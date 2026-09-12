@@ -1,0 +1,26 @@
+{
+  "scope": "synthetic local Responses fixture; no provider acceptance claim",
+  "binaries": [
+    {
+      "path": "/private/tmp/cai-codex-0.153.0-release/codex-aarch64-apple-darwin",
+      "version": "codex-cli 0.153.0",
+      "sha256": "a29d9e86eef88cbbd69f97ce8c590b1d0a287c8f77424f5eef226b883d7eaa22"
+    },
+    {
+      "path": "/private/tmp/cai-codex-v0.154.0-build-20260912/codex-rs/target/debug/codex",
+      "version": "codex-cli 0.154.0",
+      "sha256": "52a333a5a16a48b0b91ff4ece47d9e2eaac3b1e7177d52bd71f70788dc86e37d"
+    }
+  ],
+  "checks": [
+    "both binaries read the same synthetic file credential",
+    "turn 1: same session, config, credentials, instructions and prior history",
+    "turn 2: same session, config, credentials, instructions and prior history",
+    "turn 3: same session, config, credentials, instructions and prior history",
+    "configuration and credential file unchanged after upstream/candidate/upstream",
+    "concurrent same-session writer rejected; independent session completed",
+    "both binaries parse the same synthetic OAuth file; no refresh or acceptance tested"
+  ],
+  "response_requests": 5,
+  "passed": true
+}

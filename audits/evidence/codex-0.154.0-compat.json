@@ -1,0 +1,28 @@
+{
+  "scope": "synthetic local Responses fixture; no provider acceptance claim",
+  "binaries": [
+    {
+      "path": "/opt/homebrew/Caskroom/codex/0.154.0/bin/codex",
+      "version": "codex-cli 0.154.0",
+      "sha256": "4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc"
+    },
+    {
+      "path": "/private/tmp/cai-codex-v0.154.0-build-20260912/codex-rs/target/debug/codex",
+      "version": "codex-cli 0.154.0",
+      "sha256": "52a333a5a16a48b0b91ff4ece47d9e2eaac3b1e7177d52bd71f70788dc86e37d"
+    }
+  ],
+  "checks": [
+    "both binaries read the same synthetic file credential",
+    "turn 1: same session, config, credentials, instructions and prior history",
+    "turn 2: same session, config, credentials, instructions and prior history",
+    "turn 3: same session, config, credentials, instructions and prior history",
+    "configuration and credential file unchanged after upstream/candidate/upstream",
+    "concurrent same-session writer rejected; independent session completed",
+    "both binaries parse the same synthetic OAuth file; no refresh or acceptance tested",
+    "both binaries read one synthetic OS-keyring credential in an isolated namespace",
+    "synthetic keyring logout visible to both binaries; test credential removed"
+  ],
+  "response_requests": 5,
+  "passed": true
+}
