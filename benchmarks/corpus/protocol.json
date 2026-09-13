@@ -8,6 +8,7 @@
     "trigger": "Any unequal dimension score or assessment contradicting executable evidence",
     "unresolved_gate": "Do not certify a confirmatory quality gate while disputes remain unresolved."
   },
+  "freeze": "benchmarks/corpus/freeze.json",
   "leakage": {
     "excluded_inputs": [
       "gold patch",
@@ -74,12 +75,12 @@
     }
   },
   "schema": 1,
-  "status": "development/validation specification; held-out execution remains locked pending user-approved pilot freeze",
+  "status": "User-approved numerical freeze; held-out execution locked pending development qualification and complete-schedule feasibility",
   "trials": {
     "development": 3,
     "failed_runs": "Retain in success denominator and cost numerator; infrastructure invalidity requires recorded evidence and identical rerun treatment across arms.",
-    "held-out": null,
-    "held_out_rule": "Explicit positive trial count approved with the user after the bounded upstream pilot; no held-out execution before freeze.",
+    "held-out": 3,
+    "held_out_rule": "Three repeats approved on 2026-09-13; criteria approval alone does not authorize held-out export or execution.",
     "retries": "Count every attempt in its original task trial; retries do not create new samples.",
     "run_order": "Seeded six-permutation balanced order; same task, seed state and trial across all three arms.",
     "validation": 3

@@ -126,6 +126,8 @@ def export_task(catalog_path, task_id, cache, output, evaluator=False, freeze=No
     if task["split"] == "held-out":
         require(freeze is not None, "held-out export requires approved freeze")
         approval = read(freeze)
+        require(approval.get("held_out_execution_authorized") is not False,
+                "held-out execution remains locked by the freeze")
         require(approval["catalog_sha256"] == identity(data) and approval["approved_by"] == "user"
                 and type(approval["held_out_trials"]) is int and approval["held_out_trials"] > 0,
                 "invalid or stale held-out freeze")

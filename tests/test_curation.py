@@ -44,6 +44,15 @@ class CurationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "approved freeze"):
                 export_task(ROOT / "catalog.json", task["id"], Path(tmp), Path(tmp) / "output.json")
 
+    def test_approved_criteria_do_not_unlock_heldout_execution(self):
+        task = next(t for t in self.catalog["tasks"] if t["split"] == "held-out")
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output.json"
+            with self.assertRaisesRegex(ValueError, "execution remains locked"):
+                export_task(ROOT / "catalog.json", task["id"], Path(tmp), output,
+                            freeze=ROOT / "freeze.json")
+            self.assertFalse(output.exists())
+
     def test_new_to_pass_compilation_repair_retains_zero_regression_count(self):
         row = {"org": "example", "repo": "repo", "number": 1, "base": {"sha": "a" * 40},
                "fix_patch": "fixture", "test_patch": "fixture", "n2p_tests": {"new-test": {}}, "p2p_tests": {}}

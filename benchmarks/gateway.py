@@ -21,20 +21,46 @@ class Budget:
         self.limits, self.output = limits, output
         self.started = time.monotonic()
         self.count, self.reserved = 0, Decimal(0)
+        self.by_scope = {k:number(v) for k,v in limits.get("initial_scope_reserved_usd", {}).items()}
+        self.reserved = sum(self.by_scope.values(), Decimal(0))
+        require(self.reserved <= number(limits["usd_exposure"]), "initial exposure exceeds cap")
+        self.open_reservations = {}
+        self.stopped = False
         self.lock = threading.Lock()
 
-    def admit(self, exposure):
+    def admit(self, exposure, scope="task_api"):
         with self.lock:
+            require(not self.stopped, "experiment admission stopped")
             require(time.monotonic() - self.started < self.limits["seconds"], "experiment time exhausted")
             require(self.count < self.limits["requests"], "experiment request count exhausted")
             amount = number(exposure)
             require(self.reserved + amount <= number(self.limits["usd_exposure"]), "experiment exposure exhausted")
+            scoped = self.by_scope.get(scope, Decimal(0)) + amount
+            if "scope_usd" in self.limits:
+                require(scope in self.limits["scope_usd"], "unbudgeted spending scope")
+                require(scoped <= number(self.limits["scope_usd"][scope]), "scope exposure exhausted")
             self.count += 1
             self.reserved += amount
+            self.by_scope[scope] = scoped
+            self.open_reservations[self.count] = (amount, scope)
 
             write(self.output / f"admission-{self.count:06d}.json",
-                  {"requests": self.count, "reserved_usd": str(self.reserved),
+                  {"requests": self.count, "reserved_usd": str(self.reserved), "scope": scope,
+                   "scope_reserved_usd": str(scoped),
                    "elapsed_seconds": time.monotonic() - self.started})
+            return self.count
+
+    def settle(self, admission, upper):
+        with self.lock:
+            require(admission in self.open_reservations, "unknown or settled admission")
+            amount, scope = self.open_reservations[admission]
+            upper = number(upper)
+            require(upper <= amount, "usage exceeds reserved exposure")
+            self.reserved -= amount - upper
+            self.by_scope[scope] -= amount - upper
+            del self.open_reservations[admission]
+            write(self.output / f"settlement-{admission:06d}.json", {"admission":admission,"scope":scope,"original_reservation_usd":str(amount),"completed_usage_upper_usd":str(upper),"remaining_reserved_usd":str(self.reserved)})
+            return amount - upper
 
     def remaining_seconds(self):
         return max(0, self.limits["seconds"] - (time.monotonic() - self.started))
@@ -58,12 +84,42 @@ def validate_routes(routes, fixture):
             require(route.get("rates") and route.get("rate_card"), "rate-card evidence required")
 
 
+def bounded_request(body, route):
+    bounds = route.get("bounds")
+    if not bounds:
+        return
+    require(body.get("service_tier", "default") in ("default", "auto"), "unpriced service tier")
+    require(not any(body.get(k) for k in ("previous_response_id", "conversation", "background")), "unbounded remote context")
+    inputs = body.get("input", [])
+    require(isinstance(inputs, (list, str)), "invalid bounded input")
+    nodes = [body]
+    while nodes:
+        node = nodes.pop()
+        if isinstance(node, dict):
+            require(not any(k in node for k in ("image_url", "file_id", "file_data", "audio")), "unbounded nontext input")
+            require(node.get("type") not in ("web_search", "web_search_preview", "file_search", "computer", "computer_use_preview", "code_interpreter", "image_generation", "mcp", "input_image", "input_file", "input_audio"), "charged or nontext tool/input")
+            nodes.extend(node.values())
+        elif isinstance(node, list):
+            nodes.extend(node)
+    reasoning = sum(isinstance(i, dict) and i.get("type") == "reasoning" for i in inputs) if isinstance(inputs, list) else 0
+    require(not isinstance(inputs, list) or len(inputs) <= 64, "bounded message count exceeded")
+    ceiling = len(json.dumps(body, ensure_ascii=False).encode()) + 4096 * (1 + reasoning)
+    require(ceiling <= bounds["input_token_ceiling"], "conservative input ceiling exceeded")
+    require(body["max_output_tokens"] <= bounds["output_tokens"], "output ceiling exceeded")
+    rates = route["rates"]
+    exposure = (Decimal(bounds["input_token_ceiling"]) * max(number(rates[k]) for k in ("input", "cache_read", "cache_write")) + Decimal(bounds["output_tokens"]) * number(rates["output"])) / 1000000
+    require(exposure <= number(route["request_exposure_usd"]), "underreserved request")
+    return ceiling
+
+
 class Gateway:
     def __init__(self, routes, budget, output, scope="task_api", fixture=False):
         validate_routes(routes, fixture)
         self.routes, self.budget, self.output, self.scope = routes, budget, output, scope
         self.token = secrets.token_urlsafe(32)
         self.records, self.connections = [], set()
+        self.admitted = 0
+        self.session_reserved = Decimal(0)
         self.lock = threading.Lock()
         self.stopped = threading.Event()
         owner = self
@@ -139,14 +195,26 @@ class Gateway:
             body = json.loads(client.rfile.read(size))
             require(body["model"] in route["models"], "unapproved model")
             record["requested_model"] = body["model"]
-            maximum = self.budget.limits["max_output_tokens"]
+            maximum = min(self.budget.limits["max_output_tokens"], route.get("bounds", {}).get("output_tokens", self.budget.limits["max_output_tokens"]))
             body["max_output_tokens"] = min(int(body.get("max_output_tokens", maximum)), maximum)
             require(body["max_output_tokens"] > 0, "invalid output limit")
+            if route.get("bounds"):
+                body["service_tier"] = "default"
             record["request"] = body
-            self.budget.admit(route["request_exposure_usd"])
+            record["input_token_upper_bound"] = bounded_request(body, route)
+            exposure = number(route["request_exposure_usd"])
+            if route.get("settle_completed_usage"):
+                rates=route["rates"]
+                exposure=(Decimal(record["input_token_upper_bound"]) * max(number(rates[k]) for k in ("input","cache_read","cache_write")) + Decimal(body["max_output_tokens"]) * number(rates["output"])) / 1000000
+            with self.lock:
+                require(self.admitted < route.get("bounds", {}).get("requests_per_session", self.budget.limits["requests"]), "session request limit")
+                require(self.session_reserved + exposure <= number(route.get("bounds", {}).get("session_usd", self.budget.limits["usd_exposure"])), "session exposure exhausted")
+                record["admission"] = self.budget.admit(str(exposure), self.scope)
+                self.session_reserved += exposure
+                self.admitted += 1
             url = urlsplit(route["url"])
             cls = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
-            conn = cls(url.hostname, url.port, timeout=min(5, max(0.1, self.budget.remaining_seconds())))
+            conn = cls(url.hostname, url.port, timeout=min(route.get("timeout_seconds", 5), max(0.1, self.budget.remaining_seconds())))
             with self.lock:
                 self.connections.add(conn)
             headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
@@ -211,6 +279,19 @@ class Gateway:
                 conn.close()
                 with self.lock:
                     self.connections.discard(conn)
+            if record.get("raw_usage") and record.get("input_token_upper_bound"):
+                usage = record["raw_usage"]
+                record["usage_within_reserved_bounds"] = (usage.get("input_tokens", float("inf")) <= record["input_token_upper_bound"] and usage.get("output_tokens", float("inf")) <= record["request"]["max_output_tokens"])
+                if not record["usage_within_reserved_bounds"]:
+                    self.stopped.set()
+                    self.budget.stopped = True
+                elif self.routes[record["route"]].get("settle_completed_usage") and record["status"] == "completed":
+                    rates=self.routes[record["route"]]["rates"]
+                    upper=(Decimal(usage["input_tokens"]) * max(number(rates[k]) for k in ("input","cache_read","cache_write")) + Decimal(usage["output_tokens"]) * number(rates["output"])) / 1000000
+                    with self.lock:
+                        released=self.budget.settle(record["admission"],str(upper))
+                        self.session_reserved -= released
+                    record["completed_usage_upper_usd"] = str(upper)
             record["finished"] = time.time()
 
     def ledger(self):

@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import posixpath
 from pathlib import Path, PurePosixPath
 import resource
 import signal
@@ -37,11 +38,21 @@ def profile(reads, writes, port=None):
 def restore(snapshot, destination, max_bytes):
     require(snapshot["format"] == "tree-v1" and isinstance(snapshot["files"], dict), "invalid tree snapshot")
     total = 0
+    links = []
     for name, item in snapshot["files"].items():
         path = PurePosixPath(name)
         require(name and not path.is_absolute() and ".." not in path.parts and ".git" not in path.parts,
                 "unsafe snapshot path")
         require(str(path) == name and "\\" not in name, "noncanonical snapshot path")
+        require(not any(str(path).startswith(other + "/") for other, value in snapshot["files"].items() if "symlink" in value), "snapshot path below symlink")
+        if "symlink" in item:
+            target = item["symlink"]
+            require(isinstance(target, str) and target and not PurePosixPath(target).is_absolute(), "unsafe symlink")
+            resolved = posixpath.normpath(str(path.parent / target))
+            require(resolved != ".." and not resolved.startswith("../"), "symlink escapes snapshot")
+            require(resolved in snapshot["files"] and "symlink" not in snapshot["files"][resolved] or any(n.startswith(resolved + "/") for n in snapshot["files"]), "symlink target missing or chained")
+            links.append((path, target))
+            continue
         data = base64.b64decode(item["base64"], validate=True)
         total += len(data)
         require(total <= max_bytes, "snapshot size limit")
@@ -51,15 +62,28 @@ def restore(snapshot, destination, max_bytes):
         with target.open("xb") as stream:
             stream.write(data)
         target.chmod(item["mode"])
+    for path, link in links:
+        target = Path(destination) / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.symlink_to(link)
 
 
 def snapshot(root, max_bytes):
     files, total = {}, 0
     for parent, directories, names in os.walk(root, followlinks=False):
         directories[:] = sorted(d for d in directories if d != ".git")
-        for name in directories + names:
-            require(not (Path(parent) / name).is_symlink(), "candidate symlink rejected")
+        for name in list(directories) + names:
+            path = Path(parent) / name
+            if path.is_symlink():
+                target = os.readlink(path)
+                require(not Path(target).is_absolute() and path.resolve().is_relative_to(Path(root).resolve()) and path.exists(), "candidate symlink rejected")
+                relative = str(path.relative_to(root))
+                files[relative] = {"symlink": target}
+                if name in directories:
+                    directories.remove(name)
         for name in sorted(names):
+            if (Path(parent) / name).is_symlink():
+                continue
             path = Path(parent) / name
             require(path.is_file(), "candidate special file rejected")
             require(path.stat().st_nlink == 1, "candidate hardlink rejected")

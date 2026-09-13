@@ -23,6 +23,11 @@ The fixture creates a manifest, schedule, run records, blinded packets, syntheti
 assessments and report. It includes 18 checks, six intentional failures and 36
 simulated assessments.
 
+A fixed-model development manifest may set `comparison: "upstream-pilot"` and include
+only `default-upstream` and `configured-upstream`. Scheduling balances paired order;
+this mode cannot run validation or held-out tasks and makes no CAI comparison.
+Live execution still requires provider/data authorization and validated spending bounds.
+
 For real native processes with a local simulated provider:
 
 ```sh
@@ -58,3 +63,14 @@ The [corpus guide](corpus/README.md) covers 88 pinned tasks and 18 focused scena
 The [protocol](corpus/protocol.json) defines splits, repeats, rubrics, leakage
 controls and disagreement handling. Final budgets and quality/savings gates
 remain part of the pilot freeze.
+
+## Bounded upstream pilot
+
+`python3 -m benchmarks.pilot prepare OUTPUT` prepares the pinned Serde development
+calibration; `verify OUTPUT/manifest.json` validates its offline exported-source
+controls. `run OUTPUT/manifest.json` incurs OpenAI API usage and requires an
+approved allowance and data scope. It refuses a second start in the same bundle.
+The September 13 pilot retained a failed pair and one symmetric infrastructure
+retest; its byte-based context configuration was rejected. See the local pilot
+audit for evidence and the approved `corpus/freeze.json` for criteria. Included OpenAI subscription usage is excluded from the USD 15 paid reserve; subscription execution still needs a validated native route. Criteria approval does not unlock held-out execution.
+Do not use the rejected configuration to qualify held-out performance.

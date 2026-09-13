@@ -61,6 +61,8 @@ def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, se
     (home / "config.toml").write_text(config)
     (home / "tmp").mkdir(exist_ok=True)
     env = clean_env(home)
+    if runtime.get("path_helpers"):
+        env["PATH"] = ":".join(str(artifact(root, ref).parent) for ref in runtime["path_helpers"]) + ":" + env["PATH"]
     env["CAI_GATEWAY_TOKEN"] = gateway.token
     overrides = {"model": runtime.get("requested_model", runtime.get("model")),
                  "model_provider": runtime["provider"], "approval_policy": "never",
@@ -79,7 +81,7 @@ def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, se
         arguments.extend(["-c", key + "=" + json.dumps(value)])
     arguments.append(prompt)
     allowed = [binary, home, workspace]
-    for helper in runtime.get("helpers", []):
+    for helper in runtime.get("helpers", []) + runtime.get("path_helpers", []):
         allowed.append(artifact(root, helper))
     invocation = {"configuration": config, "overrides": overrides, "binary_sha256": runtime["binary"]["sha256"],
                   "environment": {k: v for k, v in env.items() if k != "CAI_GATEWAY_TOKEN"}}
@@ -138,14 +140,14 @@ def evaluate(check, candidate, home, limits, seconds=None):
                    "--platform", image["Os"] + "/" + image["Architecture"],
                    "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit", str(limits["processes"]),
                    "--memory", str(limits["rss_bytes"]), "--cpus", str(check.get("cpus", 2)),
-                   "--tmpfs", "/tmp:rw,nosuid,size=256m", "--mount", f"type=bind,src={workspace},dst=/workspace",
+                   "--tmpfs", f"/tmp:rw,nosuid,{'exec' if check.get('tmpfs_exec') else 'noexec'},size={int(check.get('tmpfs_mb', 256))}m", "--mount", f"type=bind,src={workspace},dst=/workspace",
                    "--workdir", "/workspace", check["image"], *check["argv"]]
         started = time.monotonic()
         code, reason = None, None
         try:
             with (home / "stdout").open("wb") as stream:
                 process = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT,
-                    timeout=min(limits["process_seconds"], seconds if seconds is not None else limits["process_seconds"]),
+                    timeout=min(limits["process_seconds"], check.get("seconds", limits["process_seconds"]), seconds if seconds is not None else limits["process_seconds"]),
                     preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (limits["file_bytes"], limits["file_bytes"])))
                 code = process.returncode
         except subprocess.TimeoutExpired:

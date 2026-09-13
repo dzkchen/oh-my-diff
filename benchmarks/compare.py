@@ -68,7 +68,12 @@ def validate_manifest(m, root):
     require(m["schema"] == 1, "unsupported schema")
     require(m["purpose"] in ("fixture", "development", "validation", "held-out"), "invalid purpose")
     require(m["experiment"] in ("fixed-model", "routing"), "invalid experiment")
-    require(set(m["arms"]) == set(ARMS), "all three genuine comparator arms required")
+    pilot = m.get("comparison") == "upstream-pilot"
+    require(m.get("comparison", "three-arm") in ("three-arm", "upstream-pilot"), "unknown comparison")
+    if pilot:
+        require(m["purpose"] in ("fixture", "development"), "upstream pilot is development-only")
+        require(m["experiment"] == "fixed-model", "upstream pilot requires fixed models")
+    require(set(m["arms"]) == set(ARMS[:2] if pilot else ARMS), "genuine comparator arms required")
     require(type(m["trials"]) is int and m["trials"] > 0, "positive trials required")
     require(type(m["seed"]) is int, "integer seed required")
     require(m["states"] and set(m["states"]) <= {"cold", "reuse"}, "invalid states")
@@ -124,13 +129,13 @@ def validate_manifest(m, root):
 
 def schedule(m):
     rng = random.Random(m["seed"])
-    orders = list(itertools.permutations(ARMS))
+    orders = list(itertools.permutations(ARMS[:2] if m.get("comparison") == "upstream-pilot" else ARMS))
     rng.shuffle(orders)
     blocks = list(itertools.product(m["tasks"], m["states"], range(m["trials"])))
     rng.shuffle(blocks)
     result = []
     for index, (task, state, trial) in enumerate(blocks):
-        for arm in orders[index % 6]:
+        for arm in orders[index % len(orders)]:
             run = {"task": task["id"], "suite": task["suite"], "state": state,
                    "trial": trial, "arm": arm}
             run["id"] = identity({"manifest": identity(m), **run})[:24]

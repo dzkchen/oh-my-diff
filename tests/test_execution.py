@@ -8,7 +8,7 @@ import threading
 import unittest
 
 from benchmarks.compare import money, put, read, write
-from benchmarks.gateway import Budget, Gateway, validate_routes
+from benchmarks.gateway import bounded_request, Budget, Gateway, validate_routes
 from benchmarks.isolation import restore, snapshot
 from benchmarks.native_fixture import tree
 from benchmarks.reconcile import reconcile
@@ -58,6 +58,56 @@ class ExecutionTests(unittest.TestCase):
         conn.close()
         return status
 
+    def test_scope_budgets_preserve_assessment_reserve(self):
+        self.limits["scope_usd"] = {"task_api": "0.25", "evaluation": "0.25"}
+        budget = Budget(self.limits, self.root / "budget")
+        budget.admit("0.25", "task_api")
+        with self.assertRaisesRegex(ValueError, "scope exposure"):
+            budget.admit("0.01", "task_api")
+        budget.admit("0.25", "evaluation")
+        self.assertEqual(budget.reserved, 0.5)
+
+    def test_only_explicit_completed_usage_settlement_releases_exposure(self):
+        budget = Budget(self.limits, self.root / "budget")
+        first = budget.admit("0.25")
+        second = budget.admit("0.25")
+        budget.settle(first, "0.10")
+        self.assertEqual(str(budget.reserved), "0.35")
+        with self.assertRaisesRegex(ValueError, "settled"):
+            budget.settle(first, "0")
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            budget.settle(second, "0.30")
+        self.assertEqual(str(budget.reserved), "0.35")
+
+    def test_gateway_settles_complete_usage_but_keeps_failed_exposure(self):
+        self.routes["test"].update(settle_completed_usage=True, request_exposure_usd="0.03",
+            bounds={"input_token_ceiling":5000,"output_tokens":50,"requests_per_session":2,"session_usd":"0.05"},
+            rates={"input":"4","cache_read":"0.4","cache_write":"5","output":"20"})
+        self.limits["usd_exposure"] = "0.05"
+        budget = Budget(self.limits, self.root / "budget")
+        with Gateway(self.routes,budget,self.root,fixture=True) as gateway:
+            self.assertEqual(self.request(gateway),200)
+            self.assertEqual(self.request(gateway,mode="failure"),429)
+        self.assertEqual(len(list((self.root / "budget").glob("settlement-*.json"))),1)
+        self.assertGreater(float(budget.reserved),0.02)
+        self.assertLess(float(budget.reserved),0.03)
+
+    def test_bounded_requests_reject_hidden_context_and_underreservation(self):
+        route = {"bounds": {"input_token_ceiling": 5000, "output_tokens": 50},
+                 "rates": {"input": "4", "cache_read": "0.4", "cache_write": "5", "output": "20"},
+                 "request_exposure_usd": "0.03"}
+        body = {"input": "small", "max_output_tokens": 50}
+        bounded_request(body, route)
+        with self.assertRaisesRegex(ValueError, "remote context"):
+            bounded_request(dict(body, previous_response_id="prior"), route)
+        with self.assertRaisesRegex(ValueError, "input ceiling"):
+            bounded_request(dict(body, input="x" * 5000), route)
+        with self.assertRaisesRegex(ValueError, "nontext"):
+            bounded_request(dict(body, input=[{"type": "input_image", "image_url": "https://example.com"}]), route)
+        route["request_exposure_usd"] = "0.01"
+        with self.assertRaisesRegex(ValueError, "underreserved"):
+            bounded_request(body, route)
+
     def test_failed_retry_and_worker_attribution_preserved(self):
         with Gateway(self.routes, Budget(self.limits, self.root / "budget"), self.root, fixture=True) as gateway:
             self.assertEqual(self.request(gateway, mode="failure"), 429)
@@ -102,6 +152,22 @@ class ExecutionTests(unittest.TestCase):
         (dest / "link").symlink_to(self.root / "secret")
         with self.assertRaisesRegex(ValueError, "symlink"):
             snapshot(dest, 100)
+
+    def test_relative_source_symlinks_round_trip_without_escape(self):
+        source = self.root / "source-links"
+        source.mkdir()
+        (source / "real").mkdir()
+        (source / "real/value.txt").write_text("safe")
+        (source / "alias").symlink_to("real", target_is_directory=True)
+        captured = snapshot(source, 100)
+        restored = self.root / "restored-links"
+        restored.mkdir()
+        restore(captured, restored, 100)
+        self.assertTrue((restored / "alias").is_symlink())
+        self.assertEqual((restored / "alias/value.txt").read_text(), "safe")
+        captured["files"]["alias"] = {"symlink": "../outside"}
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            restore(captured, self.root / "rejected-links", 100)
 
     def test_reconciliation_replaces_unknown_and_preserves_original(self):
         with Gateway(self.routes, Budget(self.limits, self.root / "budget"), self.root / "run", fixture=True) as gateway:

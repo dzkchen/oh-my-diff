@@ -36,6 +36,28 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no CAI patch"):
             c.validate_manifest(self.m, self.root)
 
+    def test_upstream_pilot_schedule_and_holdout_denial(self):
+        self.m["comparison"] = "upstream-pilot"
+        del self.m["arms"]["cai"]
+        c.validate_manifest(self.m, self.root)
+        plan = c.schedule(self.m)
+        self.assertEqual(len(plan), 12)
+        self.assertEqual({r["arm"] for r in plan}, set(c.ARMS[:2]))
+        orders = [tuple(r["arm"] for r in plan[i:i + 2]) for i in range(0, 12, 2)]
+        self.assertEqual(orders.count(c.ARMS[:2]), 3)
+        self.assertEqual(orders.count(tuple(reversed(c.ARMS[:2]))), 3)+
+        result = c.report(self.m, *self.pipeline())
+        self.assertTrue(result["schedule_complete"])
+        self.assertTrue(result["assessment_complete"])
+        self.assertEqual(set(result["arm_provenance"]), set(c.ARMS[:2]))
+        self.m["purpose"] = "held-out"
+        with self.assertRaisesRegex(ValueError, "development-only"):
+            c.validate_manifest(self.m, self.root)
+        self.m["purpose"] = "fixture"
+        del self.m["comparison"]
+        with self.assertRaisesRegex(ValueError, "comparator arms"):
+            c.validate_manifest(self.m, self.root)
+
     def test_content_tampering_and_path_escape(self):
         ref = self.m["tasks"][0]["prompt"]
         (self.root / ref["path"]).write_text("changed")
