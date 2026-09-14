@@ -92,7 +92,7 @@ def main():
               "binary": str(binary), "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
               "checks": checks, "raw_usage_per_response": usage}
     try:
-        with tempfile.TemporaryDirectory(prefix="cai-provider-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="omd-provider-") as tmp:
             root = Path(tmp)
             repo, home = root / "repo", root / "state"
             repo.mkdir()
@@ -100,7 +100,7 @@ def main():
             home.mkdir()
             env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "TERM") if k in os.environ}
             env.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home),
-                       NO_PROXY="localhost,127.0.0.1", CAI_FIXTURE_KEY="synthetic-provider-key")
+                       NO_PROXY="localhost,127.0.0.1", OMD_FIXTURE_KEY="synthetic-provider-key")
             base = f'''model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 model_provider = "audit"
@@ -148,7 +148,7 @@ stream_max_retries = 0
                 auth = {"OPENAI_API_KEY": "synthetic-file-key"} if route == "file_api" else oauth
                 (home / "auth.json").write_text(json.dumps(auth))
                 config('requires_openai_auth = true\n' if route in ("file_api", "oauth") else
-                       'requires_openai_auth = false\nenv_key = "CAI_FIXTURE_KEY"\n')
+                       'requires_openai_auth = false\nenv_key = "OMD_FIXTURE_KEY"\n')
                 model = "muse-spark-1.3-contributor" if route == "contributor_identifier" else "gpt-5.6-sol"
                 if route == "contributor_identifier":
                     path = home / "config.toml"

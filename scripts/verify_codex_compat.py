@@ -66,7 +66,7 @@ def main():
     results = {"scope": "synthetic local Responses fixture; no provider acceptance claim",
                "binaries": [], "checks": []}
     try:
-        with tempfile.TemporaryDirectory(prefix="cai-compat-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="omd-compat-") as temporary:
             root = Path(temporary)
             state, repo = root / "state", root / "repo"
             state.mkdir()
@@ -113,7 +113,7 @@ trust_level = "trusted"
                 results["binaries"].append({"path": str(binary),
                     "version": run(binary, ["--version"]).stdout.strip(),
                     "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()})
-            run(binaries[0], ["login", "--with-api-key"], "sk-cai-synthetic-fixture-only\n")
+            run(binaries[0], ["login", "--with-api-key"], "sk-omd-synthetic-fixture-only\n")
             auth_before = (state / "auth.json").read_bytes()
             for binary in binaries:
                 status = run(binary, ["login", "status"])
@@ -134,7 +134,7 @@ trust_level = "trusted"
                 assert any(event.get("type") == "turn.completed" for event in events), result.stdout
                 body, auth = requests[-1]
                 assert body["model"] == "gpt-5.6-sol"
-                assert auth == "Bearer sk-cai-synthetic-fixture-only"
+                assert auth == "Bearer sk-omd-synthetic-fixture-only"
                 rendered = json.dumps(body)
                 for marker in ("AUDIT_GLOBAL_INSTRUCTION", "AUDIT_PROJECT_INSTRUCTION", prompt):
                     assert marker in rendered, marker
@@ -194,7 +194,7 @@ trust_level = "trusted"
                     'cli_auth_credentials_store = "file"', 'cli_auth_credentials_store = "keyring"'))
                 env.update(CODEX_HOME=str(keyring_state), CODEX_SQLITE_HOME=str(keyring_state))
                 try:
-                    run(binaries[0], ["login", "--with-api-key"], "sk-cai-synthetic-keyring-only\n")
+                    run(binaries[0], ["login", "--with-api-key"], "sk-omd-synthetic-keyring-only\n")
                     for binary in binaries:
                         status = run(binary, ["login", "status"])
                         assert "API key" in status.stdout + status.stderr

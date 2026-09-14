@@ -26,7 +26,7 @@ def prepare(root):
     binary = Path('/opt/homebrew/Caskroom/codex/0.154.0/bin/codex')
     manifest = build(root, binary, binary, 'http://127.0.0.1:1/v1', 1)
     m = read(manifest)
-    row = read('/private/tmp/cai-mswe-data/instance.json')
+    row = read('/private/tmp/omd-mswe-data/instance.json')
     catalog = read(REPO / 'benchmarks/corpus/catalog.json')
     task = next(t for t in catalog['tasks'] if t['id'] == 'serde-rs/serde#2798')
     require(row['base']['sha'] == task['source_revision'], 'base mismatch')
@@ -48,7 +48,7 @@ def prepare(root):
     prompt = row['title'] + '\n\n' + row['body'] + '\n\n' + '\n\n'.join(i['title'] + '\n' + i['body'] for i in row['resolved_issues'])
     prompt += '\n\nImplement this task in the provided source. The run has at most 40 model requests within a shared spending cap; batch independent inspections and edits. Keep command output bounded (at most 2000 tokens per call). Ripgrep, grep, sed, Perl and the native patch tool are available. Cargo is unavailable in the agent sandbox; do not spend turns trying to install it. Only local tools are available. Official behavior checks run separately after your final patch. Preserve unrelated behavior and report any checks you cannot run.'
     defaults = 'model_reasoning_effort="high"\nweb_search="disabled"\n[features]\napps=false\nplugins=false\nmemories=false\nshell_snapshot=false\n[agents]\nmax_threads=1\n[model_providers.openai_pilot]\nrequest_max_retries=0\nstream_max_retries=0\nstream_idle_timeout_ms=120000\n[analytics]\nenabled=false\n[feedback]\nenabled=false\n'
-    models = read('/private/tmp/cai-codex-v0.154.0-audit/codex-rs/models-manager/models.json')
+    models = read('/private/tmp/omd-codex-v0.154.0-audit/codex-rs/models-manager/models.json')
     for model in models['models']:
         if model['slug'] == 'gpt-5.6-sol':
             model['tool_mode'] = 'direct'
@@ -57,12 +57,12 @@ def prepare(root):
     config = put(root, 'inputs/pilot-default.toml', defaults)
     guidance = put(root, 'inputs/pilot-guidance.txt', 'Use targeted searches to locate the existing implementation. Batch independent reads, reuse existing abstractions, make a minimal complete patch, and check the relevant behavior with available local tools. Keep final verification claims limited to checks actually run.')
     m.update(purpose='development', comparison='upstream-pilot', trials=1, states=['cold'])
-    del m['arms']['cai']
+    del m['arms']['omd']
     for name, arm in m['arms'].items():
         arm.update(provider='openai_pilot', requested_model='gpt-5.6-sol', configuration=config, helpers=[model_ref], control_label=name + '-common-direct-transport', configuration_note='Pinned unmodified binary; direct-tool catalog setting common to both arms, because bundled code-mode helper is not provisioned. Fixed high reasoning, one thread, bundled ripgrep and shared session spending limits. Configured arm adds general targeted-inspection guidance.')
         if name == 'configured-upstream':
             arm['instructions'] = guidance
-    m['configuration_review'] = 'Native catalog direct-tool compatibility common to both upstream arms; explicit high reasoning and identical available local tools/permissions. Configured upstream adds general bounded inspection/reuse/check guidance. No task-answer hints or CAI policies. This is a constrained calibration, not certification of globally optimal upstream configuration.'
+    m['configuration_review'] = 'Native catalog direct-tool compatibility common to both upstream arms; explicit high reasoning and identical available local tools/permissions. Configured upstream adds general bounded inspection/reuse/check guidance. No task-answer hints or Oh My Diff policies. This is a constrained calibration, not certification of globally optimal upstream configuration.'
     limits = m['execution']['limits']
     limits.update(seconds=3600, requests=84, usd_exposure='5', scope_usd={'task_api':'3.50','evaluation':'1.50'}, max_output_tokens=4096, max_request_bytes=100000, max_response_bytes=4000000, process_seconds=900, cpu_seconds=900, rss_bytes=6*1024**3, processes=64, snapshot_bytes=16000000)
     m['controls'].update(resource_limits=limits, reasoning='high')
@@ -150,10 +150,10 @@ def verify(manifest):
     root=manifest.parent;m=read(manifest)
     source=read(artifact(root,m['tasks'][0]['source']))
     check=read(artifact(root,m['tasks'][0]['checks']))
-    row=read('/private/tmp/cai-mswe-data/instance.json')
+    row=read('/private/tmp/omd-mswe-data/instance.json')
     results={}
     for case in ['base','test-only','gold','wrong']:
-        with tempfile.TemporaryDirectory(prefix='cai-private-control-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='omd-private-control-') as tmp:
             work=Path(tmp);restore(source,work,16000000)
             if case=='gold':
                 patch=work/'control.patch';patch.write_text(row['fix_patch'])
@@ -201,7 +201,7 @@ def run(manifest):
         log_path=root/'runs'/spec['id']/'evaluator/stdout'
         log=log_path.read_text(errors='replace') if log_path.exists() else ''
         passed={match.group(1) for line in log.splitlines() if (match:=re.match(r'test (\S+) ... ok',line.strip()))}
-        row=read('/private/tmp/cai-mswe-data/instance.json')
+        row=read('/private/tmp/omd-mswe-data/instance.json')
         expected=set().union(*(set(row[k]) for k in ['p2p_tests','f2p_tests','s2p_tests','n2p_tests']))
         run['checks'][0]['passed'] = run['checks'][0]['passed'] and bool(passed) and expected <= passed
         proof=put(root/'runs'/spec['id'],'exact-tests.json',json.dumps({'parser':'Pinned Serde parse_log pass regex; exact dataset expectation names','expected':len(expected),'passed':len(passed),'missing':sorted(expected-passed)}))

@@ -9,7 +9,8 @@ import random
 import statistics
 from datetime import datetime
 
-ARMS = ("default-upstream", "configured-upstream", "cai")
+ARMS = ("default-upstream", "configured-upstream", "omd")
+LEGACY_OMD_ARM = "cai"
 SCOPES = ("task_api", "task_environment", "evaluation", "guideline_development")
 DIMENSIONS = ("correctness", "scope", "maintainability")
 
@@ -64,6 +65,14 @@ def artifact(root, ref):
     return path
 
 
+def arm_order(m):
+    if m.get("comparison") == "upstream-pilot":
+        return ARMS[:2]
+    if LEGACY_OMD_ARM in m["arms"] and ARMS[2] not in m["arms"]:
+        return (*ARMS[:2], LEGACY_OMD_ARM)
+    return ARMS
+
+
 def validate_manifest(m, root):
     require(m["schema"] == 1, "unsupported schema")
     require(m["purpose"] in ("fixture", "development", "validation", "held-out"), "invalid purpose")
@@ -73,7 +82,7 @@ def validate_manifest(m, root):
     if pilot:
         require(m["purpose"] in ("fixture", "development"), "upstream pilot is development-only")
         require(m["experiment"] == "fixed-model", "upstream pilot requires fixed models")
-    require(set(m["arms"]) == set(ARMS[:2] if pilot else ARMS), "genuine comparator arms required")
+    require(set(m["arms"]) == set(arm_order(m)), "genuine comparator arms required")
     require(type(m["trials"]) is int and m["trials"] > 0, "positive trials required")
     require(type(m["seed"]) is int, "integer seed required")
     require(m["states"] and set(m["states"]) <= {"cold", "reuse"}, "invalid states")
@@ -91,10 +100,10 @@ def validate_manifest(m, root):
         for field in ("binary", "configuration", "instructions"):
             artifact(root, arm[field])
         require(arm["configuration_note"], "explain comparator configuration")
-        if name != "cai":
+        if name not in (ARMS[2], LEGACY_OMD_ARM):
             require(arm["runtime_patches"] == [], "upstream arm must be unmodified")
         elif m["purpose"] != "fixture":
-            require(arm["runtime_patches"], "no CAI patch yet; do not label upstream as CAI")
+            require(arm["runtime_patches"], "no Oh My Diff patch yet; do not label upstream as Oh My Diff")
     a, b = (m["arms"][name] for name in ARMS[:2])
     require(a["binary"]["sha256"] == b["binary"]["sha256"], "upstream arms must use same binary")
     if m["experiment"] == "fixed-model":
@@ -129,7 +138,7 @@ def validate_manifest(m, root):
 
 def schedule(m):
     rng = random.Random(m["seed"])
-    orders = list(itertools.permutations(ARMS[:2] if m.get("comparison") == "upstream-pilot" else ARMS))
+    orders = list(itertools.permutations(arm_order(m)))
     rng.shuffle(orders)
     blocks = list(itertools.product(m["tasks"], m["states"], range(m["trials"])))
     rng.shuffle(blocks)

@@ -14,10 +14,10 @@ from benchmarks.runner import clean_env, evaluate, native
 from benchmarks.compare import read
 
 
-@unittest.skipUnless(os.environ.get("CAI_NATIVE_TESTS") == "1", "explicit macOS/native validation required")
+@unittest.skipUnless(os.environ.get("OMD_NATIVE_TESTS") == "1", "explicit macOS/native validation required")
 class NativeRunnerTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="cai-native-test-")
+        self.tmp = tempfile.TemporaryDirectory(prefix="omd-native-test-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.work, self.home = self.root / "work", self.root / "home"
@@ -62,7 +62,7 @@ class NativeRunnerTests(unittest.TestCase):
     def test_linux_docker_evaluator_is_separate_and_offline(self):
         image = "mswebench/serde-rs_m_serde@sha256:359320345fb3a9dc9853b6fee3a23e5e81e1b3a3fbe7cc63c79a9acc403b3a64"
         result = evaluate({"backend": "docker", "image": image, "argv": ["/bin/sh", "-c",
-            "test -f solution.py && test ! -S /var/run/docker.sock && ! touch /root/cai-write-probe"]},
+            "test -f solution.py && test ! -S /var/run/docker.sock && ! touch /root/omd-write-probe"]},
             tree({"solution.py": "def add(a, b): return a+b\n"}), self.root / "evaluator", dict(self.limits, process_seconds=20))
         self.assertEqual(result["exit_code"], 0)
         self.assertEqual(result["image"]["Os"], "linux")

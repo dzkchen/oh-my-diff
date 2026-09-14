@@ -23,22 +23,28 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(len(set(orders)), 6)
 
     def test_genuine_upstream_and_fixed_models(self):
-        self.m["arms"]["default-upstream"]["runtime_patches"] = ["cai-disabled"]
+        self.m["arms"]["default-upstream"]["runtime_patches"] = ["omd-disabled"]
         with self.assertRaisesRegex(ValueError, "unmodified"):
             c.validate_manifest(self.m, self.root)
         self.m["arms"]["default-upstream"]["runtime_patches"] = []
-        self.m["arms"]["cai"]["requested_model"] = "different"
+        self.m["arms"]["omd"]["requested_model"] = "different"
         with self.assertRaisesRegex(ValueError, "assignments differ"):
             c.validate_manifest(self.m, self.root)
 
-    def test_no_unimplemented_cai_claim(self):
+    def test_no_unimplemented_omd_claim(self):
         self.m["purpose"] = "development"
-        with self.assertRaisesRegex(ValueError, "no CAI patch"):
+        with self.assertRaisesRegex(ValueError, "no Oh My Diff patch"):
             c.validate_manifest(self.m, self.root)
+
+    def test_legacy_arm_remains_replayable(self):
+        self.m["arms"][c.LEGACY_OMD_ARM] = self.m["arms"].pop("omd")
+        c.validate_manifest(self.m, self.root)
+        plan = c.schedule(self.m)
+        self.assertEqual({run["arm"] for run in plan}, {*c.ARMS[:2], c.LEGACY_OMD_ARM})
 
     def test_upstream_pilot_schedule_and_holdout_denial(self):
         self.m["comparison"] = "upstream-pilot"
-        del self.m["arms"]["cai"]
+        del self.m["arms"]["omd"]
         c.validate_manifest(self.m, self.root)
         plan = c.schedule(self.m)
         self.assertEqual(len(plan), 12)

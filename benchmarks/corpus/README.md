@@ -55,13 +55,13 @@ recorded as unverified; curation does not authorize sending repository data.
 ## Reproduction and export
 
 ```sh
-python3 -m benchmarks.curate build --output /private/tmp/cai-catalog-rebuilt.json
+python3 -m benchmarks.curate build --output /private/tmp/omd-catalog-rebuilt.json
 python3 -m benchmarks.curate validate
-python3 -m benchmarks.curate export --task 'serde-rs/serde#2798' --output /private/tmp/cai-task-input.json
+python3 -m benchmarks.curate export --task 'serde-rs/serde#2798' --output /private/tmp/omd-task-input.json
 ```
 
 Build downloads only pinned public JSONL files when absent. Raw records, including
-solutions, remain in the private `/private/tmp/cai-curation-private` cache; they
+solutions, remain in the private `/private/tmp/omd-curation-private` cache; they
 are not printed. Rebuilding from the retained cache reproduces the catalog exactly.
 Agent export contains only task ID, repository, base commit, problem statement and
 split. Obtain source with a clean export at that base commit, without history,

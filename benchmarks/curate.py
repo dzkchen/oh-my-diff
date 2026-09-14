@@ -11,6 +11,7 @@ from .compare import digest, identity, read, require, write
 REVISION = "56ff018c04a38e27ada1e9d0a6d5839a51f88f0d"
 BASE_URL = "https://huggingface.co/datasets/ByteDance-Seed/Multi-SWE-bench/resolve/" + REVISION + "/"
 SPLITS = ("development", "validation", "held-out")
+FROZEN_SELECTION_SALT = "cai-curation-v1:"
 REPOSITORIES = {
     "python": ["astropy/astropy", "django/django", "scikit-learn/scikit-learn",
                "pytest-dev/pytest", "matplotlib/matplotlib", "sphinx-doc/sphinx",
@@ -73,7 +74,7 @@ def catalog(cache, output):
                     candidates.append(safe_task(row, language, source))
                 except ValueError as error:
                     rejected.append({"id": repo + "#" + str(row["number"]), "reason": str(error)})
-            ordered = sorted(candidates, key=lambda t: digest(("cai-curation-v1:" + t["id"]).encode()))
+            ordered = sorted(candidates, key=lambda t: digest((FROZEN_SELECTION_SALT + t["id"]).encode()))
             if repo == "serde-rs/serde":
                 ordered.sort(key=lambda t: t["id"] != "serde-rs/serde#2798")
             require(ordered, f"no eligible tasks: {repo}")
@@ -147,7 +148,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("build", "validate", "export"))
     parser.add_argument("--catalog", type=Path, default=Path("benchmarks/corpus/catalog.json"))
-    parser.add_argument("--cache", type=Path, default=Path("/private/tmp/cai-curation-private"))
+    parser.add_argument("--cache", type=Path, default=Path("/private/tmp/omd-curation-private"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--task")
     parser.add_argument("--evaluator", action="store_true")

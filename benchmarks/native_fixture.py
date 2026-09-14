@@ -87,10 +87,10 @@ def build(root, upstream, custom, url, trials):
     version = subprocess.check_output([str(upstream), "--version"], text=True).strip()
     pin = read(Path(__file__).resolve().parents[1] / "upstream.lock.json")["commit"]
     arms = {name: {"upstream_commit": pin, "runtime_patches": [], "version": version,
-                   "binary": binaries["custom" if name == "cai" else "upstream"],
+                   "binary": binaries["custom" if name == "omd" else "upstream"],
                    "configuration": default if name == "default-upstream" else configured,
-                   "instructions": instructions, "provider": "fixture", "requested_model": "cai-fixture-coder",
-                   "control_label": "unmodified-custom-build" if name == "cai" else name,
+                   "instructions": instructions, "provider": "fixture", "requested_model": "omd-fixture-coder",
+                   "control_label": "unmodified-custom-build" if name == "omd" else name,
                    "configuration_note": "Fixture: common transport controls; configured arm enables a bounded native agent pool."} for name in ARMS}
     limits = {"seconds": 600, "requests": 100, "usd_exposure": "0", "max_output_tokens": 1000,
               "max_request_bytes": 4000000, "max_response_bytes": 4000000, "process_seconds": 30,
@@ -98,7 +98,7 @@ def build(root, upstream, custom, url, trials):
               "processes": 32, "snapshot_bytes": 16000000}
     assessors = [{"model": model, "provider": "fixture", "binary": binaries["upstream"],
                   "configuration": default, "instructions": instructions} for model in ("fixture-assessor-a", "fixture-assessor-b")]
-    routes = {"fixture": {"url": url, "models": ["cai-fixture-coder", "fixture-assessor-a", "fixture-assessor-b"],
+    routes = {"fixture": {"url": url, "models": ["omd-fixture-coder", "fixture-assessor-a", "fixture-assessor-b"],
                           "billing": "estimate", "account_alias": "synthetic-only", "request_exposure_usd": "0",
                           "rate_card": "synthetic invented rates, USD per million tokens",
                           "rates": {"semantics": "input-includes-disjoint-cache;output-includes-reasoning",

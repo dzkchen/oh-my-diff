@@ -65,7 +65,7 @@ def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, se
     env = clean_env(home)
     if runtime.get("path_helpers"):
         env["PATH"] = ":".join(str(artifact(root, ref).parent) for ref in runtime["path_helpers"]) + ":" + env["PATH"]
-    env["CAI_GATEWAY_TOKEN"] = gateway.token
+    env["OMD_GATEWAY_TOKEN"] = gateway.token
     overrides = {"model": runtime.get("requested_model", runtime.get("model")),
                  "model_provider": runtime["provider"], "approval_policy": "never",
 
@@ -76,7 +76,7 @@ def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, se
     for name in gateway.routes:
         prefix = f"model_providers.{name}."
         overrides.update({prefix + "name": name, prefix + "base_url": f"http://127.0.0.1:{gateway.port}/{name}",
-                          prefix + "wire_api": "responses", prefix + "env_key": "CAI_GATEWAY_TOKEN",
+                          prefix + "wire_api": "responses", prefix + "env_key": "OMD_GATEWAY_TOKEN",
                           prefix + "requires_openai_auth": False, prefix + "supports_websockets": False})
         if gateway.routes[name].get("native_subscription"):
             claims = {"https://api.openai.com/auth": {"chatgpt_plan_type": "team", "chatgpt_account_id": "isolated-gateway"}}
@@ -92,7 +92,7 @@ def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, se
     for helper in runtime.get("helpers", []) + runtime.get("path_helpers", []):
         allowed.append(artifact(root, helper))
     invocation = {"configuration": config, "overrides": overrides, "binary_sha256": runtime["binary"]["sha256"],
-                  "environment": {k: v for k, v in env.items() if k != "CAI_GATEWAY_TOKEN"}}
+                  "environment": {k: v for k, v in env.items() if k != "OMD_GATEWAY_TOKEN"}}
     version = launch([str(binary), "--version"], workspace, env, [home], evidence / "version", limits,
                      reads=allowed, seconds=seconds)
     require(version["exit_code"] == 0, "native version probe failed inside sandbox")
@@ -116,7 +116,7 @@ def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, se
 
 
 def patch_between(before, after, max_bytes):
-    with tempfile.TemporaryDirectory(prefix="cai-diff-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="omd-diff-") as tmp:
         path = Path(tmp)
         (path / "a").mkdir()
         (path / "b").mkdir()
@@ -149,7 +149,7 @@ def evaluate(check, candidate, home, limits, seconds=None):
                         reads=[workspace, state] + check.get("toolchain_reads", []), seconds=seconds)
     else:
 
-        name = "cai-check-" + os.urandom(8).hex()
+        name = "omd-check-" + os.urandom(8).hex()
         image = json.loads(subprocess.check_output(["docker", "image", "inspect", check["image"]], text=True, timeout=15))[0]
         command = ["docker", "run", "--rm", "--pull=never", "--name", name, "--network=none", "--read-only",
                    "--platform", image["Os"] + "/" + image["Architecture"],
@@ -183,7 +183,7 @@ def execute_run(m, root, spec, out, budget):
     out.mkdir(parents=True)
     source = read(artifact(root, task["source"]))
     result, candidate, error = {}, source, None
-    with tempfile.TemporaryDirectory(prefix="cai-trial-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="omd-trial-") as tmp:
         work = Path(tmp)
         workspace, state = work / "workspace", work / "state"
         workspace.mkdir()
@@ -262,7 +262,7 @@ def dispatch_assessors(m, root, blinded, output, budget):
             evidence = output / uid
             evidence.mkdir(parents=True)
             result, error = {}, None
-            with tempfile.TemporaryDirectory(prefix="cai-assessor-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="omd-assessor-") as tmp:
                 work = Path(tmp)
                 source, state = work / "source", work / "state"
                 source.mkdir()

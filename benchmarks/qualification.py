@@ -27,14 +27,14 @@ MODELS = ("gpt-5.6-sol", "gpt-6-astra")
 def credentials():
     auth = read(Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "auth.json")
     require(auth.get("tokens") and not auth.get("OPENAI_API_KEY"), "native ChatGPT login required")
-    os.environ["CAI_SUBSCRIPTION_ACCESS"] = auth["tokens"]["access_token"]
-    os.environ["CAI_SUBSCRIPTION_ACCOUNT"] = auth["tokens"]["account_id"]
+    os.environ["OMD_SUBSCRIPTION_ACCESS"] = auth["tokens"]["access_token"]
+    os.environ["OMD_SUBSCRIPTION_ACCOUNT"] = auth["tokens"]["account_id"]
 
 
 def quota(require_available=True):
     request = urllib.request.Request("https://chatgpt.com/backend-api/wham/usage", headers={
-        "Authorization": "Bearer " + os.environ["CAI_SUBSCRIPTION_ACCESS"],
-        "ChatGPT-Account-Id": os.environ["CAI_SUBSCRIPTION_ACCOUNT"]})
+        "Authorization": "Bearer " + os.environ["OMD_SUBSCRIPTION_ACCESS"],
+        "ChatGPT-Account-Id": os.environ["OMD_SUBSCRIPTION_ACCOUNT"]})
     with urllib.request.urlopen(request, timeout=20) as response:
         body = json.load(response)
     selected = {k: v for k, v in body.items() if k in ("plan_type", "rate_limit", "credits", "additional_rate_limits")}
@@ -53,8 +53,8 @@ def prepare(root):
     config = config.replace("openai_pilot", "subscription")
     config = 'model_context_window=272000\nmodel_auto_compact_token_limit=240000\n' + config.replace('[features]\n', '[features]\nenable_request_compression=false\n')
     configuration = put(root, "inputs/subscription.toml", config)
-    routes = {"subscription": {"url": "https://chatgpt.com/backend-api/codex", "credential_env": "CAI_SUBSCRIPTION_ACCESS",
-        "account_env": "CAI_SUBSCRIPTION_ACCOUNT", "models": list(MODELS), "account_alias": "user-chatgpt-subscription",
+    routes = {"subscription": {"url": "https://chatgpt.com/backend-api/codex", "credential_env": "OMD_SUBSCRIPTION_ACCESS",
+        "account_env": "OMD_SUBSCRIPTION_ACCOUNT", "models": list(MODELS), "account_alias": "user-chatgpt-subscription",
         "billing": "subscription", "native_subscription": True, "included_usage_verified": True,
         "request_exposure_usd": "0", "timeout_seconds": 120,
         "bounds": {"input_accounting": "observed-prefix-v1", "input_token_ceiling": 240000,
@@ -70,7 +70,7 @@ def prepare(root):
     for arm in m["arms"].values():
         arm.update(provider="subscription", configuration=configuration, helpers=[model_ref])
         arm["configuration_note"] = "Pinned unmodified Codex; common native ChatGPT transport, high effort, direct tools, isolated source/state, bundled ripgrep. Configured upstream adds general inspection/reuse/check guidance. No solution hints."
-    m["configuration_review"] = "Compare the same pinned upstream, lead, tools, authentication, context window and resources. General targeted inspection and verification guidance is the configured alternative; no CAI policies or benchmark-answer hints. This development qualification does not assert a globally optimal configuration."
+    m["configuration_review"] = "Compare the same pinned upstream, lead, tools, authentication, context window and resources. General targeted inspection and verification guidance is the configured alternative; no Oh My Diff policies or benchmark-answer hints. This development qualification does not assert a globally optimal configuration."
     m["trials"] = 3
     limits = m["execution"]["limits"]
     limits.update(seconds=28800, requests=1000, usd_exposure="0", scope_usd={"task_api":"0", "evaluation":"0"},
@@ -82,19 +82,19 @@ def prepare(root):
     m["execution"].update(routes=routes, authorization={"manifest_purpose":"development", "subscription_requests_approved":True,
         "paid_requests_approved":False, "data_approved":True, "reference":"User approved included OpenAI subscription benchmarking and USD15/8h bounds, then instructed make Phase2 exit complete. This batch uses no paid fallback or credits."})
     task = m["tasks"][0]
-    raw = read("/private/tmp/cai-mswe-data/instance.json")
+    raw = read("/private/tmp/omd-mswe-data/instance.json")
     task["qualification_record"] = put(root, "private/serde-record.json", json.dumps(raw))
     prompt = artifact(root, task["prompt"]).read_text().replace("40 model requests within a shared spending cap", "60 model requests within shared time and subscription limits")
     task["prompt"] = put(root, "inputs/serde-task.txt", prompt)
     catalog = read(REPO / "benchmarks/corpus/catalog.json")
     selected = next(t for t in catalog["tasks"] if t["id"] == "psf/requests#6028")
     row_path = root / "private/requests-record.json"
-    export_task(REPO / "benchmarks/corpus/catalog.json", selected["id"], Path("/private/tmp/cai-curation-private"), row_path, True)
+    export_task(REPO / "benchmarks/corpus/catalog.json", selected["id"], Path("/private/tmp/omd-curation-private"), row_path, True)
     row = read(row_path)
-    image_info = json.loads(subprocess.check_output(["docker", "image", "inspect", "cai-requests-6028-qualified"]))[0]
+    image_info = json.loads(subprocess.check_output(["docker", "image", "inspect", "omd-requests-6028-qualified"]))[0]
     image = image_info["RepoDigests"][0]
     raw_source = subprocess.check_output(["docker", "run", "--rm", "--pull=never", "--platform", "linux/amd64", "--network", "none", image, "git", "-C", "/testbed", "archive", selected["source_revision"]], timeout=60)
-    with tempfile.TemporaryDirectory(prefix="cai-requests-source-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="omd-requests-source-") as tmp:
         with tarfile.open(fileobj=io.BytesIO(raw_source)) as archive:
             archive.extractall(tmp, filter="data")
         tree = snapshot(Path(tmp), limits["snapshot_bytes"])
@@ -165,7 +165,7 @@ def access(manifest):
         runtime=copy.deepcopy(m["arms"]["default-upstream"])
         runtime["requested_model"]=model
         output=folder/model
-        with tempfile.TemporaryDirectory(prefix="cai-subscription-access-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="omd-subscription-access-") as tmp:
             work=Path(tmp)/"source";state=Path(tmp)/"state"
             work.mkdir();state.mkdir()
             with Gateway(m["execution"]["routes"],budget,output) as gateway:
@@ -200,7 +200,7 @@ def verify(manifest):
         check = read(artifact(root,task["checks"]))
         for case in ("base", "test-only", "gold", "wrong"):
             current = copy.deepcopy(check)
-            with tempfile.TemporaryDirectory(prefix="cai-qualification-control-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="omd-qualification-control-") as tmp:
                 work = Path(tmp)
                 restore(source, work, m["execution"]["limits"]["snapshot_bytes"])
                 if case == "gold":

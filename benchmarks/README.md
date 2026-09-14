@@ -1,6 +1,6 @@
-# CAI benchmarks
+# Oh My Diff benchmarks
 
-Compare default upstream, configured upstream and CAI with pinned inputs,
+Compare default upstream, configured upstream and Oh My Diff with pinned inputs,
 cold/reuse trials, request-level costs, latency, isolated checks and blinded
 assessments. Reports keep retries and failures, separate evaluation overhead,
 and distinguish actual charges, estimates and unknown costs.
@@ -9,7 +9,7 @@ Validation includes simulated provider fixtures and real upstream development
 trials on two pinned tasks. Each upstream arm passed 3/3 Serde and 2/3 Requests
 checks. An approved API supplement completed two independent reviews for all
 twelve candidates; incomplete original native reviews and disagreements remain
-retained. There are no CAI performance results. The custom fixture build is labeled
+retained. There are no Oh My Diff performance results. The custom fixture build is labeled
 `unmodified-custom-build`.
 
 ## Quick start
@@ -19,7 +19,7 @@ Use a fresh output directory for each run.
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 -m benchmarks.fixture --output /private/tmp/cai-comparison-demo
+python3 -m benchmarks.fixture --output /private/tmp/omd-comparison-demo
 ```
 
 The fixture creates a manifest, schedule, run records, blinded packets, synthetic
@@ -28,14 +28,14 @@ simulated assessments.
 
 A fixed-model development manifest may set `comparison: "upstream-pilot"` and include
 only `default-upstream` and `configured-upstream`. Scheduling balances paired order;
-this mode cannot run validation or held-out tasks and makes no CAI comparison.
+this mode cannot run validation or held-out tasks and makes no Oh My Diff comparison.
 Live execution still requires provider/data authorization and validated spending bounds.
 
 For real native processes with a local simulated provider:
 
 ```sh
-python3 -m benchmarks.native_fixture --upstream /path/to/upstream/codex --custom /path/to/custom/codex --trials 3 --output /private/tmp/cai-native-demo
-CAI_NATIVE_TESTS=1 python3 -m unittest discover -s tests -v
+python3 -m benchmarks.native_fixture --upstream /path/to/upstream/codex --custom /path/to/custom/codex --trials 3 --output /private/tmp/omd-native-demo
+OMD_NATIVE_TESTS=1 python3 -m unittest discover -s tests -v
 ```
 
 Native execution requires macOS Seatbelt and the pinned binaries. Native tests

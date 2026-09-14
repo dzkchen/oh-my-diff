@@ -36,7 +36,7 @@ def charge(root, uid, scope="task_api", basis="actual", status="completed"):
 
 
 def create_manifest(root):
-    binary = put(root, "inputs/runtime.txt", "synthetic runtime; no CAI performance evidence\n")
+    binary = put(root, "inputs/runtime.txt", "synthetic runtime; no Oh My Diff performance evidence\n")
     instructions = put(root, "inputs/instructions.txt", "Implement the requested change and run its check.\n")
     prompt = put(root, "inputs/task.txt", "Fix add(a, b) to return their sum.\n")
     source = put(root, "inputs/source.py", "def add(a, b):\n    return a - b\n")
