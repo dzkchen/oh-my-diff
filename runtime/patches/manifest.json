@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "fd9708bc443cebfb0ce3398efbb5c6dfd242f485caf5007d61db0c647e0dda22"
+    "sha256": "adcf0b8b1f65680369322aa0029ea5dcb646a86cfb74178ad9587a0a739b011d"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -81,11 +81,11 @@
     },
     "codex-rs/ext/omd/src/accounting_tests.rs": {
       "before": null,
-      "after": "53388f5908bfc4f2b6247cc875052cd03dc3158f2f881b924ab9f730410109b7"
+      "after": "5df8a7e9f161b157e694e04feb64701a258628edb5c3776accba0cca865c5117"
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "0dd46d3ad9803f3499f35302087812ec42cccc8f00993db3611b7a63c8c322e9"
+      "after": "12eb5040b85dc39cdebcb4e74e6f25c502fd90d287104fd088c8f92e4ca289d0"
     },
     "codex-rs/ext/omd/src/execution_tests.rs": {
       "before": null,
@@ -93,7 +93,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "7552db4db9dd0482f724dee2aa06794da5a0c3a9ebb79ae9dd7260ac77b2b5f8"
+      "after": "51069b90d773547e719bcffd27c27c752ecf3c60c02c38a7b162118f05e3cfd6"
     },
     "codex-rs/login/src/auth/default_client.rs": {
       "before": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",
@@ -109,23 +109,23 @@
     },
     "codex-rs/omd/src/admission.rs": {
       "before": null,
-      "after": "6110ef45384c241c99945a21b43b1dcbf62430882e9122f93a5721a93ad0e754"
+      "after": "9452e7364218cfda2371a6351895529fce8baa03db1169ec39c41cf2e23d0c40"
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "79996d0e25c58e972c2f904f80251fd2538f95ac4758f5435b205a1cdc06f5ce"
+      "after": "910bfd90050ec6bf0ad508505e4b7a234a7f216abb50c70fd8623d61e5b58fb6"
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,
-      "after": "f555d580785694bcc3afcc5c698f832328cd1b41c39fc2ac68a9afe98f9e947e"
+      "after": "606f6813388057205654954e8e1e43ba26dec7769e0a85c6fd9a047a71b64612"
     },
     "codex-rs/omd/tests/admission.rs": {
       "before": null,
-      "after": "b5bbaa3890cf285467f07ec0bb28f514cc74abd154e692dff9e5567baf5473e8"
+      "after": "d556ac5565fd8f90da91abd18a1b6e9ad14666b1cf9979d79b8fbcba42899e0a"
     },
     "codex-rs/omd/tests/workspace.rs": {
       "before": null,
-      "after": "3926e10df7535ef2a6cd25081df1889a353ce180599ab12197083e3d295a174c"
+      "after": "2b4dcb203e2d462a502f93d1875a5dc2b104d9f1dcdf9e3c5799b46028b506c2"
     }
   }
 }

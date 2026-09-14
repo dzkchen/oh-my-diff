@@ -1117,10 +1117,10 @@ index 0000000..0931be0
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000..2c68f49
+index 0000000..f632aed
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,202 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::WorkerLimits;
@@ -1141,6 +1141,8 @@ index 0000000..2c68f49
 +                exposure_microusd: 20000,
 +                seconds: 30,
 +                concurrent_workers: 1,
++                max_depth: 2,
++                max_reassessments: 1,
 +            },
 +            root.path().join("evidence"),
 +        )
@@ -1174,6 +1176,8 @@ index 0000000..2c68f49
 +    );
 +    task.start_worker(
 +        "worker".into(),
++        "lead".into(),
++        1,
 +        WorkerLimits {
 +            requests: 2,
 +            exposure_microusd: 20000,
@@ -1321,10 +1325,10 @@ index 0000000..2c68f49
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..558b5da
+index 0000000..d6c770d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,1204 @@
+@@ -0,0 +1,1325 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -1808,7 +1812,12 @@ index 0000000..558b5da
 +    }
 +    let thread_id = manager.reserve_thread_id();
 +    host.task
-+        .start_worker(role.into(), host.manifest.worker_limits.clone())
++        .start_worker(
++            role.into(),
++            lead.owner.clone(),
++            lead.depth.saturating_add(1),
++            host.manifest.worker_limits.clone(),
++        )
 +        .map_err(error)?;
 +    if let Err(error) = host.enroll(thread_id, role, route) {
 +        let _ = host.task.finish_worker(role);
@@ -1819,7 +1828,7 @@ index 0000000..558b5da
 +    options.reserved_thread_id = Some(thread_id);
 +    options.session_source = Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
 +        parent_thread_id: lead.thread,
-+        depth: 1,
++        depth: i32::try_from(lead.depth.saturating_add(1)).unwrap_or(i32::MAX),
 +        agent_path: None,
 +        agent_nickname: Some(role.into()),
 +        agent_role: Some(role.into()),
@@ -2012,6 +2021,34 @@ index 0000000..558b5da
 +    let base =
 +        codex_omd::capture_tracked(&manifest.repository, &untracked, manifest.snapshot_bytes)
 +            .map_err(error)?;
++    if manifest.lifecycle.explicit_resume.is_some() {
++        let prior_base = std::fs::read(manifest.evidence.join("base.json"))
++            .ok()
++            .and_then(|bytes| serde_json::from_slice::<Snapshot>(&bytes).ok());
++        let prior_context = std::fs::read(manifest.evidence.join("context.json"))
++            .ok()
++            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
++        let remaining = host.task.remaining().map_err(error)?;
++        host.evidence(
++            "reconciliation.json",
++            &json!({
++                "schema": 1,
++                "explicit_resume": manifest.lifecycle.explicit_resume,
++                "workspace": {
++                    "prior_sha256": prior_base.as_ref().map(Snapshot::hash).transpose().map_err(error)?,
++                    "current_sha256": base.hash().map_err(error)?,
++                    "changed_paths": prior_base.as_ref().map(|prior| prior.changed_paths(&base)),
++                },
++                "permissions": {
++                    "prior_sha256": prior_context.as_ref().and_then(|value| value["permissions_sha256"].as_str()),
++                    "current_sha256": hash(&permissions_bytes),
++                    "effective_policy_rederived": true,
++                },
++                "remaining": {"seconds": remaining.0.as_secs(), "requests": remaining.1, "exposure_microusd": remaining.2},
++                "uncertain_requests": host.task.uncertain_requests().map_err(error)?,
++            }),
++        )?;
++    }
 +    let base_ref = host.evidence("base.json", &serde_json::to_value(&base).map_err(error)?)?;
 +    let context = build_context(&manifest.context_policy, request, call, &base)?;
 +    let parent_thread = manager.get_thread(lead.thread).await.map_err(error)?;
@@ -2050,29 +2087,111 @@ index 0000000..558b5da
 +        )
 +        .await
 +        .map_err(error)?;
-+    let worker_root = codex_omd::create_worktree(
-+        &base,
-+        &manifest.scratch.join("contributor"),
-+        manifest.snapshot_bytes,
-+    )
-+    .map_err(error)?;
-+    let summary = run_child(
-+        lead,
-+        &parent,
-+        &worker_root,
-+        ChildTurn {
-+            role: "contributor",
-+            route: &manifest.worker,
-+            prompt: context.prompt.clone(),
-+            history: context.history.clone(),
-+            writable: true,
-+        },
-+    )
-+    .await?;
++    let mut contributor_failures = Vec::new();
++    let mut reassessed = false;
++    let mut selected_route = &manifest.worker;
++    let mut selected_role = String::new();
++    let mut selected_root = None;
++    let mut summary = String::new();
++    let worker_sequence = host.task.attempts().map_err(error)?.len();
++    for attempt in 1..=manifest.recovery.contributor_attempts {
++        let role = format!("contributor-{}", worker_sequence + attempt as usize);
++        let directory = manifest.scratch.join(&role);
++        let worker_root = codex_omd::create_worktree(&base, &directory, manifest.snapshot_bytes)
++            .map_err(error)?;
++        match run_child(
++            lead,
++            &parent,
++            &worker_root,
++            ChildTurn {
++                role: &role,
++                route: &manifest.worker,
++                prompt: context.prompt.clone(),
++                history: context.history.clone(),
++                writable: true,
++            },
++        )
++        .await
++        {
++            Ok(value) => {
++                selected_role = role;
++                selected_root = Some(worker_root);
++                summary = value;
++                break;
++            }
++            Err(child_error) => {
++                let source = host.evidence(
++                    &format!("contributor-outage-{attempt}.json"),
++                    &json!({"attempt": attempt, "error": child_error, "worktree_discarded": directory}),
++                )?;
++                host.task
++                    .record_failure(
++                        FailureClass::Model,
++                        format!(
++                            "Contributor attempt {attempt} failed before an accepted candidate"
++                        ),
++                        vec![source],
++                    )
++                    .map_err(error)?;
++                reassessed = host
++                    .task
++                    .observe_equivalent_failure(
++                        "contributor_outage",
++                        manifest.recovery.equivalent_failure_threshold,
++                        "discard partial work and use the permitted opposite OpenAI lead",
++                    )
++                    .map_err(error)?
++                    || reassessed;
++                codex_omd::cleanup_owned_directory(&manifest.scratch, &directory).map_err(error)?;
++                contributor_failures.push(child_error);
++            }
++        }
++    }
++    let fallback_used = selected_root.is_none();
++    if fallback_used {
++        host.authorize()?;
++        if !manifest.recovery.fallback_to_opposite_lead || !reassessed {
++            return Err(format!(
++                "Contributor outage fallback is not permitted: {}",
++                contributor_failures.join("; ")
++            ));
++        }
++        selected_route = host.route(lead.route.opposite());
++        selected_role = "contributor-outage-fallback".into();
++        let directory = manifest.scratch.join(&selected_role);
++        let worker_root = codex_omd::create_worktree(&base, &directory, manifest.snapshot_bytes)
++            .map_err(error)?;
++        summary = run_child(
++            lead,
++            &parent,
++            &worker_root,
++            ChildTurn {
++                role: &selected_role,
++                route: selected_route,
++                prompt: format!(
++                    "Contributor was unavailable after {} bounded attempts. Perform the same task without widening permissions or allowance. {}",
++                    contributor_failures.len(),
++                    context.prompt
++                ),
++                history: context.history.clone(),
++                writable: true,
++            },
++        )
++        .await?;
++        selected_root = Some(worker_root);
++    }
++    let worker_root = selected_root.ok_or("implementation worker produced no workspace")?;
 +    let denied = protected_paths(manifest);
 +    let paths = all_paths(host, &isolated(&parent, &worker_root, &[], &denied, false)?).await?;
 +    let candidate =
 +        Snapshot::capture(&worker_root, &paths, manifest.snapshot_bytes).map_err(error)?;
++    codex_omd::cleanup_owned_directory(
++        &manifest.scratch,
++        worker_root
++            .parent()
++            .ok_or("implementation worktree parent missing")?,
++    )
++    .map_err(error)?;
 +    let changed = base.changed_paths(&candidate);
 +    if changed.is_empty() {
 +        return Err("Contributor returned no code change".into());
@@ -2130,6 +2249,11 @@ index 0000000..558b5da
 +        manifest.snapshot_bytes,
 +    )
 +    .map_err(error)?;
++    let reviewer_route = if fallback_used {
++        host.route(lead.route)
++    } else {
++        reviewer_route
++    };
 +    let review = run_child(
 +        lead,
 +        &parent,
@@ -2249,8 +2373,9 @@ index 0000000..558b5da
 +    {
 +        return Err("integration did not finish at the reviewed version; changes may already be applied alongside a concurrent edit; inspect retained integration evidence".into());
 +    }
++    codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
 +    Ok(
-+        json!({"schema": 1, "status": "integrated", "model": manifest.worker.model, "summary": summary.chars().take(2048).collect::<String>(), "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
++        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
 +    )
 +}
 +
@@ -2646,10 +2771,10 @@ index 0000000..f39321c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..4807f04
+index 0000000..7a4d419
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,817 @@
 +mod accounting;
 +mod execution;
 +
@@ -2680,6 +2805,8 @@ index 0000000..4807f04
 +use codex_omd::WorkerLimits;
 +use codex_protocol::ThreadId;
 +use codex_protocol::openai_models::ReasoningEffort;
++use codex_protocol::protocol::SessionSource;
++use codex_protocol::protocol::SubAgentSource;
 +use codex_tools::FunctionCallError;
 +use codex_tools::JsonSchema;
 +use codex_tools::ResponsesApiTool;
@@ -2706,6 +2833,8 @@ index 0000000..4807f04
 +    approved_untracked: Vec<String>,
 +    limits: Limits,
 +    worker_limits: WorkerLimits,
++    lifecycle: LifecyclePolicy,
++    recovery: RecoveryPolicy,
 +    lead_policy: LeadPolicy,
 +    leads: LeadRoutes,
 +    context_policy: WorkerContextPolicy,
@@ -2715,6 +2844,20 @@ index 0000000..4807f04
 +    toolchain_reads: Vec<PathBuf>,
 +    snapshot_bytes: usize,
 +    max_request_bytes: usize,
++}
++
++#[derive(Clone, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct LifecyclePolicy {
++    explicit_resume: Option<String>,
++}
++
++#[derive(Clone, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct RecoveryPolicy {
++    contributor_attempts: u32,
++    equivalent_failure_threshold: u32,
++    fallback_to_opposite_lead: bool,
 +}
 +
 +#[derive(Clone, Deserialize)]
@@ -2846,6 +2989,7 @@ index 0000000..4807f04
 +    manager: Weak<ThreadManager>,
 +    contribution_started: std::sync::atomic::AtomicBool,
 +    operation: std::sync::atomic::AtomicBool,
++    lead_completed: std::sync::atomic::AtomicBool,
 +}
 +
 +struct OperationGuard<'a>(&'a std::sync::atomic::AtomicBool);
@@ -2860,6 +3004,8 @@ index 0000000..4807f04
 +struct Lead {
 +    thread: ThreadId,
 +    route: LeadName,
++    owner: String,
++    depth: u32,
 +    host: Arc<Host>,
 +}
 +
@@ -2894,6 +3040,9 @@ index 0000000..4807f04
 +        || manifest.escalation.evidence_bytes == 0
 +        || manifest.escalation.evidence_bytes > manifest.max_request_bytes
 +        || manifest.escalation.allowed_failure_classes.is_empty()
++        || manifest.recovery.contributor_attempts == 0
++        || manifest.recovery.equivalent_failure_threshold < 2
++        || manifest.recovery.contributor_attempts < manifest.recovery.equivalent_failure_threshold
 +        || manifest
 +            .escalation
 +            .allowed_failure_classes
@@ -2938,9 +3087,17 @@ index 0000000..4807f04
 +            return Err("shared task packet must be canonical and host-owned".into());
 +        }
 +    }
++    if manifest.lifecycle.explicit_resume.is_some() && manifest.scratch.exists() {
++        codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
++            .map_err(|e| e.to_string())?;
++    }
 +    let task = Arc::new(
-+        Task::create(manifest.limits.clone(), manifest.evidence.clone())
-+            .map_err(|e| e.to_string())?,
++        Task::open(
++            manifest.limits.clone(),
++            manifest.evidence.clone(),
++            manifest.lifecycle.explicit_resume.as_deref(),
++        )
++        .map_err(|e| e.to_string())?,
 +    );
 +    let accounts = Arc::new(Accounts::default());
 +    codex_api::request_observer::install_response_observer(accounts.clone())
@@ -2952,6 +3109,7 @@ index 0000000..4807f04
 +        manager,
 +        contribution_started: std::sync::atomic::AtomicBool::new(false),
 +        operation: std::sync::atomic::AtomicBool::new(false),
++        lead_completed: std::sync::atomic::AtomicBool::new(false),
 +    });
 +    let _ = host.authorize();
 +    let deadline_host = host.clone();
@@ -2960,7 +3118,7 @@ index 0000000..4807f04
 +            deadline_host.manifest.limits.seconds,
 +        ))
 +        .await;
-+        deadline_host.stop_tree().await;
++        deadline_host.stop_tree("task_deadline", true, None).await;
 +    });
 +    registry.thread_lifecycle_contributor(Arc::new(Extension(host.clone())));
 +    registry.tool_contributor(Arc::new(Extension(host)));
@@ -2987,8 +3145,13 @@ index 0000000..4807f04
 +        }
 +    }
 +
-+    async fn stop_tree(&self) {
-+        let _ = self.task.stop();
++    async fn stop_tree(&self, reason: &str, final_stop: bool, except: Option<ThreadId>) {
++        if final_stop {
++            let _ = self.task.stop();
++        } else {
++            let uncertain = self.task.uncertain_requests().unwrap_or_default();
++            let _ = self.task.pause(reason, uncertain);
++        }
 +        let threads: Vec<_> = self
 +            .accounts
 +            .0
@@ -2998,15 +3161,23 @@ index 0000000..4807f04
 +        if let Some(manager) = self.manager.upgrade() {
 +            for id in threads {
 +                if let Ok(id) = ThreadId::from_string(&id)
++                    && Some(id) != except
 +                    && let Ok(thread) = manager.get_thread(id).await
 +                {
 +                    let _ = thread.submit(codex_protocol::protocol::Op::Interrupt).await;
 +                    let _ = thread
 +                        .submit(codex_protocol::protocol::Op::CleanBackgroundTerminals)
 +                        .await;
++                    let _ = tokio::time::timeout(
++                        std::time::Duration::from_secs(5),
++                        thread.shutdown_and_wait(),
++                    )
++                    .await;
 +                }
 +            }
 +        }
++        let _ =
++            codex_omd::cleanup_owned_directory(&self.manifest.repository, &self.manifest.scratch);
 +    }
 +
 +    fn authorize(&self) -> Result<(), String> {
@@ -3032,7 +3203,7 @@ index 0000000..4807f04
 +            task: self.task.clone(),
 +            owner: owner.into(),
 +            model: route.model.clone(),
-+            provider: if owner == "contributor" {
++            provider: if route.model == "muse-spark-1.3-contributor" {
 +                "meta"
 +            } else {
 +                "openai"
@@ -3059,6 +3230,13 @@ index 0000000..4807f04
 +    fn evidence(&self, name: &str, value: &Value) -> Result<Value, String> {
 +        use std::io::Write;
 +        let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
++        let name = self
++            .manifest
++            .lifecycle
++            .explicit_resume
++            .as_ref()
++            .map(|reference| format!("resume-{}-{name}", execution::hash(reference.as_bytes())))
++            .unwrap_or_else(|| name.to_owned());
 +        let path = self.manifest.evidence.join(name);
 +        let mut file = std::fs::OpenOptions::new()
 +            .create_new(true)
@@ -3085,35 +3263,113 @@ index 0000000..4807f04
 +                return;
 +            };
 +            let route = self.route(route_name);
-+            if let Ok(thread) = ThreadId::from_string(input.thread_store.level_id())
-+                && self.enroll(thread, "lead", route).is_ok()
++            let Ok(thread) = ThreadId::from_string(input.thread_store.level_id()) else {
++                return;
++            };
++            let (owner, parent, depth) = match input.session_source {
++                SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++                    parent_thread_id,
++                    depth,
++                    ..
++                }) => {
++                    let parent =
++                        self.accounts.0.lock().ok().and_then(|accounts| {
++                            accounts.get(&parent_thread_id.to_string()).cloned()
++                        });
++                    let Some(parent) = parent else {
++                        return;
++                    };
++                    (
++                        format!("agent:{thread}"),
++                        parent.owner,
++                        u32::try_from(*depth).unwrap_or(u32::MAX),
++                    )
++                }
++                _ => ("lead".into(), String::new(), 0),
++            };
++            if owner != "lead"
++                && self
++                    .task
++                    .start_worker(
++                        owner.clone(),
++                        parent,
++                        depth,
++                        self.manifest.worker_limits.clone(),
++                    )
++                    .is_err()
 +            {
++                return;
++            }
++            if self.enroll(thread, &owner, route).is_ok() {
 +                input.thread_store.insert(Lead {
 +                    thread,
 +                    route: route_name,
++                    owner,
++                    depth,
 +                    host: self.0.clone(),
 +                });
++            } else if owner != "lead" {
++                let _ = self.task.finish_worker(&owner);
 +            }
 +        })
 +    }
 +
 +    fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            if input.thread_store.get::<Lead>().is_some()
-+                && matches!(
-+                    input.cause,
-+                    ThreadIdleCause::Interrupted | ThreadIdleCause::Failed
-+                )
-+            {
-+                self.stop_tree().await;
++            if let Some(lead) = input.thread_store.get::<Lead>() {
++                match input.cause {
++                    ThreadIdleCause::Completed
++                        if self
++                            .accounts
++                            .0
++                            .lock()
++                            .ok()
++                            .and_then(|accounts| accounts.get(&lead.thread.to_string()).cloned())
++                            .is_some_and(|account| account.owner == "lead") =>
++                    {
++                        self.lead_completed
++                            .store(true, std::sync::atomic::Ordering::Release);
++                    }
++                    ThreadIdleCause::Interrupted | ThreadIdleCause::Failed => {
++                        self.lead_completed
++                            .store(false, std::sync::atomic::Ordering::Release);
++                        self.stop_tree("foreground_interrupted", false, Some(lead.thread))
++                            .await;
++                    }
++                    _ => {}
++                }
 +            }
 +        })
 +    }
 +
 +    fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            if input.thread_store.get::<Lead>().is_some() {
-+                let _ = self.task.stop();
++            if let Some(lead) = input.thread_store.get::<Lead>() {
++                let account = self
++                    .accounts
++                    .0
++                    .lock()
++                    .ok()
++                    .and_then(|mut accounts| accounts.remove(&lead.thread.to_string()));
++                if let Some(account) = account {
++                    if account.owner == "lead" {
++                        let completed = self
++                            .lead_completed
++                            .load(std::sync::atomic::Ordering::Acquire);
++                        self.stop_tree(
++                            if completed {
++                                "completed"
++                            } else {
++                                "client_loss"
++                            },
++                            completed,
++                            Some(lead.thread),
++                        )
++                        .await;
++                    } else {
++                        let _ = self.task.finish_worker(&account.owner);
++                    }
++                }
 +            }
 +        })
 +    }
@@ -3392,10 +3648,10 @@ index 0000000..812e16b
 +tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000..193c07a
+index 0000000..884c9af
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,630 @@
+@@ -0,0 +1,1018 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -3409,13 +3665,17 @@ index 0000000..193c07a
 +use std::sync::Mutex;
 +use std::time::Duration;
 +use std::time::Instant;
++use std::time::SystemTime;
++use std::time::UNIX_EPOCH;
 +
-+#[derive(Clone, Debug, Deserialize, Serialize)]
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +pub struct Limits {
 +    pub requests: u32,
 +    pub exposure_microusd: u64,
 +    pub seconds: u64,
 +    pub concurrent_workers: u32,
++    pub max_depth: u32,
++    pub max_reassessments: u32,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize)]
@@ -3468,6 +3728,8 @@ index 0000000..193c07a
 +}
 +
 +struct Worker {
++    parent: String,
++    depth: u32,
 +    limits: WorkerLimits,
 +    started: Instant,
 +    requests: u32,
@@ -3475,8 +3737,15 @@ index 0000000..193c07a
 +    active: bool,
 +}
 +
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++enum TaskStatus {
++    Active,
++    Paused,
++    Stopped,
++}
++
 +struct State {
-+    stopped: bool,
++    status: TaskStatus,
 +    contributor_authorized: bool,
 +    requests: u32,
 +    exposure: u64,
@@ -3485,12 +3754,15 @@ index 0000000..193c07a
 +    failures: BTreeMap<u32, Failure>,
 +    escalated_failures: BTreeSet<u32>,
 +    escalations: u32,
++    reassessments: u32,
++    failure_fingerprints: BTreeMap<String, u32>,
 +    workers: BTreeMap<String, Worker>,
 +}
 +
 +pub struct Task {
 +    limits: Limits,
 +    started: Instant,
++    deadline_unix_millis: u128,
 +    evidence: PathBuf,
 +    state: Mutex<State>,
 +}
@@ -3499,19 +3771,33 @@ index 0000000..193c07a
 +    io::Error::other(message)
 +}
 +
++fn unix_millis() -> io::Result<u128> {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map(|duration| duration.as_millis())
++        .map_err(|_| denied("system clock precedes Unix epoch"))
++}
++
 +impl Task {
 +    pub fn create(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
-+        if limits.requests == 0 || limits.seconds == 0 || limits.concurrent_workers == 0 {
++        if limits.requests == 0
++            || limits.seconds == 0
++            || limits.concurrent_workers == 0
++            || limits.max_depth == 0
++        {
 +            return Err(denied("task limits must be positive"));
 +        }
 +        fs::create_dir(&evidence)?;
 +        let evidence = evidence.canonicalize()?;
 +        let task = Self {
++            deadline_unix_millis: unix_millis()?
++                .checked_add(u128::from(limits.seconds) * 1000)
++                .ok_or_else(|| denied("task deadline overflow"))?,
 +            limits,
 +            started: Instant::now(),
 +            evidence,
 +            state: Mutex::new(State {
-+                stopped: false,
++                status: TaskStatus::Active,
 +                contributor_authorized: false,
 +                requests: 0,
 +                exposure: 0,
@@ -3520,6 +3806,8 @@ index 0000000..193c07a
 +                failures: BTreeMap::new(),
 +                escalated_failures: BTreeSet::new(),
 +                escalations: 0,
++                reassessments: 0,
++                failure_fingerprints: BTreeMap::new(),
 +                workers: BTreeMap::new(),
 +            }),
 +        };
@@ -3535,12 +3823,223 @@ index 0000000..193c07a
 +        Ok(task)
 +    }
 +
++    pub fn open(
++        limits: Limits,
++        evidence: PathBuf,
++        explicit_resume: Option<&str>,
++    ) -> io::Result<Self> {
++        if !evidence.exists() {
++            if explicit_resume.is_some() {
++                return Err(denied("explicit resume has no prior task evidence"));
++            }
++            return Self::create(limits, evidence);
++        }
++        let reference =
++            explicit_resume.ok_or_else(|| denied("existing task requires explicit resume"))?;
++        if reference.is_empty() || reference.len() > 4096 {
++            return Err(denied("explicit resume reference required"));
++        }
++        let evidence = evidence.canonicalize()?;
++        let mut records = fs::read_dir(&evidence)?
++            .filter_map(Result::ok)
++            .filter(|entry| {
++                entry
++                    .file_name()
++                    .to_str()
++                    .is_some_and(|name| name.len() == 13 && name.ends_with(".json"))
++            })
++            .collect::<Vec<_>>();
++        records.sort_by_key(fs::DirEntry::file_name);
++        if records.is_empty() {
++            return Err(denied("resume evidence is empty"));
++        }
++        let mut state = State {
++            status: TaskStatus::Active,
++            contributor_authorized: false,
++            requests: 0,
++            exposure: 0,
++            sequence: 0,
++            attempts: BTreeMap::new(),
++            failures: BTreeMap::new(),
++            escalated_failures: BTreeSet::new(),
++            escalations: 0,
++            reassessments: 0,
++            failure_fingerprints: BTreeMap::new(),
++            workers: BTreeMap::new(),
++        };
++        let mut created_unix_millis = None;
++        for entry in records {
++            if entry.file_type()?.is_symlink() {
++                return Err(denied("resume evidence cannot be a symbolic link"));
++            }
++            let value: Value = serde_json::from_slice(&fs::read(entry.path())?)?;
++            let sequence = value["sequence"]
++                .as_u64()
++                .ok_or_else(|| denied("resume evidence sequence missing"))?;
++            if state.sequence.checked_add(1) != Some(sequence) {
++                return Err(denied("resume evidence sequence is incomplete"));
++            }
++            state.sequence = sequence;
++            let timestamp = value["unix_millis"]
++                .as_u64()
++                .map(u128::from)
++                .ok_or_else(|| denied("resume evidence timestamp missing"))?;
++            created_unix_millis.get_or_insert(timestamp);
++            let record = &value["record"];
++            if state.sequence == 1 && record["event"] != "created" {
++                return Err(denied("resume evidence must begin with task creation"));
++            }
++            match record["event"].as_str() {
++                Some("created") => {
++                    let recorded: Limits = serde_json::from_value(record["limits"].clone())?;
++                    if state.sequence != 1 || recorded != limits {
++                        return Err(denied("resume limits differ from original task"));
++                    }
++                }
++                Some("contributor_authorization") => {
++                    state.contributor_authorized = record["authorized"].as_bool().unwrap_or(false);
++                }
++                Some("worker_started") => {
++                    let id = record["worker"]
++                        .as_str()
++                        .ok_or_else(|| denied("worker identity missing"))?
++                        .to_owned();
++                    state.workers.insert(
++                        id,
++                        Worker {
++                            parent: record["parent"].as_str().unwrap_or("lead").to_owned(),
++                            depth: u32::try_from(record["depth"].as_u64().unwrap_or(1))
++                                .map_err(|_| denied("worker depth overflow"))?,
++                            limits: serde_json::from_value(record["limits"].clone())?,
++                            started: Instant::now(),
++                            requests: 0,
++                            exposure: 0,
++                            active: true,
++                        },
++                    );
++                }
++                Some("worker_stopped") => {
++                    if let Some(worker) = record["worker"]
++                        .as_str()
++                        .and_then(|id| state.workers.get_mut(id))
++                    {
++                        worker.active = false;
++                    }
++                }
++                Some("request_admitted")
++                | Some("request_dispatched")
++                | Some("request_failed")
++                | Some("request_settled")
++                | Some("raw_usage_observed") => {
++                    let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
++                    state.attempts.insert(attempt.request, attempt);
++                }
++                Some("failure_recorded") => {
++                    let failure: Failure = serde_json::from_value(record["failure"].clone())?;
++                    state.failures.insert(failure.id, failure);
++                }
++                Some("escalation_permitted") => {
++                    let failure = record["failure"]
++                        .as_u64()
++                        .ok_or_else(|| denied("escalation failure identity missing"))?
++                        as u32;
++                    state.escalated_failures.insert(failure);
++                    state.escalations += 1;
++                }
++                Some("equivalent_failure_observed") => {
++                    let fingerprint = record["fingerprint"]
++                        .as_str()
++                        .ok_or_else(|| denied("failure fingerprint missing"))?;
++                    let count = record["count"]
++                        .as_u64()
++                        .ok_or_else(|| denied("failure observation count missing"))?
++                        as u32;
++                    state
++                        .failure_fingerprints
++                        .insert(fingerprint.to_owned(), count);
++                }
++                Some("loop_reassessed") => state.reassessments += 1,
++                Some("task_paused") => state.status = TaskStatus::Paused,
++                Some("task_resumed") => state.status = TaskStatus::Active,
++                Some("reservation_violation") => {
++                    let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
++                    state.attempts.insert(attempt.request, attempt);
++                    state.status = TaskStatus::Stopped;
++                }
++                Some("task_stopped") => {
++                    state.status = TaskStatus::Stopped;
++                }
++                Some("dispatch_callback_failed") => {}
++                Some(_) => return Err(denied("resume evidence event is unsupported")),
++                None => return Err(denied("resume evidence event missing")),
++            }
++        }
++        state.requests = u32::try_from(state.attempts.len())
++            .map_err(|_| denied("resume request count overflow"))?;
++        if state.attempts.keys().copied().ne(1..=state.requests) {
++            return Err(denied("resume request sequence is incomplete"));
++        }
++        state.exposure = state.attempts.values().try_fold(0u64, |total, attempt| {
++            total
++                .checked_add(
++                    attempt
++                        .settled_microusd
++                        .unwrap_or(attempt.reserved_microusd),
++                )
++                .ok_or_else(|| denied("resume exposure overflow"))
++        })?;
++        for worker in state.workers.values_mut() {
++            worker.active = false;
++        }
++        if state.status == TaskStatus::Stopped {
++            return Err(denied("stopped task cannot resume"));
++        }
++        let deadline_unix_millis = created_unix_millis
++            .ok_or_else(|| denied("created timestamp missing"))?
++            .checked_add(u128::from(limits.seconds) * 1000)
++            .ok_or_else(|| denied("task deadline overflow"))?;
++        if unix_millis()? >= deadline_unix_millis {
++            return Err(denied("task expired before resume"));
++        }
++        let task = Self {
++            limits,
++            started: Instant::now(),
++            deadline_unix_millis,
++            evidence,
++            state: Mutex::new(state),
++        };
++        let uncertain = task.uncertain_requests()?;
++        {
++            let mut state = task
++                .state
++                .lock()
++                .map_err(|_| denied("task lock poisoned"))?;
++            if state.status == TaskStatus::Active {
++                task.record(
++                    &mut state,
++                    &serde_json::json!({"event": "task_paused", "reason": "abrupt_client_loss", "active_workers": [], "uncertain_operations": uncertain}),
++                )?;
++                state.status = TaskStatus::Paused;
++            }
++        }
++        task.resume(reference)?;
++        Ok(task)
++    }
++
++    fn expired(&self) -> bool {
++        unix_millis().map_or(true, |now| now >= self.deadline_unix_millis)
++    }
++
 +    fn record(&self, state: &mut State, event: &Value) -> io::Result<()> {
-+        state.sequence += 1;
++        state.sequence = state
++            .sequence
++            .checked_add(1)
++            .ok_or_else(|| denied("evidence sequence overflow"))?;
 +        let result = (|| {
 +            let bytes = serde_json::to_vec(&serde_json::json!({
 +                "sequence": state.sequence,
 +                "elapsed_millis": self.started.elapsed().as_millis(),
++                "unix_millis": unix_millis()?,
 +                "record": event,
 +            }))?;
 +            if bytes.len() > 1_048_576 {
@@ -3554,7 +4053,7 @@ index 0000000..193c07a
 +            file.sync_all()
 +        })();
 +        if result.is_err() {
-+            state.stopped = true;
++            state.status = TaskStatus::Stopped;
 +        }
 +        result
 +    }
@@ -3576,7 +4075,13 @@ index 0000000..193c07a
 +        Ok(())
 +    }
 +
-+    pub fn start_worker(&self, id: String, limits: WorkerLimits) -> io::Result<()> {
++    pub fn start_worker(
++        &self,
++        id: String,
++        parent: String,
++        depth: u32,
++        limits: WorkerLimits,
++    ) -> io::Result<()> {
 +        let mut state = self
 +            .state
 +            .lock()
@@ -3584,11 +4089,22 @@ index 0000000..193c07a
 +        if id.is_empty() || id.len() > 128 || id == "lead" || state.workers.contains_key(&id) {
 +            return Err(denied("invalid or reused worker identity"));
 +        }
-+        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
++        if state.status != TaskStatus::Active || self.expired() {
 +            return Err(denied("task stopped or expired"));
 +        }
++        let valid_parent = if depth == 1 {
++            parent == "lead"
++        } else {
++            state
++                .workers
++                .get(&parent)
++                .is_some_and(|worker| worker.active && worker.depth.checked_add(1) == Some(depth))
++        };
 +        if limits.requests == 0
 +            || limits.seconds == 0
++            || depth == 0
++            || depth > self.limits.max_depth
++            || !valid_parent
 +            || limits.requests > self.limits.requests
 +            || limits.seconds > self.limits.seconds
 +            || limits.exposure_microusd > self.limits.exposure_microusd
@@ -3603,11 +4119,13 @@ index 0000000..193c07a
 +        }
 +        self.record(
 +            &mut state,
-+            &serde_json::json!({"event": "worker_started", "worker": id, "limits": limits}),
++            &serde_json::json!({"event": "worker_started", "worker": id, "parent": parent, "depth": depth, "limits": limits}),
 +        )?;
 +        state.workers.insert(
 +            id,
 +            Worker {
++                parent,
++                depth,
 +                limits,
 +                started: Instant::now(),
 +                requests: 0,
@@ -3625,6 +4143,13 @@ index 0000000..193c07a
 +            .map_err(|_| denied("task lock poisoned"))?;
 +        if !state.workers.get(id).is_some_and(|worker| worker.active) {
 +            return Err(denied("unknown or inactive worker"));
++        }
++        if state
++            .workers
++            .values()
++            .any(|worker| worker.active && worker.parent == id)
++        {
++            return Err(denied("worker has active descendants"));
 +        }
 +        self.record(
 +            &mut state,
@@ -3649,7 +4174,7 @@ index 0000000..193c07a
 +            .state
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
-+        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
++        if state.status != TaskStatus::Active || self.expired() {
 +            return Err(denied("task stopped or expired"));
 +        }
 +        let allowed = match (provider, model) {
@@ -3733,8 +4258,8 @@ index 0000000..193c07a
 +            .get(&admission.request)
 +            .cloned()
 +            .ok_or_else(|| denied("unknown request"))?;
-+        if state.stopped
-+            || self.started.elapsed().as_secs() >= self.limits.seconds
++        if state.status != TaskStatus::Active
++            || self.expired()
 +            || attempt.status != "unknown"
 +            || (attempt.provider == "meta" && !state.contributor_authorized)
 +        {
@@ -3810,7 +4335,7 @@ index 0000000..193c07a
 +            return Err(denied("request settled or invalid raw usage"));
 +        }
 +        if upper_microusd > attempt.reserved_microusd {
-+            state.stopped = true;
++            state.status = TaskStatus::Stopped;
 +            state.exposure = state
 +                .exposure
 +                .saturating_add(upper_microusd - attempt.reserved_microusd);
@@ -3908,7 +4433,7 @@ index 0000000..193c07a
 +            .state
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
-+        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
++        if state.status != TaskStatus::Active || self.expired() {
 +            return Err(denied("task stopped or expired"));
 +        }
 +        Ok(())
@@ -3932,7 +4457,7 @@ index 0000000..193c07a
 +            .state
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
-+        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
++        if state.status != TaskStatus::Active || self.expired() {
 +            return Err(denied("task stopped or expired"));
 +        }
 +        let id = u32::try_from(state.failures.len())
@@ -3963,11 +4488,15 @@ index 0000000..193c07a
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
 +        let remaining = (
-+            Duration::from_secs(self.limits.seconds).saturating_sub(self.started.elapsed()),
++            Duration::from_millis(
++                self.deadline_unix_millis
++                    .saturating_sub(unix_millis().unwrap_or(u128::MAX))
++                    .min(u128::from(u64::MAX)) as u64,
++            ),
 +            self.limits.requests.saturating_sub(state.requests),
 +            self.limits.exposure_microusd.saturating_sub(state.exposure),
 +        );
-+        if state.stopped || remaining.0.is_zero() {
++        if state.status != TaskStatus::Active || remaining.0.is_zero() {
 +            return Err(denied("task stopped or expired"));
 +        }
 +        if max_escalations == 0
@@ -3997,12 +4526,123 @@ index 0000000..193c07a
 +        Ok(remaining)
 +    }
 +
++    pub fn observe_equivalent_failure(
++        &self,
++        fingerprint: &str,
++        threshold: u32,
++        changed_action: &str,
++    ) -> io::Result<bool> {
++        if fingerprint.is_empty()
++            || fingerprint.len() > 256
++            || threshold < 2
++            || changed_action.is_empty()
++            || changed_action.len() > 256
++        {
++            return Err(denied("invalid loop reassessment observation"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if state.status != TaskStatus::Active {
++            return Err(denied("task is not active"));
++        }
++        let count = state
++            .failure_fingerprints
++            .get(fingerprint)
++            .copied()
++            .unwrap_or(0)
++            .checked_add(1)
++            .ok_or_else(|| denied("failure observation overflow"))?;
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "equivalent_failure_observed", "fingerprint": fingerprint, "count": count}),
++        )?;
++        state
++            .failure_fingerprints
++            .insert(fingerprint.to_owned(), count);
++        if count < threshold {
++            return Ok(false);
++        }
++        if count > threshold || state.reassessments >= self.limits.max_reassessments {
++            return Err(denied("loop reassessment limit exhausted"));
++        }
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "loop_reassessed", "fingerprint": fingerprint, "equivalent_failures": count, "changed_action": changed_action}),
++        )?;
++        state.reassessments += 1;
++        Ok(true)
++    }
++
++    pub fn pause(&self, reason: &str, uncertain_operations: Vec<u32>) -> io::Result<()> {
++        if reason.is_empty() || reason.len() > 256 {
++            return Err(denied("pause reason required"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if state.status != TaskStatus::Active {
++            return Err(denied("only an active task can pause"));
++        }
++        let active_workers = state
++            .workers
++            .iter()
++            .filter(|(_, worker)| worker.active)
++            .map(|(id, _)| id.clone())
++            .collect::<Vec<_>>();
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "task_paused", "reason": reason, "active_workers": active_workers, "uncertain_operations": uncertain_operations}),
++        )?;
++        state.status = TaskStatus::Paused;
++        for worker in state.workers.values_mut() {
++            worker.active = false;
++        }
++        Ok(())
++    }
++
++    pub fn resume(&self, reference: &str) -> io::Result<()> {
++        if reference.is_empty() || reference.len() > 4096 {
++            return Err(denied("explicit resume reference required"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if state.status != TaskStatus::Paused || self.expired() {
++            return Err(denied("task is not resumable"));
++        }
++        let remaining_requests = self.limits.requests.saturating_sub(state.requests);
++        let remaining_exposure = self.limits.exposure_microusd.saturating_sub(state.exposure);
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "task_resumed", "reference": reference, "remaining": {"requests": remaining_requests, "exposure_microusd": remaining_exposure}}),
++        )?;
++        state.status = TaskStatus::Active;
++        Ok(())
++    }
++
++    pub fn uncertain_requests(&self) -> io::Result<Vec<u32>> {
++        let state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        Ok(state
++            .attempts
++            .values()
++            .filter(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
++            .map(|attempt| attempt.request)
++            .collect())
++    }
++
 +    pub fn stop(&self) -> io::Result<()> {
 +        let mut state = self
 +            .state
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
-+        state.stopped = true;
++        state.status = TaskStatus::Stopped;
 +        self.record(&mut state, &serde_json::json!({"event": "task_stopped"}))
 +    }
 +
@@ -4012,7 +4652,11 @@ index 0000000..193c07a
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
 +        Ok((
-+            Duration::from_secs(self.limits.seconds).saturating_sub(self.started.elapsed()),
++            Duration::from_millis(
++                self.deadline_unix_millis
++                    .saturating_sub(unix_millis().unwrap_or(u128::MAX))
++                    .min(u128::from(u64::MAX)) as u64,
++            ),
 +            self.limits.requests - state.requests,
 +            self.limits.exposure_microusd.saturating_sub(state.exposure),
 +        ))
@@ -4028,10 +4672,10 @@ index 0000000..193c07a
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..146ae65
+index 0000000..507a559
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,16 @@
 +mod admission;
 +mod workspace;
 +
@@ -4045,14 +4689,15 @@ index 0000000..146ae65
 +pub use workspace::File;
 +pub use workspace::Snapshot;
 +pub use workspace::capture_tracked;
++pub use workspace::cleanup_owned_directory;
 +pub use workspace::create_worktree;
 +pub use workspace::tracked_paths;
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000..b16bef5
+index 0000000..74978b9
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,404 @@
+@@ -0,0 +1,422 @@
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
 +use rustix::fs::mkdirat;
@@ -4457,12 +5102,30 @@ index 0000000..b16bef5
 +    }
 +    Ok(worker)
 +}
++
++pub fn cleanup_owned_directory(parent: &Path, directory: &Path) -> io::Result<()> {
++    if !directory.exists() {
++        return Ok(());
++    }
++    let parent = parent.canonicalize()?;
++    let directory_parent = directory
++        .parent()
++        .ok_or_else(|| invalid("owned directory parent missing"))?
++        .canonicalize()?;
++    if directory_parent != parent
++        || directory.file_name().is_none()
++        || fs::symlink_metadata(directory)?.file_type().is_symlink()
++    {
++        return Err(invalid("cleanup target is not a direct owned directory"));
++    }
++    fs::remove_dir_all(directory)
++}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000..feeee02
+index 0000000..ce81185
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,292 @@
+@@ -0,0 +1,360 @@
 +use codex_omd::FailureClass;
 +use codex_omd::Limits;
 +use codex_omd::Task;
@@ -4475,7 +5138,9 @@ index 0000000..feeee02
 +        requests: 3,
 +        exposure_microusd: 100,
 +        seconds: 30,
-+        concurrent_workers: 1,
++        concurrent_workers: 2,
++        max_depth: 2,
++        max_reassessments: 1,
 +    }
 +}
 +
@@ -4491,7 +5156,8 @@ index 0000000..feeee02
 +fn contributor_requires_current_authorization_and_exact_identity() {
 +    let dir = tempfile::tempdir().unwrap();
 +    let task = Task::create(limits(), dir.path().join("task")).unwrap();
-+    task.start_worker("worker".into(), worker()).unwrap();
++    task.start_worker("worker".into(), "lead".into(), 1, worker())
++        .unwrap();
 +    assert!(
 +        task.admit("worker", "meta", "muse-spark-1.3-contributor", 10)
 +            .is_err()
@@ -4518,11 +5184,16 @@ index 0000000..feeee02
 +fn unknown_usage_remains_reserved_after_worker_exit() {
 +    let dir = tempfile::tempdir().unwrap();
 +    let task = Task::create(limits(), dir.path().join("task")).unwrap();
-+    task.start_worker("first".into(), worker()).unwrap();
++    task.start_worker("first".into(), "lead".into(), 1, worker())
++        .unwrap();
 +    task.admit("first", "openai", "gpt-5.6-sol", 60).unwrap();
 +    task.finish_worker("first").unwrap();
-+    assert!(task.start_worker("first".into(), worker()).is_err());
-+    task.start_worker("second".into(), worker()).unwrap();
++    assert!(
++        task.start_worker("first".into(), "lead".into(), 1, worker())
++            .is_err()
++    );
++    task.start_worker("second".into(), "lead".into(), 1, worker())
++        .unwrap();
 +    assert!(task.admit("second", "openai", "gpt-5.6-sol", 41).is_err());
 +    assert_eq!(task.remaining().unwrap().2, 40);
 +    let attempt = task.attempts().unwrap().remove(0);
@@ -4540,7 +5211,8 @@ index 0000000..feeee02
 +fn settlement_releases_only_proven_unused_exposure_and_never_request_count() {
 +    let dir = tempfile::tempdir().unwrap();
 +    let task = Task::create(limits(), dir.path().join("task")).unwrap();
-+    task.start_worker("worker".into(), worker()).unwrap();
++    task.start_worker("worker".into(), "lead".into(), 1, worker())
++        .unwrap();
 +    let admission = task.admit("worker", "openai", "gpt-5.6-sol", 60).unwrap();
 +    task.dispatch(&admission, || Ok(())).unwrap();
 +    task.settle(
@@ -4641,7 +5313,8 @@ index 0000000..feeee02
 +fn revoked_or_stopped_reservations_cannot_dispatch_and_dispatch_is_one_shot() {
 +    let dir = tempfile::tempdir().unwrap();
 +    let task = Task::create(limits(), dir.path().join("task")).unwrap();
-+    task.start_worker("worker".into(), worker()).unwrap();
++    task.start_worker("worker".into(), "lead".into(), 1, worker())
++        .unwrap();
 +    task.set_contributor_authorization(true, "grant").unwrap();
 +    let request = task
 +        .admit("worker", "meta", "muse-spark-1.3-contributor", 10)
@@ -4755,15 +5428,74 @@ index 0000000..feeee02
 +        .unwrap();
 +    assert!(task.permit_escalation(failure.id, 0).is_err());
 +}
++
++#[test]
++fn recursion_requires_an_active_parent_and_shared_depth_capacity() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create(limits(), dir.path().join("task")).unwrap();
++    assert!(
++        task.start_worker("orphan".into(), "missing".into(), 2, worker())
++            .is_err()
++    );
++    task.start_worker("parent".into(), "lead".into(), 1, worker())
++        .unwrap();
++    task.start_worker("child".into(), "parent".into(), 2, worker())
++        .unwrap();
++    assert!(
++        task.start_worker("too-deep".into(), "child".into(), 3, worker())
++            .is_err()
++    );
++    assert!(task.finish_worker("parent").is_err());
++    task.finish_worker("child").unwrap();
++    task.finish_worker("parent").unwrap();
++}
++
++#[test]
++fn equivalent_failures_force_one_bounded_changed_action() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create(limits(), dir.path().join("task")).unwrap();
++    assert!(
++        !task
++            .observe_equivalent_failure("provider-outage", 2, "fresh retry")
++            .unwrap()
++    );
++    assert!(
++        task.observe_equivalent_failure("provider-outage", 2, "openai fallback")
++            .unwrap()
++    );
++    assert!(
++        task.observe_equivalent_failure("provider-outage", 2, "repeat fallback")
++            .is_err()
++    );
++}
++
++#[test]
++fn explicit_resume_preserves_allowance_and_uncertain_requests() {
++    let dir = tempfile::tempdir().unwrap();
++    let evidence = dir.path().join("task");
++    let task = Task::create(limits(), evidence.clone()).unwrap();
++    let request = task.admit("lead", "openai", "gpt-5.6-sol", 30).unwrap();
++    task.dispatch(&request, || Ok(())).unwrap();
++    task.pause("client_loss", task.uncertain_requests().unwrap())
++        .unwrap();
++    drop(task);
++    assert!(Task::open(limits(), evidence.clone(), None).is_err());
++    let resumed = Task::open(limits(), evidence, Some("user requested resume")).unwrap();
++    assert_eq!(resumed.remaining().unwrap().1, 2);
++    assert_eq!(resumed.remaining().unwrap().2, 70);
++    assert_eq!(resumed.uncertain_requests().unwrap(), vec![1]);
++    resumed.check_active().unwrap();
++}
 diff --git a/codex-rs/omd/tests/workspace.rs b/codex-rs/omd/tests/workspace.rs
 new file mode 100644
-index 0000000..c3b82e7
+index 0000000..03463c9
 --- /dev/null
 +++ b/codex-rs/omd/tests/workspace.rs
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,249 @@
 +use codex_omd::File;
 +use codex_omd::Snapshot;
 +use codex_omd::capture_tracked;
++use codex_omd::cleanup_owned_directory;
 +use codex_omd::create_worktree;
 +use codex_omd::tracked_paths;
 +use std::collections::BTreeMap;
@@ -4795,6 +5527,21 @@ index 0000000..c3b82e7
 +        fs::read(temp.path().join("isolated/depot/source.txt")).unwrap(),
 +        b"dirty tracked input"
 +    );
++}
++
++#[test]
++fn cleanup_removes_only_a_direct_owned_directory() {
++    let temp = tempfile::tempdir().unwrap();
++    let owned = temp.path().join("owned");
++    fs::create_dir(&owned).unwrap();
++    fs::write(owned.join("artifact"), "data").unwrap();
++    cleanup_owned_directory(temp.path(), &owned).unwrap();
++    assert!(!owned.exists());
++    let nested_parent = temp.path().join("nested");
++    let nested = nested_parent.join("not-direct");
++    fs::create_dir_all(&nested).unwrap();
++    assert!(cleanup_owned_directory(temp.path(), &nested).is_err());
++    assert!(nested.exists());
 +}
 +
 +#[test]

@@ -481,7 +481,12 @@ async fn run_child(
     }
     let thread_id = manager.reserve_thread_id();
     host.task
-        .start_worker(role.into(), host.manifest.worker_limits.clone())
+        .start_worker(
+            role.into(),
+            lead.owner.clone(),
+            lead.depth.saturating_add(1),
+            host.manifest.worker_limits.clone(),
+        )
         .map_err(error)?;
     if let Err(error) = host.enroll(thread_id, role, route) {
         let _ = host.task.finish_worker(role);
@@ -492,7 +497,7 @@ async fn run_child(
     options.reserved_thread_id = Some(thread_id);
     options.session_source = Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
         parent_thread_id: lead.thread,
-        depth: 1,
+        depth: i32::try_from(lead.depth.saturating_add(1)).unwrap_or(i32::MAX),
         agent_path: None,
         agent_nickname: Some(role.into()),
         agent_role: Some(role.into()),
@@ -685,6 +690,34 @@ pub async fn contribute(
     let base =
         codex_omd::capture_tracked(&manifest.repository, &untracked, manifest.snapshot_bytes)
             .map_err(error)?;
+    if manifest.lifecycle.explicit_resume.is_some() {
+        let prior_base = std::fs::read(manifest.evidence.join("base.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Snapshot>(&bytes).ok());
+        let prior_context = std::fs::read(manifest.evidence.join("context.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        let remaining = host.task.remaining().map_err(error)?;
+        host.evidence(
+            "reconciliation.json",
+            &json!({
+                "schema": 1,
+                "explicit_resume": manifest.lifecycle.explicit_resume,
+                "workspace": {
+                    "prior_sha256": prior_base.as_ref().map(Snapshot::hash).transpose().map_err(error)?,
+                    "current_sha256": base.hash().map_err(error)?,
+                    "changed_paths": prior_base.as_ref().map(|prior| prior.changed_paths(&base)),
+                },
+                "permissions": {
+                    "prior_sha256": prior_context.as_ref().and_then(|value| value["permissions_sha256"].as_str()),
+                    "current_sha256": hash(&permissions_bytes),
+                    "effective_policy_rederived": true,
+                },
+                "remaining": {"seconds": remaining.0.as_secs(), "requests": remaining.1, "exposure_microusd": remaining.2},
+                "uncertain_requests": host.task.uncertain_requests().map_err(error)?,
+            }),
+        )?;
+    }
     let base_ref = host.evidence("base.json", &serde_json::to_value(&base).map_err(error)?)?;
     let context = build_context(&manifest.context_policy, request, call, &base)?;
     let parent_thread = manager.get_thread(lead.thread).await.map_err(error)?;
@@ -723,29 +756,111 @@ pub async fn contribute(
         )
         .await
         .map_err(error)?;
-    let worker_root = codex_omd::create_worktree(
-        &base,
-        &manifest.scratch.join("contributor"),
-        manifest.snapshot_bytes,
-    )
-    .map_err(error)?;
-    let summary = run_child(
-        lead,
-        &parent,
-        &worker_root,
-        ChildTurn {
-            role: "contributor",
-            route: &manifest.worker,
-            prompt: context.prompt.clone(),
-            history: context.history.clone(),
-            writable: true,
-        },
-    )
-    .await?;
+    let mut contributor_failures = Vec::new();
+    let mut reassessed = false;
+    let mut selected_route = &manifest.worker;
+    let mut selected_role = String::new();
+    let mut selected_root = None;
+    let mut summary = String::new();
+    let worker_sequence = host.task.attempts().map_err(error)?.len();
+    for attempt in 1..=manifest.recovery.contributor_attempts {
+        let role = format!("contributor-{}", worker_sequence + attempt as usize);
+        let directory = manifest.scratch.join(&role);
+        let worker_root = codex_omd::create_worktree(&base, &directory, manifest.snapshot_bytes)
+            .map_err(error)?;
+        match run_child(
+            lead,
+            &parent,
+            &worker_root,
+            ChildTurn {
+                role: &role,
+                route: &manifest.worker,
+                prompt: context.prompt.clone(),
+                history: context.history.clone(),
+                writable: true,
+            },
+        )
+        .await
+        {
+            Ok(value) => {
+                selected_role = role;
+                selected_root = Some(worker_root);
+                summary = value;
+                break;
+            }
+            Err(child_error) => {
+                let source = host.evidence(
+                    &format!("contributor-outage-{attempt}.json"),
+                    &json!({"attempt": attempt, "error": child_error, "worktree_discarded": directory}),
+                )?;
+                host.task
+                    .record_failure(
+                        FailureClass::Model,
+                        format!(
+                            "Contributor attempt {attempt} failed before an accepted candidate"
+                        ),
+                        vec![source],
+                    )
+                    .map_err(error)?;
+                reassessed = host
+                    .task
+                    .observe_equivalent_failure(
+                        "contributor_outage",
+                        manifest.recovery.equivalent_failure_threshold,
+                        "discard partial work and use the permitted opposite OpenAI lead",
+                    )
+                    .map_err(error)?
+                    || reassessed;
+                codex_omd::cleanup_owned_directory(&manifest.scratch, &directory).map_err(error)?;
+                contributor_failures.push(child_error);
+            }
+        }
+    }
+    let fallback_used = selected_root.is_none();
+    if fallback_used {
+        host.authorize()?;
+        if !manifest.recovery.fallback_to_opposite_lead || !reassessed {
+            return Err(format!(
+                "Contributor outage fallback is not permitted: {}",
+                contributor_failures.join("; ")
+            ));
+        }
+        selected_route = host.route(lead.route.opposite());
+        selected_role = "contributor-outage-fallback".into();
+        let directory = manifest.scratch.join(&selected_role);
+        let worker_root = codex_omd::create_worktree(&base, &directory, manifest.snapshot_bytes)
+            .map_err(error)?;
+        summary = run_child(
+            lead,
+            &parent,
+            &worker_root,
+            ChildTurn {
+                role: &selected_role,
+                route: selected_route,
+                prompt: format!(
+                    "Contributor was unavailable after {} bounded attempts. Perform the same task without widening permissions or allowance. {}",
+                    contributor_failures.len(),
+                    context.prompt
+                ),
+                history: context.history.clone(),
+                writable: true,
+            },
+        )
+        .await?;
+        selected_root = Some(worker_root);
+    }
+    let worker_root = selected_root.ok_or("implementation worker produced no workspace")?;
     let denied = protected_paths(manifest);
     let paths = all_paths(host, &isolated(&parent, &worker_root, &[], &denied, false)?).await?;
     let candidate =
         Snapshot::capture(&worker_root, &paths, manifest.snapshot_bytes).map_err(error)?;
+    codex_omd::cleanup_owned_directory(
+        &manifest.scratch,
+        worker_root
+            .parent()
+            .ok_or("implementation worktree parent missing")?,
+    )
+    .map_err(error)?;
     let changed = base.changed_paths(&candidate);
     if changed.is_empty() {
         return Err("Contributor returned no code change".into());
@@ -803,6 +918,11 @@ pub async fn contribute(
         manifest.snapshot_bytes,
     )
     .map_err(error)?;
+    let reviewer_route = if fallback_used {
+        host.route(lead.route)
+    } else {
+        reviewer_route
+    };
     let review = run_child(
         lead,
         &parent,
@@ -922,8 +1042,9 @@ pub async fn contribute(
     {
         return Err("integration did not finish at the reviewed version; changes may already be applied alongside a concurrent edit; inspect retained integration evidence".into());
     }
+    codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
     Ok(
-        json!({"schema": 1, "status": "integrated", "model": manifest.worker.model, "summary": summary.chars().take(2048).collect::<String>(), "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
+        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
     )
 }
 

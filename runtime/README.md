@@ -54,6 +54,22 @@ parent history plus a bounded assignment. `context.json` records the selected po
 content hashes, effective-permission hash, instruction sources, authorization binding,
 and all selected routes.
 
+`limits.max_depth` and `limits.max_reassessments` apply across the native tree.
+Each supported Sol/Astra descendant is enrolled with its parent and depth before
+its first request, and every controlled child uses the same task ledger plus the
+tighter `worker_limits`. `recovery` bounds Contributor attempts, the equivalent
+failure threshold, and whether the opposite OpenAI lead may take over after a
+recorded reassessment. A fallback uses a fresh isolated snapshot and is reviewed
+by the original lead route.
+
+`lifecycle.explicit_resume` is absent for a new task. After interruption or
+abrupt client loss, a new launcher invocation must supply a nonempty explicit
+resume reference against the original evidence directory. The runtime replays
+the numbered journal without resetting time, request, or exposure allowances;
+retains uncertain requests; rejects changed limits or incomplete evidence;
+cleans stale owned scratch; and records live workspace and effective-permission
+reconciliation before controlled work continues.
+
 Run the no-provider macOS end-to-end fixture from this repository:
 
 ```sh
@@ -61,11 +77,14 @@ python3 -m benchmarks.controlled_fixture /path/to/codex/codex-rs/target/debug/co
 ```
 
 Other scenarios are `direct`, `escalation`, `permissions`, `conflict`,
-`index-conflict`, `review-reject`, `request-cap`, `revoked`, and `deadline`. Use
+`index-conflict`, `review-reject`, `request-cap`, `revoked`, `deadline`,
+`recursion`, `outage-fallback`, and `client-loss-resume`. Use
 `--failure-class environment|edit|diagnosis|model` with `escalation`. Each scenario
 requires a fresh destination. These
 fixtures need loopback listening and native sandbox execution, and use synthetic
 responses only. They establish runtime behavior, not model quality or savings.
+The client-loss scenario kills the first client while a request is in-flight,
+changes an unrelated tracked file, then explicitly resumes.
 Use `--context-policy focused_brief|shared_task_packet|parent_history`,
 `--lead-policy fixed|task_entry`, and `--lead sol|astra` to exercise the policy
 matrix.
@@ -84,9 +103,10 @@ host-owned grant. Credentials are loaded only by the approved host runner.
 Generated evidence, binaries, target directories and runtime scratch are ignored.
 
 This is a bounded macOS development implementation. Host Git setup commands rely
-on the enclosing runtime deadline; the core command capture cancels ordinary
-process groups, not every possible detached descendant. Integration detects
-races but is not an atomic filesystem transaction. Baseline native reviewers
+on the enclosing runtime deadline; ordinary process groups and background
+terminals are cleaned, while intentionally detached out-of-band daemons are not
+claimed by the fixture evidence. Integration detects races but is not an atomic
+filesystem transaction. Baseline native reviewers
 inherit parent write permissions and are instructed to read only; the treatment
 adds enforced read-only review. The experiment also checks that its final scored
 tree equals the integrated reviewed tree. Included subscription allocation,
@@ -95,4 +115,4 @@ cannot support verified total-cost savings. Full upstream regression and paid
 experiment results are separate gates recorded in the local audit.
 Failure class is a lead-supplied typed claim bound to host-preserved evidence; the
 runtime does not infer its semantic correctness. Escalation is advisory recovery,
-not the interruption/resume and recursive lifecycle work scheduled for Phase 4.
+distinct from bounded outage fallback and explicit lifecycle resume.

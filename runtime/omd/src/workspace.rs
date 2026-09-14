@@ -402,3 +402,21 @@ pub fn create_worktree(
     }
     Ok(worker)
 }
+
+pub fn cleanup_owned_directory(parent: &Path, directory: &Path) -> io::Result<()> {
+    if !directory.exists() {
+        return Ok(());
+    }
+    let parent = parent.canonicalize()?;
+    let directory_parent = directory
+        .parent()
+        .ok_or_else(|| invalid("owned directory parent missing"))?
+        .canonicalize()?;
+    if directory_parent != parent
+        || directory.file_name().is_none()
+        || fs::symlink_metadata(directory)?.file_type().is_symlink()
+    {
+        return Err(invalid("cleanup target is not a direct owned directory"));
+    }
+    fs::remove_dir_all(directory)
+}

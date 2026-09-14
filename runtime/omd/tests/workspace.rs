@@ -1,6 +1,7 @@
 use codex_omd::File;
 use codex_omd::Snapshot;
 use codex_omd::capture_tracked;
+use codex_omd::cleanup_owned_directory;
 use codex_omd::create_worktree;
 use codex_omd::tracked_paths;
 use std::collections::BTreeMap;
@@ -32,6 +33,21 @@ fn worktree_contains_snapshot_without_touching_original_inputs() {
         fs::read(temp.path().join("isolated/depot/source.txt")).unwrap(),
         b"dirty tracked input"
     );
+}
+
+#[test]
+fn cleanup_removes_only_a_direct_owned_directory() {
+    let temp = tempfile::tempdir().unwrap();
+    let owned = temp.path().join("owned");
+    fs::create_dir(&owned).unwrap();
+    fs::write(owned.join("artifact"), "data").unwrap();
+    cleanup_owned_directory(temp.path(), &owned).unwrap();
+    assert!(!owned.exists());
+    let nested_parent = temp.path().join("nested");
+    let nested = nested_parent.join("not-direct");
+    fs::create_dir_all(&nested).unwrap();
+    assert!(cleanup_owned_directory(temp.path(), &nested).is_err());
+    assert!(nested.exists());
 }
 
 #[test]

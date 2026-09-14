@@ -11,13 +11,17 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Limits {
     pub requests: u32,
     pub exposure_microusd: u64,
     pub seconds: u64,
     pub concurrent_workers: u32,
+    pub max_depth: u32,
+    pub max_reassessments: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -70,6 +74,8 @@ impl Admission {
 }
 
 struct Worker {
+    parent: String,
+    depth: u32,
     limits: WorkerLimits,
     started: Instant,
     requests: u32,
@@ -77,8 +83,15 @@ struct Worker {
     active: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskStatus {
+    Active,
+    Paused,
+    Stopped,
+}
+
 struct State {
-    stopped: bool,
+    status: TaskStatus,
     contributor_authorized: bool,
     requests: u32,
     exposure: u64,
@@ -87,12 +100,15 @@ struct State {
     failures: BTreeMap<u32, Failure>,
     escalated_failures: BTreeSet<u32>,
     escalations: u32,
+    reassessments: u32,
+    failure_fingerprints: BTreeMap<String, u32>,
     workers: BTreeMap<String, Worker>,
 }
 
 pub struct Task {
     limits: Limits,
     started: Instant,
+    deadline_unix_millis: u128,
     evidence: PathBuf,
     state: Mutex<State>,
 }
@@ -101,19 +117,33 @@ fn denied(message: &str) -> io::Error {
     io::Error::other(message)
 }
 
+fn unix_millis() -> io::Result<u128> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .map_err(|_| denied("system clock precedes Unix epoch"))
+}
+
 impl Task {
     pub fn create(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
-        if limits.requests == 0 || limits.seconds == 0 || limits.concurrent_workers == 0 {
+        if limits.requests == 0
+            || limits.seconds == 0
+            || limits.concurrent_workers == 0
+            || limits.max_depth == 0
+        {
             return Err(denied("task limits must be positive"));
         }
         fs::create_dir(&evidence)?;
         let evidence = evidence.canonicalize()?;
         let task = Self {
+            deadline_unix_millis: unix_millis()?
+                .checked_add(u128::from(limits.seconds) * 1000)
+                .ok_or_else(|| denied("task deadline overflow"))?,
             limits,
             started: Instant::now(),
             evidence,
             state: Mutex::new(State {
-                stopped: false,
+                status: TaskStatus::Active,
                 contributor_authorized: false,
                 requests: 0,
                 exposure: 0,
@@ -122,6 +152,8 @@ impl Task {
                 failures: BTreeMap::new(),
                 escalated_failures: BTreeSet::new(),
                 escalations: 0,
+                reassessments: 0,
+                failure_fingerprints: BTreeMap::new(),
                 workers: BTreeMap::new(),
             }),
         };
@@ -137,12 +169,223 @@ impl Task {
         Ok(task)
     }
 
+    pub fn open(
+        limits: Limits,
+        evidence: PathBuf,
+        explicit_resume: Option<&str>,
+    ) -> io::Result<Self> {
+        if !evidence.exists() {
+            if explicit_resume.is_some() {
+                return Err(denied("explicit resume has no prior task evidence"));
+            }
+            return Self::create(limits, evidence);
+        }
+        let reference =
+            explicit_resume.ok_or_else(|| denied("existing task requires explicit resume"))?;
+        if reference.is_empty() || reference.len() > 4096 {
+            return Err(denied("explicit resume reference required"));
+        }
+        let evidence = evidence.canonicalize()?;
+        let mut records = fs::read_dir(&evidence)?
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.len() == 13 && name.ends_with(".json"))
+            })
+            .collect::<Vec<_>>();
+        records.sort_by_key(fs::DirEntry::file_name);
+        if records.is_empty() {
+            return Err(denied("resume evidence is empty"));
+        }
+        let mut state = State {
+            status: TaskStatus::Active,
+            contributor_authorized: false,
+            requests: 0,
+            exposure: 0,
+            sequence: 0,
+            attempts: BTreeMap::new(),
+            failures: BTreeMap::new(),
+            escalated_failures: BTreeSet::new(),
+            escalations: 0,
+            reassessments: 0,
+            failure_fingerprints: BTreeMap::new(),
+            workers: BTreeMap::new(),
+        };
+        let mut created_unix_millis = None;
+        for entry in records {
+            if entry.file_type()?.is_symlink() {
+                return Err(denied("resume evidence cannot be a symbolic link"));
+            }
+            let value: Value = serde_json::from_slice(&fs::read(entry.path())?)?;
+            let sequence = value["sequence"]
+                .as_u64()
+                .ok_or_else(|| denied("resume evidence sequence missing"))?;
+            if state.sequence.checked_add(1) != Some(sequence) {
+                return Err(denied("resume evidence sequence is incomplete"));
+            }
+            state.sequence = sequence;
+            let timestamp = value["unix_millis"]
+                .as_u64()
+                .map(u128::from)
+                .ok_or_else(|| denied("resume evidence timestamp missing"))?;
+            created_unix_millis.get_or_insert(timestamp);
+            let record = &value["record"];
+            if state.sequence == 1 && record["event"] != "created" {
+                return Err(denied("resume evidence must begin with task creation"));
+            }
+            match record["event"].as_str() {
+                Some("created") => {
+                    let recorded: Limits = serde_json::from_value(record["limits"].clone())?;
+                    if state.sequence != 1 || recorded != limits {
+                        return Err(denied("resume limits differ from original task"));
+                    }
+                }
+                Some("contributor_authorization") => {
+                    state.contributor_authorized = record["authorized"].as_bool().unwrap_or(false);
+                }
+                Some("worker_started") => {
+                    let id = record["worker"]
+                        .as_str()
+                        .ok_or_else(|| denied("worker identity missing"))?
+                        .to_owned();
+                    state.workers.insert(
+                        id,
+                        Worker {
+                            parent: record["parent"].as_str().unwrap_or("lead").to_owned(),
+                            depth: u32::try_from(record["depth"].as_u64().unwrap_or(1))
+                                .map_err(|_| denied("worker depth overflow"))?,
+                            limits: serde_json::from_value(record["limits"].clone())?,
+                            started: Instant::now(),
+                            requests: 0,
+                            exposure: 0,
+                            active: true,
+                        },
+                    );
+                }
+                Some("worker_stopped") => {
+                    if let Some(worker) = record["worker"]
+                        .as_str()
+                        .and_then(|id| state.workers.get_mut(id))
+                    {
+                        worker.active = false;
+                    }
+                }
+                Some("request_admitted")
+                | Some("request_dispatched")
+                | Some("request_failed")
+                | Some("request_settled")
+                | Some("raw_usage_observed") => {
+                    let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
+                    state.attempts.insert(attempt.request, attempt);
+                }
+                Some("failure_recorded") => {
+                    let failure: Failure = serde_json::from_value(record["failure"].clone())?;
+                    state.failures.insert(failure.id, failure);
+                }
+                Some("escalation_permitted") => {
+                    let failure = record["failure"]
+                        .as_u64()
+                        .ok_or_else(|| denied("escalation failure identity missing"))?
+                        as u32;
+                    state.escalated_failures.insert(failure);
+                    state.escalations += 1;
+                }
+                Some("equivalent_failure_observed") => {
+                    let fingerprint = record["fingerprint"]
+                        .as_str()
+                        .ok_or_else(|| denied("failure fingerprint missing"))?;
+                    let count = record["count"]
+                        .as_u64()
+                        .ok_or_else(|| denied("failure observation count missing"))?
+                        as u32;
+                    state
+                        .failure_fingerprints
+                        .insert(fingerprint.to_owned(), count);
+                }
+                Some("loop_reassessed") => state.reassessments += 1,
+                Some("task_paused") => state.status = TaskStatus::Paused,
+                Some("task_resumed") => state.status = TaskStatus::Active,
+                Some("reservation_violation") => {
+                    let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
+                    state.attempts.insert(attempt.request, attempt);
+                    state.status = TaskStatus::Stopped;
+                }
+                Some("task_stopped") => {
+                    state.status = TaskStatus::Stopped;
+                }
+                Some("dispatch_callback_failed") => {}
+                Some(_) => return Err(denied("resume evidence event is unsupported")),
+                None => return Err(denied("resume evidence event missing")),
+            }
+        }
+        state.requests = u32::try_from(state.attempts.len())
+            .map_err(|_| denied("resume request count overflow"))?;
+        if state.attempts.keys().copied().ne(1..=state.requests) {
+            return Err(denied("resume request sequence is incomplete"));
+        }
+        state.exposure = state.attempts.values().try_fold(0u64, |total, attempt| {
+            total
+                .checked_add(
+                    attempt
+                        .settled_microusd
+                        .unwrap_or(attempt.reserved_microusd),
+                )
+                .ok_or_else(|| denied("resume exposure overflow"))
+        })?;
+        for worker in state.workers.values_mut() {
+            worker.active = false;
+        }
+        if state.status == TaskStatus::Stopped {
+            return Err(denied("stopped task cannot resume"));
+        }
+        let deadline_unix_millis = created_unix_millis
+            .ok_or_else(|| denied("created timestamp missing"))?
+            .checked_add(u128::from(limits.seconds) * 1000)
+            .ok_or_else(|| denied("task deadline overflow"))?;
+        if unix_millis()? >= deadline_unix_millis {
+            return Err(denied("task expired before resume"));
+        }
+        let task = Self {
+            limits,
+            started: Instant::now(),
+            deadline_unix_millis,
+            evidence,
+            state: Mutex::new(state),
+        };
+        let uncertain = task.uncertain_requests()?;
+        {
+            let mut state = task
+                .state
+                .lock()
+                .map_err(|_| denied("task lock poisoned"))?;
+            if state.status == TaskStatus::Active {
+                task.record(
+                    &mut state,
+                    &serde_json::json!({"event": "task_paused", "reason": "abrupt_client_loss", "active_workers": [], "uncertain_operations": uncertain}),
+                )?;
+                state.status = TaskStatus::Paused;
+            }
+        }
+        task.resume(reference)?;
+        Ok(task)
+    }
+
+    fn expired(&self) -> bool {
+        unix_millis().map_or(true, |now| now >= self.deadline_unix_millis)
+    }
+
     fn record(&self, state: &mut State, event: &Value) -> io::Result<()> {
-        state.sequence += 1;
+        state.sequence = state
+            .sequence
+            .checked_add(1)
+            .ok_or_else(|| denied("evidence sequence overflow"))?;
         let result = (|| {
             let bytes = serde_json::to_vec(&serde_json::json!({
                 "sequence": state.sequence,
                 "elapsed_millis": self.started.elapsed().as_millis(),
+                "unix_millis": unix_millis()?,
                 "record": event,
             }))?;
             if bytes.len() > 1_048_576 {
@@ -156,7 +399,7 @@ impl Task {
             file.sync_all()
         })();
         if result.is_err() {
-            state.stopped = true;
+            state.status = TaskStatus::Stopped;
         }
         result
     }
@@ -178,7 +421,13 @@ impl Task {
         Ok(())
     }
 
-    pub fn start_worker(&self, id: String, limits: WorkerLimits) -> io::Result<()> {
+    pub fn start_worker(
+        &self,
+        id: String,
+        parent: String,
+        depth: u32,
+        limits: WorkerLimits,
+    ) -> io::Result<()> {
         let mut state = self
             .state
             .lock()
@@ -186,11 +435,22 @@ impl Task {
         if id.is_empty() || id.len() > 128 || id == "lead" || state.workers.contains_key(&id) {
             return Err(denied("invalid or reused worker identity"));
         }
-        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
+        if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
+        let valid_parent = if depth == 1 {
+            parent == "lead"
+        } else {
+            state
+                .workers
+                .get(&parent)
+                .is_some_and(|worker| worker.active && worker.depth.checked_add(1) == Some(depth))
+        };
         if limits.requests == 0
             || limits.seconds == 0
+            || depth == 0
+            || depth > self.limits.max_depth
+            || !valid_parent
             || limits.requests > self.limits.requests
             || limits.seconds > self.limits.seconds
             || limits.exposure_microusd > self.limits.exposure_microusd
@@ -205,11 +465,13 @@ impl Task {
         }
         self.record(
             &mut state,
-            &serde_json::json!({"event": "worker_started", "worker": id, "limits": limits}),
+            &serde_json::json!({"event": "worker_started", "worker": id, "parent": parent, "depth": depth, "limits": limits}),
         )?;
         state.workers.insert(
             id,
             Worker {
+                parent,
+                depth,
                 limits,
                 started: Instant::now(),
                 requests: 0,
@@ -227,6 +489,13 @@ impl Task {
             .map_err(|_| denied("task lock poisoned"))?;
         if !state.workers.get(id).is_some_and(|worker| worker.active) {
             return Err(denied("unknown or inactive worker"));
+        }
+        if state
+            .workers
+            .values()
+            .any(|worker| worker.active && worker.parent == id)
+        {
+            return Err(denied("worker has active descendants"));
         }
         self.record(
             &mut state,
@@ -251,7 +520,7 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
+        if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
         let allowed = match (provider, model) {
@@ -335,8 +604,8 @@ impl Task {
             .get(&admission.request)
             .cloned()
             .ok_or_else(|| denied("unknown request"))?;
-        if state.stopped
-            || self.started.elapsed().as_secs() >= self.limits.seconds
+        if state.status != TaskStatus::Active
+            || self.expired()
             || attempt.status != "unknown"
             || (attempt.provider == "meta" && !state.contributor_authorized)
         {
@@ -412,7 +681,7 @@ impl Task {
             return Err(denied("request settled or invalid raw usage"));
         }
         if upper_microusd > attempt.reserved_microusd {
-            state.stopped = true;
+            state.status = TaskStatus::Stopped;
             state.exposure = state
                 .exposure
                 .saturating_add(upper_microusd - attempt.reserved_microusd);
@@ -510,7 +779,7 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
+        if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
         Ok(())
@@ -534,7 +803,7 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
+        if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
         let id = u32::try_from(state.failures.len())
@@ -565,11 +834,15 @@ impl Task {
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
         let remaining = (
-            Duration::from_secs(self.limits.seconds).saturating_sub(self.started.elapsed()),
+            Duration::from_millis(
+                self.deadline_unix_millis
+                    .saturating_sub(unix_millis().unwrap_or(u128::MAX))
+                    .min(u128::from(u64::MAX)) as u64,
+            ),
             self.limits.requests.saturating_sub(state.requests),
             self.limits.exposure_microusd.saturating_sub(state.exposure),
         );
-        if state.stopped || remaining.0.is_zero() {
+        if state.status != TaskStatus::Active || remaining.0.is_zero() {
             return Err(denied("task stopped or expired"));
         }
         if max_escalations == 0
@@ -599,12 +872,123 @@ impl Task {
         Ok(remaining)
     }
 
+    pub fn observe_equivalent_failure(
+        &self,
+        fingerprint: &str,
+        threshold: u32,
+        changed_action: &str,
+    ) -> io::Result<bool> {
+        if fingerprint.is_empty()
+            || fingerprint.len() > 256
+            || threshold < 2
+            || changed_action.is_empty()
+            || changed_action.len() > 256
+        {
+            return Err(denied("invalid loop reassessment observation"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if state.status != TaskStatus::Active {
+            return Err(denied("task is not active"));
+        }
+        let count = state
+            .failure_fingerprints
+            .get(fingerprint)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| denied("failure observation overflow"))?;
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "equivalent_failure_observed", "fingerprint": fingerprint, "count": count}),
+        )?;
+        state
+            .failure_fingerprints
+            .insert(fingerprint.to_owned(), count);
+        if count < threshold {
+            return Ok(false);
+        }
+        if count > threshold || state.reassessments >= self.limits.max_reassessments {
+            return Err(denied("loop reassessment limit exhausted"));
+        }
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "loop_reassessed", "fingerprint": fingerprint, "equivalent_failures": count, "changed_action": changed_action}),
+        )?;
+        state.reassessments += 1;
+        Ok(true)
+    }
+
+    pub fn pause(&self, reason: &str, uncertain_operations: Vec<u32>) -> io::Result<()> {
+        if reason.is_empty() || reason.len() > 256 {
+            return Err(denied("pause reason required"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if state.status != TaskStatus::Active {
+            return Err(denied("only an active task can pause"));
+        }
+        let active_workers = state
+            .workers
+            .iter()
+            .filter(|(_, worker)| worker.active)
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "task_paused", "reason": reason, "active_workers": active_workers, "uncertain_operations": uncertain_operations}),
+        )?;
+        state.status = TaskStatus::Paused;
+        for worker in state.workers.values_mut() {
+            worker.active = false;
+        }
+        Ok(())
+    }
+
+    pub fn resume(&self, reference: &str) -> io::Result<()> {
+        if reference.is_empty() || reference.len() > 4096 {
+            return Err(denied("explicit resume reference required"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if state.status != TaskStatus::Paused || self.expired() {
+            return Err(denied("task is not resumable"));
+        }
+        let remaining_requests = self.limits.requests.saturating_sub(state.requests);
+        let remaining_exposure = self.limits.exposure_microusd.saturating_sub(state.exposure);
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "task_resumed", "reference": reference, "remaining": {"requests": remaining_requests, "exposure_microusd": remaining_exposure}}),
+        )?;
+        state.status = TaskStatus::Active;
+        Ok(())
+    }
+
+    pub fn uncertain_requests(&self) -> io::Result<Vec<u32>> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        Ok(state
+            .attempts
+            .values()
+            .filter(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
+            .map(|attempt| attempt.request)
+            .collect())
+    }
+
     pub fn stop(&self) -> io::Result<()> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        state.stopped = true;
+        state.status = TaskStatus::Stopped;
         self.record(&mut state, &serde_json::json!({"event": "task_stopped"}))
     }
 
@@ -614,7 +998,11 @@ impl Task {
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
         Ok((
-            Duration::from_secs(self.limits.seconds).saturating_sub(self.started.elapsed()),
+            Duration::from_millis(
+                self.deadline_unix_millis
+                    .saturating_sub(unix_millis().unwrap_or(u128::MAX))
+                    .min(u128::from(u64::MAX)) as u64,
+            ),
             self.limits.requests - state.requests,
             self.limits.exposure_microusd.saturating_sub(state.exposure),
         ))

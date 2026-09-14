@@ -19,6 +19,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     repo.mkdir()
     home.mkdir()
     (repo / "solution.py").write_text("def add(a, b):\n    return a - b\n")
+    (repo / "notes.txt").write_text("tracked user notes\n")
     (repo / "AGENTS.md").write_text("GLOBAL_INSTRUCTION_SENTINEL: preserve unrelated files.\n")
     (repo / ".gitignore").write_text(".omd/\n__pycache__/\n.omd-tmp/\n")
     git_env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
@@ -28,6 +29,8 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     requests = []
 
     class Provider(http.server.BaseHTTPRequestHandler):
+        abrupt_delay_started = False
+
         def log_message(self, *_):
             pass
 
@@ -38,14 +41,35 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             if scenario == "runner" and owner is None:
                 owner = {"gpt-5.6-sol": "lead", "muse-spark-1.3-contributor": "contributor", "gpt-6-astra": "reviewer"}[model]
             requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": owner, "body": body})
+            if scenario == "client-loss-resume" and owner and owner.startswith("contributor-") and not Provider.abrupt_delay_started:
+                Provider.abrupt_delay_started = True
+                time.sleep(30)
+            if scenario == "outage-fallback" and owner and owner.startswith("contributor-") and "fallback" not in owner:
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":{"message":"synthetic Contributor outage"}}')
+                return
             inputs = body.get("input", [])
             outputs = [i for i in inputs if i.get("type") == "function_call_output"]
             search_outputs = [i for i in inputs if i.get("type") == "tool_search_output"]
             calls = {i.get("call_id"): i.get("name") for i in inputs if i.get("type") == "function_call"}
             exec_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "exec_command"]
             escalation_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_escalate"]
+            spawn_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "spawn_agent"]
+            wait_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "wait_agent"]
             text = json.dumps(body.get("input", []))
-            if owner == "lead" and scenario == "direct" and not exec_outputs:
+            if scenario == "recursion" and owner == "lead" and not spawn_outputs:
+                item = {"type": "function_call", "id": "spawn-level-one", "call_id": "spawn-level-one", "namespace": "collaboration", "name": "spawn_agent", "arguments": json.dumps({"message": "LEVEL_ONE_WORKER", "task_name": "level_one"})}
+            elif scenario == "recursion" and owner == "lead" and not wait_outputs:
+                item = {"type": "function_call", "id": "wait-level-one", "call_id": "wait-level-one", "namespace": "collaboration", "name": "wait_agent", "arguments": json.dumps({"timeout_ms": 30000})}
+            elif scenario == "recursion" and owner and owner.startswith("agent:") and "LEVEL_ONE_WORKER" in text and "spawn-level-two" not in text:
+                item = {"type": "function_call", "id": "spawn-level-two", "call_id": "spawn-level-two", "namespace": "collaboration", "name": "spawn_agent", "arguments": json.dumps({"message": "LEVEL_TWO_WORKER", "task_name": "level_two"})}
+            elif scenario == "recursion" and owner and owner.startswith("agent:") and "LEVEL_ONE_WORKER" in text and not wait_outputs:
+                item = {"type": "function_call", "id": "wait-level-two", "call_id": "wait-level-two", "namespace": "collaboration", "name": "wait_agent", "arguments": json.dumps({"timeout_ms": 30000})}
+            elif scenario == "recursion":
+                item = {"type": "message", "id": "recursive-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Recursive worker completed."}]}
+            elif owner == "lead" and scenario == "direct" and not exec_outputs:
                 item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
             elif owner == "lead" and scenario == "escalation" and not exec_outputs:
                 item = {"type": "function_call", "id": "failed-edit", "call_id": "failed-edit", "name": "exec_command", "arguments": json.dumps({"cmd": "/usr/bin/false", "max_output_tokens": 500})}
@@ -64,11 +88,13 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                     "parent_history": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files."},
                 }[context_policy]
                 item = {"type": "function_call", "id": "delegate", "call_id": "delegate", "name": "omd_contribute", "arguments": json.dumps(arguments)}
-            elif owner == "contributor" and not exec_outputs:
+            elif owner and owner.startswith("contributor-") and "fallback" not in owner and not exec_outputs:
                 command = "printf 'def add(a, b):\\n    return a + b\\n' > solution.py"
                 if scenario == "permissions":
                     command += f"; if cat {json.dumps(str(home / 'secret'))}; then exit 81; fi; if printf bad > {json.dumps(str(repo / 'unrelated.txt'))}; then exit 82; fi"
                 item = {"type": "function_call", "id": "edit", "call_id": "edit", "namespace": "functions", "name": "exec_command", "arguments": json.dumps({"cmd": command, "max_output_tokens": 500})}
+            elif owner == "contributor-outage-fallback" and not exec_outputs:
+                item = {"type": "function_call", "id": "fallback-edit", "call_id": "fallback-edit", "namespace": "functions", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
             elif owner == "reviewer":
                 match = re.search(r"Candidate SHA256: ([0-9a-f]{64})", text)
                 if scenario == "index-conflict":
@@ -107,9 +133,9 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     context = {"mode": context_policy, "max_bytes": 2000000}
     if context_policy == "shared_task_packet":
         context["packet"] = {"path": str(task_packet.resolve()), "sha256": hashlib.sha256(task_packet.read_bytes()).hexdigest()}
-    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
+    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
     if scenario == "request-cap":
-        manifest["limits"]["requests"] = 1
+        manifest["limits"]["requests"] = 2
         manifest["worker_limits"]["requests"] = 1
     if scenario == "deadline":
         manifest["limits"]["seconds"] = 3
@@ -196,12 +222,25 @@ enabled = false
             assert controlled_attribution(destination), "native/gateway admission join failed"
             process = SimpleNamespace(stdout=(destination / "native/stdout").read_text(), stderr=(destination / "native/stderr").read_text(), returncode=result["exit_code"])
             shutil.copytree(destination / "native/controlled-evidence", destination / "evidence")
+        elif scenario == "client-loss-resume":
+            command = [str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."]
+            first = subprocess.Popen(command, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            deadline = time.monotonic() + 20
+            while not Provider.abrupt_delay_started and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert Provider.abrupt_delay_started, "Contributor request did not become in-flight"
+            first.kill()
+            first.communicate(timeout=10)
+            (repo / "notes.txt").write_text("intervening tracked user notes\n")
+            manifest["lifecycle"]["explicit_resume"] = "fixture explicit resume after abrupt client loss"
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+            process = subprocess.run(command, cwd=repo, env=env, capture_output=True, text=True, timeout=150)
         else:
             process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."], cwd=repo, env=env, capture_output=True, text=True, timeout=150)
         (destination / "stdout.txt").write_text(process.stdout)
         (destination / "stderr.txt").write_text(process.stderr)
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
-        results = list((destination / "evidence").glob("worker-result-*.json"))
+        results = list((destination / "evidence").glob("*worker-result-*.json"))
         result = json.loads(results[0].read_text()) if results else {}
         escalation_results = list((destination / "evidence").glob("escalation-result-*.json"))
         escalation_result = json.loads(escalation_results[0].read_text()) if escalation_results else {}
@@ -209,10 +248,10 @@ enabled = false
             assert 3 <= time.monotonic() - started < 15, "deadline was not exercised"
             assert any(json.loads(p.read_text())["record"].get("event") == "task_stopped" for p in (destination / "evidence").glob("0*.json")), "deadline did not stop task"
             result = {"status": "failed", "error": "native task interrupted at deadline; no worker result"}
-        worker_requests = [request for request in requests if request["native_owner"] == "contributor"]
+        worker_requests = [request for request in requests if (request["native_owner"] or "").startswith("contributor-")]
         reviewer_requests = [request for request in requests if request["native_owner"] == "reviewer"]
         escalation_requests = [request for request in requests if (request["native_owner"] or "").startswith("escalation-")]
-        if scenario not in ("request-cap", "direct", "escalation"):
+        if scenario not in ("request-cap", "direct", "escalation", "recursion"):
             assert worker_requests, "worker route was not observed"
         if worker_requests:
             assert all("GLOBAL_INSTRUCTION_SENTINEL" in json.dumps(request) for request in worker_requests + reviewer_requests), "project instructions were not inherited"
@@ -224,10 +263,11 @@ enabled = false
         assert requests[0]["model"] == lead_model and requests[0]["native_owner"] == "lead", "lead route drifted"
         first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
         assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools, "controlled tools were not deferred"
-        if scenario != "direct":
+        if scenario not in ("direct", "request-cap", "recursion"):
             assert any(i.get("type") == "tool_search_call" for request in requests for i in request["body"].get("input", [])), "task-scoped tool discovery was not exercised"
         if reviewer_requests:
-            assert reviewer_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead], "reviewer was not opposite the lead"
+            expected_reviewer = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead] if scenario == "outage-fallback" else {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
+            assert reviewer_requests[0]["model"] == expected_reviewer, "reviewer route did not remain separate from the implementer"
         ids = [request["native_request_id"] for request in (gateway.records if scenario == "runner" else requests)]
         assert all(ids) and len(ids) == len(set(ids)), "wire attempts lack unique native admission IDs"
         if scenario == "escalation":
@@ -236,11 +276,34 @@ enabled = false
             assert escalation_requests and escalation_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
             source = json.loads(next((destination / "evidence").glob("failure-source-*.json")).read_text())
             assert source["call_ids"] == ["failed-edit"] and any(i.get("type") == "function_call_output" for i in source["items"]), source
-        elif scenario == "direct":
+        elif scenario in ("direct", "recursion"):
             assert not result and not worker_requests and not reviewer_requests and not escalation_requests
+            if scenario == "recursion":
+                recursive_requests = [request for request in requests if (request["native_owner"] or "").startswith("agent:")]
+                assert len({request["native_owner"] for request in recursive_requests}) == 2
+                events = [json.loads(path.read_text())["record"] for path in sorted((destination / "evidence").glob("0*.json"))]
+                depths = [event["depth"] for event in events if event.get("event") == "worker_started"]
+                assert depths == [1, 2], depths
         else:
-            expected = "integrated" if scenario in ("success", "permissions", "runner") else "failed"
+            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume") else "failed"
             assert result.get("status") == expected, result or process.stderr[-2000:]
+            if scenario == "outage-fallback":
+                assert result["implementation"]["fallback_used"] is True
+                assert len(result["implementation"]["contributor_failures"]) == 2
+                events = [json.loads(path.read_text())["record"]["event"] for path in sorted((destination / "evidence").glob("0*.json"))]
+                assert "loop_reassessed" in events
+            if scenario == "client-loss-resume":
+                assert any(attempt["status"] in ("unknown", "in_flight") for attempt in result["attempts"])
+                events = [json.loads(path.read_text())["record"] for path in sorted((destination / "evidence").glob("0*.json"))]
+                assert any(event.get("event") == "task_paused" and event.get("reason") == "abrupt_client_loss" for event in events)
+                assert any(event.get("event") == "task_resumed" for event in events)
+                reconciliation = json.loads(next((destination / "evidence").glob("resume-*-reconciliation.json")).read_text())
+                assert reconciliation["workspace"]["current_sha256"] != reconciliation["workspace"]["prior_sha256"]
+                assert reconciliation["workspace"]["changed_paths"] == ["notes.txt"]
+                assert reconciliation["permissions"]["effective_policy_rederived"] is True
+                assert reconciliation["uncertain_requests"]
+                assert (repo / "notes.txt").read_text() == "intervening tracked user notes\n"
+                assert not (repo / ".omd").exists()
         if scenario == "permissions":
             output = " ".join(i.get("output", "") for r in requests if r["model"] == "muse-spark-1.3-contributor" for i in r["body"].get("input", []) if i.get("type") == "function_call_output")
             assert output.lower().count("operation not permitted") + output.lower().count("permission denied") >= 2, output
@@ -252,6 +315,7 @@ enabled = false
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
         if scenario == "conflict":
             assert (repo / "solution.py").read_text() == "intervening user edit\n"
+        assert not (repo / ".omd").exists(), "owned runtime scratch was not cleaned"
         if scenario not in ("direct", "escalation") and (destination / "evidence/context.json").exists():
             context_record = json.loads((destination / "evidence/context.json").read_text())
             assert context_record["context"]["policy"] == context_policy
@@ -268,7 +332,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation"), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation", "outage-fallback", "client-loss-resume", "recursion"), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")

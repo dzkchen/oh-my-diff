@@ -18,6 +18,8 @@ fn setup() -> (
                 exposure_microusd: 20000,
                 seconds: 30,
                 concurrent_workers: 1,
+                max_depth: 2,
+                max_reassessments: 1,
             },
             root.path().join("evidence"),
         )
@@ -51,6 +53,8 @@ fn setup() -> (
     );
     task.start_worker(
         "worker".into(),
+        "lead".into(),
+        1,
         WorkerLimits {
             requests: 2,
             exposure_microusd: 20000,

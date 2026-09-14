@@ -11,5 +11,6 @@ pub use admission::WorkerLimits;
 pub use workspace::File;
 pub use workspace::Snapshot;
 pub use workspace::capture_tracked;
+pub use workspace::cleanup_owned_directory;
 pub use workspace::create_worktree;
 pub use workspace::tracked_paths;

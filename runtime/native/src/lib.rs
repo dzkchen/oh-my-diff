@@ -28,6 +28,8 @@ use codex_omd::Task;
 use codex_omd::WorkerLimits;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
 use codex_tools::FunctionCallError;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
@@ -54,6 +56,8 @@ struct Manifest {
     approved_untracked: Vec<String>,
     limits: Limits,
     worker_limits: WorkerLimits,
+    lifecycle: LifecyclePolicy,
+    recovery: RecoveryPolicy,
     lead_policy: LeadPolicy,
     leads: LeadRoutes,
     context_policy: WorkerContextPolicy,
@@ -63,6 +67,20 @@ struct Manifest {
     toolchain_reads: Vec<PathBuf>,
     snapshot_bytes: usize,
     max_request_bytes: usize,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LifecyclePolicy {
+    explicit_resume: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryPolicy {
+    contributor_attempts: u32,
+    equivalent_failure_threshold: u32,
+    fallback_to_opposite_lead: bool,
 }
 
 #[derive(Clone, Deserialize)]
@@ -194,6 +212,7 @@ struct Host {
     manager: Weak<ThreadManager>,
     contribution_started: std::sync::atomic::AtomicBool,
     operation: std::sync::atomic::AtomicBool,
+    lead_completed: std::sync::atomic::AtomicBool,
 }
 
 struct OperationGuard<'a>(&'a std::sync::atomic::AtomicBool);
@@ -208,6 +227,8 @@ impl Drop for OperationGuard<'_> {
 struct Lead {
     thread: ThreadId,
     route: LeadName,
+    owner: String,
+    depth: u32,
     host: Arc<Host>,
 }
 
@@ -242,6 +263,9 @@ pub fn install(
         || manifest.escalation.evidence_bytes == 0
         || manifest.escalation.evidence_bytes > manifest.max_request_bytes
         || manifest.escalation.allowed_failure_classes.is_empty()
+        || manifest.recovery.contributor_attempts == 0
+        || manifest.recovery.equivalent_failure_threshold < 2
+        || manifest.recovery.contributor_attempts < manifest.recovery.equivalent_failure_threshold
         || manifest
             .escalation
             .allowed_failure_classes
@@ -286,9 +310,17 @@ pub fn install(
             return Err("shared task packet must be canonical and host-owned".into());
         }
     }
+    if manifest.lifecycle.explicit_resume.is_some() && manifest.scratch.exists() {
+        codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
+            .map_err(|e| e.to_string())?;
+    }
     let task = Arc::new(
-        Task::create(manifest.limits.clone(), manifest.evidence.clone())
-            .map_err(|e| e.to_string())?,
+        Task::open(
+            manifest.limits.clone(),
+            manifest.evidence.clone(),
+            manifest.lifecycle.explicit_resume.as_deref(),
+        )
+        .map_err(|e| e.to_string())?,
     );
     let accounts = Arc::new(Accounts::default());
     codex_api::request_observer::install_response_observer(accounts.clone())
@@ -300,6 +332,7 @@ pub fn install(
         manager,
         contribution_started: std::sync::atomic::AtomicBool::new(false),
         operation: std::sync::atomic::AtomicBool::new(false),
+        lead_completed: std::sync::atomic::AtomicBool::new(false),
     });
     let _ = host.authorize();
     let deadline_host = host.clone();
@@ -308,7 +341,7 @@ pub fn install(
             deadline_host.manifest.limits.seconds,
         ))
         .await;
-        deadline_host.stop_tree().await;
+        deadline_host.stop_tree("task_deadline", true, None).await;
     });
     registry.thread_lifecycle_contributor(Arc::new(Extension(host.clone())));
     registry.tool_contributor(Arc::new(Extension(host)));
@@ -335,8 +368,13 @@ impl Host {
         }
     }
 
-    async fn stop_tree(&self) {
-        let _ = self.task.stop();
+    async fn stop_tree(&self, reason: &str, final_stop: bool, except: Option<ThreadId>) {
+        if final_stop {
+            let _ = self.task.stop();
+        } else {
+            let uncertain = self.task.uncertain_requests().unwrap_or_default();
+            let _ = self.task.pause(reason, uncertain);
+        }
         let threads: Vec<_> = self
             .accounts
             .0
@@ -346,15 +384,23 @@ impl Host {
         if let Some(manager) = self.manager.upgrade() {
             for id in threads {
                 if let Ok(id) = ThreadId::from_string(&id)
+                    && Some(id) != except
                     && let Ok(thread) = manager.get_thread(id).await
                 {
                     let _ = thread.submit(codex_protocol::protocol::Op::Interrupt).await;
                     let _ = thread
                         .submit(codex_protocol::protocol::Op::CleanBackgroundTerminals)
                         .await;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        thread.shutdown_and_wait(),
+                    )
+                    .await;
                 }
             }
         }
+        let _ =
+            codex_omd::cleanup_owned_directory(&self.manifest.repository, &self.manifest.scratch);
     }
 
     fn authorize(&self) -> Result<(), String> {
@@ -380,7 +426,7 @@ impl Host {
             task: self.task.clone(),
             owner: owner.into(),
             model: route.model.clone(),
-            provider: if owner == "contributor" {
+            provider: if route.model == "muse-spark-1.3-contributor" {
                 "meta"
             } else {
                 "openai"
@@ -407,6 +453,13 @@ impl Host {
     fn evidence(&self, name: &str, value: &Value) -> Result<Value, String> {
         use std::io::Write;
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+        let name = self
+            .manifest
+            .lifecycle
+            .explicit_resume
+            .as_ref()
+            .map(|reference| format!("resume-{}-{name}", execution::hash(reference.as_bytes())))
+            .unwrap_or_else(|| name.to_owned());
         let path = self.manifest.evidence.join(name);
         let mut file = std::fs::OpenOptions::new()
             .create_new(true)
@@ -433,35 +486,113 @@ impl ThreadLifecycleContributor<Config> for Extension {
                 return;
             };
             let route = self.route(route_name);
-            if let Ok(thread) = ThreadId::from_string(input.thread_store.level_id())
-                && self.enroll(thread, "lead", route).is_ok()
+            let Ok(thread) = ThreadId::from_string(input.thread_store.level_id()) else {
+                return;
+            };
+            let (owner, parent, depth) = match input.session_source {
+                SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth,
+                    ..
+                }) => {
+                    let parent =
+                        self.accounts.0.lock().ok().and_then(|accounts| {
+                            accounts.get(&parent_thread_id.to_string()).cloned()
+                        });
+                    let Some(parent) = parent else {
+                        return;
+                    };
+                    (
+                        format!("agent:{thread}"),
+                        parent.owner,
+                        u32::try_from(*depth).unwrap_or(u32::MAX),
+                    )
+                }
+                _ => ("lead".into(), String::new(), 0),
+            };
+            if owner != "lead"
+                && self
+                    .task
+                    .start_worker(
+                        owner.clone(),
+                        parent,
+                        depth,
+                        self.manifest.worker_limits.clone(),
+                    )
+                    .is_err()
             {
+                return;
+            }
+            if self.enroll(thread, &owner, route).is_ok() {
                 input.thread_store.insert(Lead {
                     thread,
                     route: route_name,
+                    owner,
+                    depth,
                     host: self.0.clone(),
                 });
+            } else if owner != "lead" {
+                let _ = self.task.finish_worker(&owner);
             }
         })
     }
 
     fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if input.thread_store.get::<Lead>().is_some()
-                && matches!(
-                    input.cause,
-                    ThreadIdleCause::Interrupted | ThreadIdleCause::Failed
-                )
-            {
-                self.stop_tree().await;
+            if let Some(lead) = input.thread_store.get::<Lead>() {
+                match input.cause {
+                    ThreadIdleCause::Completed
+                        if self
+                            .accounts
+                            .0
+                            .lock()
+                            .ok()
+                            .and_then(|accounts| accounts.get(&lead.thread.to_string()).cloned())
+                            .is_some_and(|account| account.owner == "lead") =>
+                    {
+                        self.lead_completed
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    ThreadIdleCause::Interrupted | ThreadIdleCause::Failed => {
+                        self.lead_completed
+                            .store(false, std::sync::atomic::Ordering::Release);
+                        self.stop_tree("foreground_interrupted", false, Some(lead.thread))
+                            .await;
+                    }
+                    _ => {}
+                }
             }
         })
     }
 
     fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if input.thread_store.get::<Lead>().is_some() {
-                let _ = self.task.stop();
+            if let Some(lead) = input.thread_store.get::<Lead>() {
+                let account = self
+                    .accounts
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|mut accounts| accounts.remove(&lead.thread.to_string()));
+                if let Some(account) = account {
+                    if account.owner == "lead" {
+                        let completed = self
+                            .lead_completed
+                            .load(std::sync::atomic::Ordering::Acquire);
+                        self.stop_tree(
+                            if completed {
+                                "completed"
+                            } else {
+                                "client_loss"
+                            },
+                            completed,
+                            Some(lead.thread),
+                        )
+                        .await;
+                    } else {
+                        let _ = self.task.finish_worker(&account.owner);
+                    }
+                }
             }
         })
     }

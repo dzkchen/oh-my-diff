@@ -10,7 +10,9 @@ fn limits() -> Limits {
         requests: 3,
         exposure_microusd: 100,
         seconds: 30,
-        concurrent_workers: 1,
+        concurrent_workers: 2,
+        max_depth: 2,
+        max_reassessments: 1,
     }
 }
 
@@ -26,7 +28,8 @@ fn worker() -> WorkerLimits {
 fn contributor_requires_current_authorization_and_exact_identity() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
-    task.start_worker("worker".into(), worker()).unwrap();
+    task.start_worker("worker".into(), "lead".into(), 1, worker())
+        .unwrap();
     assert!(
         task.admit("worker", "meta", "muse-spark-1.3-contributor", 10)
             .is_err()
@@ -53,11 +56,16 @@ fn contributor_requires_current_authorization_and_exact_identity() {
 fn unknown_usage_remains_reserved_after_worker_exit() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
-    task.start_worker("first".into(), worker()).unwrap();
+    task.start_worker("first".into(), "lead".into(), 1, worker())
+        .unwrap();
     task.admit("first", "openai", "gpt-5.6-sol", 60).unwrap();
     task.finish_worker("first").unwrap();
-    assert!(task.start_worker("first".into(), worker()).is_err());
-    task.start_worker("second".into(), worker()).unwrap();
+    assert!(
+        task.start_worker("first".into(), "lead".into(), 1, worker())
+            .is_err()
+    );
+    task.start_worker("second".into(), "lead".into(), 1, worker())
+        .unwrap();
     assert!(task.admit("second", "openai", "gpt-5.6-sol", 41).is_err());
     assert_eq!(task.remaining().unwrap().2, 40);
     let attempt = task.attempts().unwrap().remove(0);
@@ -75,7 +83,8 @@ fn unknown_usage_remains_reserved_after_worker_exit() {
 fn settlement_releases_only_proven_unused_exposure_and_never_request_count() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
-    task.start_worker("worker".into(), worker()).unwrap();
+    task.start_worker("worker".into(), "lead".into(), 1, worker())
+        .unwrap();
     let admission = task.admit("worker", "openai", "gpt-5.6-sol", 60).unwrap();
     task.dispatch(&admission, || Ok(())).unwrap();
     task.settle(
@@ -176,7 +185,8 @@ fn failure_keeps_exposure_and_survives_later_usage_reconciliation() {
 fn revoked_or_stopped_reservations_cannot_dispatch_and_dispatch_is_one_shot() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
-    task.start_worker("worker".into(), worker()).unwrap();
+    task.start_worker("worker".into(), "lead".into(), 1, worker())
+        .unwrap();
     task.set_contributor_authorization(true, "grant").unwrap();
     let request = task
         .admit("worker", "meta", "muse-spark-1.3-contributor", 10)
@@ -289,4 +299,62 @@ fn failure_and_escalation_validation_fail_closed() {
         )
         .unwrap();
     assert!(task.permit_escalation(failure.id, 0).is_err());
+}
+
+#[test]
+fn recursion_requires_an_active_parent_and_shared_depth_capacity() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    assert!(
+        task.start_worker("orphan".into(), "missing".into(), 2, worker())
+            .is_err()
+    );
+    task.start_worker("parent".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.start_worker("child".into(), "parent".into(), 2, worker())
+        .unwrap();
+    assert!(
+        task.start_worker("too-deep".into(), "child".into(), 3, worker())
+            .is_err()
+    );
+    assert!(task.finish_worker("parent").is_err());
+    task.finish_worker("child").unwrap();
+    task.finish_worker("parent").unwrap();
+}
+
+#[test]
+fn equivalent_failures_force_one_bounded_changed_action() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    assert!(
+        !task
+            .observe_equivalent_failure("provider-outage", 2, "fresh retry")
+            .unwrap()
+    );
+    assert!(
+        task.observe_equivalent_failure("provider-outage", 2, "openai fallback")
+            .unwrap()
+    );
+    assert!(
+        task.observe_equivalent_failure("provider-outage", 2, "repeat fallback")
+            .is_err()
+    );
+}
+
+#[test]
+fn explicit_resume_preserves_allowance_and_uncertain_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("task");
+    let task = Task::create(limits(), evidence.clone()).unwrap();
+    let request = task.admit("lead", "openai", "gpt-5.6-sol", 30).unwrap();
+    task.dispatch(&request, || Ok(())).unwrap();
+    task.pause("client_loss", task.uncertain_requests().unwrap())
+        .unwrap();
+    drop(task);
+    assert!(Task::open(limits(), evidence.clone(), None).is_err());
+    let resumed = Task::open(limits(), evidence, Some("user requested resume")).unwrap();
+    assert_eq!(resumed.remaining().unwrap().1, 2);
+    assert_eq!(resumed.remaining().unwrap().2, 70);
+    assert_eq!(resumed.uncertain_requests().unwrap(), vec![1]);
+    resumed.check_active().unwrap();
 }
