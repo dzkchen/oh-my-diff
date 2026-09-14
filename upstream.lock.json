@@ -16,7 +16,7 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/controlled-contributor.patch",
-      "sha256": "adcf0b8b1f65680369322aa0029ea5dcb646a86cfb74178ad9587a0a739b011d"
+      "sha256": "6d5cb9195b1ca13eda653c90b9502634ab03dfd25947102c916c3e0faddce1e8"
     }
   ],
   "compatibility_evidence": ".docs/audits/upstream-compatibility.md"

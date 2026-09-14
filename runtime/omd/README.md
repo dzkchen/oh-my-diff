@@ -7,8 +7,10 @@ provider observation, review and integration. See [the runtime workflow](../READ
 `Task` serializes shared and worker request/exposure admission, journals a
 reservation before dispatch, retains unknown exposure, and records
 raw usage supplied by the host. Worker completion does not refund requests or
-unsettled exposure. A fresh task refuses an existing evidence directory; resume
-is not implemented. The host must supply conservative per-request reservations,
+unsettled exposure. A fresh task refuses an existing evidence directory. An
+explicit resume replays the append-only journal without resetting the original
+deadline, requests, exposure, uncertain operations, or completed evidence. The
+host must supply conservative per-request reservations,
 validate provider usage/rates, bind authorization to the repository and context,
 enforce request and process deadlines, and own the evidence directory outside
 model-write permissions. The authorization setter is a trusted host API.
@@ -16,6 +18,18 @@ Sending must use the one-shot `dispatch` transition, which rechecks live limits
 and authorization before marking the request in flight. The callback runs after
 releasing the task lock so stop/revocation can proceed. Cancellation of dispatched
 requests remains host-owned; admission does not imply remote cancellation.
+
+Checkpointed tasks bind an objective, acceptance criteria, and a bounded
+no-progress threshold at creation. They atomically maintain a compact
+`checkpoint.json` outside conversational history while retaining the complete
+numbered journal. Progress updates preserve completed acceptance evidence,
+steering, failed hypotheses, and candidate/check versions; the host derives
+worker states and remaining allowance. Reconciliation records prior and current
+workspace/process state without pretending it is new progress. Worker results
+move through completed and consumed states, while interruption and failed work
+remain stopped. Duplicate active objectives are rejected. Repeated equivalent
+tool results trigger reassessment and then pause; configured waits remain valid
+until the task deadline.
 
 `record_failure` journals a bounded typed failure with host-owned evidence
 references. `permit_escalation` permits each failure at most once, enforces the

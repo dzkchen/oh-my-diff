@@ -50,6 +50,8 @@ def configure(root, runtime, workspace, home, evidence, gateway, limits, env, ov
                     "repository_identity": runtime["task_identity"], "approved_untracked": [],
                     "limits": {"seconds": 900, "requests": 60, "exposure_microusd": 500000, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1},
                     "worker_limits": {"seconds": 300, "requests": 20, "exposure_microusd": 500000},
+                    "checkpoint": {"objective": runtime["task_identity"], "acceptance_criteria": ["configured executable check passes", "separate review approves the exact candidate", "accepted candidate is integrated without conflicting workspace change"], "max_no_progress_calls": 2},
+                    "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"],
                     "lifecycle": {"explicit_resume": None},
                     "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True},
                     "lead_policy": {"mode": "fixed", "lead": "sol"},

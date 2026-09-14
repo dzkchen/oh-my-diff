@@ -1,4 +1,5 @@
 mod admission;
+mod checkpoint;
 mod workspace;
 
 pub use admission::Admission;
@@ -8,6 +9,17 @@ pub use admission::FailureClass;
 pub use admission::Limits;
 pub use admission::Task;
 pub use admission::WorkerLimits;
+pub use checkpoint::AcceptanceEvidence;
+pub use checkpoint::CallDecision;
+pub use checkpoint::CheckpointTaskStatus;
+pub use checkpoint::CheckpointUpdate;
+pub use checkpoint::LiveState;
+pub use checkpoint::ProcessSnapshot;
+pub use checkpoint::ProcessStatus;
+pub use checkpoint::TaskCheckpoint;
+pub use checkpoint::TaskContract;
+pub use checkpoint::VersionMarker;
+pub use checkpoint::WorkerStatus;
 pub use workspace::File;
 pub use workspace::Snapshot;
 pub use workspace::capture_tracked;

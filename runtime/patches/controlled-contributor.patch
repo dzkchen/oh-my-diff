@@ -1325,10 +1325,10 @@ index 0000000..f632aed
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..d6c770d
+index 0000000..aec3ac8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,1325 @@
+@@ -0,0 +1,1358 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -1819,6 +1819,13 @@ index 0000000..d6c770d
 +            host.manifest.worker_limits.clone(),
 +        )
 +        .map_err(error)?;
++    if let Err(error) = host
++        .task
++        .claim_worker_objective(role, &hash(prompt.as_bytes()))
++    {
++        let _ = host.task.finish_worker(role);
++        return Err(error.to_string());
++    }
 +    if let Err(error) = host.enroll(thread_id, role, route) {
 +        let _ = host.task.finish_worker(role);
 +        return Err(error);
@@ -1901,9 +1908,30 @@ index 0000000..d6c770d
 +    )
 +    .await
 +    .map_err(|_| "native child cleanup deadline exceeded".to_owned())??;
-+    host.task.finish_worker(role).map_err(error)?;
-+    child.active = false;
-+    result
++    match result {
++        Ok(result) => {
++            host.task
++                .complete_worker(
++                    role,
++                    VersionMarker {
++                        label: format!("{role}-result"),
++                        sha256: hash(result.as_bytes()),
++                        evidence: format!("native-thread:{thread_id}"),
++                        evidence_sha256: hash(thread_id.to_string().as_bytes()),
++                    },
++                )
++                .map_err(error)?;
++            child.active = false;
++            Ok(result)
++        }
++        Err(error) => {
++            host.task
++                .finish_worker(role)
++                .map_err(|error| error.to_string())?;
++            child.active = false;
++            Err(error)
++        }
++    }
 +}
 +
 +async fn command(host: &Host, config: &Config, argv: Vec<String>) -> Result<Value, String> {
@@ -2196,6 +2224,9 @@ index 0000000..d6c770d
 +    if changed.is_empty() {
 +        return Err("Contributor returned no code change".into());
 +    }
++    host.task
++        .consume_worker_result(&selected_role)
++        .map_err(error)?;
 +    let tracked = codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)?;
 +    let mut current_paths = tracked.clone();
 +    current_paths.extend(base.files.keys().chain(candidate.files.keys()).cloned());
@@ -2267,6 +2298,7 @@ index 0000000..d6c770d
 +        },
 +    ).await?;
 +    let review: Review = serde_json::from_str(&review).map_err(error)?;
++    host.task.consume_worker_result("reviewer").map_err(error)?;
 +    let review_ref = host.evidence("review.json", &json!({"model": reviewer_route.model, "candidate_sha256": candidate_hash, "response": review}))?;
 +    if !review.approved || review.candidate_sha256 != candidate_hash || !review.findings.is_empty()
 +    {
@@ -2588,6 +2620,7 @@ index 0000000..d6c770d
 +        },
 +    )
 +    .await?;
++    host.task.consume_worker_result(&role).map_err(error)?;
 +    let remaining_after = host.task.remaining().map_err(error)?;
 +    Ok(json!({
 +        "schema": 1,
@@ -2771,10 +2804,10 @@ index 0000000..f39321c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..7a4d419
+index 0000000..6dee452
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,817 @@
+@@ -0,0 +1,1294 @@
 +mod accounting;
 +mod execution;
 +
@@ -2784,26 +2817,44 @@ index 0000000..7a4d419
 +use codex_core::StartThreadOptions;
 +use codex_core::ThreadManager;
 +use codex_core::config::Config;
++use codex_extension_api::ContentItemKind;
++use codex_extension_api::ContextContributor;
 +use codex_extension_api::ExtensionData;
 +use codex_extension_api::ExtensionFuture;
 +use codex_extension_api::ExtensionRegistryBuilder;
 +use codex_extension_api::JsonToolOutput;
++use codex_extension_api::PromptFragment;
 +use codex_extension_api::ThreadIdleCause;
 +use codex_extension_api::ThreadIdleInput;
 +use codex_extension_api::ThreadLifecycleContributor;
 +use codex_extension_api::ThreadStartInput;
 +use codex_extension_api::ThreadStopInput;
 +use codex_extension_api::ToolCall;
++use codex_extension_api::ToolCallOutcome;
 +use codex_extension_api::ToolContributor;
 +use codex_extension_api::ToolExecutor;
 +use codex_extension_api::ToolExecutorFuture;
++use codex_extension_api::ToolFinishInput;
++use codex_extension_api::ToolLifecycleContributor;
++use codex_extension_api::ToolLifecycleFuture;
 +use codex_extension_api::ToolOutput;
++use codex_extension_api::ToolStartInput;
++use codex_extension_api::TurnContextContributionInput;
++use codex_extension_api::TurnItemContributor;
++use codex_omd::CheckpointUpdate;
 +use codex_omd::FailureClass;
 +use codex_omd::Limits;
++use codex_omd::LiveState;
++use codex_omd::ProcessSnapshot;
++use codex_omd::ProcessStatus;
 +use codex_omd::Snapshot;
 +use codex_omd::Task;
++use codex_omd::TaskContract;
++use codex_omd::VersionMarker;
 +use codex_omd::WorkerLimits;
 +use codex_protocol::ThreadId;
++use codex_protocol::items::TurnItem;
++use codex_protocol::models::ResponseItem;
 +use codex_protocol::openai_models::ReasoningEffort;
 +use codex_protocol::protocol::SessionSource;
 +use codex_protocol::protocol::SubAgentSource;
@@ -2833,6 +2884,8 @@ index 0000000..7a4d419
 +    approved_untracked: Vec<String>,
 +    limits: Limits,
 +    worker_limits: WorkerLimits,
++    checkpoint: TaskContract,
++    legitimate_wait_tools: Vec<String>,
 +    lifecycle: LifecyclePolicy,
 +    recovery: RecoveryPolicy,
 +    lead_policy: LeadPolicy,
@@ -2990,6 +3043,13 @@ index 0000000..7a4d419
 +    contribution_started: std::sync::atomic::AtomicBool,
 +    operation: std::sync::atomic::AtomicBool,
 +    lead_completed: std::sync::atomic::AtomicBool,
++    pending_calls: std::sync::Mutex<BTreeMap<String, PendingCall>>,
++}
++
++#[derive(Clone)]
++struct PendingCall {
++    signature_sha256: String,
++    legitimate_wait: bool,
 +}
 +
 +struct OperationGuard<'a>(&'a std::sync::atomic::AtomicBool);
@@ -3012,6 +3072,39 @@ index 0000000..7a4d419
 +struct ContributionTool(Arc<Lead>);
 +
 +struct EscalationTool(Arc<Lead>);
++
++struct CheckpointTool(Arc<Lead>);
++
++fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveState, String> {
++    let approved = manifest
++        .approved_untracked
++        .iter()
++        .cloned()
++        .collect::<std::collections::BTreeSet<_>>();
++    let paths =
++        codex_omd::tracked_paths(&manifest.repository, &approved).map_err(|e| e.to_string())?;
++    let snapshot =
++        codex_omd::capture_tracked(&manifest.repository, &approved, manifest.snapshot_bytes)
++            .map_err(|e| e.to_string())?;
++    let processes = accounts
++        .0
++        .lock()
++        .map_err(|_| "account lock poisoned")?
++        .iter()
++        .map(|(identity, account)| ProcessSnapshot {
++            identity: identity.clone(),
++            owner: account.owner.clone(),
++            status: ProcessStatus::Running,
++        })
++        .collect();
++    Ok(LiveState {
++        workspace_sha256: snapshot.hash().map_err(|e| e.to_string())?,
++        tracked_paths_sha256: execution::hash(
++            &serde_json::to_vec(&paths).map_err(|e| e.to_string())?,
++        ),
++        processes,
++    })
++}
 +
 +pub fn install(
 +    registry: &mut ExtensionRegistryBuilder<Config>,
@@ -3043,6 +3136,17 @@ index 0000000..7a4d419
 +        || manifest.recovery.contributor_attempts == 0
 +        || manifest.recovery.equivalent_failure_threshold < 2
 +        || manifest.recovery.contributor_attempts < manifest.recovery.equivalent_failure_threshold
++        || manifest.legitimate_wait_tools.len() > 16
++        || manifest
++            .legitimate_wait_tools
++            .iter()
++            .any(|name| name.is_empty() || name.len() > 128)
++        || manifest
++            .legitimate_wait_tools
++            .iter()
++            .collect::<std::collections::BTreeSet<_>>()
++            .len()
++            != manifest.legitimate_wait_tools.len()
 +        || manifest
 +            .escalation
 +            .allowed_failure_classes
@@ -3091,15 +3195,18 @@ index 0000000..7a4d419
 +        codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
 +            .map_err(|e| e.to_string())?;
 +    }
++    let accounts = Arc::new(Accounts::default());
++    let live = capture_live_state(&manifest, &accounts)?;
 +    let task = Arc::new(
-+        Task::open(
++        Task::open_checkpointed(
 +            manifest.limits.clone(),
 +            manifest.evidence.clone(),
 +            manifest.lifecycle.explicit_resume.as_deref(),
++            manifest.checkpoint.clone(),
++            live,
 +        )
 +        .map_err(|e| e.to_string())?,
 +    );
-+    let accounts = Arc::new(Accounts::default());
 +    codex_api::request_observer::install_response_observer(accounts.clone())
 +        .map_err(str::to_owned)?;
 +    let host = Arc::new(Host {
@@ -3110,6 +3217,7 @@ index 0000000..7a4d419
 +        contribution_started: std::sync::atomic::AtomicBool::new(false),
 +        operation: std::sync::atomic::AtomicBool::new(false),
 +        lead_completed: std::sync::atomic::AtomicBool::new(false),
++        pending_calls: std::sync::Mutex::new(BTreeMap::new()),
 +    });
 +    let _ = host.authorize();
 +    let deadline_host = host.clone();
@@ -3121,6 +3229,9 @@ index 0000000..7a4d419
 +        deadline_host.stop_tree("task_deadline", true, None).await;
 +    });
 +    registry.thread_lifecycle_contributor(Arc::new(Extension(host.clone())));
++    registry.prompt_contributor(Arc::new(Extension(host.clone())));
++    registry.tool_lifecycle_contributor(Arc::new(Extension(host.clone())));
++    registry.turn_item_contributor(Arc::new(Extension(host.clone())));
 +    registry.tool_contributor(Arc::new(Extension(host)));
 +    Ok(())
 +}
@@ -3147,7 +3258,14 @@ index 0000000..7a4d419
 +
 +    async fn stop_tree(&self, reason: &str, final_stop: bool, except: Option<ThreadId>) {
 +        if final_stop {
-+            let _ = self.task.stop();
++            if reason != "completed"
++                || self
++                    .task
++                    .complete("foreground acceptance checkpoint")
++                    .is_err()
++            {
++                let _ = self.task.stop();
++            }
 +        } else {
 +            let uncertain = self.task.uncertain_requests().unwrap_or_default();
 +            let _ = self.task.pause(reason, uncertain);
@@ -3248,6 +3366,247 @@ index 0000000..7a4d419
 +            .map_err(|e| e.to_string())?;
 +        Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
 +    }
++
++    fn live_state(&self) -> Result<LiveState, String> {
++        capture_live_state(&self.manifest, &self.accounts)
++    }
++
++    fn save_checkpoint(
++        &self,
++        update: CheckpointUpdate,
++    ) -> Result<codex_omd::TaskCheckpoint, String> {
++        for marker in update
++            .candidate_versions
++            .iter()
++            .chain(&update.check_versions)
++            .chain(
++                update
++                    .completed_acceptance
++                    .iter()
++                    .flat_map(|acceptance| &acceptance.evidence),
++            )
++        {
++            let path = PathBuf::from(&marker.evidence);
++            if path.canonicalize().map_err(|e| e.to_string())? != path
++                || !path.starts_with(&self.manifest.evidence)
++                || !std::fs::symlink_metadata(&path)
++                    .map_err(|e| e.to_string())?
++                    .file_type()
++                    .is_file()
++                || execution::hash(&std::fs::read(&path).map_err(|e| e.to_string())?)
++                    != marker.evidence_sha256
++            {
++                return Err("checkpoint marker is not bound to host-owned evidence".into());
++            }
++        }
++        self.task
++            .save_checkpoint(update, self.live_state()?)
++            .map_err(|e| e.to_string())
++    }
++
++    fn observe_call_result(&self, thread: ThreadId, call_id: &str, result: &[u8]) {
++        let identity = format!("{thread}:{call_id}");
++        let pending = self
++            .pending_calls
++            .lock()
++            .ok()
++            .and_then(|mut calls| calls.remove(&identity));
++        if let Some(pending) = pending {
++            let _ = self.task.observe_call(
++                &pending.signature_sha256,
++                &execution::hash(result),
++                pending.legitimate_wait,
++            );
++        }
++    }
++
++    fn observe_history_results<'a>(
++        &self,
++        thread: ThreadId,
++        items: impl Iterator<Item = &'a ResponseItem>,
++    ) {
++        for item in items {
++            let observed = match item {
++                ResponseItem::FunctionCallOutput {
++                    call_id: Some(call_id),
++                    output,
++                    ..
++                } => serde_json::to_vec(output)
++                    .ok()
++                    .map(|result| (call_id.as_str(), result)),
++                ResponseItem::CustomToolCallOutput {
++                    call_id, output, ..
++                } => serde_json::to_vec(output)
++                    .ok()
++                    .map(|result| (call_id.as_str(), result)),
++                ResponseItem::ToolSearchOutput {
++                    call_id: Some(call_id),
++                    status,
++                    tools,
++                    ..
++                } => serde_json::to_vec(&(status, tools))
++                    .ok()
++                    .map(|result| (call_id.as_str(), result)),
++                _ => None,
++            };
++            if let Some((call_id, result)) = observed {
++                self.observe_call_result(thread, call_id, &result);
++            }
++        }
++    }
++}
++
++impl ContextContributor for Extension {
++    fn contribute_turn_context<'a>(
++        &'a self,
++        input: TurnContextContributionInput<'a>,
++    ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
++        Box::pin(async move {
++            if input.thread_store.get::<Lead>().is_none() {
++                return Vec::new();
++            }
++            let Ok(Some(checkpoint)) = self.task.checkpoint() else {
++                return Vec::new();
++            };
++            let Ok(rendered) = serde_json::to_string(&checkpoint) else {
++                return Vec::new();
++            };
++            vec![PromptFragment::developer_capability(
++                format!(
++                    "Host-owned durable task checkpoint. Treat it as authoritative across compaction and use omd_checkpoint for evidence-backed progress updates: {rendered}"
++                ),
++                ContentItemKind("oh_my_diff.task_checkpoint".into()),
++            )]
++        })
++    }
++}
++
++impl ToolLifecycleContributor for Extension {
++    fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
++        Box::pin(async move {
++            let Some(lead) = input.thread_store.get::<Lead>() else {
++                return;
++            };
++            self.observe_history_results(lead.thread, input.conversation_history.items());
++            let tool = input.tool_name.to_string();
++            let payload_sha256 = execution::hash(input.payload.log_payload().as_bytes());
++            let signature_sha256 =
++                execution::hash(format!("{}\0{}\0{}", lead.owner, tool, payload_sha256).as_bytes());
++            let legitimate_wait = self
++                .manifest
++                .legitimate_wait_tools
++                .iter()
++                .any(|name| name == &tool);
++            if let Ok(mut pending) = self.pending_calls.lock() {
++                pending.insert(
++                    format!("{}:{}", lead.thread, input.call_id),
++                    PendingCall {
++                        signature_sha256,
++                        legitimate_wait,
++                    },
++                );
++            }
++        })
++    }
++
++    fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
++        Box::pin(async move {
++            let Some(lead) = input.thread_store.get::<Lead>() else {
++                return;
++            };
++            let result = match input.outcome {
++                ToolCallOutcome::Completed { .. } => return,
++                ToolCallOutcome::Blocked => b"blocked".as_slice(),
++                ToolCallOutcome::Failed { handler_executed } => {
++                    if handler_executed {
++                        b"failed:executed".as_slice()
++                    } else {
++                        b"failed:not_executed".as_slice()
++                    }
++                }
++                ToolCallOutcome::Aborted => b"aborted".as_slice(),
++            };
++            self.observe_call_result(lead.thread, input.call_id, result);
++        })
++    }
++}
++
++impl TurnItemContributor for Extension {
++    fn contribute<'a>(
++        &'a self,
++        thread_store: &'a ExtensionData,
++        _turn_store: &'a ExtensionData,
++        item: &'a mut TurnItem,
++    ) -> ExtensionFuture<'a, Result<(), String>> {
++        Box::pin(async move {
++            let Some(lead) = thread_store.get::<Lead>() else {
++                return Ok(());
++            };
++            let observed = match item {
++                TurnItem::FunctionCallOutput(output) => Some((
++                    output.id.as_str(),
++                    serde_json::to_vec(&output.output).map_err(|e| e.to_string())?,
++                )),
++                TurnItem::DynamicToolCall(output)
++                    if !matches!(
++                        output.status,
++                        codex_protocol::items::DynamicToolCallStatus::InProgress
++                    ) =>
++                {
++                    Some((
++                        output.id.as_str(),
++                        serde_json::to_vec(&(
++                            output.status,
++                            &output.content_items,
++                            output.success,
++                            &output.error,
++                        ))
++                        .map_err(|e| e.to_string())?,
++                    ))
++                }
++                TurnItem::CollabAgentToolCall(output)
++                    if !matches!(
++                        output.status,
++                        codex_protocol::items::CollabAgentToolCallStatus::InProgress
++                    ) =>
++                {
++                    Some((
++                        output.id.as_str(),
++                        serde_json::to_vec(&(
++                            output.status,
++                            &output.receiver_thread_ids,
++                            &output.receiver_agents,
++                        ))
++                        .map_err(|e| e.to_string())?,
++                    ))
++                }
++                TurnItem::McpToolCall(output)
++                    if !matches!(
++                        output.status,
++                        codex_protocol::items::McpToolCallStatus::InProgress
++                    ) =>
++                {
++                    Some((
++                        output.id.as_str(),
++                        serde_json::to_vec(&(&output.status, &output.result, &output.error))
++                            .map_err(|e| e.to_string())?,
++                    ))
++                }
++                TurnItem::ContextCompaction(_) => {
++                    let live = self.live_state()?;
++                    self.task
++                        .reconcile("conversation_compaction", live)
++                        .map_err(|e| e.to_string())?;
++                    None
++                }
++                _ => None,
++            };
++            if let Some((call_id, result)) = observed {
++                self.observe_call_result(lead.thread, call_id, &result);
++            }
++            Ok(())
++        })
++    }
 +}
 +
 +impl ThreadLifecycleContributor<Config> for Extension {
@@ -3330,6 +3689,19 @@ index 0000000..7a4d419
 +                        self.lead_completed
 +                            .store(true, std::sync::atomic::Ordering::Release);
 +                    }
++                    ThreadIdleCause::Completed if lead.owner.starts_with("agent:") => {
++                        let _ = self.task.complete_worker(
++                            &lead.owner,
++                            VersionMarker {
++                                label: "native-agent-result".into(),
++                                sha256: execution::hash(lead.thread.to_string().as_bytes()),
++                                evidence: format!("native-thread:{}", lead.thread),
++                                evidence_sha256: execution::hash(
++                                    lead.thread.to_string().as_bytes(),
++                                ),
++                            },
++                        );
++                    }
 +                    ThreadIdleCause::Interrupted | ThreadIdleCause::Failed => {
 +                        self.lead_completed
 +                            .store(false, std::sync::atomic::Ordering::Release);
@@ -3367,7 +3739,9 @@ index 0000000..7a4d419
 +                        )
 +                        .await;
 +                    } else {
-+                        let _ = self.task.finish_worker(&account.owner);
++                        if self.task.consume_worker_result(&account.owner).is_err() {
++                            let _ = self.task.finish_worker(&account.owner);
++                        }
 +                    }
 +                }
 +            }
@@ -3384,8 +3758,10 @@ index 0000000..7a4d419
 +        let Some(lead) = thread.get::<Lead>() else {
 +            return Vec::new();
 +        };
-+        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> =
-+            vec![Arc::new(EscalationTool(lead.clone()))];
++        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> = vec![
++            Arc::new(CheckpointTool(lead.clone())),
++            Arc::new(EscalationTool(lead.clone())),
++        ];
 +        if accounting::authorized(
 +            &self.manifest.authorization,
 +            &self.manifest.authorization_sha256,
@@ -3394,6 +3770,140 @@ index 0000000..7a4d419
 +            tools.push(Arc::new(ContributionTool(lead)));
 +        }
 +        tools
++    }
++}
++
++fn version_marker_schema() -> JsonSchema {
++    JsonSchema::object(
++        BTreeMap::from([
++            (
++                "label".into(),
++                JsonSchema::string(Some("Version label.".into())),
++            ),
++            (
++                "sha256".into(),
++                JsonSchema::string(Some("Exact lowercase SHA256.".into())),
++            ),
++            (
++                "evidence".into(),
++                JsonSchema::string(Some("Host-owned evidence reference.".into())),
++            ),
++            (
++                "evidence_sha256".into(),
++                JsonSchema::string(Some("Exact lowercase evidence SHA256.".into())),
++            ),
++        ]),
++        Some(vec![
++            "label".into(),
++            "sha256".into(),
++            "evidence".into(),
++            "evidence_sha256".into(),
++        ]),
++        Some(false.into()),
++    )
++}
++
++impl<'call> ToolExecutor<ToolCall<'call>> for CheckpointTool {
++    fn tool_name(&self) -> ToolName {
++        ToolName::plain("omd_checkpoint")
++    }
++
++    fn spec(&self) -> ToolSpec {
++        let acceptance = JsonSchema::object(
++            BTreeMap::from([
++                (
++                    "criterion".into(),
++                    JsonSchema::string(Some(
++                        "Exact acceptance criterion from the task contract.".into(),
++                    )),
++                ),
++                (
++                    "evidence".into(),
++                    JsonSchema::array(
++                        version_marker_schema(),
++                        Some("Evidence proving this criterion.".into()),
++                    ),
++                ),
++            ]),
++            Some(vec!["criterion".into(), "evidence".into()]),
++            Some(false.into()),
++        );
++        let text_array = |description: &str| {
++            JsonSchema::array(JsonSchema::string(None), Some(description.into()))
++        };
++        ToolSpec::Function(ResponsesApiTool {
++            name: "omd_checkpoint".into(),
++            description: "Persist an evidence-backed compact task checkpoint outside the conversation summary. Completed acceptance, steering, failed hypotheses, and version markers are monotonic; remaining work may be revised. Host captures worker states, live workspace/process state, and remaining allowance.".into(),
++            strict: false,
++            defer_loading: None,
++            output_schema: None,
++            parameters: JsonSchema::object(
++                BTreeMap::from([
++                    (
++                        "completed_acceptance".into(),
++                        JsonSchema::array(acceptance, Some("Completed acceptance evidence.".into())),
++                    ),
++                    (
++                        "completed_steering".into(),
++                        text_array("Completed user steering."),
++                    ),
++                    ("remaining_work".into(), text_array("Exact work still remaining.")),
++                    (
++                        "failed_hypotheses".into(),
++                        text_array("Failed hypotheses retained for recovery."),
++                    ),
++                    (
++                        "candidate_versions".into(),
++                        JsonSchema::array(
++                            version_marker_schema(),
++                            Some("Candidate versions and evidence.".into()),
++                        ),
++                    ),
++                    (
++                        "check_versions".into(),
++                        JsonSchema::array(
++                            version_marker_schema(),
++                            Some("Check versions and evidence.".into()),
++                        ),
++                    ),
++                ]),
++                Some(vec![
++                    "completed_acceptance".into(),
++                    "completed_steering".into(),
++                    "remaining_work".into(),
++                    "failed_hypotheses".into(),
++                    "candidate_versions".into(),
++                    "check_versions".into(),
++                ]),
++                Some(false.into()),
++            ),
++        })
++    }
++
++    fn exposure(&self) -> ToolExposure {
++        ToolExposure::Deferred
++    }
++
++    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
++    where
++        'call: 'a,
++    {
++        Box::pin(async move {
++            let update: CheckpointUpdate = serde_json::from_str(call.function_arguments()?)
++                .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
++            let checkpoint = self
++                .0
++                .host
++                .save_checkpoint(update)
++                .map_err(FunctionCallError::RespondToModel)?;
++            Ok(Box::new(JsonToolOutput::new(json!({
++                "schema": 1,
++                "revision": checkpoint.revision,
++                "task_status": checkpoint.task_status,
++                "remaining_work": checkpoint.remaining_work,
++                "allowance": checkpoint.allowance,
++            }))) as Box<dyn ToolOutput>)
++        })
 +    }
 +}
 +
@@ -3648,10 +4158,23 @@ index 0000000..812e16b
 +tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000..884c9af
+index 0000000..3a9dfb0
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1018 @@
+@@ -0,0 +1,1730 @@
++use crate::checkpoint::AllowanceCheckpoint;
++use crate::checkpoint::CallDecision;
++use crate::checkpoint::CheckpointTaskStatus;
++use crate::checkpoint::CheckpointUpdate;
++use crate::checkpoint::LiveState;
++use crate::checkpoint::NoProgressCheckpoint;
++use crate::checkpoint::Reconciliation;
++use crate::checkpoint::TaskCheckpoint;
++use crate::checkpoint::TaskContract;
++use crate::checkpoint::VersionMarker;
++use crate::checkpoint::WorkerCheckpoint;
++use crate::checkpoint::WorkerStatus;
++use crate::checkpoint::preserves;
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -3734,7 +4257,9 @@ index 0000000..884c9af
 +    started: Instant,
 +    requests: u32,
 +    exposure: u64,
-+    active: bool,
++    status: WorkerStatus,
++    objective: Option<String>,
++    result: Option<VersionMarker>,
 +}
 +
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3742,6 +4267,14 @@ index 0000000..884c9af
 +    Active,
 +    Paused,
 +    Stopped,
++    Completed,
++}
++
++#[derive(Clone)]
++struct CallRecord {
++    result_sha256: String,
++    progress_revision: u64,
++    unchanged_calls: u32,
 +}
 +
 +struct State {
@@ -3757,6 +4290,9 @@ index 0000000..884c9af
 +    reassessments: u32,
 +    failure_fingerprints: BTreeMap<String, u32>,
 +    workers: BTreeMap<String, Worker>,
++    contract: Option<TaskContract>,
++    checkpoint: Option<TaskCheckpoint>,
++    calls: BTreeMap<String, CallRecord>,
 +}
 +
 +pub struct Task {
@@ -3780,6 +4316,37 @@ index 0000000..884c9af
 +
 +impl Task {
 +    pub fn create(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
++        Self::create_inner(limits, evidence, None)
++    }
++
++    pub fn create_checkpointed(
++        limits: Limits,
++        evidence: PathBuf,
++        contract: TaskContract,
++        live: LiveState,
++    ) -> io::Result<Self> {
++        contract.validate()?;
++        live.validate()?;
++        let task = Self::create_inner(limits, evidence, Some(contract.clone()))?;
++        task.save_checkpoint(
++            CheckpointUpdate {
++                completed_acceptance: Vec::new(),
++                completed_steering: Vec::new(),
++                remaining_work: contract.acceptance_criteria,
++                failed_hypotheses: Vec::new(),
++                candidate_versions: Vec::new(),
++                check_versions: Vec::new(),
++            },
++            live,
++        )?;
++        Ok(task)
++    }
++
++    fn create_inner(
++        limits: Limits,
++        evidence: PathBuf,
++        contract: Option<TaskContract>,
++    ) -> io::Result<Self> {
 +        if limits.requests == 0
 +            || limits.seconds == 0
 +            || limits.concurrent_workers == 0
@@ -3809,6 +4376,9 @@ index 0000000..884c9af
 +                reassessments: 0,
 +                failure_fingerprints: BTreeMap::new(),
 +                workers: BTreeMap::new(),
++                contract: contract.clone(),
++                checkpoint: None,
++                calls: BTreeMap::new(),
 +            }),
 +        };
 +        let mut state = task
@@ -3817,7 +4387,7 @@ index 0000000..884c9af
 +            .map_err(|_| denied("task lock poisoned"))?;
 +        task.record(
 +            &mut state,
-+            &serde_json::json!({"event": "created", "limits": task.limits}),
++            &serde_json::json!({"event": "created", "limits": task.limits, "contract": contract}),
 +        )?;
 +        drop(state);
 +        Ok(task)
@@ -3828,11 +4398,45 @@ index 0000000..884c9af
 +        evidence: PathBuf,
 +        explicit_resume: Option<&str>,
 +    ) -> io::Result<Self> {
++        Self::open_inner(limits, evidence, explicit_resume, None, None)
++    }
++
++    pub fn open_checkpointed(
++        limits: Limits,
++        evidence: PathBuf,
++        explicit_resume: Option<&str>,
++        contract: TaskContract,
++        live: LiveState,
++    ) -> io::Result<Self> {
++        contract.validate()?;
++        live.validate()?;
 +        if !evidence.exists() {
 +            if explicit_resume.is_some() {
 +                return Err(denied("explicit resume has no prior task evidence"));
 +            }
-+            return Self::create(limits, evidence);
++            return Self::create_checkpointed(limits, evidence, contract, live);
++        }
++        Self::open_inner(
++            limits,
++            evidence,
++            explicit_resume,
++            Some(contract),
++            Some(live),
++        )
++    }
++
++    fn open_inner(
++        limits: Limits,
++        evidence: PathBuf,
++        explicit_resume: Option<&str>,
++        expected_contract: Option<TaskContract>,
++        current_live: Option<LiveState>,
++    ) -> io::Result<Self> {
++        if !evidence.exists() {
++            if explicit_resume.is_some() {
++                return Err(denied("explicit resume has no prior task evidence"));
++            }
++            return Self::create_inner(limits, evidence, expected_contract);
 +        }
 +        let reference =
 +            explicit_resume.ok_or_else(|| denied("existing task requires explicit resume"))?;
@@ -3866,6 +4470,9 @@ index 0000000..884c9af
 +            reassessments: 0,
 +            failure_fingerprints: BTreeMap::new(),
 +            workers: BTreeMap::new(),
++            contract: None,
++            checkpoint: None,
++            calls: BTreeMap::new(),
 +        };
 +        let mut created_unix_millis = None;
 +        for entry in records {
@@ -3892,9 +4499,20 @@ index 0000000..884c9af
 +            match record["event"].as_str() {
 +                Some("created") => {
 +                    let recorded: Limits = serde_json::from_value(record["limits"].clone())?;
-+                    if state.sequence != 1 || recorded != limits {
-+                        return Err(denied("resume limits differ from original task"));
++                    let recorded_contract = record
++                        .get("contract")
++                        .filter(|value| !value.is_null())
++                        .map(|value| serde_json::from_value::<TaskContract>(value.clone()))
++                        .transpose()?;
++                    if state.sequence != 1
++                        || recorded != limits
++                        || recorded_contract != expected_contract
++                    {
++                        return Err(denied(
++                            "resume limits or contract differ from original task",
++                        ));
 +                    }
++                    state.contract = recorded_contract;
 +                }
 +                Some("contributor_authorization") => {
 +                    state.contributor_authorized = record["authorized"].as_bool().unwrap_or(false);
@@ -3914,7 +4532,9 @@ index 0000000..884c9af
 +                            started: Instant::now(),
 +                            requests: 0,
 +                            exposure: 0,
-+                            active: true,
++                            status: WorkerStatus::Active,
++                            objective: None,
++                            result: None,
 +                        },
 +                    );
 +                }
@@ -3923,8 +4543,37 @@ index 0000000..884c9af
 +                        .as_str()
 +                        .and_then(|id| state.workers.get_mut(id))
 +                    {
-+                        worker.active = false;
++                        worker.status = WorkerStatus::Stopped;
 +                    }
++                }
++                Some("worker_objective_claimed") => {
++                    let worker = record["worker"]
++                        .as_str()
++                        .and_then(|id| state.workers.get_mut(id))
++                        .ok_or_else(|| denied("objective worker missing"))?;
++                    worker.objective = Some(
++                        record["objective"]
++                            .as_str()
++                            .ok_or_else(|| denied("worker objective missing"))?
++                            .to_owned(),
++                    );
++                }
++                Some("worker_completed") => {
++                    let worker = record["worker"]
++                        .as_str()
++                        .and_then(|id| state.workers.get_mut(id))
++                        .ok_or_else(|| denied("completed worker missing"))?;
++                    let result: VersionMarker = serde_json::from_value(record["result"].clone())?;
++                    result.validate()?;
++                    worker.status = WorkerStatus::Completed;
++                    worker.result = Some(result);
++                }
++                Some("worker_result_consumed") => {
++                    let worker = record["worker"]
++                        .as_str()
++                        .and_then(|id| state.workers.get_mut(id))
++                        .ok_or_else(|| denied("consumed worker missing"))?;
++                    worker.status = WorkerStatus::Consumed;
 +                }
 +                Some("request_admitted")
 +                | Some("request_dispatched")
@@ -3959,6 +4608,64 @@ index 0000000..884c9af
 +                        .insert(fingerprint.to_owned(), count);
 +                }
 +                Some("loop_reassessed") => state.reassessments += 1,
++                Some("checkpoint_saved") => {
++                    let checkpoint: TaskCheckpoint =
++                        serde_json::from_value(record["checkpoint"].clone())?;
++                    let contract = state
++                        .contract
++                        .as_ref()
++                        .ok_or_else(|| denied("checkpoint contract missing"))?;
++                    if checkpoint.schema != 1
++                        || checkpoint.objective != contract.objective
++                        || checkpoint.acceptance_criteria != contract.acceptance_criteria
++                        || checkpoint.progress_revision == 0
++                        || state.checkpoint.as_ref().is_some_and(|prior| {
++                            checkpoint.progress_revision < prior.progress_revision
++                                || checkpoint.progress_revision
++                                    > prior.progress_revision.saturating_add(1)
++                        })
++                        || checkpoint.revision
++                            != state
++                                .checkpoint
++                                .as_ref()
++                                .map_or(1, |prior| prior.revision.saturating_add(1))
++                    {
++                        return Err(denied("checkpoint sequence or contract changed"));
++                    }
++                    CheckpointUpdate {
++                        completed_acceptance: checkpoint.completed_acceptance.clone(),
++                        completed_steering: checkpoint.completed_steering.clone(),
++                        remaining_work: checkpoint.remaining_work.clone(),
++                        failed_hypotheses: checkpoint.failed_hypotheses.clone(),
++                        candidate_versions: checkpoint.candidate_versions.clone(),
++                        check_versions: checkpoint.check_versions.clone(),
++                    }
++                    .validate(contract)?;
++                    checkpoint.live.validate()?;
++                    state.checkpoint = Some(checkpoint);
++                }
++                Some("call_observed") => {
++                    let signature = record["signature_sha256"]
++                        .as_str()
++                        .ok_or_else(|| denied("call signature missing"))?;
++                    state.calls.insert(
++                        signature.to_owned(),
++                        CallRecord {
++                            result_sha256: record["result_sha256"]
++                                .as_str()
++                                .ok_or_else(|| denied("call result hash missing"))?
++                                .to_owned(),
++                            progress_revision: record["progress_revision"]
++                                .as_u64()
++                                .ok_or_else(|| denied("call progress revision missing"))?,
++                            unchanged_calls: record["unchanged_calls"]
++                                .as_u64()
++                                .and_then(|value| u32::try_from(value).ok())
++                                .ok_or_else(|| denied("unchanged call count missing"))?,
++                        },
++                    );
++                }
++                Some("no_progress_paused") => state.status = TaskStatus::Paused,
 +                Some("task_paused") => state.status = TaskStatus::Paused,
 +                Some("task_resumed") => state.status = TaskStatus::Active,
 +                Some("reservation_violation") => {
@@ -3968,6 +4675,9 @@ index 0000000..884c9af
 +                }
 +                Some("task_stopped") => {
 +                    state.status = TaskStatus::Stopped;
++                }
++                Some("task_completed") => {
++                    state.status = TaskStatus::Completed;
 +                }
 +                Some("dispatch_callback_failed") => {}
 +                Some(_) => return Err(denied("resume evidence event is unsupported")),
@@ -3989,10 +4699,12 @@ index 0000000..884c9af
 +                .ok_or_else(|| denied("resume exposure overflow"))
 +        })?;
 +        for worker in state.workers.values_mut() {
-+            worker.active = false;
++            if worker.status == WorkerStatus::Active {
++                worker.status = WorkerStatus::Stopped;
++            }
 +        }
-+        if state.status == TaskStatus::Stopped {
-+            return Err(denied("stopped task cannot resume"));
++        if matches!(state.status, TaskStatus::Stopped | TaskStatus::Completed) {
++            return Err(denied("stopped or completed task cannot resume"));
 +        }
 +        let deadline_unix_millis = created_unix_millis
 +            .ok_or_else(|| denied("created timestamp missing"))?
@@ -4008,6 +4720,7 @@ index 0000000..884c9af
 +            evidence,
 +            state: Mutex::new(state),
 +        };
++        task.rewrite_compact_checkpoint()?;
 +        let uncertain = task.uncertain_requests()?;
 +        {
 +            let mut state = task
@@ -4021,6 +4734,9 @@ index 0000000..884c9af
 +                )?;
 +                state.status = TaskStatus::Paused;
 +            }
++        }
++        if let Some(live) = current_live {
++            task.reconcile("restart", live)?;
 +        }
 +        task.resume(reference)?;
 +        Ok(task)
@@ -4056,6 +4772,357 @@ index 0000000..884c9af
 +            state.status = TaskStatus::Stopped;
 +        }
 +        result
++    }
++
++    fn task_status(status: TaskStatus) -> CheckpointTaskStatus {
++        match status {
++            TaskStatus::Active => CheckpointTaskStatus::Active,
++            TaskStatus::Paused => CheckpointTaskStatus::Paused,
++            TaskStatus::Stopped => CheckpointTaskStatus::Stopped,
++            TaskStatus::Completed => CheckpointTaskStatus::Completed,
++        }
++    }
++
++    fn allowance(&self, state: &State) -> AllowanceCheckpoint {
++        AllowanceCheckpoint {
++            seconds_remaining: self
++                .deadline_unix_millis
++                .saturating_sub(unix_millis().unwrap_or(u128::MAX))
++                .min(u128::from(u64::MAX)) as u64
++                / 1000,
++            requests_consumed: state.requests,
++            requests_remaining: self.limits.requests.saturating_sub(state.requests),
++            exposure_consumed_microusd: state.exposure,
++            exposure_remaining_microusd: self
++                .limits
++                .exposure_microusd
++                .saturating_sub(state.exposure),
++            uncertain_requests: state
++                .attempts
++                .values()
++                .filter(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
++                .map(|attempt| attempt.request)
++                .collect(),
++        }
++    }
++
++    fn worker_checkpoints(state: &State) -> Vec<WorkerCheckpoint> {
++        state
++            .workers
++            .iter()
++            .map(|(id, worker)| WorkerCheckpoint {
++                id: id.clone(),
++                parent: worker.parent.clone(),
++                depth: worker.depth,
++                objective: worker.objective.clone(),
++                status: worker.status,
++                result: worker.result.clone(),
++            })
++            .collect()
++    }
++
++    fn write_compact_checkpoint(&self, checkpoint: &TaskCheckpoint) -> io::Result<()> {
++        let bytes = serde_json::to_vec(checkpoint)?;
++        if bytes.len() > 65_536 {
++            return Err(denied("compact checkpoint exceeds size limit"));
++        }
++        let temporary = self.evidence.join(format!(
++            ".checkpoint-{}-{}.tmp",
++            checkpoint.revision,
++            unix_millis()?
++        ));
++        let mut file = OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(&temporary)?;
++        file.write_all(&bytes)?;
++        file.sync_all()?;
++        fs::rename(&temporary, self.evidence.join("checkpoint.json"))?;
++        OpenOptions::new()
++            .read(true)
++            .open(&self.evidence)?
++            .sync_all()
++    }
++
++    fn rewrite_compact_checkpoint(&self) -> io::Result<()> {
++        let checkpoint = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?
++            .checkpoint
++            .clone();
++        if let Some(checkpoint) = checkpoint {
++            self.write_compact_checkpoint(&checkpoint)?;
++        }
++        Ok(())
++    }
++
++    fn save_checkpoint_inner(
++        &self,
++        update: CheckpointUpdate,
++        live: LiveState,
++        reconciliation: Option<Reconciliation>,
++    ) -> io::Result<TaskCheckpoint> {
++        live.validate()?;
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if matches!(state.status, TaskStatus::Stopped | TaskStatus::Completed) {
++            return Err(denied("terminal task cannot checkpoint"));
++        }
++        let contract = state
++            .contract
++            .clone()
++            .ok_or_else(|| denied("task has no checkpoint contract"))?;
++        update.validate(&contract)?;
++        if let Some(prior) = &state.checkpoint
++            && (!preserves(&prior.completed_acceptance, &update.completed_acceptance)
++                || !preserves(&prior.completed_steering, &update.completed_steering)
++                || !preserves(&prior.failed_hypotheses, &update.failed_hypotheses)
++                || !preserves(&prior.candidate_versions, &update.candidate_versions)
++                || !preserves(&prior.check_versions, &update.check_versions))
++        {
++            return Err(denied("checkpoint cannot discard completed evidence"));
++        }
++        if reconciliation.is_none()
++            && state.checkpoint.as_ref().is_some_and(|prior| {
++                prior.completed_acceptance == update.completed_acceptance
++                    && prior.completed_steering == update.completed_steering
++                    && prior.remaining_work == update.remaining_work
++                    && prior.failed_hypotheses == update.failed_hypotheses
++                    && prior.candidate_versions == update.candidate_versions
++                    && prior.check_versions == update.check_versions
++                    && prior.live == live
++            })
++        {
++            return Err(denied("checkpoint update contains no progress"));
++        }
++        let revision = state
++            .checkpoint
++            .as_ref()
++            .map_or(1, |checkpoint| checkpoint.revision.saturating_add(1));
++        let progress_changed = state.checkpoint.as_ref().is_none_or(|prior| {
++            prior.completed_acceptance != update.completed_acceptance
++                || prior.completed_steering != update.completed_steering
++                || prior.remaining_work != update.remaining_work
++                || prior.failed_hypotheses != update.failed_hypotheses
++                || prior.candidate_versions != update.candidate_versions
++                || prior.check_versions != update.check_versions
++        });
++        let progress_revision = state.checkpoint.as_ref().map_or(1, |checkpoint| {
++            checkpoint
++                .progress_revision
++                .saturating_add(u64::from(progress_changed))
++        });
++        let no_progress = state
++            .checkpoint
++            .as_ref()
++            .map(|checkpoint| checkpoint.no_progress.clone())
++            .unwrap_or(NoProgressCheckpoint {
++                signature_sha256: None,
++                unchanged_calls: 0,
++                max_unchanged_calls: contract.max_no_progress_calls,
++                decision: "progress".into(),
++            });
++        let checkpoint = TaskCheckpoint {
++            schema: 1,
++            revision,
++            progress_revision,
++            task_status: Self::task_status(state.status),
++            objective: contract.objective,
++            acceptance_criteria: contract.acceptance_criteria,
++            completed_acceptance: update.completed_acceptance,
++            completed_steering: update.completed_steering,
++            remaining_work: update.remaining_work,
++            failed_hypotheses: update.failed_hypotheses,
++            candidate_versions: update.candidate_versions,
++            check_versions: update.check_versions,
++            workers: Self::worker_checkpoints(&state),
++            allowance: self.allowance(&state),
++            live,
++            reconciliation,
++            no_progress,
++        };
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "checkpoint_saved", "checkpoint": checkpoint}),
++        )?;
++        if let Err(error) = self.write_compact_checkpoint(&checkpoint) {
++            state.status = TaskStatus::Stopped;
++            return Err(error);
++        }
++        state.checkpoint = Some(checkpoint.clone());
++        Ok(checkpoint)
++    }
++
++    pub fn save_checkpoint(
++        &self,
++        update: CheckpointUpdate,
++        live: LiveState,
++    ) -> io::Result<TaskCheckpoint> {
++        self.save_checkpoint_inner(update, live, None)
++    }
++
++    pub fn reconcile(&self, reason: &str, live: LiveState) -> io::Result<TaskCheckpoint> {
++        if reason.is_empty() || reason.len() > 256 {
++            return Err(denied("reconciliation reason required"));
++        }
++        let prior = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?
++            .checkpoint
++            .clone()
++            .ok_or_else(|| denied("task has no checkpoint to reconcile"))?;
++        let reconciliation = Reconciliation {
++            reason: reason.to_owned(),
++            prior_workspace_sha256: prior.live.workspace_sha256.clone(),
++            current_workspace_sha256: live.workspace_sha256.clone(),
++            changed_workspace: prior.live.workspace_sha256 != live.workspace_sha256,
++            prior_processes: prior.live.processes.clone(),
++            current_processes: live.processes.clone(),
++        };
++        self.save_checkpoint_inner(
++            CheckpointUpdate {
++                completed_acceptance: prior.completed_acceptance,
++                completed_steering: prior.completed_steering,
++                remaining_work: prior.remaining_work,
++                failed_hypotheses: prior.failed_hypotheses,
++                candidate_versions: prior.candidate_versions,
++                check_versions: prior.check_versions,
++            },
++            live,
++            Some(reconciliation),
++        )
++    }
++
++    pub fn checkpoint(&self) -> io::Result<Option<TaskCheckpoint>> {
++        Ok(self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?
++            .checkpoint
++            .clone())
++    }
++
++    fn refresh_checkpoint(&self, state: &mut State) -> io::Result<()> {
++        let workers = Self::worker_checkpoints(state);
++        let allowance = self.allowance(state);
++        let status = Self::task_status(state.status);
++        if let Some(checkpoint) = state.checkpoint.as_mut() {
++            checkpoint.task_status = status;
++            checkpoint.workers = workers;
++            checkpoint.allowance = allowance;
++            if let Err(error) = self.write_compact_checkpoint(checkpoint) {
++                state.status = TaskStatus::Stopped;
++                return Err(error);
++            }
++        }
++        Ok(())
++    }
++
++    pub fn observe_call(
++        &self,
++        signature_sha256: &str,
++        result_sha256: &str,
++        legitimate_wait: bool,
++    ) -> io::Result<CallDecision> {
++        let valid_hash = |value: &str| {
++            value.len() == 64
++                && value
++                    .bytes()
++                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
++        };
++        if !valid_hash(signature_sha256) || !valid_hash(result_sha256) {
++            return Err(denied("call observation requires SHA256 identities"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if state.status != TaskStatus::Active || self.expired() {
++            return Err(denied("task stopped or expired"));
++        }
++        let progress_revision = state
++            .checkpoint
++            .as_ref()
++            .ok_or_else(|| denied("task has no checkpoint"))?
++            .progress_revision;
++        let max = state
++            .contract
++            .as_ref()
++            .ok_or_else(|| denied("task has no checkpoint contract"))?
++            .max_no_progress_calls;
++        let prior = state.calls.get(signature_sha256);
++        let unchanged = prior.is_some_and(|call| {
++            call.result_sha256 == result_sha256 && call.progress_revision == progress_revision
++        });
++        let unchanged_calls = if unchanged {
++            prior
++                .map(|call| call.unchanged_calls)
++                .unwrap_or(0)
++                .checked_add(1)
++                .ok_or_else(|| denied("unchanged call count overflow"))?
++        } else {
++            1
++        };
++        let decision = if legitimate_wait {
++            CallDecision::LegitimateWait
++        } else if !unchanged {
++            CallDecision::Progress
++        } else if unchanged_calls < max {
++            CallDecision::Unchanged
++        } else if unchanged_calls == max {
++            CallDecision::Reassess
++        } else {
++            CallDecision::Paused
++        };
++        self.record(
++            &mut state,
++            &serde_json::json!({
++                "event": "call_observed",
++                "signature_sha256": signature_sha256,
++                "result_sha256": result_sha256,
++                "progress_revision": progress_revision,
++                "unchanged_calls": unchanged_calls,
++                "legitimate_wait": legitimate_wait,
++                "decision": decision,
++            }),
++        )?;
++        state.calls.insert(
++            signature_sha256.to_owned(),
++            CallRecord {
++                result_sha256: result_sha256.to_owned(),
++                progress_revision,
++                unchanged_calls,
++            },
++        );
++        if let Some(checkpoint) = state.checkpoint.as_mut() {
++            checkpoint.no_progress = NoProgressCheckpoint {
++                signature_sha256: Some(signature_sha256.to_owned()),
++                unchanged_calls,
++                max_unchanged_calls: max,
++                decision: serde_json::to_value(decision)?
++                    .as_str()
++                    .unwrap_or("unknown")
++                    .to_owned(),
++            };
++        }
++        if decision == CallDecision::Paused {
++            self.record(
++                &mut state,
++                &serde_json::json!({"event": "no_progress_paused", "signature_sha256": signature_sha256, "unchanged_calls": unchanged_calls}),
++            )?;
++            state.status = TaskStatus::Paused;
++            for worker in state.workers.values_mut() {
++                if worker.status == WorkerStatus::Active {
++                    worker.status = WorkerStatus::Stopped;
++                }
++            }
++        }
++        self.refresh_checkpoint(&mut state)?;
++        Ok(decision)
 +    }
 +
 +    pub fn set_contributor_authorization(
@@ -4095,10 +5162,9 @@ index 0000000..884c9af
 +        let valid_parent = if depth == 1 {
 +            parent == "lead"
 +        } else {
-+            state
-+                .workers
-+                .get(&parent)
-+                .is_some_and(|worker| worker.active && worker.depth.checked_add(1) == Some(depth))
++            state.workers.get(&parent).is_some_and(|worker| {
++                worker.status == WorkerStatus::Active && worker.depth.checked_add(1) == Some(depth)
++            })
 +        };
 +        if limits.requests == 0
 +            || limits.seconds == 0
@@ -4111,7 +5177,7 @@ index 0000000..884c9af
 +            || state
 +                .workers
 +                .values()
-+                .filter(|worker| worker.active)
++                .filter(|worker| worker.status == WorkerStatus::Active)
 +                .count()
 +                >= self.limits.concurrent_workers as usize
 +        {
@@ -4130,9 +5196,101 @@ index 0000000..884c9af
 +                started: Instant::now(),
 +                requests: 0,
 +                exposure: 0,
-+                active: true,
++                status: WorkerStatus::Active,
++                objective: None,
++                result: None,
 +            },
 +        );
++        self.refresh_checkpoint(&mut state)?;
++        Ok(())
++    }
++
++    pub fn claim_worker_objective(&self, id: &str, objective: &str) -> io::Result<()> {
++        let normalized = objective
++            .split_whitespace()
++            .map(str::to_lowercase)
++            .collect::<Vec<_>>()
++            .join(" ");
++        if normalized.is_empty() || normalized.len() > 4096 {
++            return Err(denied("bounded worker objective required"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if !state.workers.get(id).is_some_and(|worker| {
++            worker.status == WorkerStatus::Active && worker.objective.is_none()
++        }) || state.workers.iter().any(|(other_id, worker)| {
++            other_id != id
++                && worker.status == WorkerStatus::Active
++                && worker.objective.as_deref() == Some(normalized.as_str())
++        }) {
++            return Err(denied("duplicate or invalid active worker objective"));
++        }
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "worker_objective_claimed", "worker": id, "objective": normalized}),
++        )?;
++        state
++            .workers
++            .get_mut(id)
++            .ok_or_else(|| denied("worker disappeared"))?
++            .objective = Some(normalized);
++        self.refresh_checkpoint(&mut state)?;
++        Ok(())
++    }
++
++    pub fn complete_worker(&self, id: &str, result: VersionMarker) -> io::Result<()> {
++        result.validate()?;
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if !state
++            .workers
++            .get(id)
++            .is_some_and(|worker| worker.status == WorkerStatus::Active)
++            || state
++                .workers
++                .values()
++                .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
++        {
++            return Err(denied("worker is not completable"));
++        }
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "worker_completed", "worker": id, "result": result}),
++        )?;
++        let worker = state
++            .workers
++            .get_mut(id)
++            .ok_or_else(|| denied("worker disappeared"))?;
++        worker.status = WorkerStatus::Completed;
++        worker.result = Some(result);
++        self.refresh_checkpoint(&mut state)?;
++        Ok(())
++    }
++
++    pub fn consume_worker_result(&self, id: &str) -> io::Result<()> {
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if !state.workers.get(id).is_some_and(|worker| {
++            worker.status == WorkerStatus::Completed && worker.result.is_some()
++        }) {
++            return Err(denied("worker result is not consumable"));
++        }
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "worker_result_consumed", "worker": id}),
++        )?;
++        state
++            .workers
++            .get_mut(id)
++            .ok_or_else(|| denied("worker disappeared"))?
++            .status = WorkerStatus::Consumed;
++        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
 +
@@ -4141,13 +5299,17 @@ index 0000000..884c9af
 +            .state
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
-+        if !state.workers.get(id).is_some_and(|worker| worker.active) {
++        if !state
++            .workers
++            .get(id)
++            .is_some_and(|worker| worker.status == WorkerStatus::Active)
++        {
 +            return Err(denied("unknown or inactive worker"));
 +        }
 +        if state
 +            .workers
 +            .values()
-+            .any(|worker| worker.active && worker.parent == id)
++            .any(|worker| worker.status == WorkerStatus::Active && worker.parent == id)
 +        {
 +            return Err(denied("worker has active descendants"));
 +        }
@@ -4159,7 +5321,8 @@ index 0000000..884c9af
 +            .workers
 +            .get_mut(id)
 +            .ok_or_else(|| denied("worker disappeared"))?
-+            .active = false;
++            .status = WorkerStatus::Stopped;
++        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
 +
@@ -4201,7 +5364,7 @@ index 0000000..884c9af
 +                .workers
 +                .get(owner)
 +                .ok_or_else(|| denied("unregistered worker"))?;
-+            if !worker.active
++            if worker.status != WorkerStatus::Active
 +                || worker.started.elapsed().as_secs() >= worker.limits.seconds
 +                || worker.requests >= worker.limits.requests
 +                || worker
@@ -4238,6 +5401,7 @@ index 0000000..884c9af
 +            task: self.evidence.clone(),
 +        };
 +        state.attempts.insert(attempt.request, attempt);
++        self.refresh_checkpoint(&mut state)?;
 +        Ok(admission)
 +    }
 +
@@ -4269,7 +5433,8 @@ index 0000000..884c9af
 +        }
 +        if attempt.owner != "lead"
 +            && !state.workers.get(&attempt.owner).is_some_and(|worker| {
-+                worker.active && worker.started.elapsed().as_secs() < worker.limits.seconds
++                worker.status == WorkerStatus::Active
++                    && worker.started.elapsed().as_secs() < worker.limits.seconds
 +            })
 +        {
 +            return Err(denied("worker stopped or expired before dispatch"));
@@ -4280,6 +5445,7 @@ index 0000000..884c9af
 +            &serde_json::json!({"event": "request_dispatched", "attempt": attempt}),
 +        )?;
 +        state.attempts.insert(admission.request, attempt.clone());
++        self.refresh_checkpoint(&mut state)?;
 +        drop(state);
 +        match send() {
 +            Ok(value) => Ok(value),
@@ -4305,6 +5471,7 @@ index 0000000..884c9af
 +                    &serde_json::json!({"event": "request_failed", "attempt": attempt}),
 +                )?;
 +                state.attempts.insert(admission.request, attempt);
++                self.refresh_checkpoint(&mut state)?;
 +                Err(error)
 +            }
 +        }
@@ -4352,6 +5519,7 @@ index 0000000..884c9af
 +                &mut state,
 +                &serde_json::json!({"event": "reservation_violation", "attempt": attempt}),
 +            )?;
++            self.refresh_checkpoint(&mut state)?;
 +            return Err(denied(
 +                "observed usage exceeded reservation; admission stopped",
 +            ));
@@ -4374,6 +5542,7 @@ index 0000000..884c9af
 +            worker.exposure -= released;
 +        }
 +        state.attempts.insert(admission.request, attempt);
++        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
 +
@@ -4400,6 +5569,7 @@ index 0000000..884c9af
 +            &serde_json::json!({"event": "request_failed", "attempt": attempt}),
 +        )?;
 +        state.attempts.insert(admission.request, attempt);
++        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
 +
@@ -4425,6 +5595,7 @@ index 0000000..884c9af
 +            &serde_json::json!({"event": "raw_usage_observed", "attempt": attempt}),
 +        )?;
 +        state.attempts.insert(admission.request, attempt);
++        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
 +
@@ -4589,7 +5760,7 @@ index 0000000..884c9af
 +        let active_workers = state
 +            .workers
 +            .iter()
-+            .filter(|(_, worker)| worker.active)
++            .filter(|(_, worker)| worker.status == WorkerStatus::Active)
 +            .map(|(id, _)| id.clone())
 +            .collect::<Vec<_>>();
 +        self.record(
@@ -4598,8 +5769,9 @@ index 0000000..884c9af
 +        )?;
 +        state.status = TaskStatus::Paused;
 +        for worker in state.workers.values_mut() {
-+            worker.active = false;
++            worker.status = WorkerStatus::Stopped;
 +        }
++        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
 +
@@ -4621,6 +5793,7 @@ index 0000000..884c9af
 +            &serde_json::json!({"event": "task_resumed", "reference": reference, "remaining": {"requests": remaining_requests, "exposure_microusd": remaining_exposure}}),
 +        )?;
 +        state.status = TaskStatus::Active;
++        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
 +
@@ -4643,7 +5816,56 @@ index 0000000..884c9af
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
 +        state.status = TaskStatus::Stopped;
-+        self.record(&mut state, &serde_json::json!({"event": "task_stopped"}))
++        self.record(&mut state, &serde_json::json!({"event": "task_stopped"}))?;
++        self.refresh_checkpoint(&mut state)
++    }
++
++    pub fn complete(&self, reference: &str) -> io::Result<()> {
++        if reference.is_empty() || reference.len() > 4096 {
++            return Err(denied("completion evidence reference required"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        let contract = state
++            .contract
++            .as_ref()
++            .ok_or_else(|| denied("task has no checkpoint contract"))?;
++        let checkpoint = state
++            .checkpoint
++            .as_ref()
++            .ok_or_else(|| denied("task has no checkpoint"))?;
++        let completed = checkpoint
++            .completed_acceptance
++            .iter()
++            .map(|acceptance| &acceptance.criterion)
++            .collect::<BTreeSet<_>>();
++        if state.status != TaskStatus::Active
++            || !checkpoint.remaining_work.is_empty()
++            || contract
++                .acceptance_criteria
++                .iter()
++                .any(|criterion| !completed.contains(criterion))
++            || state
++                .workers
++                .values()
++                .any(|worker| worker.status == WorkerStatus::Active)
++            || state
++                .attempts
++                .values()
++                .any(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
++        {
++            return Err(denied(
++                "task acceptance is incomplete or work remains active",
++            ));
++        }
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "task_completed", "reference": reference}),
++        )?;
++        state.status = TaskStatus::Completed;
++        self.refresh_checkpoint(&mut state)
 +    }
 +
 +    pub fn remaining(&self) -> io::Result<(Duration, u32, u64)> {
@@ -4670,13 +5892,276 @@ index 0000000..884c9af
 +        Ok(state.attempts.values().cloned().collect())
 +    }
 +}
+diff --git a/codex-rs/omd/src/checkpoint.rs b/codex-rs/omd/src/checkpoint.rs
+new file mode 100644
+index 0000000..fd247db
+--- /dev/null
++++ b/codex-rs/omd/src/checkpoint.rs
+@@ -0,0 +1,256 @@
++use serde::Deserialize;
++use serde::Serialize;
++use std::collections::BTreeSet;
++use std::io;
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct TaskContract {
++    pub objective: String,
++    pub acceptance_criteria: Vec<String>,
++    pub max_no_progress_calls: u32,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(deny_unknown_fields)]
++pub struct VersionMarker {
++    pub label: String,
++    pub sha256: String,
++    pub evidence: String,
++    pub evidence_sha256: String,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(deny_unknown_fields)]
++pub struct AcceptanceEvidence {
++    pub criterion: String,
++    pub evidence: Vec<VersionMarker>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct CheckpointUpdate {
++    pub completed_acceptance: Vec<AcceptanceEvidence>,
++    pub completed_steering: Vec<String>,
++    pub remaining_work: Vec<String>,
++    pub failed_hypotheses: Vec<String>,
++    pub candidate_versions: Vec<VersionMarker>,
++    pub check_versions: Vec<VersionMarker>,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(rename_all = "snake_case")]
++pub enum ProcessStatus {
++    Running,
++    Stopped,
++    Completed,
++    Unknown,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++pub struct ProcessSnapshot {
++    pub identity: String,
++    pub owner: String,
++    pub status: ProcessStatus,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct LiveState {
++    pub workspace_sha256: String,
++    pub tracked_paths_sha256: String,
++    pub processes: Vec<ProcessSnapshot>,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum WorkerStatus {
++    Active,
++    Stopped,
++    Completed,
++    Consumed,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct WorkerCheckpoint {
++    pub id: String,
++    pub parent: String,
++    pub depth: u32,
++    pub objective: Option<String>,
++    pub status: WorkerStatus,
++    pub result: Option<VersionMarker>,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum CheckpointTaskStatus {
++    Active,
++    Paused,
++    Stopped,
++    Completed,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct AllowanceCheckpoint {
++    pub seconds_remaining: u64,
++    pub requests_consumed: u32,
++    pub requests_remaining: u32,
++    pub exposure_consumed_microusd: u64,
++    pub exposure_remaining_microusd: u64,
++    pub uncertain_requests: Vec<u32>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct Reconciliation {
++    pub reason: String,
++    pub prior_workspace_sha256: String,
++    pub current_workspace_sha256: String,
++    pub changed_workspace: bool,
++    pub prior_processes: Vec<ProcessSnapshot>,
++    pub current_processes: Vec<ProcessSnapshot>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct NoProgressCheckpoint {
++    pub signature_sha256: Option<String>,
++    pub unchanged_calls: u32,
++    pub max_unchanged_calls: u32,
++    pub decision: String,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct TaskCheckpoint {
++    pub schema: u32,
++    pub revision: u64,
++    pub progress_revision: u64,
++    pub task_status: CheckpointTaskStatus,
++    pub objective: String,
++    pub acceptance_criteria: Vec<String>,
++    pub completed_acceptance: Vec<AcceptanceEvidence>,
++    pub completed_steering: Vec<String>,
++    pub remaining_work: Vec<String>,
++    pub failed_hypotheses: Vec<String>,
++    pub candidate_versions: Vec<VersionMarker>,
++    pub check_versions: Vec<VersionMarker>,
++    pub workers: Vec<WorkerCheckpoint>,
++    pub allowance: AllowanceCheckpoint,
++    pub live: LiveState,
++    pub reconciliation: Option<Reconciliation>,
++    pub no_progress: NoProgressCheckpoint,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum CallDecision {
++    Progress,
++    Unchanged,
++    Reassess,
++    LegitimateWait,
++    Paused,
++}
++
++fn invalid(message: &str) -> io::Error {
++    io::Error::other(message)
++}
++
++fn valid_text(value: &str, max: usize) -> bool {
++    !value.trim().is_empty() && value.len() <= max
++}
++
++fn unique_text(values: &[String], max_items: usize, max_bytes: usize) -> bool {
++    values.len() <= max_items
++        && values.iter().all(|value| valid_text(value, max_bytes))
++        && values.iter().collect::<BTreeSet<_>>().len() == values.len()
++}
++
++fn valid_sha256(value: &str) -> bool {
++    value.len() == 64
++        && value
++            .bytes()
++            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
++}
++
++impl VersionMarker {
++    pub(crate) fn validate(&self) -> io::Result<()> {
++        if !valid_text(&self.label, 256)
++            || !valid_sha256(&self.sha256)
++            || !valid_text(&self.evidence, 4096)
++            || !valid_sha256(&self.evidence_sha256)
++        {
++            return Err(invalid("invalid version marker"));
++        }
++        Ok(())
++    }
++}
++
++impl TaskContract {
++    pub(crate) fn validate(&self) -> io::Result<()> {
++        if !valid_text(&self.objective, 4096)
++            || !unique_text(&self.acceptance_criteria, 32, 1024)
++            || self.acceptance_criteria.is_empty()
++            || !(2..=16).contains(&self.max_no_progress_calls)
++        {
++            return Err(invalid("invalid bounded task contract"));
++        }
++        Ok(())
++    }
++}
++
++impl LiveState {
++    pub(crate) fn validate(&self) -> io::Result<()> {
++        if !valid_sha256(&self.workspace_sha256)
++            || !valid_sha256(&self.tracked_paths_sha256)
++            || self.processes.len() > 128
++        {
++            return Err(invalid("invalid live state"));
++        }
++        let mut identities = BTreeSet::new();
++        for process in &self.processes {
++            if !valid_text(&process.identity, 256)
++                || !valid_text(&process.owner, 128)
++                || !identities.insert(&process.identity)
++            {
++                return Err(invalid("invalid live process state"));
++            }
++        }
++        Ok(())
++    }
++}
++
++impl CheckpointUpdate {
++    pub(crate) fn validate(&self, contract: &TaskContract) -> io::Result<()> {
++        if !unique_text(&self.completed_steering, 64, 4096)
++            || !unique_text(&self.remaining_work, 64, 4096)
++            || !unique_text(&self.failed_hypotheses, 64, 4096)
++            || self.completed_acceptance.len() > contract.acceptance_criteria.len()
++            || self.candidate_versions.len() > 32
++            || self.check_versions.len() > 32
++        {
++            return Err(invalid("invalid bounded checkpoint update"));
++        }
++        let criteria = contract.acceptance_criteria.iter().collect::<BTreeSet<_>>();
++        let mut completed = BTreeSet::new();
++        for acceptance in &self.completed_acceptance {
++            if !criteria.contains(&acceptance.criterion)
++                || !completed.insert(&acceptance.criterion)
++                || acceptance.evidence.is_empty()
++                || acceptance.evidence.len() > 16
++            {
++                return Err(invalid("invalid acceptance evidence"));
++            }
++            for marker in &acceptance.evidence {
++                marker.validate()?;
++            }
++        }
++        for marker in self.candidate_versions.iter().chain(&self.check_versions) {
++            marker.validate()?;
++        }
++        if serde_json::to_vec(self)?.len() > 65_536 {
++            return Err(invalid("checkpoint update exceeds size limit"));
++        }
++        Ok(())
++    }
++}
++
++pub(crate) fn preserves<T: Ord>(prior: &[T], current: &[T]) -> bool {
++    let current = current.iter().collect::<BTreeSet<_>>();
++    prior.iter().all(|value| current.contains(value))
++}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..507a559
+index 0000000..2ecf28a
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,28 @@
 +mod admission;
++mod checkpoint;
 +mod workspace;
 +
 +pub use admission::Admission;
@@ -4686,6 +6171,17 @@ index 0000000..507a559
 +pub use admission::Limits;
 +pub use admission::Task;
 +pub use admission::WorkerLimits;
++pub use checkpoint::AcceptanceEvidence;
++pub use checkpoint::CallDecision;
++pub use checkpoint::CheckpointTaskStatus;
++pub use checkpoint::CheckpointUpdate;
++pub use checkpoint::LiveState;
++pub use checkpoint::ProcessSnapshot;
++pub use checkpoint::ProcessStatus;
++pub use checkpoint::TaskCheckpoint;
++pub use checkpoint::TaskContract;
++pub use checkpoint::VersionMarker;
++pub use checkpoint::WorkerStatus;
 +pub use workspace::File;
 +pub use workspace::Snapshot;
 +pub use workspace::capture_tracked;
@@ -5122,14 +6618,24 @@ index 0000000..74978b9
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000..ce81185
+index 0000000..4316d12
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,623 @@
++use codex_omd::AcceptanceEvidence;
++use codex_omd::CallDecision;
++use codex_omd::CheckpointTaskStatus;
++use codex_omd::CheckpointUpdate;
 +use codex_omd::FailureClass;
 +use codex_omd::Limits;
++use codex_omd::LiveState;
++use codex_omd::ProcessSnapshot;
++use codex_omd::ProcessStatus;
 +use codex_omd::Task;
++use codex_omd::TaskContract;
++use codex_omd::VersionMarker;
 +use codex_omd::WorkerLimits;
++use codex_omd::WorkerStatus;
 +use serde_json::json;
 +use std::sync::Arc;
 +
@@ -5149,6 +6655,53 @@ index 0000000..ce81185
 +        requests: 2,
 +        exposure_microusd: 60,
 +        seconds: 20,
++    }
++}
++
++fn contract() -> TaskContract {
++    TaskContract {
++        objective: "Persist task progress independently of conversation".into(),
++        acceptance_criteria: vec!["candidate checked".into(), "restart reconciled".into()],
++        max_no_progress_calls: 2,
++    }
++}
++
++fn live(workspace: char, processes: Vec<ProcessSnapshot>) -> LiveState {
++    LiveState {
++        workspace_sha256: workspace.to_string().repeat(64),
++        tracked_paths_sha256: "b".repeat(64),
++        processes,
++    }
++}
++
++fn marker(label: &str, hash: char) -> VersionMarker {
++    VersionMarker {
++        label: label.into(),
++        sha256: hash.to_string().repeat(64),
++        evidence: format!("evidence/{label}.json"),
++        evidence_sha256: "f".repeat(64),
++    }
++}
++
++fn completed_update() -> CheckpointUpdate {
++    let candidate = marker("candidate-v1", 'c');
++    let check = marker("check-v1", 'd');
++    CheckpointUpdate {
++        completed_acceptance: vec![
++            AcceptanceEvidence {
++                criterion: "candidate checked".into(),
++                evidence: vec![candidate.clone(), check.clone()],
++            },
++            AcceptanceEvidence {
++                criterion: "restart reconciled".into(),
++                evidence: vec![check.clone()],
++            },
++        ],
++        completed_steering: vec!["keep the user's dirty files".into()],
++        remaining_work: Vec::new(),
++        failed_hypotheses: vec!["conversation summary is durable state".into()],
++        candidate_versions: vec![candidate],
++        check_versions: vec![check],
 +    }
 +}
 +
@@ -5485,6 +7038,212 @@ index 0000000..ce81185
 +    assert_eq!(resumed.remaining().unwrap().2, 70);
 +    assert_eq!(resumed.uncertain_requests().unwrap(), vec![1]);
 +    resumed.check_active().unwrap();
++}
++
++#[test]
++fn compact_checkpoint_preserves_contract_progress_versions_and_allowance() {
++    let dir = tempfile::tempdir().unwrap();
++    let evidence = dir.path().join("task");
++    let task = Task::create_checkpointed(
++        limits(),
++        evidence.clone(),
++        contract(),
++        live('a', Vec::new()),
++    )
++    .unwrap();
++    let request = task.admit("lead", "openai", "gpt-5.6-sol", 30).unwrap();
++    task.dispatch(&request, || Ok(())).unwrap();
++    task.settle(&request, json!({"input_tokens": 1}), 10)
++        .unwrap();
++    let checkpoint = task
++        .save_checkpoint(completed_update(), live('c', Vec::new()))
++        .unwrap();
++    assert_eq!(checkpoint.objective, contract().objective);
++    assert_eq!(
++        checkpoint.acceptance_criteria,
++        contract().acceptance_criteria
++    );
++    assert_eq!(checkpoint.completed_steering.len(), 1);
++    assert_eq!(checkpoint.failed_hypotheses.len(), 1);
++    assert_eq!(checkpoint.candidate_versions[0].label, "candidate-v1");
++    assert_eq!(checkpoint.check_versions[0].label, "check-v1");
++    assert_eq!(checkpoint.allowance.requests_consumed, 1);
++    assert_eq!(checkpoint.allowance.exposure_consumed_microusd, 10);
++    let compact: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(evidence.join("checkpoint.json")).unwrap()).unwrap();
++    assert_eq!(compact["revision"], checkpoint.revision);
++    let mut discarded = completed_update();
++    discarded.completed_steering.clear();
++    assert!(
++        task.save_checkpoint(discarded, live('c', Vec::new()))
++            .is_err()
++    );
++}
++
++#[test]
++fn worker_objectives_and_results_distinguish_stopped_completed_and_consumed() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create_checkpointed(
++        limits(),
++        dir.path().join("task"),
++        contract(),
++        live('a', Vec::new()),
++    )
++    .unwrap();
++    task.start_worker("first".into(), "lead".into(), 1, worker())
++        .unwrap();
++    task.start_worker("second".into(), "lead".into(), 1, worker())
++        .unwrap();
++    task.claim_worker_objective("first", "Inspect   the parser")
++        .unwrap();
++    assert!(
++        task.claim_worker_objective("second", "inspect the PARSER")
++            .is_err()
++    );
++    task.claim_worker_objective("second", "Inspect the renderer")
++        .unwrap();
++    task.finish_worker("second").unwrap();
++    task.complete_worker("first", marker("worker-result", 'e'))
++        .unwrap();
++    let statuses = task
++        .checkpoint()
++        .unwrap()
++        .unwrap()
++        .workers
++        .into_iter()
++        .map(|worker| (worker.id, worker.status))
++        .collect::<std::collections::BTreeMap<_, _>>();
++    assert_eq!(statuses["first"], WorkerStatus::Completed);
++    assert_eq!(statuses["second"], WorkerStatus::Stopped);
++    task.consume_worker_result("first").unwrap();
++    assert_eq!(
++        task.checkpoint().unwrap().unwrap().workers[0].status,
++        WorkerStatus::Consumed
++    );
++}
++
++#[test]
++fn unchanged_calls_reassess_then_pause_but_waits_remain_bounded_by_task_time() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create_checkpointed(
++        limits(),
++        dir.path().join("task"),
++        contract(),
++        live('a', Vec::new()),
++    )
++    .unwrap();
++    let signature = "1".repeat(64);
++    let result = "2".repeat(64);
++    assert_eq!(
++        task.observe_call(&signature, &result, false).unwrap(),
++        CallDecision::Progress
++    );
++    assert_eq!(
++        task.observe_call(&signature, &result, true).unwrap(),
++        CallDecision::LegitimateWait
++    );
++    assert_eq!(
++        task.observe_call(&signature, &result, false).unwrap(),
++        CallDecision::Paused
++    );
++    assert_eq!(
++        task.checkpoint().unwrap().unwrap().task_status,
++        CheckpointTaskStatus::Paused
++    );
++    assert!(task.admit("lead", "openai", "gpt-5.6-sol", 1).is_err());
++}
++
++#[test]
++fn a_checkpoint_revision_resets_unchanged_call_detection() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create_checkpointed(
++        limits(),
++        dir.path().join("task"),
++        contract(),
++        live('a', Vec::new()),
++    )
++    .unwrap();
++    let signature = "3".repeat(64);
++    let result = "4".repeat(64);
++    assert_eq!(
++        task.observe_call(&signature, &result, false).unwrap(),
++        CallDecision::Progress
++    );
++    let checkpoint = task.checkpoint().unwrap().unwrap();
++    task.save_checkpoint(
++        CheckpointUpdate {
++            completed_acceptance: checkpoint.completed_acceptance,
++            completed_steering: vec!["used a different bounded approach".into()],
++            remaining_work: checkpoint.remaining_work,
++            failed_hypotheses: checkpoint.failed_hypotheses,
++            candidate_versions: checkpoint.candidate_versions,
++            check_versions: checkpoint.check_versions,
++        },
++        live('a', Vec::new()),
++    )
++    .unwrap();
++    assert_eq!(
++        task.observe_call(&signature, &result, false).unwrap(),
++        CallDecision::Progress
++    );
++}
++
++#[test]
++fn restart_reconciles_workspace_processes_and_preserves_terminal_semantics() {
++    let dir = tempfile::tempdir().unwrap();
++    let evidence = dir.path().join("task");
++    let prior_process = ProcessSnapshot {
++        identity: "process-1".into(),
++        owner: "worker".into(),
++        status: ProcessStatus::Running,
++    };
++    let task = Task::create_checkpointed(
++        limits(),
++        evidence.clone(),
++        contract(),
++        live('a', vec![prior_process.clone()]),
++    )
++    .unwrap();
++    let signature = "7".repeat(64);
++    let result = "8".repeat(64);
++    assert_eq!(
++        task.observe_call(&signature, &result, false).unwrap(),
++        CallDecision::Progress
++    );
++    task.pause("compaction", Vec::new()).unwrap();
++    drop(task);
++    let stopped_process = ProcessSnapshot {
++        status: ProcessStatus::Stopped,
++        ..prior_process
++    };
++    let resumed = Task::open_checkpointed(
++        limits(),
++        evidence,
++        Some("explicit restart"),
++        contract(),
++        live('f', vec![stopped_process.clone()]),
++    )
++    .unwrap();
++    let checkpoint = resumed.checkpoint().unwrap().unwrap();
++    let reconciliation = checkpoint.reconciliation.unwrap();
++    assert!(reconciliation.changed_workspace);
++    assert_eq!(reconciliation.current_processes, vec![stopped_process]);
++    assert_eq!(checkpoint.task_status, CheckpointTaskStatus::Active);
++    assert_eq!(
++        resumed.observe_call(&signature, &result, false).unwrap(),
++        CallDecision::Reassess
++    );
++    assert!(resumed.complete("not ready").is_err());
++    resumed
++        .save_checkpoint(completed_update(), live('f', Vec::new()))
++        .unwrap();
++    resumed
++        .complete("all acceptance evidence retained")
++        .unwrap();
++    assert_eq!(
++        resumed.checkpoint().unwrap().unwrap().task_status,
++        CheckpointTaskStatus::Completed
++    );
 +}
 diff --git a/codex-rs/omd/tests/workspace.rs b/codex-rs/omd/tests/workspace.rs
 new file mode 100644

@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "adcf0b8b1f65680369322aa0029ea5dcb646a86cfb74178ad9587a0a739b011d"
+    "sha256": "6d5cb9195b1ca13eda653c90b9502634ab03dfd25947102c916c3e0faddce1e8"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -85,7 +85,7 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "12eb5040b85dc39cdebcb4e74e6f25c502fd90d287104fd088c8f92e4ca289d0"
+      "after": "f6784b402d91cd38775bcb50d4185e67cc9bfb4b5c3f8e431ed7aa534a29f905"
     },
     "codex-rs/ext/omd/src/execution_tests.rs": {
       "before": null,
@@ -93,7 +93,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "51069b90d773547e719bcffd27c27c752ecf3c60c02c38a7b162118f05e3cfd6"
+      "after": "2418bd98bb5198aec7baece6a332ef10efbca08a99749ca21adbd5fa2d85978b"
     },
     "codex-rs/login/src/auth/default_client.rs": {
       "before": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",
@@ -109,11 +109,15 @@
     },
     "codex-rs/omd/src/admission.rs": {
       "before": null,
-      "after": "9452e7364218cfda2371a6351895529fce8baa03db1169ec39c41cf2e23d0c40"
+      "after": "5b6430555fa0fc58b07ff6eb6c03f27bc0b242786457d37959bd045034fcb5f1"
+    },
+    "codex-rs/omd/src/checkpoint.rs": {
+      "before": null,
+      "after": "d03808fb8b280f1bc28c9a8607ed41b2492710459eb92fe1508ceca1632fb9a7"
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "910bfd90050ec6bf0ad508505e4b7a234a7f216abb50c70fd8623d61e5b58fb6"
+      "after": "a3ff65aa5ebdca27a77abb6067399709f7b72bd7dd847e2a1b77981a08744cfa"
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,
@@ -121,7 +125,7 @@
     },
     "codex-rs/omd/tests/admission.rs": {
       "before": null,
-      "after": "d556ac5565fd8f90da91abd18a1b6e9ad14666b1cf9979d79b8fbcba42899e0a"
+      "after": "e37fc878a90dff01c16571da1f0664002e37dee5438e180a8c08fd7e696a2a99"
     },
     "codex-rs/omd/tests/workspace.rs": {
       "before": null,

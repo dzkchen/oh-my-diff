@@ -70,6 +70,20 @@ retains uncertain requests; rejects changed limits or incomplete evidence;
 cleans stale owned scratch; and records live workspace and effective-permission
 reconciliation before controlled work continues.
 
+Every controlled manifest also supplies a bounded `checkpoint` contract and a
+small `legitimate_wait_tools` allowlist. The host keeps the compact checkpoint in
+the external evidence directory and injects it into each lead turn independently
+of conversation summaries. `omd_checkpoint` is deferred with the other controlled
+tools and accepts only bounded, monotonic progress whose candidate, check, and
+acceptance markers resolve to exact host-owned evidence files. Worker ownership,
+stopped/completed/consumed results, live workspace/process state, request and
+exposure allowance, and unchanged-call decisions are host-derived. Compaction
+and explicit restart reconcile live state without advancing the progress version.
+Repeated non-wait calls with the same signature and result force one reassessment
+and then pause; configured waits remain bounded by the original task deadline.
+A foreground completion is recorded only after every acceptance criterion has
+evidence, remaining work is empty, and no worker or uncertain request is active.
+
 Run the no-provider macOS end-to-end fixture from this repository:
 
 ```sh
@@ -79,6 +93,8 @@ python3 -m benchmarks.controlled_fixture /path/to/codex/codex-rs/target/debug/co
 Other scenarios are `direct`, `escalation`, `permissions`, `conflict`,
 `index-conflict`, `review-reject`, `request-cap`, `revoked`, `deadline`,
 `recursion`, `outage-fallback`, and `client-loss-resume`. Use
+`checkpoint` to retain incomplete steering without false completion and
+`no-progress` to exercise bounded identical-result detection. Use
 `--failure-class environment|edit|diagnosis|model` with `escalation`. Each scenario
 requires a fresh destination. These
 fixtures need loopback listening and native sandbox execution, and use synthetic

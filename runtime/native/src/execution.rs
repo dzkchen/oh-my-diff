@@ -488,6 +488,13 @@ async fn run_child(
             host.manifest.worker_limits.clone(),
         )
         .map_err(error)?;
+    if let Err(error) = host
+        .task
+        .claim_worker_objective(role, &hash(prompt.as_bytes()))
+    {
+        let _ = host.task.finish_worker(role);
+        return Err(error.to_string());
+    }
     if let Err(error) = host.enroll(thread_id, role, route) {
         let _ = host.task.finish_worker(role);
         return Err(error);
@@ -570,9 +577,30 @@ async fn run_child(
     )
     .await
     .map_err(|_| "native child cleanup deadline exceeded".to_owned())??;
-    host.task.finish_worker(role).map_err(error)?;
-    child.active = false;
-    result
+    match result {
+        Ok(result) => {
+            host.task
+                .complete_worker(
+                    role,
+                    VersionMarker {
+                        label: format!("{role}-result"),
+                        sha256: hash(result.as_bytes()),
+                        evidence: format!("native-thread:{thread_id}"),
+                        evidence_sha256: hash(thread_id.to_string().as_bytes()),
+                    },
+                )
+                .map_err(error)?;
+            child.active = false;
+            Ok(result)
+        }
+        Err(error) => {
+            host.task
+                .finish_worker(role)
+                .map_err(|error| error.to_string())?;
+            child.active = false;
+            Err(error)
+        }
+    }
 }
 
 async fn command(host: &Host, config: &Config, argv: Vec<String>) -> Result<Value, String> {
@@ -865,6 +893,9 @@ pub async fn contribute(
     if changed.is_empty() {
         return Err("Contributor returned no code change".into());
     }
+    host.task
+        .consume_worker_result(&selected_role)
+        .map_err(error)?;
     let tracked = codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)?;
     let mut current_paths = tracked.clone();
     current_paths.extend(base.files.keys().chain(candidate.files.keys()).cloned());
@@ -936,6 +967,7 @@ pub async fn contribute(
         },
     ).await?;
     let review: Review = serde_json::from_str(&review).map_err(error)?;
+    host.task.consume_worker_result("reviewer").map_err(error)?;
     let review_ref = host.evidence("review.json", &json!({"model": reviewer_route.model, "candidate_sha256": candidate_hash, "response": review}))?;
     if !review.approved || review.candidate_sha256 != candidate_hash || !review.findings.is_empty()
     {
@@ -1257,6 +1289,7 @@ pub async fn escalate(
         },
     )
     .await?;
+    host.task.consume_worker_result(&role).map_err(error)?;
     let remaining_after = host.task.remaining().map_err(error)?;
     Ok(json!({
         "schema": 1,

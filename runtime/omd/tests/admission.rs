@@ -1,7 +1,17 @@
+use codex_omd::AcceptanceEvidence;
+use codex_omd::CallDecision;
+use codex_omd::CheckpointTaskStatus;
+use codex_omd::CheckpointUpdate;
 use codex_omd::FailureClass;
 use codex_omd::Limits;
+use codex_omd::LiveState;
+use codex_omd::ProcessSnapshot;
+use codex_omd::ProcessStatus;
 use codex_omd::Task;
+use codex_omd::TaskContract;
+use codex_omd::VersionMarker;
 use codex_omd::WorkerLimits;
+use codex_omd::WorkerStatus;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -21,6 +31,53 @@ fn worker() -> WorkerLimits {
         requests: 2,
         exposure_microusd: 60,
         seconds: 20,
+    }
+}
+
+fn contract() -> TaskContract {
+    TaskContract {
+        objective: "Persist task progress independently of conversation".into(),
+        acceptance_criteria: vec!["candidate checked".into(), "restart reconciled".into()],
+        max_no_progress_calls: 2,
+    }
+}
+
+fn live(workspace: char, processes: Vec<ProcessSnapshot>) -> LiveState {
+    LiveState {
+        workspace_sha256: workspace.to_string().repeat(64),
+        tracked_paths_sha256: "b".repeat(64),
+        processes,
+    }
+}
+
+fn marker(label: &str, hash: char) -> VersionMarker {
+    VersionMarker {
+        label: label.into(),
+        sha256: hash.to_string().repeat(64),
+        evidence: format!("evidence/{label}.json"),
+        evidence_sha256: "f".repeat(64),
+    }
+}
+
+fn completed_update() -> CheckpointUpdate {
+    let candidate = marker("candidate-v1", 'c');
+    let check = marker("check-v1", 'd');
+    CheckpointUpdate {
+        completed_acceptance: vec![
+            AcceptanceEvidence {
+                criterion: "candidate checked".into(),
+                evidence: vec![candidate.clone(), check.clone()],
+            },
+            AcceptanceEvidence {
+                criterion: "restart reconciled".into(),
+                evidence: vec![check.clone()],
+            },
+        ],
+        completed_steering: vec!["keep the user's dirty files".into()],
+        remaining_work: Vec::new(),
+        failed_hypotheses: vec!["conversation summary is durable state".into()],
+        candidate_versions: vec![candidate],
+        check_versions: vec![check],
     }
 }
 
@@ -357,4 +414,210 @@ fn explicit_resume_preserves_allowance_and_uncertain_requests() {
     assert_eq!(resumed.remaining().unwrap().2, 70);
     assert_eq!(resumed.uncertain_requests().unwrap(), vec![1]);
     resumed.check_active().unwrap();
+}
+
+#[test]
+fn compact_checkpoint_preserves_contract_progress_versions_and_allowance() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("task");
+    let task = Task::create_checkpointed(
+        limits(),
+        evidence.clone(),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    let request = task.admit("lead", "openai", "gpt-5.6-sol", 30).unwrap();
+    task.dispatch(&request, || Ok(())).unwrap();
+    task.settle(&request, json!({"input_tokens": 1}), 10)
+        .unwrap();
+    let checkpoint = task
+        .save_checkpoint(completed_update(), live('c', Vec::new()))
+        .unwrap();
+    assert_eq!(checkpoint.objective, contract().objective);
+    assert_eq!(
+        checkpoint.acceptance_criteria,
+        contract().acceptance_criteria
+    );
+    assert_eq!(checkpoint.completed_steering.len(), 1);
+    assert_eq!(checkpoint.failed_hypotheses.len(), 1);
+    assert_eq!(checkpoint.candidate_versions[0].label, "candidate-v1");
+    assert_eq!(checkpoint.check_versions[0].label, "check-v1");
+    assert_eq!(checkpoint.allowance.requests_consumed, 1);
+    assert_eq!(checkpoint.allowance.exposure_consumed_microusd, 10);
+    let compact: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(evidence.join("checkpoint.json")).unwrap()).unwrap();
+    assert_eq!(compact["revision"], checkpoint.revision);
+    let mut discarded = completed_update();
+    discarded.completed_steering.clear();
+    assert!(
+        task.save_checkpoint(discarded, live('c', Vec::new()))
+            .is_err()
+    );
+}
+
+#[test]
+fn worker_objectives_and_results_distinguish_stopped_completed_and_consumed() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create_checkpointed(
+        limits(),
+        dir.path().join("task"),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    task.start_worker("first".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.start_worker("second".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.claim_worker_objective("first", "Inspect   the parser")
+        .unwrap();
+    assert!(
+        task.claim_worker_objective("second", "inspect the PARSER")
+            .is_err()
+    );
+    task.claim_worker_objective("second", "Inspect the renderer")
+        .unwrap();
+    task.finish_worker("second").unwrap();
+    task.complete_worker("first", marker("worker-result", 'e'))
+        .unwrap();
+    let statuses = task
+        .checkpoint()
+        .unwrap()
+        .unwrap()
+        .workers
+        .into_iter()
+        .map(|worker| (worker.id, worker.status))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(statuses["first"], WorkerStatus::Completed);
+    assert_eq!(statuses["second"], WorkerStatus::Stopped);
+    task.consume_worker_result("first").unwrap();
+    assert_eq!(
+        task.checkpoint().unwrap().unwrap().workers[0].status,
+        WorkerStatus::Consumed
+    );
+}
+
+#[test]
+fn unchanged_calls_reassess_then_pause_but_waits_remain_bounded_by_task_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create_checkpointed(
+        limits(),
+        dir.path().join("task"),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    let signature = "1".repeat(64);
+    let result = "2".repeat(64);
+    assert_eq!(
+        task.observe_call(&signature, &result, false).unwrap(),
+        CallDecision::Progress
+    );
+    assert_eq!(
+        task.observe_call(&signature, &result, true).unwrap(),
+        CallDecision::LegitimateWait
+    );
+    assert_eq!(
+        task.observe_call(&signature, &result, false).unwrap(),
+        CallDecision::Paused
+    );
+    assert_eq!(
+        task.checkpoint().unwrap().unwrap().task_status,
+        CheckpointTaskStatus::Paused
+    );
+    assert!(task.admit("lead", "openai", "gpt-5.6-sol", 1).is_err());
+}
+
+#[test]
+fn a_checkpoint_revision_resets_unchanged_call_detection() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create_checkpointed(
+        limits(),
+        dir.path().join("task"),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    let signature = "3".repeat(64);
+    let result = "4".repeat(64);
+    assert_eq!(
+        task.observe_call(&signature, &result, false).unwrap(),
+        CallDecision::Progress
+    );
+    let checkpoint = task.checkpoint().unwrap().unwrap();
+    task.save_checkpoint(
+        CheckpointUpdate {
+            completed_acceptance: checkpoint.completed_acceptance,
+            completed_steering: vec!["used a different bounded approach".into()],
+            remaining_work: checkpoint.remaining_work,
+            failed_hypotheses: checkpoint.failed_hypotheses,
+            candidate_versions: checkpoint.candidate_versions,
+            check_versions: checkpoint.check_versions,
+        },
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    assert_eq!(
+        task.observe_call(&signature, &result, false).unwrap(),
+        CallDecision::Progress
+    );
+}
+
+#[test]
+fn restart_reconciles_workspace_processes_and_preserves_terminal_semantics() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("task");
+    let prior_process = ProcessSnapshot {
+        identity: "process-1".into(),
+        owner: "worker".into(),
+        status: ProcessStatus::Running,
+    };
+    let task = Task::create_checkpointed(
+        limits(),
+        evidence.clone(),
+        contract(),
+        live('a', vec![prior_process.clone()]),
+    )
+    .unwrap();
+    let signature = "7".repeat(64);
+    let result = "8".repeat(64);
+    assert_eq!(
+        task.observe_call(&signature, &result, false).unwrap(),
+        CallDecision::Progress
+    );
+    task.pause("compaction", Vec::new()).unwrap();
+    drop(task);
+    let stopped_process = ProcessSnapshot {
+        status: ProcessStatus::Stopped,
+        ..prior_process
+    };
+    let resumed = Task::open_checkpointed(
+        limits(),
+        evidence,
+        Some("explicit restart"),
+        contract(),
+        live('f', vec![stopped_process.clone()]),
+    )
+    .unwrap();
+    let checkpoint = resumed.checkpoint().unwrap().unwrap();
+    let reconciliation = checkpoint.reconciliation.unwrap();
+    assert!(reconciliation.changed_workspace);
+    assert_eq!(reconciliation.current_processes, vec![stopped_process]);
+    assert_eq!(checkpoint.task_status, CheckpointTaskStatus::Active);
+    assert_eq!(
+        resumed.observe_call(&signature, &result, false).unwrap(),
+        CallDecision::Reassess
+    );
+    assert!(resumed.complete("not ready").is_err());
+    resumed
+        .save_checkpoint(completed_update(), live('f', Vec::new()))
+        .unwrap();
+    resumed
+        .complete("all acceptance evidence retained")
+        .unwrap();
+    assert_eq!(
+        resumed.checkpoint().unwrap().unwrap().task_status,
+        CheckpointTaskStatus::Completed
+    );
 }

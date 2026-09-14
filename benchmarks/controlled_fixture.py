@@ -56,6 +56,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             calls = {i.get("call_id"): i.get("name") for i in inputs if i.get("type") == "function_call"}
             exec_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "exec_command"]
             escalation_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_escalate"]
+            checkpoint_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_checkpoint"]
             spawn_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "spawn_agent"]
             wait_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "wait_agent"]
             text = json.dumps(body.get("input", []))
@@ -69,6 +70,12 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "function_call", "id": "wait-level-two", "call_id": "wait-level-two", "namespace": "collaboration", "name": "wait_agent", "arguments": json.dumps({"timeout_ms": 30000})}
             elif scenario == "recursion":
                 item = {"type": "message", "id": "recursive-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Recursive worker completed."}]}
+            elif owner == "lead" and scenario == "no-progress" and not search_outputs:
+                item = {"type": "tool_search_call", "id": "search-checkpoint", "call_id": "search-checkpoint", "status": "completed", "execution": "client", "arguments": {"query": "durable task checkpoint"}}
+            elif owner == "lead" and scenario == "no-progress" and len(checkpoint_outputs) < 4:
+                criteria = manifest["checkpoint"]["acceptance_criteria"]
+                sequence = len(checkpoint_outputs) + 1
+                item = {"type": "function_call", "id": f"unchanged-checkpoint-{sequence}", "call_id": f"unchanged-checkpoint-{sequence}", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": [], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [], "check_versions": []})}
             elif owner == "lead" and scenario == "direct" and not exec_outputs:
                 item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
             elif owner == "lead" and scenario == "escalation" and not exec_outputs:
@@ -88,6 +95,12 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                     "parent_history": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files."},
                 }[context_policy]
                 item = {"type": "function_call", "id": "delegate", "call_id": "delegate", "name": "omd_contribute", "arguments": json.dumps(arguments)}
+            elif owner == "lead" and scenario == "checkpoint" and not checkpoint_outputs:
+                criteria = manifest["checkpoint"]["acceptance_criteria"]
+                contribution = next(json.loads(output["output"])["result"] for output in outputs if calls.get(output.get("call_id")) == "omd_contribute")
+                candidate = {"label": "integrated-candidate", "sha256": contribution["candidate_sha256"], "evidence": contribution["candidate"]["path"], "evidence_sha256": contribution["candidate"]["sha256"]}
+                check = {"label": "candidate-check", "sha256": contribution["candidate_sha256"], "evidence": contribution["checks"]["path"], "evidence_sha256": contribution["checks"]["sha256"]}
+                item = {"type": "function_call", "id": "checkpoint", "call_id": "checkpoint", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": ["Delegated the bounded implementation and retained its result."], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [candidate], "check_versions": [check]})}
             elif owner and owner.startswith("contributor-") and "fallback" not in owner and not exec_outputs:
                 command = "printf 'def add(a, b):\\n    return a + b\\n' > solution.py"
                 if scenario == "permissions":
@@ -133,7 +146,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     context = {"mode": context_policy, "max_bytes": 2000000}
     if context_policy == "shared_task_packet":
         context["packet"] = {"path": str(task_packet.resolve()), "sha256": hashlib.sha256(task_packet.read_bytes()).hexdigest()}
-    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
+    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "checkpoint": {"objective": "Fix solution.py so add returns the sum while preserving unrelated work.", "acceptance_criteria": ["candidate check passes", "separate review approves the exact candidate", "reviewed candidate integrates without losing unrelated work"], "max_no_progress_calls": 2}, "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"], "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
     if scenario == "request-cap":
         manifest["limits"]["requests"] = 2
         manifest["worker_limits"]["requests"] = 1
@@ -248,10 +261,17 @@ enabled = false
             assert 3 <= time.monotonic() - started < 15, "deadline was not exercised"
             assert any(json.loads(p.read_text())["record"].get("event") == "task_stopped" for p in (destination / "evidence").glob("0*.json")), "deadline did not stop task"
             result = {"status": "failed", "error": "native task interrupted at deadline; no worker result"}
+        if scenario == "no-progress" and not result:
+            events = [json.loads(path.read_text())["record"] for path in sorted((destination / "evidence").glob("0*.json"))]
+            decisions = [event["decision"] for event in events if event.get("event") == "call_observed"]
+            assert decisions[-3:] == ["progress", "reassess", "paused"], decisions
+            checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
+            assert checkpoint["task_status"] == "paused"
+            result = {"status": "failed", "error": "unchanged tool results paused the task"}
         worker_requests = [request for request in requests if (request["native_owner"] or "").startswith("contributor-")]
         reviewer_requests = [request for request in requests if request["native_owner"] == "reviewer"]
         escalation_requests = [request for request in requests if (request["native_owner"] or "").startswith("escalation-")]
-        if scenario not in ("request-cap", "direct", "escalation", "recursion"):
+        if scenario not in ("request-cap", "direct", "escalation", "recursion", "no-progress"):
             assert worker_requests, "worker route was not observed"
         if worker_requests:
             assert all("GLOBAL_INSTRUCTION_SENTINEL" in json.dumps(request) for request in worker_requests + reviewer_requests), "project instructions were not inherited"
@@ -262,7 +282,7 @@ enabled = false
             assert ("LEAD_ONLY_INSTRUCTION_SENTINEL" in worker_context) == (context_policy == "parent_history"), "parent instruction selection drifted"
         assert requests[0]["model"] == lead_model and requests[0]["native_owner"] == "lead", "lead route drifted"
         first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
-        assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools, "controlled tools were not deferred"
+        assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools and "omd_checkpoint" not in first_tools, "controlled tools were not deferred"
         if scenario not in ("direct", "request-cap", "recursion"):
             assert any(i.get("type") == "tool_search_call" for request in requests for i in request["body"].get("input", [])), "task-scoped tool discovery was not exercised"
         if reviewer_requests:
@@ -285,8 +305,16 @@ enabled = false
                 depths = [event["depth"] for event in events if event.get("event") == "worker_started"]
                 assert depths == [1, 2], depths
         else:
-            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume") else "failed"
+            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume", "checkpoint") else "failed"
             assert result.get("status") == expected, result or process.stderr[-2000:]
+            if scenario == "checkpoint":
+                checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
+                assert checkpoint["completed_steering"] == ["Delegated the bounded implementation and retained its result."]
+                assert checkpoint["remaining_work"] == manifest["checkpoint"]["acceptance_criteria"]
+                assert [item["label"] for item in checkpoint["candidate_versions"]] == ["integrated-candidate"]
+                assert [item["label"] for item in checkpoint["check_versions"]] == ["candidate-check"]
+                assert checkpoint["task_status"] == "stopped"
+                assert checkpoint["allowance"]["requests_consumed"] == len(requests)
             if scenario == "outage-fallback":
                 assert result["implementation"]["fallback_used"] is True
                 assert len(result["implementation"]["contributor_failures"]) == 2
@@ -332,7 +360,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation", "outage-fallback", "client-loss-resume", "recursion"), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress"), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")

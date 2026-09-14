@@ -7,26 +7,44 @@ use accounting::Rates;
 use codex_core::StartThreadOptions;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
+use codex_extension_api::ContentItemKind;
+use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionFuture;
 use codex_extension_api::ExtensionRegistryBuilder;
 use codex_extension_api::JsonToolOutput;
+use codex_extension_api::PromptFragment;
 use codex_extension_api::ThreadIdleCause;
 use codex_extension_api::ThreadIdleInput;
 use codex_extension_api::ThreadLifecycleContributor;
 use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ThreadStopInput;
 use codex_extension_api::ToolCall;
+use codex_extension_api::ToolCallOutcome;
 use codex_extension_api::ToolContributor;
 use codex_extension_api::ToolExecutor;
 use codex_extension_api::ToolExecutorFuture;
+use codex_extension_api::ToolFinishInput;
+use codex_extension_api::ToolLifecycleContributor;
+use codex_extension_api::ToolLifecycleFuture;
 use codex_extension_api::ToolOutput;
+use codex_extension_api::ToolStartInput;
+use codex_extension_api::TurnContextContributionInput;
+use codex_extension_api::TurnItemContributor;
+use codex_omd::CheckpointUpdate;
 use codex_omd::FailureClass;
 use codex_omd::Limits;
+use codex_omd::LiveState;
+use codex_omd::ProcessSnapshot;
+use codex_omd::ProcessStatus;
 use codex_omd::Snapshot;
 use codex_omd::Task;
+use codex_omd::TaskContract;
+use codex_omd::VersionMarker;
 use codex_omd::WorkerLimits;
 use codex_protocol::ThreadId;
+use codex_protocol::items::TurnItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -56,6 +74,8 @@ struct Manifest {
     approved_untracked: Vec<String>,
     limits: Limits,
     worker_limits: WorkerLimits,
+    checkpoint: TaskContract,
+    legitimate_wait_tools: Vec<String>,
     lifecycle: LifecyclePolicy,
     recovery: RecoveryPolicy,
     lead_policy: LeadPolicy,
@@ -213,6 +233,13 @@ struct Host {
     contribution_started: std::sync::atomic::AtomicBool,
     operation: std::sync::atomic::AtomicBool,
     lead_completed: std::sync::atomic::AtomicBool,
+    pending_calls: std::sync::Mutex<BTreeMap<String, PendingCall>>,
+}
+
+#[derive(Clone)]
+struct PendingCall {
+    signature_sha256: String,
+    legitimate_wait: bool,
 }
 
 struct OperationGuard<'a>(&'a std::sync::atomic::AtomicBool);
@@ -235,6 +262,39 @@ struct Lead {
 struct ContributionTool(Arc<Lead>);
 
 struct EscalationTool(Arc<Lead>);
+
+struct CheckpointTool(Arc<Lead>);
+
+fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveState, String> {
+    let approved = manifest
+        .approved_untracked
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let paths =
+        codex_omd::tracked_paths(&manifest.repository, &approved).map_err(|e| e.to_string())?;
+    let snapshot =
+        codex_omd::capture_tracked(&manifest.repository, &approved, manifest.snapshot_bytes)
+            .map_err(|e| e.to_string())?;
+    let processes = accounts
+        .0
+        .lock()
+        .map_err(|_| "account lock poisoned")?
+        .iter()
+        .map(|(identity, account)| ProcessSnapshot {
+            identity: identity.clone(),
+            owner: account.owner.clone(),
+            status: ProcessStatus::Running,
+        })
+        .collect();
+    Ok(LiveState {
+        workspace_sha256: snapshot.hash().map_err(|e| e.to_string())?,
+        tracked_paths_sha256: execution::hash(
+            &serde_json::to_vec(&paths).map_err(|e| e.to_string())?,
+        ),
+        processes,
+    })
+}
 
 pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
@@ -266,6 +326,17 @@ pub fn install(
         || manifest.recovery.contributor_attempts == 0
         || manifest.recovery.equivalent_failure_threshold < 2
         || manifest.recovery.contributor_attempts < manifest.recovery.equivalent_failure_threshold
+        || manifest.legitimate_wait_tools.len() > 16
+        || manifest
+            .legitimate_wait_tools
+            .iter()
+            .any(|name| name.is_empty() || name.len() > 128)
+        || manifest
+            .legitimate_wait_tools
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != manifest.legitimate_wait_tools.len()
         || manifest
             .escalation
             .allowed_failure_classes
@@ -314,15 +385,18 @@ pub fn install(
         codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
             .map_err(|e| e.to_string())?;
     }
+    let accounts = Arc::new(Accounts::default());
+    let live = capture_live_state(&manifest, &accounts)?;
     let task = Arc::new(
-        Task::open(
+        Task::open_checkpointed(
             manifest.limits.clone(),
             manifest.evidence.clone(),
             manifest.lifecycle.explicit_resume.as_deref(),
+            manifest.checkpoint.clone(),
+            live,
         )
         .map_err(|e| e.to_string())?,
     );
-    let accounts = Arc::new(Accounts::default());
     codex_api::request_observer::install_response_observer(accounts.clone())
         .map_err(str::to_owned)?;
     let host = Arc::new(Host {
@@ -333,6 +407,7 @@ pub fn install(
         contribution_started: std::sync::atomic::AtomicBool::new(false),
         operation: std::sync::atomic::AtomicBool::new(false),
         lead_completed: std::sync::atomic::AtomicBool::new(false),
+        pending_calls: std::sync::Mutex::new(BTreeMap::new()),
     });
     let _ = host.authorize();
     let deadline_host = host.clone();
@@ -344,6 +419,9 @@ pub fn install(
         deadline_host.stop_tree("task_deadline", true, None).await;
     });
     registry.thread_lifecycle_contributor(Arc::new(Extension(host.clone())));
+    registry.prompt_contributor(Arc::new(Extension(host.clone())));
+    registry.tool_lifecycle_contributor(Arc::new(Extension(host.clone())));
+    registry.turn_item_contributor(Arc::new(Extension(host.clone())));
     registry.tool_contributor(Arc::new(Extension(host)));
     Ok(())
 }
@@ -370,7 +448,14 @@ impl Host {
 
     async fn stop_tree(&self, reason: &str, final_stop: bool, except: Option<ThreadId>) {
         if final_stop {
-            let _ = self.task.stop();
+            if reason != "completed"
+                || self
+                    .task
+                    .complete("foreground acceptance checkpoint")
+                    .is_err()
+            {
+                let _ = self.task.stop();
+            }
         } else {
             let uncertain = self.task.uncertain_requests().unwrap_or_default();
             let _ = self.task.pause(reason, uncertain);
@@ -471,6 +556,247 @@ impl Host {
             .map_err(|e| e.to_string())?;
         Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
     }
+
+    fn live_state(&self) -> Result<LiveState, String> {
+        capture_live_state(&self.manifest, &self.accounts)
+    }
+
+    fn save_checkpoint(
+        &self,
+        update: CheckpointUpdate,
+    ) -> Result<codex_omd::TaskCheckpoint, String> {
+        for marker in update
+            .candidate_versions
+            .iter()
+            .chain(&update.check_versions)
+            .chain(
+                update
+                    .completed_acceptance
+                    .iter()
+                    .flat_map(|acceptance| &acceptance.evidence),
+            )
+        {
+            let path = PathBuf::from(&marker.evidence);
+            if path.canonicalize().map_err(|e| e.to_string())? != path
+                || !path.starts_with(&self.manifest.evidence)
+                || !std::fs::symlink_metadata(&path)
+                    .map_err(|e| e.to_string())?
+                    .file_type()
+                    .is_file()
+                || execution::hash(&std::fs::read(&path).map_err(|e| e.to_string())?)
+                    != marker.evidence_sha256
+            {
+                return Err("checkpoint marker is not bound to host-owned evidence".into());
+            }
+        }
+        self.task
+            .save_checkpoint(update, self.live_state()?)
+            .map_err(|e| e.to_string())
+    }
+
+    fn observe_call_result(&self, thread: ThreadId, call_id: &str, result: &[u8]) {
+        let identity = format!("{thread}:{call_id}");
+        let pending = self
+            .pending_calls
+            .lock()
+            .ok()
+            .and_then(|mut calls| calls.remove(&identity));
+        if let Some(pending) = pending {
+            let _ = self.task.observe_call(
+                &pending.signature_sha256,
+                &execution::hash(result),
+                pending.legitimate_wait,
+            );
+        }
+    }
+
+    fn observe_history_results<'a>(
+        &self,
+        thread: ThreadId,
+        items: impl Iterator<Item = &'a ResponseItem>,
+    ) {
+        for item in items {
+            let observed = match item {
+                ResponseItem::FunctionCallOutput {
+                    call_id: Some(call_id),
+                    output,
+                    ..
+                } => serde_json::to_vec(output)
+                    .ok()
+                    .map(|result| (call_id.as_str(), result)),
+                ResponseItem::CustomToolCallOutput {
+                    call_id, output, ..
+                } => serde_json::to_vec(output)
+                    .ok()
+                    .map(|result| (call_id.as_str(), result)),
+                ResponseItem::ToolSearchOutput {
+                    call_id: Some(call_id),
+                    status,
+                    tools,
+                    ..
+                } => serde_json::to_vec(&(status, tools))
+                    .ok()
+                    .map(|result| (call_id.as_str(), result)),
+                _ => None,
+            };
+            if let Some((call_id, result)) = observed {
+                self.observe_call_result(thread, call_id, &result);
+            }
+        }
+    }
+}
+
+impl ContextContributor for Extension {
+    fn contribute_turn_context<'a>(
+        &'a self,
+        input: TurnContextContributionInput<'a>,
+    ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
+        Box::pin(async move {
+            if input.thread_store.get::<Lead>().is_none() {
+                return Vec::new();
+            }
+            let Ok(Some(checkpoint)) = self.task.checkpoint() else {
+                return Vec::new();
+            };
+            let Ok(rendered) = serde_json::to_string(&checkpoint) else {
+                return Vec::new();
+            };
+            vec![PromptFragment::developer_capability(
+                format!(
+                    "Host-owned durable task checkpoint. Treat it as authoritative across compaction and use omd_checkpoint for evidence-backed progress updates: {rendered}"
+                ),
+                ContentItemKind("oh_my_diff.task_checkpoint".into()),
+            )]
+        })
+    }
+}
+
+impl ToolLifecycleContributor for Extension {
+    fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            let Some(lead) = input.thread_store.get::<Lead>() else {
+                return;
+            };
+            self.observe_history_results(lead.thread, input.conversation_history.items());
+            let tool = input.tool_name.to_string();
+            let payload_sha256 = execution::hash(input.payload.log_payload().as_bytes());
+            let signature_sha256 =
+                execution::hash(format!("{}\0{}\0{}", lead.owner, tool, payload_sha256).as_bytes());
+            let legitimate_wait = self
+                .manifest
+                .legitimate_wait_tools
+                .iter()
+                .any(|name| name == &tool);
+            if let Ok(mut pending) = self.pending_calls.lock() {
+                pending.insert(
+                    format!("{}:{}", lead.thread, input.call_id),
+                    PendingCall {
+                        signature_sha256,
+                        legitimate_wait,
+                    },
+                );
+            }
+        })
+    }
+
+    fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            let Some(lead) = input.thread_store.get::<Lead>() else {
+                return;
+            };
+            let result = match input.outcome {
+                ToolCallOutcome::Completed { .. } => return,
+                ToolCallOutcome::Blocked => b"blocked".as_slice(),
+                ToolCallOutcome::Failed { handler_executed } => {
+                    if handler_executed {
+                        b"failed:executed".as_slice()
+                    } else {
+                        b"failed:not_executed".as_slice()
+                    }
+                }
+                ToolCallOutcome::Aborted => b"aborted".as_slice(),
+            };
+            self.observe_call_result(lead.thread, input.call_id, result);
+        })
+    }
+}
+
+impl TurnItemContributor for Extension {
+    fn contribute<'a>(
+        &'a self,
+        thread_store: &'a ExtensionData,
+        _turn_store: &'a ExtensionData,
+        item: &'a mut TurnItem,
+    ) -> ExtensionFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let Some(lead) = thread_store.get::<Lead>() else {
+                return Ok(());
+            };
+            let observed = match item {
+                TurnItem::FunctionCallOutput(output) => Some((
+                    output.id.as_str(),
+                    serde_json::to_vec(&output.output).map_err(|e| e.to_string())?,
+                )),
+                TurnItem::DynamicToolCall(output)
+                    if !matches!(
+                        output.status,
+                        codex_protocol::items::DynamicToolCallStatus::InProgress
+                    ) =>
+                {
+                    Some((
+                        output.id.as_str(),
+                        serde_json::to_vec(&(
+                            output.status,
+                            &output.content_items,
+                            output.success,
+                            &output.error,
+                        ))
+                        .map_err(|e| e.to_string())?,
+                    ))
+                }
+                TurnItem::CollabAgentToolCall(output)
+                    if !matches!(
+                        output.status,
+                        codex_protocol::items::CollabAgentToolCallStatus::InProgress
+                    ) =>
+                {
+                    Some((
+                        output.id.as_str(),
+                        serde_json::to_vec(&(
+                            output.status,
+                            &output.receiver_thread_ids,
+                            &output.receiver_agents,
+                        ))
+                        .map_err(|e| e.to_string())?,
+                    ))
+                }
+                TurnItem::McpToolCall(output)
+                    if !matches!(
+                        output.status,
+                        codex_protocol::items::McpToolCallStatus::InProgress
+                    ) =>
+                {
+                    Some((
+                        output.id.as_str(),
+                        serde_json::to_vec(&(&output.status, &output.result, &output.error))
+                            .map_err(|e| e.to_string())?,
+                    ))
+                }
+                TurnItem::ContextCompaction(_) => {
+                    let live = self.live_state()?;
+                    self.task
+                        .reconcile("conversation_compaction", live)
+                        .map_err(|e| e.to_string())?;
+                    None
+                }
+                _ => None,
+            };
+            if let Some((call_id, result)) = observed {
+                self.observe_call_result(lead.thread, call_id, &result);
+            }
+            Ok(())
+        })
+    }
 }
 
 impl ThreadLifecycleContributor<Config> for Extension {
@@ -553,6 +879,19 @@ impl ThreadLifecycleContributor<Config> for Extension {
                         self.lead_completed
                             .store(true, std::sync::atomic::Ordering::Release);
                     }
+                    ThreadIdleCause::Completed if lead.owner.starts_with("agent:") => {
+                        let _ = self.task.complete_worker(
+                            &lead.owner,
+                            VersionMarker {
+                                label: "native-agent-result".into(),
+                                sha256: execution::hash(lead.thread.to_string().as_bytes()),
+                                evidence: format!("native-thread:{}", lead.thread),
+                                evidence_sha256: execution::hash(
+                                    lead.thread.to_string().as_bytes(),
+                                ),
+                            },
+                        );
+                    }
                     ThreadIdleCause::Interrupted | ThreadIdleCause::Failed => {
                         self.lead_completed
                             .store(false, std::sync::atomic::Ordering::Release);
@@ -590,7 +929,9 @@ impl ThreadLifecycleContributor<Config> for Extension {
                         )
                         .await;
                     } else {
-                        let _ = self.task.finish_worker(&account.owner);
+                        if self.task.consume_worker_result(&account.owner).is_err() {
+                            let _ = self.task.finish_worker(&account.owner);
+                        }
                     }
                 }
             }
@@ -607,8 +948,10 @@ impl ToolContributor for Extension {
         let Some(lead) = thread.get::<Lead>() else {
             return Vec::new();
         };
-        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> =
-            vec![Arc::new(EscalationTool(lead.clone()))];
+        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> = vec![
+            Arc::new(CheckpointTool(lead.clone())),
+            Arc::new(EscalationTool(lead.clone())),
+        ];
         if accounting::authorized(
             &self.manifest.authorization,
             &self.manifest.authorization_sha256,
@@ -617,6 +960,140 @@ impl ToolContributor for Extension {
             tools.push(Arc::new(ContributionTool(lead)));
         }
         tools
+    }
+}
+
+fn version_marker_schema() -> JsonSchema {
+    JsonSchema::object(
+        BTreeMap::from([
+            (
+                "label".into(),
+                JsonSchema::string(Some("Version label.".into())),
+            ),
+            (
+                "sha256".into(),
+                JsonSchema::string(Some("Exact lowercase SHA256.".into())),
+            ),
+            (
+                "evidence".into(),
+                JsonSchema::string(Some("Host-owned evidence reference.".into())),
+            ),
+            (
+                "evidence_sha256".into(),
+                JsonSchema::string(Some("Exact lowercase evidence SHA256.".into())),
+            ),
+        ]),
+        Some(vec![
+            "label".into(),
+            "sha256".into(),
+            "evidence".into(),
+            "evidence_sha256".into(),
+        ]),
+        Some(false.into()),
+    )
+}
+
+impl<'call> ToolExecutor<ToolCall<'call>> for CheckpointTool {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("omd_checkpoint")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        let acceptance = JsonSchema::object(
+            BTreeMap::from([
+                (
+                    "criterion".into(),
+                    JsonSchema::string(Some(
+                        "Exact acceptance criterion from the task contract.".into(),
+                    )),
+                ),
+                (
+                    "evidence".into(),
+                    JsonSchema::array(
+                        version_marker_schema(),
+                        Some("Evidence proving this criterion.".into()),
+                    ),
+                ),
+            ]),
+            Some(vec!["criterion".into(), "evidence".into()]),
+            Some(false.into()),
+        );
+        let text_array = |description: &str| {
+            JsonSchema::array(JsonSchema::string(None), Some(description.into()))
+        };
+        ToolSpec::Function(ResponsesApiTool {
+            name: "omd_checkpoint".into(),
+            description: "Persist an evidence-backed compact task checkpoint outside the conversation summary. Completed acceptance, steering, failed hypotheses, and version markers are monotonic; remaining work may be revised. Host captures worker states, live workspace/process state, and remaining allowance.".into(),
+            strict: false,
+            defer_loading: None,
+            output_schema: None,
+            parameters: JsonSchema::object(
+                BTreeMap::from([
+                    (
+                        "completed_acceptance".into(),
+                        JsonSchema::array(acceptance, Some("Completed acceptance evidence.".into())),
+                    ),
+                    (
+                        "completed_steering".into(),
+                        text_array("Completed user steering."),
+                    ),
+                    ("remaining_work".into(), text_array("Exact work still remaining.")),
+                    (
+                        "failed_hypotheses".into(),
+                        text_array("Failed hypotheses retained for recovery."),
+                    ),
+                    (
+                        "candidate_versions".into(),
+                        JsonSchema::array(
+                            version_marker_schema(),
+                            Some("Candidate versions and evidence.".into()),
+                        ),
+                    ),
+                    (
+                        "check_versions".into(),
+                        JsonSchema::array(
+                            version_marker_schema(),
+                            Some("Check versions and evidence.".into()),
+                        ),
+                    ),
+                ]),
+                Some(vec![
+                    "completed_acceptance".into(),
+                    "completed_steering".into(),
+                    "remaining_work".into(),
+                    "failed_hypotheses".into(),
+                    "candidate_versions".into(),
+                    "check_versions".into(),
+                ]),
+                Some(false.into()),
+            ),
+        })
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
+    }
+
+    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
+    where
+        'call: 'a,
+    {
+        Box::pin(async move {
+            let update: CheckpointUpdate = serde_json::from_str(call.function_arguments()?)
+                .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
+            let checkpoint = self
+                .0
+                .host
+                .save_checkpoint(update)
+                .map_err(FunctionCallError::RespondToModel)?;
+            Ok(Box::new(JsonToolOutput::new(json!({
+                "schema": 1,
+                "revision": checkpoint.revision,
+                "task_status": checkpoint.task_status,
+                "remaining_work": checkpoint.remaining_work,
+                "allowance": checkpoint.allowance,
+            }))) as Box<dyn ToolOutput>)
+        })
     }
 }
 
