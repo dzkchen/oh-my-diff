@@ -71,14 +71,16 @@ trusted evaluator only, with restrictive file permissions.
 Held-out export requires `--freeze APPROVAL.json`, binding `catalog_sha256` to the
 canonical JSON hash and recording `approved_by: "user"` plus a positive
 `held_out_trials`. This is an operator-supplied approval record, not an authenticity
-service. No such approval or held-out execution occurred in this task.
+service. The numerical protocol has since been approved, but its explicit
+`held_out_execution_authorized: false` still blocks held-out export and execution.
 
 `protocol.json` defines three repeats for development and validation, balanced
 comparator order, retry accounting, five anchored rubric levels for correctness,
 scope and maintainability, independent blinded assessment, disagreement handling
-and leakage controls. Held-out trial count, savings/quality thresholds, spending,
-latency/resources, assessor identities, uncertainty and retesting remain reserved
-for the user-approved pilot freeze. The curation task does not start that pilot.
+and leakage controls. The user-approved `freeze.json` now fixes held-out trial
+count, savings/quality thresholds, spending, latency/resources, assessor identities,
+uncertainty and retesting. Development qualification and complete-schedule
+feasibility remain prerequisites for held-out execution.
 
 `benchmarks.scenarios.score_scenario` validates trusted observation records against
 each focused contract. Missing evidence fails. Unit tests exercise positive and

@@ -27,6 +27,16 @@ class NativeRunnerTests(unittest.TestCase):
         self.limits = {"process_seconds": 5, "cpu_seconds": 5, "file_bytes": 1000000,
                        "rss_bytes": 1000000000, "processes": 16, "snapshot_bytes": 1000000}
 
+    def test_private_test_inputs_are_restored_without_replacing_candidate_code(self):
+        protected=tree({"tests/edited.txt":"trusted", "tests/deleted.txt":"restored"})["files"]
+        protected["tests/new.txt"]=None
+        candidate=tree({"implementation.txt":"candidate", "tests/edited.txt":"tampered", "tests/new.txt":"tampered"})
+        check={"backend":"macos-seatbelt", "protected_tests":protected,
+               "argv":["/bin/sh","-c",'test "$(cat implementation.txt)" = candidate && test "$(cat tests/edited.txt)" = trusted && test "$(cat tests/deleted.txt)" = restored && test ! -e tests/new.txt']}
+        result=evaluate(check,candidate,self.root/"protected-check",self.limits,5)
+        self.assertEqual(result["exit_code"],0)
+        self.assertNotIn("tests/deleted.txt",candidate["files"])
+
     def test_private_checks_credentials_other_trials_and_external_network_denied(self):
         (self.root / "private").write_text("GOLD_AND_CREDENTIAL_CANARY")
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)

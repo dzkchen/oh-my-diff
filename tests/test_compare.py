@@ -45,7 +45,7 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual({r["arm"] for r in plan}, set(c.ARMS[:2]))
         orders = [tuple(r["arm"] for r in plan[i:i + 2]) for i in range(0, 12, 2)]
         self.assertEqual(orders.count(c.ARMS[:2]), 3)
-        self.assertEqual(orders.count(tuple(reversed(c.ARMS[:2]))), 3)+
+        self.assertEqual(orders.count(tuple(reversed(c.ARMS[:2]))), 3)
         result = c.report(self.m, *self.pipeline())
         self.assertTrue(result["schedule_complete"])
         self.assertTrue(result["assessment_complete"])

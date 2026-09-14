@@ -5,9 +5,12 @@ cold/reuse trials, request-level costs, latency, isolated checks and blinded
 assessments. Reports keep retries and failures, separate evaluation overhead,
 and distinguish actual charges, estimates and unknown costs.
 
-Validation so far uses simulated provider responses. Native binaries really run,
-but the custom build has no CAI patches and is labeled `unmodified-custom-build`.
-No real model quality or CAI performance results are available yet.
+Validation includes simulated provider fixtures and real upstream development
+trials on two pinned tasks. Each upstream arm passed 3/3 Serde and 2/3 Requests
+checks. An approved API supplement completed two independent reviews for all
+twelve candidates; incomplete original native reviews and disagreements remain
+retained. There are no CAI performance results. The custom fixture build is labeled
+`unmodified-custom-build`.
 
 ## Quick start
 
@@ -50,6 +53,9 @@ Use `python3 -m benchmarks.<module> --help` for arguments.
 | `reconcile` | Apply vetted USD charge exports to a new bundle, preserving original evidence. |
 | `native_usage` | Import native JSONL observations; usage alone remains accounting-incomplete. |
 | `curate` | Rebuild/validate the corpus and export task inputs. |
+| `qualification` | Prepare, verify and execute the bounded native subscription development baseline. |
+| `qualification_replay` | Recheck every saved development candidate with canonical test inputs, preserving original evidence. |
+| `qualification_assess` | Prepare a fixed API assessment supplement; execution requires approval of that exact paid plan. |
 
 ## Evaluation rules
 
@@ -61,8 +67,8 @@ Use `python3 -m benchmarks.<module> --help` for arguments.
 
 The [corpus guide](corpus/README.md) covers 88 pinned tasks and 18 focused scenarios.
 The [protocol](corpus/protocol.json) defines splits, repeats, rubrics, leakage
-controls and disagreement handling. Final budgets and quality/savings gates
-remain part of the pilot freeze.
+controls and disagreement handling. The approved [freeze](corpus/freeze.json)
+sets numerical budgets and quality/savings gates; held-out execution remains locked.
 
 ## Bounded upstream pilot
 
@@ -72,5 +78,14 @@ controls. `run OUTPUT/manifest.json` incurs OpenAI API usage and requires an
 approved allowance and data scope. It refuses a second start in the same bundle.
 The September 13 pilot retained a failed pair and one symmetric infrastructure
 retest; its byte-based context configuration was rejected. See the local pilot
-audit for evidence and the approved `corpus/freeze.json` for criteria. Included OpenAI subscription usage is excluded from the USD 15 paid reserve; subscription execution still needs a validated native route. Criteria approval does not unlock held-out execution.
+audit for evidence and the approved `corpus/freeze.json` for criteria. Included OpenAI subscription usage is excluded from the USD 15 paid reserve. The subsequent native route is validated for the recorded account and development configuration; each new schedule still requires current quota and allowance checks. Criteria approval does not unlock held-out execution.
 Do not use the rejected configuration to qualify held-out performance.
+
+The local `.docs/audits/baseline-qualification.md` contains the later real-task
+results, environment repair, evaluator replay, retained assessment failures and
+exact reproduction commands. Subscription observations establish token/quota and
+latency evidence, not metered API dollar savings. The explicitly approved assessment
+supplement completed all 24 reviews for USD 1.5507183 estimated, within its
+USD 7.8148875 reservation. It preserves all original assessments and changes no
+task candidates. Review conflicts remain unresolved; this completes bounded
+baseline evidence and protocol preparation, not a confirmatory quality gate.

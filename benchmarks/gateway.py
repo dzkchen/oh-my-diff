@@ -77,14 +77,19 @@ def validate_routes(routes, fixture):
         else:
             require(url.scheme == "https", "live provider requires HTTPS")
             require(route.get("credential_env") and os.environ.get(route["credential_env"]), "provider credential unavailable")
-            require(number(route["request_exposure_usd"]) > 0, "live requests require a conservative exposure reservation")
+            if route.get("native_subscription"):
+                require(route["billing"] == "subscription" and route["url"] == "https://chatgpt.com/backend-api/codex", "subscription endpoint or billing mismatch")
+                require(route.get("account_env") and os.environ.get(route["account_env"]), "subscription account unavailable")
+                require(route.get("included_usage_verified") is True and number(route["request_exposure_usd"]) == 0, "included subscription usage must be verified")
+            else:
+                require(number(route["request_exposure_usd"]) > 0, "live requests require a conservative exposure reservation")
         require(route["models"] and route["account_alias"], "provider model/account declaration required")
         require(route["billing"] in ("unknown", "subscription", "estimate"), "invalid route billing mode")
         if route["billing"] == "estimate":
             require(route.get("rates") and route.get("rate_card"), "rate-card evidence required")
 
 
-def bounded_request(body, route):
+def bounded_request(body, route, records=()):
     bounds = route.get("bounds")
     if not bounds:
         return
@@ -102,9 +107,24 @@ def bounded_request(body, route):
         elif isinstance(node, list):
             nodes.extend(node)
     reasoning = sum(isinstance(i, dict) and i.get("type") == "reasoning" for i in inputs) if isinstance(inputs, list) else 0
-    require(not isinstance(inputs, list) or len(inputs) <= 64, "bounded message count exceeded")
+    require(not isinstance(inputs, list) or len(inputs) <= bounds.get("input_items", 64), "bounded message count exceeded")
     ceiling = len(json.dumps(body, ensure_ascii=False).encode()) + 4096 * (1 + reasoning)
+    if bounds.get("input_accounting") == "observed-prefix-v1" and isinstance(inputs, list):
+        static = {k: v for k, v in body.items() if k != "input"}
+        for record in records:
+            prior = record.get("request", {})
+            prefix = prior.get("input")
+            usage = record.get("raw_usage") or {}
+            if (record.get("status") == "completed" and isinstance(prefix, list)
+                    and inputs[:len(prefix)] == prefix and type(usage.get("input_tokens")) is int
+                    and static == {k: v for k, v in prior.items() if k != "input"}):
+                added = inputs[len(prefix):]
+                upper = usage["input_tokens"] + len(json.dumps(added, ensure_ascii=False).encode()) + 4096 * (1 + len(added))
+                ceiling = min(ceiling, upper)
     require(ceiling <= bounds["input_token_ceiling"], "conservative input ceiling exceeded")
+    if route.get("native_subscription"):
+        require(not body.get("max_output_tokens"), "subscription must preserve native output admission")
+        return ceiling
     require(body["max_output_tokens"] <= bounds["output_tokens"], "output ceiling exceeded")
     rates = route["rates"]
     exposure = (Decimal(bounds["input_token_ceiling"]) * max(number(rates[k]) for k in ("input", "cache_read", "cache_write")) + Decimal(bounds["output_tokens"]) * number(rates["output"])) / 1000000
@@ -195,13 +215,14 @@ class Gateway:
             body = json.loads(client.rfile.read(size))
             require(body["model"] in route["models"], "unapproved model")
             record["requested_model"] = body["model"]
-            maximum = min(self.budget.limits["max_output_tokens"], route.get("bounds", {}).get("output_tokens", self.budget.limits["max_output_tokens"]))
-            body["max_output_tokens"] = min(int(body.get("max_output_tokens", maximum)), maximum)
-            require(body["max_output_tokens"] > 0, "invalid output limit")
-            if route.get("bounds"):
+            if not route.get("native_subscription"):
+                maximum = min(self.budget.limits["max_output_tokens"], route.get("bounds", {}).get("output_tokens", self.budget.limits["max_output_tokens"]))
+                body["max_output_tokens"] = min(int(body.get("max_output_tokens", maximum)), maximum)
+                require(body["max_output_tokens"] > 0, "invalid output limit")
+            if route.get("bounds") and not route.get("native_subscription"):
                 body["service_tier"] = "default"
             record["request"] = body
-            record["input_token_upper_bound"] = bounded_request(body, route)
+            record["input_token_upper_bound"] = bounded_request(body, route, self.records)
             exposure = number(route["request_exposure_usd"])
             if route.get("settle_completed_usage"):
                 rates=route["rates"]
@@ -220,6 +241,9 @@ class Gateway:
             headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
             if route.get("credential_env"):
                 headers["Authorization"] = "Bearer " + os.environ[route["credential_env"]]
+            if route.get("native_subscription"):
+                headers["ChatGPT-Account-Id"] = os.environ[route["account_env"]]
+                headers["originator"] = "codex_cli_rs"
             for key in ("thread-id", "session-id", "x-openai-subagent"):
                 if client.headers.get(key):
                     headers[key] = client.headers[key]
@@ -228,6 +252,7 @@ class Gateway:
             response = conn.getresponse()
             record["http_status"] = response.status
             record["provider_request_id"] = response.getheader("x-request-id")
+            record["rate_limit_headers"] = {k: v for k, v in response.getheaders() if k.lower().startswith(("x-codex-", "x-ratelimit-")) and k.lower() != "x-codex-turn-state"}
             record["content_type"] = response.getheader("Content-Type", "")
             client.send_response(response.status)
             client.send_header("Content-Type", record["content_type"])
@@ -281,7 +306,9 @@ class Gateway:
                     self.connections.discard(conn)
             if record.get("raw_usage") and record.get("input_token_upper_bound"):
                 usage = record["raw_usage"]
-                record["usage_within_reserved_bounds"] = (usage.get("input_tokens", float("inf")) <= record["input_token_upper_bound"] and usage.get("output_tokens", float("inf")) <= record["request"]["max_output_tokens"])
+                route = self.routes[record["route"]]
+                output_limit = route["bounds"]["output_tokens"] if route.get("native_subscription") else record["request"]["max_output_tokens"]
+                record["usage_within_reserved_bounds"] = (usage.get("input_tokens", float("inf")) <= record["input_token_upper_bound"] and usage.get("output_tokens", float("inf")) <= output_limit)
                 if not record["usage_within_reserved_bounds"]:
                     self.stopped.set()
                     self.budget.stopped = True
