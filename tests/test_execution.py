@@ -118,6 +118,20 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(money(ledger)["task_api"]["unknown"], 2)
         self.assertTrue(all(b["max_output_tokens"] == 50 for b in WireProvider.seen))
 
+    def test_interruption_persists_raw_failed_attempt_without_ledger_collection(self):
+        budget = Budget(self.limits, self.root / "budget")
+        with self.assertRaises(KeyboardInterrupt):
+            with Gateway(self.routes, budget, self.root, fixture=True) as gateway:
+                self.assertEqual(self.request(gateway, mode="failure"), 429)
+                raise KeyboardInterrupt()
+        records = [read(p) for p in (self.root / "requests").glob("*.json")]
+        self.assertEqual(len(records), budget.count)
+        self.assertTrue(records[0]["sent"])
+        self.assertEqual(records[0]["status"], "failed")
+        self.assertEqual(records[0]["admission"], 1)
+        self.assertEqual(str(budget.reserved), "0.25")
+        self.assertEqual(gateway.ledger(), gateway.ledger())
+
     def test_shared_budget_denies_before_provider_and_does_not_refund(self):
         budget = Budget(self.limits, self.root / "budget")
         with Gateway(self.routes, budget, self.root, fixture=True) as gateway:

@@ -4,11 +4,20 @@
   "tag_object": "36eab01061df3cde5f95ec20a526777b430091ba",
   "commit": "6b9826e3aa83b1a5947db50f4332cb9c65f1b340",
   "rust_toolchain": "1.95.0",
-  "rust_components": ["clippy", "rustfmt", "rust-src"],
+  "rust_components": [
+    "clippy",
+    "rustfmt",
+    "rust-src"
+  ],
   "verified_target": "aarch64-apple-darwin",
   "cargo_lock_sha256": "29b37678141ef79e8548a8f135161e5360cd5c2c775cf497589bcfdfe9efc1a0",
   "normalized_cargo_lock_sha256": "34726731e842976085e3c122f62ddd5c8d6555bdcb32f5e9361c8e27fb0795bf",
   "lock_normalization": "150 source-less workspace package versions: 0.0.0 -> 0.154.0; external dependencies unchanged",
-  "runtime_patches": [],
+  "runtime_patches": [
+    {
+      "path": "runtime/patches/controlled-contributor.patch",
+      "sha256": "0aaf8eef80862a9142c1c33a9019655ab7e625d033498d6733c5167889cabb2f"
+    }
+  ],
   "compatibility_evidence": ".docs/audits/upstream-compatibility.md"
 }

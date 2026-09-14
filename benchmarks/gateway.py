@@ -108,7 +108,7 @@ def bounded_request(body, route, records=()):
             nodes.extend(node)
     reasoning = sum(isinstance(i, dict) and i.get("type") == "reasoning" for i in inputs) if isinstance(inputs, list) else 0
     require(not isinstance(inputs, list) or len(inputs) <= bounds.get("input_items", 64), "bounded message count exceeded")
-    ceiling = len(json.dumps(body, ensure_ascii=False).encode()) + 4096 * (1 + reasoning)
+    ceiling = len(json.dumps(body, ensure_ascii=False).encode()) + 4096 + bounds.get("reasoning_tokens_per_item", 4096) * reasoning
     if bounds.get("input_accounting") == "observed-prefix-v1" and isinstance(inputs, list):
         static = {k: v for k, v in body.items() if k != "input"}
         for record in records:
@@ -141,6 +141,7 @@ class Gateway:
         self.admitted = 0
         self.session_reserved = Decimal(0)
         self.lock = threading.Lock()
+        self.persisted_records = None
         self.stopped = threading.Event()
         owner = self
 
@@ -190,12 +191,14 @@ class Gateway:
             for record in self.records:
                 if not record.get("finished"):
                     record["error"] = "request still in flight at collection cutoff"
+            self.persisted_records = [(record, put(self.output, f"requests/{record['id']}.json", json.dumps(record))) for record in json.loads(json.dumps(self.records))]
 
     def handle(self, client):
         uid = uuid.uuid4().hex
         record = {"id": uid, "sent": False, "status": "failed", "started": time.time(),
                   "thread_id": client.headers.get("thread-id"), "session_id": client.headers.get("session-id"),
-                  "role": client.headers.get("x-openai-subagent"), "raw_usage": None,
+                  "role": client.headers.get("x-openai-subagent"), "native_request_id": client.headers.get("x-omd-request-id"),
+                  "native_owner": client.headers.get("x-omd-owner"), "raw_usage": None,
                   "returned_model": None, "provider_request_id": None}
         with self.lock:
             self.records.append(record)
@@ -323,9 +326,9 @@ class Gateway:
 
     def ledger(self):
         entries = []
-        for record in self.records:
+        require(self.persisted_records is not None, "collect gateway ledger after context exit")
+        for record, evidence in self.persisted_records:
             route = self.routes.get(record.get("route"), {})
-            evidence = put(self.output, f"requests/{record['id']}.json", json.dumps(record))
             basis, amount = "unknown", None
             if not record["sent"]:
                 basis, amount = "actual", "0"

@@ -68,10 +68,10 @@ def restore(snapshot, destination, max_bytes):
         target.symlink_to(link)
 
 
-def snapshot(root, max_bytes):
+def snapshot(root, max_bytes, excluded_roots=()):
     files, total = {}, 0
     for parent, directories, names in os.walk(root, followlinks=False):
-        directories[:] = sorted(d for d in directories if d != ".git")
+        directories[:] = sorted(d for d in directories if d != ".git" and not (Path(parent) == Path(root) and d in excluded_roots))
         for name in list(directories) + names:
             path = Path(parent) / name
             if path.is_symlink():
@@ -101,11 +101,18 @@ def process_table():
             (line.split() for line in result.stdout.splitlines() if line.strip())}
 
 
-def launch(argv, cwd, env, sandbox, output, limits, port=None, reads=(), seconds=None):
+def launch(argv, cwd, env, sandbox, output, limits, port=None, reads=(), seconds=None, native_permissions=None):
     output.mkdir(parents=True, exist_ok=True)
-    sb = output / "sandbox.sb"
-    sb.write_text(profile(reads, sandbox, port))
-    command = ["/usr/bin/sandbox-exec", "-f", str(sb), *map(str, argv)]
+    if native_permissions is None:
+        sb = output / "sandbox.sb"
+        sb.write_text(profile(reads, sandbox, port))
+        command = ["/usr/bin/sandbox-exec", "-f", str(sb), *map(str, argv)]
+    else:
+        require(native_permissions.get("default_permissions") == "experiment", "native permission profile required")
+        require(native_permissions.get("permissions.experiment.network.enabled") is False, "native tool networking must be disabled")
+        sb = output / "native-permissions.json"
+        sb.write_text(json.dumps(native_permissions, indent=2))
+        command = list(map(str, argv))
     started = time.monotonic()
     timeout = min(limits["process_seconds"], seconds if seconds is not None else limits["process_seconds"])
     require(timeout > 0, "no runtime remaining")

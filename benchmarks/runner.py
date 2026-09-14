@@ -57,6 +57,14 @@ def validate_execution(m, root):
     return config
 
 
+def config_literal(value):
+    if isinstance(value, dict):
+        return "{" + ", ".join(json.dumps(k) + " = " + config_literal(v) for k, v in value.items()) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(config_literal(v) for v in value) + "]"
+    return json.dumps(value)
+
+
 def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, seconds):
     binary = artifact(root, runtime["binary"])
     config = artifact(root, runtime["configuration"]).read_text()
@@ -84,9 +92,15 @@ def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, se
             (home / "auth.json").write_text(json.dumps({"auth_mode": "chatgpt", "OPENAI_API_KEY": None, "tokens": {"id_token": jwt, "access_token": gateway.token, "refresh_token": "disabled", "account_id": "isolated-gateway"}}))
             (home / "auth.json").chmod(0o600)
             overrides[prefix + "requires_openai_auth"] = True
+    if runtime.get("reasoning"):
+        overrides["model_reasoning_effort"] = runtime["reasoning"]
+    native_permissions = None
+    if runtime.get("native_permissions"):
+        from .controlled_runtime import configure
+        native_permissions = configure(root, runtime, workspace, home, evidence, gateway, limits, env, overrides)
     arguments = [str(binary), "exec", "--json", "--skip-git-repo-check", "-o", str(home / "answer.txt")]
     for key, value in overrides.items():
-        arguments.extend(["-c", key + "=" + json.dumps(value)])
+        arguments.extend(["-c", key + "=" + config_literal(value)])
     arguments.append(prompt)
     allowed = [binary, home, workspace]
     for helper in runtime.get("helpers", []) + runtime.get("path_helpers", []):
@@ -100,7 +114,7 @@ def native(root, runtime, prompt, workspace, home, evidence, gateway, limits, se
     if runtime.get("version"):
         require(observed_version == runtime["version"], "native version differs from manifest")
     result = launch(arguments, workspace, env, [workspace, home], evidence, limits,
-                    port=gateway.port, reads=allowed, seconds=max(0, seconds - version["wall_seconds"]))
+                    port=gateway.port, reads=allowed, seconds=max(0, seconds - version["wall_seconds"]), native_permissions=native_permissions)
     result["observed_version"] = observed_version
     events = []
     for line in (evidence / "stdout").read_text(errors="replace").splitlines():
@@ -176,7 +190,8 @@ def evaluate(check, candidate, home, limits, seconds=None):
 
 def execute_run(m, root, spec, out, budget):
     config, limits = m["execution"], m["execution"]["limits"]
-    runtime = m["arms"][spec["arm"]]
+    runtime = dict(m["arms"][spec["arm"]])
+    runtime["task_identity"] = spec["task"].split("#")[0]
     task = next(t for t in m["tasks"] if t["id"] == spec["task"])
     started = datetime.now(timezone.utc).isoformat()
     clock = time.monotonic()
@@ -197,7 +212,7 @@ def execute_run(m, root, spec, out, budget):
             try:
                 result = native(root, runtime, artifact(root, task["prompt"]).read_text(), workspace, state,
                                 out / "native", gateway, limits, budget.remaining_seconds())
-                candidate = snapshot(workspace, limits["snapshot_bytes"])
+                candidate = snapshot(workspace, limits["snapshot_bytes"], excluded_roots=((".omd", ".omd-tmp") if runtime.get("controlled") else (".omd-tmp",)) if runtime.get("native_permissions") else ())
             except Exception as failure:
                 error = type(failure).__name__ + ": " + str(failure)
         ledger = gateway.ledger()
@@ -205,7 +220,7 @@ def execute_run(m, root, spec, out, budget):
         actors = sorted({r["thread_id"] for r in gateway.records if r.get("thread_id")})
         for event in ledger:
             if event["actor"] not in thread_ids and event["actor"] != "unattributed":
-                event["category"] = "delegation"
+                event["category"] = "review" if event["requested_model"] in runtime.get("in_task_review_models", []) else "delegation"
     patch = put(out, "candidate.patch", patch_between(source, candidate, limits["snapshot_bytes"]))
     put(out, "candidate-tree.json", json.dumps(candidate))
     wall = time.monotonic() - clock
@@ -220,7 +235,7 @@ def execute_run(m, root, spec, out, budget):
         checked = {"command": ["not-started"], "exit_code": None, "stop_reason": "experiment time exhausted"}
     check_evidence = put(out, "check.json", json.dumps(checked))
     coverage_data = {"request_census": len(gateway.records), "actors": actors, "lead_threads": thread_ids,
-                     "transport": "only gateway TCP port admitted; provider credentials absent in child environment",
+                     "transport": "native tools have no networking; runtime routes through gateway; provider credentials absent from runtime and tools" if runtime.get("native_permissions") else "only gateway TCP port admitted; provider credentials absent in child environment",
                      "billing": "unknowns retained; gateway census is not invoice reconciliation",
                      "task_environment": config["environment_cost"], "guideline_development": config["guideline_cost"],
                      "evaluation": "local checks; assessor requests counted separately", "error": error}
@@ -237,7 +252,7 @@ def execute_run(m, root, spec, out, budget):
            "source_sha256": task["source"]["sha256"], "check_definition_sha256": task["checks"]["sha256"],
            "resolved_configuration": resolved, "candidate": patch, "trace": trace,
            "initial_state_sha256": seed_ref["sha256"], "state_observations": "fresh isolated tree restored from pinned seed",
-           "isolation_evidence": "native/sandbox.sb; evaluator separate and has no inference gateway",
+           "isolation_evidence": "native/native-permissions.json; evaluator separate and has no inference gateway" if runtime.get("native_permissions") else "native/sandbox.sb; evaluator separate and has no inference gateway",
            "requested_model": runtime["requested_model"], "returned_models": sorted({r["returned_model"] for r in gateway.records if r.get("returned_model")}),
            "in_task_review_models": runtime.get("in_task_review_models", []),
            "coverage": {"task_api": error is None and all(r.get("finished") for r in gateway.records),
