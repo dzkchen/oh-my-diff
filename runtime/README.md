@@ -33,6 +33,17 @@ approval binds its hash.
 Integration checks concurrent content and tracked-path changes, applies only the
 reviewed delta, and verifies the resulting tree without committing it.
 
+The extension registers `omd_contribute` and `omd_escalate` as deferred tools.
+They are absent from the initial model-visible tool set and become available only
+through Codex's native task-scoped `tool_search`. The lead can work directly with
+ordinary tools, delegate once when the live repository-bound Contributor grant is
+valid, or request bounded opposite-lead advice. Escalation requires a typed
+`environment`, `edit`, `diagnosis`, or `model` failure and one to eight prior tool
+call IDs. The host copies the exact calls and outputs into bounded evidence before
+dispatch. Escalation reuses the task's remaining request, exposure, time, and
+permission limits; it does not widen access or reset an allowance. The returned
+advice does not edit or integrate files, so the original lead retains task ownership.
+
 The manifest configures lead routing and worker context independently. `lead_policy`
 is either fixed to `sol` or `astra`, or `task_entry`, which admits the exact configured
 model, provider, and reasoning effort selected at task entry. Both lead routes remain
@@ -49,8 +60,10 @@ Run the no-provider macOS end-to-end fixture from this repository:
 python3 -m benchmarks.controlled_fixture /path/to/codex/codex-rs/target/debug/codex /private/tmp/omd-fixture-new --scenario runner
 ```
 
-Other scenarios are `permissions`, `conflict`, `index-conflict`, `review-reject`,
-`request-cap`, `revoked`, and `deadline`. Each requires a fresh destination. These
+Other scenarios are `direct`, `escalation`, `permissions`, `conflict`,
+`index-conflict`, `review-reject`, `request-cap`, `revoked`, and `deadline`. Use
+`--failure-class environment|edit|diagnosis|model` with `escalation`. Each scenario
+requires a fresh destination. These
 fixtures need loopback listening and native sandbox execution, and use synthetic
 responses only. They establish runtime behavior, not model quality or savings.
 Use `--context-policy focused_brief|shared_task_packet|parent_history`,
@@ -80,3 +93,6 @@ tree equals the integrated reviewed tree. Included subscription allocation,
 missing usage and unexposed development orchestration cost remain unknown, and
 cannot support verified total-cost savings. Full upstream regression and paid
 experiment results are separate gates recorded in the local audit.
+Failure class is a lead-supplied typed claim bound to host-preserved evidence; the
+runtime does not infer its semantic correctness. Escalation is advisory recovery,
+not the interruption/resume and recursive lifecycle work scheduled for Phase 4.

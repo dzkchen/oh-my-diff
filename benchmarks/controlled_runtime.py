@@ -53,6 +53,8 @@ def configure(root, runtime, workspace, home, evidence, gateway, limits, env, ov
                     "lead_policy": {"mode": "fixed", "lead": "sol"},
                     "leads": {"sol": route("gpt-5.6-sol", "subscription", "high"), "astra": route("gpt-6-astra", "subscription", "high")},
                     "context_policy": {"mode": "focused_brief", "max_bytes": 65536},
+                    "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"],
+                                   "max_attempts": 1, "evidence_bytes": 65536},
                     "worker": route("muse-spark-1.3-contributor", "contributor", "low"), "toolchain_reads": [Path(p).as_posix() for p in reads],
                     "check_command": [GIT, "diff", "--check"], "snapshot_bytes": limits["snapshot_bytes"],
                     "max_request_bytes": 220000}

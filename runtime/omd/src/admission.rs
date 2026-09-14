@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs::OpenOptions;
 use std::fs::{self};
 use std::io::Write;
@@ -39,6 +40,23 @@ pub struct Attempt {
     pub settled_microusd: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureClass {
+    Environment,
+    Edit,
+    Diagnosis,
+    Model,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Failure {
+    pub id: u32,
+    pub class: FailureClass,
+    pub summary: String,
+    pub evidence: Vec<Value>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Admission {
     request: u32,
@@ -66,6 +84,9 @@ struct State {
     exposure: u64,
     sequence: u64,
     attempts: BTreeMap<u32, Attempt>,
+    failures: BTreeMap<u32, Failure>,
+    escalated_failures: BTreeSet<u32>,
+    escalations: u32,
     workers: BTreeMap<String, Worker>,
 }
 
@@ -98,6 +119,9 @@ impl Task {
                 exposure: 0,
                 sequence: 0,
                 attempts: BTreeMap::new(),
+                failures: BTreeMap::new(),
+                escalated_failures: BTreeSet::new(),
+                escalations: 0,
                 workers: BTreeMap::new(),
             }),
         };
@@ -490,6 +514,89 @@ impl Task {
             return Err(denied("task stopped or expired"));
         }
         Ok(())
+    }
+
+    pub fn record_failure(
+        &self,
+        class: FailureClass,
+        summary: String,
+        evidence: Vec<Value>,
+    ) -> io::Result<Failure> {
+        if summary.is_empty()
+            || summary.len() > 4096
+            || evidence.is_empty()
+            || evidence.len() > 16
+            || serde_json::to_vec(&evidence)?.len() > 1_048_576
+        {
+            return Err(denied("bounded failure summary and evidence required"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
+            return Err(denied("task stopped or expired"));
+        }
+        let id = u32::try_from(state.failures.len())
+            .ok()
+            .and_then(|count| count.checked_add(1))
+            .ok_or_else(|| denied("failure count overflow"))?;
+        let failure = Failure {
+            id,
+            class,
+            summary,
+            evidence,
+        };
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "failure_recorded", "failure": failure}),
+        )?;
+        state.failures.insert(id, failure.clone());
+        Ok(failure)
+    }
+
+    pub fn permit_escalation(
+        &self,
+        failure: u32,
+        max_escalations: u32,
+    ) -> io::Result<(Duration, u32, u64)> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let remaining = (
+            Duration::from_secs(self.limits.seconds).saturating_sub(self.started.elapsed()),
+            self.limits.requests.saturating_sub(state.requests),
+            self.limits.exposure_microusd.saturating_sub(state.exposure),
+        );
+        if state.stopped || remaining.0.is_zero() {
+            return Err(denied("task stopped or expired"));
+        }
+        if max_escalations == 0
+            || state.escalations >= max_escalations
+            || state.escalated_failures.contains(&failure)
+            || remaining.1 == 0
+            || !state.failures.contains_key(&failure)
+        {
+            return Err(denied(
+                "escalation is not permitted within remaining allowance",
+            ));
+        }
+        self.record(
+            &mut state,
+            &serde_json::json!({
+                "event": "escalation_permitted",
+                "failure": failure,
+                "remaining": {
+                    "seconds": remaining.0.as_secs(),
+                    "requests": remaining.1,
+                    "exposure_microusd": remaining.2,
+                },
+            }),
+        )?;
+        state.escalations += 1;
+        state.escalated_failures.insert(failure);
+        Ok(remaining)
     }
 
     pub fn stop(&self) -> io::Result<()> {

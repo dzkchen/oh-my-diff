@@ -17,6 +17,13 @@ and authorization before marking the request in flight. The callback runs after
 releasing the task lock so stop/revocation can proceed. Cancellation of dispatched
 requests remains host-owned; admission does not imply remote cancellation.
 
+`record_failure` journals a bounded typed failure with host-owned evidence
+references. `permit_escalation` permits each failure at most once, enforces the
+task's configured escalation cap, and fails closed after stop, deadline, request
+exhaustion, a missing failure, or reuse. It snapshots the remaining allowance
+before the caller dispatches through the ordinary shared admission path; it does
+not refund or create requests, exposure, or time.
+
 `capture_tracked` enumerates tracked files plus an explicit approved-untracked
 list and rejects a changed path set. `Snapshot` reads dirty contents through
 directory/file descriptors, revalidates the selected tree, and rejects symlinks

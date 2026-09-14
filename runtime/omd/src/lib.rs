@@ -3,6 +3,8 @@ mod workspace;
 
 pub use admission::Admission;
 pub use admission::Attempt;
+pub use admission::Failure;
+pub use admission::FailureClass;
 pub use admission::Limits;
 pub use admission::Task;
 pub use admission::WorkerLimits;

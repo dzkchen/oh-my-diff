@@ -13,7 +13,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol"):
+def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit"):
     destination.mkdir(parents=True, exist_ok=False)
     repo, home = destination / "repo", destination / "home"
     repo.mkdir()
@@ -40,10 +40,24 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": owner, "body": body})
             inputs = body.get("input", [])
             outputs = [i for i in inputs if i.get("type") == "function_call_output"]
-            calls = {i.get("call_id") for i in inputs if i.get("type") == "function_call" and i.get("name") == "exec_command"}
-            exec_outputs = [i for i in outputs if i.get("call_id") in calls]
+            search_outputs = [i for i in inputs if i.get("type") == "tool_search_output"]
+            calls = {i.get("call_id"): i.get("name") for i in inputs if i.get("type") == "function_call"}
+            exec_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "exec_command"]
+            escalation_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_escalate"]
             text = json.dumps(body.get("input", []))
-            if owner == "lead" and not outputs:
+            if owner == "lead" and scenario == "direct" and not exec_outputs:
+                item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
+            elif owner == "lead" and scenario == "escalation" and not exec_outputs:
+                item = {"type": "function_call", "id": "failed-edit", "call_id": "failed-edit", "name": "exec_command", "arguments": json.dumps({"cmd": "/usr/bin/false", "max_output_tokens": 500})}
+            elif owner == "lead" and scenario == "escalation" and not search_outputs:
+                item = {"type": "tool_search_call", "id": "search-escalation", "call_id": "search-escalation", "status": "completed", "execution": "client", "arguments": {"query": "preserve failure evidence bounded model escalation"}}
+            elif owner == "lead" and scenario == "escalation" and not escalation_outputs:
+                item = {"type": "function_call", "id": "escalate", "call_id": "escalate", "name": "omd_escalate", "arguments": json.dumps({"failure_class": failure_class, "summary": "The first direct edit command failed.", "call_ids": ["failed-edit"]})}
+            elif owner == "lead" and scenario == "escalation" and not any(i.get("call_id") == "direct-fix" for i in exec_outputs):
+                item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
+            elif owner == "lead" and scenario not in ("direct", "escalation") and not search_outputs:
+                item = {"type": "tool_search_call", "id": "search-delegation", "call_id": "search-delegation", "status": "completed", "execution": "client", "arguments": {"query": "delegate isolated contributor implementation"}}
+            elif owner == "lead" and scenario not in ("direct", "escalation") and not outputs:
                 arguments = {
                     "focused_brief": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files.", "selected_evidence": ["solution.py"]},
                     "shared_task_packet": {},
@@ -64,6 +78,8 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                     (repo / "solution.py").write_text("intervening user edit\n")
                 answer = json.dumps({"approved": scenario != "review-reject", "candidate_sha256": match.group(1) if match else "missing", "findings": []})
                 item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
+            elif owner and owner.startswith("escalation-"):
+                item = {"type": "message", "id": "advice", "role": "assistant", "content": [{"type": "output_text", "text": "The cited failure is preserved. Retry the edit directly with a simpler command."}]}
             else:
                 item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": "Synthetic worker completed."}]}
             if scenario == "revoked" and model == "muse-spark-1.3-contributor":
@@ -91,7 +107,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     context = {"mode": context_policy, "max_bytes": 2000000}
     if context_policy == "shared_task_packet":
         context["packet"] = {"path": str(task_packet.resolve()), "sha256": hashlib.sha256(task_packet.read_bytes()).hexdigest()}
-    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
+    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
     if scenario == "request-cap":
         manifest["limits"]["requests"] = 1
         manifest["worker_limits"]["requests"] = 1
@@ -187,13 +203,16 @@ enabled = false
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
         results = list((destination / "evidence").glob("worker-result-*.json"))
         result = json.loads(results[0].read_text()) if results else {}
+        escalation_results = list((destination / "evidence").glob("escalation-result-*.json"))
+        escalation_result = json.loads(escalation_results[0].read_text()) if escalation_results else {}
         if scenario == "deadline" and not result:
             assert 3 <= time.monotonic() - started < 15, "deadline was not exercised"
             assert any(json.loads(p.read_text())["record"].get("event") == "task_stopped" for p in (destination / "evidence").glob("0*.json")), "deadline did not stop task"
             result = {"status": "failed", "error": "native task interrupted at deadline; no worker result"}
         worker_requests = [request for request in requests if request["native_owner"] == "contributor"]
         reviewer_requests = [request for request in requests if request["native_owner"] == "reviewer"]
-        if scenario != "request-cap":
+        escalation_requests = [request for request in requests if (request["native_owner"] or "").startswith("escalation-")]
+        if scenario not in ("request-cap", "direct", "escalation"):
             assert worker_requests, "worker route was not observed"
         if worker_requests:
             assert all("GLOBAL_INSTRUCTION_SENTINEL" in json.dumps(request) for request in worker_requests + reviewer_requests), "project instructions were not inherited"
@@ -203,12 +222,25 @@ enabled = false
             assert ("return a - b" in worker_context) == (context_policy == "focused_brief"), "focused evidence selection drifted"
             assert ("LEAD_ONLY_INSTRUCTION_SENTINEL" in worker_context) == (context_policy == "parent_history"), "parent instruction selection drifted"
         assert requests[0]["model"] == lead_model and requests[0]["native_owner"] == "lead", "lead route drifted"
+        first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
+        assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools, "controlled tools were not deferred"
+        if scenario != "direct":
+            assert any(i.get("type") == "tool_search_call" for request in requests for i in request["body"].get("input", [])), "task-scoped tool discovery was not exercised"
         if reviewer_requests:
             assert reviewer_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead], "reviewer was not opposite the lead"
         ids = [request["native_request_id"] for request in (gateway.records if scenario == "runner" else requests)]
         assert all(ids) and len(ids) == len(set(ids)), "wire attempts lack unique native admission IDs"
-        expected = "integrated" if scenario in ("success", "permissions", "runner") else "failed"
-        assert result.get("status") == expected, result or process.stderr[-2000:]
+        if scenario == "escalation":
+            assert escalation_result.get("status") == "consulted", escalation_result or process.stderr[-2000:]
+            assert escalation_result["failure"]["class"] == failure_class
+            assert escalation_requests and escalation_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
+            source = json.loads(next((destination / "evidence").glob("failure-source-*.json")).read_text())
+            assert source["call_ids"] == ["failed-edit"] and any(i.get("type") == "function_call_output" for i in source["items"]), source
+        elif scenario == "direct":
+            assert not result and not worker_requests and not reviewer_requests and not escalation_requests
+        else:
+            expected = "integrated" if scenario in ("success", "permissions", "runner") else "failed"
+            assert result.get("status") == expected, result or process.stderr[-2000:]
         if scenario == "permissions":
             output = " ".join(i.get("output", "") for r in requests if r["model"] == "muse-spark-1.3-contributor" for i in r["body"].get("input", []) if i.get("type") == "function_call_output")
             assert output.lower().count("operation not permitted") + output.lower().count("permission denied") >= 2, output
@@ -216,12 +248,15 @@ enabled = false
         assert "SYNTHETIC_SECRET_MUST_NOT_REACH_WORKER" not in json.dumps(requests)
         if scenario in ("review-reject", "index-conflict", "request-cap", "revoked", "deadline"):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
+        if scenario in ("direct", "escalation"):
+            assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
         if scenario == "conflict":
             assert (repo / "solution.py").read_text() == "intervening user edit\n"
-        context_record = json.loads((destination / "evidence/context.json").read_text())
-        assert context_record["context"]["policy"] == context_policy
-        assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == lead
-        record = {"status": "pass", "scenario": scenario, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
+        if scenario not in ("direct", "escalation") and (destination / "evidence/context.json").exists():
+            context_record = json.loads((destination / "evidence/context.json").read_text())
+            assert context_record["context"]["policy"] == context_policy
+            assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == lead
+        record = {"status": "pass", "scenario": scenario, "failure_class": failure_class if scenario == "escalation" else None, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "escalation_result": escalation_result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
         (destination / "verification.json").write_text(json.dumps(record, indent=2))
         return record
     finally:
@@ -233,12 +268,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner"), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation"), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")
+    parser.add_argument("--failure-class", choices=("environment", "edit", "diagnosis", "model"), default="edit")
     args = parser.parse_args()
-    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead), indent=2))
+    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class), indent=2))
 
 
 if __name__ == "__main__":

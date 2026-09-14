@@ -1,3 +1,4 @@
+use codex_omd::FailureClass;
 use codex_omd::Limits;
 use codex_omd::Task;
 use codex_omd::WorkerLimits;
@@ -236,4 +237,56 @@ fn unpriced_raw_usage_is_retained_without_refunding_exposure() {
     task.check_active().unwrap();
     task.stop().unwrap();
     assert!(task.check_active().is_err());
+}
+
+#[test]
+fn classified_failures_are_preserved_and_escalation_is_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("task");
+    let task = Task::create(limits(), evidence.clone()).unwrap();
+    for class in [
+        FailureClass::Environment,
+        FailureClass::Edit,
+        FailureClass::Diagnosis,
+        FailureClass::Model,
+    ] {
+        let failure = task
+            .record_failure(
+                class,
+                format!("{class:?} failure"),
+                vec![json!({"path": "evidence.json", "sha256": "abc"})],
+            )
+            .unwrap();
+        assert_eq!(failure.class, class);
+    }
+    let remaining = task.permit_escalation(1, 2).unwrap();
+    assert_eq!(remaining.1, limits().requests);
+    assert!(task.permit_escalation(1, 2).is_err());
+    task.permit_escalation(2, 2).unwrap();
+    assert!(task.permit_escalation(3, 2).is_err());
+    let records = std::fs::read_dir(evidence).unwrap().count();
+    assert_eq!(records, 7);
+}
+
+#[test]
+fn failure_and_escalation_validation_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    assert!(
+        task.record_failure(FailureClass::Edit, String::new(), vec![json!({})])
+            .is_err()
+    );
+    assert!(
+        task.record_failure(FailureClass::Edit, "missing evidence".into(), vec![])
+            .is_err()
+    );
+    assert!(task.permit_escalation(1, 1).is_err());
+    let failure = task
+        .record_failure(
+            FailureClass::Diagnosis,
+            "bounded evidence".into(),
+            vec![json!({"call_id": "failed-call"})],
+        )
+        .unwrap();
+    assert!(task.permit_escalation(failure.id, 0).is_err());
 }

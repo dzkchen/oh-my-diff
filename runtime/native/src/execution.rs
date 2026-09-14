@@ -12,6 +12,7 @@ use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::PermissionProfileSnapshot;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::models::SandboxPermissions;
 use codex_protocol::permissions::FileSystemAccessMode as Access;
 use codex_protocol::permissions::FileSystemPath;
@@ -40,6 +41,14 @@ use std::time::Duration;
 pub struct ContributionRequest {
     brief: Option<String>,
     selected_evidence: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EscalationRequest {
+    failure_class: FailureClass,
+    summary: String,
+    call_ids: Vec<String>,
 }
 
 #[derive(Deserialize, serde::Serialize)]
@@ -440,7 +449,9 @@ async fn run_child(
         writable,
     } = turn;
     let host = &lead.host;
-    host.authorize()?;
+    if role == "contributor" {
+        host.authorize()?;
+    }
     let manager = host
         .manager
         .upgrade()
@@ -914,6 +925,242 @@ pub async fn contribute(
     Ok(
         json!({"schema": 1, "status": "integrated", "model": manifest.worker.model, "summary": summary.chars().take(2048).collect::<String>(), "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
     )
+}
+
+fn preserved_failure(
+    call: &ToolCall<'_>,
+    request: &EscalationRequest,
+    max_bytes: usize,
+) -> Result<Value, String> {
+    if request.summary.is_empty()
+        || request.summary.len() > 4096
+        || request.call_ids.is_empty()
+        || request.call_ids.len() > 8
+        || request
+            .call_ids
+            .iter()
+            .any(|id| id.is_empty() || id.len() > 128 || id == &call.call_id)
+        || request.call_ids.iter().collect::<BTreeSet<_>>().len() != request.call_ids.len()
+    {
+        return Err("bounded summary and unique prior call IDs are required".into());
+    }
+    let requested: BTreeSet<_> = request.call_ids.iter().map(String::as_str).collect();
+    let mut calls = BTreeSet::new();
+    let mut outputs = BTreeSet::new();
+    let mut items = Vec::new();
+    for item in call.conversation_history.items() {
+        let id = match item {
+            ResponseItem::FunctionCall { call_id, .. }
+            | ResponseItem::CustomToolCall { call_id, .. } => Some(call_id.as_str()),
+            ResponseItem::FunctionCallOutput { call_id, .. } => call_id.as_deref(),
+            ResponseItem::CustomToolCallOutput { call_id, .. } => Some(call_id.as_str()),
+            _ => None,
+        };
+        if id.is_some_and(|id| requested.contains(id)) {
+            if matches!(
+                item,
+                ResponseItem::FunctionCall { .. } | ResponseItem::CustomToolCall { .. }
+            ) {
+                calls.insert(id.unwrap().to_owned());
+            }
+            if matches!(
+                item,
+                ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
+            ) {
+                outputs.insert(id.unwrap().to_owned());
+            }
+            items.push(serde_json::to_value(item).map_err(error)?);
+        }
+    }
+    if calls.len() != requested.len() || outputs.len() != requested.len() {
+        return Err("each cited failure requires a preserved call and output".into());
+    }
+    let value = json!({
+        "schema": 1,
+        "failure_class": request.failure_class,
+        "summary": request.summary,
+        "call_ids": request.call_ids,
+        "items": items,
+    });
+    if serde_json::to_vec(&value).map_err(error)?.len() > max_bytes {
+        return Err("preserved failure evidence exceeds configured limit".into());
+    }
+    Ok(value)
+}
+
+pub async fn escalate(
+    lead: &Lead,
+    call: &ToolCall<'_>,
+    request: EscalationRequest,
+) -> Result<Value, String> {
+    let host = &lead.host;
+    let manifest = &host.manifest;
+    if !manifest
+        .escalation
+        .allowed_failure_classes
+        .contains(&request.failure_class)
+    {
+        return Err("failure class is not permitted for model escalation".into());
+    }
+    let source = preserved_failure(call, &request, manifest.escalation.evidence_bytes)?;
+    let source_ref = host.evidence(
+        &format!("failure-source-{}.json", hash(call.call_id.as_bytes())),
+        &source,
+    )?;
+    let failure = host
+        .task
+        .record_failure(
+            request.failure_class,
+            request.summary.clone(),
+            vec![source_ref.clone()],
+        )
+        .map_err(error)?;
+    let remaining_before = host
+        .task
+        .permit_escalation(failure.id, manifest.escalation.max_attempts)
+        .map_err(error)?;
+    let manager = host
+        .manager
+        .upgrade()
+        .ok_or("native thread manager stopped")?;
+    let inherited = manager
+        .get_thread(lead.thread)
+        .await
+        .map_err(error)?
+        .config()
+        .await;
+    let mut parent = (*inherited).clone();
+    if parent.cwd.as_path() != manifest.repository
+        || call.environments.len() != 1
+        || call.environments[0].environment_id != "local"
+        || call.environments[0].cwd != parent.cwd
+    {
+        return Err("changed or remote parent environment is not admitted".into());
+    }
+    let actual: PermissionProfile = call.environments[0]
+        .file_system_sandbox_context
+        .permissions
+        .clone()
+        .try_into()
+        .map_err(error)?;
+    let mut roots = call.environments[0]
+        .file_system_sandbox_context
+        .workspace_roots
+        .iter()
+        .map(PathUri::to_abs_path)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(error)?;
+    if roots.is_empty() {
+        roots.push(parent.cwd.clone());
+    }
+    let effective = intersect(
+        &parent
+            .permissions
+            .permission_profile()
+            .clone()
+            .materialize_project_roots_with_workspace_roots(&roots),
+        &actual.materialize_project_roots_with_workspace_roots(&roots),
+        parent.cwd.as_path(),
+    )?;
+    parent
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(effective))
+        .map_err(error)?;
+    let untracked: BTreeSet<_> = manifest.approved_untracked.iter().cloned().collect();
+    let selected = codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)?;
+    for name in &selected {
+        let path = AbsolutePathBuf::from_absolute_path_checked(manifest.repository.join(name))
+            .map_err(error)?;
+        call.environments[0]
+            .file_system
+            .read_file(
+                &PathUri::from_abs_path(&path),
+                codex_file_system::ReadFileOptions {
+                    follow_symlinks: false,
+                },
+                Some(&call.environments[0].file_system_sandbox_context),
+            )
+            .await
+            .map_err(error)?;
+    }
+    let base =
+        codex_omd::capture_tracked(&manifest.repository, &untracked, manifest.snapshot_bytes)
+            .map_err(error)?;
+    if !manifest.scratch.exists() {
+        let scratch =
+            AbsolutePathBuf::from_absolute_path_checked(&manifest.scratch).map_err(error)?;
+        call.environments[0]
+            .file_system
+            .create_directory(
+                &PathUri::from_abs_path(&scratch),
+                codex_file_system::CreateDirectoryOptions {
+                    recursive: false,
+                    follow_symlinks: false,
+                },
+                Some(&call.environments[0].file_system_sandbox_context),
+            )
+            .await
+            .map_err(error)?;
+    }
+    if !manifest.scratch.is_dir()
+        || std::fs::symlink_metadata(&manifest.scratch)
+            .map_err(error)?
+            .file_type()
+            .is_symlink()
+    {
+        return Err("controlled scratch is not a regular directory".into());
+    }
+    let root = codex_omd::create_worktree(
+        &base,
+        &manifest.scratch.join(format!("escalation-{}", failure.id)),
+        manifest.snapshot_bytes,
+    )
+    .map_err(error)?;
+    let route_name = lead.route.opposite();
+    let route = host.route(route_name);
+    let role = format!("escalation-{}", failure.id);
+    let advice = run_child(
+        lead,
+        &parent,
+        &root,
+        ChildTurn {
+            role: &role,
+            route,
+            prompt: format!(
+                "Analyze the preserved {:?} failure below against the current repository. Return a concise diagnosis and the safest next action for the lead. Do not edit files or request broader permissions. Failure evidence: {}",
+                request.failure_class,
+                serde_json::to_string(&source).map_err(error)?
+            ),
+            history: InitialHistory::New,
+            writable: false,
+        },
+    )
+    .await?;
+    let remaining_after = host.task.remaining().map_err(error)?;
+    Ok(json!({
+        "schema": 1,
+        "status": "consulted",
+        "failure": failure,
+        "source": source_ref,
+        "selected_route": {
+            "name": route_name.as_str(),
+            "provider": route.provider,
+            "model": route.model,
+            "reasoning_effort": route.reasoning_effort,
+        },
+        "remaining_before": {
+            "seconds": remaining_before.0.as_secs(),
+            "requests": remaining_before.1,
+            "exposure_microusd": remaining_before.2,
+        },
+        "remaining_after": {
+            "seconds": remaining_after.0.as_secs(),
+            "requests": remaining_after.1,
+            "exposure_microusd": remaining_after.2,
+        },
+        "advice": advice.chars().take(4096).collect::<String>(),
+        "attempts": host.task.attempts().map_err(error)?,
+    }))
 }
 
 async fn all_paths(host: &Host, config: &Config) -> Result<BTreeSet<String>, String> {

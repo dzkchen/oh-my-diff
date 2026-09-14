@@ -21,6 +21,7 @@ use codex_extension_api::ToolContributor;
 use codex_extension_api::ToolExecutor;
 use codex_extension_api::ToolExecutorFuture;
 use codex_extension_api::ToolOutput;
+use codex_omd::FailureClass;
 use codex_omd::Limits;
 use codex_omd::Snapshot;
 use codex_omd::Task;
@@ -30,6 +31,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_tools::FunctionCallError;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
+use codex_tools::ToolExposure;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
@@ -55,11 +57,20 @@ struct Manifest {
     lead_policy: LeadPolicy,
     leads: LeadRoutes,
     context_policy: WorkerContextPolicy,
+    escalation: EscalationPolicy,
     worker: Route,
     check_command: Vec<String>,
     toolchain_reads: Vec<PathBuf>,
     snapshot_bytes: usize,
     max_request_bytes: usize,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EscalationPolicy {
+    allowed_failure_classes: Vec<FailureClass>,
+    max_attempts: u32,
+    evidence_bytes: usize,
 }
 
 #[derive(Clone, Deserialize)]
@@ -181,7 +192,16 @@ struct Host {
     task: Arc<Task>,
     accounts: Arc<Accounts>,
     manager: Weak<ThreadManager>,
-    operation_started: std::sync::atomic::AtomicBool,
+    contribution_started: std::sync::atomic::AtomicBool,
+    operation: std::sync::atomic::AtomicBool,
+}
+
+struct OperationGuard<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for OperationGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 #[derive(Clone)]
@@ -190,6 +210,10 @@ struct Lead {
     route: LeadName,
     host: Arc<Host>,
 }
+
+struct ContributionTool(Arc<Lead>);
+
+struct EscalationTool(Arc<Lead>);
 
 pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
@@ -214,6 +238,17 @@ pub fn install(
         || manifest.max_request_bytes == 0
         || manifest.context_policy.max_bytes() == 0
         || manifest.context_policy.max_bytes() > manifest.max_request_bytes
+        || manifest.escalation.max_attempts == 0
+        || manifest.escalation.evidence_bytes == 0
+        || manifest.escalation.evidence_bytes > manifest.max_request_bytes
+        || manifest.escalation.allowed_failure_classes.is_empty()
+        || manifest
+            .escalation
+            .allowed_failure_classes
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != manifest.escalation.allowed_failure_classes.len()
     {
         return Err("invalid controlled-delegation assignments or limits".into());
     }
@@ -263,9 +298,10 @@ pub fn install(
         task,
         accounts,
         manager,
-        operation_started: std::sync::atomic::AtomicBool::new(false),
+        contribution_started: std::sync::atomic::AtomicBool::new(false),
+        operation: std::sync::atomic::AtomicBool::new(false),
     });
-    host.authorize()?;
+    let _ = host.authorize();
     let deadline_host = host.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(
@@ -437,20 +473,29 @@ impl ToolContributor for Extension {
         _: &ExtensionData,
         thread: &ExtensionData,
     ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
-        thread
-            .get::<Lead>()
-            .map(|lead| vec![lead as Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>])
-            .unwrap_or_default()
+        let Some(lead) = thread.get::<Lead>() else {
+            return Vec::new();
+        };
+        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> =
+            vec![Arc::new(EscalationTool(lead.clone()))];
+        if accounting::authorized(
+            &self.manifest.authorization,
+            &self.manifest.authorization_sha256,
+            &self.manifest.repository_identity,
+        ) {
+            tools.push(Arc::new(ContributionTool(lead)));
+        }
+        tools
     }
 }
 
-impl<'call> ToolExecutor<ToolCall<'call>> for Lead {
+impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
     fn tool_name(&self) -> ToolName {
         ToolName::plain("omd_contribute")
     }
     fn spec(&self) -> ToolSpec {
         let mut properties = BTreeMap::new();
-        let required = match self.host.manifest.context_policy {
+        let required = match self.0.host.manifest.context_policy {
             WorkerContextPolicy::FocusedBrief { .. } => {
                 properties.insert(
                     "brief".into(),
@@ -478,13 +523,16 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Lead {
             name: "omd_contribute".into(),
             description: format!(
                 "Delegate one bounded implementation to isolated Muse Contributor using the configured {} context. Host runs configured checks and separate opposite-lead review, rejects conflicts, and integrates only accepted changes. All attempts use the shared task allowance.",
-                self.host.manifest.context_policy.name()
+                self.0.host.manifest.context_policy.name()
             ),
             strict: false,
             defer_loading: None,
             output_schema: None,
             parameters: JsonSchema::object(properties, required, Some(false.into())),
         })
+    }
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
     }
     fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
     where
@@ -495,24 +543,136 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Lead {
                 serde_json::from_str(call.function_arguments()?)
                     .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
             if self
+                .0
                 .host
-                .operation_started
+                .operation
                 .swap(true, std::sync::atomic::Ordering::AcqRel)
             {
                 return Err(FunctionCallError::RespondToModel(
-                    "one controlled operation is permitted per task".into(),
+                    "another controlled operation is active".into(),
                 ));
             }
-            let result = execution::contribute(self, &call, request).await;
+            let _operation = OperationGuard(&self.0.host.operation);
+            if self
+                .0
+                .host
+                .contribution_started
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                return Err(FunctionCallError::RespondToModel(
+                    "one controlled contribution is permitted per task".into(),
+                ));
+            }
+            let result = execution::contribute(&self.0, &call, request).await;
             let value = match result {
                 Ok(value) => value,
                 Err(error) => json!({"status": "failed", "error": error}),
             };
             let reference = self
+                .0
                 .host
                 .evidence(
                     &format!(
                         "worker-result-{}.json",
+                        execution::hash(call.call_id.as_bytes())
+                    ),
+                    &value,
+                )
+                .map_err(FunctionCallError::RespondToModel)?;
+            Ok(Box::new(JsonToolOutput::new(
+                json!({"result": value, "evidence": reference}),
+            )) as Box<dyn ToolOutput>)
+        })
+    }
+}
+
+impl<'call> ToolExecutor<ToolCall<'call>> for EscalationTool {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("omd_escalate")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        let mut properties = BTreeMap::new();
+        properties.insert(
+            "failure_class".into(),
+            JsonSchema::string(Some(
+                "One of environment, edit, diagnosis, or model.".into(),
+            )),
+        );
+        properties.insert(
+            "summary".into(),
+            JsonSchema::string(Some("Concise description of what failed.".into())),
+        );
+        properties.insert(
+            "call_ids".into(),
+            JsonSchema::array(
+                JsonSchema::string(Some("Prior failed tool call ID.".into())),
+                Some("Prior calls whose exact inputs and outputs support the failure.".into()),
+            ),
+        );
+        ToolSpec::Function(ResponsesApiTool {
+            name: "omd_escalate".into(),
+            description: format!(
+                "Preserve cited failure evidence and request one bounded opposite-lead consultation when permitted. The host classifies environment, edit, diagnosis, and model failures separately, keeps existing permissions, and charges the shared remaining allowance. Allowed classes: {}.",
+                self.0
+                    .host
+                    .manifest
+                    .escalation
+                    .allowed_failure_classes
+                    .iter()
+                    .map(|class| format!("{class:?}").to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            strict: false,
+            defer_loading: None,
+            output_schema: None,
+            parameters: JsonSchema::object(
+                properties,
+                Some(vec![
+                    "failure_class".into(),
+                    "summary".into(),
+                    "call_ids".into(),
+                ]),
+                Some(false.into()),
+            ),
+        })
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
+    }
+
+    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
+    where
+        'call: 'a,
+    {
+        Box::pin(async move {
+            let request: execution::EscalationRequest =
+                serde_json::from_str(call.function_arguments()?)
+                    .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
+            if self
+                .0
+                .host
+                .operation
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                return Err(FunctionCallError::RespondToModel(
+                    "another controlled operation is active".into(),
+                ));
+            }
+            let _operation = OperationGuard(&self.0.host.operation);
+            let result = execution::escalate(&self.0, &call, request).await;
+            let value = match result {
+                Ok(value) => value,
+                Err(error) => json!({"status": "failed", "error": error}),
+            };
+            let reference = self
+                .0
+                .host
+                .evidence(
+                    &format!(
+                        "escalation-result-{}.json",
                         execution::hash(call.call_id.as_bytes())
                     ),
                     &value,

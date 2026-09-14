@@ -1321,10 +1321,10 @@ index 0000000..2c68f49
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..0106d5b
+index 0000000..558b5da
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,957 @@
+@@ -0,0 +1,1204 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -1339,6 +1339,7 @@ index 0000000..0106d5b
 +use codex_protocol::config_types::WindowsSandboxLevel;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
++use codex_protocol::models::ResponseItem;
 +use codex_protocol::models::SandboxPermissions;
 +use codex_protocol::permissions::FileSystemAccessMode as Access;
 +use codex_protocol::permissions::FileSystemPath;
@@ -1367,6 +1368,14 @@ index 0000000..0106d5b
 +pub struct ContributionRequest {
 +    brief: Option<String>,
 +    selected_evidence: Option<Vec<String>>,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct EscalationRequest {
++    failure_class: FailureClass,
++    summary: String,
++    call_ids: Vec<String>,
 +}
 +
 +#[derive(Deserialize, serde::Serialize)]
@@ -1767,7 +1776,9 @@ index 0000000..0106d5b
 +        writable,
 +    } = turn;
 +    let host = &lead.host;
-+    host.authorize()?;
++    if role == "contributor" {
++        host.authorize()?;
++    }
 +    let manager = host
 +        .manager
 +        .upgrade()
@@ -2243,6 +2254,242 @@ index 0000000..0106d5b
 +    )
 +}
 +
++fn preserved_failure(
++    call: &ToolCall<'_>,
++    request: &EscalationRequest,
++    max_bytes: usize,
++) -> Result<Value, String> {
++    if request.summary.is_empty()
++        || request.summary.len() > 4096
++        || request.call_ids.is_empty()
++        || request.call_ids.len() > 8
++        || request
++            .call_ids
++            .iter()
++            .any(|id| id.is_empty() || id.len() > 128 || id == &call.call_id)
++        || request.call_ids.iter().collect::<BTreeSet<_>>().len() != request.call_ids.len()
++    {
++        return Err("bounded summary and unique prior call IDs are required".into());
++    }
++    let requested: BTreeSet<_> = request.call_ids.iter().map(String::as_str).collect();
++    let mut calls = BTreeSet::new();
++    let mut outputs = BTreeSet::new();
++    let mut items = Vec::new();
++    for item in call.conversation_history.items() {
++        let id = match item {
++            ResponseItem::FunctionCall { call_id, .. }
++            | ResponseItem::CustomToolCall { call_id, .. } => Some(call_id.as_str()),
++            ResponseItem::FunctionCallOutput { call_id, .. } => call_id.as_deref(),
++            ResponseItem::CustomToolCallOutput { call_id, .. } => Some(call_id.as_str()),
++            _ => None,
++        };
++        if id.is_some_and(|id| requested.contains(id)) {
++            if matches!(
++                item,
++                ResponseItem::FunctionCall { .. } | ResponseItem::CustomToolCall { .. }
++            ) {
++                calls.insert(id.unwrap().to_owned());
++            }
++            if matches!(
++                item,
++                ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
++            ) {
++                outputs.insert(id.unwrap().to_owned());
++            }
++            items.push(serde_json::to_value(item).map_err(error)?);
++        }
++    }
++    if calls.len() != requested.len() || outputs.len() != requested.len() {
++        return Err("each cited failure requires a preserved call and output".into());
++    }
++    let value = json!({
++        "schema": 1,
++        "failure_class": request.failure_class,
++        "summary": request.summary,
++        "call_ids": request.call_ids,
++        "items": items,
++    });
++    if serde_json::to_vec(&value).map_err(error)?.len() > max_bytes {
++        return Err("preserved failure evidence exceeds configured limit".into());
++    }
++    Ok(value)
++}
++
++pub async fn escalate(
++    lead: &Lead,
++    call: &ToolCall<'_>,
++    request: EscalationRequest,
++) -> Result<Value, String> {
++    let host = &lead.host;
++    let manifest = &host.manifest;
++    if !manifest
++        .escalation
++        .allowed_failure_classes
++        .contains(&request.failure_class)
++    {
++        return Err("failure class is not permitted for model escalation".into());
++    }
++    let source = preserved_failure(call, &request, manifest.escalation.evidence_bytes)?;
++    let source_ref = host.evidence(
++        &format!("failure-source-{}.json", hash(call.call_id.as_bytes())),
++        &source,
++    )?;
++    let failure = host
++        .task
++        .record_failure(
++            request.failure_class,
++            request.summary.clone(),
++            vec![source_ref.clone()],
++        )
++        .map_err(error)?;
++    let remaining_before = host
++        .task
++        .permit_escalation(failure.id, manifest.escalation.max_attempts)
++        .map_err(error)?;
++    let manager = host
++        .manager
++        .upgrade()
++        .ok_or("native thread manager stopped")?;
++    let inherited = manager
++        .get_thread(lead.thread)
++        .await
++        .map_err(error)?
++        .config()
++        .await;
++    let mut parent = (*inherited).clone();
++    if parent.cwd.as_path() != manifest.repository
++        || call.environments.len() != 1
++        || call.environments[0].environment_id != "local"
++        || call.environments[0].cwd != parent.cwd
++    {
++        return Err("changed or remote parent environment is not admitted".into());
++    }
++    let actual: PermissionProfile = call.environments[0]
++        .file_system_sandbox_context
++        .permissions
++        .clone()
++        .try_into()
++        .map_err(error)?;
++    let mut roots = call.environments[0]
++        .file_system_sandbox_context
++        .workspace_roots
++        .iter()
++        .map(PathUri::to_abs_path)
++        .collect::<Result<Vec<_>, _>>()
++        .map_err(error)?;
++    if roots.is_empty() {
++        roots.push(parent.cwd.clone());
++    }
++    let effective = intersect(
++        &parent
++            .permissions
++            .permission_profile()
++            .clone()
++            .materialize_project_roots_with_workspace_roots(&roots),
++        &actual.materialize_project_roots_with_workspace_roots(&roots),
++        parent.cwd.as_path(),
++    )?;
++    parent
++        .permissions
++        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(effective))
++        .map_err(error)?;
++    let untracked: BTreeSet<_> = manifest.approved_untracked.iter().cloned().collect();
++    let selected = codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)?;
++    for name in &selected {
++        let path = AbsolutePathBuf::from_absolute_path_checked(manifest.repository.join(name))
++            .map_err(error)?;
++        call.environments[0]
++            .file_system
++            .read_file(
++                &PathUri::from_abs_path(&path),
++                codex_file_system::ReadFileOptions {
++                    follow_symlinks: false,
++                },
++                Some(&call.environments[0].file_system_sandbox_context),
++            )
++            .await
++            .map_err(error)?;
++    }
++    let base =
++        codex_omd::capture_tracked(&manifest.repository, &untracked, manifest.snapshot_bytes)
++            .map_err(error)?;
++    if !manifest.scratch.exists() {
++        let scratch =
++            AbsolutePathBuf::from_absolute_path_checked(&manifest.scratch).map_err(error)?;
++        call.environments[0]
++            .file_system
++            .create_directory(
++                &PathUri::from_abs_path(&scratch),
++                codex_file_system::CreateDirectoryOptions {
++                    recursive: false,
++                    follow_symlinks: false,
++                },
++                Some(&call.environments[0].file_system_sandbox_context),
++            )
++            .await
++            .map_err(error)?;
++    }
++    if !manifest.scratch.is_dir()
++        || std::fs::symlink_metadata(&manifest.scratch)
++            .map_err(error)?
++            .file_type()
++            .is_symlink()
++    {
++        return Err("controlled scratch is not a regular directory".into());
++    }
++    let root = codex_omd::create_worktree(
++        &base,
++        &manifest.scratch.join(format!("escalation-{}", failure.id)),
++        manifest.snapshot_bytes,
++    )
++    .map_err(error)?;
++    let route_name = lead.route.opposite();
++    let route = host.route(route_name);
++    let role = format!("escalation-{}", failure.id);
++    let advice = run_child(
++        lead,
++        &parent,
++        &root,
++        ChildTurn {
++            role: &role,
++            route,
++            prompt: format!(
++                "Analyze the preserved {:?} failure below against the current repository. Return a concise diagnosis and the safest next action for the lead. Do not edit files or request broader permissions. Failure evidence: {}",
++                request.failure_class,
++                serde_json::to_string(&source).map_err(error)?
++            ),
++            history: InitialHistory::New,
++            writable: false,
++        },
++    )
++    .await?;
++    let remaining_after = host.task.remaining().map_err(error)?;
++    Ok(json!({
++        "schema": 1,
++        "status": "consulted",
++        "failure": failure,
++        "source": source_ref,
++        "selected_route": {
++            "name": route_name.as_str(),
++            "provider": route.provider,
++            "model": route.model,
++            "reasoning_effort": route.reasoning_effort,
++        },
++        "remaining_before": {
++            "seconds": remaining_before.0.as_secs(),
++            "requests": remaining_before.1,
++            "exposure_microusd": remaining_before.2,
++        },
++        "remaining_after": {
++            "seconds": remaining_after.0.as_secs(),
++            "requests": remaining_after.1,
++            "exposure_microusd": remaining_after.2,
++        },
++        "advice": advice.chars().take(4096).collect::<String>(),
++        "attempts": host.task.attempts().map_err(error)?,
++    }))
++}
++
 +async fn all_paths(host: &Host, config: &Config) -> Result<BTreeSet<String>, String> {
 +    let output = command(
 +        host,
@@ -2399,10 +2646,10 @@ index 0000000..f39321c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..53ee302
+index 0000000..4807f04
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,526 @@
+@@ -0,0 +1,686 @@
 +mod accounting;
 +mod execution;
 +
@@ -2426,6 +2673,7 @@ index 0000000..53ee302
 +use codex_extension_api::ToolExecutor;
 +use codex_extension_api::ToolExecutorFuture;
 +use codex_extension_api::ToolOutput;
++use codex_omd::FailureClass;
 +use codex_omd::Limits;
 +use codex_omd::Snapshot;
 +use codex_omd::Task;
@@ -2435,6 +2683,7 @@ index 0000000..53ee302
 +use codex_tools::FunctionCallError;
 +use codex_tools::JsonSchema;
 +use codex_tools::ResponsesApiTool;
++use codex_tools::ToolExposure;
 +use codex_tools::ToolName;
 +use codex_tools::ToolSpec;
 +use serde::Deserialize;
@@ -2460,11 +2709,20 @@ index 0000000..53ee302
 +    lead_policy: LeadPolicy,
 +    leads: LeadRoutes,
 +    context_policy: WorkerContextPolicy,
++    escalation: EscalationPolicy,
 +    worker: Route,
 +    check_command: Vec<String>,
 +    toolchain_reads: Vec<PathBuf>,
 +    snapshot_bytes: usize,
 +    max_request_bytes: usize,
++}
++
++#[derive(Clone, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct EscalationPolicy {
++    allowed_failure_classes: Vec<FailureClass>,
++    max_attempts: u32,
++    evidence_bytes: usize,
 +}
 +
 +#[derive(Clone, Deserialize)]
@@ -2586,7 +2844,16 @@ index 0000000..53ee302
 +    task: Arc<Task>,
 +    accounts: Arc<Accounts>,
 +    manager: Weak<ThreadManager>,
-+    operation_started: std::sync::atomic::AtomicBool,
++    contribution_started: std::sync::atomic::AtomicBool,
++    operation: std::sync::atomic::AtomicBool,
++}
++
++struct OperationGuard<'a>(&'a std::sync::atomic::AtomicBool);
++
++impl Drop for OperationGuard<'_> {
++    fn drop(&mut self) {
++        self.0.store(false, std::sync::atomic::Ordering::Release);
++    }
 +}
 +
 +#[derive(Clone)]
@@ -2595,6 +2862,10 @@ index 0000000..53ee302
 +    route: LeadName,
 +    host: Arc<Host>,
 +}
++
++struct ContributionTool(Arc<Lead>);
++
++struct EscalationTool(Arc<Lead>);
 +
 +pub fn install(
 +    registry: &mut ExtensionRegistryBuilder<Config>,
@@ -2619,6 +2890,17 @@ index 0000000..53ee302
 +        || manifest.max_request_bytes == 0
 +        || manifest.context_policy.max_bytes() == 0
 +        || manifest.context_policy.max_bytes() > manifest.max_request_bytes
++        || manifest.escalation.max_attempts == 0
++        || manifest.escalation.evidence_bytes == 0
++        || manifest.escalation.evidence_bytes > manifest.max_request_bytes
++        || manifest.escalation.allowed_failure_classes.is_empty()
++        || manifest
++            .escalation
++            .allowed_failure_classes
++            .iter()
++            .collect::<std::collections::BTreeSet<_>>()
++            .len()
++            != manifest.escalation.allowed_failure_classes.len()
 +    {
 +        return Err("invalid controlled-delegation assignments or limits".into());
 +    }
@@ -2668,9 +2950,10 @@ index 0000000..53ee302
 +        task,
 +        accounts,
 +        manager,
-+        operation_started: std::sync::atomic::AtomicBool::new(false),
++        contribution_started: std::sync::atomic::AtomicBool::new(false),
++        operation: std::sync::atomic::AtomicBool::new(false),
 +    });
-+    host.authorize()?;
++    let _ = host.authorize();
 +    let deadline_host = host.clone();
 +    tokio::spawn(async move {
 +        tokio::time::sleep(std::time::Duration::from_secs(
@@ -2842,20 +3125,29 @@ index 0000000..53ee302
 +        _: &ExtensionData,
 +        thread: &ExtensionData,
 +    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
-+        thread
-+            .get::<Lead>()
-+            .map(|lead| vec![lead as Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>])
-+            .unwrap_or_default()
++        let Some(lead) = thread.get::<Lead>() else {
++            return Vec::new();
++        };
++        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> =
++            vec![Arc::new(EscalationTool(lead.clone()))];
++        if accounting::authorized(
++            &self.manifest.authorization,
++            &self.manifest.authorization_sha256,
++            &self.manifest.repository_identity,
++        ) {
++            tools.push(Arc::new(ContributionTool(lead)));
++        }
++        tools
 +    }
 +}
 +
-+impl<'call> ToolExecutor<ToolCall<'call>> for Lead {
++impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
 +    fn tool_name(&self) -> ToolName {
 +        ToolName::plain("omd_contribute")
 +    }
 +    fn spec(&self) -> ToolSpec {
 +        let mut properties = BTreeMap::new();
-+        let required = match self.host.manifest.context_policy {
++        let required = match self.0.host.manifest.context_policy {
 +            WorkerContextPolicy::FocusedBrief { .. } => {
 +                properties.insert(
 +                    "brief".into(),
@@ -2883,13 +3175,16 @@ index 0000000..53ee302
 +            name: "omd_contribute".into(),
 +            description: format!(
 +                "Delegate one bounded implementation to isolated Muse Contributor using the configured {} context. Host runs configured checks and separate opposite-lead review, rejects conflicts, and integrates only accepted changes. All attempts use the shared task allowance.",
-+                self.host.manifest.context_policy.name()
++                self.0.host.manifest.context_policy.name()
 +            ),
 +            strict: false,
 +            defer_loading: None,
 +            output_schema: None,
 +            parameters: JsonSchema::object(properties, required, Some(false.into())),
 +        })
++    }
++    fn exposure(&self) -> ToolExposure {
++        ToolExposure::Deferred
 +    }
 +    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
 +    where
@@ -2900,24 +3195,136 @@ index 0000000..53ee302
 +                serde_json::from_str(call.function_arguments()?)
 +                    .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
 +            if self
++                .0
 +                .host
-+                .operation_started
++                .operation
 +                .swap(true, std::sync::atomic::Ordering::AcqRel)
 +            {
 +                return Err(FunctionCallError::RespondToModel(
-+                    "one controlled operation is permitted per task".into(),
++                    "another controlled operation is active".into(),
 +                ));
 +            }
-+            let result = execution::contribute(self, &call, request).await;
++            let _operation = OperationGuard(&self.0.host.operation);
++            if self
++                .0
++                .host
++                .contribution_started
++                .swap(true, std::sync::atomic::Ordering::AcqRel)
++            {
++                return Err(FunctionCallError::RespondToModel(
++                    "one controlled contribution is permitted per task".into(),
++                ));
++            }
++            let result = execution::contribute(&self.0, &call, request).await;
 +            let value = match result {
 +                Ok(value) => value,
 +                Err(error) => json!({"status": "failed", "error": error}),
 +            };
 +            let reference = self
++                .0
 +                .host
 +                .evidence(
 +                    &format!(
 +                        "worker-result-{}.json",
++                        execution::hash(call.call_id.as_bytes())
++                    ),
++                    &value,
++                )
++                .map_err(FunctionCallError::RespondToModel)?;
++            Ok(Box::new(JsonToolOutput::new(
++                json!({"result": value, "evidence": reference}),
++            )) as Box<dyn ToolOutput>)
++        })
++    }
++}
++
++impl<'call> ToolExecutor<ToolCall<'call>> for EscalationTool {
++    fn tool_name(&self) -> ToolName {
++        ToolName::plain("omd_escalate")
++    }
++
++    fn spec(&self) -> ToolSpec {
++        let mut properties = BTreeMap::new();
++        properties.insert(
++            "failure_class".into(),
++            JsonSchema::string(Some(
++                "One of environment, edit, diagnosis, or model.".into(),
++            )),
++        );
++        properties.insert(
++            "summary".into(),
++            JsonSchema::string(Some("Concise description of what failed.".into())),
++        );
++        properties.insert(
++            "call_ids".into(),
++            JsonSchema::array(
++                JsonSchema::string(Some("Prior failed tool call ID.".into())),
++                Some("Prior calls whose exact inputs and outputs support the failure.".into()),
++            ),
++        );
++        ToolSpec::Function(ResponsesApiTool {
++            name: "omd_escalate".into(),
++            description: format!(
++                "Preserve cited failure evidence and request one bounded opposite-lead consultation when permitted. The host classifies environment, edit, diagnosis, and model failures separately, keeps existing permissions, and charges the shared remaining allowance. Allowed classes: {}.",
++                self.0
++                    .host
++                    .manifest
++                    .escalation
++                    .allowed_failure_classes
++                    .iter()
++                    .map(|class| format!("{class:?}").to_lowercase())
++                    .collect::<Vec<_>>()
++                    .join(", ")
++            ),
++            strict: false,
++            defer_loading: None,
++            output_schema: None,
++            parameters: JsonSchema::object(
++                properties,
++                Some(vec![
++                    "failure_class".into(),
++                    "summary".into(),
++                    "call_ids".into(),
++                ]),
++                Some(false.into()),
++            ),
++        })
++    }
++
++    fn exposure(&self) -> ToolExposure {
++        ToolExposure::Deferred
++    }
++
++    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
++    where
++        'call: 'a,
++    {
++        Box::pin(async move {
++            let request: execution::EscalationRequest =
++                serde_json::from_str(call.function_arguments()?)
++                    .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
++            if self
++                .0
++                .host
++                .operation
++                .swap(true, std::sync::atomic::Ordering::AcqRel)
++            {
++                return Err(FunctionCallError::RespondToModel(
++                    "another controlled operation is active".into(),
++                ));
++            }
++            let _operation = OperationGuard(&self.0.host.operation);
++            let result = execution::escalate(&self.0, &call, request).await;
++            let value = match result {
++                Ok(value) => value,
++                Err(error) => json!({"status": "failed", "error": error}),
++            };
++            let reference = self
++                .0
++                .host
++                .evidence(
++                    &format!(
++                        "escalation-result-{}.json",
 +                        execution::hash(call.call_id.as_bytes())
 +                    ),
 +                    &value,
@@ -2985,14 +3392,15 @@ index 0000000..812e16b
 +tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000..fa4a0d7
+index 0000000..193c07a
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,523 @@
+@@ -0,0 +1,630 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
 +use std::collections::BTreeMap;
++use std::collections::BTreeSet;
 +use std::fs::OpenOptions;
 +use std::fs::{self};
 +use std::io::Write;
@@ -3030,6 +3438,23 @@ index 0000000..fa4a0d7
 +    pub settled_microusd: Option<u64>,
 +}
 +
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(rename_all = "snake_case")]
++pub enum FailureClass {
++    Environment,
++    Edit,
++    Diagnosis,
++    Model,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++pub struct Failure {
++    pub id: u32,
++    pub class: FailureClass,
++    pub summary: String,
++    pub evidence: Vec<Value>,
++}
++
 +#[derive(Clone, Debug)]
 +pub struct Admission {
 +    request: u32,
@@ -3057,6 +3482,9 @@ index 0000000..fa4a0d7
 +    exposure: u64,
 +    sequence: u64,
 +    attempts: BTreeMap<u32, Attempt>,
++    failures: BTreeMap<u32, Failure>,
++    escalated_failures: BTreeSet<u32>,
++    escalations: u32,
 +    workers: BTreeMap<String, Worker>,
 +}
 +
@@ -3089,6 +3517,9 @@ index 0000000..fa4a0d7
 +                exposure: 0,
 +                sequence: 0,
 +                attempts: BTreeMap::new(),
++                failures: BTreeMap::new(),
++                escalated_failures: BTreeSet::new(),
++                escalations: 0,
 +                workers: BTreeMap::new(),
 +            }),
 +        };
@@ -3483,6 +3914,89 @@ index 0000000..fa4a0d7
 +        Ok(())
 +    }
 +
++    pub fn record_failure(
++        &self,
++        class: FailureClass,
++        summary: String,
++        evidence: Vec<Value>,
++    ) -> io::Result<Failure> {
++        if summary.is_empty()
++            || summary.len() > 4096
++            || evidence.is_empty()
++            || evidence.len() > 16
++            || serde_json::to_vec(&evidence)?.len() > 1_048_576
++        {
++            return Err(denied("bounded failure summary and evidence required"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if state.stopped || self.started.elapsed().as_secs() >= self.limits.seconds {
++            return Err(denied("task stopped or expired"));
++        }
++        let id = u32::try_from(state.failures.len())
++            .ok()
++            .and_then(|count| count.checked_add(1))
++            .ok_or_else(|| denied("failure count overflow"))?;
++        let failure = Failure {
++            id,
++            class,
++            summary,
++            evidence,
++        };
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "failure_recorded", "failure": failure}),
++        )?;
++        state.failures.insert(id, failure.clone());
++        Ok(failure)
++    }
++
++    pub fn permit_escalation(
++        &self,
++        failure: u32,
++        max_escalations: u32,
++    ) -> io::Result<(Duration, u32, u64)> {
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        let remaining = (
++            Duration::from_secs(self.limits.seconds).saturating_sub(self.started.elapsed()),
++            self.limits.requests.saturating_sub(state.requests),
++            self.limits.exposure_microusd.saturating_sub(state.exposure),
++        );
++        if state.stopped || remaining.0.is_zero() {
++            return Err(denied("task stopped or expired"));
++        }
++        if max_escalations == 0
++            || state.escalations >= max_escalations
++            || state.escalated_failures.contains(&failure)
++            || remaining.1 == 0
++            || !state.failures.contains_key(&failure)
++        {
++            return Err(denied(
++                "escalation is not permitted within remaining allowance",
++            ));
++        }
++        self.record(
++            &mut state,
++            &serde_json::json!({
++                "event": "escalation_permitted",
++                "failure": failure,
++                "remaining": {
++                    "seconds": remaining.0.as_secs(),
++                    "requests": remaining.1,
++                    "exposure_microusd": remaining.2,
++                },
++            }),
++        )?;
++        state.escalations += 1;
++        state.escalated_failures.insert(failure);
++        Ok(remaining)
++    }
++
 +    pub fn stop(&self) -> io::Result<()> {
 +        let mut state = self
 +            .state
@@ -3514,15 +4028,17 @@ index 0000000..fa4a0d7
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..b7f8755
+index 0000000..146ae65
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,15 @@
 +mod admission;
 +mod workspace;
 +
 +pub use admission::Admission;
 +pub use admission::Attempt;
++pub use admission::Failure;
++pub use admission::FailureClass;
 +pub use admission::Limits;
 +pub use admission::Task;
 +pub use admission::WorkerLimits;
@@ -3943,10 +4459,11 @@ index 0000000..b16bef5
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000..2e4f584
+index 0000000..feeee02
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,292 @@
++use codex_omd::FailureClass;
 +use codex_omd::Limits;
 +use codex_omd::Task;
 +use codex_omd::WorkerLimits;
@@ -4185,6 +4702,58 @@ index 0000000..2e4f584
 +    task.check_active().unwrap();
 +    task.stop().unwrap();
 +    assert!(task.check_active().is_err());
++}
++
++#[test]
++fn classified_failures_are_preserved_and_escalation_is_bounded() {
++    let dir = tempfile::tempdir().unwrap();
++    let evidence = dir.path().join("task");
++    let task = Task::create(limits(), evidence.clone()).unwrap();
++    for class in [
++        FailureClass::Environment,
++        FailureClass::Edit,
++        FailureClass::Diagnosis,
++        FailureClass::Model,
++    ] {
++        let failure = task
++            .record_failure(
++                class,
++                format!("{class:?} failure"),
++                vec![json!({"path": "evidence.json", "sha256": "abc"})],
++            )
++            .unwrap();
++        assert_eq!(failure.class, class);
++    }
++    let remaining = task.permit_escalation(1, 2).unwrap();
++    assert_eq!(remaining.1, limits().requests);
++    assert!(task.permit_escalation(1, 2).is_err());
++    task.permit_escalation(2, 2).unwrap();
++    assert!(task.permit_escalation(3, 2).is_err());
++    let records = std::fs::read_dir(evidence).unwrap().count();
++    assert_eq!(records, 7);
++}
++
++#[test]
++fn failure_and_escalation_validation_fail_closed() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create(limits(), dir.path().join("task")).unwrap();
++    assert!(
++        task.record_failure(FailureClass::Edit, String::new(), vec![json!({})])
++            .is_err()
++    );
++    assert!(
++        task.record_failure(FailureClass::Edit, "missing evidence".into(), vec![])
++            .is_err()
++    );
++    assert!(task.permit_escalation(1, 1).is_err());
++    let failure = task
++        .record_failure(
++            FailureClass::Diagnosis,
++            "bounded evidence".into(),
++            vec![json!({"call_id": "failed-call"})],
++        )
++        .unwrap();
++    assert!(task.permit_escalation(failure.id, 0).is_err());
 +}
 diff --git a/codex-rs/omd/tests/workspace.rs b/codex-rs/omd/tests/workspace.rs
 new file mode 100644
