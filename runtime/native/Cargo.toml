@@ -10,6 +10,7 @@ codex-client = { workspace = true }
 codex-core = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
+codex-history = { workspace = true }
 codex-omd = { path = "../../omd" }
 codex-protocol = { workspace = true }
 codex-tools = { workspace = true }

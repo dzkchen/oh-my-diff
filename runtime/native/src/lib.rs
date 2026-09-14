@@ -26,6 +26,7 @@ use codex_omd::Snapshot;
 use codex_omd::Task;
 use codex_omd::WorkerLimits;
 use codex_protocol::ThreadId;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_tools::FunctionCallError;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
@@ -51,9 +52,10 @@ struct Manifest {
     approved_untracked: Vec<String>,
     limits: Limits,
     worker_limits: WorkerLimits,
-    lead: Route,
+    lead_policy: LeadPolicy,
+    leads: LeadRoutes,
+    context_policy: WorkerContextPolicy,
     worker: Route,
-    reviewer: Route,
     check_command: Vec<String>,
     toolchain_reads: Vec<PathBuf>,
     snapshot_bytes: usize,
@@ -65,8 +67,104 @@ struct Manifest {
 struct Route {
     provider: String,
     model: String,
+    reasoning_effort: ReasoningEffort,
     responses_url: String,
     rates: Rates,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, serde::Serialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum LeadName {
+    Sol,
+    Astra,
+}
+
+impl LeadName {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Sol => "sol",
+            Self::Astra => "astra",
+        }
+    }
+
+    fn opposite(self) -> Self {
+        match self {
+            Self::Sol => Self::Astra,
+            Self::Astra => Self::Sol,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+enum LeadPolicy {
+    Fixed { lead: LeadName },
+    TaskEntry,
+}
+
+impl LeadPolicy {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Fixed { .. } => "fixed",
+            Self::TaskEntry => "task_entry",
+        }
+    }
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeadRoutes {
+    sol: Route,
+    astra: Route,
+}
+
+impl LeadRoutes {
+    fn get(&self, lead: LeadName) -> &Route {
+        match lead {
+            LeadName::Sol => &self.sol,
+            LeadName::Astra => &self.astra,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PacketReference {
+    path: PathBuf,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+enum WorkerContextPolicy {
+    FocusedBrief {
+        max_bytes: usize,
+    },
+    SharedTaskPacket {
+        max_bytes: usize,
+        packet: PacketReference,
+    },
+    ParentHistory {
+        max_bytes: usize,
+    },
+}
+
+impl WorkerContextPolicy {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::FocusedBrief { .. } => "focused_brief",
+            Self::SharedTaskPacket { .. } => "shared_task_packet",
+            Self::ParentHistory { .. } => "parent_history",
+        }
+    }
+
+    fn max_bytes(&self) -> usize {
+        match self {
+            Self::FocusedBrief { max_bytes }
+            | Self::SharedTaskPacket { max_bytes, .. }
+            | Self::ParentHistory { max_bytes } => *max_bytes,
+        }
+    }
 }
 
 struct Extension(Arc<Host>);
@@ -89,6 +187,7 @@ struct Host {
 #[derive(Clone)]
 struct Lead {
     thread: ThreadId,
+    route: LeadName,
     host: Arc<Host>,
 }
 
@@ -107,14 +206,16 @@ pub fn install(
         return Err("controlled manifest exceeds limit".into());
     }
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    if manifest.lead.model != "gpt-5.6-sol"
+    if manifest.leads.sol.model != "gpt-5.6-sol"
+        || manifest.leads.astra.model != "gpt-6-astra"
         || manifest.worker.model != "muse-spark-1.3-contributor"
-        || manifest.reviewer.model != "gpt-6-astra"
         || manifest.check_command.is_empty()
         || manifest.snapshot_bytes == 0
         || manifest.max_request_bytes == 0
+        || manifest.context_policy.max_bytes() == 0
+        || manifest.context_policy.max_bytes() > manifest.max_request_bytes
     {
-        return Err("invalid fixed controlled-delegation assignments or limits".into());
+        return Err("invalid controlled-delegation assignments or limits".into());
     }
     if manifest
         .repository
@@ -143,6 +244,12 @@ pub fn install(
         return Err(
             "manifest requires canonical source, external evidence, and in-scope scratch".into(),
         );
+    }
+    if let WorkerContextPolicy::SharedTaskPacket { packet, .. } = &manifest.context_policy {
+        let canonical = packet.path.canonicalize().map_err(|e| e.to_string())?;
+        if canonical != packet.path || packet.path.starts_with(&manifest.repository) {
+            return Err("shared task packet must be canonical and host-owned".into());
+        }
     }
     let task = Arc::new(
         Task::create(manifest.limits.clone(), manifest.evidence.clone())
@@ -173,6 +280,25 @@ pub fn install(
 }
 
 impl Host {
+    fn route(&self, lead: LeadName) -> &Route {
+        self.manifest.leads.get(lead)
+    }
+
+    fn resolve_lead(&self, config: &Config) -> Option<LeadName> {
+        let matches = |lead| {
+            let route = self.route(lead);
+            config.model.as_deref() == Some(route.model.as_str())
+                && config.model_provider_id == route.provider
+                && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
+        };
+        match self.manifest.lead_policy {
+            LeadPolicy::Fixed { lead } => matches(lead).then_some(lead),
+            LeadPolicy::TaskEntry => [LeadName::Sol, LeadName::Astra]
+                .into_iter()
+                .find(|lead| matches(*lead)),
+        }
+    }
+
     async fn stop_tree(&self) {
         let _ = self.task.stop();
         let threads: Vec<_> = self
@@ -264,16 +390,19 @@ impl ThreadLifecycleContributor<Config> for Extension {
         input: ThreadStartInput<'a, Config>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if input.config.cwd.as_path() != self.manifest.repository
-                || input.config.model.as_deref() != Some(&self.manifest.lead.model)
-            {
+            if input.config.cwd.as_path() != self.manifest.repository {
                 return;
             }
+            let Some(route_name) = self.resolve_lead(input.config) else {
+                return;
+            };
+            let route = self.route(route_name);
             if let Ok(thread) = ThreadId::from_string(input.thread_store.level_id())
-                && self.enroll(thread, "lead", &self.manifest.lead).is_ok()
+                && self.enroll(thread, "lead", route).is_ok()
             {
                 input.thread_store.insert(Lead {
                     thread,
+                    route: route_name,
                     host: self.0.clone(),
                 });
             }
@@ -320,11 +449,41 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Lead {
         ToolName::plain("omd_contribute")
     }
     fn spec(&self) -> ToolSpec {
+        let mut properties = BTreeMap::new();
+        let required = match self.host.manifest.context_policy {
+            WorkerContextPolicy::FocusedBrief { .. } => {
+                properties.insert(
+                    "brief".into(),
+                    JsonSchema::string(Some("Focused bounded task brief.".into())),
+                );
+                properties.insert(
+                    "selected_evidence".into(),
+                    JsonSchema::array(
+                        JsonSchema::string(Some("Repository-relative tracked path.".into())),
+                        Some("Selected source evidence to include with hashes.".into()),
+                    ),
+                );
+                Some(vec!["brief".into(), "selected_evidence".into()])
+            }
+            WorkerContextPolicy::SharedTaskPacket { .. } => None,
+            WorkerContextPolicy::ParentHistory { .. } => {
+                properties.insert(
+                    "brief".into(),
+                    JsonSchema::string(Some("Bounded assignment within parent history.".into())),
+                );
+                Some(vec!["brief".into()])
+            }
+        };
         ToolSpec::Function(ResponsesApiTool {
             name: "omd_contribute".into(),
-            description: "Delegate one bounded implementation to isolated Muse Contributor. Host runs configured checks and separate Astra review of the merged candidate, rejects conflicts, and integrates only accepted changes. Supply a focused brief with selected evidence; all attempts use the shared task allowance.".into(),
-            strict: false, defer_loading: None, output_schema: None,
-            parameters: JsonSchema::object(BTreeMap::from([("brief".into(), JsonSchema::string(None))]), Some(vec!["brief".into()]), Some(false.into())),
+            description: format!(
+                "Delegate one bounded implementation to isolated Muse Contributor using the configured {} context. Host runs configured checks and separate opposite-lead review, rejects conflicts, and integrates only accepted changes. All attempts use the shared task allowance.",
+                self.host.manifest.context_policy.name()
+            ),
+            strict: false,
+            defer_loading: None,
+            output_schema: None,
+            parameters: JsonSchema::object(properties, required, Some(false.into())),
         })
     }
     fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
@@ -332,14 +491,9 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Lead {
         'call: 'a,
     {
         Box::pin(async move {
-            let request: Value = serde_json::from_str(call.function_arguments()?)
-                .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
-            let brief = request["brief"]
-                .as_str()
-                .filter(|v| !v.is_empty() && v.len() <= 16_384)
-                .ok_or_else(|| {
-                    FunctionCallError::RespondToModel("brief must contain 1..16384 bytes".into())
-                })?;
+            let request: execution::ContributionRequest =
+                serde_json::from_str(call.function_arguments()?)
+                    .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
             if self
                 .host
                 .operation_started
@@ -349,7 +503,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Lead {
                     "one controlled operation is permitted per task".into(),
                 ));
             }
-            let result = execution::contribute(self, &call, brief).await;
+            let result = execution::contribute(self, &call, request).await;
             let value = match result {
                 Ok(value) => value,
                 Err(error) => json!({"status": "failed", "error": error}),

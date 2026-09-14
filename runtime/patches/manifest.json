@@ -4,12 +4,12 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "0aaf8eef80862a9142c1c33a9019655ab7e625d033498d6733c5167889cabb2f"
+    "sha256": "baa061ec632a855c3625b7e7b78a657605fdad9a6b89f65f53f4b1621743fc55"
   },
   "files": {
     "codex-rs/Cargo.lock": {
       "before": "34726731e842976085e3c122f62ddd5c8d6555bdcb32f5e9361c8e27fb0795bf",
-      "after": "f6443d963906e50a59fa3e6bf0d921cb61bbafec4d5c173253b9e233d0a745dd"
+      "after": "fd720551e5c782cdfff97e5e66fb7d47c8b68cbaf2f2e4794edd9eeb8ba2ee78"
     },
     "codex-rs/Cargo.toml": {
       "before": "be81959425540d70c4735936293a8e119e498573d5b57121849eee0539c127d1",
@@ -53,11 +53,19 @@
     },
     "codex-rs/core/src/exec.rs": {
       "before": "d95c658f1e4168c1e261e7549d77a32f7231d4e28d82548ce32965fdb0c0c2e2",
-      "after": "e4e8c99bcbffd2979f3238d201b51eb40efa929fc1a646e33be5ab6f87282ee8"
+      "after": "a5e828c9021c06a3f07cd5b428ffd300b1d277bd254c4b28cd2e9762c8a2be21"
     },
     "codex-rs/core/src/thread_manager.rs": {
       "before": "7644bd1343267a1daf938c385b09aa8071e9b82c5e1e784fcdede9cbfac97e67",
-      "after": "8fcf976a468000d044c8289ca1356ad95845e00cd093848c3194e6ae93c10f97"
+      "after": "bcff3fdfca4ad11e9399fee7678cc899f2e0020b1200618c64c6a662f1bdde17"
+    },
+    "codex-rs/core/src/tools/orchestrator.rs": {
+      "before": "0926333b469d44f0367879410ab8b33fe88ed0f424c3f5a082ce8871b605bab0",
+      "after": "a2396423324203fa47f5168070a740d983ea5fbeba6d061f2bde7822732ac506"
+    },
+    "codex-rs/exec-server/src/process_sandbox.rs": {
+      "before": "98395f922228f8b7c2de44db9c6db18eceb23088a247a3a2f3204c84df8a288f",
+      "after": "03f235eebd7e6252fbb60bfd1af28af0e0c4d3bb252e25957dd40f4d1cd7b442"
     },
     "codex-rs/ext/omd/BUILD.bazel": {
       "before": null,
@@ -65,7 +73,7 @@
     },
     "codex-rs/ext/omd/Cargo.toml": {
       "before": null,
-      "after": "0a341f135fbdc6c5a0e8610c7b0ba9dd00c734494f0ebc2ef7fbe6bdc12ed728"
+      "after": "e14cd087f938f80e7e6759102a7b3f16d7b19f56b0e385f1a4ffdeeccdd045f0"
     },
     "codex-rs/ext/omd/src/accounting.rs": {
       "before": null,
@@ -77,15 +85,15 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "8f21704ddffba098daf4ed6ae0ccb2668a28c8e337869809df625d6f9e63bde1"
+      "after": "cc4de3c1469f210479998588cae43aa6d099e4a3a8b2b857a07cd4601acfbbd6"
     },
     "codex-rs/ext/omd/src/execution_tests.rs": {
       "before": null,
-      "after": "a758841e4c507068172a1e7fab5c8f6c40caad9ed520dc0c7ae0331ab4f358e7"
+      "after": "e5ef4f13ac2294d1a3c1b68f344967916601c8cd8118431225023facba817aeb"
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "300196f280bf2c1d69a9d83707d2afd5d72ea53c4fb6e1a4b7cd3401b70eeeeb"
+      "after": "800727dee57c9c8c602871d35feecc488b3c314096432abd93d639c5ae455862"
     },
     "codex-rs/login/src/auth/default_client.rs": {
       "before": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",

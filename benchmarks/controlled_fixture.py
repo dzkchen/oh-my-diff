@@ -13,12 +13,13 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(binary, destination, scenario="success"):
+def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol"):
     destination.mkdir(parents=True, exist_ok=False)
     repo, home = destination / "repo", destination / "home"
     repo.mkdir()
     home.mkdir()
     (repo / "solution.py").write_text("def add(a, b):\n    return a - b\n")
+    (repo / "AGENTS.md").write_text("GLOBAL_INSTRUCTION_SENTINEL: preserve unrelated files.\n")
     (repo / ".gitignore").write_text(".omd/\n__pycache__/\n.omd-tmp/\n")
     git_env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
     for args in ([] if scenario == "runner" else (["init", "-q"], ["add", "."], ["-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", "commit", "-qm", "Synthetic source"])):
@@ -32,18 +33,29 @@ def run(binary, destination, scenario="success"):
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            requests.append({"path": self.path, "model": body["model"], "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": self.headers.get("x-omd-owner"), "body": body})
             model = body["model"]
-            outputs = [i for i in body.get("input", []) if i.get("type") == "function_call_output"]
+            owner = self.headers.get("x-omd-owner")
+            if scenario == "runner" and owner is None:
+                owner = {"gpt-5.6-sol": "lead", "muse-spark-1.3-contributor": "contributor", "gpt-6-astra": "reviewer"}[model]
+            requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": owner, "body": body})
+            inputs = body.get("input", [])
+            outputs = [i for i in inputs if i.get("type") == "function_call_output"]
+            calls = {i.get("call_id") for i in inputs if i.get("type") == "function_call" and i.get("name") == "exec_command"}
+            exec_outputs = [i for i in outputs if i.get("call_id") in calls]
             text = json.dumps(body.get("input", []))
-            if model == "gpt-5.6-sol" and not outputs:
-                item = {"type": "function_call", "id": "delegate", "call_id": "delegate", "name": "omd_contribute", "arguments": json.dumps({"brief": "Fix solution.py: add must return the sum. Preserve unrelated files."})}
-            elif model == "muse-spark-1.3-contributor" and not outputs:
+            if owner == "lead" and not outputs:
+                arguments = {
+                    "focused_brief": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files.", "selected_evidence": ["solution.py"]},
+                    "shared_task_packet": {},
+                    "parent_history": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files."},
+                }[context_policy]
+                item = {"type": "function_call", "id": "delegate", "call_id": "delegate", "name": "omd_contribute", "arguments": json.dumps(arguments)}
+            elif owner == "contributor" and not exec_outputs:
                 command = "printf 'def add(a, b):\\n    return a + b\\n' > solution.py"
                 if scenario == "permissions":
                     command += f"; if cat {json.dumps(str(home / 'secret'))}; then exit 81; fi; if printf bad > {json.dumps(str(repo / 'unrelated.txt'))}; then exit 82; fi"
                 item = {"type": "function_call", "id": "edit", "call_id": "edit", "namespace": "functions", "name": "exec_command", "arguments": json.dumps({"cmd": command, "max_output_tokens": 500})}
-            elif model == "gpt-6-astra":
+            elif owner == "reviewer":
                 match = re.search(r"Candidate SHA256: ([0-9a-f]{64})", text)
                 if scenario == "index-conflict":
                     (repo / "new-tracked.txt").write_text("concurrent tracked file\n")
@@ -73,8 +85,13 @@ def run(binary, destination, scenario="success"):
     grant = destination / "grant.json"
     grant.write_text(json.dumps({"schema": 1, "data_authorized": True, "revocable": True, "split": "development", "repositories": ["synthetic-fixture"]}))
     rates = {"input_microusd_per_million": 100000, "cached_microusd_per_million": 2000, "output_microusd_per_million": 200000, "reservation_microusd": 100000, "max_output_tokens": 128, "input_token_ceiling": 200000, "included_subscription": False}
-    route = lambda model: {"model": model, "provider": "fixture", "responses_url": url + "/responses", "rates": rates}
-    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "lead": route("gpt-5.6-sol"), "worker": route("muse-spark-1.3-contributor"), "reviewer": route("gpt-6-astra"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
+    task_packet = destination / "task-packet.txt"
+    task_packet.write_text("SHARED_PACKET_SENTINEL: Fix solution.py so add returns the sum. Preserve unrelated files.\n")
+    route = lambda model, effort: {"model": model, "provider": "fixture", "reasoning_effort": effort, "responses_url": url + "/responses", "rates": rates}
+    context = {"mode": context_policy, "max_bytes": 2000000}
+    if context_policy == "shared_task_packet":
+        context["packet"] = {"path": str(task_packet.resolve()), "sha256": hashlib.sha256(task_packet.read_bytes()).hexdigest()}
+    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
     if scenario == "request-cap":
         manifest["limits"]["requests"] = 1
         manifest["worker_limits"]["requests"] = 1
@@ -90,10 +107,12 @@ def run(binary, destination, scenario="success"):
         model["prefer_websockets"] = False
     (home / "models.json").write_text(json.dumps(catalog))
     (home / "secret").write_text("SYNTHETIC_SECRET_MUST_NOT_REACH_WORKER")
-    (home / "config.toml").write_text(f'''model = "gpt-5.6-sol"
+    lead_model = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead]
+    lead_effort = {"sol": "high", "astra": "xhigh"}[lead]
+    (home / "config.toml").write_text(f'''model = {json.dumps(lead_model)}
 model_provider = "fixture"
 model_catalog_json = {json.dumps(str(home / "models.json"))}
-model_reasoning_effort = "high"
+model_reasoning_effort = {json.dumps(lead_effort)}
 web_search = "disabled"
 approval_policy = "never"
 default_permissions = "experiment"
@@ -162,7 +181,7 @@ enabled = false
             process = SimpleNamespace(stdout=(destination / "native/stdout").read_text(), stderr=(destination / "native/stderr").read_text(), returncode=result["exit_code"])
             shutil.copytree(destination / "native/controlled-evidence", destination / "evidence")
         else:
-            process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", "Use omd_contribute to fix the addition bug."], cwd=repo, env=env, capture_output=True, text=True, timeout=150)
+            process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."], cwd=repo, env=env, capture_output=True, text=True, timeout=150)
         (destination / "stdout.txt").write_text(process.stdout)
         (destination / "stderr.txt").write_text(process.stderr)
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
@@ -172,9 +191,20 @@ enabled = false
             assert 3 <= time.monotonic() - started < 15, "deadline was not exercised"
             assert any(json.loads(p.read_text())["record"].get("event") == "task_stopped" for p in (destination / "evidence").glob("0*.json")), "deadline did not stop task"
             result = {"status": "failed", "error": "native task interrupted at deadline; no worker result"}
-        for request in requests:
-            if request["model"] != "gpt-5.6-sol":
-                assert "LEAD_ONLY_INSTRUCTION_SENTINEL" not in json.dumps(request)
+        worker_requests = [request for request in requests if request["native_owner"] == "contributor"]
+        reviewer_requests = [request for request in requests if request["native_owner"] == "reviewer"]
+        if scenario != "request-cap":
+            assert worker_requests, "worker route was not observed"
+        if worker_requests:
+            assert all("GLOBAL_INSTRUCTION_SENTINEL" in json.dumps(request) for request in worker_requests + reviewer_requests), "project instructions were not inherited"
+            worker_context = json.dumps(worker_requests)
+            assert ("SHARED_PACKET_SENTINEL" in worker_context) == (context_policy == "shared_task_packet"), "shared packet selection drifted"
+            assert ("PARENT_HISTORY_SENTINEL" in worker_context) == (context_policy == "parent_history"), "parent history selection drifted"
+            assert ("return a - b" in worker_context) == (context_policy == "focused_brief"), "focused evidence selection drifted"
+            assert ("LEAD_ONLY_INSTRUCTION_SENTINEL" in worker_context) == (context_policy == "parent_history"), "parent instruction selection drifted"
+        assert requests[0]["model"] == lead_model and requests[0]["native_owner"] == "lead", "lead route drifted"
+        if reviewer_requests:
+            assert reviewer_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead], "reviewer was not opposite the lead"
         ids = [request["native_request_id"] for request in (gateway.records if scenario == "runner" else requests)]
         assert all(ids) and len(ids) == len(set(ids)), "wire attempts lack unique native admission IDs"
         expected = "integrated" if scenario in ("success", "permissions", "runner") else "failed"
@@ -188,7 +218,10 @@ enabled = false
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
         if scenario == "conflict":
             assert (repo / "solution.py").read_text() == "intervening user edit\n"
-        record = {"status": "pass", "scenario": scenario, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
+        context_record = json.loads((destination / "evidence/context.json").read_text())
+        assert context_record["context"]["policy"] == context_policy
+        assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == lead
+        record = {"status": "pass", "scenario": scenario, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
         (destination / "verification.json").write_text(json.dumps(record, indent=2))
         return record
     finally:
@@ -201,8 +234,11 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner"), default="success")
+    parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
+    parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
+    parser.add_argument("--lead", choices=("sol", "astra"), default="sol")
     args = parser.parse_args()
-    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario), indent=2))
+    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead), indent=2))
 
 
 if __name__ == "__main__":

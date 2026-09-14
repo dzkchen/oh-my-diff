@@ -25,11 +25,23 @@ The host binds the repository grant, models, routes, rates, parent permissions,
 request/exposure/time limits and evidence directory before model execution. Each
 transport attempt reserves shared capacity before dispatch, records raw usage,
 and retains unknown exposure on failure. Contributor receives a fresh isolated
-worktree and narrower inherited native filesystem permissions; it receives no
-provider credentials or tool network access. Checks and a fresh Astra reviewer
-inspect the candidate in separate worktrees. Review approval binds its hash.
+worktree, host-loaded project/user instructions, the inherited execution policy,
+and narrower native filesystem permissions; it receives no provider credentials,
+MCP servers, recursive extensions, or tool network access. Checks and a fresh
+opposite-lead reviewer inspect the candidate in separate worktrees. Review
+approval binds its hash.
 Integration checks concurrent content and tracked-path changes, applies only the
 reviewed delta, and verifies the resulting tree without committing it.
+
+The manifest configures lead routing and worker context independently. `lead_policy`
+is either fixed to `sol` or `astra`, or `task_entry`, which admits the exact configured
+model, provider, and reasoning effort selected at task entry. Both lead routes remain
+explicit in `leads`; the non-lead route performs final review. `context_policy` selects
+one bounded mode: a lead-authored focused brief plus named files from the admitted
+snapshot, an immutable host-owned shared task packet bound by SHA256, or the exact
+parent history plus a bounded assignment. `context.json` records the selected policy,
+content hashes, effective-permission hash, instruction sources, authorization binding,
+and all selected routes.
 
 Run the no-provider macOS end-to-end fixture from this repository:
 
@@ -41,6 +53,9 @@ Other scenarios are `permissions`, `conflict`, `index-conflict`, `review-reject`
 `request-cap`, `revoked`, and `deadline`. Each requires a fresh destination. These
 fixtures need loopback listening and native sandbox execution, and use synthetic
 responses only. They establish runtime behavior, not model quality or savings.
+Use `--context-policy focused_brief|shared_task_packet|parent_history`,
+`--lead-policy fixed|task_entry`, and `--lead sol|astra` to exercise the policy
+matrix.
 
 Prepare the development experiment using the retained frozen baseline inputs:
 

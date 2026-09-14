@@ -41,7 +41,7 @@ def configure(root, runtime, workspace, home, evidence, gateway, limits, env, ov
         rates = lambda subscription: {"input_microusd_per_million": 0 if subscription else 100000, "cached_microusd_per_million": 0 if subscription else 2000,
                                       "output_microusd_per_million": 0 if subscription else 200000, "max_output_tokens": 8192, "input_token_ceiling": 220000,
                                       "reservation_microusd": 0 if subscription else 25000, "included_subscription": subscription}
-        route = lambda model, provider: {"model": model, "provider": provider,
+        route = lambda model, provider, effort: {"model": model, "provider": provider, "reasoning_effort": effort,
                                          "responses_url": f"http://127.0.0.1:{gateway.port}/{provider}/responses",
                                          "rates": rates(provider == "subscription")}
         manifest = {"repository": str(workspace), "scratch": str(workspace / ".omd"),
@@ -50,8 +50,10 @@ def configure(root, runtime, workspace, home, evidence, gateway, limits, env, ov
                     "repository_identity": runtime["task_identity"], "approved_untracked": [],
                     "limits": {"seconds": 900, "requests": 60, "exposure_microusd": 500000, "concurrent_workers": 1},
                     "worker_limits": {"seconds": 300, "requests": 20, "exposure_microusd": 500000},
-                    "lead": route("gpt-5.6-sol", "subscription"), "worker": route("muse-spark-1.3-contributor", "contributor"),
-                    "reviewer": route("gpt-6-astra", "subscription"), "toolchain_reads": [Path(p).as_posix() for p in reads],
+                    "lead_policy": {"mode": "fixed", "lead": "sol"},
+                    "leads": {"sol": route("gpt-5.6-sol", "subscription", "high"), "astra": route("gpt-6-astra", "subscription", "high")},
+                    "context_policy": {"mode": "focused_brief", "max_bytes": 65536},
+                    "worker": route("muse-spark-1.3-contributor", "contributor", "low"), "toolchain_reads": [Path(p).as_posix() for p in reads],
                     "check_command": [GIT, "diff", "--check"], "snapshot_bytes": limits["snapshot_bytes"],
                     "max_request_bytes": 220000}
         evidence.mkdir(parents=True, exist_ok=True)
