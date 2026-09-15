@@ -1,5 +1,55 @@
 use super::*;
 
+struct ModeEnvGuard {
+    mode: Option<std::ffi::OsString>,
+    manifest: Option<std::ffi::OsString>,
+}
+
+impl ModeEnvGuard {
+    fn direct() -> Self {
+        let guard = Self {
+            mode: std::env::var_os(codex_omd::MODE_ENV),
+            manifest: std::env::var_os(codex_omd::MANIFEST_ENV),
+        };
+        unsafe {
+            std::env::set_var(codex_omd::MODE_ENV, "upstream_direct");
+            std::env::remove_var(codex_omd::MANIFEST_ENV);
+        }
+        guard
+    }
+}
+
+impl Drop for ModeEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.mode {
+                Some(value) => std::env::set_var(codex_omd::MODE_ENV, value),
+                None => std::env::remove_var(codex_omd::MODE_ENV),
+            }
+            match &self.manifest {
+                Some(value) => std::env::set_var(codex_omd::MANIFEST_ENV, value),
+                None => std::env::remove_var(codex_omd::MANIFEST_ENV),
+            }
+        }
+    }
+}
+
+#[test]
+fn upstream_direct_install_registers_no_omd_task_behavior() {
+    let _environment = ModeEnvGuard::direct();
+    let mut builder = ExtensionRegistryBuilder::<Config>::new();
+
+    install(&mut builder, Weak::new()).unwrap();
+    let registry = builder.build();
+
+    assert!(registry.thread_lifecycle_contributors().is_empty());
+    assert!(registry.context_contributors().is_empty());
+    assert!(registry.tool_contributors().is_empty());
+    assert!(registry.tool_lifecycle_contributors().is_empty());
+    assert!(registry.tool_reaction_contributors().is_empty());
+    assert!(registry.turn_item_contributors().is_empty());
+}
+
 #[test]
 fn every_turn_review_stays_off_in_the_default_manifest_policy() {
     let policy = ReviewPolicy::default();

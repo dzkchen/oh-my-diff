@@ -1,8 +1,28 @@
 # Controlled Contributor experiment
 
-This experimental patch links isolated Contributor delegation into pinned Codex
-`rust-v0.154.0`. It is inactive unless the trusted launcher supplies
-`OMD_CONTROLLED_MANIFEST`. The ordinary runtime remains the default.
+This experimental patch links the completed Oh My Diff controls into pinned
+Codex `rust-v0.154.0`. The custom binary has an explicit upstream-style direct
+mode that returns before registering any Oh My Diff task hook:
+
+```sh
+OMD_MODE=upstream_direct codex
+```
+
+In that mode Codex keeps the pinned upstream task flow. Oh My Diff lead routing,
+delegation, escalation, checkpoints, guidance, repository knowledge, graph,
+health, semantic LSP policy, review, completion, and presentation hooks remain
+off. `/omd` and the compact status line report the effective mode and identify
+the executable as the Oh My Diff custom binary; this compatibility/identity UI
+does not alter model context, tools, permissions, requests, or task lifecycle.
+
+Explicit enabled mode requires both `OMD_MODE=enabled` and a trusted
+`OMD_CONTROLLED_MANIFEST`. For compatibility with earlier experimental launchers,
+a manifest without `OMD_MODE` still enables the controlled runtime, while neither
+variable selects the behaviorally identical direct-mode compatibility default.
+An invalid mode, enabled mode without a manifest, or direct mode with a manifest
+fails closed. Disabling Oh My Diff changes behavior inside the custom binary;
+restoring upstream means selecting or reinstalling the retained upstream
+executable and is a separate operation.
 
 Apply to a clean checkout of the commit in `upstream.lock.json`:
 

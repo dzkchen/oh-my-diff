@@ -4,6 +4,13 @@ Rust primitives linked by the experimental pinned Codex patch in `runtime/native
 This crate owns admission and snapshots; the extension owns native execution,
 provider observation, review and integration. See [the runtime workflow](../README.md).
 
+The shared `mode` boundary resolves `OMD_MODE=upstream_direct` or `enabled`
+before the native extension registers any contributor, context, lifecycle,
+reaction, checkpoint, LSP, review, or completion hook. Direct mode rejects a
+controlled manifest instead of silently activating one. The older manifest-only
+activation and no-variable direct default remain compatibility paths with an
+explicitly reported source.
+
 `Task` serializes shared and worker request/exposure admission, journals a
 reservation before dispatch, retains unknown exposure, and records
 raw usage supplied by the host. Worker completion does not refund requests or

@@ -945,9 +945,12 @@ pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
 ) -> Result<(), String> {
-    let Some(path) = std::env::var_os("OMD_CONTROLLED_MANIFEST") else {
+    let effective_mode = codex_omd::effective_mode()?;
+    if !effective_mode.mode.task_hooks_enabled() {
         return Ok(());
-    };
+    }
+    let path = std::env::var_os(codex_omd::MANIFEST_ENV)
+        .ok_or_else(|| "enabled OMD mode is missing its controlled manifest".to_string())?;
     if !cfg!(target_os = "macos") {
         return Err("controlled delegation currently requires macOS".into());
     }

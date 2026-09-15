@@ -3990,10 +3990,10 @@ index 0000000..58c0303
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..1f0e401
+index 0000000..19498c8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,2899 @@
+@@ -0,0 +1,2902 @@
 +mod accounting;
 +mod execution;
 +
@@ -4941,9 +4941,12 @@ index 0000000..1f0e401
 +    registry: &mut ExtensionRegistryBuilder<Config>,
 +    manager: Weak<ThreadManager>,
 +) -> Result<(), String> {
-+    let Some(path) = std::env::var_os("OMD_CONTROLLED_MANIFEST") else {
++    let effective_mode = codex_omd::effective_mode()?;
++    if !effective_mode.mode.task_hooks_enabled() {
 +        return Ok(());
-+    };
++    }
++    let path = std::env::var_os(codex_omd::MANIFEST_ENV)
++        .ok_or_else(|| "enabled OMD mode is missing its controlled manifest".to_string())?;
 +    if !cfg!(target_os = "macos") {
 +        return Err("controlled delegation currently requires macOS".into());
 +    }
@@ -6895,11 +6898,61 @@ index 0000000..1f0e401
 +}
 diff --git a/codex-rs/ext/omd/src/review_tests.rs b/codex-rs/ext/omd/src/review_tests.rs
 new file mode 100644
-index 0000000..168175b
+index 0000000..9b43dd3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/review_tests.rs
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,123 @@
 +use super::*;
++
++struct ModeEnvGuard {
++    mode: Option<std::ffi::OsString>,
++    manifest: Option<std::ffi::OsString>,
++}
++
++impl ModeEnvGuard {
++    fn direct() -> Self {
++        let guard = Self {
++            mode: std::env::var_os(codex_omd::MODE_ENV),
++            manifest: std::env::var_os(codex_omd::MANIFEST_ENV),
++        };
++        unsafe {
++            std::env::set_var(codex_omd::MODE_ENV, "upstream_direct");
++            std::env::remove_var(codex_omd::MANIFEST_ENV);
++        }
++        guard
++    }
++}
++
++impl Drop for ModeEnvGuard {
++    fn drop(&mut self) {
++        unsafe {
++            match &self.mode {
++                Some(value) => std::env::set_var(codex_omd::MODE_ENV, value),
++                None => std::env::remove_var(codex_omd::MODE_ENV),
++            }
++            match &self.manifest {
++                Some(value) => std::env::set_var(codex_omd::MANIFEST_ENV, value),
++                None => std::env::remove_var(codex_omd::MANIFEST_ENV),
++            }
++        }
++    }
++}
++
++#[test]
++fn upstream_direct_install_registers_no_omd_task_behavior() {
++    let _environment = ModeEnvGuard::direct();
++    let mut builder = ExtensionRegistryBuilder::<Config>::new();
++
++    install(&mut builder, Weak::new()).unwrap();
++    let registry = builder.build();
++
++    assert!(registry.thread_lifecycle_contributors().is_empty());
++    assert!(registry.context_contributors().is_empty());
++    assert!(registry.tool_contributors().is_empty());
++    assert!(registry.tool_lifecycle_contributors().is_empty());
++    assert!(registry.tool_reaction_contributors().is_empty());
++    assert!(registry.turn_item_contributors().is_empty());
++}
 +
 +#[test]
 +fn every_turn_review_stays_off_in_the_default_manifest_policy() {
@@ -7028,15 +7081,22 @@ index 0000000..812e16b
 +tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/README.md b/codex-rs/omd/README.md
 new file mode 100644
-index 0000000..8b9cbdd
+index 0000000..b5801b5
 --- /dev/null
 +++ b/codex-rs/omd/README.md
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,277 @@
 +# Controlled delegation primitives
 +
 +Rust primitives linked by the experimental pinned Codex patch in `runtime/native`.
 +This crate owns admission and snapshots; the extension owns native execution,
 +provider observation, review and integration. See [the runtime workflow](../README.md).
++
++The shared `mode` boundary resolves `OMD_MODE=upstream_direct` or `enabled`
++before the native extension registers any contributor, context, lifecycle,
++reaction, checkpoint, LSP, review, or completion hook. Direct mode rejects a
++controlled manifest instead of silently activating one. The older manifest-only
++activation and no-variable direct default remain compatibility paths with an
++explicitly reported source.
 +
 +`Task` serializes shared and worker request/exposure admission, journals a
 +reservation before dispatch, retains unknown exposure, and records
@@ -15328,10 +15388,10 @@ index 0000000..1b27bbc
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..afdf52e
+index 0000000..6a3081c
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,169 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
@@ -15342,6 +15402,7 @@ index 0000000..afdf52e
 +mod health;
 +mod knowledge;
 +mod lsp;
++mod mode;
 +mod reactive;
 +mod review;
 +mod workspace;
@@ -15468,6 +15529,14 @@ index 0000000..afdf52e
 +pub use lsp::SyncResult;
 +pub use lsp::detect_installed_servers;
 +pub use lsp::hash as lsp_hash;
++pub use mode::EffectiveMode;
++pub use mode::MANIFEST_ENV;
++pub use mode::MODE_ENV;
++pub use mode::ModeSource;
++pub use mode::PINNED_UPSTREAM;
++pub use mode::RuntimeMode;
++pub use mode::effective_mode;
++pub use mode::effective_mode_from;
 +pub use reactive::ReactiveActivation;
 +pub use reactive::ReactiveRule;
 +pub use reactive::ReactiveRuleSet;
@@ -17738,6 +17807,154 @@ index 0000000..4202822
 +    if method == 'textDocument/didChange':
 +        raise SystemExit
 +"#;
++}
+diff --git a/codex-rs/omd/src/mode.rs b/codex-rs/omd/src/mode.rs
+new file mode 100644
+index 0000000..9fb838c
+--- /dev/null
++++ b/codex-rs/omd/src/mode.rs
+@@ -0,0 +1,142 @@
++use std::ffi::OsStr;
++
++pub const MODE_ENV: &str = "OMD_MODE";
++pub const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
++pub const PINNED_UPSTREAM: &str =
++    "rust-v0.154.0 / 6b9826e3aa83b1a5947db50f4332cb9c65f1b340";
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum RuntimeMode {
++    UpstreamDirect,
++    Enabled,
++}
++
++impl RuntimeMode {
++    pub fn label(self) -> &'static str {
++        match self {
++            Self::UpstreamDirect => "upstream-style direct",
++            Self::Enabled => "OMD enabled",
++        }
++    }
++
++    pub fn task_hooks_enabled(self) -> bool {
++        matches!(self, Self::Enabled)
++    }
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum ModeSource {
++    Explicit,
++    LegacyManifest,
++    CompatibilityDefault,
++}
++
++impl ModeSource {
++    pub fn label(self) -> &'static str {
++        match self {
++            Self::Explicit => "explicit OMD_MODE selection",
++            Self::LegacyManifest => "legacy manifest activation",
++            Self::CompatibilityDefault => "compatibility default",
++        }
++    }
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub struct EffectiveMode {
++    pub mode: RuntimeMode,
++    pub source: ModeSource,
++}
++
++pub fn effective_mode() -> Result<EffectiveMode, String> {
++    effective_mode_from(
++        std::env::var_os(MODE_ENV).as_deref(),
++        std::env::var_os(MANIFEST_ENV).is_some(),
++    )
++}
++
++pub fn effective_mode_from(
++    selected: Option<&OsStr>,
++    controlled_manifest_present: bool,
++) -> Result<EffectiveMode, String> {
++    match selected.and_then(OsStr::to_str) {
++        Some("upstream_direct") if controlled_manifest_present => Err(format!(
++            "{MODE_ENV}=upstream_direct forbids {MANIFEST_ENV}; remove the manifest to keep OMD task hooks disabled"
++        )),
++        Some("upstream_direct") => Ok(EffectiveMode {
++            mode: RuntimeMode::UpstreamDirect,
++            source: ModeSource::Explicit,
++        }),
++        Some("enabled") if controlled_manifest_present => Ok(EffectiveMode {
++            mode: RuntimeMode::Enabled,
++            source: ModeSource::Explicit,
++        }),
++        Some("enabled") => Err(format!(
++            "{MODE_ENV}=enabled requires {MANIFEST_ENV} for explicit OMD activation"
++        )),
++        Some(value) => Err(format!(
++            "invalid {MODE_ENV} value {value:?}; expected upstream_direct or enabled"
++        )),
++        None if selected.is_some() => Err(format!(
++            "invalid non-Unicode {MODE_ENV}; expected upstream_direct or enabled"
++        )),
++        None if controlled_manifest_present => Ok(EffectiveMode {
++            mode: RuntimeMode::Enabled,
++            source: ModeSource::LegacyManifest,
++        }),
++        None => Ok(EffectiveMode {
++            mode: RuntimeMode::UpstreamDirect,
++            source: ModeSource::CompatibilityDefault,
++        }),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn explicit_direct_mode_rejects_every_controlled_manifest() {
++        let direct = effective_mode_from(Some(OsStr::new("upstream_direct")), false).unwrap();
++        assert_eq!(direct.mode, RuntimeMode::UpstreamDirect);
++        assert_eq!(direct.source, ModeSource::Explicit);
++        assert!(!direct.mode.task_hooks_enabled());
++
++        let error = effective_mode_from(Some(OsStr::new("upstream_direct")), true).unwrap_err();
++        assert!(error.contains("forbids OMD_CONTROLLED_MANIFEST"));
++    }
++
++    #[test]
++    fn enabled_mode_requires_explicit_activation_material() {
++        let enabled = effective_mode_from(Some(OsStr::new("enabled")), true).unwrap();
++        assert_eq!(enabled.mode, RuntimeMode::Enabled);
++        assert_eq!(enabled.source, ModeSource::Explicit);
++        assert!(enabled.mode.task_hooks_enabled());
++
++        let error = effective_mode_from(Some(OsStr::new("enabled")), false).unwrap_err();
++        assert!(error.contains("requires OMD_CONTROLLED_MANIFEST"));
++    }
++
++    #[test]
++    fn compatibility_paths_preserve_prior_activation_without_ambiguity() {
++        assert_eq!(
++            effective_mode_from(None, false).unwrap(),
++            EffectiveMode {
++                mode: RuntimeMode::UpstreamDirect,
++                source: ModeSource::CompatibilityDefault,
++            }
++        );
++        assert_eq!(
++            effective_mode_from(None, true).unwrap(),
++            EffectiveMode {
++                mode: RuntimeMode::Enabled,
++                source: ModeSource::LegacyManifest,
++            }
++        );
++    }
++
++    #[test]
++    fn unknown_mode_never_silently_falls_back() {
++        let error = effective_mode_from(Some(OsStr::new("off")), false).unwrap_err();
++        assert!(error.contains("expected upstream_direct or enabled"));
++    }
 +}
 diff --git a/codex-rs/omd/src/reactive.rs b/codex-rs/omd/src/reactive.rs
 new file mode 100644
@@ -22313,10 +22530,10 @@ index 0000000..4282243
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_inspector.rs b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 new file mode 100644
-index 0000000..67f0a55
+index 0000000..7f80f2d
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_inspector.rs
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,149 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -22327,6 +22544,39 @@ index 0000000..67f0a55
 +
 +impl ChatWidget {
 +    pub(super) fn open_omd_inspector(&mut self) {
++        let mode = match crate::omd::effective_mode() {
++            Ok(mode) => mode,
++            Err(error) => {
++                self.add_error_message(format!("Oh My Diff mode is invalid: {error}"));
++                return;
++            }
++        };
++        if mode.mode == codex_omd::RuntimeMode::UpstreamDirect {
++            let mut lines = crate::omd::direct_mode_details(mode)
++                .into_iter()
++                .map(Line::from)
++                .collect::<Vec<_>>();
++            lines[0] = lines[0].clone().bold();
++            let header = Paragraph::new(lines);
++            self.bottom_pane.show_selection_view(SelectionViewParams {
++                view_id: Some("omd-inspector"),
++                title: Some("Oh My Diff inspector".to_string()),
++                subtitle: Some("Effective mode; refresh by reopening /omd".to_string()),
++                header: Box::new(header),
++                header_gap: 1,
++                initial_selected_idx: Some(0),
++                footer_hint: Some(standard_popup_hint_line()),
++                items: vec![SelectionItem {
++                    name: "Close inspector".to_string(),
++                    description: Some("Return to the transcript".to_string()),
++                    dismiss_on_select: true,
++                    ..Default::default()
++                }],
++                ..Default::default()
++            });
++            self.request_redraw();
++            return;
++        }
 +        let snapshot = match crate::omd::snapshot() {
 +            Ok(snapshot) => snapshot,
 +            Err(error) => {
@@ -22360,7 +22610,9 @@ index 0000000..67f0a55
 +        let alternate_screen =
 +            format!("{:?}", self.local_settings.tui.alternate_screen).to_ascii_lowercase();
 +        let header = Paragraph::new(vec![
-+            Line::from("Oh My Diff · controlled Codex runtime".bold()),
++            Line::from("Oh My Diff · OMD enabled".bold()),
++            Line::from(format!("Selection {}", mode.source.label())),
++            Line::from("Binary Oh My Diff custom binary; disabling OMD does not restore upstream"),
 +            Line::from(format!(
 +                "Task {} · {} live / {} archived workers",
 +                snapshot.task_status, snapshot.live_workers, snapshot.archived_workers
@@ -22454,19 +22706,25 @@ index b8db07e..ef1e8f1 100644
              | SlashCommand::Usage
              | SlashCommand::DebugConfig
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 17f437c..8e5a0dd 100644
+index 17f437c..0b0fb3e 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-@@ -200,7 +200,7 @@ impl ChatWidget {
+@@ -200,13 +200,7 @@ impl ChatWidget {
      }
  
      fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
 -        let enabled = !selections.status_line_items.is_empty();
-+        let enabled = crate::omd::is_active() || !selections.status_line_items.is_empty();
-         self.bottom_pane.set_status_line_enabled(enabled);
-         if !enabled {
-             self.set_status_line(/*status_line*/ None);
-@@ -215,10 +215,19 @@ impl ChatWidget {
+-        self.bottom_pane.set_status_line_enabled(enabled);
+-        if !enabled {
+-            self.set_status_line(/*status_line*/ None);
+-            self.set_status_line_hyperlink(/*url*/ None);
+-            return;
+-        }
++        self.bottom_pane.set_status_line_enabled(true);
+ 
+         let mut segments = Vec::new();
+         for item in &selections.status_line_items {
+@@ -215,10 +209,15 @@ impl ChatWidget {
              }
          }
  
@@ -22476,16 +22734,12 @@ index 17f437c..8e5a0dd 100644
 -        ));
 +        let status_line =
 +            status_line_from_segments(segments, self.local_settings.tui.status_line_use_colors);
-+        let status_line = if crate::omd::is_active() {
-+            let mut spans = vec![crate::omd::compact_status().bold()];
-+            if let Some(line) = status_line {
-+                spans.push(" · ".dim());
-+                spans.extend(line.spans);
-+            }
-+            Some(Line::from(spans))
-+        } else {
-+            status_line
-+        };
++        let mut spans = vec![crate::omd::compact_status().bold()];
++        if let Some(line) = status_line {
++            spans.push(" · ".dim());
++            spans.extend(line.spans);
++        }
++        let status_line = Some(Line::from(spans));
 +        self.set_status_line(status_line);
          let hyperlink_url = selections
              .status_line_items
@@ -22592,10 +22846,10 @@ index 094fb73..56dec6b 100644
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000..6456f3f
+index 0000000..e3b7dab
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,564 @@
+@@ -0,0 +1,625 @@
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Position;
 +use ratatui::style::Modifier;
@@ -22613,7 +22867,9 @@ index 0000000..6456f3f
 +use std::time::SystemTime;
 +use std::time::UNIX_EPOCH;
 +
-+pub(crate) const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
++#[cfg(test)]
++pub(crate) const MODE_ENV: &str = codex_omd::MODE_ENV;
++pub(crate) const MANIFEST_ENV: &str = codex_omd::MANIFEST_ENV;
 +pub(crate) const GRAPH_ENV: &str = "OMD_GRAPH_SNAPSHOT";
 +pub(crate) const REVOCATION_FILE: &str = "contributor-revoked.json";
 +static FULLSCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -22678,7 +22934,26 @@ index 0000000..6456f3f
 +}
 +
 +pub(crate) fn is_active() -> bool {
-+    std::env::var_os(MANIFEST_ENV).is_some()
++    effective_mode().is_ok_and(|mode| mode.mode.task_hooks_enabled())
++}
++
++pub(crate) fn effective_mode() -> Result<codex_omd::EffectiveMode, String> {
++    codex_omd::effective_mode()
++}
++
++pub(crate) fn direct_mode_details(mode: codex_omd::EffectiveMode) -> Vec<String> {
++    vec![
++        "Oh My Diff · upstream-style direct".to_string(),
++        format!("Selection {}", mode.source.label()),
++        format!(
++            "Task behavior Pinned upstream Codex flow ({})",
++            codex_omd::PINNED_UPSTREAM
++        ),
++        "OMD task hooks Disabled before extension registration".to_string(),
++        "Binary Oh My Diff custom binary; upstream executable not restored".to_string(),
++        "Restore upstream Replace this binary through the supported uninstall/return path"
++            .to_string(),
++    ]
 +}
 +
 +pub(crate) fn load_graph(cwd: &Path) -> Result<(codex_omd::CodeGraph, PathBuf), String> {
@@ -22842,6 +23117,13 @@ index 0000000..6456f3f
 +}
 +
 +pub(crate) fn compact_status() -> String {
++    let mode = match effective_mode() {
++        Ok(mode) if mode.mode == codex_omd::RuntimeMode::UpstreamDirect => {
++            return "Oh My Diff · upstream-style direct · hooks off".to_string();
++        }
++        Ok(mode) => mode,
++        Err(error) => return format!("Oh My Diff · invalid mode · {error}"),
++    };
 +    let status = (|| {
 +        let path = std::env::var_os(MANIFEST_ENV).map(PathBuf::from)?;
 +        let manifest: Manifest = serde_json::from_slice(&bounded_read(&path, 65_536).ok()?).ok()?;
@@ -22850,7 +23132,8 @@ index 0000000..6456f3f
 +        )
 +        .ok()?;
 +        Some(format!(
-+            "Oh My Diff · {} · {}/{} req · Contributor {}",
++            "Oh My Diff · {} · {} · {}/{} req · Contributor {}",
++            mode.mode.label(),
 +            checkpoint.task_status,
 +            checkpoint.allowance.requests_consumed,
 +            checkpoint
@@ -22864,7 +23147,7 @@ index 0000000..6456f3f
 +            }
 +        ))
 +    })();
-+    status.unwrap_or_else(|| "Oh My Diff · unavailable".to_string())
++    status.unwrap_or_else(|| "Oh My Diff · enabled · unavailable".to_string())
 +}
 +
 +pub(crate) fn revoke_contributor() -> Result<String, String> {
@@ -23106,7 +23389,7 @@ index 0000000..6456f3f
 +        assert_eq!(before.authorization, ContributorAuthorization::Authorized);
 +        assert_eq!(
 +            compact_status(),
-+            "Oh My Diff · active · 2/5 req · Contributor on"
++            "Oh My Diff · OMD enabled · active · 2/5 req · Contributor on"
 +        );
 +
 +        assert!(revoke_contributor().unwrap().contains("revoked"));
@@ -23116,10 +23399,42 @@ index 0000000..6456f3f
 +        );
 +        assert_eq!(
 +            compact_status(),
-+            "Oh My Diff · active · 2/5 req · Contributor revoked"
++            "Oh My Diff · OMD enabled · active · 2/5 req · Contributor revoked"
 +        );
 +        assert!(root.path().join("evidence").join(REVOCATION_FILE).is_file());
 +        assert!(revoke_contributor().unwrap().contains("already revoked"));
++    }
++
++    #[test]
++    #[serial]
++    fn explicit_direct_mode_is_visible_and_disables_omd_presentation_hooks() {
++        let _mode = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
++        let _manifest = EnvGuard::set(MANIFEST_ENV, None);
++        let _locale = EnvGuard::set("LC_ALL", Some("en_CA.UTF-8"));
++
++        assert!(!is_active());
++        assert!(!ligatures_enabled());
++        assert!(!mouse_enabled());
++        assert_eq!(visual_input("=== -> <=").as_ref(), "=== -> <=");
++        assert_eq!(
++            compact_status(),
++            "Oh My Diff · upstream-style direct · hooks off"
++        );
++        let details = direct_mode_details(effective_mode().unwrap()).join("\n");
++        assert!(details.contains(codex_omd::PINNED_UPSTREAM));
++        assert!(details.contains("Disabled before extension registration"));
++        assert!(details.contains("upstream executable not restored"));
++        assert!(details.contains("supported uninstall/return path"));
++    }
++
++    #[test]
++    #[serial]
++    fn direct_mode_refuses_a_leaked_controlled_manifest() {
++        let _mode = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
++        let _manifest = EnvGuard::set(MANIFEST_ENV, Some("unexpected.json"));
++
++        assert!(!is_active());
++        assert!(compact_status().contains("upstream_direct forbids OMD_CONTROLLED_MANIFEST"));
 +    }
 +
 +    #[test]
@@ -23579,7 +23894,7 @@ index ef4dd6d..a27f1dc 100644
              }
              Some(event) = background_events.next() => {
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
-index ca83861..27c4292 100644
+index ca83861..8871f4c 100644
 --- a/codex-rs/tui/src/slash_command.rs
 +++ b/codex-rs/tui/src/slash_command.rs
 @@ -51,6 +51,8 @@ pub enum SlashCommand {
@@ -23595,7 +23910,7 @@ index ca83861..27c4292 100644
              SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
              SlashCommand::Hooks => "view and manage lifecycle hooks",
              SlashCommand::Status => "show current session configuration and token usage",
-+            SlashCommand::Omd => "inspect Oh My Diff runtime state and authorization",
++            SlashCommand::Omd => "inspect Oh My Diff binary, mode, and effective runtime state",
 +            SlashCommand::Graph => "navigate a versioned Oh My Diff code graph",
              SlashCommand::Cd => "change the current working directory",
              SlashCommand::Pwd => "show the current working directory",
@@ -23622,7 +23937,7 @@ index ca83861..27c4292 100644
              SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
              SlashCommand::Copy => !cfg!(target_os = "android"),
              SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),
-+            SlashCommand::Omd => crate::omd::is_active(),
++            SlashCommand::Omd => true,
 +            SlashCommand::Graph => crate::omd::is_active(),
              SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
              _ => true,
