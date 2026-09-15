@@ -82,6 +82,86 @@ fn completed_update() -> CheckpointUpdate {
 }
 
 #[test]
+fn task_limits_reject_unbounded_request_and_worker_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut excessive_requests = limits();
+    excessive_requests.requests = 10_001;
+    assert!(Task::create(excessive_requests, dir.path().join("requests")).is_err());
+    let mut excessive_workers = limits();
+    excessive_workers.concurrent_workers = 129;
+    assert!(Task::create(excessive_workers, dir.path().join("workers")).is_err());
+}
+
+#[test]
+fn live_call_and_failure_caches_fail_closed_at_their_ceiling() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create_checkpointed(
+        limits(),
+        dir.path().join("task"),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    for value in 0..256u64 {
+        task.observe_call(&format!("{value:064x}"), &"a".repeat(64), false)
+            .unwrap();
+    }
+    assert!(
+        task.observe_call(&format!("{:064x}", 256), &"b".repeat(64), false)
+            .is_err()
+    );
+    let checkpoint = task.checkpoint().unwrap().unwrap();
+    task.save_checkpoint(
+        CheckpointUpdate {
+            completed_acceptance: checkpoint.completed_acceptance,
+            completed_steering: vec!["bounded cache rotation".into()],
+            remaining_work: checkpoint.remaining_work,
+            failed_hypotheses: checkpoint.failed_hypotheses,
+            candidate_versions: checkpoint.candidate_versions,
+            check_versions: checkpoint.check_versions,
+        },
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    task.observe_call(&format!("{:064x}", 256), &"b".repeat(64), false)
+        .unwrap();
+
+    for value in 0..128 {
+        task.record_failure(
+            FailureClass::Diagnosis,
+            format!("failure {value}"),
+            vec![json!({"id": value})],
+        )
+        .unwrap();
+    }
+    assert!(
+        task.record_failure(
+            FailureClass::Diagnosis,
+            "failure overflow".into(),
+            vec![json!({"id": 128})],
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn equivalent_failure_fingerprint_cache_is_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    for value in 0..128 {
+        assert!(
+            !task
+                .observe_equivalent_failure(&format!("failure-{value}"), 2, "change route")
+                .unwrap()
+        );
+    }
+    assert!(
+        task.observe_equivalent_failure("failure-overflow", 2, "change route")
+            .is_err()
+    );
+}
+
+#[test]
 fn contributor_requires_current_authorization_and_exact_identity() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
@@ -457,11 +537,12 @@ fn compact_checkpoint_preserves_contract_progress_versions_and_allowance() {
 }
 
 #[test]
-fn worker_objectives_and_results_distinguish_stopped_completed_and_consumed() {
+fn terminal_worker_detail_is_archived_and_live_checkpoint_stays_compact() {
     let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("task");
     let task = Task::create_checkpointed(
         limits(),
-        dir.path().join("task"),
+        evidence.clone(),
         contract(),
         live('a', Vec::new()),
     )
@@ -478,6 +559,10 @@ fn worker_objectives_and_results_distinguish_stopped_completed_and_consumed() {
     );
     task.claim_worker_objective("second", "Inspect the renderer")
         .unwrap();
+    let request = task.admit("first", "openai", "gpt-5.6-sol", 60).unwrap();
+    task.dispatch(&request, || Ok(())).unwrap();
+    task.settle(&request, json!({"input_tokens": 1}), 50)
+        .unwrap();
     task.finish_worker("second").unwrap();
     task.complete_worker("first", marker("worker-result", 'e'))
         .unwrap();
@@ -490,11 +575,59 @@ fn worker_objectives_and_results_distinguish_stopped_completed_and_consumed() {
         .map(|worker| (worker.id, worker.status))
         .collect::<std::collections::BTreeMap<_, _>>();
     assert_eq!(statuses["first"], WorkerStatus::Completed);
-    assert_eq!(statuses["second"], WorkerStatus::Stopped);
+    assert!(!statuses.contains_key("second"));
+    assert_eq!(task.checkpoint().unwrap().unwrap().archived_workers, 1);
     task.consume_worker_result("first").unwrap();
-    assert_eq!(
-        task.checkpoint().unwrap().unwrap().workers[0].status,
-        WorkerStatus::Consumed
+    let compact = task.checkpoint().unwrap().unwrap();
+    assert!(compact.workers.is_empty());
+    assert_eq!(compact.archived_workers, 2);
+    assert!(
+        task.start_worker("first".into(), "lead".into(), 1, worker())
+            .is_err()
+    );
+    let archives = std::fs::read_dir(&evidence)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(entry.path()).ok()?).ok()
+        })
+        .filter(|record| record["record"]["event"] == "worker_archived")
+        .collect::<Vec<_>>();
+    assert_eq!(archives.len(), 2);
+    assert!(archives.iter().any(|record| {
+        record["record"]["archive"]["id"] == "first"
+            && record["record"]["archive"]["status"] == "consumed"
+            && record["record"]["archive"]["result"]["label"] == "worker-result"
+            && record["record"]["archive"]["requests"] == 1
+            && record["record"]["archive"]["exposure_microusd"] == 50
+    }));
+    task.start_worker("third".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.claim_worker_objective("third", "Verify pause archive replay")
+        .unwrap();
+    task.pause("restart", Vec::new()).unwrap();
+    assert_eq!(task.checkpoint().unwrap().unwrap().archived_workers, 3);
+    drop(task);
+    let resumed = Task::open_checkpointed(
+        limits(),
+        evidence,
+        Some("archive replay"),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    let resumed_checkpoint = resumed.checkpoint().unwrap().unwrap();
+    assert!(resumed_checkpoint.workers.is_empty());
+    assert_eq!(resumed_checkpoint.archived_workers, 3);
+    assert!(
+        resumed
+            .start_worker("second".into(), "lead".into(), 1, worker())
+            .is_err()
+    );
+    assert!(
+        resumed
+            .start_worker("third".into(), "lead".into(), 1, worker())
+            .is_err()
     );
 }
 

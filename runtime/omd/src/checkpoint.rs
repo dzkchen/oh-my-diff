@@ -131,6 +131,8 @@ pub struct TaskCheckpoint {
     pub candidate_versions: Vec<VersionMarker>,
     pub check_versions: Vec<VersionMarker>,
     pub workers: Vec<WorkerCheckpoint>,
+    #[serde(default)]
+    pub archived_workers: u32,
     pub allowance: AllowanceCheckpoint,
     pub live: LiveState,
     pub reconciliation: Option<Reconciliation>,

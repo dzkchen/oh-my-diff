@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 7ba1057..b204037 100644
+index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..b20403725cb5c3b04845f242b22f80b09f9b2dc4 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2212,6 +2212,7 @@ dependencies = [
@@ -53,7 +53,7 @@ index 7ba1057..b204037 100644
  name = "codex-otel"
  version = "0.154.0"
 diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
-index 3cf0d00..6ae89c0 100644
+index 3cf0d009a8ecede0fb207cc9ec40ebef30f59b09..6ae89c0f56145c5bbf0c08310c8b32dfe0c2d9d1 100644
 --- a/codex-rs/Cargo.toml
 +++ b/codex-rs/Cargo.toml
 @@ -1,5 +1,7 @@
@@ -73,7 +73,7 @@ index 3cf0d00..6ae89c0 100644
  codex-realtime-webrtc = { path = "realtime-webrtc" }
  app_test_support = { path = "app-server/tests/common" }
 diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
-index c64b15b..04ff16c 100644
+index c64b15b998c5722651a7a4dafe0b0ca299a6a03b..04ff16ca6b3c4ad4a08f32007f74808078d05b43 100644
 --- a/codex-rs/app-server/Cargo.toml
 +++ b/codex-rs/app-server/Cargo.toml
 @@ -25,6 +25,7 @@ doctest = false
@@ -85,7 +85,7 @@ index c64b15b..04ff16c 100644
  base64 = { workspace = true }
  axum = { workspace = true, default-features = false, features = [
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 929eab5..d3da68f 100644
+index 929eab5392eabd6c06a3c723060232db7203f597..d3da68fd0ae9d28418ababa21d9889b2569b226b 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -76,6 +76,9 @@ where
@@ -99,7 +99,7 @@ index 929eab5..d3da68f 100644
      if let Some(state_db) = state_db {
          codex_goal_extension::install_with_backend(
 diff --git a/codex-rs/codex-api/src/endpoint/responses.rs b/codex-rs/codex-api/src/endpoint/responses.rs
-index 78a0823..1d37da7 100644
+index 78a08232f967f291de46002ddda541b40128bbf3..1d37da70cb71ee4352898343aa3881c37e521fc2 100644
 --- a/codex-rs/codex-api/src/endpoint/responses.rs
 +++ b/codex-rs/codex-api/src/endpoint/responses.rs
 @@ -8,7 +8,7 @@ use crate::requests::Compression;
@@ -121,7 +121,7 @@ index 78a0823..1d37da7 100644
              self.session.provider().stream_idle_timeout,
              self.sse_telemetry.clone(),
 diff --git a/codex-rs/codex-api/src/endpoint/responses_websocket.rs b/codex-rs/codex-api/src/endpoint/responses_websocket.rs
-index 95d41e0..627a7a4 100644
+index 95d41e0d9154de47cdbc75f93e8aafa7fcf00966..627a7a4847d33267347711ee008818af052f5f62 100644
 --- a/codex-rs/codex-api/src/endpoint/responses_websocket.rs
 +++ b/codex-rs/codex-api/src/endpoint/responses_websocket.rs
 @@ -893,6 +893,7 @@ async fn send_websocket_request(
@@ -133,7 +133,7 @@ index 95d41e0..627a7a4 100644
      let result = tokio::time::timeout(
          idle_timeout,
 diff --git a/codex-rs/codex-api/src/endpoint/session.rs b/codex-rs/codex-api/src/endpoint/session.rs
-index 7849225..1f1f28c 100644
+index 7849225b5cbb6c37456d14e85b3fe069d878ada3..1f1f28c9e8410bf28416a354b8b7b8d690c02b73 100644
 --- a/codex-rs/codex-api/src/endpoint/session.rs
 +++ b/codex-rs/codex-api/src/endpoint/session.rs
 @@ -1,6 +1,7 @@
@@ -205,7 +205,7 @@ index 7849225..1f1f28c 100644
              },
          )
 diff --git a/codex-rs/codex-api/src/lib.rs b/codex-rs/codex-api/src/lib.rs
-index 7287cb2..64d6e8d 100644
+index 7287cb29d2e610263d71c3b33bf4a475d75b02f0..64d6e8debc55e91cd892e4f85e0f2063515f0c3a 100644
 --- a/codex-rs/codex-api/src/lib.rs
 +++ b/codex-rs/codex-api/src/lib.rs
 @@ -7,6 +7,7 @@ pub(crate) mod files;
@@ -218,7 +218,7 @@ index 7287cb2..64d6e8d 100644
  pub(crate) mod search;
 diff --git a/codex-rs/codex-api/src/request_observer.rs b/codex-rs/codex-api/src/request_observer.rs
 new file mode 100644
-index 0000000..584b9f0
+index 0000000000000000000000000000000000000000..584b9f07c481dbd7340e655f6709d20e29eda499
 --- /dev/null
 +++ b/codex-rs/codex-api/src/request_observer.rs
 @@ -0,0 +1,75 @@
@@ -298,7 +298,7 @@ index 0000000..584b9f0
 +    Ok(())
 +}
 diff --git a/codex-rs/codex-api/src/sse/mod.rs b/codex-rs/codex-api/src/sse/mod.rs
-index 441078b..975ed83 100644
+index 441078bdcbd7bfaddcd4a7d0520453a4c9473e01..975ed83555d836fa4f0800cf7e8d11756c67242b 100644
 --- a/codex-rs/codex-api/src/sse/mod.rs
 +++ b/codex-rs/codex-api/src/sse/mod.rs
 @@ -2,4 +2,3 @@ pub(crate) mod responses;
@@ -307,7 +307,7 @@ index 441078b..975ed83 100644
  pub(crate) use responses::process_responses_event;
 -pub use responses::spawn_response_stream;
 diff --git a/codex-rs/codex-api/src/sse/responses.rs b/codex-rs/codex-api/src/sse/responses.rs
-index e4f5f04..fd7ae0e 100644
+index e4f5f04d62b3834cef16cf222cb55f288ca50841..fd7ae0ecea5de947c522ee622e631b55c22b16de 100644
 --- a/codex-rs/codex-api/src/sse/responses.rs
 +++ b/codex-rs/codex-api/src/sse/responses.rs
 @@ -7,7 +7,6 @@ use crate::rate_limits::parse_all_rate_limits;
@@ -442,7 +442,7 @@ index e4f5f04..fd7ae0e 100644
                  let is_completed = matches!(event, ResponseEvent::Completed { .. });
                  if tx_event.send(Ok(event)).await.is_err() {
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
-index 46c2442..9e6642b 100644
+index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d8914bba1 100644
 --- a/codex-rs/core/src/exec.rs
 +++ b/codex-rs/core/src/exec.rs
 @@ -117,6 +117,9 @@ pub enum ExecCapturePolicy {
@@ -527,7 +527,7 @@ index 46c2442..9e6642b 100644
      use tokio::task::JoinHandle;
  
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index eb85a04..e8979ab 100644
+index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a49879718 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -275,6 +275,8 @@ struct ThreadSpawnRequest {
@@ -637,7 +637,7 @@ index eb85a04..e8979ab 100644
              .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
              .await;
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
-index ad5086f..dec4eb2 100644
+index ad5086f500b7c16e245ee9a3011966921151dae5..dec4eb20237f4a844f94c63f743136c8ac1ed1bd 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
 +++ b/codex-rs/core/src/tools/orchestrator.rs
 @@ -141,7 +141,17 @@ impl ToolOrchestrator {
@@ -668,7 +668,7 @@ index ad5086f..dec4eb2 100644
          if owner_network_policy
              && tool
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
-index a16c182..0da3731 100644
+index a16c182c739a0e9ebe128b3c7298be11b9e5bfba..0da373166558daf0d4403d45ddeb481209bd8f17 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
 +++ b/codex-rs/exec-server/src/process_sandbox.rs
 @@ -84,8 +84,10 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
@@ -698,7 +698,7 @@ index a16c182..0da3731 100644
          .with_allowed_symlinked_codex_home(runtime_paths.allowed_symlinked_codex_home.clone());
 diff --git a/codex-rs/ext/omd/BUILD.bazel b/codex-rs/ext/omd/BUILD.bazel
 new file mode 100644
-index 0000000..6c44c5e
+index 0000000000000000000000000000000000000000..6c44c5e1a9ca4ca9112bbb7d872c06b4b66200b5
 --- /dev/null
 +++ b/codex-rs/ext/omd/BUILD.bazel
 @@ -0,0 +1,6 @@
@@ -710,7 +710,7 @@ index 0000000..6c44c5e
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 0000000..4e54652
+index 0000000000000000000000000000000000000000..4e54652f1a17e8daa21effc82c414c434693a76b
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
 @@ -0,0 +1,27 @@
@@ -743,10 +743,10 @@ index 0000000..4e54652
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000..0931be0
+index 0000000000000000000000000000000000000000..4ab33dafad657ba5fb28ad63a2cf4fc1112c710b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,382 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -759,6 +759,8 @@ index 0000000..0931be0
 +use std::collections::BTreeMap;
 +use std::sync::Arc;
 +use std::sync::Mutex;
++
++pub const REVOCATION_FILE: &str = "contributor-revoked.json";
 +
 +#[derive(Clone, Deserialize)]
 +#[serde(deny_unknown_fields)]
@@ -784,12 +786,23 @@ index 0000000..0931be0
 +    pub authorization: std::path::PathBuf,
 +    pub authorization_sha256: String,
 +    pub repository_identity: String,
++    pub revocation: std::path::PathBuf,
 +}
 +
 +#[derive(Default)]
 +pub struct Accounts(pub Mutex<BTreeMap<String, Account>>);
 +
-+pub fn authorized(path: &std::path::Path, expected_sha256: &str, repository: &str) -> bool {
++pub fn authorized(
++    path: &std::path::Path,
++    expected_sha256: &str,
++    repository: &str,
++    revocation: &std::path::Path,
++) -> bool {
++    match std::fs::symlink_metadata(revocation) {
++        Ok(_) => return false,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++        Err(_) => return false,
++    }
 +    let Ok(bytes) = std::fs::read(path) else {
 +        return false;
 +    };
@@ -874,6 +887,7 @@ index 0000000..0931be0
 +                &account.authorization,
 +                &account.authorization_sha256,
 +                &account.repository_identity,
++                &account.revocation,
 +            );
 +            account
 +                .task
@@ -1117,10 +1131,10 @@ index 0000000..0931be0
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000..f632aed
+index 0000000000000000000000000000000000000000..b2f4487208363c71cd3fa44a59e44d913de623c7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,220 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::WorkerLimits;
@@ -1172,6 +1186,7 @@ index 0000000..f632aed
 +            authorization_sha256: crate::execution::hash(&std::fs::read(&authorization).unwrap()),
 +            authorization,
 +            repository_identity: "fixture".into(),
++            revocation: root.path().join("evidence").join(REVOCATION_FILE),
 +        },
 +    );
 +    task.start_worker(
@@ -1261,6 +1276,23 @@ index 0000000..f632aed
 +}
 +
 +#[test]
++fn durable_revocation_marker_blocks_future_contributor_dispatch() {
++    let (root, accounts, task, mut request, body) = setup();
++    std::fs::write(
++        root.path().join("evidence").join(REVOCATION_FILE),
++        serde_json::to_vec(&json!({
++            "schema": 1,
++            "revoked": true,
++            "source": "Oh My Diff inspector"
++        }))
++        .unwrap(),
++    )
++    .unwrap();
++    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
++    assert!(task.attempts().unwrap().is_empty());
++}
++
++#[test]
 +fn paid_preparation_caps_output_and_rejects_unbounded_or_underreserved_requests() {
 +    let (_root, accounts, task, mut request, body) = setup();
 +    let mut prepared = Some(body.clone());
@@ -1325,7 +1357,7 @@ index 0000000..f632aed
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..aec3ac8
+index 0000000000000000000000000000000000000000..aec3ac835f48a5e2dbd6a7459bb80619c71bafc1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
 @@ -0,0 +1,1358 @@
@@ -2689,7 +2721,7 @@ index 0000000..aec3ac8
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/execution_tests.rs b/codex-rs/ext/omd/src/execution_tests.rs
 new file mode 100644
-index 0000000..f39321c
+index 0000000000000000000000000000000000000000..f39321c361cf502cf02003ee062aa8bcca5e3895
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution_tests.rs
 @@ -0,0 +1,109 @@
@@ -2804,10 +2836,10 @@ index 0000000..f39321c
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..6dee452
+index 0000000000000000000000000000000000000000..f83e3703a5e5107334bc7fc53c1402dda4af2a83
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,1294 @@
+@@ -0,0 +1,1297 @@
 +mod accounting;
 +mod execution;
 +
@@ -3303,6 +3335,7 @@ index 0000000..6dee452
 +            &self.manifest.authorization,
 +            &self.manifest.authorization_sha256,
 +            &self.manifest.repository_identity,
++            &self.manifest.evidence.join(accounting::REVOCATION_FILE),
 +        );
 +        self.task
 +            .set_contributor_authorization(
@@ -3333,6 +3366,7 @@ index 0000000..6dee452
 +            authorization: self.manifest.authorization.clone(),
 +            authorization_sha256: self.manifest.authorization_sha256.clone(),
 +            repository_identity: self.manifest.repository_identity.clone(),
++            revocation: self.manifest.evidence.join(accounting::REVOCATION_FILE),
 +        };
 +        let mut accounts = self
 +            .accounts
@@ -3766,6 +3800,7 @@ index 0000000..6dee452
 +            &self.manifest.authorization,
 +            &self.manifest.authorization_sha256,
 +            &self.manifest.repository_identity,
++            &self.manifest.evidence.join(accounting::REVOCATION_FILE),
 +        ) {
 +            tools.push(Arc::new(ContributionTool(lead)));
 +        }
@@ -4103,7 +4138,7 @@ index 0000000..6dee452
 +    }
 +}
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
-index cd4cbd5..b37f321 100644
+index cd4cbd5431a785b0a1f2a9963b1536d2edf135ec..b37f321d96c66589e03f258f7d7746dd8df22462 100644
 --- a/codex-rs/login/src/auth/default_client.rs
 +++ b/codex-rs/login/src/auth/default_client.rs
 @@ -294,9 +294,14 @@ pub async fn create_client_for_route_async(
@@ -4125,7 +4160,7 @@ index cd4cbd5..b37f321 100644
  // These legacy constructors intentionally preserve the infallible behavior of `create_client`.
 diff --git a/codex-rs/omd/BUILD.bazel b/codex-rs/omd/BUILD.bazel
 new file mode 100644
-index 0000000..dd496cd
+index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01ca4e84fd2
 --- /dev/null
 +++ b/codex-rs/omd/BUILD.bazel
 @@ -0,0 +1,6 @@
@@ -4137,7 +4172,7 @@ index 0000000..dd496cd
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000..812e16b
+index 0000000000000000000000000000000000000000..812e16b756ce775f571083988846e62a34e7750d
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,15 @@
@@ -4158,10 +4193,10 @@ index 0000000..812e16b
 +tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000..3a9dfb0
+index 0000000000000000000000000000000000000000..06b5de3da5b08b616014d791514b6725f121905e
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1730 @@
+@@ -0,0 +1,1956 @@
 +use crate::checkpoint::AllowanceCheckpoint;
 +use crate::checkpoint::CallDecision;
 +use crate::checkpoint::CheckpointTaskStatus;
@@ -4201,7 +4236,7 @@ index 0000000..3a9dfb0
 +    pub max_reassessments: u32,
 +}
 +
-+#[derive(Clone, Debug, Deserialize, Serialize)]
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +pub struct WorkerLimits {
 +    pub requests: u32,
 +    pub exposure_microusd: u64,
@@ -4262,6 +4297,46 @@ index 0000000..3a9dfb0
 +    result: Option<VersionMarker>,
 +}
 +
++#[derive(Debug, Deserialize, Serialize, PartialEq)]
++struct ArchivedWorker {
++    id: String,
++    parent: String,
++    depth: u32,
++    limits: WorkerLimits,
++    requests: u32,
++    exposure_microusd: u64,
++    status: WorkerStatus,
++    objective: Option<String>,
++    result: Option<VersionMarker>,
++}
++
++impl ArchivedWorker {
++    fn from_worker(id: String, worker: &Worker) -> Self {
++        Self {
++            id,
++            parent: worker.parent.clone(),
++            depth: worker.depth,
++            limits: worker.limits.clone(),
++            requests: worker.requests,
++            exposure_microusd: worker.exposure,
++            status: worker.status,
++            objective: worker.objective.clone(),
++            result: worker.result.clone(),
++        }
++    }
++
++    fn matches_worker(&self, worker: &Worker) -> bool {
++        self.parent == worker.parent
++            && self.depth == worker.depth
++            && self.limits == worker.limits
++            && self.requests == worker.requests
++            && self.exposure_microusd == worker.exposure
++            && self.status == worker.status
++            && self.objective == worker.objective
++            && self.result == worker.result
++    }
++}
++
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 +enum TaskStatus {
 +    Active,
@@ -4289,11 +4364,19 @@ index 0000000..3a9dfb0
 +    escalations: u32,
 +    reassessments: u32,
 +    failure_fingerprints: BTreeMap<String, u32>,
++    seen_workers: BTreeSet<String>,
 +    workers: BTreeMap<String, Worker>,
 +    contract: Option<TaskContract>,
 +    checkpoint: Option<TaskCheckpoint>,
 +    calls: BTreeMap<String, CallRecord>,
 +}
++
++const MAX_TASK_REQUESTS: u32 = 10_000;
++const MAX_LIVE_WORKERS: usize = 128;
++const MAX_TOTAL_WORKERS: usize = 1_024;
++const MAX_LIVE_CALLS: usize = 256;
++const MAX_FAILURES: usize = 128;
++const MAX_FAILURE_FINGERPRINTS: usize = 128;
 +
 +pub struct Task {
 +    limits: Limits,
@@ -4315,6 +4398,21 @@ index 0000000..3a9dfb0
 +}
 +
 +impl Task {
++    fn validate_limits(limits: &Limits) -> io::Result<()> {
++        if limits.requests == 0
++            || limits.requests > MAX_TASK_REQUESTS
++            || limits.seconds == 0
++            || limits.concurrent_workers == 0
++            || limits.concurrent_workers as usize > MAX_LIVE_WORKERS
++            || limits.max_depth == 0
++        {
++            return Err(denied(
++                "task limits must be positive and within runtime ceilings",
++            ));
++        }
++        Ok(())
++    }
++
 +    pub fn create(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
 +        Self::create_inner(limits, evidence, None)
 +    }
@@ -4347,13 +4445,7 @@ index 0000000..3a9dfb0
 +        evidence: PathBuf,
 +        contract: Option<TaskContract>,
 +    ) -> io::Result<Self> {
-+        if limits.requests == 0
-+            || limits.seconds == 0
-+            || limits.concurrent_workers == 0
-+            || limits.max_depth == 0
-+        {
-+            return Err(denied("task limits must be positive"));
-+        }
++        Self::validate_limits(&limits)?;
 +        fs::create_dir(&evidence)?;
 +        let evidence = evidence.canonicalize()?;
 +        let task = Self {
@@ -4375,6 +4467,7 @@ index 0000000..3a9dfb0
 +                escalations: 0,
 +                reassessments: 0,
 +                failure_fingerprints: BTreeMap::new(),
++                seen_workers: BTreeSet::new(),
 +                workers: BTreeMap::new(),
 +                contract: contract.clone(),
 +                checkpoint: None,
@@ -4432,6 +4525,7 @@ index 0000000..3a9dfb0
 +        expected_contract: Option<TaskContract>,
 +        current_live: Option<LiveState>,
 +    ) -> io::Result<Self> {
++        Self::validate_limits(&limits)?;
 +        if !evidence.exists() {
 +            if explicit_resume.is_some() {
 +                return Err(denied("explicit resume has no prior task evidence"));
@@ -4469,6 +4563,7 @@ index 0000000..3a9dfb0
 +            escalations: 0,
 +            reassessments: 0,
 +            failure_fingerprints: BTreeMap::new(),
++            seen_workers: BTreeSet::new(),
 +            workers: BTreeMap::new(),
 +            contract: None,
 +            checkpoint: None,
@@ -4522,6 +4617,14 @@ index 0000000..3a9dfb0
 +                        .as_str()
 +                        .ok_or_else(|| denied("worker identity missing"))?
 +                        .to_owned();
++                    if !state.seen_workers.insert(id.clone())
++                        || state.seen_workers.len() > MAX_TOTAL_WORKERS
++                        || state.workers.len() >= MAX_LIVE_WORKERS
++                    {
++                        return Err(denied(
++                            "worker identity or live worker archive limit exceeded",
++                        ));
++                    }
 +                    state.workers.insert(
 +                        id,
 +                        Worker {
@@ -4575,16 +4678,52 @@ index 0000000..3a9dfb0
 +                        .ok_or_else(|| denied("consumed worker missing"))?;
 +                    worker.status = WorkerStatus::Consumed;
 +                }
++                Some("worker_archived") => {
++                    let archived: ArchivedWorker =
++                        serde_json::from_value(record["archive"].clone())?;
++                    let worker = state
++                        .workers
++                        .get(&archived.id)
++                        .ok_or_else(|| denied("archived worker missing from live state"))?;
++                    if archived.status == WorkerStatus::Active || !archived.matches_worker(worker) {
++                        return Err(denied("archived worker evidence changed"));
++                    }
++                    state.workers.remove(&archived.id);
++                }
 +                Some("request_admitted")
 +                | Some("request_dispatched")
 +                | Some("request_failed")
 +                | Some("request_settled")
 +                | Some("raw_usage_observed") => {
 +                    let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
-+                    state.attempts.insert(attempt.request, attempt);
++                    let prior = state.attempts.insert(attempt.request, attempt.clone());
++                    if let Some(worker) = state.workers.get_mut(&attempt.owner) {
++                        if prior.is_none() {
++                            worker.requests = worker
++                                .requests
++                                .checked_add(1)
++                                .ok_or_else(|| denied("resume worker request count overflow"))?;
++                        }
++                        let prior_exposure = prior.as_ref().map_or(0, |prior| {
++                            prior.settled_microusd.unwrap_or(prior.reserved_microusd)
++                        });
++                        let exposure = attempt
++                            .settled_microusd
++                            .unwrap_or(attempt.reserved_microusd);
++                        worker.exposure = worker
++                            .exposure
++                            .checked_sub(prior_exposure)
++                            .and_then(|value| value.checked_add(exposure))
++                            .ok_or_else(|| denied("resume worker exposure overflow"))?;
++                    }
 +                }
 +                Some("failure_recorded") => {
 +                    let failure: Failure = serde_json::from_value(record["failure"].clone())?;
++                    if state.failures.len() >= MAX_FAILURES
++                        || failure.id != state.failures.len() as u32 + 1
++                    {
++                        return Err(denied("failure evidence exceeds live limit"));
++                    }
 +                    state.failures.insert(failure.id, failure);
 +                }
 +                Some("escalation_permitted") => {
@@ -4603,6 +4742,11 @@ index 0000000..3a9dfb0
 +                        .as_u64()
 +                        .ok_or_else(|| denied("failure observation count missing"))?
 +                        as u32;
++                    if !state.failure_fingerprints.contains_key(fingerprint)
++                        && state.failure_fingerprints.len() >= MAX_FAILURE_FINGERPRINTS
++                    {
++                        return Err(denied("failure fingerprint cache limit exceeded"));
++                    }
 +                    state
 +                        .failure_fingerprints
 +                        .insert(fingerprint.to_owned(), count);
@@ -4629,6 +4773,8 @@ index 0000000..3a9dfb0
 +                                .checkpoint
 +                                .as_ref()
 +                                .map_or(1, |prior| prior.revision.saturating_add(1))
++                        || usize::try_from(checkpoint.archived_workers).ok()
++                            != Some(state.seen_workers.len().saturating_sub(state.workers.len()))
 +                    {
 +                        return Err(denied("checkpoint sequence or contract changed"));
 +                    }
@@ -4642,12 +4788,20 @@ index 0000000..3a9dfb0
 +                    }
 +                    .validate(contract)?;
 +                    checkpoint.live.validate()?;
++                    if state.checkpoint.as_ref().is_some_and(|prior| {
++                        prior.progress_revision != checkpoint.progress_revision
++                    }) {
++                        state.calls.clear();
++                    }
 +                    state.checkpoint = Some(checkpoint);
 +                }
 +                Some("call_observed") => {
 +                    let signature = record["signature_sha256"]
 +                        .as_str()
 +                        .ok_or_else(|| denied("call signature missing"))?;
++                    if !state.calls.contains_key(signature) && state.calls.len() >= MAX_LIVE_CALLS {
++                        return Err(denied("live call cache limit exceeded"));
++                    }
 +                    state.calls.insert(
 +                        signature.to_owned(),
 +                        CallRecord {
@@ -4665,8 +4819,42 @@ index 0000000..3a9dfb0
 +                        },
 +                    );
 +                }
-+                Some("no_progress_paused") => state.status = TaskStatus::Paused,
-+                Some("task_paused") => state.status = TaskStatus::Paused,
++                Some("no_progress_paused") => {
++                    state.status = TaskStatus::Paused;
++                    for worker in state.workers.values_mut() {
++                        if worker.status == WorkerStatus::Active {
++                            worker.status = WorkerStatus::Stopped;
++                        }
++                    }
++                }
++                Some("task_paused") => {
++                    let recorded = record["active_workers"]
++                        .as_array()
++                        .ok_or_else(|| denied("paused worker list missing"))?
++                        .iter()
++                        .map(|value| {
++                            value
++                                .as_str()
++                                .map(str::to_owned)
++                                .ok_or_else(|| denied("paused worker identity missing"))
++                        })
++                        .collect::<io::Result<BTreeSet<_>>>()?;
++                    let active = state
++                        .workers
++                        .iter()
++                        .filter(|(_, worker)| worker.status == WorkerStatus::Active)
++                        .map(|(id, _)| id.clone())
++                        .collect::<BTreeSet<_>>();
++                    if recorded != active {
++                        return Err(denied("paused worker list changed"));
++                    }
++                    for id in recorded {
++                        if let Some(worker) = state.workers.get_mut(&id) {
++                            worker.status = WorkerStatus::Stopped;
++                        }
++                    }
++                    state.status = TaskStatus::Paused;
++                }
 +                Some("task_resumed") => state.status = TaskStatus::Active,
 +                Some("reservation_violation") => {
 +                    let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
@@ -4702,6 +4890,17 @@ index 0000000..3a9dfb0
 +            if worker.status == WorkerStatus::Active {
 +                worker.status = WorkerStatus::Stopped;
 +            }
++        }
++        state
++            .workers
++            .retain(|_, worker| worker.status == WorkerStatus::Completed);
++        if let Some(checkpoint) = state.checkpoint.as_mut() {
++            checkpoint
++                .workers
++                .retain(|worker| worker.status == WorkerStatus::Completed);
++            checkpoint.archived_workers =
++                u32::try_from(state.seen_workers.len().saturating_sub(state.workers.len()))
++                    .map_err(|_| denied("archived worker count overflow"))?;
 +        }
 +        if matches!(state.status, TaskStatus::Stopped | TaskStatus::Completed) {
 +            return Err(denied("stopped or completed task cannot resume"));
@@ -4821,6 +5020,25 @@ index 0000000..3a9dfb0
 +            .collect()
 +    }
 +
++    fn archive_worker(&self, state: &mut State, id: &str) -> io::Result<()> {
++        let archived = ArchivedWorker::from_worker(
++            id.to_owned(),
++            state
++                .workers
++                .get(id)
++                .ok_or_else(|| denied("worker archive target missing"))?,
++        );
++        if archived.status == WorkerStatus::Active {
++            return Err(denied("active worker cannot be archived"));
++        }
++        self.record(
++            state,
++            &serde_json::json!({"event": "worker_archived", "archive": archived}),
++        )?;
++        state.workers.remove(id);
++        Ok(())
++    }
++
 +    fn write_compact_checkpoint(&self, checkpoint: &TaskCheckpoint) -> io::Result<()> {
 +        let bytes = serde_json::to_vec(checkpoint)?;
 +        if bytes.len() > 65_536 {
@@ -4915,6 +5133,9 @@ index 0000000..3a9dfb0
 +                .progress_revision
 +                .saturating_add(u64::from(progress_changed))
 +        });
++        if progress_changed {
++            state.calls.clear();
++        }
 +        let no_progress = state
 +            .checkpoint
 +            .as_ref()
@@ -4939,6 +5160,10 @@ index 0000000..3a9dfb0
 +            candidate_versions: update.candidate_versions,
 +            check_versions: update.check_versions,
 +            workers: Self::worker_checkpoints(&state),
++            archived_workers: u32::try_from(
++                state.seen_workers.len().saturating_sub(state.workers.len()),
++            )
++            .map_err(|_| denied("archived worker count overflow"))?,
 +            allowance: self.allowance(&state),
 +            live,
 +            reconciliation,
@@ -5008,11 +5233,15 @@ index 0000000..3a9dfb0
 +
 +    fn refresh_checkpoint(&self, state: &mut State) -> io::Result<()> {
 +        let workers = Self::worker_checkpoints(state);
++        let archived_workers =
++            u32::try_from(state.seen_workers.len().saturating_sub(state.workers.len()))
++                .map_err(|_| denied("archived worker count overflow"))?;
 +        let allowance = self.allowance(state);
 +        let status = Self::task_status(state.status);
 +        if let Some(checkpoint) = state.checkpoint.as_mut() {
 +            checkpoint.task_status = status;
 +            checkpoint.workers = workers;
++            checkpoint.archived_workers = archived_workers;
 +            checkpoint.allowance = allowance;
 +            if let Err(error) = self.write_compact_checkpoint(checkpoint) {
 +                state.status = TaskStatus::Stopped;
@@ -5067,6 +5296,11 @@ index 0000000..3a9dfb0
 +        } else {
 +            1
 +        };
++        if prior.is_none() && state.calls.len() >= MAX_LIVE_CALLS {
++            return Err(denied(
++                "live call cache limit exceeded; checkpoint progress required",
++            ));
++        }
 +        let decision = if legitimate_wait {
 +            CallDecision::LegitimateWait
 +        } else if !unchanged {
@@ -5115,10 +5349,17 @@ index 0000000..3a9dfb0
 +                &serde_json::json!({"event": "no_progress_paused", "signature_sha256": signature_sha256, "unchanged_calls": unchanged_calls}),
 +            )?;
 +            state.status = TaskStatus::Paused;
-+            for worker in state.workers.values_mut() {
-+                if worker.status == WorkerStatus::Active {
++            let active_workers = state
++                .workers
++                .iter()
++                .filter(|(_, worker)| worker.status == WorkerStatus::Active)
++                .map(|(id, _)| id.clone())
++                .collect::<Vec<_>>();
++            for id in active_workers {
++                if let Some(worker) = state.workers.get_mut(&id) {
 +                    worker.status = WorkerStatus::Stopped;
 +                }
++                self.archive_worker(&mut state, &id)?;
 +            }
 +        }
 +        self.refresh_checkpoint(&mut state)?;
@@ -5153,7 +5394,13 @@ index 0000000..3a9dfb0
 +            .state
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
-+        if id.is_empty() || id.len() > 128 || id == "lead" || state.workers.contains_key(&id) {
++        if id.is_empty()
++            || id.len() > 128
++            || id == "lead"
++            || state.seen_workers.contains(&id)
++            || state.seen_workers.len() >= MAX_TOTAL_WORKERS
++            || state.workers.len() >= MAX_LIVE_WORKERS
++        {
 +            return Err(denied("invalid or reused worker identity"));
 +        }
 +        if state.status != TaskStatus::Active || self.expired() {
@@ -5187,6 +5434,7 @@ index 0000000..3a9dfb0
 +            &mut state,
 +            &serde_json::json!({"event": "worker_started", "worker": id, "parent": parent, "depth": depth, "limits": limits}),
 +        )?;
++        state.seen_workers.insert(id.clone());
 +        state.workers.insert(
 +            id,
 +            Worker {
@@ -5290,6 +5538,7 @@ index 0000000..3a9dfb0
 +            .get_mut(id)
 +            .ok_or_else(|| denied("worker disappeared"))?
 +            .status = WorkerStatus::Consumed;
++        self.archive_worker(&mut state, id)?;
 +        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
@@ -5322,6 +5571,7 @@ index 0000000..3a9dfb0
 +            .get_mut(id)
 +            .ok_or_else(|| denied("worker disappeared"))?
 +            .status = WorkerStatus::Stopped;
++        self.archive_worker(&mut state, id)?;
 +        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
 +    }
@@ -5631,6 +5881,9 @@ index 0000000..3a9dfb0
 +        if state.status != TaskStatus::Active || self.expired() {
 +            return Err(denied("task stopped or expired"));
 +        }
++        if state.failures.len() >= MAX_FAILURES {
++            return Err(denied("failure evidence limit exceeded"));
++        }
 +        let id = u32::try_from(state.failures.len())
 +            .ok()
 +            .and_then(|count| count.checked_add(1))
@@ -5718,6 +5971,11 @@ index 0000000..3a9dfb0
 +        if state.status != TaskStatus::Active {
 +            return Err(denied("task is not active"));
 +        }
++        if !state.failure_fingerprints.contains_key(fingerprint)
++            && state.failure_fingerprints.len() >= MAX_FAILURE_FINGERPRINTS
++        {
++            return Err(denied("failure fingerprint cache limit exceeded"));
++        }
 +        let count = state
 +            .failure_fingerprints
 +            .get(fingerprint)
@@ -5768,8 +6026,11 @@ index 0000000..3a9dfb0
 +            &serde_json::json!({"event": "task_paused", "reason": reason, "active_workers": active_workers, "uncertain_operations": uncertain_operations}),
 +        )?;
 +        state.status = TaskStatus::Paused;
-+        for worker in state.workers.values_mut() {
-+            worker.status = WorkerStatus::Stopped;
++        for id in active_workers {
++            if let Some(worker) = state.workers.get_mut(&id) {
++                worker.status = WorkerStatus::Stopped;
++            }
++            self.archive_worker(&mut state, &id)?;
 +        }
 +        self.refresh_checkpoint(&mut state)?;
 +        Ok(())
@@ -5894,10 +6155,10 @@ index 0000000..3a9dfb0
 +}
 diff --git a/codex-rs/omd/src/checkpoint.rs b/codex-rs/omd/src/checkpoint.rs
 new file mode 100644
-index 0000000..fd247db
+index 0000000000000000000000000000000000000000..be185507bb8911c12554e132a6fa3e1700c31c19
 --- /dev/null
 +++ b/codex-rs/omd/src/checkpoint.rs
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,258 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use std::collections::BTreeSet;
@@ -6031,6 +6292,8 @@ index 0000000..fd247db
 +    pub candidate_versions: Vec<VersionMarker>,
 +    pub check_versions: Vec<VersionMarker>,
 +    pub workers: Vec<WorkerCheckpoint>,
++    #[serde(default)]
++    pub archived_workers: u32,
 +    pub allowance: AllowanceCheckpoint,
 +    pub live: LiveState,
 +    pub reconciliation: Option<Reconciliation>,
@@ -6156,7 +6419,7 @@ index 0000000..fd247db
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..2ecf28a
+index 0000000000000000000000000000000000000000..2ecf28a88a2823b61649efec19c1497f596b6553
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,28 @@
@@ -6190,7 +6453,7 @@ index 0000000..2ecf28a
 +pub use workspace::tracked_paths;
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000..74978b9
+index 0000000000000000000000000000000000000000..74978b9b0cd65020174ff06d5501179226be9484
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
 @@ -0,0 +1,422 @@
@@ -6618,10 +6881,10 @@ index 0000000..74978b9
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000..4316d12
+index 0000000000000000000000000000000000000000..8025d9f797e291fa0ec43b6099785bf13ead49bf
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,756 @@
 +use codex_omd::AcceptanceEvidence;
 +use codex_omd::CallDecision;
 +use codex_omd::CheckpointTaskStatus;
@@ -6703,6 +6966,86 @@ index 0000000..4316d12
 +        candidate_versions: vec![candidate],
 +        check_versions: vec![check],
 +    }
++}
++
++#[test]
++fn task_limits_reject_unbounded_request_and_worker_state() {
++    let dir = tempfile::tempdir().unwrap();
++    let mut excessive_requests = limits();
++    excessive_requests.requests = 10_001;
++    assert!(Task::create(excessive_requests, dir.path().join("requests")).is_err());
++    let mut excessive_workers = limits();
++    excessive_workers.concurrent_workers = 129;
++    assert!(Task::create(excessive_workers, dir.path().join("workers")).is_err());
++}
++
++#[test]
++fn live_call_and_failure_caches_fail_closed_at_their_ceiling() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create_checkpointed(
++        limits(),
++        dir.path().join("task"),
++        contract(),
++        live('a', Vec::new()),
++    )
++    .unwrap();
++    for value in 0..256u64 {
++        task.observe_call(&format!("{value:064x}"), &"a".repeat(64), false)
++            .unwrap();
++    }
++    assert!(
++        task.observe_call(&format!("{:064x}", 256), &"b".repeat(64), false)
++            .is_err()
++    );
++    let checkpoint = task.checkpoint().unwrap().unwrap();
++    task.save_checkpoint(
++        CheckpointUpdate {
++            completed_acceptance: checkpoint.completed_acceptance,
++            completed_steering: vec!["bounded cache rotation".into()],
++            remaining_work: checkpoint.remaining_work,
++            failed_hypotheses: checkpoint.failed_hypotheses,
++            candidate_versions: checkpoint.candidate_versions,
++            check_versions: checkpoint.check_versions,
++        },
++        live('a', Vec::new()),
++    )
++    .unwrap();
++    task.observe_call(&format!("{:064x}", 256), &"b".repeat(64), false)
++        .unwrap();
++
++    for value in 0..128 {
++        task.record_failure(
++            FailureClass::Diagnosis,
++            format!("failure {value}"),
++            vec![json!({"id": value})],
++        )
++        .unwrap();
++    }
++    assert!(
++        task.record_failure(
++            FailureClass::Diagnosis,
++            "failure overflow".into(),
++            vec![json!({"id": 128})],
++        )
++        .is_err()
++    );
++}
++
++#[test]
++fn equivalent_failure_fingerprint_cache_is_bounded() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create(limits(), dir.path().join("task")).unwrap();
++    for value in 0..128 {
++        assert!(
++            !task
++                .observe_equivalent_failure(&format!("failure-{value}"), 2, "change route")
++                .unwrap()
++        );
++    }
++    assert!(
++        task.observe_equivalent_failure("failure-overflow", 2, "change route")
++            .is_err()
++    );
 +}
 +
 +#[test]
@@ -7081,11 +7424,12 @@ index 0000000..4316d12
 +}
 +
 +#[test]
-+fn worker_objectives_and_results_distinguish_stopped_completed_and_consumed() {
++fn terminal_worker_detail_is_archived_and_live_checkpoint_stays_compact() {
 +    let dir = tempfile::tempdir().unwrap();
++    let evidence = dir.path().join("task");
 +    let task = Task::create_checkpointed(
 +        limits(),
-+        dir.path().join("task"),
++        evidence.clone(),
 +        contract(),
 +        live('a', Vec::new()),
 +    )
@@ -7102,6 +7446,10 @@ index 0000000..4316d12
 +    );
 +    task.claim_worker_objective("second", "Inspect the renderer")
 +        .unwrap();
++    let request = task.admit("first", "openai", "gpt-5.6-sol", 60).unwrap();
++    task.dispatch(&request, || Ok(())).unwrap();
++    task.settle(&request, json!({"input_tokens": 1}), 50)
++        .unwrap();
 +    task.finish_worker("second").unwrap();
 +    task.complete_worker("first", marker("worker-result", 'e'))
 +        .unwrap();
@@ -7114,11 +7462,59 @@ index 0000000..4316d12
 +        .map(|worker| (worker.id, worker.status))
 +        .collect::<std::collections::BTreeMap<_, _>>();
 +    assert_eq!(statuses["first"], WorkerStatus::Completed);
-+    assert_eq!(statuses["second"], WorkerStatus::Stopped);
++    assert!(!statuses.contains_key("second"));
++    assert_eq!(task.checkpoint().unwrap().unwrap().archived_workers, 1);
 +    task.consume_worker_result("first").unwrap();
-+    assert_eq!(
-+        task.checkpoint().unwrap().unwrap().workers[0].status,
-+        WorkerStatus::Consumed
++    let compact = task.checkpoint().unwrap().unwrap();
++    assert!(compact.workers.is_empty());
++    assert_eq!(compact.archived_workers, 2);
++    assert!(
++        task.start_worker("first".into(), "lead".into(), 1, worker())
++            .is_err()
++    );
++    let archives = std::fs::read_dir(&evidence)
++        .unwrap()
++        .filter_map(Result::ok)
++        .filter_map(|entry| {
++            serde_json::from_slice::<serde_json::Value>(&std::fs::read(entry.path()).ok()?).ok()
++        })
++        .filter(|record| record["record"]["event"] == "worker_archived")
++        .collect::<Vec<_>>();
++    assert_eq!(archives.len(), 2);
++    assert!(archives.iter().any(|record| {
++        record["record"]["archive"]["id"] == "first"
++            && record["record"]["archive"]["status"] == "consumed"
++            && record["record"]["archive"]["result"]["label"] == "worker-result"
++            && record["record"]["archive"]["requests"] == 1
++            && record["record"]["archive"]["exposure_microusd"] == 50
++    }));
++    task.start_worker("third".into(), "lead".into(), 1, worker())
++        .unwrap();
++    task.claim_worker_objective("third", "Verify pause archive replay")
++        .unwrap();
++    task.pause("restart", Vec::new()).unwrap();
++    assert_eq!(task.checkpoint().unwrap().unwrap().archived_workers, 3);
++    drop(task);
++    let resumed = Task::open_checkpointed(
++        limits(),
++        evidence,
++        Some("archive replay"),
++        contract(),
++        live('a', Vec::new()),
++    )
++    .unwrap();
++    let resumed_checkpoint = resumed.checkpoint().unwrap().unwrap();
++    assert!(resumed_checkpoint.workers.is_empty());
++    assert_eq!(resumed_checkpoint.archived_workers, 3);
++    assert!(
++        resumed
++            .start_worker("second".into(), "lead".into(), 1, worker())
++            .is_err()
++    );
++    assert!(
++        resumed
++            .start_worker("third".into(), "lead".into(), 1, worker())
++            .is_err()
 +    );
 +}
 +
@@ -7247,7 +7643,7 @@ index 0000000..4316d12
 +}
 diff --git a/codex-rs/omd/tests/workspace.rs b/codex-rs/omd/tests/workspace.rs
 new file mode 100644
-index 0000000..03463c9
+index 0000000000000000000000000000000000000000..03463c997925ae2a797718c426f581b486aee6a5
 --- /dev/null
 +++ b/codex-rs/omd/tests/workspace.rs
 @@ -0,0 +1,249 @@
@@ -7500,3 +7896,2337 @@ index 0000000..03463c9
 +        0o600
 +    );
 +}
+diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
+index e7140a6533a6a8a3e719ba67019f7e810ab8b083..1a39285d2e1aa9769c0ee3014667fa3ce330c997 100644
+--- a/codex-rs/tui/src/app.rs
++++ b/codex-rs/tui/src/app.rs
+@@ -174,7 +174,11 @@ use crossterm::event::KeyCode;
+ use crossterm::event::KeyEvent;
+ use crossterm::event::KeyEventKind;
+ use crossterm::event::KeyModifiers;
++use crossterm::event::MouseButton;
++use crossterm::event::MouseEvent;
++use crossterm::event::MouseEventKind;
+ use ratatui::backend::Backend;
++use ratatui::layout::Position;
+ use ratatui::layout::Rect;
+ use ratatui::layout::Size;
+ use ratatui::style::Stylize;
+@@ -850,13 +854,14 @@ impl App {
+         let screen_size = tui.screen_size_for_event(&event)?;
+         if !matches!(
+             &event,
+-            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
++            TuiEvent::Key(_) | TuiEvent::Mouse(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
+         ) {
+             self.expire_pending_key_chord();
+             self.handle_draw_pre_render(tui, screen_size)?;
+         }
+ 
+         let event = if let TuiEvent::Key(mut key_event) = event {
++            tui.clear_mouse_selection();
+             let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+             if self.should_recover_vim_insert_escape(key_event) {
+                 // Restore both strokes before chords or global shortcuts can consume them.
+@@ -874,6 +879,31 @@ impl App {
+             event
+         };
+ 
++        if let TuiEvent::Mouse(mouse_event) = &event {
++            let mouse_event = *mouse_event;
++            if matches!(
++                mouse_event.kind,
++                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
++            ) && self.overlay.is_some()
++            {
++                let code = if mouse_event.kind == MouseEventKind::ScrollUp {
++                    KeyCode::Up
++                } else {
++                    KeyCode::Down
++                };
++                let _ = self
++                    .handle_backtrack_overlay_event(
++                        tui,
++                        app_server,
++                        TuiEvent::Key(KeyEvent::new(code, KeyModifiers::NONE)),
++                    )
++                    .await?;
++            } else {
++                self.handle_omd_mouse(tui, mouse_event);
++            }
++            return Ok(AppRunControl::Continue);
++        }
++
+         if self.reconnect.offline
+             && let TuiEvent::Key(key) = &event
+         {
+@@ -983,11 +1013,44 @@ impl App {
+                     }
+                 }
+                 TuiEvent::FocusLost => {}
++                TuiEvent::Mouse(_) => {}
+             }
+         }
+         Ok(AppRunControl::Continue)
+     }
+ 
++    fn handle_omd_mouse(&mut self, tui: &mut tui::Tui, event: MouseEvent) {
++        if !crate::omd::mouse_enabled() || !tui.is_alt_screen_active() {
++            return;
++        }
++        let position = Position::new(event.column, event.row);
++        match event.kind {
++            MouseEventKind::Down(MouseButton::Left) => {
++                self.chat_widget
++                    .position_composer_cursor_from_screen(position);
++                tui.begin_mouse_selection(position);
++            }
++            MouseEventKind::Drag(MouseButton::Left) => tui.drag_mouse_selection(position),
++            MouseEventKind::Up(MouseButton::Left) => {
++                let Some(selection) = tui.finish_mouse_selection(position) else {
++                    return;
++                };
++                let text = self
++                    .chat_widget
++                    .composer_selected_text_from_screen(selection)
++                    .unwrap_or_else(|| tui.selected_text(selection));
++                if !text.is_empty() {
++                    self.app_event_tx.send(AppEvent::CopySelection {
++                        text: Arc::from(text),
++                        label: "highlighted text".to_string(),
++                        format: crate::clipboard_copy::CopyFormat::PlainText,
++                    });
++                }
++            }
++            _ => {}
++        }
++    }
++
+     pub(super) fn show_shutdown_feedback(&mut self, tui: &mut tui::Tui) -> Result<()> {
+         self.disable_ambient_pet_before_shutdown(tui)?;
+         self.chat_widget.show_shutdown_in_progress();
+@@ -1018,6 +1081,7 @@ impl App {
+             self.schedule_immediate_resize_reflow(tui);
+             self.maybe_run_resize_reflow(tui, screen_size)?;
+         }
++        let mouse_selection = tui.mouse_selection();
+         self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
+             let desired_height = if dashboard_visible {
+                 screen_size.height
+@@ -1029,6 +1093,9 @@ impl App {
+                 let area = frame.area();
+                 rendered_area = area;
+                 chat_widget.render(area, frame.buffer);
++                if let Some(selection) = mouse_selection {
++                    crate::omd::highlight_selection(frame.buffer_mut(), selection);
++                }
+                 self.chat_widget.note_rendered_width(area.width);
+                 if let Some((x, y)) = chat_widget.cursor_pos(area) {
+                     frame.set_cursor_style(chat_widget.cursor_style(area));
+diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
+index cc16390c17de1c2dcc3f87456dd667bee44eb787..b4497a02f3a04a0ce8f4c8b62f49d0bba0e4255d 100644
+--- a/codex-rs/tui/src/app/event_dispatch.rs
++++ b/codex-rs/tui/src/app/event_dispatch.rs
+@@ -250,6 +250,12 @@ impl App {
+             AppEvent::CopySelection { text, label, format } => {
+                 self.chat_widget.copy_selection(text, label, format);
+             }
++            AppEvent::OmdContributorRevocation { result } => match result {
++                Ok(message) => self.chat_widget.add_info_message(message, None),
++                Err(error) => self
++                    .chat_widget
++                    .add_error_message(format!("Contributor revocation failed: {error}")),
++            },
+             AppEvent::ClearUi { name } => {
+                 self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
+                 self.reset_app_ui_state_after_clear();
+diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
+index 64c8bda18db957a6990441ffd57f96be606a7556..5a651989760166d55a3a9a52de52c566baed7cc4 100644
+--- a/codex-rs/tui/src/app/tests.rs
++++ b/codex-rs/tui/src/app/tests.rs
+@@ -218,6 +218,80 @@ async fn pasted_text_normalizes_mixed_line_endings_at_app_boundary() -> Result<(
+     Ok(())
+ }
+ 
++#[tokio::test]
++#[serial_test::serial]
++async fn mouse_highlight_release_queues_automatic_copy() -> Result<()> {
++    struct RestoreManifest(Option<std::ffi::OsString>);
++
++    impl Drop for RestoreManifest {
++        fn drop(&mut self) {
++            match self.0.take() {
++                Some(value) => unsafe { std::env::set_var(crate::omd::MANIFEST_ENV, value) },
++                None => unsafe { std::env::remove_var(crate::omd::MANIFEST_ENV) },
++            }
++        }
++    }
++
++    let restore = RestoreManifest(std::env::var_os(crate::omd::MANIFEST_ENV));
++    unsafe { std::env::set_var(crate::omd::MANIFEST_ENV, "fixture.json") };
++    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
++    while app_event_rx.try_recv().is_ok() {}
++    let mut tui = crate::tui::test_support::make_test_tui()?;
++    tui.enter_persistent_alt_screen()?;
++    assert!(tui.is_alt_screen_active());
++    assert!(tui.mouse_capture_enabled());
++    assert!(crate::omd::fullscreen_active());
++    tui.draw(u16::MAX, |frame| {
++        frame
++            .buffer_mut()
++            .set_string(0, 0, "hello", ratatui::style::Style::default());
++    })?;
++
++    for event in [
++        MouseEvent {
++            kind: MouseEventKind::Down(MouseButton::Left),
++            column: 0,
++            row: 0,
++            modifiers: KeyModifiers::NONE,
++        },
++        MouseEvent {
++            kind: MouseEventKind::Drag(MouseButton::Left),
++            column: 4,
++            row: 0,
++            modifiers: KeyModifiers::NONE,
++        },
++        MouseEvent {
++            kind: MouseEventKind::Up(MouseButton::Left),
++            column: 4,
++            row: 0,
++            modifiers: KeyModifiers::NONE,
++        },
++    ] {
++        app.handle_omd_mouse(&mut tui, event);
++    }
++
++    assert_matches!(
++        app_event_rx.try_recv(),
++        Ok(AppEvent::CopySelection { text, label, .. })
++            if &*text == "hello" && label == "highlighted text"
++    );
++    tui.leave_alt_screen()?;
++    assert!(tui.is_alt_screen_active());
++    assert!(tui.mouse_capture_enabled());
++    assert!(crate::omd::fullscreen_active());
++    tui.leave_persistent_alt_screen()?;
++    assert!(!tui.is_alt_screen_active());
++    assert!(!tui.mouse_capture_enabled());
++    assert!(!crate::omd::fullscreen_active());
++    tui.set_alt_screen_enabled(/*enabled*/ false);
++    tui.enter_alt_screen()?;
++    assert!(!tui.is_alt_screen_active());
++    assert!(!tui.mouse_capture_enabled());
++    assert!(!crate::omd::fullscreen_active());
++    drop(restore);
++    Ok(())
++}
++
+ #[tokio::test]
+ async fn duplicate_named_resume_renders_error_without_replacing_current_session() -> Result<()> {
+     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+diff --git a/codex-rs/tui/src/app_backtrack/legacy_input.rs b/codex-rs/tui/src/app_backtrack/legacy_input.rs
+index c36e83bd768785d26d8dd74ccdba446a1347df70..20b1d931f1e8f9f16d947e108a7944a8ecd492b3 100644
+--- a/codex-rs/tui/src/app_backtrack/legacy_input.rs
++++ b/codex-rs/tui/src/app_backtrack/legacy_input.rs
+@@ -35,12 +35,15 @@ impl App {
+         if self.backtrack.overlay_preview_active {
+             return self.handle_backtrack_preview_event(tui, event);
+         }
++        let search_active = self.overlay.as_ref().is_some_and(
++            |overlay| matches!(overlay, Overlay::Transcript(overlay) if overlay.is_searching()),
++        );
+         match event {
+             TuiEvent::Key(KeyEvent {
+                 code: KeyCode::Esc,
+                 kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                 ..
+-            }) => self.begin_overlay_backtrack_preview(tui),
++            }) if !search_active => self.begin_overlay_backtrack_preview(tui),
+             event => self.overlay_forward_event(tui, event)?,
+         }
+         Ok(true)
+diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
+index 1df5a1a7f4f00a61a1fa8a263ccca3752ffeee7a..d48a83d5aab2cb96df015d337ef73bef820d1b2c 100644
+--- a/codex-rs/tui/src/app_event.rs
++++ b/codex-rs/tui/src/app_event.rs
+@@ -390,6 +390,9 @@ pub(crate) enum AppEvent {
+         label: String,
+         format: crate::clipboard_copy::CopyFormat,
+     },
++    OmdContributorRevocation {
++        result: Result<String, String>,
++    },
+ 
+     /// Persist a submitted prompt in the cross-session message history.
+     AppendMessageHistoryEntry {
+diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+index 967c712fe9a5f0d95999be28ae847647db8a27c0..a55e53fd3429605b7f46d6112bb386fb33579bb0 100644
+--- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
++++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
+@@ -347,6 +347,7 @@ use codex_file_search::FileMatch;
+ #[cfg(test)]
+ use codex_plugin::AppConnectorId;
+ use codex_plugin::PluginCapabilitySummary;
++use std::cell::Cell;
+ use std::cell::OnceCell;
+ use std::collections::HashMap;
+ use std::collections::HashSet;
+@@ -532,6 +533,7 @@ pub(crate) struct ChatComposer {
+     luna_reserve_active: bool,
+     attachments: AttachmentState,
+     placeholder_text: String,
++    last_textarea_rect: Cell<Rect>,
+     blocks_direct_input: bool,
+     is_task_running: bool,
+     queue_submissions: bool,
+@@ -700,6 +702,7 @@ impl ChatComposer {
+             luna_reserve_active: false,
+             attachments: AttachmentState::default(),
+             placeholder_text,
++            last_textarea_rect: Cell::new(Rect::ZERO),
+             blocks_direct_input: false,
+             is_task_running: false,
+             queue_submissions: false,
+@@ -1088,6 +1091,63 @@ impl ChatComposer {
+         self.cursor_pos_with_textarea_right_reserve(area, /*textarea_right_reserve*/ 0)
+     }
+ 
++    pub(crate) fn position_cursor_from_screen(
++        &mut self,
++        position: ratatui::layout::Position,
++    ) -> bool {
++        if !self.draft.input_enabled || !matches!(self.popups.active, ActivePopup::None) {
++            return false;
++        }
++        let area = self.last_textarea_rect.get();
++        let state = *self.draft.textarea_state.borrow();
++        let Some(cursor) = self
++            .draft
++            .textarea
++            .source_position_from_screen(area, state, position, false)
++        else {
++            return false;
++        };
++        self.draft.textarea.set_cursor(cursor);
++        true
++    }
++
++    pub(crate) fn selected_text_from_screen(
++        &self,
++        selection: crate::omd::MouseSelection,
++    ) -> Option<String> {
++        let area = self.last_textarea_rect.get();
++        if area.is_empty() || !area.contains(selection.anchor) {
++            return None;
++        }
++        let clamp = |position: ratatui::layout::Position| {
++            ratatui::layout::Position::new(
++                position
++                    .x
++                    .clamp(area.left(), area.right().saturating_sub(1)),
++                position
++                    .y
++                    .clamp(area.top(), area.bottom().saturating_sub(1)),
++            )
++        };
++        let anchor = clamp(selection.anchor);
++        let head = clamp(selection.head);
++        let (start_position, end_position) = if (anchor.y, anchor.x) <= (head.y, head.x) {
++            (anchor, head)
++        } else {
++            (head, anchor)
++        };
++        let state = *self.draft.textarea_state.borrow();
++        let start =
++            self.draft
++                .textarea
++                .source_position_from_screen(area, state, start_position, false)?;
++        let end =
++            self.draft
++                .textarea
++                .source_position_from_screen(area, state, end_position, true)?;
++        Some(self.draft.textarea.text()[start..end].to_string())
++    }
++
+     pub(crate) fn cursor_pos_with_textarea_right_reserve(
+         &self,
+         area: Rect,
+@@ -4682,6 +4742,7 @@ impl ChatComposer {
+     ) {
+         let [composer_rect, remote_images_rect, textarea_rect, popup_rect] =
+             self.layout_areas_with_textarea_right_reserve(area, textarea_right_reserve);
++        self.last_textarea_rect.set(textarea_rect);
+         match &self.popups.active {
+             ActivePopup::Command(popup) => {
+                 popup.render_ref(popup_rect, buf);
+@@ -5221,6 +5282,27 @@ mod tests {
+         });
+     }
+ 
++    #[test]
++    fn reverse_mouse_selection_copies_literal_composer_text() {
++        let (mut composer, _rx) = new_test_composer();
++        composer.set_text_content("a === b".to_string(), Vec::new(), Vec::new());
++        let area = Rect::new(0, 0, 40, 6);
++        let mut buffer = Buffer::empty(area);
++        composer.render(area, &mut buffer);
++        let textarea = composer.last_textarea_rect.get();
++        let selection = crate::omd::MouseSelection {
++            anchor: ratatui::layout::Position::new(textarea.x + 4, textarea.y),
++            head: ratatui::layout::Position::new(textarea.x + 2, textarea.y),
++            dragged: true,
++        };
++
++        assert_eq!(
++            composer.selected_text_from_screen(selection).as_deref(),
++            Some("===")
++        );
++        assert_eq!(composer.current_text(), "a === b");
++    }
++
+     #[test]
+     fn footer_hint_row_is_separated_from_composer() {
+         let (tx, _rx) = unbounded_channel::<AppEvent>();
+diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
+index f249fad8b2eb8c02a6d4cd04008e39d173cb3c15..afc30b4a14e56c73e3471cbd46631d2f1f592aec 100644
+--- a/codex-rs/tui/src/bottom_pane/mod.rs
++++ b/codex-rs/tui/src/bottom_pane/mod.rs
+@@ -1031,6 +1031,40 @@ impl BottomPane {
+         self.composer.current_text()
+     }
+ 
++    pub(crate) fn position_composer_cursor_from_screen(
++        &mut self,
++        position: ratatui::layout::Position,
++    ) -> bool {
++        if self.has_active_view()
++            || self
++                .questions
++                .as_ref()
++                .is_some_and(|question| question.expanded)
++        {
++            return false;
++        }
++        let positioned = self.composer.position_cursor_from_screen(position);
++        if positioned {
++            self.request_redraw();
++        }
++        positioned
++    }
++
++    pub(crate) fn composer_selected_text_from_screen(
++        &self,
++        selection: crate::omd::MouseSelection,
++    ) -> Option<String> {
++        if self.has_active_view()
++            || self
++                .questions
++                .as_ref()
++                .is_some_and(|question| question.expanded)
++        {
++            return None;
++        }
++        self.composer.selected_text_from_screen(selection)
++    }
++
+     #[cfg(test)]
+     pub(crate) fn composer_cursor(&self) -> usize {
+         self.composer.cursor()
+diff --git a/codex-rs/tui/src/bottom_pane/textarea.rs b/codex-rs/tui/src/bottom_pane/textarea.rs
+index e8900ad606f14612d6611ac3e6339c0cc3cf500c..f73a0181db5047984e58e86592e236f43b1bc7cc 100644
+--- a/codex-rs/tui/src/bottom_pane/textarea.rs
++++ b/codex-rs/tui/src/bottom_pane/textarea.rs
+@@ -527,6 +527,37 @@ impl TextArea {
+         Some((area.x + col as u16, area.y + screen_row))
+     }
+ 
++    pub(crate) fn source_position_from_screen(
++        &self,
++        area: Rect,
++        state: TextAreaState,
++        position: ratatui::layout::Position,
++        after_cell: bool,
++    ) -> Option<usize> {
++        if area.is_empty() || !area.contains(position) {
++            return None;
++        }
++        let lines = self.wrapped_lines(area.width);
++        let scroll = self.effective_scroll(area, &lines, state.scroll) as usize;
++        let line = lines.get(scroll + usize::from(position.y.saturating_sub(area.y)))?;
++        let end = line.end.saturating_sub(1).min(self.text.len());
++        let text = &self.text[line.start..end];
++        let target_col = usize::from(position.x.saturating_sub(area.x));
++        let mut current_col = 0usize;
++        for (offset, grapheme) in text.grapheme_indices(true) {
++            let width = display_width(text_for_display(grapheme).as_ref()).max(1);
++            if target_col < current_col + width {
++                return Some(if after_cell {
++                    line.start + offset + grapheme.len()
++                } else {
++                    line.start + offset
++                });
++            }
++            current_col += width;
++        }
++        Some(end)
++    }
++
+     pub fn is_empty(&self) -> bool {
+         self.text.is_empty()
+     }
+@@ -2171,13 +2202,9 @@ impl TextArea {
+             let line_range = r.start..r.start + visible.len();
+             buf.set_style(Rect::new(area.x, y, area.width, 1), base_style);
+             // Draw base line with the provided style.
+-            buf.set_stringn(
+-                area.x,
+-                y,
+-                text_for_display(visible),
+-                usize::from(area.width),
+-                base_style,
+-            );
++            let display = text_for_display(visible);
++            let display = crate::omd::visual_input(display.as_ref());
++            buf.set_stringn(area.x, y, display, usize::from(area.width), base_style);
+ 
+             // Apply search highlights last so they remain visible over styled elements.
+             let overlays = self
+@@ -2197,10 +2224,12 @@ impl TextArea {
+                     continue;
+                 }
+                 let x_off = x_off as u16;
++                let display = text_for_display(styled);
++                let display = crate::omd::visual_input(display.as_ref());
+                 buf.set_stringn(
+                     area.x + x_off,
+                     y,
+-                    text_for_display(styled),
++                    display,
+                     usize::from(area.width.saturating_sub(x_off)),
+                     style,
+                 );
+@@ -2342,6 +2371,32 @@ mod tests {
+         assert_eq!(t.cursor(), 5);
+     }
+ 
++    #[test]
++    fn screen_positions_map_to_literal_ligature_source() {
++        let mut t = ta_with("a === b -> c <= d");
++        let area = Rect::new(4, 2, 40, 1);
++        let state = TextAreaState::default();
++
++        assert_eq!(
++            t.source_position_from_screen(
++                area,
++                state,
++                ratatui::layout::Position::new(6, 2),
++                false,
++            ),
++            Some(2)
++        );
++        assert_eq!(
++            t.source_position_from_screen(area, state, ratatui::layout::Position::new(8, 2), true,),
++            Some(5)
++        );
++        t.set_cursor(5);
++        t.insert_str("!");
++
++        assert_eq!(t.text(), "a ===! b -> c <= d");
++        assert_eq!(t.cursor(), 6);
++    }
++
+     #[test]
+     fn insert_str_at_clamps_to_char_boundary() {
+         let mut t = TextArea::new();
+diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
+index 16d4a6e5932e63f4e8185a59c00dfe1d5dd91b35..e33410f2a458a22a5b19103c30adc72470f87b1c 100644
+--- a/codex-rs/tui/src/chatwidget.rs
++++ b/codex-rs/tui/src/chatwidget.rs
+@@ -381,6 +381,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+ mod model_popup_state;
+ mod model_popups;
+ mod notifications;
++mod omd_inspector;
+ use self::notifications::Notification;
+ mod permission_discovery;
+ mod permission_popups;
+@@ -1681,6 +1682,22 @@ impl ChatWidget {
+         self.bottom_pane.composer_is_empty() && !self.bottom_pane.is_in_paste_burst()
+     }
+ 
++    pub(crate) fn position_composer_cursor_from_screen(
++        &mut self,
++        position: ratatui::layout::Position,
++    ) -> bool {
++        self.bottom_pane
++            .position_composer_cursor_from_screen(position)
++    }
++
++    pub(crate) fn composer_selected_text_from_screen(
++        &self,
++        selection: crate::omd::MouseSelection,
++    ) -> Option<String> {
++        self.bottom_pane
++            .composer_selected_text_from_screen(selection)
++    }
++
+     pub(crate) fn composer_is_vim_enabled(&self) -> bool {
+         self.bottom_pane.composer_is_vim_enabled()
+     }
+diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
+index f45ae82fef827e04dfa35cd771ad3f501ff0afbc..7ba8abfce25cacf2ac9f75b9c3ce41e08a6ca910 100644
+--- a/codex-rs/tui/src/chatwidget/constructor.rs
++++ b/codex-rs/tui/src/chatwidget/constructor.rs
+@@ -37,7 +37,11 @@ impl ChatWidget {
+         let mut config = config;
+         config.model = model.clone();
+         let prevent_idle_sleep = config.features.enabled(Feature::PreventIdleSleep);
+-        let placeholder = PLACEHOLDER.to_string();
++        let placeholder = if crate::omd::is_active() {
++            "Ask Oh My Diff to do anything".to_string()
++        } else {
++            PLACEHOLDER.to_string()
++        };
+         let side_placeholder = SIDE_PLACEHOLDER.to_string();
+ 
+         let model_override = model.as_deref();
+diff --git a/codex-rs/tui/src/chatwidget/omd_inspector.rs b/codex-rs/tui/src/chatwidget/omd_inspector.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..67f0a55f91f27dee3c768303ec017b380674d7e4
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/omd_inspector.rs
+@@ -0,0 +1,114 @@
++use super::*;
++use crate::app_event::AppEvent;
++use crate::bottom_pane::SelectionItem;
++use crate::bottom_pane::SelectionViewParams;
++use crate::bottom_pane::popup_consts::standard_popup_hint_line;
++use ratatui::text::Line;
++use ratatui::widgets::Paragraph;
++
++impl ChatWidget {
++    pub(super) fn open_omd_inspector(&mut self) {
++        let snapshot = match crate::omd::snapshot() {
++            Ok(snapshot) => snapshot,
++            Err(error) => {
++                self.add_error_message(format!("Oh My Diff inspector unavailable: {error}"));
++                return;
++            }
++        };
++        let authorization = match snapshot.authorization {
++            crate::omd::ContributorAuthorization::Authorized => "authorized",
++            crate::omd::ContributorAuthorization::Revoked => "revoked",
++            crate::omd::ContributorAuthorization::Invalid => "blocked",
++        };
++        let renderer = if crate::omd::ligatures_enabled() {
++            "Unicode ligatures (OMD_TUI_ASCII=1 for literal ASCII)"
++        } else {
++            "literal ASCII"
++        };
++        let mouse = if crate::omd::mouse_enabled() && crate::omd::fullscreen_active() {
++            "click-to-position and copy-on-highlight (OMD_TUI_MOUSE=off to disable)"
++        } else if crate::omd::mouse_enabled() {
++            "terminal-native selection in inline mode"
++        } else {
++            "terminal-native selection (OMD_TUI_MOUSE=off)"
++        };
++        let permissions = self
++            .status_line_value(StatusLineItem::Permissions)
++            .unwrap_or_else(|| "unknown".to_string());
++        let approval = self
++            .status_line_value(StatusLineItem::ApprovalMode)
++            .unwrap_or_else(|| "unknown".to_string());
++        let alternate_screen =
++            format!("{:?}", self.local_settings.tui.alternate_screen).to_ascii_lowercase();
++        let header = Paragraph::new(vec![
++            Line::from("Oh My Diff · controlled Codex runtime".bold()),
++            Line::from(format!(
++                "Task {} · {} live / {} archived workers",
++                snapshot.task_status, snapshot.live_workers, snapshot.archived_workers
++            )),
++            Line::from(format!(
++                "Allowance {}/{} requests · ${:.6}/${:.6} exposure",
++                snapshot.requests_consumed,
++                snapshot
++                    .requests_consumed
++                    .saturating_add(snapshot.requests_remaining),
++                snapshot.exposure_consumed_microusd as f64 / 1_000_000.0,
++                snapshot
++                    .exposure_consumed_microusd
++                    .saturating_add(snapshot.exposure_remaining_microusd) as f64
++                    / 1_000_000.0,
++            )),
++            Line::from(format!("Contributor {authorization}")),
++            Line::from(format!("Permissions {permissions} · approvals {approval}")),
++            Line::from(format!(
++                "Display {} · configured alternate screen {alternate_screen} · {renderer}",
++                if crate::omd::fullscreen_active() {
++                    "fullscreen"
++                } else {
++                    "inline"
++                }
++            )),
++            Line::from(format!("Mouse {mouse}")),
++            Line::from("Accessibility Ctrl+T transcript · /raw screen-reader mode"),
++            Line::from(format!("Evidence {}", snapshot.evidence.display()).dim()),
++        ]);
++        let can_revoke = snapshot.authorization == crate::omd::ContributorAuthorization::Authorized;
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            view_id: Some("omd-inspector"),
++            title: Some("Oh My Diff inspector".to_string()),
++            subtitle: Some("Effective runtime state; refresh by reopening /omd".to_string()),
++            header: Box::new(header),
++            header_gap: 1,
++            initial_selected_idx: Some(0),
++            footer_hint: Some(standard_popup_hint_line()),
++            items: vec![
++                SelectionItem {
++                    name: "Close inspector".to_string(),
++                    description: Some("Return to the transcript".to_string()),
++                    dismiss_on_select: true,
++                    ..Default::default()
++                },
++                SelectionItem {
++                    name: "Revoke Contributor authorization".to_string(),
++                    description: Some(
++                        "Create durable revocation evidence and block future Contributor dispatches"
++                            .to_string(),
++                    ),
++                    is_disabled: !can_revoke,
++                    disabled_reason: (!can_revoke)
++                        .then(|| format!("Contributor authorization is {authorization}")),
++                    require_explicit_confirmation: true,
++                    actions: vec![Box::new(|tx| {
++                        tx.send(AppEvent::OmdContributorRevocation {
++                            result: crate::omd::revoke_contributor(),
++                        });
++                    })],
++                    dismiss_on_select: true,
++                    ..Default::default()
++                },
++            ],
++            ..Default::default()
++        });
++        self.request_redraw();
++    }
++}
+diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+index b8db07ee74123aba2691a17e19915b31bd8a03a4..d46ab69315f71aae25c1cfa5d7e32b2ebfeceb26 100644
+--- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
++++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
+@@ -492,6 +492,7 @@ impl ChatWidget {
+                     );
+                 }
+             }
++            SlashCommand::Omd => self.open_omd_inspector(),
+             SlashCommand::Cd => {
+                 self.dispatch_command_with_args(SlashCommand::Cd, "~".to_string(), Vec::new());
+             }
+@@ -1166,6 +1167,7 @@ impl ChatWidget {
+         match cmd {
+             SlashCommand::Ide
+             | SlashCommand::Status
++            | SlashCommand::Omd
+             | SlashCommand::Pwd
+             | SlashCommand::Usage
+             | SlashCommand::DebugConfig
+diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
+index 17f437c48899cb5394d6413fad41240de29c15e9..8e5a0dd77ea30b41bfa3fdfb38e471eb766868fe 100644
+--- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
++++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
+@@ -200,7 +200,7 @@ impl ChatWidget {
+     }
+ 
+     fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
+-        let enabled = !selections.status_line_items.is_empty();
++        let enabled = crate::omd::is_active() || !selections.status_line_items.is_empty();
+         self.bottom_pane.set_status_line_enabled(enabled);
+         if !enabled {
+             self.set_status_line(/*status_line*/ None);
+@@ -215,10 +215,19 @@ impl ChatWidget {
+             }
+         }
+ 
+-        self.set_status_line(status_line_from_segments(
+-            segments,
+-            self.local_settings.tui.status_line_use_colors,
+-        ));
++        let status_line =
++            status_line_from_segments(segments, self.local_settings.tui.status_line_use_colors);
++        let status_line = if crate::omd::is_active() {
++            let mut spans = vec![crate::omd::compact_status().bold()];
++            if let Some(line) = status_line {
++                spans.push(" · ".dim());
++                spans.extend(line.spans);
++            }
++            Some(Line::from(spans))
++        } else {
++            status_line
++        };
++        self.set_status_line(status_line);
+         let hyperlink_url = selections
+             .status_line_items
+             .contains(&StatusLineItem::PullRequestNumber)
+diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
+index 64e163f18b22dcdae60de1b6757ec0d97f4e7645..1b94f6b786983eed190459567752e4a4e851cfe2 100644
+--- a/codex-rs/tui/src/custom_terminal.rs
++++ b/codex-rs/tui/src/custom_terminal.rs
+@@ -268,6 +268,10 @@ where
+         &self.buffers[1 - self.current]
+     }
+ 
++    pub(crate) fn rendered_buffer(&self) -> &Buffer {
++        self.previous_buffer()
++    }
++
+     /// Gets the previous buffer as a mutable reference.
+     fn previous_buffer_mut(&mut self) -> &mut Buffer {
+         &mut self.buffers[1 - self.current]
+diff --git a/codex-rs/tui/src/cwd_prompt.rs b/codex-rs/tui/src/cwd_prompt.rs
+index b0d6205602884906fc9ed851220c70f16d283d3b..dd77c7ee2acc480659e4353262c29a92fb5eb4c3 100644
+--- a/codex-rs/tui/src/cwd_prompt.rs
++++ b/codex-rs/tui/src/cwd_prompt.rs
+@@ -134,7 +134,7 @@ pub(crate) async fn run_cwd_selection_prompt(
+             tui.screen_size_for_event(&event)?;
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/external_agent_config_migration/mod.rs b/codex-rs/tui/src/external_agent_config_migration/mod.rs
+index a80fe03af1e0106bcebdef5dba939949cd5c376f..bd6683a491aa09c0f3b8460b5b4720a4a1dc7d6f 100644
+--- a/codex-rs/tui/src/external_agent_config_migration/mod.rs
++++ b/codex-rs/tui/src/external_agent_config_migration/mod.rs
+@@ -108,7 +108,7 @@ pub(crate) async fn run_external_agent_config_migration_prompt(
+             let _ = tui.screen_size_for_event(&event);
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     let _ = tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/external_agent_config_migration/source.rs b/codex-rs/tui/src/external_agent_config_migration/source.rs
+index bc01ad78c39722c13fb4c1a08676238ea34bba23..c20e910642e4a5a77b18fff6d66731b150ee1ea1 100644
+--- a/codex-rs/tui/src/external_agent_config_migration/source.rs
++++ b/codex-rs/tui/src/external_agent_config_migration/source.rs
+@@ -65,7 +65,7 @@ pub(crate) async fn run_external_agent_config_source_prompt(
+             let _ = tui.screen_size_for_event(&event);
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     let _ = tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
+index 3d9650d3d4c5391dc15fe5bc5b79386aab2ae4d7..2dd9cd9208f8eca84ab9c5781797c9e2363fa084 100644
+--- a/codex-rs/tui/src/lib.rs
++++ b/codex-rs/tui/src/lib.rs
+@@ -177,6 +177,7 @@ mod named_session_lookup;
+ mod notifications;
+ #[cfg(any(not(debug_assertions), test))]
+ mod npm_registry;
++mod omd;
+ pub(crate) mod onboarding;
+ mod oss_selection;
+ mod pager_overlay;
+@@ -1812,6 +1813,9 @@ async fn run_ratatui_app(
+         Ok(StartupHooksReviewOutcome::OpenHooksBrowser(data)) => Some(data),
+     };
+ 
++    if use_alt_screen {
++        tui.enter_persistent_alt_screen()?;
++    }
+     let app_result = App::run(
+         &mut tui,
+         app_server,
+@@ -1838,6 +1842,10 @@ async fn run_ratatui_app(
+     )
+     .await;
+ 
++    if use_alt_screen {
++        let _ = tui.leave_persistent_alt_screen();
++    }
++
+     terminal_restore_guard.restore_silently();
+     // Mark the end of the recorded session.
+     session_log::log_session_end();
+diff --git a/codex-rs/tui/src/model_migration.rs b/codex-rs/tui/src/model_migration.rs
+index 094fb731b0f44d50c1d6e2a447ec6e80fb5ddbc5..56dec6bc918300d269739fb18b679dfd2a87061b 100644
+--- a/codex-rs/tui/src/model_migration.rs
++++ b/codex-rs/tui/src/model_migration.rs
+@@ -154,7 +154,7 @@ pub(crate) async fn run_model_migration_prompt(
+             let _ = alt.tui.screen_size_for_event(&event);
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     let _ = alt.tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ecc5228971e43de01da4a04d1a4bb1d1676dfd59
+--- /dev/null
++++ b/codex-rs/tui/src/omd.rs
+@@ -0,0 +1,510 @@
++use ratatui::buffer::Buffer;
++use ratatui::layout::Position;
++use ratatui::style::Modifier;
++use serde::Deserialize;
++use serde_json::Value;
++use sha2::Digest;
++use sha2::Sha256;
++use std::borrow::Cow;
++use std::fs::OpenOptions;
++use std::io::Write;
++use std::path::Path;
++use std::path::PathBuf;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
++use std::time::SystemTime;
++use std::time::UNIX_EPOCH;
++
++pub(crate) const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
++pub(crate) const REVOCATION_FILE: &str = "contributor-revoked.json";
++static FULLSCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub(crate) struct MouseSelection {
++    pub(crate) anchor: Position,
++    pub(crate) head: Position,
++    pub(crate) dragged: bool,
++}
++
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub(crate) enum ContributorAuthorization {
++    Authorized,
++    Revoked,
++    Invalid,
++}
++
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub(crate) struct Snapshot {
++    pub(crate) evidence: PathBuf,
++    pub(crate) task_status: String,
++    pub(crate) live_workers: usize,
++    pub(crate) archived_workers: usize,
++    pub(crate) requests_consumed: u64,
++    pub(crate) requests_remaining: u64,
++    pub(crate) exposure_consumed_microusd: u64,
++    pub(crate) exposure_remaining_microusd: u64,
++    pub(crate) authorization: ContributorAuthorization,
++}
++
++#[derive(Deserialize)]
++struct Manifest {
++    evidence: PathBuf,
++    authorization: PathBuf,
++    authorization_sha256: String,
++    repository_identity: String,
++}
++
++#[derive(Default, Deserialize)]
++struct Checkpoint {
++    #[serde(default)]
++    task_status: String,
++    #[serde(default)]
++    workers: Vec<Value>,
++    #[serde(default)]
++    archived_workers: usize,
++    #[serde(default)]
++    allowance: Allowance,
++}
++
++#[derive(Default, Deserialize)]
++struct Allowance {
++    #[serde(default)]
++    requests_consumed: u64,
++    #[serde(default)]
++    requests_remaining: u64,
++    #[serde(default)]
++    exposure_consumed_microusd: u64,
++    #[serde(default)]
++    exposure_remaining_microusd: u64,
++}
++
++pub(crate) fn is_active() -> bool {
++    std::env::var_os(MANIFEST_ENV).is_some()
++}
++
++pub(crate) fn ligatures_enabled() -> bool {
++    is_active() && std::env::var("OMD_TUI_ASCII").as_deref() != Ok("1") && locale_supports_unicode()
++}
++
++pub(crate) fn mouse_enabled() -> bool {
++    is_active() && std::env::var("OMD_TUI_MOUSE").as_deref() != Ok("off")
++}
++
++pub(crate) fn set_fullscreen_active(active: bool) {
++    FULLSCREEN_ACTIVE.store(active, Ordering::Relaxed);
++}
++
++pub(crate) fn fullscreen_active() -> bool {
++    FULLSCREEN_ACTIVE.load(Ordering::Relaxed)
++}
++
++fn locale_supports_unicode() -> bool {
++    ["LC_ALL", "LC_CTYPE", "LANG"]
++        .into_iter()
++        .filter_map(|name| std::env::var(name).ok())
++        .find(|value| !value.is_empty())
++        .is_none_or(|value| {
++            let normalized = value.to_ascii_lowercase();
++            normalized.contains("utf-8") || normalized.contains("utf8")
++        })
++}
++
++pub(crate) fn visual_input(text: &str) -> Cow<'_, str> {
++    if !ligatures_enabled()
++        || (!text.contains("===") && !text.contains("->") && !text.contains("<="))
++    {
++        return Cow::Borrowed(text);
++    }
++    Cow::Owned(visual_input_unicode(text))
++}
++
++fn visual_input_unicode(text: &str) -> String {
++    let mut rendered = String::with_capacity(text.len());
++    let mut remaining = text;
++    while !remaining.is_empty() {
++        if let Some(rest) = remaining.strip_prefix("===") {
++            rendered.push_str("≡  ");
++            remaining = rest;
++        } else if let Some(rest) = remaining.strip_prefix("->") {
++            rendered.push_str("→ ");
++            remaining = rest;
++        } else if let Some(rest) = remaining.strip_prefix("<=") {
++            rendered.push_str("≤ ");
++            remaining = rest;
++        } else if let Some(character) = remaining.chars().next() {
++            rendered.push(character);
++            remaining = &remaining[character.len_utf8()..];
++        }
++    }
++    rendered
++}
++
++pub(crate) fn snapshot() -> Result<Snapshot, String> {
++    let path = std::env::var_os(MANIFEST_ENV)
++        .map(PathBuf::from)
++        .ok_or_else(|| "Oh My Diff controlled runtime is not active".to_string())?;
++    snapshot_from_manifest(&path)
++}
++
++fn snapshot_from_manifest(path: &Path) -> Result<Snapshot, String> {
++    let bytes = bounded_read(path, 65_536)?;
++    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
++    let checkpoint: Checkpoint = serde_json::from_slice(&bounded_read(
++        &manifest.evidence.join("checkpoint.json"),
++        65_536,
++    )?)
++    .map_err(|error| error.to_string())?;
++    let authorization = authorization_state(&manifest);
++    Ok(Snapshot {
++        evidence: manifest.evidence,
++        task_status: checkpoint.task_status,
++        live_workers: checkpoint.workers.len(),
++        archived_workers: checkpoint.archived_workers,
++        requests_consumed: checkpoint.allowance.requests_consumed,
++        requests_remaining: checkpoint.allowance.requests_remaining,
++        exposure_consumed_microusd: checkpoint.allowance.exposure_consumed_microusd,
++        exposure_remaining_microusd: checkpoint.allowance.exposure_remaining_microusd,
++        authorization,
++    })
++}
++
++fn authorization_state(manifest: &Manifest) -> ContributorAuthorization {
++    match std::fs::symlink_metadata(manifest.evidence.join(REVOCATION_FILE)) {
++        Ok(_) => return ContributorAuthorization::Revoked,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++        Err(_) => return ContributorAuthorization::Invalid,
++    }
++    let Ok(bytes) = bounded_read(&manifest.authorization, 65_536) else {
++        return ContributorAuthorization::Invalid;
++    };
++    if format!("{:x}", Sha256::digest(&bytes)) != manifest.authorization_sha256 {
++        return ContributorAuthorization::Invalid;
++    }
++    let Ok(grant) = serde_json::from_slice::<Value>(&bytes) else {
++        return ContributorAuthorization::Invalid;
++    };
++    if grant["schema"] == 1
++        && grant["data_authorized"] == true
++        && grant["revocable"] == true
++        && grant["split"] == "development"
++        && grant["repositories"]
++            .as_array()
++            .is_some_and(|repositories| {
++                repositories
++                    .iter()
++                    .any(|repository| repository.as_str() == Some(&manifest.repository_identity))
++            })
++    {
++        ContributorAuthorization::Authorized
++    } else {
++        ContributorAuthorization::Invalid
++    }
++}
++
++fn bounded_read(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
++    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
++    if metadata.file_type().is_symlink() || metadata.len() > limit as u64 {
++        return Err(format!(
++            "unsafe or oversized Oh My Diff file: {}",
++            path.display()
++        ));
++    }
++    std::fs::read(path).map_err(|error| error.to_string())
++}
++
++pub(crate) fn compact_status() -> String {
++    let status = (|| {
++        let path = std::env::var_os(MANIFEST_ENV).map(PathBuf::from)?;
++        let manifest: Manifest = serde_json::from_slice(&bounded_read(&path, 65_536).ok()?).ok()?;
++        let checkpoint: Checkpoint = serde_json::from_slice(
++            &bounded_read(&manifest.evidence.join("checkpoint.json"), 65_536).ok()?,
++        )
++        .ok()?;
++        Some(format!(
++            "Oh My Diff · {} · {}/{} req · Contributor {}",
++            checkpoint.task_status,
++            checkpoint.allowance.requests_consumed,
++            checkpoint
++                .allowance
++                .requests_consumed
++                .saturating_add(checkpoint.allowance.requests_remaining),
++            match authorization_state(&manifest) {
++                ContributorAuthorization::Authorized => "on",
++                ContributorAuthorization::Revoked => "revoked",
++                ContributorAuthorization::Invalid => "blocked",
++            }
++        ))
++    })();
++    status.unwrap_or_else(|| "Oh My Diff · unavailable".to_string())
++}
++
++pub(crate) fn revoke_contributor() -> Result<String, String> {
++    let path = std::env::var_os(MANIFEST_ENV)
++        .map(PathBuf::from)
++        .ok_or_else(|| "Oh My Diff controlled runtime is not active".to_string())?;
++    let bytes = bounded_read(&path, 65_536)?;
++    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
++    let destination = manifest.evidence.join(REVOCATION_FILE);
++    if destination.exists() {
++        return Ok("Contributor authorization was already revoked".to_string());
++    }
++    let marker = serde_json::to_vec(&serde_json::json!({
++        "schema": 1,
++        "revoked": true,
++        "unix_millis": SystemTime::now()
++            .duration_since(UNIX_EPOCH)
++            .map_err(|error| error.to_string())?
++            .as_millis(),
++        "source": "Oh My Diff inspector"
++    }))
++    .map_err(|error| error.to_string())?;
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&destination)
++        .map_err(|error| error.to_string())?;
++    file.write_all(&marker).map_err(|error| error.to_string())?;
++    file.sync_all().map_err(|error| error.to_string())?;
++    OpenOptions::new()
++        .read(true)
++        .open(&manifest.evidence)
++        .and_then(|directory| directory.sync_all())
++        .map_err(|error| error.to_string())?;
++    Ok("Contributor authorization revoked; future dispatches are blocked".to_string())
++}
++
++pub(crate) fn highlight_selection(buffer: &mut Buffer, selection: MouseSelection) {
++    if !selection.dragged {
++        return;
++    }
++    let positions = selection_positions(buffer, selection).collect::<Vec<_>>();
++    for position in positions {
++        if let Some(cell) = buffer.cell_mut(position) {
++            cell.modifier.insert(Modifier::REVERSED);
++        }
++    }
++}
++
++pub(crate) fn selected_text(buffer: &Buffer, selection: MouseSelection) -> String {
++    let mut lines = Vec::new();
++    let mut current_y = None;
++    let mut line = String::new();
++    for position in selection_positions(buffer, selection) {
++        if current_y.is_some_and(|y| y != position.y) {
++            lines.push(line.trim_end().to_string());
++            line.clear();
++        }
++        current_y = Some(position.y);
++        if let Some(cell) = buffer.cell(position) {
++            line.push_str(cell.symbol());
++        }
++    }
++    if current_y.is_some() {
++        lines.push(line.trim_end().to_string());
++    }
++    lines.join("\n")
++}
++
++fn selection_positions(
++    buffer: &Buffer,
++    selection: MouseSelection,
++) -> impl Iterator<Item = Position> + '_ {
++    let (start, end) = ordered(selection.anchor, selection.head);
++    let area = buffer.area;
++    (start.y..=end.y).flat_map(move |y| {
++        let left = if y == start.y { start.x } else { area.left() };
++        let right = if y == end.y {
++            end.x
++        } else {
++            area.right().saturating_sub(1)
++        };
++        (left..=right).filter_map(move |x| {
++            area.contains(Position::new(x, y))
++                .then_some(Position::new(x, y))
++        })
++    })
++}
++
++fn ordered(first: Position, second: Position) -> (Position, Position) {
++    if (first.y, first.x) <= (second.y, second.x) {
++        (first, second)
++    } else {
++        (second, first)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use ratatui::buffer::Buffer;
++    use ratatui::layout::Rect;
++    use ratatui::text::Line;
++    use serial_test::serial;
++    use tempfile::TempDir;
++
++    struct EnvGuard {
++        name: &'static str,
++        original: Option<std::ffi::OsString>,
++    }
++
++    impl EnvGuard {
++        fn set(name: &'static str, value: Option<&str>) -> Self {
++            let original = std::env::var_os(name);
++            match value {
++                Some(value) => unsafe { std::env::set_var(name, value) },
++                None => unsafe { std::env::remove_var(name) },
++            }
++            Self { name, original }
++        }
++    }
++
++    impl Drop for EnvGuard {
++        fn drop(&mut self) {
++            match &self.original {
++                Some(value) => unsafe { std::env::set_var(self.name, value) },
++                None => unsafe { std::env::remove_var(self.name) },
++            }
++        }
++    }
++
++    fn runtime_fixture(root: &TempDir) -> PathBuf {
++        let evidence = root.path().join("evidence");
++        std::fs::create_dir(&evidence).unwrap();
++        let authorization = root.path().join("authorization.json");
++        let grant = serde_json::to_vec(&serde_json::json!({
++            "schema": 1,
++            "data_authorized": true,
++            "revocable": true,
++            "split": "development",
++            "repositories": ["fixture"]
++        }))
++        .unwrap();
++        std::fs::write(&authorization, &grant).unwrap();
++        std::fs::write(
++            evidence.join("checkpoint.json"),
++            serde_json::to_vec(&serde_json::json!({
++                "task_status": "active",
++                "workers": [{"id": "live"}],
++                "archived_workers": 1,
++                "allowance": {
++                    "requests_consumed": 2,
++                    "requests_remaining": 3,
++                    "exposure_consumed_microusd": 10,
++                    "exposure_remaining_microusd": 20
++                }
++            }))
++            .unwrap(),
++        )
++        .unwrap();
++        std::fs::write(
++            evidence.join("00000001.json"),
++            serde_json::to_vec(&serde_json::json!({
++                "record": {"event": "worker_archived"}
++            }))
++            .unwrap(),
++        )
++        .unwrap();
++        let manifest = root.path().join("manifest.json");
++        std::fs::write(
++            &manifest,
++            serde_json::to_vec(&serde_json::json!({
++                "evidence": evidence,
++                "authorization": authorization,
++                "authorization_sha256": format!("{:x}", Sha256::digest(&grant)),
++                "repository_identity": "fixture"
++            }))
++            .unwrap(),
++        )
++        .unwrap();
++        manifest
++    }
++
++    #[test]
++    fn unicode_input_is_width_preserving() {
++        let source = "a === b -> c <= d";
++        let visual = visual_input_unicode(source);
++        assert_eq!(visual, "a ≡   b →  c ≤  d");
++        assert_eq!(Line::from(source).width(), Line::from(visual).width());
++        assert_eq!(source, "a === b -> c <= d");
++    }
++
++    #[test]
++    #[serial]
++    fn ascii_fallback_keeps_literal_input() {
++        let _manifest = EnvGuard::set(MANIFEST_ENV, Some("fixture.json"));
++        let _locale = EnvGuard::set("LC_ALL", Some("en_CA.UTF-8"));
++        let _ascii = EnvGuard::set("OMD_TUI_ASCII", Some("1"));
++        let _mouse = EnvGuard::set("OMD_TUI_MOUSE", Some("off"));
++
++        assert_eq!(visual_input("=== -> <=").as_ref(), "=== -> <=");
++        assert!(!mouse_enabled());
++    }
++
++    #[test]
++    #[serial]
++    fn non_unicode_locale_automatically_uses_ascii() {
++        let _manifest = EnvGuard::set(MANIFEST_ENV, Some("fixture.json"));
++        let _locale = EnvGuard::set("LC_ALL", Some("C"));
++        let _ascii = EnvGuard::set("OMD_TUI_ASCII", None);
++
++        assert_eq!(visual_input("=== -> <=").as_ref(), "=== -> <=");
++    }
++
++    #[test]
++    #[serial]
++    fn active_unicode_mode_is_visual_only() {
++        let _manifest = EnvGuard::set(MANIFEST_ENV, Some("fixture.json"));
++        let _locale = EnvGuard::set("LC_ALL", Some("en_CA.UTF-8"));
++        let _ascii = EnvGuard::set("OMD_TUI_ASCII", None);
++        let source = String::from("=== -> <=");
++
++        assert_eq!(visual_input(&source).as_ref(), "≡   →  ≤ ");
++        assert_eq!(source, "=== -> <=");
++    }
++
++    #[test]
++    #[serial]
++    fn inspector_snapshot_and_durable_revocation_share_effective_state() {
++        let root = TempDir::new().unwrap();
++        let manifest = runtime_fixture(&root);
++        let _manifest = EnvGuard::set(MANIFEST_ENV, manifest.to_str());
++
++        let before = snapshot().unwrap();
++        assert_eq!(before.task_status, "active");
++        assert_eq!(before.live_workers, 1);
++        assert_eq!(before.archived_workers, 1);
++        assert_eq!(before.requests_consumed, 2);
++        assert_eq!(before.authorization, ContributorAuthorization::Authorized);
++        assert_eq!(
++            compact_status(),
++            "Oh My Diff · active · 2/5 req · Contributor on"
++        );
++
++        assert!(revoke_contributor().unwrap().contains("revoked"));
++        assert_eq!(
++            snapshot().unwrap().authorization,
++            ContributorAuthorization::Revoked
++        );
++        assert_eq!(
++            compact_status(),
++            "Oh My Diff · active · 2/5 req · Contributor revoked"
++        );
++        assert!(root.path().join("evidence").join(REVOCATION_FILE).is_file());
++        assert!(revoke_contributor().unwrap().contains("already revoked"));
++    }
++
++    #[test]
++    fn linear_selection_copies_and_highlights_visible_cells() {
++        let mut buffer = Buffer::with_lines(["alpha", "beta "]);
++        let selection = MouseSelection {
++            anchor: Position::new(2, 0),
++            head: Position::new(1, 1),
++            dragged: true,
++        };
++        assert_eq!(selected_text(&buffer, selection), "pha\nbe");
++        highlight_selection(&mut buffer, selection);
++        assert!(buffer[(2, 0)].modifier.contains(Modifier::REVERSED));
++        assert!(!buffer[(0, 0)].modifier.contains(Modifier::REVERSED));
++        assert_eq!(buffer.area, Rect::new(0, 0, 5, 2));
++    }
++}
+diff --git a/codex-rs/tui/src/onboarding/onboarding_screen.rs b/codex-rs/tui/src/onboarding/onboarding_screen.rs
+index 756e231b501fa21d6ad824b9b2c101e5a1f7aeb4..f8c7b444ac2e2a45d030c5726de732373a084a0d 100644
+--- a/codex-rs/tui/src/onboarding/onboarding_screen.rs
++++ b/codex-rs/tui/src/onboarding/onboarding_screen.rs
+@@ -580,7 +580,7 @@ pub(crate) async fn run_onboarding_app(
+                                 frame.render_widget_ref(&onboarding_screen, frame.area());
+                             });
+                         }
+-                        TuiEvent::FocusLost => {}
++                        TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                     }
+                 }
+             }
+diff --git a/codex-rs/tui/src/pager_overlay.rs b/codex-rs/tui/src/pager_overlay.rs
+index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d490fe7ab53 100644
+--- a/codex-rs/tui/src/pager_overlay.rs
++++ b/codex-rs/tui/src/pager_overlay.rs
+@@ -40,6 +40,8 @@ use crate::tui;
+ use crate::tui::TuiEvent;
+ use crossterm::event::KeyCode;
+ use crossterm::event::KeyEvent;
++use crossterm::event::KeyEventKind;
++use crossterm::event::KeyModifiers;
+ use ratatui::buffer::Buffer;
+ use ratatui::buffer::Cell;
+ use ratatui::layout::Rect;
+@@ -474,12 +476,20 @@ pub(crate) struct TranscriptOverlay {
+     /// Committed transcript cells (does not include the live tail).
+     cells: Vec<Arc<dyn HistoryCell>>,
+     highlight_cell: Option<usize>,
++    search: TranscriptSearch,
+     /// Cache key for the render-only live tail appended after committed cells.
+     live_tail_key: Option<LiveTailKey>,
+     history_state: TranscriptHistoryState,
+     is_done: bool,
+ }
+ 
++#[derive(Default)]
++struct TranscriptSearch {
++    query: String,
++    editing: bool,
++    match_cell: Option<usize>,
++}
++
+ /// Cache key for the active-cell "live tail" appended to the transcript overlay.
+ ///
+ /// Changing any field implies a different rendered tail.
+@@ -506,6 +516,7 @@ impl TranscriptOverlay {
+                 Self::render_cells(
+                     &transcript_cells,
+                     /*highlight_cell*/ None,
++                    /*search_match*/ None,
+                     TranscriptHistoryState::Idle,
+                 ),
+                 "T R A N S C R I P T".to_string(),
+@@ -514,6 +525,7 @@ impl TranscriptOverlay {
+             ),
+             cells: transcript_cells,
+             highlight_cell: None,
++            search: TranscriptSearch::default(),
+             live_tail_key: None,
+             history_state: TranscriptHistoryState::Idle,
+             is_done: false,
+@@ -549,12 +561,20 @@ impl TranscriptOverlay {
+     fn render_cells(
+         cells: &[Arc<dyn HistoryCell>],
+         highlight_cell: Option<usize>,
++        search_match: Option<usize>,
+         history_state: TranscriptHistoryState,
+     ) -> Vec<Box<dyn Renderable>> {
+         cells
+             .iter()
+             .enumerate()
+-            .map(|(i, cell)| Self::render_cell(cell, i, highlight_cell, history_state))
++            .map(|(i, cell)| {
++                Self::render_cell(
++                    cell,
++                    i,
++                    highlight_cell == Some(i) || search_match == Some(i),
++                    history_state,
++                )
++            })
+             .collect()
+     }
+ 
+@@ -562,7 +582,7 @@ impl TranscriptOverlay {
+     fn render_cell(
+         cell: &Arc<dyn HistoryCell>,
+         index: usize,
+-        highlight_cell: Option<usize>,
++        highlighted: bool,
+         history_state: TranscriptHistoryState,
+     ) -> Box<dyn Renderable> {
+         if cell.as_any().is::<SessionInfoCell>()
+@@ -572,7 +592,7 @@ impl TranscriptOverlay {
+         }
+         let cell_renderable = CellRenderable {
+             cell: cell.clone(),
+-            highlighted: highlight_cell == Some(index),
++            highlighted,
+         };
+         let mut cell_renderable: Box<dyn Renderable> = if cell.has_stable_transcript_height() {
+             Box::new(CachedRenderable::new(cell_renderable))
+@@ -604,12 +624,7 @@ impl TranscriptOverlay {
+         let follow_bottom = self.view.is_scrolled_to_bottom();
+         let had_prior_cells = !self.cells.is_empty();
+         let tail_renderable = self.take_live_tail_renderable();
+-        let cell_renderable = Self::render_cell(
+-            &cell,
+-            self.cells.len(),
+-            self.highlight_cell,
+-            self.history_state,
+-        );
++        let cell_renderable = Self::render_cell(&cell, self.cells.len(), false, self.history_state);
+         self.cells.push(cell);
+         self.view.renderables.push(cell_renderable);
+         if let Some(tail) = tail_renderable {
+@@ -667,6 +682,7 @@ impl TranscriptOverlay {
+         self.cells.splice(insert_at..insert_at, cells);
+         for index in [
+             &mut self.highlight_cell,
++            &mut self.search.match_cell,
+             &mut self.view.pending_scroll_chunk,
+         ] {
+             if let Some(index) = index.as_mut()
+@@ -703,6 +719,13 @@ impl TranscriptOverlay {
+         {
+             self.highlight_cell = None;
+         }
++        if self
++            .search
++            .match_cell
++            .is_some_and(|idx| idx >= self.cells.len())
++        {
++            self.search.match_cell = None;
++        }
+         self.rebuild_renderables(live_tail);
+         if follow_bottom {
+             self.view.scroll_offset = usize::MAX;
+@@ -738,6 +761,15 @@ impl TranscriptOverlay {
+                     *highlight_cell = highlight_cell.saturating_sub(removed.saturating_sub(1));
+                 }
+             }
++            if let Some(search_match) = self.search.match_cell.as_mut()
++                && *search_match >= clamped_start
++            {
++                if *search_match < clamped_end {
++                    *search_match = clamped_start;
++                } else {
++                    *search_match = search_match.saturating_sub(removed.saturating_sub(1));
++                }
++            }
+             self.cells
+                 .splice(clamped_start..clamped_end, std::iter::once(consolidated));
+             if self
+@@ -746,6 +778,13 @@ impl TranscriptOverlay {
+             {
+                 self.highlight_cell = None;
+             }
++            if self
++                .search
++                .match_cell
++                .is_some_and(|search_match| search_match >= self.cells.len())
++            {
++                self.search.match_cell = None;
++            }
+             self.rebuild_renderables(live_tail);
+         }
+         if follow_bottom {
+@@ -812,7 +851,7 @@ impl TranscriptOverlay {
+                     self.view.renderables[index] = Self::render_cell(
+                         history_cell,
+                         index,
+-                        self.highlight_cell,
++                        self.highlight_cell == Some(index) || self.search.match_cell == Some(index),
+                         self.history_state,
+                     );
+                 }
+@@ -823,6 +862,88 @@ impl TranscriptOverlay {
+         }
+     }
+ 
++    pub(crate) fn is_searching(&self) -> bool {
++        self.search.editing
++    }
++
++    fn begin_search(&mut self) {
++        self.search.editing = true;
++    }
++
++    fn set_search_match(&mut self, cell: Option<usize>) {
++        let previous = self.search.match_cell;
++        self.search.match_cell = cell;
++        for index in [previous, cell].into_iter().flatten() {
++            if let Some(history_cell) = self.cells.get(index) {
++                self.view.renderables[index] = Self::render_cell(
++                    history_cell,
++                    index,
++                    self.highlight_cell == Some(index) || self.search.match_cell == Some(index),
++                    self.history_state,
++                );
++            }
++        }
++        if let Some(index) = cell {
++            self.view.scroll_chunk_into_view(index);
++        }
++    }
++
++    fn find_search_match(&mut self, forward: bool) {
++        if self.search.query.is_empty() || self.cells.is_empty() {
++            self.set_search_match(None);
++            return;
++        }
++        let query = self.search.query.to_lowercase();
++        let len = self.cells.len();
++        let initial = match (self.search.match_cell, forward) {
++            (Some(index), true) => index.saturating_add(1) % len,
++            (Some(0), false) | (None, false) => len - 1,
++            (Some(index), false) => index - 1,
++            (None, true) => 0,
++        };
++        let matched = (0..len)
++            .map(|offset| {
++                if forward {
++                    (initial + offset) % len
++                } else {
++                    (initial + len - offset) % len
++                }
++            })
++            .find(|index| {
++                self.cells[*index]
++                    .raw_lines()
++                    .into_iter()
++                    .any(|line| line.to_string().to_lowercase().contains(&query))
++            });
++        self.set_search_match(matched);
++    }
++
++    fn handle_search_key(&mut self, key_event: KeyEvent) {
++        if !matches!(key_event.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
++            return;
++        }
++        match key_event.code {
++            KeyCode::Esc => self.search.editing = false,
++            KeyCode::Enter => {
++                self.search.editing = false;
++                self.find_search_match(/*forward*/ true);
++            }
++            KeyCode::Backspace => {
++                self.search.query.pop();
++                self.set_search_match(None);
++            }
++            KeyCode::Char(character)
++                if !key_event
++                    .modifiers
++                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
++            {
++                self.search.query.push(character);
++                self.set_search_match(None);
++            }
++            _ => {}
++        }
++    }
++
+     /// Returns whether the underlying pager view is currently pinned to the bottom.
+     ///
+     /// The `App` draw loop uses this to decide whether to schedule animation frames for the live
+@@ -833,8 +954,12 @@ impl TranscriptOverlay {
+ 
+     // Detach the live tail before changing cells: their old count identifies the tail renderable.
+     fn rebuild_renderables(&mut self, tail_renderable: Option<Box<dyn Renderable>>) {
+-        self.view.renderables =
+-            Self::render_cells(&self.cells, self.highlight_cell, self.history_state);
++        self.view.renderables = Self::render_cells(
++            &self.cells,
++            self.highlight_cell,
++            self.search.match_cell,
++            self.history_state,
++        );
+         if let Some(tail) = tail_renderable {
+             self.view.renderables.push(tail);
+         }
+@@ -872,6 +997,16 @@ impl TranscriptOverlay {
+         let line2 = Rect::new(area.x, area.y.saturating_add(1), area.width, 1);
+         render_navigation_hints(line1, buf, &self.view.keymap);
+ 
++        if self.search.editing {
++            Paragraph::new(Line::from(vec![
++                " Search: ".dim(),
++                self.search.query.clone().into(),
++                "  Enter find · Esc cancel".dim(),
++            ]))
++            .render(line2, buf);
++            return;
++        }
++
+         let mut pairs: Vec<(Vec<ShortcutHint>, &str)> = vec![(
+             first_or_empty(&self.view.keymap, "close", &self.view.keymap.close),
+             "close",
+@@ -892,6 +1027,13 @@ impl TranscriptOverlay {
+         } else {
+             pairs.push((vec![key_hint::plain(KeyCode::Esc).into()], "to edit prev"));
+         }
++        pairs.push((vec![key_hint::plain(KeyCode::Char('/')).into()], "search"));
++        if !self.search.query.is_empty() {
++            pairs.push((
++                vec![key_hint::plain(KeyCode::Char('n')).into()],
++                "next match",
++            ));
++        }
+         render_key_hints(line2, buf, &pairs);
+     }
+ 
+@@ -935,7 +1077,54 @@ impl TranscriptOverlay {
+ impl TranscriptOverlay {
+     pub(crate) fn handle_event(&mut self, tui: &mut tui::Tui, event: TuiEvent) -> Result<()> {
+         match event {
++            TuiEvent::Key(key_event) if self.search.editing => {
++                self.handle_search_key(key_event);
++                tui.frame_requester().schedule_frame();
++                Ok(())
++            }
++            TuiEvent::Paste(text) if self.search.editing => {
++                self.search.query.push_str(&text.replace(['\r', '\n'], " "));
++                self.set_search_match(None);
++                tui.frame_requester().schedule_frame();
++                Ok(())
++            }
+             TuiEvent::Key(key_event) => match key_event {
++                KeyEvent {
++                    code: KeyCode::Char('/'),
++                    modifiers: KeyModifiers::NONE,
++                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
++                    ..
++                }
++                | KeyEvent {
++                    code: KeyCode::Char('f'),
++                    modifiers: KeyModifiers::CONTROL,
++                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
++                    ..
++                } => {
++                    self.begin_search();
++                    tui.frame_requester().schedule_frame();
++                    Ok(())
++                }
++                KeyEvent {
++                    code: KeyCode::Char('n'),
++                    modifiers: KeyModifiers::NONE,
++                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
++                    ..
++                } if !self.search.query.is_empty() => {
++                    self.find_search_match(/*forward*/ true);
++                    tui.frame_requester().schedule_frame();
++                    Ok(())
++                }
++                KeyEvent {
++                    code: KeyCode::Char('N'),
++                    modifiers: KeyModifiers::SHIFT,
++                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
++                    ..
++                } if !self.search.query.is_empty() => {
++                    self.find_search_match(/*forward*/ false);
++                    tui.frame_requester().schedule_frame();
++                    Ok(())
++                }
+                 e if self.view.keymap.close.is_pressed(e)
+                     || self.view.keymap.close_transcript.is_pressed(e) =>
+                 {
+@@ -1116,6 +1305,36 @@ mod tests {
+         StaticOverlay::with_title(lines, title.to_string(), default_pager_keymap())
+     }
+ 
++    #[test]
++    fn transcript_search_edits_navigates_and_wraps_matches() {
++        let cells = vec![
++            Arc::new(TestCell {
++                lines: vec![Line::from("first")],
++            }) as Arc<dyn HistoryCell>,
++            Arc::new(TestCell {
++                lines: vec![Line::from("Needle one")],
++            }) as Arc<dyn HistoryCell>,
++            Arc::new(TestCell {
++                lines: vec![Line::from("needle two")],
++            }) as Arc<dyn HistoryCell>,
++        ];
++        let mut overlay = transcript_overlay(cells);
++        overlay.begin_search();
++        for character in "needle".chars() {
++            overlay.handle_search_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
++        }
++        overlay.handle_search_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
++        assert_eq!(overlay.search.match_cell, Some(1));
++        assert_eq!(overlay.view.pending_scroll_chunk, Some(1));
++
++        overlay.find_search_match(/*forward*/ true);
++        assert_eq!(overlay.search.match_cell, Some(2));
++        overlay.find_search_match(/*forward*/ true);
++        assert_eq!(overlay.search.match_cell, Some(1));
++        overlay.find_search_match(/*forward*/ false);
++        assert_eq!(overlay.search.match_cell, Some(2));
++    }
++
+     fn pager_view(
+         renderables: Vec<Box<dyn Renderable>>,
+         title: &str,
+diff --git a/codex-rs/tui/src/resume_picker.rs b/codex-rs/tui/src/resume_picker.rs
+index ef4dd6df726755663c90dde0e5b3fd62820d3197..a27f1dc03e1ac51d92b19d13fac6b058c80884fe 100644
+--- a/codex-rs/tui/src/resume_picker.rs
++++ b/codex-rs/tui/src/resume_picker.rs
+@@ -621,7 +621,7 @@ async fn run_session_picker_with_loader(
+                             state.open_pending_transcript_if_ready();
+                         }
+                     }
+-                    TuiEvent::FocusLost => {}
++                    TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 }
+             }
+             Some(event) = background_events.next() => {
+diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
+index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..65898fbda2749d684dbee96197587ca83de38d36 100644
+--- a/codex-rs/tui/src/slash_command.rs
++++ b/codex-rs/tui/src/slash_command.rs
+@@ -51,6 +51,7 @@ pub enum SlashCommand {
+     Diff,
+     Mention,
+     Status,
++    Omd,
+     Cd,
+     #[strum(to_string = "pwd", serialize = "cwd")]
+     Pwd,
+@@ -112,6 +113,7 @@ impl SlashCommand {
+             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
+             SlashCommand::Hooks => "view and manage lifecycle hooks",
+             SlashCommand::Status => "show current session configuration and token usage",
++            SlashCommand::Omd => "inspect Oh My Diff runtime state and authorization",
+             SlashCommand::Cd => "change the current working directory",
+             SlashCommand::Pwd => "show the current working directory",
+             SlashCommand::Usage => "view account usage or use a usage limit reset",
+@@ -199,6 +201,7 @@ impl SlashCommand {
+                 | SlashCommand::Diff
+                 | SlashCommand::Mention
+                 | SlashCommand::Status
++                | SlashCommand::Omd
+                 | SlashCommand::Pwd
+                 | SlashCommand::Usage
+                 | SlashCommand::Ide
+@@ -243,6 +246,7 @@ impl SlashCommand {
+             | SlashCommand::Skills
+             | SlashCommand::Hooks
+             | SlashCommand::Status
++            | SlashCommand::Omd
+             | SlashCommand::Pwd
+             | SlashCommand::Usage
+             | SlashCommand::DebugConfig
+@@ -274,6 +278,7 @@ impl SlashCommand {
+             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
+             SlashCommand::Copy => !cfg!(target_os = "android"),
+             SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),
++            SlashCommand::Omd => crate::omd::is_active(),
+             SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
+             _ => true,
+         }
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
+index 24ce94e912c387fcad0a6375a4080ec2a02352c8..b6546c75b3dfa4064995e01908ac658f7d623095 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
+@@ -12,4 +12,4 @@ expression: snapshot
+     2 +world
+ ─────────────────────────────────────────────────────────────────────────── 0% ─
+  ↑/↓ to scroll   pgup/pgdn to page   home/end to jump
+- q close   esc to edit prev
++ q close   esc to edit prev   / search
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
+index 9ed198f5546f78916ef9d845ebf018bf453a6700..e23377b7fd8d580c076b7ec1a089193bfd63ed7d 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
+@@ -10,4 +10,4 @@ last
+ ~
+ ───────────────────────────────── 100% ─
+  ↑/↓ to scroll   pgup/pgdn to page   hom
+- q close   esc to edit prev
++ q close   esc to edit prev   / search
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
+index 84cb5dbcec4bdccf25ce3ef52e5d541a3b19cc7e..64c6708a2f7c37bdbbeb512fe7c6f2c6a9e493c0 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
+@@ -14,5 +14,5 @@ expression: term.backend()
+ "tail                                    "
+ "───────────────────────────────── 100% ─"
+ " ↑/↓ to scroll   pgup/pgdn to page   hom"
+-" q close   esc to edit prev             "
++" q close   esc to edit prev   / search  "
+ "                                        "
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
+index b8106e6caef92d7de8e63cb0b4241f11675e3d2a..7837b6ed3cb60159f3b159a551b78a5a01c28329 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
+@@ -11,7 +11,7 @@ recent transcript
+ ~
+ ────────────────────────────────────────────────────────────────────────
+  ↑/↓ to scroll   pgup/pgdn to page   home/end to jump
+- q close   esc to edit prev
++ q close   esc to edit prev   / search
+ 
+ --- partial ---
+ / T R A N S C R I P T / / / / / / /  partial history | PgUp for earlier
+@@ -22,7 +22,7 @@ recent transcript
+ ~
+ ────────────────────────────────────────────────────────────────────────
+  ↑/↓ to scroll   pgup/pgdn to page   home/end to jump
+- q close   esc to edit prev
++ q close   esc to edit prev   / search
+ 
+ --- failed ---
+ / T R A N S C R I P T / / / / / / / history unavailable | PgUp to retry
+@@ -33,7 +33,7 @@ recent transcript
+ ~
+ ────────────────────────────────────────────────────────────────────────
+  ↑/↓ to scroll   pgup/pgdn to page   home/end to jump
+- q close   esc to edit prev
++ q close   esc to edit prev   / search
+ 
+ --- complete ---
+ / T R A N S C R I P T / / / / / / / / / / / / / / / /  start of history
+@@ -44,4 +44,4 @@ recent transcript
+ ~
+ ───────────────────────────────────────────────────────────────── 100% ─
+  ↑/↓ to scroll   pgup/pgdn to page   home/end to jump
+- q close   esc to edit prev
++ q close   esc to edit prev   / search
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
+index b823027c570dbea84685b917d57a9758b757d757..c80df9c44ff561da34046d2303bff99d1412f2bd 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
+@@ -10,5 +10,5 @@ expression: term.backend()
+ "~                                       "
+ "───────────────────────────────── 100% ─"
+ " ↑/↓ to scroll   pgup/pgdn to page   hom"
+-" q close   esc to edit prev             "
++" q close   esc to edit prev   / search  "
+ "                                        "
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
+index 024964cea06ed1bf48ceb8e082914e66778c3285..22d7a69975834151b7d7d3340be8b6c818f945d4 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
+@@ -10,5 +10,5 @@ expression: term.backend()
+ "gamma                                   "
+ "───────────────────────────────── 100% ─"
+ " ↑/↓ to scroll   pgup/pgdn to page   hom"
+-" q close   esc to edit prev             "
++" q close   esc to edit prev   / search  "
+ "                                        "
+diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
+index 4c3dbe00cd981d3c71eb87ed622f6f5bfe78c2be..2de94ee4e4f526798367d53f89dedcacc72323be 100644
+--- a/codex-rs/tui/src/startup_draft.rs
++++ b/codex-rs/tui/src/startup_draft.rs
+@@ -312,7 +312,7 @@ impl StartupDraftPump {
+                     }
+                     return Ok(());
+                 }
+-                TuiEvent::FocusLost => {
++                TuiEvent::Mouse(_) | TuiEvent::FocusLost => {
+                     self.pending_paste_newline = Some((started_at, newlines));
+                     return Ok(());
+                 }
+@@ -363,7 +363,11 @@ impl StartupDraftPump {
+                     self.bottom_pane.handle_paste(text);
+                 }
+             }
+-            TuiEvent::Draw | TuiEvent::Resize(_) | TuiEvent::Resume | TuiEvent::FocusGained => {}
++            TuiEvent::Draw
++            | TuiEvent::Mouse(_)
++            | TuiEvent::Resize(_)
++            | TuiEvent::Resume
++            | TuiEvent::FocusGained => {}
+             TuiEvent::FocusLost => return Ok(()),
+         }
+         if self.initial_screen == StartupDraftInitialScreen::Composer {
+diff --git a/codex-rs/tui/src/startup_hooks_review.rs b/codex-rs/tui/src/startup_hooks_review.rs
+index 002e58b14417a33e8984e61c9e69f4b34f18edcb..9090b6280e9b18729e1dce83ff21791c3048a0db 100644
+--- a/codex-rs/tui/src/startup_hooks_review.rs
++++ b/codex-rs/tui/src/startup_hooks_review.rs
+@@ -182,7 +182,7 @@ async fn run_startup_hooks_review_app(
+                     }
+                 }
+             }
+-            TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++            TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+             TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                 draw_view(tui, &view)?;
+             }
+diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
+index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32d5fc6394 100644
+--- a/codex-rs/tui/src/tui.rs
++++ b/codex-rs/tui/src/tui.rs
+@@ -19,10 +19,13 @@ use crossterm::SynchronizedUpdate;
+ use crossterm::cursor::SetCursorStyle;
+ use crossterm::event::DisableBracketedPaste;
+ use crossterm::event::DisableFocusChange;
++use crossterm::event::DisableMouseCapture;
+ use crossterm::event::EnableBracketedPaste;
+ #[cfg(not(windows))]
+ use crossterm::event::EnableFocusChange;
++use crossterm::event::EnableMouseCapture;
+ use crossterm::event::KeyEvent;
++use crossterm::event::MouseEvent;
+ use crossterm::terminal::EnterAlternateScreen;
+ use crossterm::terminal::LeaveAlternateScreen;
+ #[cfg(not(unix))]
+@@ -315,7 +318,10 @@ fn restore_common(
+     if let Err(err) = execute!(stdout(), DisableBracketedPaste) {
+         first_error.get_or_insert(err);
+     }
++    let _ = execute!(stdout(), DisableMouseCapture);
+     let _ = execute!(stdout(), DisableFocusChange);
++    let _ = execute!(stdout(), DisableAlternateScroll, LeaveAlternateScreen);
++    crate::omd::set_fullscreen_active(false);
+     if matches!(raw_mode_restore, RawModeRestore::Disable)
+         && let Err(err) = disable_raw_mode()
+     {
+@@ -562,6 +568,7 @@ fn set_panic_hook() {
+ pub enum TuiEvent {
+     /// A terminal key event after focus, paste, and protocol bookkeeping has been handled.
+     Key(KeyEvent),
++    Mouse(MouseEvent),
+     /// A bracketed paste payload normalized by the app layer before it reaches the composer.
+     Paste(String),
+     /// A terminal size notification and its reported dimensions.
+@@ -604,6 +611,9 @@ pub struct Tui {
+     scrollback: ScrollbackStrategy,
+     // When false, enter_alt_screen() becomes a no-op.
+     alt_screen_enabled: bool,
++    persistent_alt_screen: bool,
++    mouse_capture_enabled: bool,
++    mouse_selection: Option<crate::omd::MouseSelection>,
+     // Keeps unmanaged process stderr writes out of the inline viewport.
+     _stderr_guard: terminal_stderr::TerminalStderrGuard,
+ }
+@@ -658,6 +668,9 @@ impl Tui {
+             notification_condition: NotificationCondition::default(),
+             scrollback,
+             alt_screen_enabled: true,
++            persistent_alt_screen: false,
++            mouse_capture_enabled: false,
++            mouse_selection: None,
+             _stderr_guard: stderr_guard,
+         }
+     }
+@@ -665,6 +678,10 @@ impl Tui {
+     /// Set whether alternate screen is enabled. When false, enter_alt_screen() becomes a no-op.
+     pub fn set_alt_screen_enabled(&mut self, enabled: bool) {
+         self.alt_screen_enabled = enabled;
++        if !enabled {
++            self.persistent_alt_screen = false;
++            crate::omd::set_fullscreen_active(false);
++        }
+     }
+ 
+     pub fn set_notification_settings(
+@@ -692,6 +709,52 @@ impl Tui {
+         self.alt_screen_active.load(Ordering::Relaxed)
+     }
+ 
++    pub(crate) fn mouse_selection(&self) -> Option<crate::omd::MouseSelection> {
++        self.mouse_selection
++    }
++
++    #[cfg(test)]
++    pub(crate) fn mouse_capture_enabled(&self) -> bool {
++        self.mouse_capture_enabled
++    }
++
++    pub(crate) fn begin_mouse_selection(&mut self, position: Position) {
++        self.mouse_selection = Some(crate::omd::MouseSelection {
++            anchor: position,
++            head: position,
++            dragged: false,
++        });
++        self.frame_requester.schedule_frame();
++    }
++
++    pub(crate) fn drag_mouse_selection(&mut self, position: Position) {
++        if let Some(selection) = self.mouse_selection.as_mut() {
++            selection.head = position;
++            selection.dragged = true;
++            self.frame_requester.schedule_frame();
++        }
++    }
++
++    pub(crate) fn finish_mouse_selection(
++        &mut self,
++        position: Position,
++    ) -> Option<crate::omd::MouseSelection> {
++        let selection = self.mouse_selection.as_mut()?;
++        selection.head = position;
++        self.frame_requester.schedule_frame();
++        selection.dragged.then_some(*selection)
++    }
++
++    pub(crate) fn clear_mouse_selection(&mut self) {
++        if self.mouse_selection.take().is_some() {
++            self.frame_requester.schedule_frame();
++        }
++    }
++
++    pub(crate) fn selected_text(&self, selection: crate::omd::MouseSelection) -> String {
++        crate::omd::selected_text(self.terminal.rendered_buffer(), selection)
++    }
++
+     // Drop crossterm EventStream to avoid stdin conflicts with other processes.
+     pub fn pause_events(&mut self) {
+         self.event_broker.pause_events();
+@@ -715,6 +778,14 @@ impl Tui {
+     /// Reclaim terminal modes and stderr after a panic hook ran inside a recovery boundary.
+     pub(crate) fn recover_after_caught_panic(&mut self) -> Result<()> {
+         set_modes()?;
++        if self.is_alt_screen_active() {
++            execute!(self.terminal.backend_mut(), EnterAlternateScreen)?;
++            execute!(self.terminal.backend_mut(), EnableAlternateScroll)?;
++            crate::omd::set_fullscreen_active(true);
++        }
++        self.mouse_capture_enabled = self.is_alt_screen_active()
++            && crate::omd::mouse_enabled()
++            && execute!(self.terminal.backend_mut(), EnableMouseCapture).is_ok();
+         self._stderr_guard.recover_after_caught_panic()?;
+         self.terminal.invalidate_viewport();
+         self.frame_requester().schedule_frame();
+@@ -750,7 +821,7 @@ impl Tui {
+         // Leave alt screen if active to avoid conflicts with external program `f`.
+         let was_alt_screen = self.is_alt_screen_active();
+         if was_alt_screen {
+-            let _ = self.leave_alt_screen();
++            let _ = self.leave_alt_screen_inner();
+         }
+ 
+         if let Err(err) = restore_keep_raw() {
+@@ -772,7 +843,7 @@ impl Tui {
+         flush_terminal_input_buffer();
+ 
+         if was_alt_screen {
+-            let _ = self.enter_alt_screen();
++            let _ = self.enter_alt_screen_inner();
+         }
+ 
+         self.resume_events();
+@@ -830,11 +901,30 @@ impl Tui {
+     /// inline viewport for restoration when leaving.
+     pub fn enter_alt_screen(&mut self) -> Result<()> {
+         if !self.alt_screen_enabled {
++            crate::omd::set_fullscreen_active(false);
++            return Ok(());
++        }
++        if self.is_alt_screen_active() {
++            return Ok(());
++        }
++        self.enter_alt_screen_inner()
++    }
++
++    pub(crate) fn enter_persistent_alt_screen(&mut self) -> Result<()> {
++        if !self.alt_screen_enabled {
++            crate::omd::set_fullscreen_active(false);
+             return Ok(());
+         }
++        self.persistent_alt_screen = true;
++        self.enter_alt_screen()
++    }
++
++    fn enter_alt_screen_inner(&mut self) -> Result<()> {
+         let _ = execute!(self.terminal.backend_mut(), EnterAlternateScreen);
+         // Enable "alternate scroll" so terminals may translate wheel to arrows
+         let _ = execute!(self.terminal.backend_mut(), EnableAlternateScroll);
++        self.mouse_capture_enabled = crate::omd::mouse_enabled()
++            && execute!(self.terminal.backend_mut(), EnableMouseCapture).is_ok();
+         if let Ok(size) = self.terminal.size() {
+             self.alt_saved_viewport = Some(self.terminal.viewport_area);
+             self.terminal.resize(size)?;
+@@ -847,15 +937,38 @@ impl Tui {
+             let _ = self.terminal.clear();
+         }
+         self.alt_screen_active.store(true, Ordering::Relaxed);
++        crate::omd::set_fullscreen_active(true);
+         Ok(())
+     }
+ 
+     /// Leave alternate screen and restore the previously saved inline viewport, if any.
+     pub fn leave_alt_screen(&mut self) -> Result<()> {
+         if !self.alt_screen_enabled {
++            crate::omd::set_fullscreen_active(false);
++            return Ok(());
++        }
++        if self.persistent_alt_screen {
++            return Ok(());
++        }
++        self.leave_alt_screen_inner()
++    }
++
++    pub(crate) fn leave_persistent_alt_screen(&mut self) -> Result<()> {
++        self.persistent_alt_screen = false;
++        self.leave_alt_screen_inner()
++    }
++
++    fn leave_alt_screen_inner(&mut self) -> Result<()> {
++        if !self.is_alt_screen_active() {
++            crate::omd::set_fullscreen_active(false);
+             return Ok(());
+         }
+         // Disable alternate scroll when leaving alt-screen
++        if self.mouse_capture_enabled {
++            let _ = execute!(self.terminal.backend_mut(), DisableMouseCapture);
++            self.mouse_capture_enabled = false;
++        }
++        self.mouse_selection = None;
+         let _ = execute!(self.terminal.backend_mut(), DisableAlternateScroll);
+         let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+         if let Some(saved) = self.alt_saved_viewport.take() {
+@@ -864,6 +977,7 @@ impl Tui {
+         // The restored main screen does not contain the alternate screen's diff baseline.
+         self.terminal.invalidate_viewport();
+         self.alt_screen_active.store(false, Ordering::Relaxed);
++        crate::omd::set_fullscreen_active(false);
+         Ok(())
+     }
+ 
+diff --git a/codex-rs/tui/src/tui/event_stream.rs b/codex-rs/tui/src/tui/event_stream.rs
+index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aae7d7fbdc 100644
+--- a/codex-rs/tui/src/tui/event_stream.rs
++++ b/codex-rs/tui/src/tui/event_stream.rs
+@@ -186,12 +186,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+ 
+     /// Poll the shared crossterm stream for the next mapped `TuiEvent`.
+     ///
+-    /// This skips events we don't use (mouse events, etc.) and keeps polling until it yields
+-    /// a mapped event, hits `Pending`, or sees EOF/error. When the broker is paused, it drops
+-    /// the underlying stream and returns `Pending` to fully release stdin.
++    /// This keeps polling until it yields a mapped event, hits `Pending`, or sees EOF/error.
++    /// When the broker is paused, it drops the underlying stream and returns `Pending` to fully
++    /// release stdin.
+     pub fn poll_crossterm_event(&mut self, cx: &mut Context<'_>) -> Poll<Option<TuiEvent>> {
+-        // Some crossterm events map to None (e.g. mouse); loop so we keep polling
+-        // until we return a mapped event, hit Pending, or see EOF/error.
++        // Keep polling until we return a mapped event, hit Pending, or see EOF/error.
+         loop {
+             let poll_result = {
+                 let mut state = self
+@@ -247,7 +246,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+         }
+     }
+ 
+-    /// Map a crossterm event to a [`TuiEvent`], skipping events we don't use (mouse events, etc.).
++    /// Map a crossterm event to a [`TuiEvent`].
+     fn map_crossterm_event(&mut self, event: Event) -> Option<TuiEvent> {
+         match event {
+             Event::Key(key_event) => {
+@@ -267,6 +266,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+                 }
+                 Some(TuiEvent::Key(key_event))
+             }
++            Event::Mouse(mouse_event) => Some(TuiEvent::Mouse(mouse_event)),
+             Event::Resize(width, height) => {
+                 Some(TuiEvent::Resize(ratatui::layout::Size { width, height }))
+             }
+@@ -281,7 +281,6 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+                 self.terminal_focused.store(false, Ordering::Relaxed);
+                 Some(TuiEvent::FocusLost)
+             }
+-            _ => None,
+         }
+     }
+ }
+@@ -417,7 +416,7 @@ mod tests {
+     }
+ 
+     #[tokio::test(flavor = "current_thread")]
+-    async fn key_event_skips_unmapped() {
++    async fn mouse_and_key_events_are_forwarded() {
+         let (broker, handle, _draw_tx, draw_rx, terminal_focused) = setup();
+         let mut stream = make_stream(broker, draw_rx, terminal_focused);
+ 
+@@ -432,6 +431,12 @@ mod tests {
+             KeyModifiers::NONE,
+         ))));
+ 
++        let mouse = stream.next().await.unwrap();
++        match mouse {
++            TuiEvent::Mouse(event) => assert_eq!(event.kind, MouseEventKind::Moved),
++            other => panic!("expected mouse event, got {other:?}"),
++        }
++
+         let next = stream.next().await.unwrap();
+         match next {
+             TuiEvent::Key(key) => {
+diff --git a/codex-rs/tui/src/tui/job_control.rs b/codex-rs/tui/src/tui/job_control.rs
+index 2db1fc04f58fc9d701cf2c3a6719ad5658b0ae12..29cbf3609cb67cc457920844bd8aee7bb13eb497 100644
+--- a/codex-rs/tui/src/tui/job_control.rs
++++ b/codex-rs/tui/src/tui/job_control.rs
+@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
+ 
+ use crossterm::cursor::MoveTo;
+ use crossterm::cursor::Show;
++use crossterm::event::EnableMouseCapture;
+ use crossterm::event::KeyCode;
+ use crossterm::terminal::EnterAlternateScreen;
+ use crossterm::terminal::LeaveAlternateScreen;
+@@ -188,6 +189,10 @@ impl PreparedResumeAction {
+                 execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                 // Enable "alternate scroll" so terminals may translate wheel to arrows
+                 execute!(terminal.backend_mut(), EnableAlternateScroll)?;
++                if crate::omd::mouse_enabled() {
++                    execute!(terminal.backend_mut(), EnableMouseCapture)?;
++                }
++                crate::omd::set_fullscreen_active(true);
+                 terminal.set_viewport_area(Rect::from(screen_size));
+                 terminal.clear()?;
+             }
+diff --git a/codex-rs/tui/src/tui/screen_size.rs b/codex-rs/tui/src/tui/screen_size.rs
+index c9f657886e67fd00d2def92a2ba3a9ae0888b982..3865caf67b964bdfa7d4fb812dd3dc827542683f 100644
+--- a/codex-rs/tui/src/tui/screen_size.rs
++++ b/codex-rs/tui/src/tui/screen_size.rs
+@@ -47,11 +47,13 @@ impl Tui {
+             TuiEvent::Draw | TuiEvent::FocusGained => {
+                 self.screen_size.deferred_size.take().unwrap_or(cached)
+             }
+-            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost => cached,
++            TuiEvent::Key(_) | TuiEvent::Mouse(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost => {
++                cached
++            }
+         };
+         self.screen_size.pending_draw_size = (!matches!(
+             event,
+-            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
++            TuiEvent::Key(_) | TuiEvent::Mouse(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost
+         ))
+         .then_some(size);
+         Ok(size)
+diff --git a/codex-rs/tui/src/unarchive_prompt.rs b/codex-rs/tui/src/unarchive_prompt.rs
+index 3f5182276287ba064bca920c049ac38fdce6f9a6..b6aceca3c4edb3a10a03527c656ed65682507397 100644
+--- a/codex-rs/tui/src/unarchive_prompt.rs
++++ b/codex-rs/tui/src/unarchive_prompt.rs
+@@ -54,6 +54,7 @@ pub(crate) async fn run_unarchive_prompt(
+                 }
+             }
+             TuiEvent::Paste(_)
++            | TuiEvent::Mouse(_)
+             | TuiEvent::Draw
+             | TuiEvent::Resize(_)
+             | TuiEvent::Resume

@@ -493,6 +493,7 @@ impl Host {
             &self.manifest.authorization,
             &self.manifest.authorization_sha256,
             &self.manifest.repository_identity,
+            &self.manifest.evidence.join(accounting::REVOCATION_FILE),
         );
         self.task
             .set_contributor_authorization(
@@ -523,6 +524,7 @@ impl Host {
             authorization: self.manifest.authorization.clone(),
             authorization_sha256: self.manifest.authorization_sha256.clone(),
             repository_identity: self.manifest.repository_identity.clone(),
+            revocation: self.manifest.evidence.join(accounting::REVOCATION_FILE),
         };
         let mut accounts = self
             .accounts
@@ -956,6 +958,7 @@ impl ToolContributor for Extension {
             &self.manifest.authorization,
             &self.manifest.authorization_sha256,
             &self.manifest.repository_identity,
+            &self.manifest.evidence.join(accounting::REVOCATION_FILE),
         ) {
             tools.push(Arc::new(ContributionTool(lead)));
         }

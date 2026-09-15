@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+pub const REVOCATION_FILE: &str = "contributor-revoked.json";
+
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rates {
@@ -35,12 +37,23 @@ pub struct Account {
     pub authorization: std::path::PathBuf,
     pub authorization_sha256: String,
     pub repository_identity: String,
+    pub revocation: std::path::PathBuf,
 }
 
 #[derive(Default)]
 pub struct Accounts(pub Mutex<BTreeMap<String, Account>>);
 
-pub fn authorized(path: &std::path::Path, expected_sha256: &str, repository: &str) -> bool {
+pub fn authorized(
+    path: &std::path::Path,
+    expected_sha256: &str,
+    repository: &str,
+    revocation: &std::path::Path,
+) -> bool {
+    match std::fs::symlink_metadata(revocation) {
+        Ok(_) => return false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return false,
+    }
     let Ok(bytes) = std::fs::read(path) else {
         return false;
     };
@@ -125,6 +138,7 @@ impl ResponseObserver for Accounts {
                 &account.authorization,
                 &account.authorization_sha256,
                 &account.repository_identity,
+                &account.revocation,
             );
             account
                 .task

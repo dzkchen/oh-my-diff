@@ -49,6 +49,7 @@ fn setup() -> (
             authorization_sha256: crate::execution::hash(&std::fs::read(&authorization).unwrap()),
             authorization,
             repository_identity: "fixture".into(),
+            revocation: root.path().join("evidence").join(REVOCATION_FILE),
         },
     );
     task.start_worker(
@@ -131,6 +132,23 @@ fn authorization_is_rechecked_and_route_model_identity_cannot_drift() {
     std::fs::write(
         root.path().join("grant.json"),
         "{\"data_authorized\":false}",
+    )
+    .unwrap();
+    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
+    assert!(task.attempts().unwrap().is_empty());
+}
+
+#[test]
+fn durable_revocation_marker_blocks_future_contributor_dispatch() {
+    let (root, accounts, task, mut request, body) = setup();
+    std::fs::write(
+        root.path().join("evidence").join(REVOCATION_FILE),
+        serde_json::to_vec(&json!({
+            "schema": 1,
+            "revoked": true,
+            "source": "Oh My Diff inspector"
+        }))
+        .unwrap(),
     )
     .unwrap();
     assert!(accounts.before_send(&mut request, Some(&body)).is_err());

@@ -37,7 +37,7 @@ pub struct Limits {
     pub max_reassessments: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct WorkerLimits {
     pub requests: u32,
     pub exposure_microusd: u64,
@@ -98,6 +98,46 @@ struct Worker {
     result: Option<VersionMarker>,
 }
 
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+struct ArchivedWorker {
+    id: String,
+    parent: String,
+    depth: u32,
+    limits: WorkerLimits,
+    requests: u32,
+    exposure_microusd: u64,
+    status: WorkerStatus,
+    objective: Option<String>,
+    result: Option<VersionMarker>,
+}
+
+impl ArchivedWorker {
+    fn from_worker(id: String, worker: &Worker) -> Self {
+        Self {
+            id,
+            parent: worker.parent.clone(),
+            depth: worker.depth,
+            limits: worker.limits.clone(),
+            requests: worker.requests,
+            exposure_microusd: worker.exposure,
+            status: worker.status,
+            objective: worker.objective.clone(),
+            result: worker.result.clone(),
+        }
+    }
+
+    fn matches_worker(&self, worker: &Worker) -> bool {
+        self.parent == worker.parent
+            && self.depth == worker.depth
+            && self.limits == worker.limits
+            && self.requests == worker.requests
+            && self.exposure_microusd == worker.exposure
+            && self.status == worker.status
+            && self.objective == worker.objective
+            && self.result == worker.result
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TaskStatus {
     Active,
@@ -125,11 +165,19 @@ struct State {
     escalations: u32,
     reassessments: u32,
     failure_fingerprints: BTreeMap<String, u32>,
+    seen_workers: BTreeSet<String>,
     workers: BTreeMap<String, Worker>,
     contract: Option<TaskContract>,
     checkpoint: Option<TaskCheckpoint>,
     calls: BTreeMap<String, CallRecord>,
 }
+
+const MAX_TASK_REQUESTS: u32 = 10_000;
+const MAX_LIVE_WORKERS: usize = 128;
+const MAX_TOTAL_WORKERS: usize = 1_024;
+const MAX_LIVE_CALLS: usize = 256;
+const MAX_FAILURES: usize = 128;
+const MAX_FAILURE_FINGERPRINTS: usize = 128;
 
 pub struct Task {
     limits: Limits,
@@ -151,6 +199,21 @@ fn unix_millis() -> io::Result<u128> {
 }
 
 impl Task {
+    fn validate_limits(limits: &Limits) -> io::Result<()> {
+        if limits.requests == 0
+            || limits.requests > MAX_TASK_REQUESTS
+            || limits.seconds == 0
+            || limits.concurrent_workers == 0
+            || limits.concurrent_workers as usize > MAX_LIVE_WORKERS
+            || limits.max_depth == 0
+        {
+            return Err(denied(
+                "task limits must be positive and within runtime ceilings",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn create(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
         Self::create_inner(limits, evidence, None)
     }
@@ -183,13 +246,7 @@ impl Task {
         evidence: PathBuf,
         contract: Option<TaskContract>,
     ) -> io::Result<Self> {
-        if limits.requests == 0
-            || limits.seconds == 0
-            || limits.concurrent_workers == 0
-            || limits.max_depth == 0
-        {
-            return Err(denied("task limits must be positive"));
-        }
+        Self::validate_limits(&limits)?;
         fs::create_dir(&evidence)?;
         let evidence = evidence.canonicalize()?;
         let task = Self {
@@ -211,6 +268,7 @@ impl Task {
                 escalations: 0,
                 reassessments: 0,
                 failure_fingerprints: BTreeMap::new(),
+                seen_workers: BTreeSet::new(),
                 workers: BTreeMap::new(),
                 contract: contract.clone(),
                 checkpoint: None,
@@ -268,6 +326,7 @@ impl Task {
         expected_contract: Option<TaskContract>,
         current_live: Option<LiveState>,
     ) -> io::Result<Self> {
+        Self::validate_limits(&limits)?;
         if !evidence.exists() {
             if explicit_resume.is_some() {
                 return Err(denied("explicit resume has no prior task evidence"));
@@ -305,6 +364,7 @@ impl Task {
             escalations: 0,
             reassessments: 0,
             failure_fingerprints: BTreeMap::new(),
+            seen_workers: BTreeSet::new(),
             workers: BTreeMap::new(),
             contract: None,
             checkpoint: None,
@@ -358,6 +418,14 @@ impl Task {
                         .as_str()
                         .ok_or_else(|| denied("worker identity missing"))?
                         .to_owned();
+                    if !state.seen_workers.insert(id.clone())
+                        || state.seen_workers.len() > MAX_TOTAL_WORKERS
+                        || state.workers.len() >= MAX_LIVE_WORKERS
+                    {
+                        return Err(denied(
+                            "worker identity or live worker archive limit exceeded",
+                        ));
+                    }
                     state.workers.insert(
                         id,
                         Worker {
@@ -411,16 +479,52 @@ impl Task {
                         .ok_or_else(|| denied("consumed worker missing"))?;
                     worker.status = WorkerStatus::Consumed;
                 }
+                Some("worker_archived") => {
+                    let archived: ArchivedWorker =
+                        serde_json::from_value(record["archive"].clone())?;
+                    let worker = state
+                        .workers
+                        .get(&archived.id)
+                        .ok_or_else(|| denied("archived worker missing from live state"))?;
+                    if archived.status == WorkerStatus::Active || !archived.matches_worker(worker) {
+                        return Err(denied("archived worker evidence changed"));
+                    }
+                    state.workers.remove(&archived.id);
+                }
                 Some("request_admitted")
                 | Some("request_dispatched")
                 | Some("request_failed")
                 | Some("request_settled")
                 | Some("raw_usage_observed") => {
                     let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
-                    state.attempts.insert(attempt.request, attempt);
+                    let prior = state.attempts.insert(attempt.request, attempt.clone());
+                    if let Some(worker) = state.workers.get_mut(&attempt.owner) {
+                        if prior.is_none() {
+                            worker.requests = worker
+                                .requests
+                                .checked_add(1)
+                                .ok_or_else(|| denied("resume worker request count overflow"))?;
+                        }
+                        let prior_exposure = prior.as_ref().map_or(0, |prior| {
+                            prior.settled_microusd.unwrap_or(prior.reserved_microusd)
+                        });
+                        let exposure = attempt
+                            .settled_microusd
+                            .unwrap_or(attempt.reserved_microusd);
+                        worker.exposure = worker
+                            .exposure
+                            .checked_sub(prior_exposure)
+                            .and_then(|value| value.checked_add(exposure))
+                            .ok_or_else(|| denied("resume worker exposure overflow"))?;
+                    }
                 }
                 Some("failure_recorded") => {
                     let failure: Failure = serde_json::from_value(record["failure"].clone())?;
+                    if state.failures.len() >= MAX_FAILURES
+                        || failure.id != state.failures.len() as u32 + 1
+                    {
+                        return Err(denied("failure evidence exceeds live limit"));
+                    }
                     state.failures.insert(failure.id, failure);
                 }
                 Some("escalation_permitted") => {
@@ -439,6 +543,11 @@ impl Task {
                         .as_u64()
                         .ok_or_else(|| denied("failure observation count missing"))?
                         as u32;
+                    if !state.failure_fingerprints.contains_key(fingerprint)
+                        && state.failure_fingerprints.len() >= MAX_FAILURE_FINGERPRINTS
+                    {
+                        return Err(denied("failure fingerprint cache limit exceeded"));
+                    }
                     state
                         .failure_fingerprints
                         .insert(fingerprint.to_owned(), count);
@@ -465,6 +574,8 @@ impl Task {
                                 .checkpoint
                                 .as_ref()
                                 .map_or(1, |prior| prior.revision.saturating_add(1))
+                        || usize::try_from(checkpoint.archived_workers).ok()
+                            != Some(state.seen_workers.len().saturating_sub(state.workers.len()))
                     {
                         return Err(denied("checkpoint sequence or contract changed"));
                     }
@@ -478,12 +589,20 @@ impl Task {
                     }
                     .validate(contract)?;
                     checkpoint.live.validate()?;
+                    if state.checkpoint.as_ref().is_some_and(|prior| {
+                        prior.progress_revision != checkpoint.progress_revision
+                    }) {
+                        state.calls.clear();
+                    }
                     state.checkpoint = Some(checkpoint);
                 }
                 Some("call_observed") => {
                     let signature = record["signature_sha256"]
                         .as_str()
                         .ok_or_else(|| denied("call signature missing"))?;
+                    if !state.calls.contains_key(signature) && state.calls.len() >= MAX_LIVE_CALLS {
+                        return Err(denied("live call cache limit exceeded"));
+                    }
                     state.calls.insert(
                         signature.to_owned(),
                         CallRecord {
@@ -501,8 +620,42 @@ impl Task {
                         },
                     );
                 }
-                Some("no_progress_paused") => state.status = TaskStatus::Paused,
-                Some("task_paused") => state.status = TaskStatus::Paused,
+                Some("no_progress_paused") => {
+                    state.status = TaskStatus::Paused;
+                    for worker in state.workers.values_mut() {
+                        if worker.status == WorkerStatus::Active {
+                            worker.status = WorkerStatus::Stopped;
+                        }
+                    }
+                }
+                Some("task_paused") => {
+                    let recorded = record["active_workers"]
+                        .as_array()
+                        .ok_or_else(|| denied("paused worker list missing"))?
+                        .iter()
+                        .map(|value| {
+                            value
+                                .as_str()
+                                .map(str::to_owned)
+                                .ok_or_else(|| denied("paused worker identity missing"))
+                        })
+                        .collect::<io::Result<BTreeSet<_>>>()?;
+                    let active = state
+                        .workers
+                        .iter()
+                        .filter(|(_, worker)| worker.status == WorkerStatus::Active)
+                        .map(|(id, _)| id.clone())
+                        .collect::<BTreeSet<_>>();
+                    if recorded != active {
+                        return Err(denied("paused worker list changed"));
+                    }
+                    for id in recorded {
+                        if let Some(worker) = state.workers.get_mut(&id) {
+                            worker.status = WorkerStatus::Stopped;
+                        }
+                    }
+                    state.status = TaskStatus::Paused;
+                }
                 Some("task_resumed") => state.status = TaskStatus::Active,
                 Some("reservation_violation") => {
                     let attempt: Attempt = serde_json::from_value(record["attempt"].clone())?;
@@ -538,6 +691,17 @@ impl Task {
             if worker.status == WorkerStatus::Active {
                 worker.status = WorkerStatus::Stopped;
             }
+        }
+        state
+            .workers
+            .retain(|_, worker| worker.status == WorkerStatus::Completed);
+        if let Some(checkpoint) = state.checkpoint.as_mut() {
+            checkpoint
+                .workers
+                .retain(|worker| worker.status == WorkerStatus::Completed);
+            checkpoint.archived_workers =
+                u32::try_from(state.seen_workers.len().saturating_sub(state.workers.len()))
+                    .map_err(|_| denied("archived worker count overflow"))?;
         }
         if matches!(state.status, TaskStatus::Stopped | TaskStatus::Completed) {
             return Err(denied("stopped or completed task cannot resume"));
@@ -657,6 +821,25 @@ impl Task {
             .collect()
     }
 
+    fn archive_worker(&self, state: &mut State, id: &str) -> io::Result<()> {
+        let archived = ArchivedWorker::from_worker(
+            id.to_owned(),
+            state
+                .workers
+                .get(id)
+                .ok_or_else(|| denied("worker archive target missing"))?,
+        );
+        if archived.status == WorkerStatus::Active {
+            return Err(denied("active worker cannot be archived"));
+        }
+        self.record(
+            state,
+            &serde_json::json!({"event": "worker_archived", "archive": archived}),
+        )?;
+        state.workers.remove(id);
+        Ok(())
+    }
+
     fn write_compact_checkpoint(&self, checkpoint: &TaskCheckpoint) -> io::Result<()> {
         let bytes = serde_json::to_vec(checkpoint)?;
         if bytes.len() > 65_536 {
@@ -751,6 +934,9 @@ impl Task {
                 .progress_revision
                 .saturating_add(u64::from(progress_changed))
         });
+        if progress_changed {
+            state.calls.clear();
+        }
         let no_progress = state
             .checkpoint
             .as_ref()
@@ -775,6 +961,10 @@ impl Task {
             candidate_versions: update.candidate_versions,
             check_versions: update.check_versions,
             workers: Self::worker_checkpoints(&state),
+            archived_workers: u32::try_from(
+                state.seen_workers.len().saturating_sub(state.workers.len()),
+            )
+            .map_err(|_| denied("archived worker count overflow"))?,
             allowance: self.allowance(&state),
             live,
             reconciliation,
@@ -844,11 +1034,15 @@ impl Task {
 
     fn refresh_checkpoint(&self, state: &mut State) -> io::Result<()> {
         let workers = Self::worker_checkpoints(state);
+        let archived_workers =
+            u32::try_from(state.seen_workers.len().saturating_sub(state.workers.len()))
+                .map_err(|_| denied("archived worker count overflow"))?;
         let allowance = self.allowance(state);
         let status = Self::task_status(state.status);
         if let Some(checkpoint) = state.checkpoint.as_mut() {
             checkpoint.task_status = status;
             checkpoint.workers = workers;
+            checkpoint.archived_workers = archived_workers;
             checkpoint.allowance = allowance;
             if let Err(error) = self.write_compact_checkpoint(checkpoint) {
                 state.status = TaskStatus::Stopped;
@@ -903,6 +1097,11 @@ impl Task {
         } else {
             1
         };
+        if prior.is_none() && state.calls.len() >= MAX_LIVE_CALLS {
+            return Err(denied(
+                "live call cache limit exceeded; checkpoint progress required",
+            ));
+        }
         let decision = if legitimate_wait {
             CallDecision::LegitimateWait
         } else if !unchanged {
@@ -951,10 +1150,17 @@ impl Task {
                 &serde_json::json!({"event": "no_progress_paused", "signature_sha256": signature_sha256, "unchanged_calls": unchanged_calls}),
             )?;
             state.status = TaskStatus::Paused;
-            for worker in state.workers.values_mut() {
-                if worker.status == WorkerStatus::Active {
+            let active_workers = state
+                .workers
+                .iter()
+                .filter(|(_, worker)| worker.status == WorkerStatus::Active)
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            for id in active_workers {
+                if let Some(worker) = state.workers.get_mut(&id) {
                     worker.status = WorkerStatus::Stopped;
                 }
+                self.archive_worker(&mut state, &id)?;
             }
         }
         self.refresh_checkpoint(&mut state)?;
@@ -989,7 +1195,13 @@ impl Task {
             .state
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
-        if id.is_empty() || id.len() > 128 || id == "lead" || state.workers.contains_key(&id) {
+        if id.is_empty()
+            || id.len() > 128
+            || id == "lead"
+            || state.seen_workers.contains(&id)
+            || state.seen_workers.len() >= MAX_TOTAL_WORKERS
+            || state.workers.len() >= MAX_LIVE_WORKERS
+        {
             return Err(denied("invalid or reused worker identity"));
         }
         if state.status != TaskStatus::Active || self.expired() {
@@ -1023,6 +1235,7 @@ impl Task {
             &mut state,
             &serde_json::json!({"event": "worker_started", "worker": id, "parent": parent, "depth": depth, "limits": limits}),
         )?;
+        state.seen_workers.insert(id.clone());
         state.workers.insert(
             id,
             Worker {
@@ -1126,6 +1339,7 @@ impl Task {
             .get_mut(id)
             .ok_or_else(|| denied("worker disappeared"))?
             .status = WorkerStatus::Consumed;
+        self.archive_worker(&mut state, id)?;
         self.refresh_checkpoint(&mut state)?;
         Ok(())
     }
@@ -1158,6 +1372,7 @@ impl Task {
             .get_mut(id)
             .ok_or_else(|| denied("worker disappeared"))?
             .status = WorkerStatus::Stopped;
+        self.archive_worker(&mut state, id)?;
         self.refresh_checkpoint(&mut state)?;
         Ok(())
     }
@@ -1467,6 +1682,9 @@ impl Task {
         if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
+        if state.failures.len() >= MAX_FAILURES {
+            return Err(denied("failure evidence limit exceeded"));
+        }
         let id = u32::try_from(state.failures.len())
             .ok()
             .and_then(|count| count.checked_add(1))
@@ -1554,6 +1772,11 @@ impl Task {
         if state.status != TaskStatus::Active {
             return Err(denied("task is not active"));
         }
+        if !state.failure_fingerprints.contains_key(fingerprint)
+            && state.failure_fingerprints.len() >= MAX_FAILURE_FINGERPRINTS
+        {
+            return Err(denied("failure fingerprint cache limit exceeded"));
+        }
         let count = state
             .failure_fingerprints
             .get(fingerprint)
@@ -1604,8 +1827,11 @@ impl Task {
             &serde_json::json!({"event": "task_paused", "reason": reason, "active_workers": active_workers, "uncertain_operations": uncertain_operations}),
         )?;
         state.status = TaskStatus::Paused;
-        for worker in state.workers.values_mut() {
-            worker.status = WorkerStatus::Stopped;
+        for id in active_workers {
+            if let Some(worker) = state.workers.get_mut(&id) {
+                worker.status = WorkerStatus::Stopped;
+            }
+            self.archive_worker(&mut state, &id)?;
         }
         self.refresh_checkpoint(&mut state)?;
         Ok(())

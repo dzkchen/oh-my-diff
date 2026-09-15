@@ -84,6 +84,39 @@ and then pause; configured waits remain bounded by the original task deadline.
 A foreground completion is recorded only after every acceptance criterion has
 evidence, remaining work is empty, and no worker or uncertain request is active.
 
+Live task state is bounded independently of manifest values: at most 10,000 task
+requests, 128 live workers, 1,024 lifetime worker identities, 256 unchanged-call
+entries per progress revision, 128 failures, and 128 failure fingerprints. New
+entries fail closed at a ceiling. Progress clears the call cache. Stopped workers
+and consumed results move from the compact checkpoint to full append-only
+`worker_archived` journal records, including ownership, limits, objective,
+request/exposure accounting, terminal status, and result marker. Replay verifies
+each archive before removing it from live state, preserves worker-ID reuse
+protection, and exposes only active/unconsumed workers plus an archive count in
+the checkpoint.
+
+Interactive TTY use is app-like fullscreen by default. The main transcript and
+composer remain in the alternate screen, with terminal state restored around
+external programs, suspension, caught panics, and exit. Keep inline behavior
+with `codex --no-alt-screen` or:
+
+```toml
+[tui]
+alternate_screen = "never"
+```
+
+Controlled sessions show Oh My Diff branding and a compact task/request/
+Contributor status. `/omd` opens the on-demand inspector for worker/archive,
+allowance/exposure, permission/approval, renderer, mouse, evidence, and current
+authorization state; its confirmed revoke action durably blocks future
+Contributor requests. Ctrl+T transcript view supports `/` or Ctrl+F search and
+`n`/`N` navigation. In fullscreen, left click positions the caret and drag
+selection copies on release through Codex's existing clipboard strategies.
+Set `OMD_TUI_MOUSE=off` for terminal-native selection. The composer displays
+`===`, `->`, and `<=` as width-preserving `≡`, `→`, and `≤` while keeping literal
+ASCII for editing, copying, and submission. Set `OMD_TUI_ASCII=1`, or use a
+non-Unicode locale, for literal rendering.
+
 Run the no-provider macOS end-to-end fixture from this repository:
 
 ```sh
