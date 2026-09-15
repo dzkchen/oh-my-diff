@@ -125,6 +125,16 @@ this same ledger and still checks the parent immediately before applying the
 reviewed delta. A foreground task cannot complete unless its live workspace is
 the final approved candidate.
 
+The deferred `omd_complete` tool adds a distinct adversarial completion gate
+after that final review. At task creation the host freezes the short acceptance
+contract and its hash. A separate read-only opposite-lead verifier must assess
+every criterion and independently challenge missing wiring, test weakening, and
+relevant negative cases against the exact final candidate and host-owned
+evidence. Missing, stale, duplicated, reworded, or unavailable evidence cannot
+complete the task. The compact receipt reports `completed`, `continue`,
+`blocked`, or `unverified`; only `completed` permits foreground completion, and
+any later failed attempt invalidates the earlier approval.
+
 ```json
 {
   "review": {
@@ -134,6 +144,12 @@ the final approved candidate.
     "max_open_findings": 128,
     "max_repairs": 4,
     "repair_scope": ["src", "tests"]
+  },
+  "completion": {
+    "max_attempts": 8,
+    "max_paths_per_challenge": 128,
+    "max_requirements": 12,
+    "max_requirement_bytes": 512
   }
 }
 ```

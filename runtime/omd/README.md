@@ -151,6 +151,16 @@ ledger atomically, reloads and validates its candidate evidence only on explicit
 resume, and charges each model review to the original task ledger. Every-turn
 advice defaults off independently of the mandatory final review.
 
+`CompletionGate` freezes the task's short acceptance contract before controlled
+work begins and binds it to every persisted attempt. After the exact final
+review and checks pass, a distinct read-only verifier must assess every original
+criterion and the three mandatory challenge classes: missing wiring, test
+weakening, and relevant negative cases. The gate rejects changed criteria,
+duplicate or omitted assessments, unknown or stale evidence, a changed
+candidate, a reused reviewer, and incomplete challenge coverage. It emits a
+compact candidate-bound receipt with `completed`, `continue`, `blocked`, or
+`unverified`; only the latest `completed` receipt authorizes task completion.
+
 ```json
 {
   "schema": 1,

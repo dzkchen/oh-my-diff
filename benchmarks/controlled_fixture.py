@@ -57,6 +57,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             exec_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "exec_command"]
             escalation_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_escalate"]
             checkpoint_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_checkpoint"]
+            completion_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_complete"]
             spawn_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "spawn_agent"]
             wait_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "wait_agent"]
             text = json.dumps(body.get("input", []))
@@ -105,6 +106,17 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 candidate = {"label": "integrated-candidate", "sha256": contribution["candidate_sha256"], "evidence": contribution["candidate"]["path"], "evidence_sha256": contribution["candidate"]["sha256"]}
                 check = {"label": "candidate-check", "sha256": contribution["candidate_sha256"], "evidence": contribution["checks"]["path"], "evidence_sha256": contribution["checks"]["sha256"]}
                 item = {"type": "function_call", "id": "checkpoint", "call_id": "checkpoint", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": ["Delegated the bounded implementation and retained its result."], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [candidate], "check_versions": [check]})}
+            elif owner == "lead" and scenario in ("completion", "completion-unverified") and not checkpoint_outputs:
+                criteria = manifest["checkpoint"]["acceptance_criteria"]
+                contribution = next(json.loads(output["output"])["result"] for output in outputs if calls.get(output.get("call_id")) == "omd_contribute")
+                candidate = {"label": "integrated-candidate", "sha256": contribution["candidate_sha256"], "evidence": contribution["candidate"]["path"], "evidence_sha256": contribution["candidate"]["sha256"]}
+                check = {"label": "candidate-check", "sha256": contribution["candidate_sha256"], "evidence": contribution["checks"]["path"], "evidence_sha256": contribution["checks"]["sha256"]}
+                acceptance = [{"criterion": criterion, "evidence": [check]} for criterion in criteria]
+                item = {"type": "function_call", "id": "completion-checkpoint", "call_id": "completion-checkpoint", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": acceptance, "completed_steering": ["Integrated the reviewed exact candidate."], "remaining_work": [], "failed_hypotheses": [], "candidate_versions": [candidate], "check_versions": [check]})}
+            elif owner == "lead" and scenario in ("completion", "completion-unverified") and not completion_outputs:
+                checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
+                contract_sha256 = hashlib.sha256(json.dumps(manifest["checkpoint"], separators=(",", ":")).encode()).hexdigest()
+                item = {"type": "function_call", "id": "completion-gate", "call_id": "completion-gate", "name": "omd_complete", "arguments": json.dumps({"candidate_sha256": checkpoint["live"]["workspace_sha256"], "contract_sha256": contract_sha256})}
             elif owner and owner.startswith("contributor-") and "fallback" not in owner and not exec_outputs:
                 command = "printf 'def add(a, b):\\n    return a + b\\n' > solution.py"
                 if scenario == "permissions":
@@ -112,18 +124,32 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "function_call", "id": "edit", "call_id": "edit", "namespace": "functions", "name": "exec_command", "arguments": json.dumps({"cmd": command, "max_output_tokens": 500})}
             elif owner == "contributor-outage-fallback" and not exec_outputs:
                 item = {"type": "function_call", "id": "fallback-edit", "call_id": "fallback-edit", "namespace": "functions", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
-            elif owner == "reviewer":
+            elif owner and owner.startswith("reviewer-"):
                 match = re.search(r"Candidate SHA256: ([0-9a-f]{64})", text)
                 if scenario == "index-conflict":
                     (repo / "new-tracked.txt").write_text("concurrent tracked file\n")
                     subprocess.run(["/usr/bin/git", "add", "new-tracked.txt"], cwd=repo, env=git_env, check=True)
                 if scenario == "conflict":
                     (repo / "solution.py").write_text("intervening user edit\n")
-                review = {"approved": scenario != "review-reject", "candidate_sha256": match.group(1) if match else "missing", "findings": []}
+                review = {"candidate_sha256": match.group(1) if match else "missing", "findings": [], "resolved_finding_ids": []}
+                if scenario == "review-reject":
+                    review["findings"] = [{"key": "synthetic-review-rejection", "severity": "blocking", "summary": "The synthetic reviewer rejected this candidate.", "paths": ["solution.py"]}]
                 if structured_worker_reports:
                     review["report"] = {"schema": 1, "status": "completed", "summary": "The exact candidate passed review.", "scope": ["Reviewed the declared candidate and changed paths."], "uncertainty": [], "evidence": ["candidate SHA256 and configured check result"], "required_clarification": []}
                 answer = json.dumps(review)
                 item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
+            elif owner and owner.startswith("completion-verifier-"):
+                candidate_match = re.search(r"Candidate SHA256: ([0-9a-f]{64})", text)
+                contract_match = re.search(r"Contract SHA256: ([0-9a-f]{64})", text)
+                checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
+                requirements = []
+                for acceptance in checkpoint["completed_acceptance"]:
+                    requirements.append({"criterion": acceptance["criterion"], "verdict": "unverified" if scenario == "completion-unverified" else "satisfied", "summary": "Synthetic evidence is unavailable." if scenario == "completion-unverified" else "The exact-candidate check evidence supports this criterion.", "evidence_sha256s": [] if scenario == "completion-unverified" else [acceptance["evidence"][0]["evidence_sha256"]]})
+                challenges = [{"kind": kind, "verdict": "unverified" if scenario == "completion-unverified" else "passed", "summary": "Synthetic evidence is unavailable." if scenario == "completion-unverified" else "The exact candidate retains the expected path and behavior.", "paths": [] if scenario == "completion-unverified" else ["solution.py"]} for kind in ("missing_wiring", "test_weakening", "negative_cases")]
+                verification = {"candidate_sha256": candidate_match.group(1) if candidate_match else "missing", "contract_sha256": contract_match.group(1) if contract_match else "missing", "requirements": requirements, "challenges": challenges}
+                if structured_worker_reports:
+                    verification["report"] = {"schema": 1, "status": "completed", "summary": "The independent completion verification finished.", "scope": ["Assessed every criterion and mandatory challenge category."], "uncertainty": ["Synthetic evidence is unavailable."] if scenario == "completion-unverified" else [], "evidence": ["host-owned checkpoint and final review"], "required_clarification": []}
+                item = {"type": "message", "id": "completion-answer", "role": "assistant", "content": [{"type": "output_text", "text": json.dumps(verification)}]}
             elif owner and owner.startswith("escalation-"):
                 answer = json.dumps({"schema": 1, "status": "partial", "summary": "Retry the edit directly with a simpler command.", "scope": ["Diagnosed the cited edit failure only."], "uncertainty": ["The replacement command has not run."], "evidence": ["host-preserved failure source"], "required_clarification": []}) if structured_worker_reports else "The cited failure is preserved. Retry the edit directly with a simpler command."
                 item = {"type": "message", "id": "advice", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
@@ -284,7 +310,8 @@ enabled = false
             assert checkpoint["task_status"] == "paused"
             result = {"status": "failed", "error": "unchanged tool results paused the task"}
         worker_requests = [request for request in requests if (request["native_owner"] or "").startswith("contributor-")]
-        reviewer_requests = [request for request in requests if request["native_owner"] == "reviewer"]
+        reviewer_requests = [request for request in requests if (request["native_owner"] or "").startswith("reviewer-")]
+        completion_verifier_requests = [request for request in requests if (request["native_owner"] or "").startswith("completion-verifier-")]
         escalation_requests = [request for request in requests if (request["native_owner"] or "").startswith("escalation-")]
         if scenario not in ("request-cap", "direct", "escalation", "reactive", "recursion", "no-progress"):
             assert worker_requests, "worker route was not observed"
@@ -300,13 +327,19 @@ enabled = false
         assert ("concise ordinary-language sentences" in lead_context) == concise_user_updates, "user update policy selection drifted"
         assert requests[0]["model"] == lead_model and requests[0]["native_owner"] == "lead", "lead route drifted"
         first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
-        assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools and "omd_checkpoint" not in first_tools, "controlled tools were not deferred"
+        assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools and "omd_checkpoint" not in first_tools and "omd_complete" not in first_tools, "controlled tools were not deferred"
         if scenario not in ("direct", "reactive", "request-cap", "recursion"):
             assert any(i.get("type") == "tool_search_call" for request in requests for i in request["body"].get("input", [])), "task-scoped tool discovery was not exercised"
         if reviewer_requests:
             expected_reviewer = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead] if scenario == "outage-fallback" else {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
             assert reviewer_requests[0]["model"] == expected_reviewer, "reviewer route did not remain separate from the implementer"
-            assert ("Keep the approval decision" in json.dumps(reviewer_requests[0])) == structured_worker_reports, "review report instruction selection drifted"
+            assert ("report field" in json.dumps(reviewer_requests[0])) == structured_worker_reports, "review report instruction selection drifted"
+        if scenario in ("completion", "completion-unverified"):
+            assert len(completion_verifier_requests) == 1
+            assert completion_verifier_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
+            assert "missing public/runtime wiring" in json.dumps(completion_verifier_requests[0])
+            assert "weakened or removed tests/checks" in json.dumps(completion_verifier_requests[0])
+            assert "relevant negative cases" in json.dumps(completion_verifier_requests[0])
         ids = [request["native_request_id"] for request in (gateway.records if scenario == "runner" else requests)]
         assert all(ids) and len(ids) == len(set(ids)), "wire attempts lack unique native admission IDs"
         if scenario == "escalation":
@@ -338,7 +371,7 @@ enabled = false
                 checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
                 assert checkpoint["allowance"]["requests_consumed"] == len(requests)
         else:
-            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume", "checkpoint") else "blocked" if scenario == "structured-clarification" else "failed"
+            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume", "checkpoint", "completion", "completion-unverified") else "blocked" if scenario == "structured-clarification" else "failed"
             assert result.get("status") == expected, result or process.stderr[-2000:]
             if result.get("status") == "integrated":
                 assert (result.get("worker_report") is not None) == structured_worker_reports
@@ -353,6 +386,17 @@ enabled = false
                 assert [item["label"] for item in checkpoint["check_versions"]] == ["candidate-check"]
                 assert checkpoint["task_status"] == "stopped"
                 assert checkpoint["allowance"]["requests_consumed"] == len(requests)
+            if scenario in ("completion", "completion-unverified"):
+                receipts = list((destination / "evidence").glob("completion-receipt-*.json"))
+                assert len(receipts) == 1
+                record = json.loads(receipts[0].read_text())
+                receipt = record["receipt"]
+                assert receipt["status"] == ("completed" if scenario == "completion" else "unverified")
+                assert [entry["criterion"] for entry in receipt["requirements"]] == manifest["checkpoint"]["acceptance_criteria"]
+                assert [entry["kind"] for entry in receipt["challenges"]] == ["missing_wiring", "test_weakening", "negative_cases"]
+                assert all(entry["verdict"] == ("satisfied" if scenario == "completion" else "unverified") for entry in receipt["requirements"])
+                checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
+                assert checkpoint["task_status"] == ("completed" if scenario == "completion" else "stopped")
             if scenario == "outage-fallback":
                 assert result["implementation"]["fallback_used"] is True
                 assert len(result["implementation"]["contributor_failures"]) == 2
@@ -408,7 +452,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation", "reactive", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification"), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation", "reactive", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified"), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")

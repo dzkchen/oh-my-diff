@@ -70,6 +70,17 @@ struct ModelFinding {
     paths: Vec<String>,
 }
 
+#[derive(Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct CompletionVerification {
+    candidate_sha256: String,
+    contract_sha256: String,
+    requirements: Vec<codex_omd::RequirementAssessment>,
+    challenges: Vec<codex_omd::ChallengeAssessment>,
+    #[serde(default)]
+    report: Option<WorkerReport>,
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewRequest {
@@ -77,6 +88,13 @@ pub struct ReviewRequest {
     candidate_sha256: String,
     stable: bool,
     risk: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompletionRequest {
+    candidate_sha256: String,
+    contract_sha256: String,
 }
 
 pub fn hash(bytes: &[u8]) -> String {
@@ -1027,6 +1045,371 @@ pub async fn review_current(
         "repairs_used": snapshot.repairs.len(),
         "repair_limit": snapshot.policy.max_repairs,
         "evidence": review_ref,
+    }))
+}
+
+fn completion_unavailable(
+    host: &Host,
+    candidate: VersionMarker,
+    status: codex_omd::CompletionStatus,
+    reason: String,
+    call_hash: &str,
+) -> Result<Value, String> {
+    let contract_sha256 =
+        codex_omd::acceptance_contract_sha256(&host.manifest.checkpoint).map_err(error)?;
+    let remaining = host.task.remaining().map_err(error)?;
+    let allowance_remaining = !remaining.0.is_zero() && remaining.1 > 0 && remaining.2 > 0;
+    let (prior, receipt) = {
+        let mut completion = host
+            .completion
+            .lock()
+            .map_err(|_| "completion runtime lock poisoned")?;
+        let prior = completion.snapshot();
+        let receipt = completion
+            .record_unavailable(
+                candidate,
+                &contract_sha256,
+                status,
+                allowance_remaining,
+                reason,
+            )
+            .map_err(error)?;
+        (prior, receipt)
+    };
+    host.persist_completion_or_restore(prior)?;
+    let receipt_ref = host.evidence(
+        &format!("completion-receipt-{call_hash}.json"),
+        &serde_json::to_value(&receipt).map_err(error)?,
+    )?;
+    Ok(json!({
+        "schema": 1,
+        "status": receipt.status,
+        "receipt": receipt,
+        "evidence": receipt_ref,
+    }))
+}
+
+pub async fn complete_current(
+    lead: &Lead,
+    call: &ToolCall<'_>,
+    request: CompletionRequest,
+) -> Result<Value, String> {
+    let host = &lead.host;
+    let manifest = &host.manifest;
+    host.authorize()?;
+    host.task.check_active().map_err(error)?;
+    let manager = host
+        .manager
+        .upgrade()
+        .ok_or("native thread manager stopped")?;
+    let inherited = manager
+        .get_thread(lead.thread)
+        .await
+        .map_err(error)?
+        .config()
+        .await;
+    let mut parent = (*inherited).clone();
+    if parent.cwd.as_path() != manifest.repository
+        || call.environments.len() != 1
+        || call.environments[0].environment_id != "local"
+        || call.environments[0].cwd != parent.cwd
+    {
+        return Err("changed or remote parent environment is not admitted".into());
+    }
+    let actual: PermissionProfile = call.environments[0]
+        .file_system_sandbox_context
+        .permissions
+        .clone()
+        .try_into()
+        .map_err(error)?;
+    let mut roots = call.environments[0]
+        .file_system_sandbox_context
+        .workspace_roots
+        .iter()
+        .map(PathUri::to_abs_path)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(error)?;
+    if roots.is_empty() {
+        roots.push(parent.cwd.clone());
+    }
+    let actual = actual.materialize_project_roots_with_workspace_roots(&roots);
+    let configured = parent
+        .permissions
+        .permission_profile()
+        .clone()
+        .materialize_project_roots_with_workspace_roots(&roots);
+    let effective = intersect(&configured, &actual, parent.cwd.as_path())?;
+    parent
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(effective))
+        .map_err(error)?;
+    let untracked: BTreeSet<_> = manifest.approved_untracked.iter().cloned().collect();
+    let candidate =
+        codex_omd::capture_tracked(&manifest.repository, &untracked, manifest.snapshot_bytes)
+            .map_err(error)?;
+    let candidate_sha256 = candidate.hash().map_err(error)?;
+    let call_hash = hash(call.call_id.as_bytes());
+    let candidate_ref = host.evidence(
+        &format!("completion-candidate-{call_hash}.json"),
+        &serde_json::to_value(&candidate).map_err(error)?,
+    )?;
+    let candidate_marker =
+        evidence_marker("completion-candidate", &candidate_sha256, &candidate_ref)?;
+    let contract_sha256 =
+        codex_omd::acceptance_contract_sha256(&manifest.checkpoint).map_err(error)?;
+    if request.candidate_sha256 != candidate_sha256 || request.contract_sha256 != contract_sha256 {
+        return completion_unavailable(
+            host,
+            candidate_marker,
+            codex_omd::CompletionStatus::Unverified,
+            "completion request is stale or does not preserve the immutable contract".into(),
+            &call_hash,
+        );
+    }
+    let completion_snapshot = host
+        .completion
+        .lock()
+        .map_err(|_| "completion runtime lock poisoned")?
+        .snapshot();
+    if completion_snapshot.approved_candidate_sha256.as_deref() == Some(&candidate_sha256)
+        && let Some(receipt) = completion_snapshot.receipts.last().filter(|receipt| {
+            receipt.status == codex_omd::CompletionStatus::Completed
+                && receipt.candidate.sha256 == candidate_sha256
+        })
+    {
+        return Ok(json!({
+            "schema": 1,
+            "status": receipt.status,
+            "receipt": receipt,
+            "evidence": "persisted completion-state.json",
+            "reused": true,
+        }));
+    }
+    let checkpoint = host
+        .task
+        .checkpoint()
+        .map_err(error)?
+        .ok_or("completion checkpoint is unavailable")?;
+    let completed = checkpoint
+        .completed_acceptance
+        .iter()
+        .map(|entry| entry.criterion.as_str())
+        .collect::<BTreeSet<_>>();
+    let criteria = manifest
+        .checkpoint
+        .acceptance_criteria
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if completed != criteria
+        || !checkpoint.remaining_work.is_empty()
+        || checkpoint.completed_acceptance.iter().any(|entry| {
+            !entry
+                .evidence
+                .iter()
+                .any(|marker| marker.sha256 == candidate_sha256)
+        })
+    {
+        return completion_unavailable(
+            host,
+            candidate_marker,
+            codex_omd::CompletionStatus::Unverified,
+            "acceptance evidence is incomplete, stale, or work remains".into(),
+            &call_hash,
+        );
+    }
+    let review_snapshot = host
+        .review
+        .lock()
+        .map_err(|_| "review runtime lock poisoned")?
+        .ledger
+        .snapshot();
+    let final_review = review_snapshot
+        .cycles
+        .iter()
+        .rev()
+        .find(|cycle| {
+            cycle.cadence == codex_omd::ReviewCadence::Final
+                && cycle.final_approved
+                && cycle.candidate.sha256 == candidate_sha256
+        })
+        .cloned();
+    if review_snapshot.final_candidate_sha256.as_deref() != Some(&candidate_sha256)
+        || final_review.is_none()
+    {
+        return completion_unavailable(
+            host,
+            candidate_marker,
+            codex_omd::CompletionStatus::Unverified,
+            "the exact candidate lacks current executable checks and final unified review".into(),
+            &call_hash,
+        );
+    }
+    let remaining = host.task.remaining().map_err(error)?;
+    if remaining.0.is_zero() || remaining.1 == 0 || remaining.2 == 0 {
+        return completion_unavailable(
+            host,
+            candidate_marker,
+            codex_omd::CompletionStatus::Blocked,
+            "shared task allowance is exhausted before independent verification".into(),
+            &call_hash,
+        );
+    }
+    std::fs::create_dir(&manifest.scratch).map_err(error)?;
+    let verification_root = codex_omd::create_worktree(
+        &candidate,
+        &manifest.scratch.join("completion-verifier"),
+        manifest.snapshot_bytes,
+    )
+    .map_err(error)?;
+    let verifier_name = lead.route.opposite();
+    let verifier_route = host.route(verifier_name);
+    let report_mode = if manifest.communication.structured_worker_reports {
+        ReviewReportMode::Structured
+    } else {
+        ReviewReportMode::Plain
+    };
+    let attempt = host
+        .completion
+        .lock()
+        .map_err(|_| "completion runtime lock poisoned")?
+        .snapshot()
+        .receipts
+        .len() as u32
+        + 1;
+    let role = format!("completion-verifier-{attempt}");
+    let output = run_child(
+        lead,
+        &parent,
+        &verification_root,
+        ChildTurn {
+            role: &role,
+            route: verifier_route,
+            prompt: format!(
+                "Independently verify completion of this exact read-only candidate. Do not rely on the implementation owner's conclusion and do not edit files. Preserve each acceptance criterion byte-for-byte and assess it once. A satisfied requirement must cite one or more evidence_sha256s from its supplied host-owned evidence. Separately challenge missing public/runtime wiring, weakened or removed tests/checks, and relevant negative cases; return exactly one assessment for each challenge kind. A passed challenge must cite inspected repository-relative paths. Use unsatisfied/finding for actionable work, blocked for a concrete external blocker, and unverified whenever evidence is unavailable or inconclusive. Candidate SHA256: {candidate_sha256}. Contract SHA256: {contract_sha256}. Objective and criteria: {}. Acceptance evidence: {}. Approved final review cycle: {}.",
+                serde_json::to_string(&manifest.checkpoint).map_err(error)?,
+                serde_json::to_string(&checkpoint.completed_acceptance).map_err(error)?,
+                serde_json::to_string(final_review.as_ref().expect("checked final review"))
+                    .map_err(error)?,
+            ),
+            history: InitialHistory::New,
+            writable: false,
+            output_schema: Some(completion_schema(report_mode)),
+            output_instruction: manifest
+                .communication
+                .structured_worker_reports
+                .then_some(completion_report_prompt()),
+        },
+    )
+    .await;
+    let output = match output {
+        Ok(output) => output,
+        Err(reason) => {
+            codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
+                .map_err(error)?;
+            return completion_unavailable(
+                host,
+                candidate_marker,
+                codex_omd::CompletionStatus::Unverified,
+                format!("independent verifier unavailable: {reason}"),
+                &call_hash,
+            );
+        }
+    };
+    host.task.consume_worker_result(&role).map_err(error)?;
+    let verification: CompletionVerification = match serde_json::from_str(&output) {
+        Ok(value) => value,
+        Err(parse_error) => {
+            codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
+                .map_err(error)?;
+            return completion_unavailable(
+                host,
+                candidate_marker,
+                codex_omd::CompletionStatus::Unverified,
+                format!("independent verifier returned invalid evidence: {parse_error}"),
+                &call_hash,
+            );
+        }
+    };
+    let report_complete = !manifest.communication.structured_worker_reports
+        || verification.report.as_ref().is_some_and(|report| {
+            report.validate().is_ok() && report.status == WorkerReportStatus::Completed
+        });
+    let passed_paths_exist = verification.challenges.iter().all(|challenge| {
+        challenge.verdict != codex_omd::ChallengeVerdict::Passed
+            || challenge
+                .paths
+                .iter()
+                .all(|path| candidate.files.contains_key(path))
+    });
+    if !report_complete
+        || !passed_paths_exist
+        || verification.candidate_sha256 != candidate_sha256
+        || verification.contract_sha256 != contract_sha256
+    {
+        codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
+            .map_err(error)?;
+        return completion_unavailable(
+            host,
+            candidate_marker,
+            codex_omd::CompletionStatus::Unverified,
+            "independent verifier output is incomplete, stale, or cites absent passing evidence"
+                .into(),
+            &call_hash,
+        );
+    }
+    let remaining_after = host.task.remaining().map_err(error)?;
+    let submission = codex_omd::CompletionSubmission {
+        candidate: candidate_marker.clone(),
+        contract_sha256,
+        verifier: verifier_name.as_str().into(),
+        separate_verifier: verifier_name != lead.route,
+        final_review: final_review.expect("checked final review"),
+        requirement_evidence: checkpoint.completed_acceptance,
+        requirements: verification.requirements.clone(),
+        challenges: verification.challenges.clone(),
+        allowance_remaining: !remaining_after.0.is_zero()
+            && remaining_after.1 > 0
+            && remaining_after.2 > 0,
+    };
+    let (prior, submission_result) = {
+        let mut completion = host
+            .completion
+            .lock()
+            .map_err(|_| "completion runtime lock poisoned")?;
+        let prior = completion.snapshot();
+        (prior, completion.submit(submission))
+    };
+    let receipt = match submission_result {
+        Ok(receipt) => receipt,
+        Err(validation_error) => {
+            codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
+                .map_err(error)?;
+            return completion_unavailable(
+                host,
+                candidate_marker,
+                codex_omd::CompletionStatus::Unverified,
+                format!("independent verifier evidence failed validation: {validation_error}"),
+                &call_hash,
+            );
+        }
+    };
+    host.persist_completion_or_restore(prior)?;
+    let receipt_ref = host.evidence(
+        &format!("completion-receipt-{call_hash}.json"),
+        &json!({
+            "schema": 1,
+            "receipt": receipt,
+            "response": verification,
+        }),
+    )?;
+    codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
+    Ok(json!({
+        "schema": 1,
+        "status": receipt.status,
+        "receipt": receipt,
+        "evidence": receipt_ref,
+        "reused_final_checks": true,
     }))
 }
 

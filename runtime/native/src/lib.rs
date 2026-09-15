@@ -38,6 +38,8 @@ use codex_extension_api::TurnContextContributionInput;
 use codex_extension_api::TurnItemContributor;
 use codex_omd::ActiveGuideline;
 use codex_omd::CheckpointUpdate;
+use codex_omd::CompletionGate;
+use codex_omd::CompletionPolicy;
 use codex_omd::FailureClass;
 use codex_omd::GuidelineStore;
 use codex_omd::KnowledgeMode;
@@ -66,6 +68,7 @@ use codex_omd::VersionMarker;
 use codex_omd::WorkerLimits;
 use codex_omd::WorkerReport;
 use codex_omd::WorkerReportStatus;
+use codex_omd::acceptance_contract_sha256;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
@@ -111,6 +114,8 @@ struct Manifest {
     reactive_rules: Option<PacketReference>,
     #[serde(default)]
     review: ReviewPolicy,
+    #[serde(default)]
+    completion: CompletionPolicy,
     checkpoint: TaskContract,
     legitimate_wait_tools: Vec<String>,
     lifecycle: LifecyclePolicy,
@@ -313,6 +318,7 @@ struct Host {
     lsp: Option<std::sync::Mutex<LspRuntime>>,
     reactive_rules: Option<ReactiveRules>,
     review: std::sync::Mutex<ReviewRuntime>,
+    completion: std::sync::Mutex<CompletionGate>,
 }
 
 #[derive(Clone)]
@@ -347,6 +353,8 @@ struct CheckpointTool(Arc<Lead>);
 struct LspTool(Arc<Lead>);
 
 struct ReviewTool(Arc<Lead>);
+
+struct CompletionTool(Arc<Lead>);
 
 struct ReviewRuntime {
     ledger: UnifiedReview,
@@ -660,6 +668,10 @@ fn review_report_prompt() -> &'static str {
     "Return only the review object required by the response schema. Keep the exact candidate SHA256, typed findings, and resolved finding IDs at the top level, and include the structured worker report in the report field. The nested report must preserve review scope, uncertainty, evidence references, and required clarification."
 }
 
+fn completion_report_prompt() -> &'static str {
+    "Return only the completion-verification object required by the response schema. Preserve every acceptance criterion byte-for-byte and cite only supplied evidence SHA256s. Assess missing wiring, test weakening, and negative cases separately. Include the structured worker report in the report field without treating unavailable evidence as success."
+}
+
 fn string_array_schema(max_items: u32) -> Value {
     json!({
         "type": "array",
@@ -712,6 +724,50 @@ fn review_schema(report_mode: ReviewReportMode) -> Value {
             "resolved_finding_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 128, "uniqueItems": true}
         },
         "required": ["candidate_sha256", "findings", "resolved_finding_ids"],
+        "additionalProperties": false
+    });
+    if report_mode == ReviewReportMode::Structured {
+        schema["properties"]["report"] = worker_report_schema();
+        schema["required"]
+            .as_array_mut()
+            .expect("required array")
+            .push(json!("report"));
+    }
+    schema
+}
+
+fn completion_schema(report_mode: ReviewReportMode) -> Value {
+    let requirement = json!({
+        "type": "object",
+        "properties": {
+            "criterion": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "verdict": {"type": "string", "enum": ["satisfied", "unsatisfied", "blocked", "unverified"]},
+            "summary": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "evidence_sha256s": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "maxItems": 16, "uniqueItems": true}
+        },
+        "required": ["criterion", "verdict", "summary", "evidence_sha256s"],
+        "additionalProperties": false
+    });
+    let challenge = json!({
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string", "enum": ["missing_wiring", "test_weakening", "negative_cases"]},
+            "verdict": {"type": "string", "enum": ["passed", "finding", "blocked", "unverified"]},
+            "summary": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "paths": string_array_schema(128)
+        },
+        "required": ["kind", "verdict", "summary", "paths"],
+        "additionalProperties": false
+    });
+    let mut schema = json!({
+        "type": "object",
+        "properties": {
+            "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "requirements": {"type": "array", "items": requirement, "maxItems": 32},
+            "challenges": {"type": "array", "items": challenge, "minItems": 3, "maxItems": 3}
+        },
+        "required": ["candidate_sha256", "contract_sha256", "requirements", "challenges"],
         "additionalProperties": false
     });
     if report_mode == ReviewReportMode::Structured {
@@ -804,6 +860,87 @@ fn review_runtime(manifest: &Manifest) -> Result<ReviewRuntime, String> {
     Ok(ReviewRuntime { ledger, candidates })
 }
 
+fn completion_runtime(
+    manifest: &Manifest,
+    initial_candidate_sha256: &str,
+    review: &ReviewRuntime,
+) -> Result<CompletionGate, String> {
+    let path = manifest.evidence.join("completion-state.json");
+    let gate = if path.exists() {
+        if manifest.lifecycle.explicit_resume.is_none() {
+            return Err("existing completion state requires explicit resume".into());
+        }
+        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        if bytes.len() > 8_388_608 {
+            return Err("persisted completion state exceeds limit".into());
+        }
+        CompletionGate::restore(serde_json::from_slice(&bytes).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?
+    } else {
+        if manifest.lifecycle.explicit_resume.is_some() {
+            return Err(
+                "explicit resume is missing the pre-implementation completion contract".into(),
+            );
+        }
+        CompletionGate::new(
+            manifest.completion.clone(),
+            manifest.checkpoint.clone(),
+            initial_candidate_sha256.into(),
+        )
+        .map_err(|error| error.to_string())?
+    };
+    let snapshot = gate.snapshot();
+    if snapshot.policy != manifest.completion
+        || snapshot.contract != manifest.checkpoint
+        || snapshot.contract_sha256
+            != acceptance_contract_sha256(&manifest.checkpoint)
+                .map_err(|error| error.to_string())?
+    {
+        return Err("completion policy or acceptance contract changed across resume".into());
+    }
+    for marker in snapshot.receipts.iter().flat_map(|receipt| {
+        std::iter::once(&receipt.candidate).chain(
+            receipt
+                .requirements
+                .iter()
+                .flat_map(|requirement| requirement.evidence.iter()),
+        )
+    }) {
+        let path = PathBuf::from(&marker.evidence);
+        if path.canonicalize().map_err(|error| error.to_string())? != path
+            || !path.starts_with(&manifest.evidence)
+            || execution::hash(&std::fs::read(&path).map_err(|error| error.to_string())?)
+                != marker.evidence_sha256
+        {
+            return Err("persisted completion evidence is not current host-owned evidence".into());
+        }
+    }
+    for receipt in &snapshot.receipts {
+        let bytes =
+            std::fs::read(&receipt.candidate.evidence).map_err(|error| error.to_string())?;
+        let candidate: Snapshot =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        if candidate.hash().map_err(|error| error.to_string())? != receipt.candidate.sha256 {
+            return Err("persisted completion candidate version changed".into());
+        }
+    }
+    for receipt in snapshot
+        .receipts
+        .iter()
+        .filter(|receipt| receipt.final_review_cycle.is_some())
+    {
+        if !review.ledger.snapshot().cycles.iter().any(|cycle| {
+            Some(cycle.id) == receipt.final_review_cycle
+                && cycle.cadence == codex_omd::ReviewCadence::Final
+                && cycle.final_approved
+                && cycle.candidate.sha256 == receipt.candidate.sha256
+        }) {
+            return Err("persisted completion receipt is detached from final review".into());
+        }
+    }
+    Ok(gate)
+}
+
 pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
@@ -820,6 +957,7 @@ pub fn install(
     }
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     manifest.review.validate().map_err(|e| e.to_string())?;
+    manifest.completion.validate().map_err(|e| e.to_string())?;
     if manifest.leads.sol.model != "gpt-5.6-sol"
         || manifest.leads.astra.model != "gpt-6-astra"
         || manifest.worker.model != "muse-spark-1.3-contributor"
@@ -979,6 +1117,7 @@ pub fn install(
     }
     let accounts = Arc::new(Accounts::default());
     let live = capture_live_state(&manifest, &accounts)?;
+    let initial_candidate_sha256 = live.workspace_sha256.clone();
     let task = Arc::new(
         Task::open_checkpointed(
             manifest.limits.clone(),
@@ -992,6 +1131,7 @@ pub fn install(
     codex_api::request_observer::install_response_observer(accounts.clone())
         .map_err(str::to_owned)?;
     let review = review_runtime(&manifest)?;
+    let completion = completion_runtime(&manifest, &initial_candidate_sha256, &review)?;
     let host = Arc::new(Host {
         lsp: lsp_enabled.then(|| {
             let policy = manifest.lsp.as_ref().expect("enabled LSP policy");
@@ -1014,7 +1154,9 @@ pub fn install(
         knowledge_prompt: frozen_knowledge_prompt,
         reactive_rules,
         review: std::sync::Mutex::new(review),
+        completion: std::sync::Mutex::new(completion),
     });
+    host.persist_completion()?;
     let _ = host.authorize();
     let deadline_host = host.clone();
     tokio::spawn(async move {
@@ -1079,22 +1221,31 @@ impl Host {
 
     async fn stop_tree(&self, reason: &str, final_stop: bool, except: Option<ThreadId>) {
         if final_stop {
-            let reviewed_current = self
+            let (reviewed_current, completion_current) = self
                 .live_state()
                 .ok()
-                .and_then(|live| {
-                    self.review
+                .map(|live| {
+                    let reviewed = self
+                        .review
                         .lock()
                         .ok()
                         .and_then(|review| review.ledger.snapshot().final_candidate_sha256)
-                        .map(|candidate| candidate == live.workspace_sha256)
+                        .is_some_and(|candidate| candidate == live.workspace_sha256);
+                    let completed = self
+                        .completion
+                        .lock()
+                        .ok()
+                        .and_then(|completion| completion.snapshot().approved_candidate_sha256)
+                        .is_some_and(|candidate| candidate == live.workspace_sha256);
+                    (reviewed, completed)
                 })
-                .unwrap_or(false);
+                .unwrap_or((false, false));
             if reason != "completed"
                 || !reviewed_current
+                || !completion_current
                 || self
                     .task
-                    .complete("foreground acceptance checkpoint")
+                    .complete("adversarial completion receipt")
                     .is_err()
             {
                 let _ = self.task.stop();
@@ -1239,6 +1390,55 @@ impl Host {
         std::fs::File::open(&self.manifest.evidence)
             .and_then(|directory| directory.sync_all())
             .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn persist_completion(&self) -> Result<(), String> {
+        use std::io::Write;
+        let bytes = serde_json::to_vec(
+            &self
+                .completion
+                .lock()
+                .map_err(|_| "completion runtime lock poisoned")?
+                .snapshot(),
+        )
+        .map_err(|error| error.to_string())?;
+        if bytes.len() > 8_388_608 {
+            return Err("completion state exceeds persistence limit".into());
+        }
+        let path = self.manifest.evidence.join("completion-state.json");
+        let temporary = self.manifest.evidence.join(format!(
+            "completion-state-{}-{}.tmp",
+            std::process::id(),
+            execution::hash(&bytes)
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| error.to_string())?;
+        std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+        std::fs::File::open(&self.manifest.evidence)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn persist_completion_or_restore(
+        &self,
+        prior: codex_omd::CompletionSnapshot,
+    ) -> Result<(), String> {
+        if let Err(persist_error) = self.persist_completion() {
+            let restored = CompletionGate::restore(prior).map_err(|error| error.to_string())?;
+            *self
+                .completion
+                .lock()
+                .map_err(|_| "completion runtime lock poisoned")? = restored;
+            return Err(persist_error);
+        }
         Ok(())
     }
 
@@ -1398,6 +1598,28 @@ impl ContextContributor for Extension {
                     fragments.push(PromptFragment::developer_capability(
                         prompt,
                         ContentItemKind("oh_my_diff.review".into()),
+                    ));
+                }
+                if let Ok(completion) = self.completion.lock() {
+                    let snapshot = completion.snapshot();
+                    let current_candidate = self
+                        .live_state()
+                        .ok()
+                        .map(|state| state.workspace_sha256)
+                        .unwrap_or_else(|| "unavailable".into());
+                    let latest = snapshot
+                        .receipts
+                        .last()
+                        .map(|receipt| format!("{:?}", receipt.status))
+                        .unwrap_or_else(|| "not_run".into());
+                    fragments.push(PromptFragment::developer_capability(
+                        format!(
+                            "The immutable pre-implementation acceptance contract SHA256 is {}. Before reporting completion, use omd_complete on the exact final candidate after its final unified review and evidence-backed checkpoint. A separate read-only verifier must assess every criterion and explicitly challenge missing wiring, test weakening, and relevant negative cases. Unavailable evidence is not success. Continue actionable unfinished work while allowance remains; otherwise report blocked or unverified. Current candidate SHA256: {current_candidate}. Completion attempts: {}/{}; latest status: {latest}.",
+                            snapshot.contract_sha256,
+                            snapshot.receipts.len(),
+                            snapshot.policy.max_attempts,
+                        ),
+                        ContentItemKind("oh_my_diff.completion".into()),
                     ));
                 }
                 if lead.owner == "lead"
@@ -1791,6 +2013,7 @@ impl ToolContributor for Extension {
             Arc::new(CheckpointTool(lead.clone())),
             Arc::new(EscalationTool(lead.clone())),
             Arc::new(ReviewTool(lead.clone())),
+            Arc::new(CompletionTool(lead.clone())),
         ];
         if self.lsp.is_some() {
             tools.push(Arc::new(LspTool(lead.clone())));
@@ -2289,6 +2512,73 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ReviewTool {
             let value = execution::review_current(&self.0, &call, request)
                 .await
                 .unwrap_or_else(|error| json!({"schema": 1, "status": "failed", "error": error}));
+            Ok(Box::new(JsonToolOutput::new(value)) as Box<dyn ToolOutput>)
+        })
+    }
+}
+
+impl<'call> ToolExecutor<ToolCall<'call>> for CompletionTool {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("omd_complete")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::Function(ResponsesApiTool {
+            name: "omd_complete".into(),
+            description: "Run the final adversarial completion gate after checkpoint evidence and final unified review are current. A distinct read-only verifier must assess every immutable acceptance criterion and separately challenge missing wiring, test weakening, and relevant negative cases. The gate reuses exact-candidate checks, emits a compact requirement/evidence receipt, continues actionable work within the shared allowance, and otherwise reports blocked or unverified. Only an exact completed receipt permits task completion.".into(),
+            strict: false,
+            defer_loading: None,
+            output_schema: None,
+            parameters: JsonSchema::object(
+                BTreeMap::from([
+                    (
+                        "candidate_sha256".into(),
+                        JsonSchema::string(Some(
+                            "Exact current candidate SHA256 from host completion context.".into(),
+                        )),
+                    ),
+                    (
+                        "contract_sha256".into(),
+                        JsonSchema::string(Some(
+                            "Immutable acceptance contract SHA256 from host completion context."
+                                .into(),
+                        )),
+                    ),
+                ]),
+                Some(vec!["candidate_sha256".into(), "contract_sha256".into()]),
+                Some(false.into()),
+            ),
+        })
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
+    }
+
+    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
+    where
+        'call: 'a,
+    {
+        Box::pin(async move {
+            let request: execution::CompletionRequest =
+                serde_json::from_str(call.function_arguments()?)
+                    .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
+            if self
+                .0
+                .host
+                .operation
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                return Err(FunctionCallError::RespondToModel(
+                    "another controlled operation is active".into(),
+                ));
+            }
+            let _operation = OperationGuard(&self.0.host.operation);
+            let value = execution::complete_current(&self.0, &call, request)
+                .await
+                .unwrap_or_else(
+                    |error| json!({"schema": 1, "status": "unverified", "error": error}),
+                );
             Ok(Box::new(JsonToolOutput::new(value)) as Box<dyn ToolOutput>)
         })
     }
