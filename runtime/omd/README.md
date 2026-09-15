@@ -104,6 +104,38 @@ finding carries baseline/current source anchors plus either `authorized_scope` o
 changes fail closed, and there is no watcher, service, or aggregate repository
 health score.
 
+`LspPreferenceStore` records an explicit enabled/disabled decision by repository
+identity in a canonical host-owned file. `omd-lsp detect` inspects only the
+current `PATH`; `preference` updates one repository revision atomically; and
+`status` combines the retained choice with current server availability. The
+native extension exposes no semantic tool unless the retained choice is enabled.
+
+`LspSession` implements bounded stdio JSON-RPC without adding an external LSP
+dependency. It validates the repository size before startup, opens installed
+servers in the canonical workspace, synchronizes whole-document versions after
+coherent edits, and retains only diagnostics explicitly bound to the current
+version. Startup, requests, diagnostic batching, responses, idle lifetime,
+workspace size, edit count, and output are all capped. Servers are terminated
+after timeout, idle, task stop, client loss, or extension shutdown.
+
+Navigation and references return the server result. Code actions may apply only
+an edit-only action, resolving it first when advertised. Symbol and file renames
+apply only after the workspace edit's complete path set equals the caller's
+declared scope and each existing or absent path matches the caller's expected
+SHA256 state. UTF-16 positions, server document versions, repository containment,
+symlinks, overlaps, and resource operations are checked before writing. A failed
+cross-file application restores the pre-edit bytes. Unsupported and unverifiable
+operations carry a non-success fallback to ordinary search, scoped edits, and
+executable checks.
+
+`select_intermediate_checks` derives commands rather than accepting arbitrary
+programs. It selects Cargo with an existing manifest, pnpm with an existing
+TypeScript config, an installed Python checker, or configured Gradle/Maven;
+missing tooling remains explicitly unsupported. The input digest covers relevant
+source and project configuration, so the host can skip an identical check and
+reject a result if inputs changed
+while it ran.
+
 ```json
 {
   "schema": 1,
@@ -177,6 +209,9 @@ cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-graph -- sna
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-graph -- select /absolute/repository graph.json NODE_ID
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-health -- baseline /absolute/repository constraints.json baseline.json REVISION
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-health -- check /absolute/repository constraints.json baseline.json report.json REVISION
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-lsp -- detect
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-lsp -- preference /absolute/host-owned/lsp-preferences.json owner/repository enabled
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-lsp -- status /absolute/host-owned/lsp-preferences.json owner/repository
 ```
 
 `record_failure` journals a bounded typed failure with host-owned evidence

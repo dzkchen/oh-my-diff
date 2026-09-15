@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "67316566495dba037cf9571eef83d08163d08ee6f7a5932ea444fa2d1fe18a1f"
+    "sha256": "1b789eb717743843bd8945734e08c573cedb6cc4cff77585bc4370568da9f213"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -93,7 +93,7 @@
     },
     "codex-rs/ext/omd/Cargo.toml": {
       "before": null,
-      "after": "e14cd087f938f80e7e6759102a7b3f16d7b19f56b0e385f1a4ffdeeccdd045f0"
+      "after": "72ac9730e89dc50775d3f815af1db278be99e7f32d2a66d316d14760296c9ced"
     },
     "codex-rs/ext/omd/src/accounting.rs": {
       "before": null,
@@ -113,7 +113,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "f910a64580e2dbf5ec7075723f3ba2a8a8f92a4c89ee92d228d9f7912c2d9ebc"
+      "after": "89cda3426e26505344dcab33bc4b544660597d74e83f26b3362b5e51c956bf18"
     },
     "codex-rs/login/src/auth/default_client.rs": {
       "before": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",
@@ -129,7 +129,7 @@
     },
     "codex-rs/omd/README.md": {
       "before": null,
-      "after": "1c77bda13d10c28ba63f88808a5a2428b389580708f08876ea9e047b2c26f964"
+      "after": "3d1795f8ac194b25ed7b266798333dcdb608753ee98e66175bbbb667c3e8b4fa"
     },
     "codex-rs/omd/src/admission.rs": {
       "before": null,
@@ -151,9 +151,17 @@
       "before": null,
       "after": "4a534f28bd696194fd58cc3963a57e8075eb8f2a42c7ebcfbabffdb565c6a95c"
     },
+    "codex-rs/omd/src/bin/omd-lsp.rs": {
+      "before": null,
+      "after": "4ebee64decf01fbf6db14e276b39ff077284e37e3efdc5fd16ac434076d4d37c"
+    },
     "codex-rs/omd/src/checkpoint.rs": {
       "before": null,
       "after": "511612a2ad6c94d4dc8d3275e4e0ed4c5198338d2b794aae80b71f44d71e3724"
+    },
+    "codex-rs/omd/src/checks.rs": {
+      "before": null,
+      "after": "e4cc7515af115c8fd3469e11e817b5d30cd1754a9617f1ded37e39789bf24e4d"
     },
     "codex-rs/omd/src/communication.rs": {
       "before": null,
@@ -177,7 +185,11 @@
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "05a29c934948ba5383d9527be4bc8f04e60d45e6bb9da41b3aee9746e3335707"
+      "after": "b31892d0b441bf0f3f6e460e88f0ff200510cc18fff638bae04289e7cba9a7da"
+    },
+    "codex-rs/omd/src/lsp.rs": {
+      "before": null,
+      "after": "b2a78dfedb17048ff090b3f680e8149ff418f7f8f48d7864d50b5700197d5f68"
     },
     "codex-rs/omd/src/reactive.rs": {
       "before": null,

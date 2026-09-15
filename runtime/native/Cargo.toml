@@ -19,7 +19,7 @@ codex-utils-path-uri = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["time", "sync"] }
+tokio = { workspace = true, features = ["io-util", "process", "time", "sync"] }
 sha2 = { workspace = true }
 codex-file-system = { workspace = true }
 

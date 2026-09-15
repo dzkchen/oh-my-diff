@@ -105,6 +105,62 @@ The separate `omd-knowledge` operator handles retention, candidate approval,
 inspection, removal, and generation-advancing reset. Omitting the object disables
 repository knowledge injection.
 
+Semantic feedback is also disabled unless the manifest names a canonical
+external `lsp.preference_store` whose exact `repository_identity` entry is
+enabled. The `omd-lsp` operator changes that remembered repository preference
+and reports installed server discovery; it never installs a server. Once opted
+in, the deferred `omd_lsp` tool starts at most one bounded server session for
+each of Rust, TypeScript, JavaScript, Python, and Java. It detects
+`rust-analyzer`; `typescript-language-server` or `vtsls`; `pyright-langserver`,
+`pylsp`, or `jedi-language-server`; and `jdtls` from the launch `PATH`.
+
+The tool synchronizes complete coherent path batches and resynchronizes open
+documents after completed tools. Diagnostics are collected only after a batch
+and accepted only when the server supplies the current document version.
+Definition, references, edit-only code actions, symbol rename, and file rename
+are capability-gated. Every applied workspace edit must match the caller's
+complete repository-relative scope and current SHA256 (or an absent destination),
+plus any server document version. All files are validated before writes;
+individual replacements are atomic and a failed multi-file application rolls
+back. Command-bearing code actions, out-of-scope edits, stale versions,
+unsupported resource operations, missing servers, and missing capabilities
+return an explicit ordinary-tool fallback rather than semantic success.
+
+`intermediate_check` derives non-installing, allowlisted project checks from the
+changed languages: Cargo with an existing `Cargo.toml` for Rust, pnpm plus an
+existing `tsconfig.json` for TypeScript/JavaScript, installed Pyright/Mypy/Ruff
+for Python, and configured Gradle/Maven for Java. Output, duration, workspace
+inputs, and processes are bounded. Results are bound to a whole-language input
+digest, rechecked after
+execution, and cached only while that digest remains exact.
+
+```json
+{
+  "lsp": {
+    "preference_store": "/absolute/host-owned/lsp-preferences.json",
+    "limits": {
+      "startup_ms": 10000,
+      "request_ms": 10000,
+      "diagnostic_batch_ms": 150,
+      "idle_ms": 60000,
+      "max_workspace_files": 20000,
+      "max_workspace_bytes": 134217728,
+      "max_response_bytes": 4194304,
+      "max_edit_files": 128,
+      "max_text_edits": 4096,
+      "max_check_output_bytes": 1048576,
+      "check_timeout_ms": 120000
+    }
+  }
+}
+```
+
+```sh
+cargo run --locked -p codex-omd --bin omd-lsp -- detect
+cargo run --locked -p codex-omd --bin omd-lsp -- preference /absolute/host-owned/lsp-preferences.json owner/repository enabled
+cargo run --locked -p codex-omd --bin omd-lsp -- status /absolute/host-owned/lsp-preferences.json owner/repository
+```
+
 The offline `omd-graph` operator builds one schema-versioned JSON code/impact
 graph for the patched TUI and a self-contained interactive HTML snapshot. Its
 bounded lexical index covers Rust, Python, TypeScript/JavaScript, and Java source

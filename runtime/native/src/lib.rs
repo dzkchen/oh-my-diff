@@ -41,6 +41,12 @@ use codex_omd::KnowledgeSession;
 use codex_omd::KnowledgeStore;
 use codex_omd::Limits;
 use codex_omd::LiveState;
+use codex_omd::LspLanguage;
+use codex_omd::LspLimits;
+use codex_omd::LspPosition;
+use codex_omd::LspPreferenceStore;
+use codex_omd::LspRange;
+use codex_omd::LspSession;
 use codex_omd::ProcessSnapshot;
 use codex_omd::ProcessStatus;
 use codex_omd::ReactiveRuleSet;
@@ -92,6 +98,8 @@ struct Manifest {
     #[serde(default)]
     knowledge: Option<KnowledgePolicy>,
     #[serde(default)]
+    lsp: Option<LspPolicy>,
+    #[serde(default)]
     communication: CommunicationPolicy,
     #[serde(default)]
     reactive_rules: Option<PacketReference>,
@@ -137,6 +145,13 @@ struct KnowledgePolicy {
     store: PathBuf,
     mode: KnowledgeMode,
     max_context_bytes: usize,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LspPolicy {
+    preference_store: PathBuf,
+    limits: LspLimits,
 }
 
 impl CommunicationPolicy {
@@ -286,6 +301,7 @@ struct Host {
     pending_calls: std::sync::Mutex<BTreeMap<String, PendingCall>>,
     active_guideline: Option<ActiveGuideline>,
     knowledge_prompt: Option<String>,
+    lsp: Option<std::sync::Mutex<LspRuntime>>,
     reactive_rules: Option<ReactiveRules>,
 }
 
@@ -317,6 +333,283 @@ struct ContributionTool(Arc<Lead>);
 struct EscalationTool(Arc<Lead>);
 
 struct CheckpointTool(Arc<Lead>);
+
+struct LspTool(Arc<Lead>);
+
+struct LspRuntime {
+    repository: PathBuf,
+    limits: LspLimits,
+    sessions: BTreeMap<LspLanguage, LspSession>,
+    check_cache: BTreeMap<String, Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+enum LspRequest {
+    Status,
+    Sync {
+        language: LspLanguage,
+        paths: Vec<String>,
+    },
+    Definition {
+        language: LspLanguage,
+        path: String,
+        position: LspPosition,
+    },
+    References {
+        language: LspLanguage,
+        path: String,
+        position: LspPosition,
+        #[serde(default)]
+        include_declaration: bool,
+    },
+    CodeActions {
+        language: LspLanguage,
+        path: String,
+        range: LspRange,
+    },
+    ApplyCodeAction {
+        language: LspLanguage,
+        action_value: Value,
+        scope: Vec<String>,
+        expected_versions: BTreeMap<String, Option<String>>,
+    },
+    RenameSymbol {
+        language: LspLanguage,
+        path: String,
+        position: LspPosition,
+        new_name: String,
+        scope: Vec<String>,
+        expected_versions: BTreeMap<String, Option<String>>,
+    },
+    RenameFile {
+        language: LspLanguage,
+        old_path: String,
+        new_path: String,
+        scope: Vec<String>,
+        expected_versions: BTreeMap<String, Option<String>>,
+    },
+    IntermediateCheck {
+        paths: Vec<String>,
+    },
+}
+
+impl LspRuntime {
+    fn session(&mut self, language: LspLanguage) -> Result<&mut LspSession, Value> {
+        self.sessions
+            .retain(|_, session| !session.is_idle() && session.is_running());
+        if !self.sessions.contains_key(&language) {
+            let session =
+                LspSession::start(self.repository.clone(), language, self.limits.clone(), None)
+                    .map_err(|fallback| {
+                        serde_json::to_value(fallback).unwrap_or_else(
+                            |error| json!({"status": "failed", "error": error.to_string()}),
+                        )
+                    })?;
+            self.sessions.insert(language, session);
+        }
+        self.sessions
+            .get_mut(&language)
+            .ok_or_else(|| json!({"status": "failed", "error": "language server session missing"}))
+    }
+
+    fn sync_open_documents(&mut self) {
+        self.sessions
+            .retain(|_, session| !session.is_idle() && session.is_running());
+        for session in self.sessions.values_mut() {
+            let _ = session.sync_open_documents();
+        }
+    }
+}
+
+fn lsp_result(runtime: &mut LspRuntime, request: LspRequest) -> Value {
+    let result = match request {
+        LspRequest::Status => {
+            runtime
+                .sessions
+                .retain(|_, session| !session.is_idle() && session.is_running());
+            return json!({
+                "schema": 1,
+                "status": "ready",
+                "opt_in": "enabled",
+                "installed_servers": codex_omd::detect_installed_servers(),
+                "active_sessions": runtime.sessions.iter().map(|(language, session)| (language, session.capabilities())).collect::<BTreeMap<_, _>>(),
+                "limits": runtime.limits,
+                "auto_install": false,
+            });
+        }
+        LspRequest::Sync { language, paths } => runtime
+            .session(language)
+            .and_then(|session| {
+                session
+                    .sync(&paths)
+                    .map_err(|error| json!({"status": "failed", "error": error.to_string()}))
+            })
+            .and_then(|value| {
+                serde_json::to_value(value)
+                    .map_err(|error| json!({"status": "failed", "error": error.to_string()}))
+            }),
+        LspRequest::Definition {
+            language,
+            path,
+            position,
+        } => runtime.session(language).and_then(|session| {
+            session
+                .definition(&path, position)
+                .map_err(|fallback| serde_json::to_value(fallback).expect("serializable fallback"))
+        }),
+        LspRequest::References {
+            language,
+            path,
+            position,
+            include_declaration,
+        } => runtime.session(language).and_then(|session| {
+            session
+                .references(&path, position, include_declaration)
+                .map_err(|fallback| serde_json::to_value(fallback).expect("serializable fallback"))
+        }),
+        LspRequest::CodeActions {
+            language,
+            path,
+            range,
+        } => runtime.session(language).and_then(|session| {
+            session
+                .code_actions(&path, range)
+                .map_err(|fallback| serde_json::to_value(fallback).expect("serializable fallback"))
+        }),
+        LspRequest::ApplyCodeAction {
+            language,
+            action_value,
+            scope,
+            expected_versions,
+        } => runtime
+            .session(language)
+            .and_then(|session| {
+                session
+                    .apply_code_action(&action_value, &scope, &expected_versions)
+                    .map_err(|fallback| {
+                        serde_json::to_value(fallback).expect("serializable fallback")
+                    })
+            })
+            .and_then(|value| {
+                serde_json::to_value(value)
+                    .map_err(|error| json!({"status": "failed", "error": error.to_string()}))
+            }),
+        LspRequest::RenameSymbol {
+            language,
+            path,
+            position,
+            new_name,
+            scope,
+            expected_versions,
+        } => runtime
+            .session(language)
+            .and_then(|session| {
+                session
+                    .rename_symbol(&path, position, &new_name, &scope, &expected_versions)
+                    .map_err(|fallback| {
+                        serde_json::to_value(fallback).expect("serializable fallback")
+                    })
+            })
+            .and_then(|value| {
+                serde_json::to_value(value)
+                    .map_err(|error| json!({"status": "failed", "error": error.to_string()}))
+            }),
+        LspRequest::RenameFile {
+            language,
+            old_path,
+            new_path,
+            scope,
+            expected_versions,
+        } => runtime
+            .session(language)
+            .and_then(|session| {
+                session
+                    .rename_file(&old_path, &new_path, &scope, &expected_versions)
+                    .map_err(|fallback| {
+                        serde_json::to_value(fallback).expect("serializable fallback")
+                    })
+            })
+            .and_then(|value| {
+                serde_json::to_value(value)
+                    .map_err(|error| json!({"status": "failed", "error": error.to_string()}))
+            }),
+        LspRequest::IntermediateCheck { .. } => unreachable!("checks are asynchronous"),
+    };
+    match result {
+        Ok(value) => json!({"schema": 1, "status": "completed", "result": value}),
+        Err(value) => value,
+    }
+}
+
+async fn read_bounded(
+    reader: impl tokio::io::AsyncRead + Unpin,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    reader
+        .take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > limit {
+        return Err("intermediate check output exceeds limit".into());
+    }
+    Ok(bytes)
+}
+
+async fn execute_intermediate_check(
+    check: codex_omd::IntermediateCheck,
+    limits: &LspLimits,
+) -> Value {
+    use std::process::Stdio;
+    let mut child = match tokio::process::Command::new(&check.program)
+        .args(&check.arguments)
+        .current_dir(&check.working_directory)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            return json!({"schema": 1, "status": "failed", "check": check, "error": error.to_string()});
+        }
+    };
+    let stdout = child.stdout.take().expect("piped check stdout");
+    let stderr = child.stderr.take().expect("piped check stderr");
+    let run = async {
+        let (stdout, stderr, status) = tokio::join!(
+            read_bounded(stdout, limits.max_check_output_bytes),
+            read_bounded(stderr, limits.max_check_output_bytes),
+            child.wait(),
+        );
+        Ok::<_, String>((stdout?, stderr?, status.map_err(|error| error.to_string())?))
+    };
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(limits.check_timeout_ms),
+        run,
+    )
+    .await
+    {
+        Ok(Ok((stdout, stderr, status))) => json!({
+            "schema": 1,
+            "status": if status.success() { "passed" } else { "failed" },
+            "check": check,
+            "exit_code": status.code(),
+            "stdout": String::from_utf8_lossy(&stdout),
+            "stderr": String::from_utf8_lossy(&stderr),
+            "cached": false,
+        }),
+        Ok(Err(error)) => json!({"schema": 1, "status": "failed", "check": check, "error": error}),
+        Err(_) => {
+            let _ = child.kill().await;
+            json!({"schema": 1, "status": "timed_out", "check": check, "timeout_ms": limits.check_timeout_ms})
+        }
+    }
+}
 
 fn guideline_prompt(guideline: &ActiveGuideline) -> String {
     format!(
@@ -563,6 +856,28 @@ pub fn install(
         Some(_) => return Err("knowledge store must be canonical, host-owned, and bounded".into()),
         None => None,
     };
+    let lsp_enabled = match &manifest.lsp {
+        Some(policy) => {
+            policy
+                .limits
+                .validate()
+                .map_err(|error| error.to_string())?;
+            let parent = policy
+                .preference_store
+                .parent()
+                .ok_or("LSP preference store parent missing")?;
+            if parent.canonicalize().map_err(|error| error.to_string())? != parent
+                || policy.preference_store.starts_with(&manifest.repository)
+            {
+                return Err("LSP preference store must be canonical and host-owned".into());
+            }
+            LspPreferenceStore::open(policy.preference_store.clone())
+                .map_err(|error| error.to_string())?
+                .preference(&manifest.repository_identity)
+                .is_some_and(|preference| preference.enabled)
+        }
+        None => false,
+    };
     let frozen_knowledge_prompt = match (&manifest.knowledge, &knowledge_session) {
         (Some(policy), Some(session)) => Some(knowledge_prompt(policy, session)?),
         _ => None,
@@ -586,6 +901,15 @@ pub fn install(
     codex_api::request_observer::install_response_observer(accounts.clone())
         .map_err(str::to_owned)?;
     let host = Arc::new(Host {
+        lsp: lsp_enabled.then(|| {
+            let policy = manifest.lsp.as_ref().expect("enabled LSP policy");
+            std::sync::Mutex::new(LspRuntime {
+                repository: manifest.repository.clone(),
+                limits: policy.limits.clone(),
+                sessions: BTreeMap::new(),
+                check_cache: BTreeMap::new(),
+            })
+        }),
         manifest,
         task,
         accounts,
@@ -607,6 +931,30 @@ pub fn install(
         .await;
         deadline_host.stop_tree("task_deadline", true, None).await;
     });
+    if let Some(lsp) = &host.lsp {
+        let interval = lsp
+            .lock()
+            .map_err(|_| "LSP runtime lock poisoned")?
+            .limits
+            .idle_ms
+            .min(60_000);
+        let weak = Arc::downgrade(&host);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+                let Some(host) = weak.upgrade() else {
+                    break;
+                };
+                if let Some(lsp) = &host.lsp
+                    && let Ok(mut runtime) = lsp.lock()
+                {
+                    runtime
+                        .sessions
+                        .retain(|_, session| !session.is_idle() && session.is_running());
+                }
+            }
+        });
+    }
     registry.thread_lifecycle_contributor(Arc::new(Extension(host.clone())));
     registry.prompt_contributor(Arc::new(Extension(host.clone())));
     registry.tool_lifecycle_contributor(Arc::new(Extension(host.clone())));
@@ -676,6 +1024,11 @@ impl Host {
         }
         let _ =
             codex_omd::cleanup_owned_directory(&self.manifest.repository, &self.manifest.scratch);
+        if let Some(lsp) = &self.lsp
+            && let Ok(mut runtime) = lsp.lock()
+        {
+            runtime.sessions.clear();
+        }
     }
 
     fn authorize(&self) -> Result<(), String> {
@@ -877,6 +1230,12 @@ impl ContextContributor for Extension {
                         ContentItemKind("oh_my_diff.repository_knowledge".into()),
                     ));
                 }
+                if self.lsp.is_some() {
+                    fragments.push(PromptFragment::developer_capability(
+                        "This repository has remembered semantic-feedback opt-in. Use omd_lsp on demand for the supported five languages. Synchronize each coherent write batch before navigation or diagnostics; semantic writes require an exact declared scope and current SHA256 for every affected existing or absent path. Use intermediate_check after meaningful changes. Treat unsupported or unavailable results as an explicit fallback, not success. Servers start on demand, stop after bounded idle time, and are never installed automatically.",
+                        ContentItemKind("oh_my_diff.lsp".into()),
+                    ));
+                }
                 if lead.owner == "lead"
                     && let Some(prompt) = self.manifest.communication.user_update_prompt()
                 {
@@ -1014,6 +1373,12 @@ impl ToolLifecycleContributor for Extension {
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
             };
+            if matches!(input.outcome, ToolCallOutcome::Completed { .. })
+                && let Some(lsp) = &self.lsp
+                && let Ok(mut runtime) = lsp.lock()
+            {
+                runtime.sync_open_documents();
+            }
             let result = match input.outcome {
                 ToolCallOutcome::Completed { .. } => return,
                 ToolCallOutcome::Blocked => b"blocked".as_slice(),
@@ -1262,6 +1627,9 @@ impl ToolContributor for Extension {
             Arc::new(CheckpointTool(lead.clone())),
             Arc::new(EscalationTool(lead.clone())),
         ];
+        if self.lsp.is_some() {
+            tools.push(Arc::new(LspTool(lead.clone())));
+        }
         if accounting::authorized(
             &self.manifest.authorization,
             &self.manifest.authorization_sha256,
@@ -1404,6 +1772,275 @@ impl<'call> ToolExecutor<ToolCall<'call>> for CheckpointTool {
                 "remaining_work": checkpoint.remaining_work,
                 "allowance": checkpoint.allowance,
             }))) as Box<dyn ToolOutput>)
+        })
+    }
+}
+
+fn lsp_position_schema() -> JsonSchema {
+    JsonSchema::object(
+        BTreeMap::from([
+            (
+                "line".into(),
+                JsonSchema::integer(Some("Zero-based line.".into())),
+            ),
+            (
+                "character".into(),
+                JsonSchema::integer(Some("Zero-based UTF-16 character offset.".into())),
+            ),
+        ]),
+        Some(vec!["line".into(), "character".into()]),
+        Some(false.into()),
+    )
+}
+
+fn lsp_range_schema() -> JsonSchema {
+    JsonSchema::object(
+        BTreeMap::from([
+            ("start".into(), lsp_position_schema()),
+            ("end".into(), lsp_position_schema()),
+        ]),
+        Some(vec!["start".into(), "end".into()]),
+        Some(false.into()),
+    )
+}
+
+impl<'call> ToolExecutor<ToolCall<'call>> for LspTool {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("omd_lsp")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        let language = JsonSchema::string_enum(
+            ["rust", "typescript", "javascript", "python", "java"]
+                .into_iter()
+                .map(|value| json!(value))
+                .collect(),
+            Some("Language server route.".into()),
+        );
+        let paths = JsonSchema::array(
+            JsonSchema::string(Some("Normalized repository-relative path.".into())),
+            Some("Exact coherent path batch or semantic edit scope.".into()),
+        );
+        let expected_versions = JsonSchema::object(
+            BTreeMap::new(),
+            None,
+            Some(
+                JsonSchema::any_of(
+                    vec![JsonSchema::string(None), JsonSchema::null(None)],
+                    Some(
+                        "Current SHA256 for an existing path or null for an absent destination."
+                            .into(),
+                    ),
+                )
+                .into(),
+            ),
+        );
+        ToolSpec::Function(ResponsesApiTool {
+            name: "omd_lsp".into(),
+            description: "Use repository-opted-in, installed language servers for synchronized diagnostics, definition navigation, references, supported code actions, and exact-scope symbol or file renames. Use intermediate_check for one derived allowlisted executable check per changed language. Call sync with the complete coherent write batch before semantic reads. Rename and code-action writes require scope and expected_versions to match every affected path exactly. Unsupported capabilities return an explicit ordinary-tool fallback; servers are never installed.".into(),
+            strict: false,
+            defer_loading: None,
+            output_schema: None,
+            parameters: JsonSchema::object(
+                BTreeMap::from([
+                    (
+                        "action".into(),
+                        JsonSchema::string_enum(
+                            [
+                                "status",
+                                "sync",
+                                "definition",
+                                "references",
+                                "code_actions",
+                                "apply_code_action",
+                                "rename_symbol",
+                                "rename_file",
+                                "intermediate_check",
+                            ]
+                            .into_iter()
+                            .map(|value| json!(value))
+                            .collect(),
+                            Some("Requested bounded operation.".into()),
+                        ),
+                    ),
+                    ("language".into(), language),
+                    ("paths".into(), paths.clone()),
+                    (
+                        "path".into(),
+                        JsonSchema::string(Some("Synchronized repository-relative source path.".into())),
+                    ),
+                    ("position".into(), lsp_position_schema()),
+                    ("range".into(), lsp_range_schema()),
+                    (
+                        "include_declaration".into(),
+                        JsonSchema::boolean(Some("Include the declaration in references.".into())),
+                    ),
+                    (
+                        "action_value".into(),
+                        JsonSchema::object(BTreeMap::new(), None, Some(true.into())),
+                    ),
+                    (
+                        "new_name".into(),
+                        JsonSchema::string(Some("Requested new symbol name.".into())),
+                    ),
+                    (
+                        "old_path".into(),
+                        JsonSchema::string(Some("Existing repository-relative file path.".into())),
+                    ),
+                    (
+                        "new_path".into(),
+                        JsonSchema::string(Some("Absent repository-relative destination path.".into())),
+                    ),
+                    ("scope".into(), paths),
+                    ("expected_versions".into(), expected_versions),
+                ]),
+                Some(vec!["action".into()]),
+                Some(false.into()),
+            ),
+        })
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
+    }
+
+    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
+    where
+        'call: 'a,
+    {
+        Box::pin(async move {
+            let request: LspRequest = serde_json::from_str(call.function_arguments()?)
+                .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
+            if self
+                .0
+                .host
+                .operation
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                return Err(FunctionCallError::RespondToModel(
+                    "another controlled operation is active".into(),
+                ));
+            }
+            let _operation = OperationGuard(&self.0.host.operation);
+            let value = match request {
+                LspRequest::IntermediateCheck { paths } => {
+                    let (checks, unsupported, limits) = {
+                        let runtime = self
+                            .0
+                            .host
+                            .lsp
+                            .as_ref()
+                            .ok_or_else(|| {
+                                FunctionCallError::RespondToModel("LSP opt-in is disabled".into())
+                            })?
+                            .lock()
+                            .map_err(|_| {
+                                FunctionCallError::RespondToModel(
+                                    "LSP runtime lock poisoned".into(),
+                                )
+                            })?;
+                        let (checks, unsupported) = codex_omd::select_intermediate_checks(
+                            &runtime.repository,
+                            &paths,
+                            &runtime.limits,
+                        )
+                        .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
+                        (checks, unsupported, runtime.limits.clone())
+                    };
+                    let mut results = Vec::new();
+                    for check in checks {
+                        let key = format!("{:?}:{}", check.language, check.input_sha256);
+                        let cached = self
+                            .0
+                            .host
+                            .lsp
+                            .as_ref()
+                            .and_then(|runtime| runtime.lock().ok())
+                            .and_then(|runtime| runtime.check_cache.get(&key).cloned());
+                        if let Some(mut cached) = cached {
+                            cached["cached"] = json!(true);
+                            results.push(cached);
+                            continue;
+                        }
+                        let result = execute_intermediate_check(check.clone(), &limits).await;
+                        let post_input = self
+                            .0
+                            .host
+                            .lsp
+                            .as_ref()
+                            .and_then(|runtime| runtime.lock().ok())
+                            .and_then(|runtime| {
+                                codex_omd::select_intermediate_checks(
+                                    &runtime.repository,
+                                    &paths,
+                                    &runtime.limits,
+                                )
+                                .ok()
+                            })
+                            .and_then(|(checks, _)| {
+                                checks
+                                    .into_iter()
+                                    .find(|post| post.language == check.language)
+                                    .map(|post| post.input_sha256)
+                            });
+                        let mut result = result;
+                        let candidate_current = post_input.as_deref() == Some(&check.input_sha256);
+                        result["candidate_current"] = json!(candidate_current);
+                        if !candidate_current {
+                            result["status"] = json!("stale");
+                        }
+                        if candidate_current
+                            && let Some(runtime) = &self.0.host.lsp
+                            && let Ok(mut runtime) = runtime.lock()
+                        {
+                            runtime.check_cache.insert(key, result.clone());
+                        }
+                        results.push(result);
+                    }
+                    let status = if results.is_empty() {
+                        "unsupported"
+                    } else if unsupported.is_empty() {
+                        "completed"
+                    } else {
+                        "partial"
+                    };
+                    json!({
+                        "schema": 1,
+                        "status": status,
+                        "results": results,
+                        "unsupported": unsupported,
+                    })
+                }
+                request => {
+                    let mut runtime = self
+                        .0
+                        .host
+                        .lsp
+                        .as_ref()
+                        .ok_or_else(|| {
+                            FunctionCallError::RespondToModel("LSP opt-in is disabled".into())
+                        })?
+                        .lock()
+                        .map_err(|_| {
+                            FunctionCallError::RespondToModel("LSP runtime lock poisoned".into())
+                        })?;
+                    lsp_result(&mut runtime, request)
+                }
+            };
+            let reference = self
+                .0
+                .host
+                .evidence(
+                    &format!(
+                        "lsp-result-{}.json",
+                        execution::hash(call.call_id.as_bytes())
+                    ),
+                    &value,
+                )
+                .map_err(FunctionCallError::RespondToModel)?;
+            Ok(Box::new(JsonToolOutput::new(
+                json!({"result": value, "evidence": reference}),
+            )) as Box<dyn ToolOutput>)
         })
     }
 }
