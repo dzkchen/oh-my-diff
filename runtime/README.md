@@ -84,6 +84,16 @@ and then pause; configured waits remain bounded by the original task deadline.
 A foreground completion is recorded only after every acceptance criterion has
 evidence, remaining work is empty, and no worker or uncertain request is active.
 
+The optional `guideline_store` manifest field selects a canonical external
+operator-owned store. It does not select a checklist variant or activate a
+proposal. The separate `omd-guidelines` binary records immutable development
+proposals and disjoint validation, and allows a named maintainer to promote an
+exact passed version or roll back to the prior selection. A controlled session
+freezes the promoted version and proposal hash at startup, injects only that
+version below current user/project instructions, and denies worker access to the
+store. With the field absent or no promoted version, guidance behavior is
+unchanged. See [`runtime/omd/README.md`](omd/README.md) for the operator commands.
+
 Live task state is bounded independently of manifest values: at most 10,000 task
 requests, 128 live workers, 1,024 lifetime worker identities, 256 unchanged-call
 entries per progress revision, 128 failures, and 128 failure fingerprints. New

@@ -1,5 +1,6 @@
 mod admission;
 mod checkpoint;
+mod guideline;
 mod workspace;
 
 pub use admission::Admission;
@@ -20,6 +21,20 @@ pub use checkpoint::TaskCheckpoint;
 pub use checkpoint::TaskContract;
 pub use checkpoint::VersionMarker;
 pub use checkpoint::WorkerStatus;
+pub use guideline::ActiveGuideline;
+pub use guideline::EvidenceReference;
+pub use guideline::EvidenceSplit;
+pub use guideline::GuidelineProposal;
+pub use guideline::GuidelineRule;
+pub use guideline::GuidelineSelection;
+pub use guideline::GuidelineStore;
+pub use guideline::GuidelineTransition;
+pub use guideline::GuidelineVariant;
+pub use guideline::MaintainerAction;
+pub use guideline::PromotionRequest;
+pub use guideline::RollbackRequest;
+pub use guideline::ValidationOutcome;
+pub use guideline::ValidationRecord;
 pub use workspace::File;
 pub use workspace::Snapshot;
 pub use workspace::capture_tracked;

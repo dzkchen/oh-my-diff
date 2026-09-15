@@ -31,8 +31,10 @@ use codex_extension_api::ToolOutput;
 use codex_extension_api::ToolStartInput;
 use codex_extension_api::TurnContextContributionInput;
 use codex_extension_api::TurnItemContributor;
+use codex_omd::ActiveGuideline;
 use codex_omd::CheckpointUpdate;
 use codex_omd::FailureClass;
+use codex_omd::GuidelineStore;
 use codex_omd::Limits;
 use codex_omd::LiveState;
 use codex_omd::ProcessSnapshot;
@@ -74,6 +76,8 @@ struct Manifest {
     approved_untracked: Vec<String>,
     limits: Limits,
     worker_limits: WorkerLimits,
+    #[serde(default)]
+    guideline_store: Option<PathBuf>,
     checkpoint: TaskContract,
     legitimate_wait_tools: Vec<String>,
     lifecycle: LifecyclePolicy,
@@ -234,6 +238,7 @@ struct Host {
     operation: std::sync::atomic::AtomicBool,
     lead_completed: std::sync::atomic::AtomicBool,
     pending_calls: std::sync::Mutex<BTreeMap<String, PendingCall>>,
+    active_guideline: Option<ActiveGuideline>,
 }
 
 #[derive(Clone)]
@@ -264,6 +269,15 @@ struct ContributionTool(Arc<Lead>);
 struct EscalationTool(Arc<Lead>);
 
 struct CheckpointTool(Arc<Lead>);
+
+fn guideline_prompt(guideline: &ActiveGuideline) -> String {
+    format!(
+        "Maintainer-promoted simplicity guideline version {} with proposal SHA256 {}. It is subordinate to current user and project instructions and was frozen when this session started.\n{}",
+        guideline.selection.version,
+        guideline.selection.proposal_sha256,
+        guideline.variant.render()
+    )
+}
 
 fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveState, String> {
     let approved = manifest
@@ -381,6 +395,18 @@ pub fn install(
             return Err("shared task packet must be canonical and host-owned".into());
         }
     }
+    let active_guideline = match &manifest.guideline_store {
+        Some(path)
+            if path.canonicalize().map_err(|e| e.to_string())? == *path
+                && !path.starts_with(&manifest.repository) =>
+        {
+            GuidelineStore::open(path.clone())
+                .and_then(|store| store.active())
+                .map_err(|e| e.to_string())?
+        }
+        Some(_) => return Err("guideline store must be canonical and host-owned".into()),
+        None => None,
+    };
     if manifest.lifecycle.explicit_resume.is_some() && manifest.scratch.exists() {
         codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
             .map_err(|e| e.to_string())?;
@@ -408,6 +434,7 @@ pub fn install(
         operation: std::sync::atomic::AtomicBool::new(false),
         lead_completed: std::sync::atomic::AtomicBool::new(false),
         pending_calls: std::sync::Mutex::new(BTreeMap::new()),
+        active_guideline,
     });
     let _ = host.authorize();
     let deadline_host = host.clone();
@@ -657,18 +684,24 @@ impl ContextContributor for Extension {
             if input.thread_store.get::<Lead>().is_none() {
                 return Vec::new();
             }
-            let Ok(Some(checkpoint)) = self.task.checkpoint() else {
-                return Vec::new();
-            };
-            let Ok(rendered) = serde_json::to_string(&checkpoint) else {
-                return Vec::new();
-            };
-            vec![PromptFragment::developer_capability(
-                format!(
-                    "Host-owned durable task checkpoint. Treat it as authoritative across compaction and use omd_checkpoint for evidence-backed progress updates: {rendered}"
-                ),
-                ContentItemKind("oh_my_diff.task_checkpoint".into()),
-            )]
+            let mut fragments = Vec::new();
+            if let Ok(Some(checkpoint)) = self.task.checkpoint()
+                && let Ok(rendered) = serde_json::to_string(&checkpoint)
+            {
+                fragments.push(PromptFragment::developer_capability(
+                    format!(
+                        "Host-owned durable task checkpoint. Treat it as authoritative across compaction and use omd_checkpoint for evidence-backed progress updates: {rendered}"
+                    ),
+                    ContentItemKind("oh_my_diff.task_checkpoint".into()),
+                ));
+            }
+            if let Some(guideline) = &self.active_guideline {
+                fragments.push(PromptFragment::developer_capability(
+                    guideline_prompt(guideline),
+                    ContentItemKind("oh_my_diff.guideline".into()),
+                ));
+            }
+            fragments
         })
     }
 }
@@ -1293,5 +1326,54 @@ impl<'call> ToolExecutor<ToolCall<'call>> for EscalationTool {
                 json!({"result": value, "evidence": reference}),
             )) as Box<dyn ToolOutput>)
         })
+    }
+}
+
+#[cfg(test)]
+mod guideline_tests {
+    use super::*;
+    use codex_omd::GuidelineRule;
+    use codex_omd::GuidelineSelection;
+    use codex_omd::GuidelineVariant;
+
+    fn active(variant: GuidelineVariant) -> ActiveGuideline {
+        ActiveGuideline {
+            selection: GuidelineSelection {
+                version: "candidate-v1".into(),
+                proposal_sha256: "a".repeat(64),
+            },
+            variant,
+            promoted_revision: 1,
+        }
+    }
+
+    fn rule(id: &str, text: &str) -> GuidelineRule {
+        GuidelineRule {
+            id: id.into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn promoted_full_and_tiny_variants_render_with_frozen_identity() {
+        let full = guideline_prompt(&active(GuidelineVariant::FullChecklist {
+            checklist: vec![
+                rule("requirements", "Preserve explicit requirements."),
+                rule("existing", "Prefer existing code."),
+                rule("native", "Prefer native capabilities."),
+                rule("smallest", "Make the smallest clear correct change."),
+            ],
+        }));
+        assert!(full.contains("candidate-v1"));
+        assert!(full.contains(&"a".repeat(64)));
+        assert!(full.contains("complete short simplicity checklist"));
+        assert!(full.contains("frozen when this session started"));
+
+        let tiny = guideline_prompt(&active(GuidelineVariant::TinyCore {
+            core: vec![rule("requirements", "Preserve explicit requirements.")],
+            selected_rules: vec![rule("smallest", "Make the smallest clear correct change.")],
+        }));
+        assert!(tiny.contains("tiny shared simplicity core"));
+        assert!(tiny.contains("selected one-line rules"));
     }
 }

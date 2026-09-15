@@ -31,6 +31,33 @@ remain stopped. Duplicate active objectives are rejected. Repeated equivalent
 tool results trigger reassessment and then pause; configured waits remain valid
 until the task deadline.
 
+`GuidelineStore` keeps immutable versioned proposals and validation records in a
+host-owned directory. A proposal is either a complete checklist of four to
+sixteen bounded one-line rules or a tiny core of one to four rules plus one to
+twelve selected one-line rules. Proposals accept development evidence only;
+validation records accept validation evidence only and reject any task identity
+used by the proposal. Neither action activates a candidate.
+
+The `omd-guidelines` operator binary provides `init`, `propose`, `validate`,
+`promote`, `rollback`, `active`, and `history` commands. Promotion requires an
+exact passed validation hash, a named maintainer and reason, and the expected
+currently active selection. Rollback has the same maintainer and stale-state
+checks and restores the preceding explicit selection, including no active
+guideline. The store begins with no active guideline. When a controlled manifest
+explicitly supplies a canonical external `guideline_store`, the native extension
+freezes its active selection at session start, protects the store from workers,
+and injects the version, proposal hash, and rules below current user and project
+instructions. Omitting the field or leaving the store unpromoted preserves the
+existing default.
+
+```sh
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- init /absolute/host-owned/guidelines
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- propose /absolute/host-owned/guidelines proposal.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- validate /absolute/host-owned/guidelines validation.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- promote /absolute/host-owned/guidelines promotion.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- rollback /absolute/host-owned/guidelines rollback.json
+```
+
 `record_failure` journals a bounded typed failure with host-owned evidence
 references. `permit_escalation` permits each failure at most once, enforces the
 task's configured escalation cap, and fails closed after stop, deadline, request

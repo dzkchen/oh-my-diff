@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "dec56a8d2ef5aad2ebdb4ecbf2cd13329df6cca5baf59c28647c4be9f2315bdb"
+    "sha256": "a990990ee8f06d15decb846247bb343b27a3063eed2e283a005a5dbb6d2c6c7e"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -85,7 +85,7 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "f6784b402d91cd38775bcb50d4185e67cc9bfb4b5c3f8e431ed7aa534a29f905"
+      "after": "62495f4ab165cd85e52cf2f7d60c79d0a006beea0127b6bd1e6345c4cc4a7745"
     },
     "codex-rs/ext/omd/src/execution_tests.rs": {
       "before": null,
@@ -93,7 +93,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "cf3e9eb6865dc445eaa151a7b3e8c08cceb5702bb0a6003177e523e37e0b5865"
+      "after": "b1f856036b35f29e7dd927592a991bb25242e873efda2ed25607db57da3a861f"
     },
     "codex-rs/login/src/auth/default_client.rs": {
       "before": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",
@@ -115,9 +115,17 @@
       "before": null,
       "after": "511612a2ad6c94d4dc8d3275e4e0ed4c5198338d2b794aae80b71f44d71e3724"
     },
+    "codex-rs/omd/src/bin/omd-guidelines.rs": {
+      "before": null,
+      "after": "fdd63b1953aa3535cca297772a5c5171a139ba6cb116e85a251f3d341f21923c"
+    },
+    "codex-rs/omd/src/guideline.rs": {
+      "before": null,
+      "after": "96cfe0cc070760732dd84a52aa03b9fb2c55a8d6b6a4104b088b07df00671ad3"
+    },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "a3ff65aa5ebdca27a77abb6067399709f7b72bd7dd847e2a1b77981a08744cfa"
+      "after": "429aa9d37092b72f45b2fb7bdfd9173c49dbc9c4333b6a5067e80e9ce2b7b7cc"
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,
@@ -126,6 +134,10 @@
     "codex-rs/omd/tests/admission.rs": {
       "before": null,
       "after": "559e3273876ce4129e11dbc2e382d6f49105a72b2b3ce371ba46cb48f0f3c623"
+    },
+    "codex-rs/omd/tests/guideline.rs": {
+      "before": null,
+      "after": "92f09d361f193c589a3417cd5264165119cb3d75501885e8deaa6f3ea9e75d4d"
     },
     "codex-rs/omd/tests/workspace.rs": {
       "before": null,
