@@ -122,9 +122,19 @@ composer. Set `OMD_GRAPH_SNAPSHOT` to the JSON path, or place it at
 file with search, node/confidence filters, source links, a neighborhood view,
 and bounded copyable selections; it starts no server and edits no architecture.
 
+The offline `omd-health` operator reuses that graph to bind approved repository
+constraints to a versioned source baseline. It checks introduced dependency
+boundaries, exact normalized domain-logic duplicates, removed or weakened tests,
+and approved test minimums. Its report separates introduced findings, baseline
+debt, and unresolved possible boundary matches; each finding states whether all
+implicated paths are in the declared repair scope. It writes evidence only,
+never repairs source, never runs as a watcher, and emits no health score.
+
 ```sh
 cargo run --locked -p codex-omd --bin omd-graph -- snapshot /absolute/repository /absolute/repository/.omd/code-graph.json /absolute/repository/.omd/code-graph.html owner/repository REVISION
 cargo run --locked -p codex-omd --bin omd-graph -- validate /absolute/repository /absolute/repository/.omd/code-graph.json
+cargo run --locked -p codex-omd --bin omd-health -- baseline /absolute/repository constraints.json baseline.json REVISION
+cargo run --locked -p codex-omd --bin omd-health -- check /absolute/repository constraints.json baseline.json report.json REVISION
 ```
 
 ```json

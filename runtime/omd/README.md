@@ -86,6 +86,44 @@ source requires regeneration. HTML search/filtering, graph neighborhoods, local
 source links, and copyable evidence run entirely in the generated file. The CLI
 does not launch a service or provide architecture editing.
 
+`HealthBaseline` and the one-shot `omd-health` operator reuse `CodeGraph` source,
+import, symbol, test, confidence, and freshness evidence. A baseline binds an
+explicit revision and source digest to the exact SHA256 of a maintainer-approved
+constraint version. Dependency rules compare extracted imports with denied path
+prefixes and keep unresolved possible matches uncertain. Duplication rules find
+exact normalized function-body matches only inside selected domain prefixes and
+label the lexical result inferred. Verification rules retain test bodies,
+assertion-marker counts, and skip state, then report removed tests, reduced
+assertions, newly skipped tests, or approved minimum failures.
+
+Reports keep introduced findings, existing baseline debt, and uncertain findings
+in separate arrays. Uncertain-only output does not fail the command. Introduced
+non-uncertain findings write the complete report and exit with status 2. Each
+finding carries baseline/current source anchors plus either `authorized_scope` or
+`requires_authorization`; the operator never edits source. Constraints and source
+changes fail closed, and there is no watcher, service, or aggregate repository
+health score.
+
+```json
+{
+  "schema": 1,
+  "version": "repository-health-v1",
+  "repository_identity": "owner/repository",
+  "approval": {"actor": "maintainer", "reason": "approved architecture and test boundaries"},
+  "dependency_boundaries": [
+    {"id": "domain-no-infra", "from_prefix": "src/domain", "denied_to_prefix": "src/infra"}
+  ],
+  "duplication_scopes": [
+    {"id": "domain-logic", "path_prefixes": ["src/domain"], "minimum_logical_lines": 4}
+  ],
+  "verification": [
+    {"id": "domain-tests", "test_path_prefix": "tests/domain", "minimum_tests": 1, "minimum_assertions_per_test": 1}
+  ],
+  "repair_scope": ["src/domain"],
+  "max_findings": 256
+}
+```
+
 `ReactiveRules` validates a separately versioned, SHA-bound rule source used by
 the native post-tool hook. Each rule selects an exact `lead` or `worker` scope,
 tool name, and one of `completed_host_success`, `completed_host_failure`,
@@ -137,6 +175,8 @@ cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge --
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- reset /absolute/host-owned/knowledge reset.json
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-graph -- snapshot /absolute/repository graph.json graph.html owner/repository REVISION
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-graph -- select /absolute/repository graph.json NODE_ID
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-health -- baseline /absolute/repository constraints.json baseline.json REVISION
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-health -- check /absolute/repository constraints.json baseline.json report.json REVISION
 ```
 
 `record_failure` journals a bounded typed failure with host-owned evidence
