@@ -28,6 +28,7 @@ use codex_extension_api::ToolFinishInput;
 use codex_extension_api::ToolLifecycleContributor;
 use codex_extension_api::ToolLifecycleFuture;
 use codex_extension_api::ToolOutput;
+use codex_extension_api::ToolReactionContributor;
 use codex_extension_api::ToolStartInput;
 use codex_extension_api::TurnContextContributionInput;
 use codex_extension_api::TurnItemContributor;
@@ -39,6 +40,10 @@ use codex_omd::Limits;
 use codex_omd::LiveState;
 use codex_omd::ProcessSnapshot;
 use codex_omd::ProcessStatus;
+use codex_omd::ReactiveRuleSet;
+use codex_omd::ReactiveRules;
+use codex_omd::ReactiveToolOutcome;
+use codex_omd::ReactiveTrigger;
 use codex_omd::Snapshot;
 use codex_omd::Task;
 use codex_omd::TaskContract;
@@ -83,6 +88,8 @@ struct Manifest {
     guideline_store: Option<PathBuf>,
     #[serde(default)]
     communication: CommunicationPolicy,
+    #[serde(default)]
+    reactive_rules: Option<PacketReference>,
     checkpoint: TaskContract,
     legitimate_wait_tools: Vec<String>,
     lifecycle: LifecyclePolicy,
@@ -265,6 +272,7 @@ struct Host {
     lead_completed: std::sync::atomic::AtomicBool,
     pending_calls: std::sync::Mutex<BTreeMap<String, PendingCall>>,
     active_guideline: Option<ActiveGuideline>,
+    reactive_rules: Option<ReactiveRules>,
 }
 
 #[derive(Clone)]
@@ -473,6 +481,29 @@ pub fn install(
             return Err("shared task packet must be canonical and host-owned".into());
         }
     }
+    let reactive_rules = match &manifest.reactive_rules {
+        Some(reference) => {
+            let canonical = reference.path.canonicalize().map_err(|e| e.to_string())?;
+            if canonical != reference.path || reference.path.starts_with(&manifest.repository) {
+                return Err("reactive rules must be canonical and host-owned".into());
+            }
+            let bytes = std::fs::read(&reference.path).map_err(|e| e.to_string())?;
+            if bytes.len() > 65_536 || execution::hash(&bytes) != reference.sha256 {
+                return Err("reactive rule source changed or exceeds its bound".into());
+            }
+            let rule_set: ReactiveRuleSet =
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            Some(
+                ReactiveRules::new(
+                    rule_set,
+                    reference.path.display().to_string(),
+                    reference.sha256.clone(),
+                )
+                .map_err(|e| e.to_string())?,
+            )
+        }
+        None => None,
+    };
     let active_guideline = match &manifest.guideline_store {
         Some(path)
             if path.canonicalize().map_err(|e| e.to_string())? == *path
@@ -513,6 +544,7 @@ pub fn install(
         lead_completed: std::sync::atomic::AtomicBool::new(false),
         pending_calls: std::sync::Mutex::new(BTreeMap::new()),
         active_guideline,
+        reactive_rules,
     });
     let _ = host.authorize();
     let deadline_host = host.clone();
@@ -526,6 +558,7 @@ pub fn install(
     registry.thread_lifecycle_contributor(Arc::new(Extension(host.clone())));
     registry.prompt_contributor(Arc::new(Extension(host.clone())));
     registry.tool_lifecycle_contributor(Arc::new(Extension(host.clone())));
+    registry.tool_reaction_contributor(Arc::new(Extension(host.clone())));
     registry.turn_item_contributor(Arc::new(Extension(host.clone())));
     registry.tool_contributor(Arc::new(Extension(host)));
     Ok(())
@@ -759,35 +792,133 @@ impl ContextContributor for Extension {
         input: TurnContextContributionInput<'a>,
     ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
         Box::pin(async move {
-            let Some(lead) = input.thread_store.get::<Lead>() else {
+            let lead = input.thread_store.get::<Lead>();
+            let controlled =
+                lead.is_some()
+                    || self.accounts.0.lock().ok().is_some_and(|accounts| {
+                        accounts.contains_key(&input.thread_id.to_string())
+                    });
+            if !controlled {
                 return Vec::new();
-            };
+            }
             let mut fragments = Vec::new();
-            if let Ok(Some(checkpoint)) = self.task.checkpoint()
-                && let Ok(rendered) = serde_json::to_string(&checkpoint)
-            {
-                fragments.push(PromptFragment::developer_capability(
-                    format!(
-                        "Host-owned durable task checkpoint. Treat it as authoritative across compaction and use omd_checkpoint for evidence-backed progress updates: {rendered}"
-                    ),
-                    ContentItemKind("oh_my_diff.task_checkpoint".into()),
-                ));
+            if let Some(lead) = lead {
+                if let Ok(Some(checkpoint)) = self.task.checkpoint()
+                    && let Ok(rendered) = serde_json::to_string(&checkpoint)
+                {
+                    fragments.push(PromptFragment::developer_capability(
+                        format!(
+                            "Host-owned durable task checkpoint. Treat it as authoritative across compaction and use omd_checkpoint for evidence-backed progress updates: {rendered}"
+                        ),
+                        ContentItemKind("oh_my_diff.task_checkpoint".into()),
+                    ));
+                }
+                if let Some(guideline) = &self.active_guideline {
+                    fragments.push(PromptFragment::developer_capability(
+                        guideline_prompt(guideline),
+                        ContentItemKind("oh_my_diff.guideline".into()),
+                    ));
+                }
+                if lead.owner == "lead"
+                    && let Some(prompt) = self.manifest.communication.user_update_prompt()
+                {
+                    fragments.push(PromptFragment::developer_capability(
+                        prompt,
+                        ContentItemKind("oh_my_diff.user_updates".into()),
+                    ));
+                }
             }
-            if let Some(guideline) = &self.active_guideline {
-                fragments.push(PromptFragment::developer_capability(
-                    guideline_prompt(guideline),
-                    ContentItemKind("oh_my_diff.guideline".into()),
-                ));
-            }
-            if lead.owner == "lead"
-                && let Some(prompt) = self.manifest.communication.user_update_prompt()
+            if let Some(reactive) = &self.reactive_rules
+                && let Ok(prompts) = reactive.context_prompts(&input.thread_id.to_string())
             {
-                fragments.push(PromptFragment::developer_capability(
-                    prompt,
-                    ContentItemKind("oh_my_diff.user_updates".into()),
-                ));
+                fragments.extend(prompts.into_iter().map(|prompt| {
+                    PromptFragment::developer_capability(
+                        prompt,
+                        ContentItemKind("oh_my_diff.reactive_rule".into()),
+                    )
+                }));
             }
             fragments
+        })
+    }
+}
+
+impl ToolReactionContributor for Extension {
+    fn on_tool_finish_reaction<'a>(
+        &'a self,
+        input: ToolFinishInput<'a>,
+    ) -> ExtensionFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let thread = input.thread_store.level_id().to_string();
+            let owner = match input.thread_store.get::<Lead>() {
+                Some(lead) => lead.owner.clone(),
+                None => self
+                    .accounts
+                    .0
+                    .lock()
+                    .ok()?
+                    .get(&thread)
+                    .map(|account| account.owner.clone())?,
+            };
+            let Some(reactive) = &self.reactive_rules else {
+                return None;
+            };
+            let outcome = match input.outcome {
+                ToolCallOutcome::Completed { success: true } => {
+                    ReactiveToolOutcome::CompletedHostSuccess
+                }
+                ToolCallOutcome::Completed { success: false } => {
+                    ReactiveToolOutcome::CompletedHostFailure
+                }
+                ToolCallOutcome::Blocked => ReactiveToolOutcome::Blocked,
+                ToolCallOutcome::Failed {
+                    handler_executed: false,
+                } => ReactiveToolOutcome::FailedBeforeExecution,
+                ToolCallOutcome::Failed {
+                    handler_executed: true,
+                } => ReactiveToolOutcome::FailedAfterExecution,
+                ToolCallOutcome::Aborted => ReactiveToolOutcome::Aborted,
+            };
+            let trigger = ReactiveTrigger::ToolFinished {
+                tool: input.tool_name.to_string(),
+                outcome,
+            };
+            let activation = match reactive.activate(&thread, &owner, &trigger) {
+                Ok(Some(activation)) => activation,
+                _ => return None,
+            };
+            let prompt = activation.prompt();
+            let allowance = self
+                .task
+                .checkpoint()
+                .ok()
+                .flatten()
+                .map(|checkpoint| checkpoint.allowance);
+            let evidence = json!({
+                "schema": 1,
+                "activation": activation,
+                "prompt": prompt,
+                "thread": thread,
+                "owner": owner,
+                "call_id": input.call_id,
+                "turn_id": input.turn_id,
+                "allowance_before_follow_up": allowance,
+                "stream_interrupted": false,
+            });
+            let name = format!(
+                "reactive-{}.json",
+                execution::hash(
+                    format!(
+                        "{}\0{}\0{}\0{}",
+                        thread, input.turn_id, input.call_id, activation.rule_id
+                    )
+                    .as_bytes()
+                )
+            );
+            if self.evidence(&name, &evidence).is_err() {
+                return None;
+            }
+            Some(prompt)
         })
     }
 }

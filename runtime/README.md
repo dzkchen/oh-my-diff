@@ -118,6 +118,24 @@ or blocked implementation is returned to the lead without integration. Each
 switch can be enabled alone, together, or neither; neither changes permissions,
 accounting, task scope, or the separately selected simplicity guideline.
 
+The optional `reactive_rules` manifest reference selects a canonical external
+JSON rule set by exact SHA256. Rules match one exact lead/worker scope,
+canonical tool name, and host-observed finish outcome; `completed_host_success`
+and `completed_host_failure` are the host tool-result markers, not an inference
+about domain-specific output such as a command's exit code. Overlapping matches,
+regexes, wildcards, multiline instructions, and unbounded activation counts are
+rejected. A match contributes one bounded developer-context message through the
+native post-tool hook path and may be reactivated a bounded number of times when
+context is rebuilt after compaction. The message carries rule-set version,
+source, and hash, remains subordinate to current user/project instructions, and
+states that the completed tool's effects were not rolled back. A reaction does
+not retry by itself; any follow-up request uses ordinary shared admission and
+accounting. Controlled children receive an isolated registry containing only
+reactive context/reaction contributors. Omitting the reference preserves
+existing behavior. No stream
+interruption is installed because this hook path closes the demonstrated
+feedback gap without cancelling an in-flight response.
+
 Live task state is bounded independently of manifest values: at most 10,000 task
 requests, 128 live workers, 1,024 lifetime worker identities, 256 unchanged-call
 entries per progress revision, 128 failures, and 128 failure fingerprints. New
@@ -171,7 +189,8 @@ changes an unrelated tracked file, then explicitly resumes.
 Use `--context-policy focused_brief|shared_task_packet|parent_history`,
 `--lead-policy fixed|task_entry`, and `--lead sol|astra` to exercise the policy
 matrix. Add `--concise-user-updates` or `--structured-worker-reports` to exercise
-either communication mode independently.
+either communication mode independently. Use `--scenario reactive` for the
+exact-match post-tool reaction and shared retry-accounting fixture.
 
 Prepare the development experiment using the retained frozen baseline inputs:
 

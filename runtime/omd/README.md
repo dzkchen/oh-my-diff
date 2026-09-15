@@ -50,6 +50,37 @@ and injects the version, proposal hash, and rules below current user and project
 instructions. Omitting the field or leaving the store unpromoted preserves the
 existing default.
 
+`ReactiveRules` validates a separately versioned, SHA-bound rule source used by
+the native post-tool hook. Each rule selects an exact `lead` or `worker` scope,
+tool name, and one of `completed_host_success`, `completed_host_failure`,
+`blocked`, `failed_before_execution`, `failed_after_execution`, or `aborted`.
+Duplicate matches are ambiguous and rejected. `max_activations` is limited to
+one through eight, and `max_context_reactivations` to zero through four.
+Activation prompts retain source/version/hash provenance and instruction
+priority, explicitly deny rollback and automatic-retry claims, and remain
+available for bounded context rebuild injection after compaction.
+
+```json
+{
+  "schema": 1,
+  "version": "reactive-v1",
+  "rules": [
+    {
+      "id": "inspect-command-result",
+      "scope": "lead",
+      "trigger": {
+        "event": "tool_finished",
+        "tool": "exec_command",
+        "outcome": "completed_host_success"
+      },
+      "instruction": "Inspect the exact command result and exit code before choosing any follow-up.",
+      "max_activations": 1,
+      "max_context_reactivations": 1
+    }
+  ]
+}
+```
+
 ```sh
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- init /absolute/host-owned/guidelines
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- propose /absolute/host-owned/guidelines proposal.json

@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..b20403725cb5c3b04845f242b22f80b09f9b2dc4 100644
+index 7ba1057..b204037 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2212,6 +2212,7 @@ dependencies = [
@@ -53,7 +53,7 @@ index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..b20403725cb5c3b04845f242b22f80b0
  name = "codex-otel"
  version = "0.154.0"
 diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
-index 3cf0d009a8ecede0fb207cc9ec40ebef30f59b09..6ae89c0f56145c5bbf0c08310c8b32dfe0c2d9d1 100644
+index 3cf0d00..6ae89c0 100644
 --- a/codex-rs/Cargo.toml
 +++ b/codex-rs/Cargo.toml
 @@ -1,5 +1,7 @@
@@ -73,7 +73,7 @@ index 3cf0d009a8ecede0fb207cc9ec40ebef30f59b09..6ae89c0f56145c5bbf0c08310c8b32df
  codex-realtime-webrtc = { path = "realtime-webrtc" }
  app_test_support = { path = "app-server/tests/common" }
 diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
-index c64b15b998c5722651a7a4dafe0b0ca299a6a03b..04ff16ca6b3c4ad4a08f32007f74808078d05b43 100644
+index c64b15b..04ff16c 100644
 --- a/codex-rs/app-server/Cargo.toml
 +++ b/codex-rs/app-server/Cargo.toml
 @@ -25,6 +25,7 @@ doctest = false
@@ -85,7 +85,7 @@ index c64b15b998c5722651a7a4dafe0b0ca299a6a03b..04ff16ca6b3c4ad4a08f32007f748080
  base64 = { workspace = true }
  axum = { workspace = true, default-features = false, features = [
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 929eab5392eabd6c06a3c723060232db7203f597..d3da68fd0ae9d28418ababa21d9889b2569b226b 100644
+index 929eab5..d3da68f 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -76,6 +76,9 @@ where
@@ -99,7 +99,7 @@ index 929eab5392eabd6c06a3c723060232db7203f597..d3da68fd0ae9d28418ababa21d9889b2
      if let Some(state_db) = state_db {
          codex_goal_extension::install_with_backend(
 diff --git a/codex-rs/codex-api/src/endpoint/responses.rs b/codex-rs/codex-api/src/endpoint/responses.rs
-index 78a08232f967f291de46002ddda541b40128bbf3..1d37da70cb71ee4352898343aa3881c37e521fc2 100644
+index 78a0823..1d37da7 100644
 --- a/codex-rs/codex-api/src/endpoint/responses.rs
 +++ b/codex-rs/codex-api/src/endpoint/responses.rs
 @@ -8,7 +8,7 @@ use crate::requests::Compression;
@@ -121,7 +121,7 @@ index 78a08232f967f291de46002ddda541b40128bbf3..1d37da70cb71ee4352898343aa3881c3
              self.session.provider().stream_idle_timeout,
              self.sse_telemetry.clone(),
 diff --git a/codex-rs/codex-api/src/endpoint/responses_websocket.rs b/codex-rs/codex-api/src/endpoint/responses_websocket.rs
-index 95d41e0d9154de47cdbc75f93e8aafa7fcf00966..627a7a4847d33267347711ee008818af052f5f62 100644
+index 95d41e0..627a7a4 100644
 --- a/codex-rs/codex-api/src/endpoint/responses_websocket.rs
 +++ b/codex-rs/codex-api/src/endpoint/responses_websocket.rs
 @@ -893,6 +893,7 @@ async fn send_websocket_request(
@@ -133,7 +133,7 @@ index 95d41e0d9154de47cdbc75f93e8aafa7fcf00966..627a7a4847d33267347711ee008818af
      let result = tokio::time::timeout(
          idle_timeout,
 diff --git a/codex-rs/codex-api/src/endpoint/session.rs b/codex-rs/codex-api/src/endpoint/session.rs
-index 7849225b5cbb6c37456d14e85b3fe069d878ada3..1f1f28c9e8410bf28416a354b8b7b8d690c02b73 100644
+index 7849225..1f1f28c 100644
 --- a/codex-rs/codex-api/src/endpoint/session.rs
 +++ b/codex-rs/codex-api/src/endpoint/session.rs
 @@ -1,6 +1,7 @@
@@ -205,7 +205,7 @@ index 7849225b5cbb6c37456d14e85b3fe069d878ada3..1f1f28c9e8410bf28416a354b8b7b8d6
              },
          )
 diff --git a/codex-rs/codex-api/src/lib.rs b/codex-rs/codex-api/src/lib.rs
-index 7287cb29d2e610263d71c3b33bf4a475d75b02f0..64d6e8debc55e91cd892e4f85e0f2063515f0c3a 100644
+index 7287cb2..64d6e8d 100644
 --- a/codex-rs/codex-api/src/lib.rs
 +++ b/codex-rs/codex-api/src/lib.rs
 @@ -7,6 +7,7 @@ pub(crate) mod files;
@@ -218,7 +218,7 @@ index 7287cb29d2e610263d71c3b33bf4a475d75b02f0..64d6e8debc55e91cd892e4f85e0f2063
  pub(crate) mod search;
 diff --git a/codex-rs/codex-api/src/request_observer.rs b/codex-rs/codex-api/src/request_observer.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..584b9f07c481dbd7340e655f6709d20e29eda499
+index 0000000..584b9f0
 --- /dev/null
 +++ b/codex-rs/codex-api/src/request_observer.rs
 @@ -0,0 +1,75 @@
@@ -298,7 +298,7 @@ index 0000000000000000000000000000000000000000..584b9f07c481dbd7340e655f6709d20e
 +    Ok(())
 +}
 diff --git a/codex-rs/codex-api/src/sse/mod.rs b/codex-rs/codex-api/src/sse/mod.rs
-index 441078bdcbd7bfaddcd4a7d0520453a4c9473e01..975ed83555d836fa4f0800cf7e8d11756c67242b 100644
+index 441078b..975ed83 100644
 --- a/codex-rs/codex-api/src/sse/mod.rs
 +++ b/codex-rs/codex-api/src/sse/mod.rs
 @@ -2,4 +2,3 @@ pub(crate) mod responses;
@@ -307,7 +307,7 @@ index 441078bdcbd7bfaddcd4a7d0520453a4c9473e01..975ed83555d836fa4f0800cf7e8d1175
  pub(crate) use responses::process_responses_event;
 -pub use responses::spawn_response_stream;
 diff --git a/codex-rs/codex-api/src/sse/responses.rs b/codex-rs/codex-api/src/sse/responses.rs
-index e4f5f04d62b3834cef16cf222cb55f288ca50841..fd7ae0ecea5de947c522ee622e631b55c22b16de 100644
+index e4f5f04..fd7ae0e 100644
 --- a/codex-rs/codex-api/src/sse/responses.rs
 +++ b/codex-rs/codex-api/src/sse/responses.rs
 @@ -7,7 +7,6 @@ use crate::rate_limits::parse_all_rate_limits;
@@ -442,7 +442,7 @@ index e4f5f04d62b3834cef16cf222cb55f288ca50841..fd7ae0ecea5de947c522ee622e631b55
                  let is_completed = matches!(event, ResponseEvent::Completed { .. });
                  if tx_event.send(Ok(event)).await.is_err() {
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
-index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d8914bba1 100644
+index 46c2442..9e6642b 100644
 --- a/codex-rs/core/src/exec.rs
 +++ b/codex-rs/core/src/exec.rs
 @@ -117,6 +117,9 @@ pub enum ExecCapturePolicy {
@@ -526,11 +526,43 @@ index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d
      // We need mutable bindings so we can `abort()` them on timeout.
      use tokio::task::JoinHandle;
  
+diff --git a/codex-rs/core/src/hook_runtime.rs b/codex-rs/core/src/hook_runtime.rs
+index e17f150..af2e7cc 100644
+--- a/codex-rs/core/src/hook_runtime.rs
++++ b/codex-rs/core/src/hook_runtime.rs
+@@ -828,8 +828,8 @@ impl HookRuntimeOutcome {
+ }
+ 
+ pub(crate) async fn record_additional_contexts(
+-    sess: &Arc<Session>,
+-    turn_context: &Arc<TurnContext>,
++    sess: &Session,
++    turn_context: &TurnContext,
+     additional_contexts: Vec<String>,
+ ) {
+     let developer_messages = additional_context_messages(additional_contexts);
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a49879718 100644
+index eb85a04..b210fa0 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -275,6 +275,8 @@ struct ThreadSpawnRequest {
+@@ -241,6 +241,8 @@ pub struct StartThreadOptions {
+     pub environments: Option<Vec<TurnEnvironmentSelection>>,
+     pub thread_extension_init: ExtensionDataInit,
+     pub client_mcp_extensions: ClientMcpExtensions,
++    /// Optional isolated extension registry for a controlled child session.
++    pub isolated_extensions: Option<Arc<ExtensionRegistry<Config>>>,
+     /// Thread ID reserved before startup so the caller can associate host-owned state with it.
+     pub reserved_thread_id: Option<ThreadId>,
+ }
+@@ -260,6 +262,7 @@ impl StartThreadOptions {
+             environments: None,
+             thread_extension_init: ExtensionDataInit::default(),
+             client_mcp_extensions: ClientMcpExtensions::default(),
++            isolated_extensions: None,
+             reserved_thread_id: None,
+         }
+     }
+@@ -275,6 +278,8 @@ struct ThreadSpawnRequest {
      inherited_environments: Option<TurnEnvironmentSnapshot>,
      inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
      user_shell_override: Option<crate::shell::Shell>,
@@ -539,7 +571,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a
  }
  
  impl ThreadSpawnRequest {
-@@ -293,6 +295,8 @@ impl ThreadSpawnRequest {
+@@ -293,6 +298,8 @@ impl ThreadSpawnRequest {
              inherited_environments: None,
              inherited_exec_policy: None,
              user_shell_override: None,
@@ -548,7 +580,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a
          }
      }
  }
-@@ -1008,6 +1012,23 @@ impl ThreadManager {
+@@ -1008,6 +1015,23 @@ impl ThreadManager {
          Box::pin(self.state.spawn_thread(request)).await
      }
  
@@ -572,7 +604,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a
      /// Allocates a thread ID before startup so a caller can associate host-owned state with it.
      pub fn reserve_thread_id(&self) -> ThreadId {
          self.state.thread_id_generator.as_ref()()
-@@ -1910,6 +1931,8 @@ impl ThreadManagerState {
+@@ -1910,6 +1934,8 @@ impl ThreadManagerState {
              inherited_environments,
              inherited_exec_policy,
              user_shell_override,
@@ -581,7 +613,15 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a
          } = request;
          let StartThreadOptions {
              config,
-@@ -1961,29 +1984,26 @@ impl ThreadManagerState {
+@@ -1924,6 +1950,7 @@ impl ThreadManagerState {
+             environments,
+             thread_extension_init,
+             client_mcp_extensions,
++            isolated_extensions,
+             reserved_thread_id,
+         } = options;
+         let session_source = session_source.unwrap_or_else(|| self.session_source.clone());
+@@ -1961,29 +1988,37 @@ impl ThreadManagerState {
                  threads.remove(&resumed.conversation_id);
              }
          }
@@ -603,8 +643,19 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a
 +            )
 +            .await
 +        };
-+        let (extensions, mcp_manager, multi_agent_version) = if basic_session || !inherit_extensions
-+        {
++        let (extensions, mcp_manager, multi_agent_version) = if basic_session {
++            (
++                empty_extension_registry(),
++                Arc::new(McpManager::new(Arc::clone(&self.plugins_manager))),
++                Some(MultiAgentVersion::Disabled),
++            )
++        } else if let Some(extensions) = isolated_extensions {
++            (
++                extensions,
++                Arc::new(McpManager::new(Arc::clone(&self.plugins_manager))),
++                Some(MultiAgentVersion::Disabled),
++            )
++        } else if !inherit_extensions {
              (
 -                LoadedUserInstructions::default(),
 -                None,
@@ -624,7 +675,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a
                  Arc::clone(&self.extensions),
                  Arc::clone(&self.mcp_manager),
                  self.initial_multi_agent_version_for_spawn(
-@@ -1995,6 +2015,11 @@ impl ThreadManagerState {
+@@ -1995,6 +2030,11 @@ impl ThreadManagerState {
                  .await,
              )
          };
@@ -636,8 +687,43 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e8979ab148f29f607afa617997f3268a
          let parent_rollout_thread_trace = self
              .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
              .await;
+diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
+index bea620e..66f7591 100644
+--- a/codex-rs/core/src/tools/lifecycle.rs
++++ b/codex-rs/core/src/tools/lifecycle.rs
+@@ -125,6 +125,30 @@ async fn notify_tool_finish_parts(
+             })
+             .await;
+     }
++    let mut additional_contexts = Vec::new();
++    for contributor in session.services.extensions.tool_reaction_contributors() {
++        if additional_contexts.len() == 16 {
++            break;
++        }
++        if let Some(context) = contributor
++            .on_tool_finish_reaction(ToolFinishInput {
++                session_store: &session.services.session_extension_data,
++                thread_store: &session.services.thread_extension_data,
++                turn_store: turn.extension_data.as_ref(),
++                turn_id: turn.sub_id.as_str(),
++                call_id,
++                tool_name,
++                source: extension_tool_call_source(source.clone()),
++                outcome,
++            })
++            .await
++            && !context.trim().is_empty()
++            && context.len() <= 4096
++        {
++            additional_contexts.push(context);
++        }
++    }
++    crate::hook_runtime::record_additional_contexts(session, turn, additional_contexts).await;
+ }
+ 
+ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
-index ad5086f500b7c16e245ee9a3011966921151dae5..dec4eb20237f4a844f94c63f743136c8ac1ed1bd 100644
+index ad5086f..dec4eb2 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
 +++ b/codex-rs/core/src/tools/orchestrator.rs
 @@ -141,7 +141,17 @@ impl ToolOrchestrator {
@@ -668,7 +754,7 @@ index ad5086f500b7c16e245ee9a3011966921151dae5..dec4eb20237f4a844f94c63f743136c8
          if owner_network_policy
              && tool
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
-index a16c182c739a0e9ebe128b3c7298be11b9e5bfba..0da373166558daf0d4403d45ddeb481209bd8f17 100644
+index a16c182..0da3731 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
 +++ b/codex-rs/exec-server/src/process_sandbox.rs
 @@ -84,8 +84,10 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
@@ -696,9 +782,98 @@ index a16c182c739a0e9ebe128b3c7298be11b9e5bfba..0da373166558daf0d4403d45ddeb4812
      #[cfg(target_os = "macos")]
      let sandbox_manager = sandbox_manager
          .with_allowed_symlinked_codex_home(runtime_paths.allowed_symlinked_codex_home.clone());
+diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
+index 8c75997..9761532 100644
+--- a/codex-rs/ext/extension-api/src/contributors.rs
++++ b/codex-rs/ext/extension-api/src/contributors.rs
+@@ -347,6 +347,20 @@ pub trait ToolLifecycleContributor: Send + Sync {
+     }
+ }
+ 
++/// Contributes bounded developer context after a host-observed tool outcome without implying rollback.
++pub trait ToolReactionContributor: Send + Sync {
++    fn on_tool_finish_reaction<'a>(
++        &'a self,
++        _input: ToolFinishInput<'a>,
++    ) -> ExtensionFuture<'a, Option<String>> {
++        Box::pin(async move {
++            let _self = self;
++            let _input = _input;
++            None
++        })
++    }
++}
++
+ /// Owns the complete approval decision, including whether to consult a reviewer.
+ /// Returning `None` leaves the request to the next contributor.
+ pub trait ApprovalReviewContributor: Send + Sync {
+diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
+index 84f2ac0..71fd54d 100644
+--- a/codex-rs/ext/extension-api/src/lib.rs
++++ b/codex-rs/ext/extension-api/src/lib.rs
+@@ -79,6 +79,7 @@ pub use contributors::ToolContributor;
+ pub use contributors::ToolFinishInput;
+ pub use contributors::ToolLifecycleContributor;
+ pub use contributors::ToolLifecycleFuture;
++pub use contributors::ToolReactionContributor;
+ pub use contributors::ToolStartInput;
+ pub use contributors::TurnAbortInput;
+ pub use contributors::TurnContextContributionInput;
+diff --git a/codex-rs/ext/extension-api/src/registry.rs b/codex-rs/ext/extension-api/src/registry.rs
+index e4aeba9..d5a3216 100644
+--- a/codex-rs/ext/extension-api/src/registry.rs
++++ b/codex-rs/ext/extension-api/src/registry.rs
+@@ -11,6 +11,7 @@ use crate::ThreadLifecycleContributor;
+ use crate::TokenUsageContributor;
+ use crate::ToolContributor;
+ use crate::ToolLifecycleContributor;
++use crate::ToolReactionContributor;
+ use crate::TurnInputContributor;
+ use crate::TurnItemContributor;
+ use crate::TurnLifecycleContributor;
+@@ -36,6 +37,7 @@ impl<C: Sync> Default for ExtensionRegistryBuilder<C> {
+                 turn_input_contributors: Vec::new(),
+                 tool_contributors: Vec::new(),
+                 tool_lifecycle_contributors: Vec::new(),
++                tool_reaction_contributors: Vec::new(),
+                 turn_item_contributors: Vec::new(),
+             },
+         }
+@@ -125,6 +127,11 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
+         self.registry.tool_lifecycle_contributors.push(contributor);
+     }
+ 
++    /// Registers one post-tool reaction contributor.
++    pub fn tool_reaction_contributor(&mut self, contributor: Arc<dyn ToolReactionContributor>) {
++        self.registry.tool_reaction_contributors.push(contributor);
++    }
++
+     /// Registers one ordered turn-item contributor.
+     pub fn turn_item_contributor(&mut self, contributor: Arc<dyn TurnItemContributor>) {
+         self.registry.turn_item_contributors.push(contributor);
+@@ -149,6 +156,7 @@ pub struct ExtensionRegistry<C: Sync> {
+     turn_input_contributors: Vec<Arc<dyn TurnInputContributor>>,
+     tool_contributors: Vec<Arc<dyn ToolContributor>>,
+     tool_lifecycle_contributors: Vec<Arc<dyn ToolLifecycleContributor>>,
++    tool_reaction_contributors: Vec<Arc<dyn ToolReactionContributor>>,
+     turn_item_contributors: Vec<Arc<dyn TurnItemContributor>>,
+     approval_review_contributors: Vec<Arc<dyn ApprovalReviewContributor>>,
+ }
+@@ -233,6 +241,11 @@ impl<C: Sync> ExtensionRegistry<C> {
+         &self.tool_lifecycle_contributors
+     }
+ 
++    /// Returns the registered post-tool reaction contributors.
++    pub fn tool_reaction_contributors(&self) -> &[Arc<dyn ToolReactionContributor>] {
++        &self.tool_reaction_contributors
++    }
++
+     /// Returns the registered ordered turn-item contributors.
+     pub fn turn_item_contributors(&self) -> &[Arc<dyn TurnItemContributor>] {
+         &self.turn_item_contributors
 diff --git a/codex-rs/ext/omd/BUILD.bazel b/codex-rs/ext/omd/BUILD.bazel
 new file mode 100644
-index 0000000000000000000000000000000000000000..6c44c5e1a9ca4ca9112bbb7d872c06b4b66200b5
+index 0000000..6c44c5e
 --- /dev/null
 +++ b/codex-rs/ext/omd/BUILD.bazel
 @@ -0,0 +1,6 @@
@@ -710,7 +885,7 @@ index 0000000000000000000000000000000000000000..6c44c5e1a9ca4ca9112bbb7d872c06b4
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e54652f1a17e8daa21effc82c414c434693a76b
+index 0000000..4e54652
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
 @@ -0,0 +1,27 @@
@@ -743,7 +918,7 @@ index 0000000000000000000000000000000000000000..4e54652f1a17e8daa21effc82c414c43
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4ab33dafad657ba5fb28ad63a2cf4fc1112c710b
+index 0000000..4ab33da
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,382 @@
@@ -1131,7 +1306,7 @@ index 0000000000000000000000000000000000000000..4ab33dafad657ba5fb28ad63a2cf4fc1
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b2f4487208363c71cd3fa44a59e44d913de623c7
+index 0000000..b2f4487
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
 @@ -0,0 +1,220 @@
@@ -1357,10 +1532,10 @@ index 0000000000000000000000000000000000000000..b2f4487208363c71cd3fa44a59e44d91
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9710e430595165afe8f8c768313faf54b396a3e7
+index 0000000..16ef947
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,1464 @@
+@@ -0,0 +1,1475 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -1901,6 +2076,12 @@ index 0000000000000000000000000000000000000000..9710e430595165afe8f8c768313faf54
 +        agent_nickname: Some(role.into()),
 +        agent_role: Some(role.into()),
 +    }));
++    if host.reactive_rules.is_some() {
++        let mut registry = ExtensionRegistryBuilder::new();
++        registry.prompt_contributor(Arc::new(Extension(host.clone())));
++        registry.tool_reaction_contributor(Arc::new(Extension(host.clone())));
++        options.isolated_extensions = Some(Arc::new(registry.build()));
++    }
 +    let spawned = match manager
 +        .spawn_controlled_subagent(lead.thread, options)
 +        .await
@@ -2169,6 +2350,11 @@ index 0000000000000000000000000000000000000000..9710e430595165afe8f8c768313faf54
 +            "authorization": {"reference": manifest.authorization, "sha256": manifest.authorization_sha256, "repository_identity": manifest.repository_identity},
 +            "guideline": host.active_guideline.as_ref().map(|guideline| &guideline.selection),
 +            "communication": manifest.communication,
++            "reactive_rules": host.reactive_rules.as_ref().map(|rules| json!({
++                "source": rules.source(),
++                "sha256": rules.source_sha256(),
++                "version": rules.rule_set().version,
++            })),
 +        }),
 +    )?;
 +    let scratch = AbsolutePathBuf::from_absolute_path_checked(&manifest.scratch).map_err(error)?;
@@ -2827,7 +3013,7 @@ index 0000000000000000000000000000000000000000..9710e430595165afe8f8c768313faf54
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/execution_tests.rs b/codex-rs/ext/omd/src/execution_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f048c840ee603cc09e79fca04b7cd915eb699421
+index 0000000..f048c84
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution_tests.rs
 @@ -0,0 +1,133 @@
@@ -2966,10 +3152,10 @@ index 0000000000000000000000000000000000000000..f048c840ee603cc09e79fca04b7cd915
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318ead8024a
+index 0000000..27fcd23
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,1503 @@
+@@ -0,0 +1,1634 @@
 +mod accounting;
 +mod execution;
 +
@@ -3000,6 +3186,7 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +use codex_extension_api::ToolLifecycleContributor;
 +use codex_extension_api::ToolLifecycleFuture;
 +use codex_extension_api::ToolOutput;
++use codex_extension_api::ToolReactionContributor;
 +use codex_extension_api::ToolStartInput;
 +use codex_extension_api::TurnContextContributionInput;
 +use codex_extension_api::TurnItemContributor;
@@ -3011,6 +3198,10 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +use codex_omd::LiveState;
 +use codex_omd::ProcessSnapshot;
 +use codex_omd::ProcessStatus;
++use codex_omd::ReactiveRuleSet;
++use codex_omd::ReactiveRules;
++use codex_omd::ReactiveToolOutcome;
++use codex_omd::ReactiveTrigger;
 +use codex_omd::Snapshot;
 +use codex_omd::Task;
 +use codex_omd::TaskContract;
@@ -3055,6 +3246,8 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +    guideline_store: Option<PathBuf>,
 +    #[serde(default)]
 +    communication: CommunicationPolicy,
++    #[serde(default)]
++    reactive_rules: Option<PacketReference>,
 +    checkpoint: TaskContract,
 +    legitimate_wait_tools: Vec<String>,
 +    lifecycle: LifecyclePolicy,
@@ -3237,6 +3430,7 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +    lead_completed: std::sync::atomic::AtomicBool,
 +    pending_calls: std::sync::Mutex<BTreeMap<String, PendingCall>>,
 +    active_guideline: Option<ActiveGuideline>,
++    reactive_rules: Option<ReactiveRules>,
 +}
 +
 +#[derive(Clone)]
@@ -3445,6 +3639,29 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +            return Err("shared task packet must be canonical and host-owned".into());
 +        }
 +    }
++    let reactive_rules = match &manifest.reactive_rules {
++        Some(reference) => {
++            let canonical = reference.path.canonicalize().map_err(|e| e.to_string())?;
++            if canonical != reference.path || reference.path.starts_with(&manifest.repository) {
++                return Err("reactive rules must be canonical and host-owned".into());
++            }
++            let bytes = std::fs::read(&reference.path).map_err(|e| e.to_string())?;
++            if bytes.len() > 65_536 || execution::hash(&bytes) != reference.sha256 {
++                return Err("reactive rule source changed or exceeds its bound".into());
++            }
++            let rule_set: ReactiveRuleSet =
++                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
++            Some(
++                ReactiveRules::new(
++                    rule_set,
++                    reference.path.display().to_string(),
++                    reference.sha256.clone(),
++                )
++                .map_err(|e| e.to_string())?,
++            )
++        }
++        None => None,
++    };
 +    let active_guideline = match &manifest.guideline_store {
 +        Some(path)
 +            if path.canonicalize().map_err(|e| e.to_string())? == *path
@@ -3485,6 +3702,7 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +        lead_completed: std::sync::atomic::AtomicBool::new(false),
 +        pending_calls: std::sync::Mutex::new(BTreeMap::new()),
 +        active_guideline,
++        reactive_rules,
 +    });
 +    let _ = host.authorize();
 +    let deadline_host = host.clone();
@@ -3498,6 +3716,7 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +    registry.thread_lifecycle_contributor(Arc::new(Extension(host.clone())));
 +    registry.prompt_contributor(Arc::new(Extension(host.clone())));
 +    registry.tool_lifecycle_contributor(Arc::new(Extension(host.clone())));
++    registry.tool_reaction_contributor(Arc::new(Extension(host.clone())));
 +    registry.turn_item_contributor(Arc::new(Extension(host.clone())));
 +    registry.tool_contributor(Arc::new(Extension(host)));
 +    Ok(())
@@ -3731,35 +3950,133 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +        input: TurnContextContributionInput<'a>,
 +    ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
 +        Box::pin(async move {
-+            let Some(lead) = input.thread_store.get::<Lead>() else {
++            let lead = input.thread_store.get::<Lead>();
++            let controlled =
++                lead.is_some()
++                    || self.accounts.0.lock().ok().is_some_and(|accounts| {
++                        accounts.contains_key(&input.thread_id.to_string())
++                    });
++            if !controlled {
 +                return Vec::new();
-+            };
++            }
 +            let mut fragments = Vec::new();
-+            if let Ok(Some(checkpoint)) = self.task.checkpoint()
-+                && let Ok(rendered) = serde_json::to_string(&checkpoint)
-+            {
-+                fragments.push(PromptFragment::developer_capability(
-+                    format!(
-+                        "Host-owned durable task checkpoint. Treat it as authoritative across compaction and use omd_checkpoint for evidence-backed progress updates: {rendered}"
-+                    ),
-+                    ContentItemKind("oh_my_diff.task_checkpoint".into()),
-+                ));
++            if let Some(lead) = lead {
++                if let Ok(Some(checkpoint)) = self.task.checkpoint()
++                    && let Ok(rendered) = serde_json::to_string(&checkpoint)
++                {
++                    fragments.push(PromptFragment::developer_capability(
++                        format!(
++                            "Host-owned durable task checkpoint. Treat it as authoritative across compaction and use omd_checkpoint for evidence-backed progress updates: {rendered}"
++                        ),
++                        ContentItemKind("oh_my_diff.task_checkpoint".into()),
++                    ));
++                }
++                if let Some(guideline) = &self.active_guideline {
++                    fragments.push(PromptFragment::developer_capability(
++                        guideline_prompt(guideline),
++                        ContentItemKind("oh_my_diff.guideline".into()),
++                    ));
++                }
++                if lead.owner == "lead"
++                    && let Some(prompt) = self.manifest.communication.user_update_prompt()
++                {
++                    fragments.push(PromptFragment::developer_capability(
++                        prompt,
++                        ContentItemKind("oh_my_diff.user_updates".into()),
++                    ));
++                }
 +            }
-+            if let Some(guideline) = &self.active_guideline {
-+                fragments.push(PromptFragment::developer_capability(
-+                    guideline_prompt(guideline),
-+                    ContentItemKind("oh_my_diff.guideline".into()),
-+                ));
-+            }
-+            if lead.owner == "lead"
-+                && let Some(prompt) = self.manifest.communication.user_update_prompt()
++            if let Some(reactive) = &self.reactive_rules
++                && let Ok(prompts) = reactive.context_prompts(&input.thread_id.to_string())
 +            {
-+                fragments.push(PromptFragment::developer_capability(
-+                    prompt,
-+                    ContentItemKind("oh_my_diff.user_updates".into()),
-+                ));
++                fragments.extend(prompts.into_iter().map(|prompt| {
++                    PromptFragment::developer_capability(
++                        prompt,
++                        ContentItemKind("oh_my_diff.reactive_rule".into()),
++                    )
++                }));
 +            }
 +            fragments
++        })
++    }
++}
++
++impl ToolReactionContributor for Extension {
++    fn on_tool_finish_reaction<'a>(
++        &'a self,
++        input: ToolFinishInput<'a>,
++    ) -> ExtensionFuture<'a, Option<String>> {
++        Box::pin(async move {
++            let thread = input.thread_store.level_id().to_string();
++            let owner = match input.thread_store.get::<Lead>() {
++                Some(lead) => lead.owner.clone(),
++                None => self
++                    .accounts
++                    .0
++                    .lock()
++                    .ok()?
++                    .get(&thread)
++                    .map(|account| account.owner.clone())?,
++            };
++            let Some(reactive) = &self.reactive_rules else {
++                return None;
++            };
++            let outcome = match input.outcome {
++                ToolCallOutcome::Completed { success: true } => {
++                    ReactiveToolOutcome::CompletedHostSuccess
++                }
++                ToolCallOutcome::Completed { success: false } => {
++                    ReactiveToolOutcome::CompletedHostFailure
++                }
++                ToolCallOutcome::Blocked => ReactiveToolOutcome::Blocked,
++                ToolCallOutcome::Failed {
++                    handler_executed: false,
++                } => ReactiveToolOutcome::FailedBeforeExecution,
++                ToolCallOutcome::Failed {
++                    handler_executed: true,
++                } => ReactiveToolOutcome::FailedAfterExecution,
++                ToolCallOutcome::Aborted => ReactiveToolOutcome::Aborted,
++            };
++            let trigger = ReactiveTrigger::ToolFinished {
++                tool: input.tool_name.to_string(),
++                outcome,
++            };
++            let activation = match reactive.activate(&thread, &owner, &trigger) {
++                Ok(Some(activation)) => activation,
++                _ => return None,
++            };
++            let prompt = activation.prompt();
++            let allowance = self
++                .task
++                .checkpoint()
++                .ok()
++                .flatten()
++                .map(|checkpoint| checkpoint.allowance);
++            let evidence = json!({
++                "schema": 1,
++                "activation": activation,
++                "prompt": prompt,
++                "thread": thread,
++                "owner": owner,
++                "call_id": input.call_id,
++                "turn_id": input.turn_id,
++                "allowance_before_follow_up": allowance,
++                "stream_interrupted": false,
++            });
++            let name = format!(
++                "reactive-{}.json",
++                execution::hash(
++                    format!(
++                        "{}\0{}\0{}\0{}",
++                        thread, input.turn_id, input.call_id, activation.rule_id
++                    )
++                    .as_bytes()
++                )
++            );
++            if self.evidence(&name, &evidence).is_err() {
++                return None;
++            }
++            Some(prompt)
 +        })
 +    }
 +}
@@ -4474,7 +4791,7 @@ index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318
 +    }
 +}
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
-index cd4cbd5431a785b0a1f2a9963b1536d2edf135ec..b37f321d96c66589e03f258f7d7746dd8df22462 100644
+index cd4cbd5..b37f321 100644
 --- a/codex-rs/login/src/auth/default_client.rs
 +++ b/codex-rs/login/src/auth/default_client.rs
 @@ -294,9 +294,14 @@ pub async fn create_client_for_route_async(
@@ -4496,7 +4813,7 @@ index cd4cbd5431a785b0a1f2a9963b1536d2edf135ec..b37f321d96c66589e03f258f7d7746dd
  // These legacy constructors intentionally preserve the infallible behavior of `create_client`.
 diff --git a/codex-rs/omd/BUILD.bazel b/codex-rs/omd/BUILD.bazel
 new file mode 100644
-index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01ca4e84fd2
+index 0000000..dd496cd
 --- /dev/null
 +++ b/codex-rs/omd/BUILD.bazel
 @@ -0,0 +1,6 @@
@@ -4508,7 +4825,7 @@ index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..812e16b756ce775f571083988846e62a34e7750d
+index 0000000..812e16b
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,15 @@
@@ -4529,7 +4846,7 @@ index 0000000000000000000000000000000000000000..812e16b756ce775f571083988846e62a
 +tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..06b5de3da5b08b616014d791514b6725f121905e
+index 0000000..06b5de3
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
 @@ -0,0 +1,1956 @@
@@ -6491,7 +6808,7 @@ index 0000000000000000000000000000000000000000..06b5de3da5b08b616014d791514b6725
 +}
 diff --git a/codex-rs/omd/src/bin/omd-guidelines.rs b/codex-rs/omd/src/bin/omd-guidelines.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3f3418a4c19fb709122190713e83f6ce5b3524df
+index 0000000..3f3418a
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-guidelines.rs
 @@ -0,0 +1,58 @@
@@ -6555,7 +6872,7 @@ index 0000000000000000000000000000000000000000..3f3418a4c19fb709122190713e83f6ce
 +}
 diff --git a/codex-rs/omd/src/checkpoint.rs b/codex-rs/omd/src/checkpoint.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..be185507bb8911c12554e132a6fa3e1700c31c19
+index 0000000..be18550
 --- /dev/null
 +++ b/codex-rs/omd/src/checkpoint.rs
 @@ -0,0 +1,258 @@
@@ -6819,7 +7136,7 @@ index 0000000000000000000000000000000000000000..be185507bb8911c12554e132a6fa3e17
 +}
 diff --git a/codex-rs/omd/src/communication.rs b/codex-rs/omd/src/communication.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..de74f1086d7a228166bd72a04dfd92337291bf7b
+index 0000000..de74f10
 --- /dev/null
 +++ b/codex-rs/omd/src/communication.rs
 @@ -0,0 +1,67 @@
@@ -6892,7 +7209,7 @@ index 0000000000000000000000000000000000000000..de74f1086d7a228166bd72a04dfd9233
 +}
 diff --git a/codex-rs/omd/src/guideline.rs b/codex-rs/omd/src/guideline.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6d04bd123f2ed2af2c0ac0cbc66dd9ecea546433
+index 0000000..6d04bd1
 --- /dev/null
 +++ b/codex-rs/omd/src/guideline.rs
 @@ -0,0 +1,658 @@
@@ -7556,14 +7873,15 @@ index 0000000000000000000000000000000000000000..6d04bd123f2ed2af2c0ac0cbc66dd9ec
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9976bef0a4089e81c1abf5558d45ef2394d35a2
+index 0000000..76c155b
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,54 @@
 +mod admission;
 +mod checkpoint;
 +mod communication;
 +mod guideline;
++mod reactive;
 +mod workspace;
 +
 +pub use admission::Admission;
@@ -7600,15 +7918,292 @@ index 0000000000000000000000000000000000000000..a9976bef0a4089e81c1abf5558d45ef2
 +pub use guideline::RollbackRequest;
 +pub use guideline::ValidationOutcome;
 +pub use guideline::ValidationRecord;
++pub use reactive::ReactiveActivation;
++pub use reactive::ReactiveRule;
++pub use reactive::ReactiveRuleSet;
++pub use reactive::ReactiveRules;
++pub use reactive::ReactiveScope;
++pub use reactive::ReactiveToolOutcome;
++pub use reactive::ReactiveTrigger;
 +pub use workspace::File;
 +pub use workspace::Snapshot;
 +pub use workspace::capture_tracked;
 +pub use workspace::cleanup_owned_directory;
 +pub use workspace::create_worktree;
 +pub use workspace::tracked_paths;
+diff --git a/codex-rs/omd/src/reactive.rs b/codex-rs/omd/src/reactive.rs
+new file mode 100644
+index 0000000..f28113b
+--- /dev/null
++++ b/codex-rs/omd/src/reactive.rs
+@@ -0,0 +1,264 @@
++use serde::Deserialize;
++use serde::Serialize;
++use std::collections::BTreeMap;
++use std::collections::BTreeSet;
++use std::io;
++use std::sync::Mutex;
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(rename_all = "snake_case")]
++pub enum ReactiveScope {
++    Lead,
++    Worker,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(rename_all = "snake_case")]
++pub enum ReactiveToolOutcome {
++    CompletedHostSuccess,
++    CompletedHostFailure,
++    Blocked,
++    FailedBeforeExecution,
++    FailedAfterExecution,
++    Aborted,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
++pub enum ReactiveTrigger {
++    ToolFinished {
++        tool: String,
++        outcome: ReactiveToolOutcome,
++    },
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ReactiveRule {
++    pub id: String,
++    pub scope: ReactiveScope,
++    pub trigger: ReactiveTrigger,
++    pub instruction: String,
++    pub max_activations: u32,
++    pub max_context_reactivations: u32,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ReactiveRuleSet {
++    pub schema: u32,
++    pub version: String,
++    pub rules: Vec<ReactiveRule>,
++}
++
++#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
++pub struct ReactiveActivation {
++    pub rule_id: String,
++    pub rule_set_version: String,
++    pub source: String,
++    pub source_sha256: String,
++    pub scope: ReactiveScope,
++    pub trigger: ReactiveTrigger,
++    pub activation: u32,
++    pub max_activations: u32,
++    pub executed_effects_rolled_back: bool,
++    pub retry_started: bool,
++    #[serde(skip)]
++    instruction: String,
++}
++
++#[derive(Clone)]
++struct ActiveRule {
++    activation: ReactiveActivation,
++    remaining_context_reactivations: u32,
++}
++
++#[derive(Default)]
++struct ReactiveState {
++    activations: BTreeMap<String, u32>,
++    active: BTreeMap<(String, String), ActiveRule>,
++}
++
++pub struct ReactiveRules {
++    rule_set: ReactiveRuleSet,
++    source: String,
++    source_sha256: String,
++    state: Mutex<ReactiveState>,
++}
++
++fn invalid(message: &str) -> io::Error {
++    io::Error::other(message)
++}
++
++fn valid_token(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 64
++        && value.bytes().enumerate().all(|(index, byte)| {
++            byte.is_ascii_lowercase()
++                || byte.is_ascii_digit()
++                || (index > 0 && matches!(byte, b'.' | b'_' | b'-'))
++        })
++}
++
++fn valid_sha256(value: &str) -> bool {
++    value.len() == 64
++        && value
++            .bytes()
++            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
++}
++
++fn valid_tool(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 128
++        && value.bytes().all(|byte| {
++            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':' | b'/')
++        })
++}
++
++fn valid_instruction(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 512
++        && value.trim() == value
++        && !value.contains(['\r', '\n'])
++}
++
++impl ReactiveRuleSet {
++    pub fn validate(&self) -> io::Result<()> {
++        if self.schema != 1 || !valid_token(&self.version) || !(1..=16).contains(&self.rules.len())
++        {
++            return Err(invalid("invalid reactive rule set"));
++        }
++        let mut ids = BTreeSet::new();
++        let mut matches = BTreeSet::new();
++        for rule in &self.rules {
++            let ReactiveTrigger::ToolFinished { tool, .. } = &rule.trigger;
++            if !valid_token(&rule.id)
++                || !ids.insert(rule.id.as_str())
++                || !valid_tool(tool)
++                || !valid_instruction(&rule.instruction)
++                || !(1..=8).contains(&rule.max_activations)
++                || rule.max_context_reactivations > 4
++                || !matches.insert((rule.scope, rule.trigger.clone()))
++            {
++                return Err(invalid("invalid or ambiguous reactive rule"));
++            }
++        }
++        if serde_json::to_vec(self)?.len() > 65_536 {
++            return Err(invalid("reactive rule set exceeds size limit"));
++        }
++        Ok(())
++    }
++}
++
++impl ReactiveActivation {
++    pub fn prompt(&self) -> String {
++        format!(
++            "A scoped reactive rule was activated after the host observed an exact tool outcome. Rule {} from rule set {} at {} with SHA256 {} says: {} This developer-capability guidance is subordinate to current user and project instructions. The triggering call has already reached its recorded outcome; no executed effect was rolled back. This activation does not start a retry. Any follow-up model request or retry remains subject to the shared task allowance and request accounting.",
++            self.rule_id, self.rule_set_version, self.source, self.source_sha256, self.instruction
++        )
++    }
++
++    pub fn context_prompt(&self) -> String {
++        format!("Reactivated after a context rebuild: {}", self.prompt())
++    }
++}
++
++impl ReactiveRules {
++    pub fn new(
++        rule_set: ReactiveRuleSet,
++        source: String,
++        source_sha256: String,
++    ) -> io::Result<Self> {
++        rule_set.validate()?;
++        if source.is_empty() || source.len() > 4096 || !valid_sha256(&source_sha256) {
++            return Err(invalid("invalid reactive rule provenance"));
++        }
++        Ok(Self {
++            rule_set,
++            source,
++            source_sha256,
++            state: Mutex::new(ReactiveState::default()),
++        })
++    }
++
++    pub fn rule_set(&self) -> &ReactiveRuleSet {
++        &self.rule_set
++    }
++
++    pub fn source(&self) -> &str {
++        &self.source
++    }
++
++    pub fn source_sha256(&self) -> &str {
++        &self.source_sha256
++    }
++
++    pub fn activate(
++        &self,
++        thread: &str,
++        owner: &str,
++        trigger: &ReactiveTrigger,
++    ) -> io::Result<Option<ReactiveActivation>> {
++        if thread.is_empty() || thread.len() > 256 || owner.is_empty() || owner.len() > 256 {
++            return Err(invalid("invalid reactive activation identity"));
++        }
++        let scope = if owner == "lead" {
++            ReactiveScope::Lead
++        } else {
++            ReactiveScope::Worker
++        };
++        let Some(rule) = self
++            .rule_set
++            .rules
++            .iter()
++            .find(|rule| rule.scope == scope && &rule.trigger == trigger)
++        else {
++            return Ok(None);
++        };
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| invalid("reactive rule lock poisoned"))?;
++        let count = state.activations.entry(rule.id.clone()).or_default();
++        if *count >= rule.max_activations {
++            return Ok(None);
++        }
++        *count += 1;
++        let activation = ReactiveActivation {
++            rule_id: rule.id.clone(),
++            rule_set_version: self.rule_set.version.clone(),
++            source: self.source.clone(),
++            source_sha256: self.source_sha256.clone(),
++            scope: rule.scope,
++            trigger: rule.trigger.clone(),
++            activation: *count,
++            max_activations: rule.max_activations,
++            executed_effects_rolled_back: false,
++            retry_started: false,
++            instruction: rule.instruction.clone(),
++        };
++        state.active.insert(
++            (thread.to_owned(), rule.id.clone()),
++            ActiveRule {
++                activation: activation.clone(),
++                remaining_context_reactivations: rule.max_context_reactivations,
++            },
++        );
++        Ok(Some(activation))
++    }
++
++    pub fn context_prompts(&self, thread: &str) -> io::Result<Vec<String>> {
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| invalid("reactive rule lock poisoned"))?;
++        let mut prompts = Vec::new();
++        for ((active_thread, _), active) in &mut state.active {
++            if active_thread == thread && active.remaining_context_reactivations > 0 {
++                active.remaining_context_reactivations -= 1;
++                prompts.push(active.activation.context_prompt());
++            }
++        }
++        Ok(prompts)
++    }
++}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..74978b9b0cd65020174ff06d5501179226be9484
+index 0000000..74978b9
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
 @@ -0,0 +1,422 @@
@@ -8036,7 +8631,7 @@ index 0000000000000000000000000000000000000000..74978b9b0cd65020174ff06d55011792
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8025d9f797e291fa0ec43b6099785bf13ead49bf
+index 0000000..8025d9f
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
 @@ -0,0 +1,756 @@
@@ -8798,7 +9393,7 @@ index 0000000000000000000000000000000000000000..8025d9f797e291fa0ec43b6099785bf1
 +}
 diff --git a/codex-rs/omd/tests/communication.rs b/codex-rs/omd/tests/communication.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f64cb6ee619a7b50ac560f11a4e9bd118cd08ea3
+index 0000000..f64cb6e
 --- /dev/null
 +++ b/codex-rs/omd/tests/communication.rs
 @@ -0,0 +1,49 @@
@@ -8853,7 +9448,7 @@ index 0000000000000000000000000000000000000000..f64cb6ee619a7b50ac560f11a4e9bd11
 +}
 diff --git a/codex-rs/omd/tests/guideline.rs b/codex-rs/omd/tests/guideline.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..163f95b6a6f50bd8c738dc99dd5210d91e7cd6a3
+index 0000000..163f95b
 --- /dev/null
 +++ b/codex-rs/omd/tests/guideline.rs
 @@ -0,0 +1,286 @@
@@ -9143,9 +9738,170 @@ index 0000000000000000000000000000000000000000..163f95b6a6f50bd8c738dc99dd5210d9
 +    );
 +    assert_eq!(store.transitions().unwrap().len(), 4);
 +}
+diff --git a/codex-rs/omd/tests/reactive.rs b/codex-rs/omd/tests/reactive.rs
+new file mode 100644
+index 0000000..6e4431e
+--- /dev/null
++++ b/codex-rs/omd/tests/reactive.rs
+@@ -0,0 +1,155 @@
++use codex_omd::ReactiveRule;
++use codex_omd::ReactiveRuleSet;
++use codex_omd::ReactiveRules;
++use codex_omd::ReactiveScope;
++use codex_omd::ReactiveToolOutcome;
++use codex_omd::ReactiveTrigger;
++
++fn trigger(tool: &str, outcome: ReactiveToolOutcome) -> ReactiveTrigger {
++    ReactiveTrigger::ToolFinished {
++        tool: tool.into(),
++        outcome,
++    }
++}
++
++fn rule(id: &str, scope: ReactiveScope, tool: &str) -> ReactiveRule {
++    ReactiveRule {
++        id: id.into(),
++        scope,
++        trigger: trigger(tool, ReactiveToolOutcome::CompletedHostFailure),
++        instruction: "Inspect the observed failure before choosing a different bounded attempt."
++            .into(),
++        max_activations: 2,
++        max_context_reactivations: 1,
++    }
++}
++
++fn rules(entries: Vec<ReactiveRule>) -> ReactiveRuleSet {
++    ReactiveRuleSet {
++        schema: 1,
++        version: "reactive-v1".into(),
++        rules: entries,
++    }
++}
++
++fn runtime(entries: Vec<ReactiveRule>) -> ReactiveRules {
++    ReactiveRules::new(
++        rules(entries),
++        "/private/tmp/reactive-rules.json".into(),
++        "a".repeat(64),
++    )
++    .unwrap()
++}
++
++#[test]
++fn exact_scoped_match_activates_only_the_selected_rule() {
++    let reactive = runtime(vec![
++        rule("lead-edit", ReactiveScope::Lead, "exec_command"),
++        rule("worker-edit", ReactiveScope::Worker, "exec_command"),
++    ]);
++    let exact = trigger("exec_command", ReactiveToolOutcome::CompletedHostFailure);
++    let activation = reactive
++        .activate("thread-lead", "lead", &exact)
++        .unwrap()
++        .unwrap();
++    assert_eq!(activation.rule_id, "lead-edit");
++    assert_eq!(activation.activation, 1);
++    assert!(
++        reactive
++            .activate(
++                "thread-lead",
++                "lead",
++                &trigger("functions.exec", ReactiveToolOutcome::CompletedHostFailure)
++            )
++            .unwrap()
++            .is_none()
++    );
++}
++
++#[test]
++fn ambiguous_matches_and_unbounded_rules_are_rejected() {
++    let duplicate = rule("second", ReactiveScope::Lead, "exec_command");
++    assert!(
++        ReactiveRules::new(
++            rules(vec![
++                rule("first", ReactiveScope::Lead, "exec_command"),
++                duplicate
++            ]),
++            "source".into(),
++            "b".repeat(64)
++        )
++        .is_err()
++    );
++    let mut unbounded = rule("unbounded", ReactiveScope::Lead, "exec_command");
++    unbounded.max_activations = 9;
++    assert!(ReactiveRules::new(rules(vec![unbounded]), "source".into(), "b".repeat(64)).is_err());
++}
++
++#[test]
++fn lead_and_worker_scopes_are_not_ambiguous() {
++    let reactive = runtime(vec![
++        rule("lead-edit", ReactiveScope::Lead, "exec_command"),
++        rule("worker-edit", ReactiveScope::Worker, "exec_command"),
++    ]);
++    let exact = trigger("exec_command", ReactiveToolOutcome::CompletedHostFailure);
++    assert_eq!(
++        reactive
++            .activate("thread-worker", "agent:worker", &exact)
++            .unwrap()
++            .unwrap()
++            .rule_id,
++        "worker-edit"
++    );
++}
++
++#[test]
++fn activation_is_bounded_and_does_not_claim_retry_or_rollback() {
++    let reactive = runtime(vec![rule(
++        "failed-edit",
++        ReactiveScope::Lead,
++        "exec_command",
++    )]);
++    let exact = trigger("exec_command", ReactiveToolOutcome::CompletedHostFailure);
++    let first = reactive
++        .activate("thread", "lead", &exact)
++        .unwrap()
++        .unwrap();
++    let second = reactive
++        .activate("thread", "lead", &exact)
++        .unwrap()
++        .unwrap();
++    assert!(
++        reactive
++            .activate("thread", "lead", &exact)
++            .unwrap()
++            .is_none()
++    );
++    assert_eq!((first.activation, second.activation), (1, 2));
++    assert!(!second.executed_effects_rolled_back);
++    assert!(!second.retry_started);
++    let prompt = second.prompt();
++    assert!(prompt.contains("subordinate to current user and project instructions"));
++    assert!(prompt.contains("no executed effect was rolled back"));
++    assert!(prompt.contains("shared task allowance and request accounting"));
++    assert!(prompt.contains("reactive-v1"));
++    assert!(prompt.contains(&"a".repeat(64)));
++}
++
++#[test]
++fn active_rule_survives_until_one_bounded_context_reactivation() {
++    let reactive = runtime(vec![rule(
++        "failed-edit",
++        ReactiveScope::Lead,
++        "exec_command",
++    )]);
++    let exact = trigger("exec_command", ReactiveToolOutcome::CompletedHostFailure);
++    reactive
++        .activate("thread", "lead", &exact)
++        .unwrap()
++        .unwrap();
++    let after_compaction = reactive.context_prompts("thread").unwrap();
++    assert_eq!(after_compaction.len(), 1);
++    assert!(after_compaction[0].starts_with("Reactivated after a context rebuild:"));
++    assert!(reactive.context_prompts("thread").unwrap().is_empty());
++    assert!(reactive.context_prompts("other-thread").unwrap().is_empty());
++}
 diff --git a/codex-rs/omd/tests/workspace.rs b/codex-rs/omd/tests/workspace.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..03463c997925ae2a797718c426f581b486aee6a5
+index 0000000..03463c9
 --- /dev/null
 +++ b/codex-rs/omd/tests/workspace.rs
 @@ -0,0 +1,249 @@
@@ -9399,7 +10155,7 @@ index 0000000000000000000000000000000000000000..03463c997925ae2a797718c426f581b4
 +    );
 +}
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index e7140a6533a6a8a3e719ba67019f7e810ab8b083..1a39285d2e1aa9769c0ee3014667fa3ce330c997 100644
+index e7140a6..1a39285 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -174,7 +174,11 @@ use crossterm::event::KeyCode;
@@ -9526,7 +10282,7 @@ index e7140a6533a6a8a3e719ba67019f7e810ab8b083..1a39285d2e1aa9769c0ee3014667fa3c
                  if let Some((x, y)) = chat_widget.cursor_pos(area) {
                      frame.set_cursor_style(chat_widget.cursor_style(area));
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index cc16390c17de1c2dcc3f87456dd667bee44eb787..b4497a02f3a04a0ce8f4c8b62f49d0bba0e4255d 100644
+index cc16390..b4497a0 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -250,6 +250,12 @@ impl App {
@@ -9543,7 +10299,7 @@ index cc16390c17de1c2dcc3f87456dd667bee44eb787..b4497a02f3a04a0ce8f4c8b62f49d0bb
                  self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
                  self.reset_app_ui_state_after_clear();
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index 64c8bda18db957a6990441ffd57f96be606a7556..5a651989760166d55a3a9a52de52c566baed7cc4 100644
+index 64c8bda..5a65198 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
 @@ -218,6 +218,80 @@ async fn pasted_text_normalizes_mixed_line_endings_at_app_boundary() -> Result<(
@@ -9628,7 +10384,7 @@ index 64c8bda18db957a6990441ffd57f96be606a7556..5a651989760166d55a3a9a52de52c566
  async fn duplicate_named_resume_renders_error_without_replacing_current_session() -> Result<()> {
      let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
 diff --git a/codex-rs/tui/src/app_backtrack/legacy_input.rs b/codex-rs/tui/src/app_backtrack/legacy_input.rs
-index c36e83bd768785d26d8dd74ccdba446a1347df70..20b1d931f1e8f9f16d947e108a7944a8ecd492b3 100644
+index c36e83b..20b1d93 100644
 --- a/codex-rs/tui/src/app_backtrack/legacy_input.rs
 +++ b/codex-rs/tui/src/app_backtrack/legacy_input.rs
 @@ -35,12 +35,15 @@ impl App {
@@ -9649,7 +10405,7 @@ index c36e83bd768785d26d8dd74ccdba446a1347df70..20b1d931f1e8f9f16d947e108a7944a8
          }
          Ok(true)
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 1df5a1a7f4f00a61a1fa8a263ccca3752ffeee7a..d48a83d5aab2cb96df015d337ef73bef820d1b2c 100644
+index 1df5a1a..d48a83d 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -390,6 +390,9 @@ pub(crate) enum AppEvent {
@@ -9663,7 +10419,7 @@ index 1df5a1a7f4f00a61a1fa8a263ccca3752ffeee7a..d48a83d5aab2cb96df015d337ef73bef
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 967c712fe9a5f0d95999be28ae847647db8a27c0..a55e53fd3429605b7f46d6112bb386fb33579bb0 100644
+index 967c712..a55e53f 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -347,6 +347,7 @@ use codex_file_search::FileMatch;
@@ -9791,7 +10547,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..a55e53fd3429605b7f46d6112bb386fb
      fn footer_hint_row_is_separated_from_composer() {
          let (tx, _rx) = unbounded_channel::<AppEvent>();
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index f249fad8b2eb8c02a6d4cd04008e39d173cb3c15..afc30b4a14e56c73e3471cbd46631d2f1f592aec 100644
+index f249fad..afc30b4 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
 @@ -1031,6 +1031,40 @@ impl BottomPane {
@@ -9836,7 +10592,7 @@ index f249fad8b2eb8c02a6d4cd04008e39d173cb3c15..afc30b4a14e56c73e3471cbd46631d2f
      pub(crate) fn composer_cursor(&self) -> usize {
          self.composer.cursor()
 diff --git a/codex-rs/tui/src/bottom_pane/textarea.rs b/codex-rs/tui/src/bottom_pane/textarea.rs
-index e8900ad606f14612d6611ac3e6339c0cc3cf500c..f73a0181db5047984e58e86592e236f43b1bc7cc 100644
+index e8900ad..f73a018 100644
 --- a/codex-rs/tui/src/bottom_pane/textarea.rs
 +++ b/codex-rs/tui/src/bottom_pane/textarea.rs
 @@ -527,6 +527,37 @@ impl TextArea {
@@ -9942,7 +10698,7 @@ index e8900ad606f14612d6611ac3e6339c0cc3cf500c..f73a0181db5047984e58e86592e236f4
      fn insert_str_at_clamps_to_char_boundary() {
          let mut t = TextArea::new();
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 16d4a6e5932e63f4e8185a59c00dfe1d5dd91b35..e33410f2a458a22a5b19103c30adc72470f87b1c 100644
+index 16d4a6e..e33410f 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -381,6 +381,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
@@ -9977,7 +10733,7 @@ index 16d4a6e5932e63f4e8185a59c00dfe1d5dd91b35..e33410f2a458a22a5b19103c30adc724
          self.bottom_pane.composer_is_vim_enabled()
      }
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index f45ae82fef827e04dfa35cd771ad3f501ff0afbc..7ba8abfce25cacf2ac9f75b9c3ce41e08a6ca910 100644
+index f45ae82..7ba8abf 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -37,7 +37,11 @@ impl ChatWidget {
@@ -9995,7 +10751,7 @@ index f45ae82fef827e04dfa35cd771ad3f501ff0afbc..7ba8abfce25cacf2ac9f75b9c3ce41e0
          let model_override = model.as_deref();
 diff --git a/codex-rs/tui/src/chatwidget/omd_inspector.rs b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..67f0a55f91f27dee3c768303ec017b380674d7e4
+index 0000000..67f0a55
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 @@ -0,0 +1,114 @@
@@ -10114,7 +10870,7 @@ index 0000000000000000000000000000000000000000..67f0a55f91f27dee3c768303ec017b38
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index b8db07ee74123aba2691a17e19915b31bd8a03a4..d46ab69315f71aae25c1cfa5d7e32b2ebfeceb26 100644
+index b8db07e..d46ab69 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 @@ -492,6 +492,7 @@ impl ChatWidget {
@@ -10134,7 +10890,7 @@ index b8db07ee74123aba2691a17e19915b31bd8a03a4..d46ab69315f71aae25c1cfa5d7e32b2e
              | SlashCommand::Usage
              | SlashCommand::DebugConfig
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 17f437c48899cb5394d6413fad41240de29c15e9..8e5a0dd77ea30b41bfa3fdfb38e471eb766868fe 100644
+index 17f437c..8e5a0dd 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 @@ -200,7 +200,7 @@ impl ChatWidget {
@@ -10171,7 +10927,7 @@ index 17f437c48899cb5394d6413fad41240de29c15e9..8e5a0dd77ea30b41bfa3fdfb38e471eb
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
 diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
-index 64e163f18b22dcdae60de1b6757ec0d97f4e7645..1b94f6b786983eed190459567752e4a4e851cfe2 100644
+index 64e163f..1b94f6b 100644
 --- a/codex-rs/tui/src/custom_terminal.rs
 +++ b/codex-rs/tui/src/custom_terminal.rs
 @@ -268,6 +268,10 @@ where
@@ -10186,7 +10942,7 @@ index 64e163f18b22dcdae60de1b6757ec0d97f4e7645..1b94f6b786983eed190459567752e4a4
      fn previous_buffer_mut(&mut self) -> &mut Buffer {
          &mut self.buffers[1 - self.current]
 diff --git a/codex-rs/tui/src/cwd_prompt.rs b/codex-rs/tui/src/cwd_prompt.rs
-index b0d6205602884906fc9ed851220c70f16d283d3b..dd77c7ee2acc480659e4353262c29a92fb5eb4c3 100644
+index b0d6205..dd77c7e 100644
 --- a/codex-rs/tui/src/cwd_prompt.rs
 +++ b/codex-rs/tui/src/cwd_prompt.rs
 @@ -134,7 +134,7 @@ pub(crate) async fn run_cwd_selection_prompt(
@@ -10199,7 +10955,7 @@ index b0d6205602884906fc9ed851220c70f16d283d3b..dd77c7ee2acc480659e4353262c29a92
                      tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/external_agent_config_migration/mod.rs b/codex-rs/tui/src/external_agent_config_migration/mod.rs
-index a80fe03af1e0106bcebdef5dba939949cd5c376f..bd6683a491aa09c0f3b8460b5b4720a4a1dc7d6f 100644
+index a80fe03..bd6683a 100644
 --- a/codex-rs/tui/src/external_agent_config_migration/mod.rs
 +++ b/codex-rs/tui/src/external_agent_config_migration/mod.rs
 @@ -108,7 +108,7 @@ pub(crate) async fn run_external_agent_config_migration_prompt(
@@ -10212,7 +10968,7 @@ index a80fe03af1e0106bcebdef5dba939949cd5c376f..bd6683a491aa09c0f3b8460b5b4720a4
                      let _ = tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/external_agent_config_migration/source.rs b/codex-rs/tui/src/external_agent_config_migration/source.rs
-index bc01ad78c39722c13fb4c1a08676238ea34bba23..c20e910642e4a5a77b18fff6d66731b150ee1ea1 100644
+index bc01ad7..c20e910 100644
 --- a/codex-rs/tui/src/external_agent_config_migration/source.rs
 +++ b/codex-rs/tui/src/external_agent_config_migration/source.rs
 @@ -65,7 +65,7 @@ pub(crate) async fn run_external_agent_config_source_prompt(
@@ -10225,7 +10981,7 @@ index bc01ad78c39722c13fb4c1a08676238ea34bba23..c20e910642e4a5a77b18fff6d66731b1
                      let _ = tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 3d9650d3d4c5391dc15fe5bc5b79386aab2ae4d7..2dd9cd9208f8eca84ab9c5781797c9e2363fa084 100644
+index 3d9650d..2dd9cd9 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
 @@ -177,6 +177,7 @@ mod named_session_lookup;
@@ -10258,7 +11014,7 @@ index 3d9650d3d4c5391dc15fe5bc5b79386aab2ae4d7..2dd9cd9208f8eca84ab9c5781797c9e2
      // Mark the end of the recorded session.
      session_log::log_session_end();
 diff --git a/codex-rs/tui/src/model_migration.rs b/codex-rs/tui/src/model_migration.rs
-index 094fb731b0f44d50c1d6e2a447ec6e80fb5ddbc5..56dec6bc918300d269739fb18b679dfd2a87061b 100644
+index 094fb73..56dec6b 100644
 --- a/codex-rs/tui/src/model_migration.rs
 +++ b/codex-rs/tui/src/model_migration.rs
 @@ -154,7 +154,7 @@ pub(crate) async fn run_model_migration_prompt(
@@ -10272,7 +11028,7 @@ index 094fb731b0f44d50c1d6e2a447ec6e80fb5ddbc5..56dec6bc918300d269739fb18b679dfd
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ecc5228971e43de01da4a04d1a4bb1d1676dfd59
+index 0000000..ecc5228
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
 @@ -0,0 +1,510 @@
@@ -10787,7 +11543,7 @@ index 0000000000000000000000000000000000000000..ecc5228971e43de01da4a04d1a4bb1d1
 +    }
 +}
 diff --git a/codex-rs/tui/src/onboarding/onboarding_screen.rs b/codex-rs/tui/src/onboarding/onboarding_screen.rs
-index 756e231b501fa21d6ad824b9b2c101e5a1f7aeb4..f8c7b444ac2e2a45d030c5726de732373a084a0d 100644
+index 756e231..f8c7b44 100644
 --- a/codex-rs/tui/src/onboarding/onboarding_screen.rs
 +++ b/codex-rs/tui/src/onboarding/onboarding_screen.rs
 @@ -580,7 +580,7 @@ pub(crate) async fn run_onboarding_app(
@@ -10800,7 +11556,7 @@ index 756e231b501fa21d6ad824b9b2c101e5a1f7aeb4..f8c7b444ac2e2a45d030c5726de73237
                  }
              }
 diff --git a/codex-rs/tui/src/pager_overlay.rs b/codex-rs/tui/src/pager_overlay.rs
-index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d490fe7ab53 100644
+index 9b6c763..d807bce 100644
 --- a/codex-rs/tui/src/pager_overlay.rs
 +++ b/codex-rs/tui/src/pager_overlay.rs
 @@ -40,6 +40,8 @@ use crate::tui;
@@ -11192,7 +11948,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
          renderables: Vec<Box<dyn Renderable>>,
          title: &str,
 diff --git a/codex-rs/tui/src/resume_picker.rs b/codex-rs/tui/src/resume_picker.rs
-index ef4dd6df726755663c90dde0e5b3fd62820d3197..a27f1dc03e1ac51d92b19d13fac6b058c80884fe 100644
+index ef4dd6d..a27f1dc 100644
 --- a/codex-rs/tui/src/resume_picker.rs
 +++ b/codex-rs/tui/src/resume_picker.rs
 @@ -621,7 +621,7 @@ async fn run_session_picker_with_loader(
@@ -11205,7 +11961,7 @@ index ef4dd6df726755663c90dde0e5b3fd62820d3197..a27f1dc03e1ac51d92b19d13fac6b058
              }
              Some(event) = background_events.next() => {
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
-index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..65898fbda2749d684dbee96197587ca83de38d36 100644
+index ca83861..65898fb 100644
 --- a/codex-rs/tui/src/slash_command.rs
 +++ b/codex-rs/tui/src/slash_command.rs
 @@ -51,6 +51,7 @@ pub enum SlashCommand {
@@ -11249,7 +12005,7 @@ index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..65898fbda2749d684dbee96197587ca8
              _ => true,
          }
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
-index 24ce94e912c387fcad0a6375a4080ec2a02352c8..b6546c75b3dfa4064995e01908ac658f7d623095 100644
+index 24ce94e..b6546c7 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
 @@ -12,4 +12,4 @@ expression: snapshot
@@ -11259,7 +12015,7 @@ index 24ce94e912c387fcad0a6375a4080ec2a02352c8..b6546c75b3dfa4064995e01908ac658f
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
-index 9ed198f5546f78916ef9d845ebf018bf453a6700..e23377b7fd8d580c076b7ec1a089193bfd63ed7d 100644
+index 9ed198f..e23377b 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
 @@ -10,4 +10,4 @@ last
@@ -11269,7 +12025,7 @@ index 9ed198f5546f78916ef9d845ebf018bf453a6700..e23377b7fd8d580c076b7ec1a089193b
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
-index 84cb5dbcec4bdccf25ce3ef52e5d541a3b19cc7e..64c6708a2f7c37bdbbeb512fe7c6f2c6a9e493c0 100644
+index 84cb5db..64c6708 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
 @@ -14,5 +14,5 @@ expression: term.backend()
@@ -11280,7 +12036,7 @@ index 84cb5dbcec4bdccf25ce3ef52e5d541a3b19cc7e..64c6708a2f7c37bdbbeb512fe7c6f2c6
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
-index b8106e6caef92d7de8e63cb0b4241f11675e3d2a..7837b6ed3cb60159f3b159a551b78a5a01c28329 100644
+index b8106e6..7837b6e 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
 @@ -11,7 +11,7 @@ recent transcript
@@ -11317,7 +12073,7 @@ index b8106e6caef92d7de8e63cb0b4241f11675e3d2a..7837b6ed3cb60159f3b159a551b78a5a
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
-index b823027c570dbea84685b917d57a9758b757d757..c80df9c44ff561da34046d2303bff99d1412f2bd 100644
+index b823027..c80df9c 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
 @@ -10,5 +10,5 @@ expression: term.backend()
@@ -11328,7 +12084,7 @@ index b823027c570dbea84685b917d57a9758b757d757..c80df9c44ff561da34046d2303bff99d
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
-index 024964cea06ed1bf48ceb8e082914e66778c3285..22d7a69975834151b7d7d3340be8b6c818f945d4 100644
+index 024964c..22d7a69 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
 @@ -10,5 +10,5 @@ expression: term.backend()
@@ -11339,7 +12095,7 @@ index 024964cea06ed1bf48ceb8e082914e66778c3285..22d7a69975834151b7d7d3340be8b6c8
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
-index 4c3dbe00cd981d3c71eb87ed622f6f5bfe78c2be..2de94ee4e4f526798367d53f89dedcacc72323be 100644
+index 4c3dbe0..2de94ee 100644
 --- a/codex-rs/tui/src/startup_draft.rs
 +++ b/codex-rs/tui/src/startup_draft.rs
 @@ -312,7 +312,7 @@ impl StartupDraftPump {
@@ -11365,7 +12121,7 @@ index 4c3dbe00cd981d3c71eb87ed622f6f5bfe78c2be..2de94ee4e4f526798367d53f89dedcac
          }
          if self.initial_screen == StartupDraftInitialScreen::Composer {
 diff --git a/codex-rs/tui/src/startup_hooks_review.rs b/codex-rs/tui/src/startup_hooks_review.rs
-index 002e58b14417a33e8984e61c9e69f4b34f18edcb..9090b6280e9b18729e1dce83ff21791c3048a0db 100644
+index 002e58b..9090b62 100644
 --- a/codex-rs/tui/src/startup_hooks_review.rs
 +++ b/codex-rs/tui/src/startup_hooks_review.rs
 @@ -182,7 +182,7 @@ async fn run_startup_hooks_review_app(
@@ -11378,7 +12134,7 @@ index 002e58b14417a33e8984e61c9e69f4b34f18edcb..9090b6280e9b18729e1dce83ff21791c
                  draw_view(tui, &view)?;
              }
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32d5fc6394 100644
+index 96b3fbc..968fd3a 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -19,10 +19,13 @@ use crossterm::SynchronizedUpdate;
@@ -11610,7 +12366,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
      }
  
 diff --git a/codex-rs/tui/src/tui/event_stream.rs b/codex-rs/tui/src/tui/event_stream.rs
-index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aae7d7fbdc 100644
+index de4ceae..e8fd753 100644
 --- a/codex-rs/tui/src/tui/event_stream.rs
 +++ b/codex-rs/tui/src/tui/event_stream.rs
 @@ -186,12 +186,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
@@ -11678,7 +12434,7 @@ index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aa
          match next {
              TuiEvent::Key(key) => {
 diff --git a/codex-rs/tui/src/tui/job_control.rs b/codex-rs/tui/src/tui/job_control.rs
-index 2db1fc04f58fc9d701cf2c3a6719ad5658b0ae12..29cbf3609cb67cc457920844bd8aee7bb13eb497 100644
+index 2db1fc0..29cbf36 100644
 --- a/codex-rs/tui/src/tui/job_control.rs
 +++ b/codex-rs/tui/src/tui/job_control.rs
 @@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
@@ -11701,7 +12457,7 @@ index 2db1fc04f58fc9d701cf2c3a6719ad5658b0ae12..29cbf3609cb67cc457920844bd8aee7b
                  terminal.clear()?;
              }
 diff --git a/codex-rs/tui/src/tui/screen_size.rs b/codex-rs/tui/src/tui/screen_size.rs
-index c9f657886e67fd00d2def92a2ba3a9ae0888b982..3865caf67b964bdfa7d4fb812dd3dc827542683f 100644
+index c9f6578..3865caf 100644
 --- a/codex-rs/tui/src/tui/screen_size.rs
 +++ b/codex-rs/tui/src/tui/screen_size.rs
 @@ -47,11 +47,13 @@ impl Tui {
@@ -11721,7 +12477,7 @@ index c9f657886e67fd00d2def92a2ba3a9ae0888b982..3865caf67b964bdfa7d4fb812dd3dc82
          .then_some(size);
          Ok(size)
 diff --git a/codex-rs/tui/src/unarchive_prompt.rs b/codex-rs/tui/src/unarchive_prompt.rs
-index 3f5182276287ba064bca920c049ac38fdce6f9a6..b6aceca3c4edb3a10a03527c656ed65682507397 100644
+index 3f51822..b6aceca 100644
 --- a/codex-rs/tui/src/unarchive_prompt.rs
 +++ b/codex-rs/tui/src/unarchive_prompt.rs
 @@ -54,6 +54,7 @@ pub(crate) async fn run_unarchive_prompt(

@@ -538,6 +538,12 @@ async fn run_child(
         agent_nickname: Some(role.into()),
         agent_role: Some(role.into()),
     }));
+    if host.reactive_rules.is_some() {
+        let mut registry = ExtensionRegistryBuilder::new();
+        registry.prompt_contributor(Arc::new(Extension(host.clone())));
+        registry.tool_reaction_contributor(Arc::new(Extension(host.clone())));
+        options.isolated_extensions = Some(Arc::new(registry.build()));
+    }
     let spawned = match manager
         .spawn_controlled_subagent(lead.thread, options)
         .await
@@ -806,6 +812,11 @@ pub async fn contribute(
             "authorization": {"reference": manifest.authorization, "sha256": manifest.authorization_sha256, "repository_identity": manifest.repository_identity},
             "guideline": host.active_guideline.as_ref().map(|guideline| &guideline.selection),
             "communication": manifest.communication,
+            "reactive_rules": host.reactive_rules.as_ref().map(|rules| json!({
+                "source": rules.source(),
+                "sha256": rules.source_sha256(),
+                "version": rules.rule_set().version,
+            })),
         }),
     )?;
     let scratch = AbsolutePathBuf::from_absolute_path_checked(&manifest.scratch).map_err(error)?;
