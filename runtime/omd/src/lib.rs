@@ -1,5 +1,6 @@
 mod admission;
 mod checkpoint;
+mod communication;
 mod guideline;
 mod workspace;
 
@@ -21,6 +22,8 @@ pub use checkpoint::TaskCheckpoint;
 pub use checkpoint::TaskContract;
 pub use checkpoint::VersionMarker;
 pub use checkpoint::WorkerStatus;
+pub use communication::WorkerReport;
+pub use communication::WorkerReportStatus;
 pub use guideline::ActiveGuideline;
 pub use guideline::EvidenceReference;
 pub use guideline::EvidenceSplit;

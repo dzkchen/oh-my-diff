@@ -57,6 +57,8 @@ struct Review {
     approved: bool,
     candidate_sha256: String,
     findings: Vec<Value>,
+    #[serde(default)]
+    report: Option<WorkerReport>,
 }
 
 pub fn hash(bytes: &[u8]) -> String {
@@ -64,6 +66,17 @@ pub fn hash(bytes: &[u8]) -> String {
 }
 fn error(e: impl ToString) -> String {
     e.to_string()
+}
+
+fn worker_result(
+    value: String,
+    structured: bool,
+) -> Result<(String, Option<WorkerReport>), String> {
+    if !structured {
+        return Ok((value, None));
+    }
+    let report = WorkerReport::parse(&value).map_err(error)?;
+    Ok((report.summary.clone(), Some(report)))
 }
 
 struct Child {
@@ -86,6 +99,8 @@ struct ChildTurn<'a> {
     prompt: String,
     history: InitialHistory,
     writable: bool,
+    output_schema: Option<Value>,
+    output_instruction: Option<&'static str>,
 }
 
 impl Drop for Child {
@@ -450,6 +465,8 @@ async fn run_child(
         prompt,
         history,
         writable,
+        output_schema,
+        output_instruction,
     } = turn;
     let host = &lead.host;
     if role == "contributor" {
@@ -482,6 +499,10 @@ async fn run_child(
     if let Some(guideline) = &host.active_guideline {
         developer_instructions.push('\n');
         developer_instructions.push_str(&guideline_prompt(guideline));
+    }
+    if let Some(instruction) = output_instruction {
+        developer_instructions.push('\n');
+        developer_instructions.push_str(instruction);
     }
     config.developer_instructions = Some(developer_instructions);
     if writable {
@@ -542,10 +563,16 @@ async fn run_child(
     let result = tokio::time::timeout(remaining, async {
         child
             .thread
-            .start_turn_if_idle(TurnInputRequest::user_input(vec![UserInput::Text {
-                text: prompt,
-                text_elements: vec![],
-            }]))
+            .start_turn_if_idle(
+                TurnInputRequest::user_input(vec![UserInput::Text {
+                    text: prompt,
+                    text_elements: vec![],
+                }])
+                .on_start(TurnStartOptions {
+                    final_output_json_schema: output_schema,
+                    ..Default::default()
+                }),
+            )
             .await
             .map_err(error)?;
         loop {
@@ -778,6 +805,7 @@ pub async fn contribute(
             "instruction_sources": instruction_sources,
             "authorization": {"reference": manifest.authorization, "sha256": manifest.authorization_sha256, "repository_identity": manifest.repository_identity},
             "guideline": host.active_guideline.as_ref().map(|guideline| &guideline.selection),
+            "communication": manifest.communication,
         }),
     )?;
     let scratch = AbsolutePathBuf::from_absolute_path_checked(&manifest.scratch).map_err(error)?;
@@ -799,6 +827,7 @@ pub async fn contribute(
     let mut selected_role = String::new();
     let mut selected_root = None;
     let mut summary = String::new();
+    let mut worker_report = None;
     let worker_sequence = host.task.attempts().map_err(error)?.len();
     for attempt in 1..=manifest.recovery.contributor_attempts {
         let role = format!("contributor-{}", worker_sequence + attempt as usize);
@@ -815,6 +844,11 @@ pub async fn contribute(
                 prompt: context.prompt.clone(),
                 history: context.history.clone(),
                 writable: true,
+                output_schema: manifest.communication.worker_output_schema(),
+                output_instruction: manifest
+                    .communication
+                    .structured_worker_reports
+                    .then_some(worker_report_prompt()),
             },
         )
         .await
@@ -822,7 +856,8 @@ pub async fn contribute(
             Ok(value) => {
                 selected_role = role;
                 selected_root = Some(worker_root);
-                summary = value;
+                (summary, worker_report) =
+                    worker_result(value, manifest.communication.structured_worker_reports)?;
                 break;
             }
             Err(child_error) => {
@@ -881,12 +916,49 @@ pub async fn contribute(
                 ),
                 history: context.history.clone(),
                 writable: true,
+                output_schema: manifest.communication.worker_output_schema(),
+                output_instruction: manifest
+                    .communication
+                    .structured_worker_reports
+                    .then_some(worker_report_prompt()),
             },
         )
         .await?;
+        (summary, worker_report) =
+            worker_result(summary, manifest.communication.structured_worker_reports)?;
         selected_root = Some(worker_root);
     }
     let worker_root = selected_root.ok_or("implementation worker produced no workspace")?;
+    if let Some(report) = &worker_report
+        && report.status != WorkerReportStatus::Completed
+    {
+        host.task
+            .consume_worker_result(&selected_role)
+            .map_err(error)?;
+        codex_omd::cleanup_owned_directory(
+            &manifest.scratch,
+            worker_root
+                .parent()
+                .ok_or("implementation worktree parent missing")?,
+        )
+        .map_err(error)?;
+        return Ok(json!({
+            "schema": 1,
+            "status": report.status,
+            "model": selected_route.model,
+            "summary": summary,
+            "worker_report": report,
+            "implementation": {
+                "role": selected_role,
+                "provider": selected_route.provider,
+                "fallback_used": fallback_used,
+                "contributor_failures": contributor_failures,
+            },
+            "base": base_ref,
+            "context": context_ref,
+            "attempts": host.task.attempts().map_err(error)?,
+        }));
+    }
     let denied = protected_paths(manifest);
     let paths = all_paths(host, &isolated(&parent, &worker_root, &[], &denied, false)?).await?;
     let candidate =
@@ -963,6 +1035,11 @@ pub async fn contribute(
     } else {
         reviewer_route
     };
+    let review_fields = if manifest.communication.structured_worker_reports {
+        "approved (boolean), candidate_sha256 (the exact SHA), findings (array), and report (the required structured worker report)"
+    } else {
+        "approved (boolean), candidate_sha256 (the exact SHA), and findings (array)"
+    };
     let review = run_child(
         lead,
         &parent,
@@ -970,15 +1047,27 @@ pub async fn contribute(
         ChildTurn {
             role: "reviewer",
             route: reviewer_route,
-            prompt: format!("Review this candidate against the task context below. Inspect changed code and look for correctness or regression defects. Checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Return only JSON with fields approved (boolean), candidate_sha256 (the exact SHA), findings (array). Do not edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, context.prompt),
+            prompt: format!("Review this candidate against the task context below. Inspect changed code and look for correctness or regression defects. Checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Return only JSON with fields {review_fields}. Do not edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, context.prompt),
             history: context.history,
             writable: false,
+            output_schema: manifest.communication.review_output_schema(),
+            output_instruction: manifest
+                .communication
+                .structured_worker_reports
+                .then_some(review_report_prompt()),
         },
     ).await?;
     let review: Review = serde_json::from_str(&review).map_err(error)?;
+    let structured_review_complete = !manifest.communication.structured_worker_reports
+        || review.report.as_ref().is_some_and(|report| {
+            report.validate().is_ok() && report.status == WorkerReportStatus::Completed
+        });
     host.task.consume_worker_result("reviewer").map_err(error)?;
     let review_ref = host.evidence("review.json", &json!({"model": reviewer_route.model, "candidate_sha256": candidate_hash, "response": review}))?;
-    if !review.approved || review.candidate_sha256 != candidate_hash || !review.findings.is_empty()
+    if !structured_review_complete
+        || !review.approved
+        || review.candidate_sha256 != candidate_hash
+        || !review.findings.is_empty()
     {
         return Err("separate-model review did not approve the exact candidate".into());
     }
@@ -1085,7 +1174,7 @@ pub async fn contribute(
     }
     codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
     Ok(
-        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
+        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "worker_report": worker_report, "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
     )
 }
 
@@ -1295,9 +1384,16 @@ pub async fn escalate(
             ),
             history: InitialHistory::New,
             writable: false,
+            output_schema: manifest.communication.worker_output_schema(),
+            output_instruction: manifest
+                .communication
+                .structured_worker_reports
+                .then_some(worker_report_prompt()),
         },
     )
     .await?;
+    let (advice, worker_report) =
+        worker_result(advice, manifest.communication.structured_worker_reports)?;
     host.task.consume_worker_result(&role).map_err(error)?;
     let remaining_after = host.task.remaining().map_err(error)?;
     Ok(json!({
@@ -1322,6 +1418,7 @@ pub async fn escalate(
             "exposure_microusd": remaining_after.2,
         },
         "advice": advice.chars().take(4096).collect::<String>(),
+        "worker_report": worker_report,
         "attempts": host.task.attempts().map_err(error)?,
     }))
 }

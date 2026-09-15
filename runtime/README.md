@@ -94,6 +94,30 @@ version below current user/project instructions, and denies worker access to the
 store. With the field absent or no promoted version, guidance behavior is
 unchanged. See [`runtime/omd/README.md`](omd/README.md) for the operator commands.
 
+The optional `communication` manifest object selects user updates and worker
+reports independently. Both switches default to `false`, preserving ordinary
+Codex behavior when omitted:
+
+```json
+{
+  "communication": {
+    "concise_user_updates": true,
+    "structured_worker_reports": false
+  }
+}
+```
+
+Concise user updates add lead-only guidance for short ordinary-language progress
+and final messages while retaining scope, uncertainty, evidence references,
+limitations, and any clarification needed for safe progress. Structured worker
+reports instead bind implementation, fallback, review, and escalation turns to a
+host-validated JSON schema with explicit `status`, `summary`, `scope`,
+`uncertainty`, `evidence`, and `required_clarification` fields. A blocked report
+must name the clarification, a completed report cannot carry one, and a partial
+or blocked implementation is returned to the lead without integration. Each
+switch can be enabled alone, together, or neither; neither changes permissions,
+accounting, task scope, or the separately selected simplicity guideline.
+
 Live task state is bounded independently of manifest values: at most 10,000 task
 requests, 128 live workers, 1,024 lifetime worker identities, 256 unchanged-call
 entries per progress revision, 128 failures, and 128 failure fingerprints. New
@@ -146,7 +170,8 @@ The client-loss scenario kills the first client while a request is in-flight,
 changes an unrelated tracked file, then explicitly resumes.
 Use `--context-policy focused_brief|shared_task_packet|parent_history`,
 `--lead-policy fixed|task_entry`, and `--lead sol|astra` to exercise the policy
-matrix.
+matrix. Add `--concise-user-updates` or `--structured-worker-reports` to exercise
+either communication mode independently.
 
 Prepare the development experiment using the retained frozen baseline inputs:
 

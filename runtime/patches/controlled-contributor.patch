@@ -1357,10 +1357,10 @@ index 0000000000000000000000000000000000000000..b2f4487208363c71cd3fa44a59e44d91
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b7218ea2a
+index 0000000000000000000000000000000000000000..9710e430595165afe8f8c768313faf54b396a3e7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,1367 @@
+@@ -0,0 +1,1464 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -1420,6 +1420,8 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +    approved: bool,
 +    candidate_sha256: String,
 +    findings: Vec<Value>,
++    #[serde(default)]
++    report: Option<WorkerReport>,
 +}
 +
 +pub fn hash(bytes: &[u8]) -> String {
@@ -1427,6 +1429,17 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +}
 +fn error(e: impl ToString) -> String {
 +    e.to_string()
++}
++
++fn worker_result(
++    value: String,
++    structured: bool,
++) -> Result<(String, Option<WorkerReport>), String> {
++    if !structured {
++        return Ok((value, None));
++    }
++    let report = WorkerReport::parse(&value).map_err(error)?;
++    Ok((report.summary.clone(), Some(report)))
 +}
 +
 +struct Child {
@@ -1449,6 +1462,8 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +    prompt: String,
 +    history: InitialHistory,
 +    writable: bool,
++    output_schema: Option<Value>,
++    output_instruction: Option<&'static str>,
 +}
 +
 +impl Drop for Child {
@@ -1813,6 +1828,8 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +        prompt,
 +        history,
 +        writable,
++        output_schema,
++        output_instruction,
 +    } = turn;
 +    let host = &lead.host;
 +    if role == "contributor" {
@@ -1845,6 +1862,10 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +    if let Some(guideline) = &host.active_guideline {
 +        developer_instructions.push('\n');
 +        developer_instructions.push_str(&guideline_prompt(guideline));
++    }
++    if let Some(instruction) = output_instruction {
++        developer_instructions.push('\n');
++        developer_instructions.push_str(instruction);
 +    }
 +    config.developer_instructions = Some(developer_instructions);
 +    if writable {
@@ -1905,10 +1926,16 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +    let result = tokio::time::timeout(remaining, async {
 +        child
 +            .thread
-+            .start_turn_if_idle(TurnInputRequest::user_input(vec![UserInput::Text {
-+                text: prompt,
-+                text_elements: vec![],
-+            }]))
++            .start_turn_if_idle(
++                TurnInputRequest::user_input(vec![UserInput::Text {
++                    text: prompt,
++                    text_elements: vec![],
++                }])
++                .on_start(TurnStartOptions {
++                    final_output_json_schema: output_schema,
++                    ..Default::default()
++                }),
++            )
 +            .await
 +            .map_err(error)?;
 +        loop {
@@ -2141,6 +2168,7 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +            "instruction_sources": instruction_sources,
 +            "authorization": {"reference": manifest.authorization, "sha256": manifest.authorization_sha256, "repository_identity": manifest.repository_identity},
 +            "guideline": host.active_guideline.as_ref().map(|guideline| &guideline.selection),
++            "communication": manifest.communication,
 +        }),
 +    )?;
 +    let scratch = AbsolutePathBuf::from_absolute_path_checked(&manifest.scratch).map_err(error)?;
@@ -2162,6 +2190,7 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +    let mut selected_role = String::new();
 +    let mut selected_root = None;
 +    let mut summary = String::new();
++    let mut worker_report = None;
 +    let worker_sequence = host.task.attempts().map_err(error)?.len();
 +    for attempt in 1..=manifest.recovery.contributor_attempts {
 +        let role = format!("contributor-{}", worker_sequence + attempt as usize);
@@ -2178,6 +2207,11 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +                prompt: context.prompt.clone(),
 +                history: context.history.clone(),
 +                writable: true,
++                output_schema: manifest.communication.worker_output_schema(),
++                output_instruction: manifest
++                    .communication
++                    .structured_worker_reports
++                    .then_some(worker_report_prompt()),
 +            },
 +        )
 +        .await
@@ -2185,7 +2219,8 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +            Ok(value) => {
 +                selected_role = role;
 +                selected_root = Some(worker_root);
-+                summary = value;
++                (summary, worker_report) =
++                    worker_result(value, manifest.communication.structured_worker_reports)?;
 +                break;
 +            }
 +            Err(child_error) => {
@@ -2244,12 +2279,49 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +                ),
 +                history: context.history.clone(),
 +                writable: true,
++                output_schema: manifest.communication.worker_output_schema(),
++                output_instruction: manifest
++                    .communication
++                    .structured_worker_reports
++                    .then_some(worker_report_prompt()),
 +            },
 +        )
 +        .await?;
++        (summary, worker_report) =
++            worker_result(summary, manifest.communication.structured_worker_reports)?;
 +        selected_root = Some(worker_root);
 +    }
 +    let worker_root = selected_root.ok_or("implementation worker produced no workspace")?;
++    if let Some(report) = &worker_report
++        && report.status != WorkerReportStatus::Completed
++    {
++        host.task
++            .consume_worker_result(&selected_role)
++            .map_err(error)?;
++        codex_omd::cleanup_owned_directory(
++            &manifest.scratch,
++            worker_root
++                .parent()
++                .ok_or("implementation worktree parent missing")?,
++        )
++        .map_err(error)?;
++        return Ok(json!({
++            "schema": 1,
++            "status": report.status,
++            "model": selected_route.model,
++            "summary": summary,
++            "worker_report": report,
++            "implementation": {
++                "role": selected_role,
++                "provider": selected_route.provider,
++                "fallback_used": fallback_used,
++                "contributor_failures": contributor_failures,
++            },
++            "base": base_ref,
++            "context": context_ref,
++            "attempts": host.task.attempts().map_err(error)?,
++        }));
++    }
 +    let denied = protected_paths(manifest);
 +    let paths = all_paths(host, &isolated(&parent, &worker_root, &[], &denied, false)?).await?;
 +    let candidate =
@@ -2326,6 +2398,11 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +    } else {
 +        reviewer_route
 +    };
++    let review_fields = if manifest.communication.structured_worker_reports {
++        "approved (boolean), candidate_sha256 (the exact SHA), findings (array), and report (the required structured worker report)"
++    } else {
++        "approved (boolean), candidate_sha256 (the exact SHA), and findings (array)"
++    };
 +    let review = run_child(
 +        lead,
 +        &parent,
@@ -2333,15 +2410,27 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +        ChildTurn {
 +            role: "reviewer",
 +            route: reviewer_route,
-+            prompt: format!("Review this candidate against the task context below. Inspect changed code and look for correctness or regression defects. Checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Return only JSON with fields approved (boolean), candidate_sha256 (the exact SHA), findings (array). Do not edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, context.prompt),
++            prompt: format!("Review this candidate against the task context below. Inspect changed code and look for correctness or regression defects. Checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Return only JSON with fields {review_fields}. Do not edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, context.prompt),
 +            history: context.history,
 +            writable: false,
++            output_schema: manifest.communication.review_output_schema(),
++            output_instruction: manifest
++                .communication
++                .structured_worker_reports
++                .then_some(review_report_prompt()),
 +        },
 +    ).await?;
 +    let review: Review = serde_json::from_str(&review).map_err(error)?;
++    let structured_review_complete = !manifest.communication.structured_worker_reports
++        || review.report.as_ref().is_some_and(|report| {
++            report.validate().is_ok() && report.status == WorkerReportStatus::Completed
++        });
 +    host.task.consume_worker_result("reviewer").map_err(error)?;
 +    let review_ref = host.evidence("review.json", &json!({"model": reviewer_route.model, "candidate_sha256": candidate_hash, "response": review}))?;
-+    if !review.approved || review.candidate_sha256 != candidate_hash || !review.findings.is_empty()
++    if !structured_review_complete
++        || !review.approved
++        || review.candidate_sha256 != candidate_hash
++        || !review.findings.is_empty()
 +    {
 +        return Err("separate-model review did not approve the exact candidate".into());
 +    }
@@ -2448,7 +2537,7 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +    }
 +    codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
 +    Ok(
-+        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
++        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "worker_report": worker_report, "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
 +    )
 +}
 +
@@ -2658,9 +2747,16 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +            ),
 +            history: InitialHistory::New,
 +            writable: false,
++            output_schema: manifest.communication.worker_output_schema(),
++            output_instruction: manifest
++                .communication
++                .structured_worker_reports
++                .then_some(worker_report_prompt()),
 +        },
 +    )
 +    .await?;
++    let (advice, worker_report) =
++        worker_result(advice, manifest.communication.structured_worker_reports)?;
 +    host.task.consume_worker_result(&role).map_err(error)?;
 +    let remaining_after = host.task.remaining().map_err(error)?;
 +    Ok(json!({
@@ -2685,6 +2781,7 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +            "exposure_microusd": remaining_after.2,
 +        },
 +        "advice": advice.chars().take(4096).collect::<String>(),
++        "worker_report": worker_report,
 +        "attempts": host.task.attempts().map_err(error)?,
 +    }))
 +}
@@ -2730,11 +2827,35 @@ index 0000000000000000000000000000000000000000..7df4e593fea07b490b281749aa03912b
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/execution_tests.rs b/codex-rs/ext/omd/src/execution_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f39321c361cf502cf02003ee062aa8bcca5e3895
+index 0000000000000000000000000000000000000000..f048c840ee603cc09e79fca04b7cd915eb699421
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution_tests.rs
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,133 @@
 +use super::*;
++
++#[test]
++fn structured_worker_results_are_validated_without_changing_plain_results() {
++    let plain = "ordinary worker answer".to_owned();
++    assert_eq!(worker_result(plain.clone(), false).unwrap(), (plain, None));
++
++    let value = json!({
++        "schema": 1,
++        "status": "partial",
++        "summary": "The parser changed, but one target remains unverified.",
++        "scope": ["parser.rs only"],
++        "uncertainty": ["Windows was not exercised."],
++        "evidence": ["cargo test -p parser"],
++        "required_clarification": []
++    })
++    .to_string();
++    let (summary, report) = worker_result(value, true).unwrap();
++    assert_eq!(
++        summary,
++        "The parser changed, but one target remains unverified."
++    );
++    assert_eq!(report.unwrap().status, WorkerReportStatus::Partial);
++    assert!(worker_result(r#"{"schema":1,"status":"completed"}"#.into(), true).is_err());
++}
 +
 +#[test]
 +fn platform_defaults_require_both_authorities_and_never_erase_denies() {
@@ -2845,10 +2966,10 @@ index 0000000000000000000000000000000000000000..f39321c361cf502cf02003ee062aa8bc
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c5f119ea4dc5d12adaf8c54c6fa58ea94844bb96
+index 0000000000000000000000000000000000000000..952ca9336861864ca8851481375c8318ead8024a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,1379 @@
+@@ -0,0 +1,1503 @@
 +mod accounting;
 +mod execution;
 +
@@ -2895,12 +3016,15 @@ index 0000000000000000000000000000000000000000..c5f119ea4dc5d12adaf8c54c6fa58ea9
 +use codex_omd::TaskContract;
 +use codex_omd::VersionMarker;
 +use codex_omd::WorkerLimits;
++use codex_omd::WorkerReport;
++use codex_omd::WorkerReportStatus;
 +use codex_protocol::ThreadId;
 +use codex_protocol::items::TurnItem;
 +use codex_protocol::models::ResponseItem;
 +use codex_protocol::openai_models::ReasoningEffort;
 +use codex_protocol::protocol::SessionSource;
 +use codex_protocol::protocol::SubAgentSource;
++use codex_protocol::turn_input::TurnStartOptions;
 +use codex_tools::FunctionCallError;
 +use codex_tools::JsonSchema;
 +use codex_tools::ResponsesApiTool;
@@ -2929,6 +3053,8 @@ index 0000000000000000000000000000000000000000..c5f119ea4dc5d12adaf8c54c6fa58ea9
 +    worker_limits: WorkerLimits,
 +    #[serde(default)]
 +    guideline_store: Option<PathBuf>,
++    #[serde(default)]
++    communication: CommunicationPolicy,
 +    checkpoint: TaskContract,
 +    legitimate_wait_tools: Vec<String>,
 +    lifecycle: LifecyclePolicy,
@@ -2956,6 +3082,27 @@ index 0000000000000000000000000000000000000000..c5f119ea4dc5d12adaf8c54c6fa58ea9
 +    contributor_attempts: u32,
 +    equivalent_failure_threshold: u32,
 +    fallback_to_opposite_lead: bool,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, serde::Serialize)]
++#[serde(deny_unknown_fields)]
++struct CommunicationPolicy {
++    concise_user_updates: bool,
++    structured_worker_reports: bool,
++}
++
++impl CommunicationPolicy {
++    fn user_update_prompt(&self) -> Option<&'static str> {
++        self.concise_user_updates.then(user_update_prompt)
++    }
++
++    fn worker_output_schema(&self) -> Option<Value> {
++        self.structured_worker_reports.then(worker_report_schema)
++    }
++
++    fn review_output_schema(&self) -> Option<Value> {
++        self.structured_worker_reports.then(review_schema)
++    }
 +}
 +
 +#[derive(Clone, Deserialize)]
@@ -3128,6 +3275,58 @@ index 0000000000000000000000000000000000000000..c5f119ea4dc5d12adaf8c54c6fa58ea9
 +        guideline.selection.proposal_sha256,
 +        guideline.variant.render()
 +    )
++}
++
++fn user_update_prompt() -> &'static str {
++    "For user-facing progress and final updates, use concise ordinary-language sentences. State the current outcome and next relevant action without telegraphic wording or a persona. Preserve the requested scope, distinguish verified facts from uncertainty, retain useful evidence references, and ask any clarification required for safe progress as a direct understandable question. Do not shorten away constraints, blockers, limitations, or incomplete work."
++}
++
++fn worker_report_prompt() -> &'static str {
++    "Return only the structured worker report required by the response schema. Report the bounded scope actually handled, every material uncertainty, useful file/check/source evidence references, and every clarification the lead must obtain from the user. Use an empty array only when that category is genuinely absent. Use blocked status when progress requires clarification, partial when useful work remains, and completed only when no clarification is required."
++}
++
++fn review_report_prompt() -> &'static str {
++    "Return only the review object required by the response schema. Keep the approval decision, exact candidate SHA256, and findings at the top level, and include the structured worker report in the report field. The nested report must preserve review scope, uncertainty, evidence references, and required clarification."
++}
++
++fn string_array_schema(max_items: u32) -> Value {
++    json!({
++        "type": "array",
++        "items": {"type": "string", "minLength": 1},
++        "maxItems": max_items,
++        "uniqueItems": true
++    })
++}
++
++fn worker_report_schema() -> Value {
++    json!({
++        "type": "object",
++        "properties": {
++            "schema": {"type": "integer", "const": 1},
++            "status": {"type": "string", "enum": ["completed", "partial", "blocked"]},
++            "summary": {"type": "string", "minLength": 1, "maxLength": 4096},
++            "scope": string_array_schema(32),
++            "uncertainty": string_array_schema(32),
++            "evidence": string_array_schema(64),
++            "required_clarification": string_array_schema(16)
++        },
++        "required": ["schema", "status", "summary", "scope", "uncertainty", "evidence", "required_clarification"],
++        "additionalProperties": false
++    })
++}
++
++fn review_schema() -> Value {
++    json!({
++        "type": "object",
++        "properties": {
++            "approved": {"type": "boolean"},
++            "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
++            "findings": {"type": "array", "items": {"type": "string"}},
++            "report": worker_report_schema()
++        },
++        "required": ["approved", "candidate_sha256", "findings", "report"],
++        "additionalProperties": false
++    })
 +}
 +
 +fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveState, String> {
@@ -3532,9 +3731,9 @@ index 0000000000000000000000000000000000000000..c5f119ea4dc5d12adaf8c54c6fa58ea9
 +        input: TurnContextContributionInput<'a>,
 +    ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
 +        Box::pin(async move {
-+            if input.thread_store.get::<Lead>().is_none() {
++            let Some(lead) = input.thread_store.get::<Lead>() else {
 +                return Vec::new();
-+            }
++            };
 +            let mut fragments = Vec::new();
 +            if let Ok(Some(checkpoint)) = self.task.checkpoint()
 +                && let Ok(rendered) = serde_json::to_string(&checkpoint)
@@ -3550,6 +3749,14 @@ index 0000000000000000000000000000000000000000..c5f119ea4dc5d12adaf8c54c6fa58ea9
 +                fragments.push(PromptFragment::developer_capability(
 +                    guideline_prompt(guideline),
 +                    ContentItemKind("oh_my_diff.guideline".into()),
++                ));
++            }
++            if lead.owner == "lead"
++                && let Some(prompt) = self.manifest.communication.user_update_prompt()
++            {
++                fragments.push(PromptFragment::developer_capability(
++                    prompt,
++                    ContentItemKind("oh_my_diff.user_updates".into()),
 +                ));
 +            }
 +            fragments
@@ -4177,6 +4384,44 @@ index 0000000000000000000000000000000000000000..c5f119ea4dc5d12adaf8c54c6fa58ea9
 +                json!({"result": value, "evidence": reference}),
 +            )) as Box<dyn ToolOutput>)
 +        })
++    }
++}
++
++#[cfg(test)]
++mod communication_tests {
++    use super::*;
++
++    #[test]
++    fn user_updates_and_worker_reports_are_independent() {
++        let user_only = CommunicationPolicy {
++            concise_user_updates: true,
++            structured_worker_reports: false,
++        };
++        assert!(user_only.user_update_prompt().is_some());
++        assert!(user_only.worker_output_schema().is_none());
++
++        let worker_only = CommunicationPolicy {
++            concise_user_updates: false,
++            structured_worker_reports: true,
++        };
++        assert!(worker_only.user_update_prompt().is_none());
++        assert!(worker_only.worker_output_schema().is_some());
++    }
++
++    #[test]
++    fn communication_contract_retains_required_information() {
++        let prompt = user_update_prompt();
++        for required in ["scope", "uncertainty", "evidence", "clarification"] {
++            assert!(prompt.contains(required));
++            assert!(worker_report_prompt().contains(required));
++        }
++        let schema = worker_report_schema();
++        let required = schema["required"].as_array().unwrap();
++        for field in ["scope", "uncertainty", "evidence", "required_clarification"] {
++            assert!(required.iter().any(|value| value == field));
++        }
++        assert!(review_report_prompt().contains("top level"));
++        assert!(review_report_prompt().contains("report field"));
 +    }
 +}
 +
@@ -6572,6 +6817,79 @@ index 0000000000000000000000000000000000000000..be185507bb8911c12554e132a6fa3e17
 +    let current = current.iter().collect::<BTreeSet<_>>();
 +    prior.iter().all(|value| current.contains(value))
 +}
+diff --git a/codex-rs/omd/src/communication.rs b/codex-rs/omd/src/communication.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..de74f1086d7a228166bd72a04dfd92337291bf7b
+--- /dev/null
++++ b/codex-rs/omd/src/communication.rs
+@@ -0,0 +1,67 @@
++use serde::Deserialize;
++use serde::Serialize;
++use std::collections::BTreeSet;
++use std::io;
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum WorkerReportStatus {
++    Completed,
++    Partial,
++    Blocked,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct WorkerReport {
++    pub schema: u32,
++    pub status: WorkerReportStatus,
++    pub summary: String,
++    pub scope: Vec<String>,
++    pub uncertainty: Vec<String>,
++    pub evidence: Vec<String>,
++    pub required_clarification: Vec<String>,
++}
++
++fn invalid(message: &str) -> io::Error {
++    io::Error::other(message)
++}
++
++fn valid_text(value: &str, max: usize) -> bool {
++    !value.trim().is_empty() && value.len() <= max
++}
++
++fn unique_text(values: &[String], max_items: usize, max_bytes: usize) -> bool {
++    values.len() <= max_items
++        && values.iter().all(|value| valid_text(value, max_bytes))
++        && values.iter().collect::<BTreeSet<_>>().len() == values.len()
++}
++
++impl WorkerReport {
++    pub fn parse(value: &str) -> io::Result<Self> {
++        if value.len() > 65_536 {
++            return Err(invalid("worker report exceeds size limit"));
++        }
++        let report: Self = serde_json::from_str(value)?;
++        report.validate()?;
++        Ok(report)
++    }
++
++    pub fn validate(&self) -> io::Result<()> {
++        if self.schema != 1
++            || !valid_text(&self.summary, 4096)
++            || self.scope.is_empty()
++            || !unique_text(&self.scope, 32, 1024)
++            || !unique_text(&self.uncertainty, 32, 1024)
++            || !unique_text(&self.evidence, 64, 4096)
++            || !unique_text(&self.required_clarification, 16, 1024)
++            || (self.status == WorkerReportStatus::Blocked
++                && self.required_clarification.is_empty())
++            || (self.status == WorkerReportStatus::Completed
++                && !self.required_clarification.is_empty())
++        {
++            return Err(invalid("invalid structured worker report"));
++        }
++        Ok(())
++    }
++}
 diff --git a/codex-rs/omd/src/guideline.rs b/codex-rs/omd/src/guideline.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..6d04bd123f2ed2af2c0ac0cbc66dd9ecea546433
@@ -7238,12 +7556,13 @@ index 0000000000000000000000000000000000000000..6d04bd123f2ed2af2c0ac0cbc66dd9ec
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..14bd97f669cde7f7ceb3f2c686c7713ba7be8676
+index 0000000000000000000000000000000000000000..a9976bef0a4089e81c1abf5558d45ef2394d35a2
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,46 @@
 +mod admission;
 +mod checkpoint;
++mod communication;
 +mod guideline;
 +mod workspace;
 +
@@ -7265,6 +7584,8 @@ index 0000000000000000000000000000000000000000..14bd97f669cde7f7ceb3f2c686c7713b
 +pub use checkpoint::TaskContract;
 +pub use checkpoint::VersionMarker;
 +pub use checkpoint::WorkerStatus;
++pub use communication::WorkerReport;
++pub use communication::WorkerReportStatus;
 +pub use guideline::ActiveGuideline;
 +pub use guideline::EvidenceReference;
 +pub use guideline::EvidenceSplit;
@@ -8474,6 +8795,61 @@ index 0000000000000000000000000000000000000000..8025d9f797e291fa0ec43b6099785bf1
 +        resumed.checkpoint().unwrap().unwrap().task_status,
 +        CheckpointTaskStatus::Completed
 +    );
++}
+diff --git a/codex-rs/omd/tests/communication.rs b/codex-rs/omd/tests/communication.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..f64cb6ee619a7b50ac560f11a4e9bd118cd08ea3
+--- /dev/null
++++ b/codex-rs/omd/tests/communication.rs
+@@ -0,0 +1,49 @@
++use codex_omd::WorkerReport;
++use codex_omd::WorkerReportStatus;
++
++fn report(status: WorkerReportStatus) -> WorkerReport {
++    WorkerReport {
++        schema: 1,
++        status,
++        summary: "Implemented the requested parser change.".into(),
++        scope: vec!["parser.rs only".into()],
++        uncertainty: vec!["The platform-specific path was not exercised.".into()],
++        evidence: vec!["cargo test -p parser".into()],
++        required_clarification: vec![],
++    }
++}
++
++#[test]
++fn structured_report_round_trips_all_required_information() {
++    let expected = report(WorkerReportStatus::Partial);
++    let encoded = serde_json::to_string(&expected).unwrap();
++    assert_eq!(WorkerReport::parse(&encoded).unwrap(), expected);
++}
++
++#[test]
++fn blocked_report_requires_explicit_clarification() {
++    let blocked = report(WorkerReportStatus::Blocked);
++    assert!(blocked.validate().is_err());
++    let valid = WorkerReport {
++        required_clarification: vec!["Which compatibility target should be retained?".into()],
++        ..blocked
++    };
++    assert!(valid.validate().is_ok());
++}
++
++#[test]
++fn completed_report_cannot_hide_required_clarification() {
++    let invalid = WorkerReport {
++        required_clarification: vec!["Should I change the public API?".into()],
++        ..report(WorkerReportStatus::Completed)
++    };
++    assert!(invalid.validate().is_err());
++}
++
++#[test]
++fn report_rejects_missing_or_unknown_fields() {
++    let missing = r#"{"schema":1,"status":"partial","summary":"Work remains.","scope":["parser.rs"],"uncertainty":[],"evidence":[]}"#;
++    let unknown = r#"{"schema":1,"status":"completed","summary":"Done.","scope":["parser.rs"],"uncertainty":[],"evidence":[],"required_clarification":[],"extra":true}"#;
++    assert!(WorkerReport::parse(missing).is_err());
++    assert!(WorkerReport::parse(unknown).is_err());
 +}
 diff --git a/codex-rs/omd/tests/guideline.rs b/codex-rs/omd/tests/guideline.rs
 new file mode 100644

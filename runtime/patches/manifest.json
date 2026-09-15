@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "a990990ee8f06d15decb846247bb343b27a3063eed2e283a005a5dbb6d2c6c7e"
+    "sha256": "ca1bb2b53ec9335ac2a302bf0e42034e6906c99f6cf4c2ef8f2cd90f02085e9d"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -85,15 +85,15 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "62495f4ab165cd85e52cf2f7d60c79d0a006beea0127b6bd1e6345c4cc4a7745"
+      "after": "490891057eaa3329c1f3971077c785c6b692d79263041602253842ca5efde550"
     },
     "codex-rs/ext/omd/src/execution_tests.rs": {
       "before": null,
-      "after": "e5ef4f13ac2294d1a3c1b68f344967916601c8cd8118431225023facba817aeb"
+      "after": "6abdc96e5713f1a642505ec2fad80153e05a7e32f8699464b0cabf02f601561f"
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "b1f856036b35f29e7dd927592a991bb25242e873efda2ed25607db57da3a861f"
+      "after": "fb9e015e3aada494b850db1616a3ff42f295538883a467167773288501b663e3"
     },
     "codex-rs/login/src/auth/default_client.rs": {
       "before": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",
@@ -115,6 +115,10 @@
       "before": null,
       "after": "511612a2ad6c94d4dc8d3275e4e0ed4c5198338d2b794aae80b71f44d71e3724"
     },
+    "codex-rs/omd/src/communication.rs": {
+      "before": null,
+      "after": "0a598f3576267719384aa7b8beaf7207b32e4cb974738bb0b6c27cea309a5e73"
+    },
     "codex-rs/omd/src/bin/omd-guidelines.rs": {
       "before": null,
       "after": "fdd63b1953aa3535cca297772a5c5171a139ba6cb116e85a251f3d341f21923c"
@@ -125,7 +129,7 @@
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "429aa9d37092b72f45b2fb7bdfd9173c49dbc9c4333b6a5067e80e9ce2b7b7cc"
+      "after": "29733fd10715be41071385db0f2e8014b467ae2e5576fe380f8e1716801cd1e2"
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,
@@ -134,6 +138,10 @@
     "codex-rs/omd/tests/admission.rs": {
       "before": null,
       "after": "559e3273876ce4129e11dbc2e382d6f49105a72b2b3ce371ba46cb48f0f3c623"
+    },
+    "codex-rs/omd/tests/communication.rs": {
+      "before": null,
+      "after": "68a9524da35b01e775400e1b4bc76886ad0a64c45bf5aecd585d06e789478033"
     },
     "codex-rs/omd/tests/guideline.rs": {
       "before": null,

@@ -44,12 +44,15 @@ use codex_omd::Task;
 use codex_omd::TaskContract;
 use codex_omd::VersionMarker;
 use codex_omd::WorkerLimits;
+use codex_omd::WorkerReport;
+use codex_omd::WorkerReportStatus;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::turn_input::TurnStartOptions;
 use codex_tools::FunctionCallError;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
@@ -78,6 +81,8 @@ struct Manifest {
     worker_limits: WorkerLimits,
     #[serde(default)]
     guideline_store: Option<PathBuf>,
+    #[serde(default)]
+    communication: CommunicationPolicy,
     checkpoint: TaskContract,
     legitimate_wait_tools: Vec<String>,
     lifecycle: LifecyclePolicy,
@@ -105,6 +110,27 @@ struct RecoveryPolicy {
     contributor_attempts: u32,
     equivalent_failure_threshold: u32,
     fallback_to_opposite_lead: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct CommunicationPolicy {
+    concise_user_updates: bool,
+    structured_worker_reports: bool,
+}
+
+impl CommunicationPolicy {
+    fn user_update_prompt(&self) -> Option<&'static str> {
+        self.concise_user_updates.then(user_update_prompt)
+    }
+
+    fn worker_output_schema(&self) -> Option<Value> {
+        self.structured_worker_reports.then(worker_report_schema)
+    }
+
+    fn review_output_schema(&self) -> Option<Value> {
+        self.structured_worker_reports.then(review_schema)
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -277,6 +303,58 @@ fn guideline_prompt(guideline: &ActiveGuideline) -> String {
         guideline.selection.proposal_sha256,
         guideline.variant.render()
     )
+}
+
+fn user_update_prompt() -> &'static str {
+    "For user-facing progress and final updates, use concise ordinary-language sentences. State the current outcome and next relevant action without telegraphic wording or a persona. Preserve the requested scope, distinguish verified facts from uncertainty, retain useful evidence references, and ask any clarification required for safe progress as a direct understandable question. Do not shorten away constraints, blockers, limitations, or incomplete work."
+}
+
+fn worker_report_prompt() -> &'static str {
+    "Return only the structured worker report required by the response schema. Report the bounded scope actually handled, every material uncertainty, useful file/check/source evidence references, and every clarification the lead must obtain from the user. Use an empty array only when that category is genuinely absent. Use blocked status when progress requires clarification, partial when useful work remains, and completed only when no clarification is required."
+}
+
+fn review_report_prompt() -> &'static str {
+    "Return only the review object required by the response schema. Keep the approval decision, exact candidate SHA256, and findings at the top level, and include the structured worker report in the report field. The nested report must preserve review scope, uncertainty, evidence references, and required clarification."
+}
+
+fn string_array_schema(max_items: u32) -> Value {
+    json!({
+        "type": "array",
+        "items": {"type": "string", "minLength": 1},
+        "maxItems": max_items,
+        "uniqueItems": true
+    })
+}
+
+fn worker_report_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "schema": {"type": "integer", "const": 1},
+            "status": {"type": "string", "enum": ["completed", "partial", "blocked"]},
+            "summary": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "scope": string_array_schema(32),
+            "uncertainty": string_array_schema(32),
+            "evidence": string_array_schema(64),
+            "required_clarification": string_array_schema(16)
+        },
+        "required": ["schema", "status", "summary", "scope", "uncertainty", "evidence", "required_clarification"],
+        "additionalProperties": false
+    })
+}
+
+fn review_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "approved": {"type": "boolean"},
+            "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "findings": {"type": "array", "items": {"type": "string"}},
+            "report": worker_report_schema()
+        },
+        "required": ["approved", "candidate_sha256", "findings", "report"],
+        "additionalProperties": false
+    })
 }
 
 fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveState, String> {
@@ -681,9 +759,9 @@ impl ContextContributor for Extension {
         input: TurnContextContributionInput<'a>,
     ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
         Box::pin(async move {
-            if input.thread_store.get::<Lead>().is_none() {
+            let Some(lead) = input.thread_store.get::<Lead>() else {
                 return Vec::new();
-            }
+            };
             let mut fragments = Vec::new();
             if let Ok(Some(checkpoint)) = self.task.checkpoint()
                 && let Ok(rendered) = serde_json::to_string(&checkpoint)
@@ -699,6 +777,14 @@ impl ContextContributor for Extension {
                 fragments.push(PromptFragment::developer_capability(
                     guideline_prompt(guideline),
                     ContentItemKind("oh_my_diff.guideline".into()),
+                ));
+            }
+            if lead.owner == "lead"
+                && let Some(prompt) = self.manifest.communication.user_update_prompt()
+            {
+                fragments.push(PromptFragment::developer_capability(
+                    prompt,
+                    ContentItemKind("oh_my_diff.user_updates".into()),
                 ));
             }
             fragments
@@ -1326,6 +1412,44 @@ impl<'call> ToolExecutor<ToolCall<'call>> for EscalationTool {
                 json!({"result": value, "evidence": reference}),
             )) as Box<dyn ToolOutput>)
         })
+    }
+}
+
+#[cfg(test)]
+mod communication_tests {
+    use super::*;
+
+    #[test]
+    fn user_updates_and_worker_reports_are_independent() {
+        let user_only = CommunicationPolicy {
+            concise_user_updates: true,
+            structured_worker_reports: false,
+        };
+        assert!(user_only.user_update_prompt().is_some());
+        assert!(user_only.worker_output_schema().is_none());
+
+        let worker_only = CommunicationPolicy {
+            concise_user_updates: false,
+            structured_worker_reports: true,
+        };
+        assert!(worker_only.user_update_prompt().is_none());
+        assert!(worker_only.worker_output_schema().is_some());
+    }
+
+    #[test]
+    fn communication_contract_retains_required_information() {
+        let prompt = user_update_prompt();
+        for required in ["scope", "uncertainty", "evidence", "clarification"] {
+            assert!(prompt.contains(required));
+            assert!(worker_report_prompt().contains(required));
+        }
+        let schema = worker_report_schema();
+        let required = schema["required"].as_array().unwrap();
+        for field in ["scope", "uncertainty", "evidence", "required_clarification"] {
+            assert!(required.iter().any(|value| value == field));
+        }
+        assert!(review_report_prompt().contains("top level"));
+        assert!(review_report_prompt().contains("report field"));
     }
 }
 

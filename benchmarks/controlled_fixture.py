@@ -13,7 +13,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit"):
+def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False):
     destination.mkdir(parents=True, exist_ok=False)
     repo, home = destination / "repo", destination / "home"
     repo.mkdir()
@@ -115,12 +115,19 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                     subprocess.run(["/usr/bin/git", "add", "new-tracked.txt"], cwd=repo, env=git_env, check=True)
                 if scenario == "conflict":
                     (repo / "solution.py").write_text("intervening user edit\n")
-                answer = json.dumps({"approved": scenario != "review-reject", "candidate_sha256": match.group(1) if match else "missing", "findings": []})
+                review = {"approved": scenario != "review-reject", "candidate_sha256": match.group(1) if match else "missing", "findings": []}
+                if structured_worker_reports:
+                    review["report"] = {"schema": 1, "status": "completed", "summary": "The exact candidate passed review.", "scope": ["Reviewed the declared candidate and changed paths."], "uncertainty": [], "evidence": ["candidate SHA256 and configured check result"], "required_clarification": []}
+                answer = json.dumps(review)
                 item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
             elif owner and owner.startswith("escalation-"):
-                item = {"type": "message", "id": "advice", "role": "assistant", "content": [{"type": "output_text", "text": "The cited failure is preserved. Retry the edit directly with a simpler command."}]}
+                answer = json.dumps({"schema": 1, "status": "partial", "summary": "Retry the edit directly with a simpler command.", "scope": ["Diagnosed the cited edit failure only."], "uncertainty": ["The replacement command has not run."], "evidence": ["host-preserved failure source"], "required_clarification": []}) if structured_worker_reports else "The cited failure is preserved. Retry the edit directly with a simpler command."
+                item = {"type": "message", "id": "advice", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
             else:
-                item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": "Synthetic worker completed."}]}
+                report_status = "blocked" if scenario == "structured-clarification" else "completed"
+                clarification = ["Should the public addition behavior change for negative inputs?"] if report_status == "blocked" else []
+                answer = json.dumps({"schema": 1, "status": report_status, "summary": "Clarification is required before integration." if clarification else "Synthetic worker completed.", "scope": ["Changed solution.py only."], "uncertainty": ["Negative-input behavior is unresolved."] if clarification else [], "evidence": ["solution.py and the edit tool result"], "required_clarification": clarification}) if structured_worker_reports and owner != "lead" else "Synthetic worker completed."
+                item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
             if scenario == "revoked" and model == "muse-spark-1.3-contributor":
                 grant.write_text(json.dumps({"data_authorized": False}))
             self.send_response(200)
@@ -146,7 +153,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     context = {"mode": context_policy, "max_bytes": 2000000}
     if context_policy == "shared_task_packet":
         context["packet"] = {"path": str(task_packet.resolve()), "sha256": hashlib.sha256(task_packet.read_bytes()).hexdigest()}
-    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "checkpoint": {"objective": "Fix solution.py so add returns the sum while preserving unrelated work.", "acceptance_criteria": ["candidate check passes", "separate review approves the exact candidate", "reviewed candidate integrates without losing unrelated work"], "max_no_progress_calls": 2}, "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"], "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
+    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "communication": {"concise_user_updates": concise_user_updates, "structured_worker_reports": structured_worker_reports}, "checkpoint": {"objective": "Fix solution.py so add returns the sum while preserving unrelated work.", "acceptance_criteria": ["candidate check passes", "separate review approves the exact candidate", "reviewed candidate integrates without losing unrelated work"], "max_no_progress_calls": 2}, "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"], "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
     if scenario == "request-cap":
         manifest["limits"]["requests"] = 2
         manifest["worker_limits"]["requests"] = 1
@@ -280,6 +287,9 @@ enabled = false
             assert ("PARENT_HISTORY_SENTINEL" in worker_context) == (context_policy == "parent_history"), "parent history selection drifted"
             assert ("return a - b" in worker_context) == (context_policy == "focused_brief"), "focused evidence selection drifted"
             assert ("LEAD_ONLY_INSTRUCTION_SENTINEL" in worker_context) == (context_policy == "parent_history"), "parent instruction selection drifted"
+            assert ("required_clarification" in worker_context) == structured_worker_reports, "worker report schema selection drifted"
+        lead_context = json.dumps(requests[0]["body"].get("input", []))
+        assert ("concise ordinary-language sentences" in lead_context) == concise_user_updates, "user update policy selection drifted"
         assert requests[0]["model"] == lead_model and requests[0]["native_owner"] == "lead", "lead route drifted"
         first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
         assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools and "omd_checkpoint" not in first_tools, "controlled tools were not deferred"
@@ -288,6 +298,7 @@ enabled = false
         if reviewer_requests:
             expected_reviewer = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead] if scenario == "outage-fallback" else {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
             assert reviewer_requests[0]["model"] == expected_reviewer, "reviewer route did not remain separate from the implementer"
+            assert ("Keep the approval decision" in json.dumps(reviewer_requests[0])) == structured_worker_reports, "review report instruction selection drifted"
         ids = [request["native_request_id"] for request in (gateway.records if scenario == "runner" else requests)]
         assert all(ids) and len(ids) == len(set(ids)), "wire attempts lack unique native admission IDs"
         if scenario == "escalation":
@@ -305,8 +316,13 @@ enabled = false
                 depths = [event["depth"] for event in events if event.get("event") == "worker_started"]
                 assert depths == [1, 2], depths
         else:
-            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume", "checkpoint") else "failed"
+            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume", "checkpoint") else "blocked" if scenario == "structured-clarification" else "failed"
             assert result.get("status") == expected, result or process.stderr[-2000:]
+            if result.get("status") == "integrated":
+                assert (result.get("worker_report") is not None) == structured_worker_reports
+            if scenario == "structured-clarification":
+                assert result["worker_report"]["required_clarification"] == ["Should the public addition behavior change for negative inputs?"]
+                assert not reviewer_requests
             if scenario == "checkpoint":
                 checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
                 assert checkpoint["completed_steering"] == ["Delegated the bounded implementation and retained its result."]
@@ -337,7 +353,7 @@ enabled = false
             assert output.lower().count("operation not permitted") + output.lower().count("permission denied") >= 2, output
         assert (repo / "unrelated.txt").read_text() == "Uncommitted user work\n"
         assert "SYNTHETIC_SECRET_MUST_NOT_REACH_WORKER" not in json.dumps(requests)
-        if scenario in ("review-reject", "index-conflict", "request-cap", "revoked", "deadline"):
+        if scenario in ("review-reject", "index-conflict", "request-cap", "revoked", "deadline", "structured-clarification"):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
         if scenario in ("direct", "escalation"):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
@@ -348,7 +364,8 @@ enabled = false
             context_record = json.loads((destination / "evidence/context.json").read_text())
             assert context_record["context"]["policy"] == context_policy
             assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == lead
-        record = {"status": "pass", "scenario": scenario, "failure_class": failure_class if scenario == "escalation" else None, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "escalation_result": escalation_result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
+            assert context_record["communication"] == manifest["communication"]
+        record = {"status": "pass", "scenario": scenario, "failure_class": failure_class if scenario == "escalation" else None, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "communication": manifest["communication"], "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "escalation_result": escalation_result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
         (destination / "verification.json").write_text(json.dumps(record, indent=2))
         return record
     finally:
@@ -360,13 +377,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress"), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification"), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")
     parser.add_argument("--failure-class", choices=("environment", "edit", "diagnosis", "model"), default="edit")
+    parser.add_argument("--concise-user-updates", action="store_true")
+    parser.add_argument("--structured-worker-reports", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class), indent=2))
+    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports), indent=2))
 
 
 if __name__ == "__main__":

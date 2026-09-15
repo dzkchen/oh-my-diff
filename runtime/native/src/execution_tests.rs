@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn structured_worker_results_are_validated_without_changing_plain_results() {
+    let plain = "ordinary worker answer".to_owned();
+    assert_eq!(worker_result(plain.clone(), false).unwrap(), (plain, None));
+
+    let value = json!({
+        "schema": 1,
+        "status": "partial",
+        "summary": "The parser changed, but one target remains unverified.",
+        "scope": ["parser.rs only"],
+        "uncertainty": ["Windows was not exercised."],
+        "evidence": ["cargo test -p parser"],
+        "required_clarification": []
+    })
+    .to_string();
+    let (summary, report) = worker_result(value, true).unwrap();
+    assert_eq!(
+        summary,
+        "The parser changed, but one target remains unverified."
+    );
+    assert_eq!(report.unwrap().status, WorkerReportStatus::Partial);
+    assert!(worker_result(r#"{"schema":1,"status":"completed"}"#.into(), true).is_err());
+}
+
+#[test]
 fn platform_defaults_require_both_authorities_and_never_erase_denies() {
     let root = tempfile::tempdir().unwrap();
     let cwd = root.path().canonicalize().unwrap();
