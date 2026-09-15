@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "1b789eb717743843bd8945734e08c573cedb6cc4cff77585bc4370568da9f213"
+    "sha256": "42511bce956363bc04a3d38d0fe76f3b90e9cb0d78cc01aa74383cf098b72310"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -105,15 +105,19 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "1380da2daa7e1de6391e742904adcc03328a851acbe1625521bd7ff15309216a"
+      "after": "f5ad55c2e6b5b8895b18803ac1ea1c9d9c9e038bc8247c77ef264d57c384f559"
     },
     "codex-rs/ext/omd/src/execution_tests.rs": {
       "before": null,
-      "after": "6abdc96e5713f1a642505ec2fad80153e05a7e32f8699464b0cabf02f601561f"
+      "after": "4a750a4ed722ff22073cc11e537ef82e39c7daca821fe2484e20e8cb045abb49"
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "89cda3426e26505344dcab33bc4b544660597d74e83f26b3362b5e51c956bf18"
+      "after": "8e7b446448d5eba2234e6ca4cad256b94a63ba517be8f9cbe8c36b1d4dfe3d5c"
+    },
+    "codex-rs/ext/omd/src/review_tests.rs": {
+      "before": null,
+      "after": "5d3e8da265432178fa240d080caf4326f1b29a1fdad7b0490024c1cf403aecf3"
     },
     "codex-rs/login/src/auth/default_client.rs": {
       "before": "e50fc9a61d4b91127e2c248e15d45e735831e4070c396fa8efbc693717cfb23b",
@@ -129,7 +133,7 @@
     },
     "codex-rs/omd/README.md": {
       "before": null,
-      "after": "3d1795f8ac194b25ed7b266798333dcdb608753ee98e66175bbbb667c3e8b4fa"
+      "after": "a673d801cc73fa6ec72c16479207cb9a799e6dcfcd334ddb9860d2e345f35aff"
     },
     "codex-rs/omd/src/admission.rs": {
       "before": null,
@@ -185,7 +189,7 @@
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "b31892d0b441bf0f3f6e460e88f0ff200510cc18fff638bae04289e7cba9a7da"
+      "after": "efb7a009fdbf902234364729f914e23db6e1cc8f8ac4af27d49e24f9c1c3ea99"
     },
     "codex-rs/omd/src/lsp.rs": {
       "before": null,
@@ -194,6 +198,14 @@
     "codex-rs/omd/src/reactive.rs": {
       "before": null,
       "after": "a1b62277c6eb74e4b1c15909f01f1138e3e7a747392cb5e3d0df5bf69d4d7aca"
+    },
+    "codex-rs/omd/src/review.rs": {
+      "before": null,
+      "after": "60f5ce0138d9be7145467649ce4ff2f5155f53420374129be3c510209a08ac41"
+    },
+    "codex-rs/omd/src/review_tests.rs": {
+      "before": null,
+      "after": "cef17bcb029c359ee4437a1b37779652d87d2be0e31ba83b8dfc18b5c53f7644"
     },
     "codex-rs/omd/src/workspace.rs": {
       "before": null,

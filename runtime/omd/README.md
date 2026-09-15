@@ -136,6 +136,21 @@ source and project configuration, so the host can skip an identical check and
 reject a result if inputs changed
 while it ran.
 
+`UnifiedReview` is the bounded state machine shared by stable-milestone,
+risk-triggered, optional every-turn, and final review. Each cycle binds its
+candidate and executable-check evidence by SHA256. Stable finding fingerprints
+collapse repeats within and across reviews; omitted findings on a later candidate
+remain stale until explicitly resolved. A final cycle succeeds only for a stable
+candidate with current checks, a distinct reviewer, and no open or stale finding.
+
+Candidate changes after findings are repair records. They name the old and new
+candidate, affected finding IDs, exact changed paths, and new-candidate evidence;
+the configured repair count and path scope fail closed. Any later review or
+repair invalidates an older final approval. The native host persists the complete
+ledger atomically, reloads and validates its candidate evidence only on explicit
+resume, and charges each model review to the original task ledger. Every-turn
+advice defaults off independently of the mandatory final review.
+
 ```json
 {
   "schema": 1,

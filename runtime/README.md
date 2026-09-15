@@ -105,6 +105,39 @@ The separate `omd-knowledge` operator handles retention, candidate approval,
 inspection, removal, and generation-advancing reset. Omitting the object disables
 repository knowledge injection.
 
+All controlled tasks use one host-owned review ledger. The deferred `omd_review`
+tool sends an exact read-only candidate to the configured opposite lead for a
+stable milestone, an explicitly named risk, optional every-turn advice, or the
+final gate. Reviews consume the existing shared task request, exposure, worker,
+and time allowance. Stable keys collapse duplicate findings; findings omitted on
+a changed candidate become stale rather than disappearing, and explicit
+resolution is bound to the changed candidate. Candidate changes while findings
+remain count as repairs, whose total and repository-relative paths are bounded
+by the manifest.
+
+The ledger and candidate evidence are persisted outside the conversation and
+revalidated on explicit resume. Every-turn advice has its own switch and defaults
+off. Final review is never disabled: the host first runs the configured executable
+checks in an isolated candidate snapshot, then requires a separate read-only
+review with no open or stale findings. Checks and review are bound to the same
+candidate hash; later writes invalidate approval. Contributor integration uses
+this same ledger and still checks the parent immediately before applying the
+reviewed delta. A foreground task cannot complete unless its live workspace is
+the final approved candidate.
+
+```json
+{
+  "review": {
+    "every_turn_advice": false,
+    "max_cycles": 16,
+    "max_findings_per_cycle": 64,
+    "max_open_findings": 128,
+    "max_repairs": 4,
+    "repair_scope": ["src", "tests"]
+  }
+}
+```
+
 Semantic feedback is also disabled unless the manifest names a canonical
 external `lsp.preference_store` whose exact `repository_identity` entry is
 enabled. The `omd-lsp` operator changes that remembered repository preference

@@ -1540,10 +1540,10 @@ index 0000000..b2f4487
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..5aae909
+index 0000000..83fd515
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,1482 @@
+@@ -0,0 +1,1909 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -1597,14 +1597,32 @@ index 0000000..5aae909
 +    call_ids: Vec<String>,
 +}
 +
-+#[derive(Deserialize, serde::Serialize)]
++#[derive(Clone, Deserialize, serde::Serialize)]
 +#[serde(deny_unknown_fields)]
 +struct Review {
-+    approved: bool,
 +    candidate_sha256: String,
-+    findings: Vec<Value>,
++    findings: Vec<ModelFinding>,
++    resolved_finding_ids: Vec<u32>,
 +    #[serde(default)]
 +    report: Option<WorkerReport>,
++}
++
++#[derive(Clone, Deserialize, serde::Serialize)]
++#[serde(deny_unknown_fields)]
++struct ModelFinding {
++    key: String,
++    severity: codex_omd::ReviewSeverity,
++    summary: String,
++    paths: Vec<String>,
++}
++
++#[derive(Clone, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct ReviewRequest {
++    cadence: codex_omd::ReviewCadence,
++    candidate_sha256: String,
++    stable: bool,
++    risk: Option<String>,
 +}
 +
 +pub fn hash(bytes: &[u8]) -> String {
@@ -2238,6 +2256,326 @@ index 0000000..5aae909
 +    )
 +}
 +
++fn review_findings(
++    findings: Vec<ModelFinding>,
++) -> Result<Vec<codex_omd::ReviewFindingInput>, String> {
++    findings
++        .into_iter()
++        .map(|finding| {
++            let key = finding.key.trim().to_ascii_lowercase();
++            if key.is_empty() || key.len() > 256 {
++                return Err("review finding key is empty or exceeds its bound".into());
++            }
++            Ok(codex_omd::ReviewFindingInput {
++                fingerprint: hash(key.as_bytes()),
++                severity: finding.severity,
++                summary: finding.summary,
++                paths: finding.paths,
++            })
++        })
++        .collect()
++}
++
++fn evidence_marker(
++    label: &str,
++    candidate_sha256: &str,
++    reference: &Value,
++) -> Result<VersionMarker, String> {
++    Ok(VersionMarker {
++        label: label.into(),
++        sha256: candidate_sha256.into(),
++        evidence: reference["path"]
++            .as_str()
++            .ok_or("evidence path missing")?
++            .into(),
++        evidence_sha256: reference["sha256"]
++            .as_str()
++            .ok_or("evidence SHA256 missing")?
++            .into(),
++    })
++}
++
++pub async fn review_current(
++    lead: &Lead,
++    call: &ToolCall<'_>,
++    request: ReviewRequest,
++) -> Result<Value, String> {
++    let host = &lead.host;
++    let manifest = &host.manifest;
++    host.authorize()?;
++    host.task.check_active().map_err(error)?;
++    let manager = host
++        .manager
++        .upgrade()
++        .ok_or("native thread manager stopped")?;
++    let inherited = manager
++        .get_thread(lead.thread)
++        .await
++        .map_err(error)?
++        .config()
++        .await;
++    let mut parent = (*inherited).clone();
++    if parent.cwd.as_path() != manifest.repository
++        || call.environments.len() != 1
++        || call.environments[0].environment_id != "local"
++        || call.environments[0].cwd != parent.cwd
++    {
++        return Err("changed or remote parent environment is not admitted".into());
++    }
++    let actual: PermissionProfile = call.environments[0]
++        .file_system_sandbox_context
++        .permissions
++        .clone()
++        .try_into()
++        .map_err(error)?;
++    let mut roots = call.environments[0]
++        .file_system_sandbox_context
++        .workspace_roots
++        .iter()
++        .map(PathUri::to_abs_path)
++        .collect::<Result<Vec<_>, _>>()
++        .map_err(error)?;
++    if roots.is_empty() {
++        roots.push(parent.cwd.clone());
++    }
++    let actual = actual.materialize_project_roots_with_workspace_roots(&roots);
++    let configured = parent
++        .permissions
++        .permission_profile()
++        .clone()
++        .materialize_project_roots_with_workspace_roots(&roots);
++    let effective = intersect(&configured, &actual, parent.cwd.as_path())?;
++    parent
++        .permissions
++        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(effective))
++        .map_err(error)?;
++    host.review
++        .lock()
++        .map_err(|_| "review runtime lock poisoned")?
++        .ledger
++        .snapshot()
++        .policy
++        .validate_request(request.cadence, request.stable, request.risk.as_deref())
++        .map_err(error)?;
++    let untracked: BTreeSet<_> = manifest.approved_untracked.iter().cloned().collect();
++    let candidate =
++        codex_omd::capture_tracked(&manifest.repository, &untracked, manifest.snapshot_bytes)
++            .map_err(error)?;
++    let candidate_sha256 = candidate.hash().map_err(error)?;
++    if request.candidate_sha256 != candidate_sha256 {
++        return Err("review request candidate SHA256 is stale".into());
++    }
++    let call_hash = hash(call.call_id.as_bytes());
++    let candidate_ref = host.evidence(
++        &format!("review-candidate-{call_hash}.json"),
++        &serde_json::to_value(&candidate).map_err(error)?,
++    )?;
++    let candidate_marker = evidence_marker("review-candidate", &candidate_sha256, &candidate_ref)?;
++    let (cycle_number, unresolved, repair_recorded) = {
++        let mut runtime = host
++            .review
++            .lock()
++            .map_err(|_| "review runtime lock poisoned")?;
++        let snapshot = runtime.ledger.snapshot();
++        let mut repair_recorded = false;
++        if let Some(previous) = snapshot.cycles.last()
++            && previous.candidate.sha256 != candidate_sha256
++        {
++            let unresolved = runtime.ledger.unresolved();
++            if !unresolved.is_empty() {
++                let prior = runtime
++                    .candidates
++                    .get(&previous.candidate.sha256)
++                    .ok_or("prior reviewed candidate snapshot missing")?;
++                let paths = prior
++                    .changed_paths(&candidate)
++                    .into_iter()
++                    .collect::<Vec<_>>();
++                let finding_ids = unresolved
++                    .iter()
++                    .map(|finding| finding.id)
++                    .collect::<Vec<_>>();
++                if let Some(record) = runtime
++                    .ledger
++                    .recorded_repair(&previous.candidate.sha256, &candidate_sha256)
++                {
++                    if record.paths != paths
++                        || record.finding_ids != finding_ids
++                        || record.evidence.evidence_sha256 != candidate_marker.evidence_sha256
++                    {
++                        return Err("persisted repair transition does not match candidate".into());
++                    }
++                } else {
++                    runtime
++                        .ledger
++                        .record_repair(
++                            &previous.candidate.sha256,
++                            &candidate_sha256,
++                            paths,
++                            finding_ids,
++                            candidate_marker.clone(),
++                        )
++                        .map_err(error)?;
++                    repair_recorded = true;
++                }
++            }
++        }
++        runtime
++            .candidates
++            .insert(candidate_sha256.clone(), candidate.clone());
++        (
++            runtime.ledger.snapshot().cycles.len() as u32 + 1,
++            runtime.ledger.unresolved(),
++            repair_recorded,
++        )
++    };
++    if repair_recorded {
++        host.persist_review()?;
++    }
++    std::fs::create_dir(&manifest.scratch).map_err(error)?;
++    let denied = protected_paths(manifest);
++    let mut checks = Vec::new();
++    if request.cadence == codex_omd::ReviewCadence::Final {
++        let check_root = codex_omd::create_worktree(
++            &candidate,
++            &manifest.scratch.join("review-checks"),
++            manifest.snapshot_bytes,
++        )
++        .map_err(error)?;
++        std::fs::create_dir_all(check_root.join(".omd-tmp")).map_err(error)?;
++        let check_config = isolated(
++            &parent,
++            &check_root,
++            &manifest.toolchain_reads,
++            &denied,
++            true,
++        )?;
++        let result = command(host, &check_config, manifest.check_command.clone()).await?;
++        let check_ref = host.evidence(
++            &format!("review-checks-{call_hash}.json"),
++            &json!({"candidate_sha256": candidate_sha256, "result": result}),
++        )?;
++        if result["exit_code"] != 0 || result["timed_out"] != false {
++            return Err("final candidate checks failed".into());
++        }
++        if Snapshot::capture(
++            &check_root,
++            &candidate.files.keys().cloned().collect(),
++            manifest.snapshot_bytes,
++        )
++        .map_err(error)?
++            != candidate
++        {
++            return Err("final checks modified the candidate".into());
++        }
++        checks.push(evidence_marker(
++            "final-executable-checks",
++            &candidate_sha256,
++            &check_ref,
++        )?);
++    }
++    let review_root = codex_omd::create_worktree(
++        &candidate,
++        &manifest.scratch.join("review-model"),
++        manifest.snapshot_bytes,
++    )
++    .map_err(error)?;
++    let reviewer_name = lead.route.opposite();
++    let reviewer_route = host.route(reviewer_name);
++    let review_fields = if manifest.communication.structured_worker_reports {
++        "candidate_sha256, findings, resolved_finding_ids, and report"
++    } else {
++        "candidate_sha256, findings, and resolved_finding_ids"
++    };
++    let role = format!("reviewer-{cycle_number}");
++    let output = run_child(
++        lead,
++        &parent,
++        &review_root,
++        ChildTurn {
++            role: &role,
++            route: reviewer_route,
++            prompt: format!(
++                "Perform a {:?} review of the exact read-only candidate. Inspect correctness, regressions, scope, and relevant negative cases. Candidate SHA256: {candidate_sha256}. Stable: {}. Risk: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this changed candidate proves it fixed or no longer applicable. Do not approve or edit files.",
++                request.cadence,
++                request.stable,
++                request.risk.as_deref().unwrap_or("none"),
++                serde_json::to_string(&unresolved).map_err(error)?,
++            ),
++            history: InitialHistory::New,
++            writable: false,
++            output_schema: Some(review_schema(
++                if manifest.communication.structured_worker_reports {
++                    ReviewReportMode::Structured
++                } else {
++                    ReviewReportMode::Plain
++                },
++            )),
++            output_instruction: manifest
++                .communication
++                .structured_worker_reports
++                .then_some(review_report_prompt()),
++        },
++    )
++    .await?;
++    let review: Review = serde_json::from_str(&output).map_err(error)?;
++    host.task.consume_worker_result(&role).map_err(error)?;
++    let structured_review_complete = !manifest.communication.structured_worker_reports
++        || review.report.as_ref().is_some_and(|report| {
++            report.validate().is_ok() && report.status == WorkerReportStatus::Completed
++        });
++    if !structured_review_complete || review.candidate_sha256 != candidate_sha256 {
++        return Err("separate reviewer did not return a complete exact-candidate review".into());
++    }
++    let cycle = {
++        let mut runtime = host
++            .review
++            .lock()
++            .map_err(|_| "review runtime lock poisoned")?;
++        runtime
++            .ledger
++            .submit(codex_omd::ReviewSubmission {
++                cadence: request.cadence,
++                candidate: candidate_marker,
++                stable: request.stable,
++                risk: request.risk,
++                reviewer: reviewer_name.as_str().into(),
++                separate_reviewer: reviewer_name != lead.route,
++                checks,
++                findings: review_findings(review.findings.clone())?,
++                resolved_finding_ids: review.resolved_finding_ids.clone(),
++            })
++            .map_err(error)?
++    };
++    host.persist_review()?;
++    let snapshot = host
++        .review
++        .lock()
++        .map_err(|_| "review runtime lock poisoned")?
++        .ledger
++        .snapshot();
++    let review_ref = host.evidence(
++        &format!("review-cycle-{call_hash}.json"),
++        &json!({
++            "schema": 1,
++            "model": reviewer_route.model,
++            "cycle": cycle,
++            "response": review,
++            "review": snapshot,
++        }),
++    )?;
++    codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
++    Ok(json!({
++        "schema": 1,
++        "status": if cycle.final_approved { "approved" } else if cycle.observed_finding_ids.is_empty() { "advice_complete" } else { "findings" },
++        "cycle": cycle,
++        "unresolved_findings": snapshot.findings.into_iter().filter(|finding| finding.status != codex_omd::FindingStatus::Resolved).collect::<Vec<_>>(),
++        "repairs_used": snapshot.repairs.len(),
++        "repair_limit": snapshot.policy.max_repairs,
++        "evidence": review_ref,
++    }))
++}
++
 +pub async fn contribute(
 +    lead: &Lead,
 +    call: &ToolCall<'_>,
@@ -2556,6 +2894,8 @@ index 0000000..5aae909
 +        "candidate.json",
 +        &serde_json::to_value(&merged).map_err(error)?,
 +    )?;
++    let candidate_marker =
++        evidence_marker("integration-candidate", &candidate_hash, &candidate_ref)?;
 +    let check_root = codex_omd::create_worktree(
 +        &merged,
 +        &manifest.scratch.join("checks"),
@@ -2588,30 +2928,91 @@ index 0000000..5aae909
 +    {
 +        return Err("checks modified the candidate".into());
 +    }
++    let check_marker = evidence_marker("final-executable-checks", &candidate_hash, &check_ref)?;
++    let (review_cycle_number, prior_findings, repair_recorded) = {
++        let mut runtime = host
++            .review
++            .lock()
++            .map_err(|_| "review runtime lock poisoned")?;
++        let snapshot = runtime.ledger.snapshot();
++        let mut repair_recorded = false;
++        if let Some(previous) = snapshot.cycles.last()
++            && previous.candidate.sha256 != candidate_hash
++        {
++            let unresolved = runtime.ledger.unresolved();
++            if !unresolved.is_empty() {
++                let prior = runtime
++                    .candidates
++                    .get(&previous.candidate.sha256)
++                    .ok_or("prior reviewed candidate snapshot missing")?;
++                let repair_paths = prior.changed_paths(&merged).into_iter().collect::<Vec<_>>();
++                let finding_ids = unresolved
++                    .iter()
++                    .map(|finding| finding.id)
++                    .collect::<Vec<_>>();
++                if let Some(record) = runtime
++                    .ledger
++                    .recorded_repair(&previous.candidate.sha256, &candidate_hash)
++                {
++                    if record.paths != repair_paths
++                        || record.finding_ids != finding_ids
++                        || record.evidence.evidence_sha256 != candidate_marker.evidence_sha256
++                    {
++                        return Err("persisted repair transition does not match candidate".into());
++                    }
++                } else {
++                    runtime
++                        .ledger
++                        .record_repair(
++                            &previous.candidate.sha256,
++                            &candidate_hash,
++                            repair_paths,
++                            finding_ids,
++                            candidate_marker.clone(),
++                        )
++                        .map_err(error)?;
++                    repair_recorded = true;
++                }
++            }
++        }
++        runtime
++            .candidates
++            .insert(candidate_hash.clone(), merged.clone());
++        (
++            runtime.ledger.snapshot().cycles.len() as u32 + 1,
++            runtime.ledger.unresolved(),
++            repair_recorded,
++        )
++    };
++    if repair_recorded {
++        host.persist_review()?;
++    }
 +    let review_root = codex_omd::create_worktree(
 +        &merged,
 +        &manifest.scratch.join("review"),
 +        manifest.snapshot_bytes,
 +    )
 +    .map_err(error)?;
-+    let reviewer_route = if fallback_used {
-+        host.route(lead.route)
++    let actual_reviewer_name = if fallback_used {
++        lead.route
 +    } else {
-+        reviewer_route
++        reviewer_name
 +    };
++    let reviewer_route = host.route(actual_reviewer_name);
 +    let review_fields = if manifest.communication.structured_worker_reports {
-+        "approved (boolean), candidate_sha256 (the exact SHA), findings (array), and report (the required structured worker report)"
++        "candidate_sha256, findings, resolved_finding_ids, and report"
 +    } else {
-+        "approved (boolean), candidate_sha256 (the exact SHA), and findings (array)"
++        "candidate_sha256, findings, and resolved_finding_ids"
 +    };
++    let reviewer_role = format!("reviewer-{review_cycle_number}");
 +    let review = run_child(
 +        lead,
 +        &parent,
 +        &review_root,
 +        ChildTurn {
-+            role: "reviewer",
++            role: &reviewer_role,
 +            route: reviewer_route,
-+            prompt: format!("Review this candidate against the task context below. Inspect changed code and look for correctness or regression defects. Checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Return only JSON with fields {review_fields}. Do not edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, context.prompt),
++            prompt: format!("Perform the final review of this exact candidate against the task context. Inspect correctness, regressions, scope, and relevant negative cases. Executable checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this candidate proves it fixed or no longer applicable. Do not approve or edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, serde_json::to_string(&prior_findings).map_err(error)?, context.prompt),
 +            history: context.history,
 +            writable: false,
 +            output_schema: manifest.communication.review_output_schema(),
@@ -2626,14 +3027,40 @@ index 0000000..5aae909
 +        || review.report.as_ref().is_some_and(|report| {
 +            report.validate().is_ok() && report.status == WorkerReportStatus::Completed
 +        });
-+    host.task.consume_worker_result("reviewer").map_err(error)?;
-+    let review_ref = host.evidence("review.json", &json!({"model": reviewer_route.model, "candidate_sha256": candidate_hash, "response": review}))?;
-+    if !structured_review_complete
-+        || !review.approved
-+        || review.candidate_sha256 != candidate_hash
-+        || !review.findings.is_empty()
-+    {
++    host.task
++        .consume_worker_result(&reviewer_role)
++        .map_err(error)?;
++    if !structured_review_complete || review.candidate_sha256 != candidate_hash {
 +        return Err("separate-model review did not approve the exact candidate".into());
++    }
++    let review_cycle = host
++        .review
++        .lock()
++        .map_err(|_| "review runtime lock poisoned")?
++        .ledger
++        .submit(codex_omd::ReviewSubmission {
++            cadence: codex_omd::ReviewCadence::Final,
++            candidate: candidate_marker,
++            stable: true,
++            risk: None,
++            reviewer: actual_reviewer_name.as_str().into(),
++            separate_reviewer: reviewer_route.model != selected_route.model
++                || reviewer_route.provider != selected_route.provider,
++            checks: vec![check_marker],
++            findings: review_findings(review.findings.clone())?,
++            resolved_finding_ids: review.resolved_finding_ids.clone(),
++        })
++        .map_err(error)?;
++    host.persist_review()?;
++    let review_snapshot = host
++        .review
++        .lock()
++        .map_err(|_| "review runtime lock poisoned")?
++        .ledger
++        .snapshot();
++    let review_ref = host.evidence("review.json", &json!({"model": reviewer_route.model, "candidate_sha256": candidate_hash, "cycle": review_cycle, "response": review, "review": review_snapshot}))?;
++    if !review_cycle.final_approved {
++        return Err("separate-model review left unresolved findings on the exact candidate".into());
 +    }
 +    if codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)? != tracked
 +        || Snapshot::capture(
@@ -3028,11 +3455,24 @@ index 0000000..5aae909
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/execution_tests.rs b/codex-rs/ext/omd/src/execution_tests.rs
 new file mode 100644
-index 0000000..f048c84
+index 0000000..58c0303
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution_tests.rs
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,146 @@
 +use super::*;
++
++#[test]
++fn review_finding_keys_are_host_normalized_and_bounded() {
++    let finding = |key: &str| ModelFinding {
++        key: key.into(),
++        severity: codex_omd::ReviewSeverity::Warning,
++        summary: "check this path".into(),
++        paths: vec!["src/lib.rs".into()],
++    };
++    assert!(review_findings(vec![finding("   ")]).is_err());
++    let normalized = review_findings(vec![finding("  Stable-Key  ")]).unwrap();
++    assert_eq!(normalized[0].fingerprint, hash(b"stable-key"));
++}
 +
 +#[test]
 +fn structured_worker_results_are_validated_without_changing_plain_results() {
@@ -3167,12 +3607,16 @@ index 0000000..f048c84
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..151818b
+index 0000000..9768cdd
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,2360 @@
+@@ -0,0 +1,2609 @@
 +mod accounting;
 +mod execution;
++
++#[cfg(test)]
++#[path = "review_tests.rs"]
++mod review_tests;
 +
 +use accounting::Account;
 +use accounting::Accounts;
@@ -3226,9 +3670,11 @@ index 0000000..151818b
 +use codex_omd::ReactiveRules;
 +use codex_omd::ReactiveToolOutcome;
 +use codex_omd::ReactiveTrigger;
++use codex_omd::ReviewPolicy;
 +use codex_omd::Snapshot;
 +use codex_omd::Task;
 +use codex_omd::TaskContract;
++use codex_omd::UnifiedReview;
 +use codex_omd::VersionMarker;
 +use codex_omd::WorkerLimits;
 +use codex_omd::WorkerReport;
@@ -3276,6 +3722,8 @@ index 0000000..151818b
 +    communication: CommunicationPolicy,
 +    #[serde(default)]
 +    reactive_rules: Option<PacketReference>,
++    #[serde(default)]
++    review: ReviewPolicy,
 +    checkpoint: TaskContract,
 +    legitimate_wait_tools: Vec<String>,
 +    lifecycle: LifecyclePolicy,
@@ -3337,7 +3785,8 @@ index 0000000..151818b
 +    }
 +
 +    fn review_output_schema(&self) -> Option<Value> {
-+        self.structured_worker_reports.then(review_schema)
++        self.structured_worker_reports
++            .then(|| review_schema(ReviewReportMode::Structured))
 +    }
 +}
 +
@@ -3476,6 +3925,7 @@ index 0000000..151818b
 +    knowledge_prompt: Option<String>,
 +    lsp: Option<std::sync::Mutex<LspRuntime>>,
 +    reactive_rules: Option<ReactiveRules>,
++    review: std::sync::Mutex<ReviewRuntime>,
 +}
 +
 +#[derive(Clone)]
@@ -3508,6 +3958,13 @@ index 0000000..151818b
 +struct CheckpointTool(Arc<Lead>);
 +
 +struct LspTool(Arc<Lead>);
++
++struct ReviewTool(Arc<Lead>);
++
++struct ReviewRuntime {
++    ledger: UnifiedReview,
++    candidates: BTreeMap<String, Snapshot>,
++}
 +
 +struct LspRuntime {
 +    repository: PathBuf,
@@ -3813,7 +4270,7 @@ index 0000000..151818b
 +}
 +
 +fn review_report_prompt() -> &'static str {
-+    "Return only the review object required by the response schema. Keep the approval decision, exact candidate SHA256, and findings at the top level, and include the structured worker report in the report field. The nested report must preserve review scope, uncertainty, evidence references, and required clarification."
++    "Return only the review object required by the response schema. Keep the exact candidate SHA256, typed findings, and resolved finding IDs at the top level, and include the structured worker report in the report field. The nested report must preserve review scope, uncertainty, evidence references, and required clarification."
 +}
 +
 +fn string_array_schema(max_items: u32) -> Value {
@@ -3842,18 +4299,42 @@ index 0000000..151818b
 +    })
 +}
 +
-+fn review_schema() -> Value {
-+    json!({
++#[derive(Clone, Copy, Eq, PartialEq)]
++enum ReviewReportMode {
++    Plain,
++    Structured,
++}
++
++fn review_schema(report_mode: ReviewReportMode) -> Value {
++    let finding = json!({
 +        "type": "object",
 +        "properties": {
-+            "approved": {"type": "boolean"},
-+            "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-+            "findings": {"type": "array", "items": {"type": "string"}},
-+            "report": worker_report_schema()
++            "key": {"type": "string", "minLength": 1, "maxLength": 256},
++            "severity": {"type": "string", "enum": ["advice", "warning", "blocking"]},
++            "summary": {"type": "string", "minLength": 1, "maxLength": 4096},
++            "paths": string_array_schema(128)
 +        },
-+        "required": ["approved", "candidate_sha256", "findings", "report"],
++        "required": ["key", "severity", "summary", "paths"],
 +        "additionalProperties": false
-+    })
++    });
++    let mut schema = json!({
++        "type": "object",
++        "properties": {
++            "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
++            "findings": {"type": "array", "items": finding, "maxItems": 256},
++            "resolved_finding_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 128, "uniqueItems": true}
++        },
++        "required": ["candidate_sha256", "findings", "resolved_finding_ids"],
++        "additionalProperties": false
++    });
++    if report_mode == ReviewReportMode::Structured {
++        schema["properties"]["report"] = worker_report_schema();
++        schema["required"]
++            .as_array_mut()
++            .expect("required array")
++            .push(json!("report"));
++    }
++    schema
 +}
 +
 +fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveState, String> {
@@ -3887,6 +4368,55 @@ index 0000000..151818b
 +    })
 +}
 +
++fn review_runtime(manifest: &Manifest) -> Result<ReviewRuntime, String> {
++    let path = manifest.evidence.join("review-state.json");
++    let ledger = if path.exists() {
++        if manifest.lifecycle.explicit_resume.is_none() {
++            return Err("existing review state requires explicit resume".into());
++        }
++        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
++        if bytes.len() > 8_388_608 {
++            return Err("persisted review state exceeds limit".into());
++        }
++        UnifiedReview::restore(serde_json::from_slice(&bytes).map_err(|error| error.to_string())?)
++            .map_err(|error| error.to_string())?
++    } else {
++        UnifiedReview::new(manifest.review.clone()).map_err(|error| error.to_string())?
++    };
++    if ledger.snapshot().policy != manifest.review {
++        return Err("review policy changed across resume".into());
++    }
++    let mut candidates = BTreeMap::new();
++    let snapshot = ledger.snapshot();
++    let markers = snapshot
++        .cycles
++        .iter()
++        .map(|cycle| &cycle.candidate)
++        .chain(snapshot.repairs.iter().map(|repair| &repair.evidence));
++    for marker in markers {
++        if candidates.contains_key(&marker.sha256) {
++            continue;
++        }
++        let path = PathBuf::from(&marker.evidence);
++        if path.canonicalize().map_err(|error| error.to_string())? != path
++            || !path.starts_with(&manifest.evidence)
++        {
++            return Err("persisted review candidate evidence is not host-owned".into());
++        }
++        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
++        if execution::hash(&bytes) != marker.evidence_sha256 {
++            return Err("persisted review candidate evidence changed".into());
++        }
++        let candidate: Snapshot =
++            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
++        if candidate.hash().map_err(|error| error.to_string())? != marker.sha256 {
++            return Err("persisted review candidate version changed".into());
++        }
++        candidates.insert(marker.sha256.clone(), candidate);
++    }
++    Ok(ReviewRuntime { ledger, candidates })
++}
++
 +pub fn install(
 +    registry: &mut ExtensionRegistryBuilder<Config>,
 +    manager: Weak<ThreadManager>,
@@ -3902,6 +4432,7 @@ index 0000000..151818b
 +        return Err("controlled manifest exceeds limit".into());
 +    }
 +    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
++    manifest.review.validate().map_err(|e| e.to_string())?;
 +    if manifest.leads.sol.model != "gpt-5.6-sol"
 +        || manifest.leads.astra.model != "gpt-6-astra"
 +        || manifest.worker.model != "muse-spark-1.3-contributor"
@@ -4073,6 +4604,7 @@ index 0000000..151818b
 +    );
 +    codex_api::request_observer::install_response_observer(accounts.clone())
 +        .map_err(str::to_owned)?;
++    let review = review_runtime(&manifest)?;
 +    let host = Arc::new(Host {
 +        lsp: lsp_enabled.then(|| {
 +            let policy = manifest.lsp.as_ref().expect("enabled LSP policy");
@@ -4094,6 +4626,7 @@ index 0000000..151818b
 +        active_guideline,
 +        knowledge_prompt: frozen_knowledge_prompt,
 +        reactive_rules,
++        review: std::sync::Mutex::new(review),
 +    });
 +    let _ = host.authorize();
 +    let deadline_host = host.clone();
@@ -4159,7 +4692,19 @@ index 0000000..151818b
 +
 +    async fn stop_tree(&self, reason: &str, final_stop: bool, except: Option<ThreadId>) {
 +        if final_stop {
++            let reviewed_current = self
++                .live_state()
++                .ok()
++                .and_then(|live| {
++                    self.review
++                        .lock()
++                        .ok()
++                        .and_then(|review| review.ledger.snapshot().final_candidate_sha256)
++                        .map(|candidate| candidate == live.workspace_sha256)
++                })
++                .unwrap_or(false);
 +            if reason != "completed"
++                || !reviewed_current
 +                || self
 +                    .task
 +                    .complete("foreground acceptance checkpoint")
@@ -4273,6 +4818,41 @@ index 0000000..151818b
 +            .and_then(|_| file.sync_all())
 +            .map_err(|e| e.to_string())?;
 +        Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
++    }
++
++    fn persist_review(&self) -> Result<(), String> {
++        use std::io::Write;
++        let bytes = serde_json::to_vec(
++            &self
++                .review
++                .lock()
++                .map_err(|_| "review runtime lock poisoned")?
++                .ledger
++                .snapshot(),
++        )
++        .map_err(|error| error.to_string())?;
++        if bytes.len() > 8_388_608 {
++            return Err("review state exceeds persistence limit".into());
++        }
++        let path = self.manifest.evidence.join("review-state.json");
++        let temporary = self.manifest.evidence.join(format!(
++            "review-state-{}-{}.tmp",
++            std::process::id(),
++            execution::hash(&bytes)
++        ));
++        let mut file = std::fs::OpenOptions::new()
++            .create_new(true)
++            .write(true)
++            .open(&temporary)
++            .map_err(|error| error.to_string())?;
++        file.write_all(&bytes)
++            .and_then(|_| file.sync_all())
++            .map_err(|error| error.to_string())?;
++        std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
++        std::fs::File::open(&self.manifest.evidence)
++            .and_then(|directory| directory.sync_all())
++            .map_err(|error| error.to_string())?;
++        Ok(())
 +    }
 +
 +    fn live_state(&self) -> Result<LiveState, String> {
@@ -4407,6 +4987,30 @@ index 0000000..151818b
 +                    fragments.push(PromptFragment::developer_capability(
 +                        "This repository has remembered semantic-feedback opt-in. Use omd_lsp on demand for the supported five languages. Synchronize each coherent write batch before navigation or diagnostics; semantic writes require an exact declared scope and current SHA256 for every affected existing or absent path. Use intermediate_check after meaningful changes. Treat unsupported or unavailable results as an explicit fallback, not success. Servers start on demand, stop after bounded idle time, and are never installed automatically.",
 +                        ContentItemKind("oh_my_diff.lsp".into()),
++                    ));
++                }
++                if let Ok(review) = self.review.lock() {
++                    let snapshot = review.ledger.snapshot();
++                    let current_candidate = self
++                        .live_state()
++                        .ok()
++                        .map(|state| state.workspace_sha256)
++                        .unwrap_or_else(|| "unavailable".into());
++                    let prompt = format!(
++                        "Use the single host-owned omd_review system for stable milestones, explicit risk-triggered advice, and final review. Findings are candidate-bound and reconciled across cycles; repairs are limited to configured scope and count. Final review runs executable checks and uses the separately configured opposite lead before completion or integration. Every-turn advice is {} and remains independent of the required final review. Current candidate SHA256: {current_candidate}. Current review cycles: {}; unresolved findings: {}; repairs: {}/{}.",
++                        if snapshot.policy.every_turn_advice {
++                            "enabled"
++                        } else {
++                            "disabled"
++                        },
++                        snapshot.cycles.len(),
++                        review.ledger.unresolved().len(),
++                        snapshot.repairs.len(),
++                        snapshot.policy.max_repairs,
++                    );
++                    fragments.push(PromptFragment::developer_capability(
++                        prompt,
++                        ContentItemKind("oh_my_diff.review".into()),
 +                    ));
 +                }
 +                if lead.owner == "lead"
@@ -4799,6 +5403,7 @@ index 0000000..151818b
 +        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> = vec![
 +            Arc::new(CheckpointTool(lead.clone())),
 +            Arc::new(EscalationTool(lead.clone())),
++            Arc::new(ReviewTool(lead.clone())),
 +        ];
 +        if self.lsp.is_some() {
 +            tools.push(Arc::new(LspTool(lead.clone())));
@@ -5218,6 +5823,90 @@ index 0000000..151818b
 +    }
 +}
 +
++impl<'call> ToolExecutor<ToolCall<'call>> for ReviewTool {
++    fn tool_name(&self) -> ToolName {
++        ToolName::plain("omd_review")
++    }
++
++    fn spec(&self) -> ToolSpec {
++        ToolSpec::Function(ResponsesApiTool {
++            name: "omd_review".into(),
++            description: "Run one candidate-bound pass through the shared review ledger. Stable-milestone and explicit risk-triggered advice reuse unresolved findings. Every-turn advice works only when separately enabled. Final review first runs configured executable checks, then a read-only opposite-lead reviewer; completion remains blocked unless that exact candidate has no unresolved or stale findings. Candidate changes after findings count as bounded repairs and must remain inside configured repair scope.".into(),
++            strict: false,
++            defer_loading: None,
++            output_schema: None,
++            parameters: JsonSchema::object(
++                BTreeMap::from([
++                    (
++                        "cadence".into(),
++                        JsonSchema::string_enum(
++                            ["stable_milestone", "risk_triggered", "every_turn", "final"]
++                                .into_iter()
++                                .map(|value| json!(value))
++                                .collect(),
++                            Some("Review cadence; every_turn may be disabled.".into()),
++                        ),
++                    ),
++                    (
++                        "candidate_sha256".into(),
++                        JsonSchema::string(Some(
++                            "Exact current candidate SHA256 from host review context.".into(),
++                        )),
++                    ),
++                    (
++                        "stable".into(),
++                        JsonSchema::boolean(Some(
++                            "Whether implementation writes for this milestone have stopped.".into(),
++                        )),
++                    ),
++                    (
++                        "risk".into(),
++                        JsonSchema::string(Some(
++                            "Concrete bounded risk; required only for risk_triggered.".into(),
++                        )),
++                    ),
++                ]),
++                Some(vec![
++                    "cadence".into(),
++                    "candidate_sha256".into(),
++                    "stable".into(),
++                ]),
++                Some(false.into()),
++            ),
++        })
++    }
++
++    fn exposure(&self) -> ToolExposure {
++        ToolExposure::Deferred
++    }
++
++    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
++    where
++        'call: 'a,
++    {
++        Box::pin(async move {
++            let request: execution::ReviewRequest =
++                serde_json::from_str(call.function_arguments()?)
++                    .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
++            if self
++                .0
++                .host
++                .operation
++                .swap(true, std::sync::atomic::Ordering::AcqRel)
++            {
++                return Err(FunctionCallError::RespondToModel(
++                    "another controlled operation is active".into(),
++                ));
++            }
++            let _operation = OperationGuard(&self.0.host.operation);
++            let value = execution::review_current(&self.0, &call, request)
++                .await
++                .unwrap_or_else(|error| json!({"schema": 1, "status": "failed", "error": error}));
++            Ok(Box::new(JsonToolOutput::new(value)) as Box<dyn ToolOutput>)
++        })
++    }
++}
++
 +impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
 +    fn tool_name(&self) -> ToolName {
 +        ToolName::plain("omd_contribute")
@@ -5531,6 +6220,37 @@ index 0000000..151818b
 +        assert!(prompt.contains("Unapproved candidates are excluded"));
 +    }
 +}
+diff --git a/codex-rs/ext/omd/src/review_tests.rs b/codex-rs/ext/omd/src/review_tests.rs
+new file mode 100644
+index 0000000..777009b
+--- /dev/null
++++ b/codex-rs/ext/omd/src/review_tests.rs
+@@ -0,0 +1,25 @@
++use super::*;
++
++#[test]
++fn every_turn_review_stays_off_in_the_default_manifest_policy() {
++    let policy = ReviewPolicy::default();
++    assert!(!policy.every_turn_advice);
++    assert!(policy.max_cycles > 0);
++    assert!(policy.max_repairs > 0);
++}
++
++#[test]
++fn review_schema_keeps_typed_findings_and_optional_report_independent() {
++    let plain = review_schema(ReviewReportMode::Plain);
++    let structured = review_schema(ReviewReportMode::Structured);
++    let plain_required = plain["required"].as_array().unwrap();
++    let structured_required = structured["required"].as_array().unwrap();
++    assert!(!plain_required.iter().any(|field| field == "report"));
++    assert!(structured_required.iter().any(|field| field == "report"));
++    assert_eq!(plain["properties"]["findings"]["items"]["type"], "object");
++    assert_eq!(
++        plain["properties"]["findings"]["items"]["properties"]["severity"]["enum"],
++        json!(["advice", "warning", "blocking"])
++    );
++    assert!(plain["properties"].get("approved").is_none());
++}
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
 index cd4cbd5..b37f321 100644
 --- a/codex-rs/login/src/auth/default_client.rs
@@ -5587,10 +6307,10 @@ index 0000000..812e16b
 +tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/README.md b/codex-rs/omd/README.md
 new file mode 100644
-index 0000000..783918e
+index 0000000..99cbc31
 --- /dev/null
 +++ b/codex-rs/omd/README.md
-@@ -0,0 +1,245 @@
+@@ -0,0 +1,260 @@
 +# Controlled delegation primitives
 +
 +Rust primitives linked by the experimental pinned Codex patch in `runtime/native`.
@@ -5728,6 +6448,21 @@ index 0000000..783918e
 +source and project configuration, so the host can skip an identical check and
 +reject a result if inputs changed
 +while it ran.
++
++`UnifiedReview` is the bounded state machine shared by stable-milestone,
++risk-triggered, optional every-turn, and final review. Each cycle binds its
++candidate and executable-check evidence by SHA256. Stable finding fingerprints
++collapse repeats within and across reviews; omitted findings on a later candidate
++remain stale until explicitly resolved. A final cycle succeeds only for a stable
++candidate with current checks, a distinct reviewer, and no open or stale finding.
++
++Candidate changes after findings are repair records. They name the old and new
++candidate, affected finding IDs, exact changed paths, and new-candidate evidence;
++the configured repair count and path scope fail closed. Any later review or
++repair invalidates an older final approval. The native host persists the complete
++ledger atomically, reloads and validates its candidate evidence only on explicit
++resume, and charges each model review to the original task ledger. Every-turn
++advice defaults off independently of the mandatory final review.
 +
 +```json
 +{
@@ -12888,10 +13623,10 @@ index 0000000..1b27bbc
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..d390c0c
+index 0000000..29b7da2
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,146 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
@@ -12902,6 +13637,7 @@ index 0000000..d390c0c
 +mod knowledge;
 +mod lsp;
 +mod reactive;
++mod review;
 +mod workspace;
 +
 +pub use admission::Admission;
@@ -13020,6 +13756,17 @@ index 0000000..d390c0c
 +pub use reactive::ReactiveScope;
 +pub use reactive::ReactiveToolOutcome;
 +pub use reactive::ReactiveTrigger;
++pub use review::FindingStatus;
++pub use review::RepairRecord;
++pub use review::ReviewCadence;
++pub use review::ReviewCycle;
++pub use review::ReviewFinding;
++pub use review::ReviewFindingInput;
++pub use review::ReviewPolicy;
++pub use review::ReviewSeverity;
++pub use review::ReviewSnapshot;
++pub use review::ReviewSubmission;
++pub use review::UnifiedReview;
 +pub use workspace::File;
 +pub use workspace::Snapshot;
 +pub use workspace::capture_tracked;
@@ -15542,6 +16289,784 @@ index 0000000..f28113b
 +        }
 +        Ok(prompts)
 +    }
++}
+diff --git a/codex-rs/omd/src/review.rs b/codex-rs/omd/src/review.rs
+new file mode 100644
+index 0000000..cc385a5
+--- /dev/null
++++ b/codex-rs/omd/src/review.rs
+@@ -0,0 +1,538 @@
++use crate::VersionMarker;
++use serde::Deserialize;
++use serde::Serialize;
++use std::collections::BTreeMap;
++use std::collections::BTreeSet;
++use std::io;
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ReviewPolicy {
++    #[serde(default)]
++    pub every_turn_advice: bool,
++    pub max_cycles: u32,
++    pub max_findings_per_cycle: usize,
++    pub max_open_findings: usize,
++    pub max_repairs: u32,
++    pub repair_scope: Vec<String>,
++}
++
++impl Default for ReviewPolicy {
++    fn default() -> Self {
++        Self {
++            every_turn_advice: false,
++            max_cycles: 16,
++            max_findings_per_cycle: 64,
++            max_open_findings: 128,
++            max_repairs: 4,
++            repair_scope: vec![".".into()],
++        }
++    }
++}
++
++impl ReviewPolicy {
++    pub fn validate(&self) -> io::Result<()> {
++        if self.max_cycles == 0
++            || self.max_cycles > 256
++            || self.max_findings_per_cycle == 0
++            || self.max_findings_per_cycle > 256
++            || self.max_open_findings == 0
++            || self.max_open_findings > 1024
++            || self.max_repairs > 32
++            || self.repair_scope.is_empty()
++            || self.repair_scope.len() > 128
++            || !unique(&self.repair_scope)
++            || self.repair_scope.iter().any(|path| !valid_relative(path))
++        {
++            return Err(invalid("review policy is invalid or unbounded"));
++        }
++        Ok(())
++    }
++
++    pub fn validate_request(
++        &self,
++        cadence: ReviewCadence,
++        stable: bool,
++        risk: Option<&str>,
++    ) -> io::Result<()> {
++        match cadence {
++            ReviewCadence::StableMilestone if !stable => {
++                return Err(invalid("milestone review requires a stable candidate"));
++            }
++            ReviewCadence::RiskTriggered
++                if risk.is_none_or(|risk| risk.trim().is_empty() || risk.len() > 2048) =>
++            {
++                return Err(invalid("risk-triggered review requires a bounded risk"));
++            }
++            ReviewCadence::EveryTurn if !self.every_turn_advice => {
++                return Err(invalid("every-turn advice is disabled"));
++            }
++            ReviewCadence::Final if !stable => {
++                return Err(invalid("final review requires a stable candidate"));
++            }
++            _ => {}
++        }
++        if cadence != ReviewCadence::RiskTriggered && risk.is_some() {
++            return Err(invalid("risk is valid only for risk-triggered review"));
++        }
++        Ok(())
++    }
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum ReviewCadence {
++    StableMilestone,
++    RiskTriggered,
++    EveryTurn,
++    Final,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum ReviewSeverity {
++    Advice,
++    Warning,
++    Blocking,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ReviewFindingInput {
++    pub fingerprint: String,
++    pub severity: ReviewSeverity,
++    pub summary: String,
++    pub paths: Vec<String>,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum FindingStatus {
++    Open,
++    Resolved,
++    Stale,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct ReviewFinding {
++    pub id: u32,
++    pub fingerprint: String,
++    pub severity: ReviewSeverity,
++    pub summary: String,
++    pub paths: Vec<String>,
++    pub status: FindingStatus,
++    pub introduced_candidate_sha256: String,
++    pub last_seen_candidate_sha256: String,
++    pub duplicate_observations: u32,
++    pub resolved_candidate_sha256: Option<String>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ReviewSubmission {
++    pub cadence: ReviewCadence,
++    pub candidate: VersionMarker,
++    pub stable: bool,
++    pub risk: Option<String>,
++    pub reviewer: String,
++    pub separate_reviewer: bool,
++    pub checks: Vec<VersionMarker>,
++    pub findings: Vec<ReviewFindingInput>,
++    pub resolved_finding_ids: Vec<u32>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct ReviewCycle {
++    pub id: u32,
++    pub cadence: ReviewCadence,
++    pub candidate: VersionMarker,
++    pub stable: bool,
++    pub risk: Option<String>,
++    pub reviewer: String,
++    pub separate_reviewer: bool,
++    pub checks: Vec<VersionMarker>,
++    pub observed_finding_ids: Vec<u32>,
++    pub resolved_finding_ids: Vec<u32>,
++    pub duplicate_findings: u32,
++    pub final_approved: bool,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct RepairRecord {
++    pub id: u32,
++    pub from_candidate_sha256: String,
++    pub to_candidate_sha256: String,
++    pub paths: Vec<String>,
++    pub finding_ids: Vec<u32>,
++    pub evidence: VersionMarker,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct ReviewSnapshot {
++    pub schema: u32,
++    pub policy: ReviewPolicy,
++    pub cycles: Vec<ReviewCycle>,
++    pub findings: Vec<ReviewFinding>,
++    pub repairs: Vec<RepairRecord>,
++    pub final_candidate_sha256: Option<String>,
++}
++
++pub struct UnifiedReview {
++    snapshot: ReviewSnapshot,
++}
++
++impl UnifiedReview {
++    pub fn new(policy: ReviewPolicy) -> io::Result<Self> {
++        policy.validate()?;
++        Ok(Self {
++            snapshot: ReviewSnapshot {
++                schema: 1,
++                policy,
++                cycles: Vec::new(),
++                findings: Vec::new(),
++                repairs: Vec::new(),
++                final_candidate_sha256: None,
++            },
++        })
++    }
++
++    pub fn snapshot(&self) -> ReviewSnapshot {
++        self.snapshot.clone()
++    }
++
++    pub fn restore(snapshot: ReviewSnapshot) -> io::Result<Self> {
++        snapshot.policy.validate()?;
++        if snapshot.schema != 1
++            || snapshot.cycles.len() > snapshot.policy.max_cycles as usize
++            || snapshot.findings.len()
++                > snapshot
++                    .policy
++                    .max_cycles
++                    .saturating_mul(snapshot.policy.max_findings_per_cycle as u32)
++                    as usize
++            || snapshot.repairs.len() > snapshot.policy.max_repairs as usize
++            || snapshot.cycles.iter().enumerate().any(|(index, cycle)| {
++                cycle.id != index as u32 + 1 || validate_marker(&cycle.candidate).is_err()
++            })
++            || snapshot
++                .findings
++                .iter()
++                .enumerate()
++                .any(|(index, finding)| {
++                    finding.id != index as u32 + 1
++                        || validate_sha256(&finding.fingerprint).is_err()
++                        || validate_sha256(&finding.introduced_candidate_sha256).is_err()
++                        || validate_sha256(&finding.last_seen_candidate_sha256).is_err()
++                })
++            || snapshot.repairs.iter().enumerate().any(|(index, repair)| {
++                repair.id != index as u32 + 1
++                    || validate_sha256(&repair.from_candidate_sha256).is_err()
++                    || validate_sha256(&repair.to_candidate_sha256).is_err()
++                    || validate_marker(&repair.evidence).is_err()
++            })
++            || snapshot
++                .final_candidate_sha256
++                .as_ref()
++                .is_some_and(|candidate| {
++                    validate_sha256(candidate).is_err()
++                        || !snapshot.cycles.iter().any(|cycle| {
++                            cycle.final_approved && cycle.candidate.sha256 == *candidate
++                        })
++                })
++        {
++            return Err(invalid("persisted review state is invalid or unbounded"));
++        }
++        Ok(Self { snapshot })
++    }
++
++    pub fn unresolved(&self) -> Vec<ReviewFinding> {
++        self.snapshot
++            .findings
++            .iter()
++            .filter(|finding| finding.status != FindingStatus::Resolved)
++            .cloned()
++            .collect()
++    }
++
++    pub fn recorded_repair(
++        &self,
++        from_candidate_sha256: &str,
++        to_candidate_sha256: &str,
++    ) -> Option<&RepairRecord> {
++        self.snapshot.repairs.iter().find(|repair| {
++            repair.from_candidate_sha256 == from_candidate_sha256
++                && repair.to_candidate_sha256 == to_candidate_sha256
++        })
++    }
++
++    pub fn record_repair(
++        &mut self,
++        from_candidate_sha256: &str,
++        to_candidate_sha256: &str,
++        paths: Vec<String>,
++        finding_ids: Vec<u32>,
++        evidence: VersionMarker,
++    ) -> io::Result<RepairRecord> {
++        if self.snapshot.repairs.len() >= self.snapshot.policy.max_repairs as usize {
++            return Err(invalid("review repair limit exhausted"));
++        }
++        validate_sha256(from_candidate_sha256)?;
++        validate_sha256(to_candidate_sha256)?;
++        validate_marker(&evidence)?;
++        if from_candidate_sha256 == to_candidate_sha256
++            || evidence.sha256 != to_candidate_sha256
++            || paths.is_empty()
++            || paths.len() > 256
++            || finding_ids.is_empty()
++            || finding_ids.len() > self.snapshot.policy.max_open_findings
++            || self
++                .recorded_repair(from_candidate_sha256, to_candidate_sha256)
++                .is_some()
++            || !unique(&paths)
++            || !unique(&finding_ids)
++            || paths.iter().any(|path| {
++                !valid_relative(path)
++                    || !self
++                        .snapshot
++                        .policy
++                        .repair_scope
++                        .iter()
++                        .any(|scope| in_scope(path, scope))
++            })
++            || finding_ids.iter().any(|id| {
++                !self
++                    .snapshot
++                    .findings
++                    .iter()
++                    .any(|finding| finding.id == *id && finding.status != FindingStatus::Resolved)
++            })
++        {
++            return Err(invalid(
++                "repair is stale, duplicate, or outside authorized scope",
++            ));
++        }
++        let record = RepairRecord {
++            id: self.snapshot.repairs.len() as u32 + 1,
++            from_candidate_sha256: from_candidate_sha256.into(),
++            to_candidate_sha256: to_candidate_sha256.into(),
++            paths,
++            finding_ids,
++            evidence,
++        };
++        self.snapshot.final_candidate_sha256 = None;
++        self.snapshot.repairs.push(record.clone());
++        Ok(record)
++    }
++
++    pub fn submit(&mut self, submission: ReviewSubmission) -> io::Result<ReviewCycle> {
++        let mut staged = Self {
++            snapshot: self.snapshot.clone(),
++        };
++        let cycle = staged.submit_in_place(submission)?;
++        self.snapshot = staged.snapshot;
++        Ok(cycle)
++    }
++
++    fn submit_in_place(&mut self, submission: ReviewSubmission) -> io::Result<ReviewCycle> {
++        if self.snapshot.cycles.len() >= self.snapshot.policy.max_cycles as usize {
++            return Err(invalid("review cycle limit exhausted"));
++        }
++        validate_submission(&self.snapshot.policy, &submission)?;
++        let prior_candidate = self
++            .snapshot
++            .cycles
++            .last()
++            .map(|cycle| cycle.candidate.sha256.as_str());
++        let changed_candidate = prior_candidate
++            .is_some_and(|candidate| candidate != submission.candidate.sha256.as_str());
++        let resolved: BTreeSet<_> = submission.resolved_finding_ids.iter().copied().collect();
++        if submission.resolved_finding_ids.len() != resolved.len()
++            || resolved.iter().any(|id| {
++                !self
++                    .snapshot
++                    .findings
++                    .iter()
++                    .any(|finding| finding.id == *id && finding.status != FindingStatus::Resolved)
++            })
++        {
++            return Err(invalid(
++                "resolved finding is unknown, duplicate, or already resolved",
++            ));
++        }
++        if !resolved.is_empty() && !changed_candidate {
++            return Err(invalid("finding resolution requires a changed candidate"));
++        }
++        let mut deduplicated = BTreeMap::new();
++        let mut duplicate_findings = 0;
++        for finding in submission.findings {
++            validate_finding(&finding)?;
++            if deduplicated
++                .insert(finding.fingerprint.clone(), finding)
++                .is_some()
++            {
++                duplicate_findings += 1;
++            }
++        }
++        let observed_fingerprints: BTreeSet<_> = deduplicated.keys().cloned().collect();
++        for finding in &mut self.snapshot.findings {
++            if finding.status == FindingStatus::Resolved {
++                continue;
++            }
++            if resolved.contains(&finding.id) {
++                finding.status = FindingStatus::Resolved;
++                finding.resolved_candidate_sha256 = Some(submission.candidate.sha256.clone());
++            } else if changed_candidate && !observed_fingerprints.contains(&finding.fingerprint) {
++                finding.status = FindingStatus::Stale;
++            }
++        }
++        let mut observed_finding_ids = Vec::new();
++        for (fingerprint, input) in deduplicated {
++            if let Some(existing) = self.snapshot.findings.iter_mut().find(|finding| {
++                finding.fingerprint == fingerprint && finding.status != FindingStatus::Resolved
++            }) {
++                existing.status = FindingStatus::Open;
++                existing.last_seen_candidate_sha256 = submission.candidate.sha256.clone();
++                existing.severity = input.severity;
++                existing.summary = input.summary;
++                existing.paths = input.paths;
++                existing.duplicate_observations = existing.duplicate_observations.saturating_add(1);
++                observed_finding_ids.push(existing.id);
++            } else {
++                let id = self.snapshot.findings.len() as u32 + 1;
++                self.snapshot.findings.push(ReviewFinding {
++                    id,
++                    fingerprint,
++                    severity: input.severity,
++                    summary: input.summary,
++                    paths: input.paths,
++                    status: FindingStatus::Open,
++                    introduced_candidate_sha256: submission.candidate.sha256.clone(),
++                    last_seen_candidate_sha256: submission.candidate.sha256.clone(),
++                    duplicate_observations: 0,
++                    resolved_candidate_sha256: None,
++                });
++                observed_finding_ids.push(id);
++            }
++        }
++        if self.unresolved().len() > self.snapshot.policy.max_open_findings {
++            return Err(invalid("open review finding limit exceeded"));
++        }
++        let final_approved =
++            submission.cadence == ReviewCadence::Final && self.unresolved().is_empty();
++        let cycle = ReviewCycle {
++            id: self.snapshot.cycles.len() as u32 + 1,
++            cadence: submission.cadence,
++            candidate: submission.candidate,
++            stable: submission.stable,
++            risk: submission.risk,
++            reviewer: submission.reviewer,
++            separate_reviewer: submission.separate_reviewer,
++            checks: submission.checks,
++            observed_finding_ids,
++            resolved_finding_ids: resolved.into_iter().collect(),
++            duplicate_findings,
++            final_approved,
++        };
++        self.snapshot.final_candidate_sha256 =
++            final_approved.then(|| cycle.candidate.sha256.clone());
++        self.snapshot.cycles.push(cycle.clone());
++        Ok(cycle)
++    }
++}
++
++fn validate_submission(policy: &ReviewPolicy, submission: &ReviewSubmission) -> io::Result<()> {
++    validate_marker(&submission.candidate)?;
++    policy.validate_request(
++        submission.cadence,
++        submission.stable,
++        submission.risk.as_deref(),
++    )?;
++    if submission.reviewer.trim().is_empty() || submission.reviewer.len() > 128 {
++        return Err(invalid("reviewer identity is required and bounded"));
++    }
++    if submission.findings.len() > policy.max_findings_per_cycle {
++        return Err(invalid("review finding limit exceeded"));
++    }
++    if submission.cadence == ReviewCadence::Final
++        && (!submission.separate_reviewer || submission.checks.is_empty())
++    {
++        return Err(invalid(
++            "final review requires a stable candidate, executable checks, and a separate reviewer",
++        ));
++    }
++    for check in &submission.checks {
++        validate_marker(check)?;
++        if check.sha256 != submission.candidate.sha256 {
++            return Err(invalid("review check is stale for the candidate"));
++        }
++    }
++    Ok(())
++}
++
++fn validate_finding(finding: &ReviewFindingInput) -> io::Result<()> {
++    if finding.fingerprint.len() != 64
++        || !finding
++            .fingerprint
++            .bytes()
++            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
++        || finding.summary.trim().is_empty()
++        || finding.summary.len() > 4096
++        || finding.paths.len() > 128
++        || !unique(&finding.paths)
++        || finding.paths.iter().any(|path| !valid_relative(path))
++    {
++        return Err(invalid("review finding is invalid or unbounded"));
++    }
++    Ok(())
++}
++
++fn validate_marker(marker: &VersionMarker) -> io::Result<()> {
++    if marker.label.trim().is_empty()
++        || marker.label.len() > 128
++        || marker.evidence.trim().is_empty()
++        || marker.evidence.len() > 4096
++    {
++        return Err(invalid("version marker is invalid or unbounded"));
++    }
++    validate_sha256(&marker.sha256)?;
++    validate_sha256(&marker.evidence_sha256)
++}
++
++fn validate_sha256(value: &str) -> io::Result<()> {
++    if value.len() != 64
++        || !value
++            .bytes()
++            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
++    {
++        return Err(invalid("exact lowercase SHA256 is required"));
++    }
++    Ok(())
++}
++
++fn unique<T: Ord>(values: &[T]) -> bool {
++    values.iter().collect::<BTreeSet<_>>().len() == values.len()
++}
++
++fn valid_relative(path: &str) -> bool {
++    if path == "." {
++        return true;
++    }
++    let path = std::path::Path::new(path);
++    !path.as_os_str().is_empty()
++        && !path.is_absolute()
++        && path
++            .components()
++            .all(|component| matches!(component, std::path::Component::Normal(_)))
++}
++
++fn in_scope(path: &str, scope: &str) -> bool {
++    scope == "." || path == scope || path.starts_with(&format!("{scope}/"))
++}
++
++fn invalid(message: &str) -> io::Error {
++    io::Error::new(io::ErrorKind::InvalidInput, message)
++}
++
++#[cfg(test)]
++#[path = "review_tests.rs"]
++mod tests;
+diff --git a/codex-rs/omd/src/review_tests.rs b/codex-rs/omd/src/review_tests.rs
+new file mode 100644
+index 0000000..ac10203
+--- /dev/null
++++ b/codex-rs/omd/src/review_tests.rs
+@@ -0,0 +1,228 @@
++use super::*;
++
++fn sha(value: char) -> String {
++    std::iter::repeat_n(value, 64).collect()
++}
++
++fn marker(label: &str, value: char) -> VersionMarker {
++    VersionMarker {
++        label: label.into(),
++        sha256: sha(value),
++        evidence: format!("/evidence/{label}.json"),
++        evidence_sha256: sha('e'),
++    }
++}
++
++fn finding(fingerprint: char, summary: &str) -> ReviewFindingInput {
++    ReviewFindingInput {
++        fingerprint: sha(fingerprint),
++        severity: ReviewSeverity::Warning,
++        summary: summary.into(),
++        paths: vec!["src/lib.rs".into()],
++    }
++}
++
++fn submission(cadence: ReviewCadence, candidate: char) -> ReviewSubmission {
++    ReviewSubmission {
++        cadence,
++        candidate: marker("candidate", candidate),
++        stable: true,
++        risk: None,
++        reviewer: "astra".into(),
++        separate_reviewer: true,
++        checks: Vec::new(),
++        findings: Vec::new(),
++        resolved_finding_ids: Vec::new(),
++    }
++}
++
++#[test]
++fn every_turn_is_off_by_default_and_independently_switchable() {
++    let mut review = UnifiedReview::new(ReviewPolicy::default()).unwrap();
++    let request = submission(ReviewCadence::EveryTurn, 'a');
++    assert_eq!(
++        review.submit(request.clone()).unwrap_err().to_string(),
++        "every-turn advice is disabled"
++    );
++    let policy = ReviewPolicy {
++        every_turn_advice: true,
++        ..ReviewPolicy::default()
++    };
++    UnifiedReview::new(policy).unwrap().submit(request).unwrap();
++}
++
++#[test]
++fn repair_scope_entries_are_unique_and_normalized() {
++    let duplicate = ReviewPolicy {
++        repair_scope: vec!["src".into(), "src".into()],
++        ..ReviewPolicy::default()
++    };
++    assert!(duplicate.validate().is_err());
++    let dotted = ReviewPolicy {
++        repair_scope: vec!["./src".into()],
++        ..ReviewPolicy::default()
++    };
++    assert!(dotted.validate().is_err());
++}
++
++#[test]
++fn cadence_specific_preconditions_fail_closed() {
++    let mut review = UnifiedReview::new(ReviewPolicy::default()).unwrap();
++    let mut milestone = submission(ReviewCadence::StableMilestone, 'a');
++    milestone.stable = false;
++    assert!(review.submit(milestone).is_err());
++    let risk = submission(ReviewCadence::RiskTriggered, 'a');
++    assert!(review.submit(risk).is_err());
++    let final_review = submission(ReviewCadence::Final, 'a');
++    assert!(review.submit(final_review).is_err());
++}
++
++#[test]
++fn cadence_can_be_rejected_before_dispatch() {
++    let policy = ReviewPolicy::default();
++    assert_eq!(
++        policy
++            .validate_request(ReviewCadence::EveryTurn, true, None)
++            .unwrap_err()
++            .to_string(),
++        "every-turn advice is disabled"
++    );
++    assert!(
++        policy
++            .validate_request(
++                ReviewCadence::RiskTriggered,
++                true,
++                Some("dependency boundary")
++            )
++            .is_ok()
++    );
++}
++
++#[test]
++fn duplicate_findings_collapse_and_reappear_on_new_versions() {
++    let mut review = UnifiedReview::new(ReviewPolicy::default()).unwrap();
++    let mut first = submission(ReviewCadence::StableMilestone, 'a');
++    first.findings = vec![finding('1', "first"), finding('1', "updated")];
++    let cycle = review.submit(first).unwrap();
++    assert_eq!(cycle.duplicate_findings, 1);
++    assert_eq!(review.snapshot().findings.len(), 1);
++    let mut second = submission(ReviewCadence::StableMilestone, 'b');
++    second.findings = vec![finding('1', "still present")];
++    review.submit(second).unwrap();
++    let finding = &review.snapshot().findings[0];
++    assert_eq!(finding.id, 1);
++    assert_eq!(finding.duplicate_observations, 1);
++    assert_eq!(finding.last_seen_candidate_sha256, sha('b'));
++}
++
++#[test]
++fn omitted_old_findings_become_stale_until_explicitly_resolved() {
++    let mut review = UnifiedReview::new(ReviewPolicy::default()).unwrap();
++    let mut first = submission(ReviewCadence::StableMilestone, 'a');
++    first.findings = vec![finding('1', "bug")];
++    review.submit(first).unwrap();
++    review
++        .submit(submission(ReviewCadence::StableMilestone, 'b'))
++        .unwrap();
++    assert_eq!(review.snapshot().findings[0].status, FindingStatus::Stale);
++    let mut resolved = submission(ReviewCadence::StableMilestone, 'c');
++    resolved.resolved_finding_ids = vec![1];
++    review.submit(resolved).unwrap();
++    assert!(review.unresolved().is_empty());
++}
++
++#[test]
++fn final_review_requires_current_checks_and_no_unresolved_findings() {
++    let mut review = UnifiedReview::new(ReviewPolicy::default()).unwrap();
++    let mut first = submission(ReviewCadence::StableMilestone, 'a');
++    first.findings = vec![finding('1', "bug")];
++    review.submit(first).unwrap();
++    let mut final_review = submission(ReviewCadence::Final, 'b');
++    final_review.checks = vec![marker("checks", 'b')];
++    let cycle = review.submit(final_review).unwrap();
++    assert!(!cycle.final_approved);
++    let mut accepted = submission(ReviewCadence::Final, 'c');
++    accepted.checks = vec![marker("checks", 'c')];
++    accepted.resolved_finding_ids = vec![1];
++    assert!(review.submit(accepted).unwrap().final_approved);
++    assert_eq!(review.snapshot().final_candidate_sha256, Some(sha('c')));
++}
++
++#[test]
++fn repairs_are_scoped_counted_and_invalidate_final_approval() {
++    let policy = ReviewPolicy {
++        max_repairs: 1,
++        repair_scope: vec!["src".into()],
++        ..ReviewPolicy::default()
++    };
++    let mut review = UnifiedReview::new(policy).unwrap();
++    let mut first = submission(ReviewCadence::StableMilestone, 'a');
++    first.findings = vec![finding('1', "bug")];
++    review.submit(first).unwrap();
++    review
++        .record_repair(
++            &sha('a'),
++            &sha('b'),
++            vec!["src/lib.rs".into()],
++            vec![1],
++            marker("repair", 'b'),
++        )
++        .unwrap();
++    assert_eq!(
++        review
++            .recorded_repair(&sha('a'), &sha('b'))
++            .unwrap()
++            .finding_ids,
++        vec![1]
++    );
++    assert!(
++        review
++            .record_repair(
++                &sha('b'),
++                &sha('c'),
++                vec!["src/lib.rs".into()],
++                vec![1],
++                marker("repair", 'c'),
++            )
++            .is_err()
++    );
++}
++
++#[test]
++fn repair_scope_does_not_accept_prefix_collisions() {
++    let policy = ReviewPolicy {
++        repair_scope: vec!["src/domain".into()],
++        ..ReviewPolicy::default()
++    };
++    let mut review = UnifiedReview::new(policy).unwrap();
++    let mut first = submission(ReviewCadence::StableMilestone, 'a');
++    first.findings = vec![finding('1', "bug")];
++    review.submit(first).unwrap();
++    assert!(
++        review
++            .record_repair(
++                &sha('a'),
++                &sha('b'),
++                vec!["src/domain-old/lib.rs".into()],
++                vec![1],
++                marker("repair", 'b'),
++            )
++            .is_err()
++    );
++}
++
++#[test]
++fn persisted_state_round_trips_and_rejects_tampering() {
++    let mut review = UnifiedReview::new(ReviewPolicy::default()).unwrap();
++    review
++        .submit(submission(ReviewCadence::StableMilestone, 'a'))
++        .unwrap();
++    let snapshot = review.snapshot();
++    assert_eq!(
++        UnifiedReview::restore(snapshot.clone()).unwrap().snapshot(),
++        snapshot
++    );
++    let mut changed = snapshot;
++    changed.cycles[0].id = 7;
++    assert!(UnifiedReview::restore(changed).is_err());
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644

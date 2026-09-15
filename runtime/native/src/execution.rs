@@ -51,14 +51,32 @@ pub struct EscalationRequest {
     call_ids: Vec<String>,
 }
 
-#[derive(Deserialize, serde::Serialize)]
+#[derive(Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct Review {
-    approved: bool,
     candidate_sha256: String,
-    findings: Vec<Value>,
+    findings: Vec<ModelFinding>,
+    resolved_finding_ids: Vec<u32>,
     #[serde(default)]
     report: Option<WorkerReport>,
+}
+
+#[derive(Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ModelFinding {
+    key: String,
+    severity: codex_omd::ReviewSeverity,
+    summary: String,
+    paths: Vec<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewRequest {
+    cadence: codex_omd::ReviewCadence,
+    candidate_sha256: String,
+    stable: bool,
+    risk: Option<String>,
 }
 
 pub fn hash(bytes: &[u8]) -> String {
@@ -692,6 +710,326 @@ async fn command(host: &Host, config: &Config, argv: Vec<String>) -> Result<Valu
     )
 }
 
+fn review_findings(
+    findings: Vec<ModelFinding>,
+) -> Result<Vec<codex_omd::ReviewFindingInput>, String> {
+    findings
+        .into_iter()
+        .map(|finding| {
+            let key = finding.key.trim().to_ascii_lowercase();
+            if key.is_empty() || key.len() > 256 {
+                return Err("review finding key is empty or exceeds its bound".into());
+            }
+            Ok(codex_omd::ReviewFindingInput {
+                fingerprint: hash(key.as_bytes()),
+                severity: finding.severity,
+                summary: finding.summary,
+                paths: finding.paths,
+            })
+        })
+        .collect()
+}
+
+fn evidence_marker(
+    label: &str,
+    candidate_sha256: &str,
+    reference: &Value,
+) -> Result<VersionMarker, String> {
+    Ok(VersionMarker {
+        label: label.into(),
+        sha256: candidate_sha256.into(),
+        evidence: reference["path"]
+            .as_str()
+            .ok_or("evidence path missing")?
+            .into(),
+        evidence_sha256: reference["sha256"]
+            .as_str()
+            .ok_or("evidence SHA256 missing")?
+            .into(),
+    })
+}
+
+pub async fn review_current(
+    lead: &Lead,
+    call: &ToolCall<'_>,
+    request: ReviewRequest,
+) -> Result<Value, String> {
+    let host = &lead.host;
+    let manifest = &host.manifest;
+    host.authorize()?;
+    host.task.check_active().map_err(error)?;
+    let manager = host
+        .manager
+        .upgrade()
+        .ok_or("native thread manager stopped")?;
+    let inherited = manager
+        .get_thread(lead.thread)
+        .await
+        .map_err(error)?
+        .config()
+        .await;
+    let mut parent = (*inherited).clone();
+    if parent.cwd.as_path() != manifest.repository
+        || call.environments.len() != 1
+        || call.environments[0].environment_id != "local"
+        || call.environments[0].cwd != parent.cwd
+    {
+        return Err("changed or remote parent environment is not admitted".into());
+    }
+    let actual: PermissionProfile = call.environments[0]
+        .file_system_sandbox_context
+        .permissions
+        .clone()
+        .try_into()
+        .map_err(error)?;
+    let mut roots = call.environments[0]
+        .file_system_sandbox_context
+        .workspace_roots
+        .iter()
+        .map(PathUri::to_abs_path)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(error)?;
+    if roots.is_empty() {
+        roots.push(parent.cwd.clone());
+    }
+    let actual = actual.materialize_project_roots_with_workspace_roots(&roots);
+    let configured = parent
+        .permissions
+        .permission_profile()
+        .clone()
+        .materialize_project_roots_with_workspace_roots(&roots);
+    let effective = intersect(&configured, &actual, parent.cwd.as_path())?;
+    parent
+        .permissions
+        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(effective))
+        .map_err(error)?;
+    host.review
+        .lock()
+        .map_err(|_| "review runtime lock poisoned")?
+        .ledger
+        .snapshot()
+        .policy
+        .validate_request(request.cadence, request.stable, request.risk.as_deref())
+        .map_err(error)?;
+    let untracked: BTreeSet<_> = manifest.approved_untracked.iter().cloned().collect();
+    let candidate =
+        codex_omd::capture_tracked(&manifest.repository, &untracked, manifest.snapshot_bytes)
+            .map_err(error)?;
+    let candidate_sha256 = candidate.hash().map_err(error)?;
+    if request.candidate_sha256 != candidate_sha256 {
+        return Err("review request candidate SHA256 is stale".into());
+    }
+    let call_hash = hash(call.call_id.as_bytes());
+    let candidate_ref = host.evidence(
+        &format!("review-candidate-{call_hash}.json"),
+        &serde_json::to_value(&candidate).map_err(error)?,
+    )?;
+    let candidate_marker = evidence_marker("review-candidate", &candidate_sha256, &candidate_ref)?;
+    let (cycle_number, unresolved, repair_recorded) = {
+        let mut runtime = host
+            .review
+            .lock()
+            .map_err(|_| "review runtime lock poisoned")?;
+        let snapshot = runtime.ledger.snapshot();
+        let mut repair_recorded = false;
+        if let Some(previous) = snapshot.cycles.last()
+            && previous.candidate.sha256 != candidate_sha256
+        {
+            let unresolved = runtime.ledger.unresolved();
+            if !unresolved.is_empty() {
+                let prior = runtime
+                    .candidates
+                    .get(&previous.candidate.sha256)
+                    .ok_or("prior reviewed candidate snapshot missing")?;
+                let paths = prior
+                    .changed_paths(&candidate)
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                let finding_ids = unresolved
+                    .iter()
+                    .map(|finding| finding.id)
+                    .collect::<Vec<_>>();
+                if let Some(record) = runtime
+                    .ledger
+                    .recorded_repair(&previous.candidate.sha256, &candidate_sha256)
+                {
+                    if record.paths != paths
+                        || record.finding_ids != finding_ids
+                        || record.evidence.evidence_sha256 != candidate_marker.evidence_sha256
+                    {
+                        return Err("persisted repair transition does not match candidate".into());
+                    }
+                } else {
+                    runtime
+                        .ledger
+                        .record_repair(
+                            &previous.candidate.sha256,
+                            &candidate_sha256,
+                            paths,
+                            finding_ids,
+                            candidate_marker.clone(),
+                        )
+                        .map_err(error)?;
+                    repair_recorded = true;
+                }
+            }
+        }
+        runtime
+            .candidates
+            .insert(candidate_sha256.clone(), candidate.clone());
+        (
+            runtime.ledger.snapshot().cycles.len() as u32 + 1,
+            runtime.ledger.unresolved(),
+            repair_recorded,
+        )
+    };
+    if repair_recorded {
+        host.persist_review()?;
+    }
+    std::fs::create_dir(&manifest.scratch).map_err(error)?;
+    let denied = protected_paths(manifest);
+    let mut checks = Vec::new();
+    if request.cadence == codex_omd::ReviewCadence::Final {
+        let check_root = codex_omd::create_worktree(
+            &candidate,
+            &manifest.scratch.join("review-checks"),
+            manifest.snapshot_bytes,
+        )
+        .map_err(error)?;
+        std::fs::create_dir_all(check_root.join(".omd-tmp")).map_err(error)?;
+        let check_config = isolated(
+            &parent,
+            &check_root,
+            &manifest.toolchain_reads,
+            &denied,
+            true,
+        )?;
+        let result = command(host, &check_config, manifest.check_command.clone()).await?;
+        let check_ref = host.evidence(
+            &format!("review-checks-{call_hash}.json"),
+            &json!({"candidate_sha256": candidate_sha256, "result": result}),
+        )?;
+        if result["exit_code"] != 0 || result["timed_out"] != false {
+            return Err("final candidate checks failed".into());
+        }
+        if Snapshot::capture(
+            &check_root,
+            &candidate.files.keys().cloned().collect(),
+            manifest.snapshot_bytes,
+        )
+        .map_err(error)?
+            != candidate
+        {
+            return Err("final checks modified the candidate".into());
+        }
+        checks.push(evidence_marker(
+            "final-executable-checks",
+            &candidate_sha256,
+            &check_ref,
+        )?);
+    }
+    let review_root = codex_omd::create_worktree(
+        &candidate,
+        &manifest.scratch.join("review-model"),
+        manifest.snapshot_bytes,
+    )
+    .map_err(error)?;
+    let reviewer_name = lead.route.opposite();
+    let reviewer_route = host.route(reviewer_name);
+    let review_fields = if manifest.communication.structured_worker_reports {
+        "candidate_sha256, findings, resolved_finding_ids, and report"
+    } else {
+        "candidate_sha256, findings, and resolved_finding_ids"
+    };
+    let role = format!("reviewer-{cycle_number}");
+    let output = run_child(
+        lead,
+        &parent,
+        &review_root,
+        ChildTurn {
+            role: &role,
+            route: reviewer_route,
+            prompt: format!(
+                "Perform a {:?} review of the exact read-only candidate. Inspect correctness, regressions, scope, and relevant negative cases. Candidate SHA256: {candidate_sha256}. Stable: {}. Risk: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this changed candidate proves it fixed or no longer applicable. Do not approve or edit files.",
+                request.cadence,
+                request.stable,
+                request.risk.as_deref().unwrap_or("none"),
+                serde_json::to_string(&unresolved).map_err(error)?,
+            ),
+            history: InitialHistory::New,
+            writable: false,
+            output_schema: Some(review_schema(
+                if manifest.communication.structured_worker_reports {
+                    ReviewReportMode::Structured
+                } else {
+                    ReviewReportMode::Plain
+                },
+            )),
+            output_instruction: manifest
+                .communication
+                .structured_worker_reports
+                .then_some(review_report_prompt()),
+        },
+    )
+    .await?;
+    let review: Review = serde_json::from_str(&output).map_err(error)?;
+    host.task.consume_worker_result(&role).map_err(error)?;
+    let structured_review_complete = !manifest.communication.structured_worker_reports
+        || review.report.as_ref().is_some_and(|report| {
+            report.validate().is_ok() && report.status == WorkerReportStatus::Completed
+        });
+    if !structured_review_complete || review.candidate_sha256 != candidate_sha256 {
+        return Err("separate reviewer did not return a complete exact-candidate review".into());
+    }
+    let cycle = {
+        let mut runtime = host
+            .review
+            .lock()
+            .map_err(|_| "review runtime lock poisoned")?;
+        runtime
+            .ledger
+            .submit(codex_omd::ReviewSubmission {
+                cadence: request.cadence,
+                candidate: candidate_marker,
+                stable: request.stable,
+                risk: request.risk,
+                reviewer: reviewer_name.as_str().into(),
+                separate_reviewer: reviewer_name != lead.route,
+                checks,
+                findings: review_findings(review.findings.clone())?,
+                resolved_finding_ids: review.resolved_finding_ids.clone(),
+            })
+            .map_err(error)?
+    };
+    host.persist_review()?;
+    let snapshot = host
+        .review
+        .lock()
+        .map_err(|_| "review runtime lock poisoned")?
+        .ledger
+        .snapshot();
+    let review_ref = host.evidence(
+        &format!("review-cycle-{call_hash}.json"),
+        &json!({
+            "schema": 1,
+            "model": reviewer_route.model,
+            "cycle": cycle,
+            "response": review,
+            "review": snapshot,
+        }),
+    )?;
+    codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
+    Ok(json!({
+        "schema": 1,
+        "status": if cycle.final_approved { "approved" } else if cycle.observed_finding_ids.is_empty() { "advice_complete" } else { "findings" },
+        "cycle": cycle,
+        "unresolved_findings": snapshot.findings.into_iter().filter(|finding| finding.status != codex_omd::FindingStatus::Resolved).collect::<Vec<_>>(),
+        "repairs_used": snapshot.repairs.len(),
+        "repair_limit": snapshot.policy.max_repairs,
+        "evidence": review_ref,
+    }))
+}
+
 pub async fn contribute(
     lead: &Lead,
     call: &ToolCall<'_>,
@@ -1010,6 +1348,8 @@ pub async fn contribute(
         "candidate.json",
         &serde_json::to_value(&merged).map_err(error)?,
     )?;
+    let candidate_marker =
+        evidence_marker("integration-candidate", &candidate_hash, &candidate_ref)?;
     let check_root = codex_omd::create_worktree(
         &merged,
         &manifest.scratch.join("checks"),
@@ -1042,30 +1382,91 @@ pub async fn contribute(
     {
         return Err("checks modified the candidate".into());
     }
+    let check_marker = evidence_marker("final-executable-checks", &candidate_hash, &check_ref)?;
+    let (review_cycle_number, prior_findings, repair_recorded) = {
+        let mut runtime = host
+            .review
+            .lock()
+            .map_err(|_| "review runtime lock poisoned")?;
+        let snapshot = runtime.ledger.snapshot();
+        let mut repair_recorded = false;
+        if let Some(previous) = snapshot.cycles.last()
+            && previous.candidate.sha256 != candidate_hash
+        {
+            let unresolved = runtime.ledger.unresolved();
+            if !unresolved.is_empty() {
+                let prior = runtime
+                    .candidates
+                    .get(&previous.candidate.sha256)
+                    .ok_or("prior reviewed candidate snapshot missing")?;
+                let repair_paths = prior.changed_paths(&merged).into_iter().collect::<Vec<_>>();
+                let finding_ids = unresolved
+                    .iter()
+                    .map(|finding| finding.id)
+                    .collect::<Vec<_>>();
+                if let Some(record) = runtime
+                    .ledger
+                    .recorded_repair(&previous.candidate.sha256, &candidate_hash)
+                {
+                    if record.paths != repair_paths
+                        || record.finding_ids != finding_ids
+                        || record.evidence.evidence_sha256 != candidate_marker.evidence_sha256
+                    {
+                        return Err("persisted repair transition does not match candidate".into());
+                    }
+                } else {
+                    runtime
+                        .ledger
+                        .record_repair(
+                            &previous.candidate.sha256,
+                            &candidate_hash,
+                            repair_paths,
+                            finding_ids,
+                            candidate_marker.clone(),
+                        )
+                        .map_err(error)?;
+                    repair_recorded = true;
+                }
+            }
+        }
+        runtime
+            .candidates
+            .insert(candidate_hash.clone(), merged.clone());
+        (
+            runtime.ledger.snapshot().cycles.len() as u32 + 1,
+            runtime.ledger.unresolved(),
+            repair_recorded,
+        )
+    };
+    if repair_recorded {
+        host.persist_review()?;
+    }
     let review_root = codex_omd::create_worktree(
         &merged,
         &manifest.scratch.join("review"),
         manifest.snapshot_bytes,
     )
     .map_err(error)?;
-    let reviewer_route = if fallback_used {
-        host.route(lead.route)
+    let actual_reviewer_name = if fallback_used {
+        lead.route
     } else {
-        reviewer_route
+        reviewer_name
     };
+    let reviewer_route = host.route(actual_reviewer_name);
     let review_fields = if manifest.communication.structured_worker_reports {
-        "approved (boolean), candidate_sha256 (the exact SHA), findings (array), and report (the required structured worker report)"
+        "candidate_sha256, findings, resolved_finding_ids, and report"
     } else {
-        "approved (boolean), candidate_sha256 (the exact SHA), and findings (array)"
+        "candidate_sha256, findings, and resolved_finding_ids"
     };
+    let reviewer_role = format!("reviewer-{review_cycle_number}");
     let review = run_child(
         lead,
         &parent,
         &review_root,
         ChildTurn {
-            role: "reviewer",
+            role: &reviewer_role,
             route: reviewer_route,
-            prompt: format!("Review this candidate against the task context below. Inspect changed code and look for correctness or regression defects. Checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Return only JSON with fields {review_fields}. Do not edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, context.prompt),
+            prompt: format!("Perform the final review of this exact candidate against the task context. Inspect correctness, regressions, scope, and relevant negative cases. Executable checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this candidate proves it fixed or no longer applicable. Do not approve or edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, serde_json::to_string(&prior_findings).map_err(error)?, context.prompt),
             history: context.history,
             writable: false,
             output_schema: manifest.communication.review_output_schema(),
@@ -1080,14 +1481,40 @@ pub async fn contribute(
         || review.report.as_ref().is_some_and(|report| {
             report.validate().is_ok() && report.status == WorkerReportStatus::Completed
         });
-    host.task.consume_worker_result("reviewer").map_err(error)?;
-    let review_ref = host.evidence("review.json", &json!({"model": reviewer_route.model, "candidate_sha256": candidate_hash, "response": review}))?;
-    if !structured_review_complete
-        || !review.approved
-        || review.candidate_sha256 != candidate_hash
-        || !review.findings.is_empty()
-    {
+    host.task
+        .consume_worker_result(&reviewer_role)
+        .map_err(error)?;
+    if !structured_review_complete || review.candidate_sha256 != candidate_hash {
         return Err("separate-model review did not approve the exact candidate".into());
+    }
+    let review_cycle = host
+        .review
+        .lock()
+        .map_err(|_| "review runtime lock poisoned")?
+        .ledger
+        .submit(codex_omd::ReviewSubmission {
+            cadence: codex_omd::ReviewCadence::Final,
+            candidate: candidate_marker,
+            stable: true,
+            risk: None,
+            reviewer: actual_reviewer_name.as_str().into(),
+            separate_reviewer: reviewer_route.model != selected_route.model
+                || reviewer_route.provider != selected_route.provider,
+            checks: vec![check_marker],
+            findings: review_findings(review.findings.clone())?,
+            resolved_finding_ids: review.resolved_finding_ids.clone(),
+        })
+        .map_err(error)?;
+    host.persist_review()?;
+    let review_snapshot = host
+        .review
+        .lock()
+        .map_err(|_| "review runtime lock poisoned")?
+        .ledger
+        .snapshot();
+    let review_ref = host.evidence("review.json", &json!({"model": reviewer_route.model, "candidate_sha256": candidate_hash, "cycle": review_cycle, "response": review, "review": review_snapshot}))?;
+    if !review_cycle.final_approved {
+        return Err("separate-model review left unresolved findings on the exact candidate".into());
     }
     if codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)? != tracked
         || Snapshot::capture(

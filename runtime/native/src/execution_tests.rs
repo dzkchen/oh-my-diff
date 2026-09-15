@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn review_finding_keys_are_host_normalized_and_bounded() {
+    let finding = |key: &str| ModelFinding {
+        key: key.into(),
+        severity: codex_omd::ReviewSeverity::Warning,
+        summary: "check this path".into(),
+        paths: vec!["src/lib.rs".into()],
+    };
+    assert!(review_findings(vec![finding("   ")]).is_err());
+    let normalized = review_findings(vec![finding("  Stable-Key  ")]).unwrap();
+    assert_eq!(normalized[0].fingerprint, hash(b"stable-key"));
+}
+
+#[test]
 fn structured_worker_results_are_validated_without_changing_plain_results() {
     let plain = "ordinary worker answer".to_owned();
     assert_eq!(worker_result(plain.clone(), false).unwrap(), (plain, None));

@@ -1,6 +1,10 @@
 mod accounting;
 mod execution;
 
+#[cfg(test)]
+#[path = "review_tests.rs"]
+mod review_tests;
+
 use accounting::Account;
 use accounting::Accounts;
 use accounting::Rates;
@@ -53,9 +57,11 @@ use codex_omd::ReactiveRuleSet;
 use codex_omd::ReactiveRules;
 use codex_omd::ReactiveToolOutcome;
 use codex_omd::ReactiveTrigger;
+use codex_omd::ReviewPolicy;
 use codex_omd::Snapshot;
 use codex_omd::Task;
 use codex_omd::TaskContract;
+use codex_omd::UnifiedReview;
 use codex_omd::VersionMarker;
 use codex_omd::WorkerLimits;
 use codex_omd::WorkerReport;
@@ -103,6 +109,8 @@ struct Manifest {
     communication: CommunicationPolicy,
     #[serde(default)]
     reactive_rules: Option<PacketReference>,
+    #[serde(default)]
+    review: ReviewPolicy,
     checkpoint: TaskContract,
     legitimate_wait_tools: Vec<String>,
     lifecycle: LifecyclePolicy,
@@ -164,7 +172,8 @@ impl CommunicationPolicy {
     }
 
     fn review_output_schema(&self) -> Option<Value> {
-        self.structured_worker_reports.then(review_schema)
+        self.structured_worker_reports
+            .then(|| review_schema(ReviewReportMode::Structured))
     }
 }
 
@@ -303,6 +312,7 @@ struct Host {
     knowledge_prompt: Option<String>,
     lsp: Option<std::sync::Mutex<LspRuntime>>,
     reactive_rules: Option<ReactiveRules>,
+    review: std::sync::Mutex<ReviewRuntime>,
 }
 
 #[derive(Clone)]
@@ -335,6 +345,13 @@ struct EscalationTool(Arc<Lead>);
 struct CheckpointTool(Arc<Lead>);
 
 struct LspTool(Arc<Lead>);
+
+struct ReviewTool(Arc<Lead>);
+
+struct ReviewRuntime {
+    ledger: UnifiedReview,
+    candidates: BTreeMap<String, Snapshot>,
+}
 
 struct LspRuntime {
     repository: PathBuf,
@@ -640,7 +657,7 @@ fn worker_report_prompt() -> &'static str {
 }
 
 fn review_report_prompt() -> &'static str {
-    "Return only the review object required by the response schema. Keep the approval decision, exact candidate SHA256, and findings at the top level, and include the structured worker report in the report field. The nested report must preserve review scope, uncertainty, evidence references, and required clarification."
+    "Return only the review object required by the response schema. Keep the exact candidate SHA256, typed findings, and resolved finding IDs at the top level, and include the structured worker report in the report field. The nested report must preserve review scope, uncertainty, evidence references, and required clarification."
 }
 
 fn string_array_schema(max_items: u32) -> Value {
@@ -669,18 +686,42 @@ fn worker_report_schema() -> Value {
     })
 }
 
-fn review_schema() -> Value {
-    json!({
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ReviewReportMode {
+    Plain,
+    Structured,
+}
+
+fn review_schema(report_mode: ReviewReportMode) -> Value {
+    let finding = json!({
         "type": "object",
         "properties": {
-            "approved": {"type": "boolean"},
-            "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-            "findings": {"type": "array", "items": {"type": "string"}},
-            "report": worker_report_schema()
+            "key": {"type": "string", "minLength": 1, "maxLength": 256},
+            "severity": {"type": "string", "enum": ["advice", "warning", "blocking"]},
+            "summary": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "paths": string_array_schema(128)
         },
-        "required": ["approved", "candidate_sha256", "findings", "report"],
+        "required": ["key", "severity", "summary", "paths"],
         "additionalProperties": false
-    })
+    });
+    let mut schema = json!({
+        "type": "object",
+        "properties": {
+            "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "findings": {"type": "array", "items": finding, "maxItems": 256},
+            "resolved_finding_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 128, "uniqueItems": true}
+        },
+        "required": ["candidate_sha256", "findings", "resolved_finding_ids"],
+        "additionalProperties": false
+    });
+    if report_mode == ReviewReportMode::Structured {
+        schema["properties"]["report"] = worker_report_schema();
+        schema["required"]
+            .as_array_mut()
+            .expect("required array")
+            .push(json!("report"));
+    }
+    schema
 }
 
 fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveState, String> {
@@ -714,6 +755,55 @@ fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveSt
     })
 }
 
+fn review_runtime(manifest: &Manifest) -> Result<ReviewRuntime, String> {
+    let path = manifest.evidence.join("review-state.json");
+    let ledger = if path.exists() {
+        if manifest.lifecycle.explicit_resume.is_none() {
+            return Err("existing review state requires explicit resume".into());
+        }
+        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        if bytes.len() > 8_388_608 {
+            return Err("persisted review state exceeds limit".into());
+        }
+        UnifiedReview::restore(serde_json::from_slice(&bytes).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?
+    } else {
+        UnifiedReview::new(manifest.review.clone()).map_err(|error| error.to_string())?
+    };
+    if ledger.snapshot().policy != manifest.review {
+        return Err("review policy changed across resume".into());
+    }
+    let mut candidates = BTreeMap::new();
+    let snapshot = ledger.snapshot();
+    let markers = snapshot
+        .cycles
+        .iter()
+        .map(|cycle| &cycle.candidate)
+        .chain(snapshot.repairs.iter().map(|repair| &repair.evidence));
+    for marker in markers {
+        if candidates.contains_key(&marker.sha256) {
+            continue;
+        }
+        let path = PathBuf::from(&marker.evidence);
+        if path.canonicalize().map_err(|error| error.to_string())? != path
+            || !path.starts_with(&manifest.evidence)
+        {
+            return Err("persisted review candidate evidence is not host-owned".into());
+        }
+        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        if execution::hash(&bytes) != marker.evidence_sha256 {
+            return Err("persisted review candidate evidence changed".into());
+        }
+        let candidate: Snapshot =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        if candidate.hash().map_err(|error| error.to_string())? != marker.sha256 {
+            return Err("persisted review candidate version changed".into());
+        }
+        candidates.insert(marker.sha256.clone(), candidate);
+    }
+    Ok(ReviewRuntime { ledger, candidates })
+}
+
 pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
@@ -729,6 +819,7 @@ pub fn install(
         return Err("controlled manifest exceeds limit".into());
     }
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    manifest.review.validate().map_err(|e| e.to_string())?;
     if manifest.leads.sol.model != "gpt-5.6-sol"
         || manifest.leads.astra.model != "gpt-6-astra"
         || manifest.worker.model != "muse-spark-1.3-contributor"
@@ -900,6 +991,7 @@ pub fn install(
     );
     codex_api::request_observer::install_response_observer(accounts.clone())
         .map_err(str::to_owned)?;
+    let review = review_runtime(&manifest)?;
     let host = Arc::new(Host {
         lsp: lsp_enabled.then(|| {
             let policy = manifest.lsp.as_ref().expect("enabled LSP policy");
@@ -921,6 +1013,7 @@ pub fn install(
         active_guideline,
         knowledge_prompt: frozen_knowledge_prompt,
         reactive_rules,
+        review: std::sync::Mutex::new(review),
     });
     let _ = host.authorize();
     let deadline_host = host.clone();
@@ -986,7 +1079,19 @@ impl Host {
 
     async fn stop_tree(&self, reason: &str, final_stop: bool, except: Option<ThreadId>) {
         if final_stop {
+            let reviewed_current = self
+                .live_state()
+                .ok()
+                .and_then(|live| {
+                    self.review
+                        .lock()
+                        .ok()
+                        .and_then(|review| review.ledger.snapshot().final_candidate_sha256)
+                        .map(|candidate| candidate == live.workspace_sha256)
+                })
+                .unwrap_or(false);
             if reason != "completed"
+                || !reviewed_current
                 || self
                     .task
                     .complete("foreground acceptance checkpoint")
@@ -1100,6 +1205,41 @@ impl Host {
             .and_then(|_| file.sync_all())
             .map_err(|e| e.to_string())?;
         Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
+    }
+
+    fn persist_review(&self) -> Result<(), String> {
+        use std::io::Write;
+        let bytes = serde_json::to_vec(
+            &self
+                .review
+                .lock()
+                .map_err(|_| "review runtime lock poisoned")?
+                .ledger
+                .snapshot(),
+        )
+        .map_err(|error| error.to_string())?;
+        if bytes.len() > 8_388_608 {
+            return Err("review state exceeds persistence limit".into());
+        }
+        let path = self.manifest.evidence.join("review-state.json");
+        let temporary = self.manifest.evidence.join(format!(
+            "review-state-{}-{}.tmp",
+            std::process::id(),
+            execution::hash(&bytes)
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| error.to_string())?;
+        std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+        std::fs::File::open(&self.manifest.evidence)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     fn live_state(&self) -> Result<LiveState, String> {
@@ -1234,6 +1374,30 @@ impl ContextContributor for Extension {
                     fragments.push(PromptFragment::developer_capability(
                         "This repository has remembered semantic-feedback opt-in. Use omd_lsp on demand for the supported five languages. Synchronize each coherent write batch before navigation or diagnostics; semantic writes require an exact declared scope and current SHA256 for every affected existing or absent path. Use intermediate_check after meaningful changes. Treat unsupported or unavailable results as an explicit fallback, not success. Servers start on demand, stop after bounded idle time, and are never installed automatically.",
                         ContentItemKind("oh_my_diff.lsp".into()),
+                    ));
+                }
+                if let Ok(review) = self.review.lock() {
+                    let snapshot = review.ledger.snapshot();
+                    let current_candidate = self
+                        .live_state()
+                        .ok()
+                        .map(|state| state.workspace_sha256)
+                        .unwrap_or_else(|| "unavailable".into());
+                    let prompt = format!(
+                        "Use the single host-owned omd_review system for stable milestones, explicit risk-triggered advice, and final review. Findings are candidate-bound and reconciled across cycles; repairs are limited to configured scope and count. Final review runs executable checks and uses the separately configured opposite lead before completion or integration. Every-turn advice is {} and remains independent of the required final review. Current candidate SHA256: {current_candidate}. Current review cycles: {}; unresolved findings: {}; repairs: {}/{}.",
+                        if snapshot.policy.every_turn_advice {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        },
+                        snapshot.cycles.len(),
+                        review.ledger.unresolved().len(),
+                        snapshot.repairs.len(),
+                        snapshot.policy.max_repairs,
+                    );
+                    fragments.push(PromptFragment::developer_capability(
+                        prompt,
+                        ContentItemKind("oh_my_diff.review".into()),
                     ));
                 }
                 if lead.owner == "lead"
@@ -1626,6 +1790,7 @@ impl ToolContributor for Extension {
         let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> = vec![
             Arc::new(CheckpointTool(lead.clone())),
             Arc::new(EscalationTool(lead.clone())),
+            Arc::new(ReviewTool(lead.clone())),
         ];
         if self.lsp.is_some() {
             tools.push(Arc::new(LspTool(lead.clone())));
@@ -2041,6 +2206,90 @@ impl<'call> ToolExecutor<ToolCall<'call>> for LspTool {
             Ok(Box::new(JsonToolOutput::new(
                 json!({"result": value, "evidence": reference}),
             )) as Box<dyn ToolOutput>)
+        })
+    }
+}
+
+impl<'call> ToolExecutor<ToolCall<'call>> for ReviewTool {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("omd_review")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::Function(ResponsesApiTool {
+            name: "omd_review".into(),
+            description: "Run one candidate-bound pass through the shared review ledger. Stable-milestone and explicit risk-triggered advice reuse unresolved findings. Every-turn advice works only when separately enabled. Final review first runs configured executable checks, then a read-only opposite-lead reviewer; completion remains blocked unless that exact candidate has no unresolved or stale findings. Candidate changes after findings count as bounded repairs and must remain inside configured repair scope.".into(),
+            strict: false,
+            defer_loading: None,
+            output_schema: None,
+            parameters: JsonSchema::object(
+                BTreeMap::from([
+                    (
+                        "cadence".into(),
+                        JsonSchema::string_enum(
+                            ["stable_milestone", "risk_triggered", "every_turn", "final"]
+                                .into_iter()
+                                .map(|value| json!(value))
+                                .collect(),
+                            Some("Review cadence; every_turn may be disabled.".into()),
+                        ),
+                    ),
+                    (
+                        "candidate_sha256".into(),
+                        JsonSchema::string(Some(
+                            "Exact current candidate SHA256 from host review context.".into(),
+                        )),
+                    ),
+                    (
+                        "stable".into(),
+                        JsonSchema::boolean(Some(
+                            "Whether implementation writes for this milestone have stopped.".into(),
+                        )),
+                    ),
+                    (
+                        "risk".into(),
+                        JsonSchema::string(Some(
+                            "Concrete bounded risk; required only for risk_triggered.".into(),
+                        )),
+                    ),
+                ]),
+                Some(vec![
+                    "cadence".into(),
+                    "candidate_sha256".into(),
+                    "stable".into(),
+                ]),
+                Some(false.into()),
+            ),
+        })
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
+    }
+
+    fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
+    where
+        'call: 'a,
+    {
+        Box::pin(async move {
+            let request: execution::ReviewRequest =
+                serde_json::from_str(call.function_arguments()?)
+                    .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
+            if self
+                .0
+                .host
+                .operation
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                return Err(FunctionCallError::RespondToModel(
+                    "another controlled operation is active".into(),
+                ));
+            }
+            let _operation = OperationGuard(&self.0.host.operation);
+            let value = execution::review_current(&self.0, &call, request)
+                .await
+                .unwrap_or_else(|error| json!({"schema": 1, "status": "failed", "error": error}));
+            Ok(Box::new(JsonToolOutput::new(value)) as Box<dyn ToolOutput>)
         })
     }
 }
