@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 7ba1057..b204037 100644
+index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..20d79e5d6ab9a8e0969714acc7269de4819eafc0 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2212,6 +2212,7 @@ dependencies = [
@@ -52,8 +52,16 @@ index 7ba1057..b204037 100644
  [[package]]
  name = "codex-otel"
  version = "0.154.0"
+@@ -4675,6 +4711,7 @@ dependencies = [
+  "codex-model-provider",
+  "codex-model-provider-info",
+  "codex-models-manager",
++ "codex-omd",
+  "codex-otel",
+  "codex-plugin",
+  "codex-protocol",
 diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
-index 3cf0d00..6ae89c0 100644
+index 3cf0d009a8ecede0fb207cc9ec40ebef30f59b09..6ae89c0f56145c5bbf0c08310c8b32dfe0c2d9d1 100644
 --- a/codex-rs/Cargo.toml
 +++ b/codex-rs/Cargo.toml
 @@ -1,5 +1,7 @@
@@ -73,7 +81,7 @@ index 3cf0d00..6ae89c0 100644
  codex-realtime-webrtc = { path = "realtime-webrtc" }
  app_test_support = { path = "app-server/tests/common" }
 diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
-index c64b15b..04ff16c 100644
+index c64b15b998c5722651a7a4dafe0b0ca299a6a03b..04ff16ca6b3c4ad4a08f32007f74808078d05b43 100644
 --- a/codex-rs/app-server/Cargo.toml
 +++ b/codex-rs/app-server/Cargo.toml
 @@ -25,6 +25,7 @@ doctest = false
@@ -85,7 +93,7 @@ index c64b15b..04ff16c 100644
  base64 = { workspace = true }
  axum = { workspace = true, default-features = false, features = [
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 929eab5..d3da68f 100644
+index 929eab5392eabd6c06a3c723060232db7203f597..d3da68fd0ae9d28418ababa21d9889b2569b226b 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -76,6 +76,9 @@ where
@@ -99,7 +107,7 @@ index 929eab5..d3da68f 100644
      if let Some(state_db) = state_db {
          codex_goal_extension::install_with_backend(
 diff --git a/codex-rs/codex-api/src/endpoint/responses.rs b/codex-rs/codex-api/src/endpoint/responses.rs
-index 78a0823..1d37da7 100644
+index 78a08232f967f291de46002ddda541b40128bbf3..1d37da70cb71ee4352898343aa3881c37e521fc2 100644
 --- a/codex-rs/codex-api/src/endpoint/responses.rs
 +++ b/codex-rs/codex-api/src/endpoint/responses.rs
 @@ -8,7 +8,7 @@ use crate::requests::Compression;
@@ -121,7 +129,7 @@ index 78a0823..1d37da7 100644
              self.session.provider().stream_idle_timeout,
              self.sse_telemetry.clone(),
 diff --git a/codex-rs/codex-api/src/endpoint/responses_websocket.rs b/codex-rs/codex-api/src/endpoint/responses_websocket.rs
-index 95d41e0..627a7a4 100644
+index 95d41e0d9154de47cdbc75f93e8aafa7fcf00966..627a7a4847d33267347711ee008818af052f5f62 100644
 --- a/codex-rs/codex-api/src/endpoint/responses_websocket.rs
 +++ b/codex-rs/codex-api/src/endpoint/responses_websocket.rs
 @@ -893,6 +893,7 @@ async fn send_websocket_request(
@@ -133,7 +141,7 @@ index 95d41e0..627a7a4 100644
      let result = tokio::time::timeout(
          idle_timeout,
 diff --git a/codex-rs/codex-api/src/endpoint/session.rs b/codex-rs/codex-api/src/endpoint/session.rs
-index 7849225..1f1f28c 100644
+index 7849225b5cbb6c37456d14e85b3fe069d878ada3..1f1f28c9e8410bf28416a354b8b7b8d690c02b73 100644
 --- a/codex-rs/codex-api/src/endpoint/session.rs
 +++ b/codex-rs/codex-api/src/endpoint/session.rs
 @@ -1,6 +1,7 @@
@@ -205,7 +213,7 @@ index 7849225..1f1f28c 100644
              },
          )
 diff --git a/codex-rs/codex-api/src/lib.rs b/codex-rs/codex-api/src/lib.rs
-index 7287cb2..64d6e8d 100644
+index 7287cb29d2e610263d71c3b33bf4a475d75b02f0..64d6e8debc55e91cd892e4f85e0f2063515f0c3a 100644
 --- a/codex-rs/codex-api/src/lib.rs
 +++ b/codex-rs/codex-api/src/lib.rs
 @@ -7,6 +7,7 @@ pub(crate) mod files;
@@ -218,7 +226,7 @@ index 7287cb2..64d6e8d 100644
  pub(crate) mod search;
 diff --git a/codex-rs/codex-api/src/request_observer.rs b/codex-rs/codex-api/src/request_observer.rs
 new file mode 100644
-index 0000000..584b9f0
+index 0000000000000000000000000000000000000000..584b9f07c481dbd7340e655f6709d20e29eda499
 --- /dev/null
 +++ b/codex-rs/codex-api/src/request_observer.rs
 @@ -0,0 +1,75 @@
@@ -298,7 +306,7 @@ index 0000000..584b9f0
 +    Ok(())
 +}
 diff --git a/codex-rs/codex-api/src/sse/mod.rs b/codex-rs/codex-api/src/sse/mod.rs
-index 441078b..975ed83 100644
+index 441078bdcbd7bfaddcd4a7d0520453a4c9473e01..975ed83555d836fa4f0800cf7e8d11756c67242b 100644
 --- a/codex-rs/codex-api/src/sse/mod.rs
 +++ b/codex-rs/codex-api/src/sse/mod.rs
 @@ -2,4 +2,3 @@ pub(crate) mod responses;
@@ -307,7 +315,7 @@ index 441078b..975ed83 100644
  pub(crate) use responses::process_responses_event;
 -pub use responses::spawn_response_stream;
 diff --git a/codex-rs/codex-api/src/sse/responses.rs b/codex-rs/codex-api/src/sse/responses.rs
-index e4f5f04..fd7ae0e 100644
+index e4f5f04d62b3834cef16cf222cb55f288ca50841..fd7ae0ecea5de947c522ee622e631b55c22b16de 100644
 --- a/codex-rs/codex-api/src/sse/responses.rs
 +++ b/codex-rs/codex-api/src/sse/responses.rs
 @@ -7,7 +7,6 @@ use crate::rate_limits::parse_all_rate_limits;
@@ -442,7 +450,7 @@ index e4f5f04..fd7ae0e 100644
                  let is_completed = matches!(event, ResponseEvent::Completed { .. });
                  if tx_event.send(Ok(event)).await.is_err() {
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
-index 46c2442..9e6642b 100644
+index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d8914bba1 100644
 --- a/codex-rs/core/src/exec.rs
 +++ b/codex-rs/core/src/exec.rs
 @@ -117,6 +117,9 @@ pub enum ExecCapturePolicy {
@@ -527,7 +535,7 @@ index 46c2442..9e6642b 100644
      use tokio::task::JoinHandle;
  
 diff --git a/codex-rs/core/src/hook_runtime.rs b/codex-rs/core/src/hook_runtime.rs
-index e17f150..af2e7cc 100644
+index e17f1508e7ffdb313af4c444d36dc4248e4d680b..af2e7cc700c7b05fcb5273fd4d313a86ed91d2db 100644
 --- a/codex-rs/core/src/hook_runtime.rs
 +++ b/codex-rs/core/src/hook_runtime.rs
 @@ -828,8 +828,8 @@ impl HookRuntimeOutcome {
@@ -542,7 +550,7 @@ index e17f150..af2e7cc 100644
  ) {
      let developer_messages = additional_context_messages(additional_contexts);
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index eb85a04..b210fa0 100644
+index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..b210fa01d672e7241df4340aa1bc97f8e2cb3570 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -241,6 +241,8 @@ pub struct StartThreadOptions {
@@ -688,7 +696,7 @@ index eb85a04..b210fa0 100644
              .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
              .await;
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index bea620e..66f7591 100644
+index bea620e154f8ade5d8ddf875e02ec5749031fbfd..66f7591ae73083a5cec33025e18aab163ffdd8e8 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -125,6 +125,30 @@ async fn notify_tool_finish_parts(
@@ -723,7 +731,7 @@ index bea620e..66f7591 100644
  
  pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
-index ad5086f..dec4eb2 100644
+index ad5086f500b7c16e245ee9a3011966921151dae5..dec4eb20237f4a844f94c63f743136c8ac1ed1bd 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
 +++ b/codex-rs/core/src/tools/orchestrator.rs
 @@ -141,7 +141,17 @@ impl ToolOrchestrator {
@@ -754,7 +762,7 @@ index ad5086f..dec4eb2 100644
          if owner_network_policy
              && tool
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
-index a16c182..0da3731 100644
+index a16c182c739a0e9ebe128b3c7298be11b9e5bfba..0da373166558daf0d4403d45ddeb481209bd8f17 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
 +++ b/codex-rs/exec-server/src/process_sandbox.rs
 @@ -84,8 +84,10 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
@@ -783,7 +791,7 @@ index a16c182..0da3731 100644
      let sandbox_manager = sandbox_manager
          .with_allowed_symlinked_codex_home(runtime_paths.allowed_symlinked_codex_home.clone());
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 8c75997..9761532 100644
+index 8c75997b6339597ddeb4eda8102e10d15c33022b..9761532528ccc4d9c63ab920a08a58d9f406fb74 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -347,6 +347,20 @@ pub trait ToolLifecycleContributor: Send + Sync {
@@ -808,7 +816,7 @@ index 8c75997..9761532 100644
  /// Returning `None` leaves the request to the next contributor.
  pub trait ApprovalReviewContributor: Send + Sync {
 diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
-index 84f2ac0..71fd54d 100644
+index 84f2ac0b8e024f68e4b1f477cbdcdf850aa423cf..71fd54d077059fa135d4b12326870e2141959b30 100644
 --- a/codex-rs/ext/extension-api/src/lib.rs
 +++ b/codex-rs/ext/extension-api/src/lib.rs
 @@ -79,6 +79,7 @@ pub use contributors::ToolContributor;
@@ -820,7 +828,7 @@ index 84f2ac0..71fd54d 100644
  pub use contributors::TurnAbortInput;
  pub use contributors::TurnContextContributionInput;
 diff --git a/codex-rs/ext/extension-api/src/registry.rs b/codex-rs/ext/extension-api/src/registry.rs
-index e4aeba9..d5a3216 100644
+index e4aeba9b5e6b60b318598e745f0dc6294ba505b7..d5a32165f2cbfd7cd031bf75774183b2163ba908 100644
 --- a/codex-rs/ext/extension-api/src/registry.rs
 +++ b/codex-rs/ext/extension-api/src/registry.rs
 @@ -11,6 +11,7 @@ use crate::ThreadLifecycleContributor;
@@ -873,7 +881,7 @@ index e4aeba9..d5a3216 100644
          &self.turn_item_contributors
 diff --git a/codex-rs/ext/omd/BUILD.bazel b/codex-rs/ext/omd/BUILD.bazel
 new file mode 100644
-index 0000000..6c44c5e
+index 0000000000000000000000000000000000000000..6c44c5e1a9ca4ca9112bbb7d872c06b4b66200b5
 --- /dev/null
 +++ b/codex-rs/ext/omd/BUILD.bazel
 @@ -0,0 +1,6 @@
@@ -885,7 +893,7 @@ index 0000000..6c44c5e
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 0000000..4e54652
+index 0000000000000000000000000000000000000000..4e54652f1a17e8daa21effc82c414c434693a76b
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
 @@ -0,0 +1,27 @@
@@ -918,7 +926,7 @@ index 0000000..4e54652
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000..4ab33da
+index 0000000000000000000000000000000000000000..4ab33dafad657ba5fb28ad63a2cf4fc1112c710b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,382 @@
@@ -1306,7 +1314,7 @@ index 0000000..4ab33da
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000..b2f4487
+index 0000000000000000000000000000000000000000..b2f4487208363c71cd3fa44a59e44d913de623c7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
 @@ -0,0 +1,220 @@
@@ -1532,7 +1540,7 @@ index 0000000..b2f4487
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..5aae909
+index 0000000000000000000000000000000000000000..5aae90972241c8598ffba988d020e54e45fd9e64
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
 @@ -0,0 +1,1482 @@
@@ -3020,7 +3028,7 @@ index 0000000..5aae909
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/execution_tests.rs b/codex-rs/ext/omd/src/execution_tests.rs
 new file mode 100644
-index 0000000..f048c84
+index 0000000000000000000000000000000000000000..f048c840ee603cc09e79fca04b7cd915eb699421
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution_tests.rs
 @@ -0,0 +1,133 @@
@@ -3159,7 +3167,7 @@ index 0000000..f048c84
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..5b276af
+index 0000000000000000000000000000000000000000..5b276af013db88156d4a43d7453fe2bde59bd92c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
 @@ -0,0 +1,1723 @@
@@ -4887,7 +4895,7 @@ index 0000000..5b276af
 +    }
 +}
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
-index cd4cbd5..b37f321 100644
+index cd4cbd5431a785b0a1f2a9963b1536d2edf135ec..b37f321d96c66589e03f258f7d7746dd8df22462 100644
 --- a/codex-rs/login/src/auth/default_client.rs
 +++ b/codex-rs/login/src/auth/default_client.rs
 @@ -294,9 +294,14 @@ pub async fn create_client_for_route_async(
@@ -4909,7 +4917,7 @@ index cd4cbd5..b37f321 100644
  // These legacy constructors intentionally preserve the infallible behavior of `create_client`.
 diff --git a/codex-rs/omd/BUILD.bazel b/codex-rs/omd/BUILD.bazel
 new file mode 100644
-index 0000000..dd496cd
+index 0000000000000000000000000000000000000000..dd496cdda94c4f63dd7cf24839b7e01ca4e84fd2
 --- /dev/null
 +++ b/codex-rs/omd/BUILD.bazel
 @@ -0,0 +1,6 @@
@@ -4921,7 +4929,7 @@ index 0000000..dd496cd
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000..812e16b
+index 0000000000000000000000000000000000000000..812e16b756ce775f571083988846e62a34e7750d
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,15 @@
@@ -4940,9 +4948,185 @@ index 0000000..812e16b
 +
 +[dev-dependencies]
 +tempfile = "=3.27.0"
+diff --git a/codex-rs/omd/README.md b/codex-rs/omd/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c54aed0979742abf870f40e942978d3a4f1fad58
+--- /dev/null
++++ b/codex-rs/omd/README.md
+@@ -0,0 +1,170 @@
++# Controlled delegation primitives
++
++Rust primitives linked by the experimental pinned Codex patch in `runtime/native`.
++This crate owns admission and snapshots; the extension owns native execution,
++provider observation, review and integration. See [the runtime workflow](../README.md).
++
++`Task` serializes shared and worker request/exposure admission, journals a
++reservation before dispatch, retains unknown exposure, and records
++raw usage supplied by the host. Worker completion does not refund requests or
++unsettled exposure. A fresh task refuses an existing evidence directory. An
++explicit resume replays the append-only journal without resetting the original
++deadline, requests, exposure, uncertain operations, or completed evidence. The
++host must supply conservative per-request reservations,
++validate provider usage/rates, bind authorization to the repository and context,
++enforce request and process deadlines, and own the evidence directory outside
++model-write permissions. The authorization setter is a trusted host API.
++Sending must use the one-shot `dispatch` transition, which rechecks live limits
++and authorization before marking the request in flight. The callback runs after
++releasing the task lock so stop/revocation can proceed. Cancellation of dispatched
++requests remains host-owned; admission does not imply remote cancellation.
++
++Checkpointed tasks bind an objective, acceptance criteria, and a bounded
++no-progress threshold at creation. They atomically maintain a compact
++`checkpoint.json` outside conversational history while retaining the complete
++numbered journal. Progress updates preserve completed acceptance evidence,
++steering, failed hypotheses, and candidate/check versions; the host derives
++worker states and remaining allowance. Reconciliation records prior and current
++workspace/process state without pretending it is new progress. Worker results
++move through completed and consumed states, while interruption and failed work
++remain stopped. Duplicate active objectives are rejected. Repeated equivalent
++tool results trigger reassessment and then pause; configured waits remain valid
++until the task deadline.
++
++`GuidelineStore` keeps immutable versioned proposals and validation records in a
++host-owned directory. A proposal is either a complete checklist of four to
++sixteen bounded one-line rules or a tiny core of one to four rules plus one to
++twelve selected one-line rules. Proposals accept development evidence only;
++validation records accept validation evidence only and reject any task identity
++used by the proposal. Neither action activates a candidate.
++
++The `omd-guidelines` operator binary provides `init`, `propose`, `validate`,
++`promote`, `rollback`, `active`, and `history` commands. Promotion requires an
++exact passed validation hash, a named maintainer and reason, and the expected
++currently active selection. Rollback has the same maintainer and stale-state
++checks and restores the preceding explicit selection, including no active
++guideline. The store begins with no active guideline. When a controlled manifest
++explicitly supplies a canonical external `guideline_store`, the native extension
++freezes its active selection at session start, protects the store from workers,
++and injects the version, proposal hash, and rules below current user and project
++instructions. Omitting the field or leaving the store unpromoted preserves the
++existing default.
++
++`KnowledgeStore` retains immutable copies of bounded task evidence with task,
++workspace, kind, source-path, and hash provenance. Source facts are exact bounded
++UTF-8 line excerpts rather than model-authored summaries. Reuse refreshes their
++file and excerpt hashes from canonical repository files, records changes, and
++excludes missing, unsafe, or unreadable sources. Evidence integrity changes also
++invalidate dependent lessons. Inferred lessons begin as candidates and enter a
++later session only after an operator records an approval with actor, reason, and
++the current store revision.
++
++Every mutation uses an expected-revision compare-and-set under the store's writer
++lock, so concurrent writers cannot silently replace one another. `inspect`
++returns active records and the revisioned provenance journal. `remove` deletes a
++selected record, and `reset` clears all active evidence, facts, and lessons while
++advancing the store generation. Each native session must explicitly select
++`cold`, which exposes no retained content, or `reuse`, which exposes only fresh
++source excerpts and approved lessons. The configured store is external to the
++repository, repository-identity bound, context-size bounded, and denied to model
++workers.
++
++`CodeGraph` is the bounded, source-backed representation shared by the patched
++TUI `/graph` navigator and generated HTML. It recursively indexes supported
++source files without following symlinks, fails closed at global file/byte/node/
++edge/unknown/selection limits, and produces deterministic JSON for an explicit
++repository identity and revision. Every relationship has a source line and hash.
++Local imports are extracted; uniquely resolved lexical calls and related tests
++are inferred; unresolved imports, calls, and ambiguous targets remain unknown.
++Per-file coverage preserves those limitations instead of implying whole-program
++analysis.
++
++`omd-graph snapshot` writes the JSON and static HTML together. Subsequent
++validation, HTML generation, evidence selection, and TUI loading compare the
++recorded source set and hashes with the repository, so added, changed, or missing
++source requires regeneration. HTML search/filtering, graph neighborhoods, local
++source links, and copyable evidence run entirely in the generated file. The CLI
++does not launch a service or provide architecture editing.
++
++`ReactiveRules` validates a separately versioned, SHA-bound rule source used by
++the native post-tool hook. Each rule selects an exact `lead` or `worker` scope,
++tool name, and one of `completed_host_success`, `completed_host_failure`,
++`blocked`, `failed_before_execution`, `failed_after_execution`, or `aborted`.
++Duplicate matches are ambiguous and rejected. `max_activations` is limited to
++one through eight, and `max_context_reactivations` to zero through four.
++Activation prompts retain source/version/hash provenance and instruction
++priority, explicitly deny rollback and automatic-retry claims, and remain
++available for bounded context rebuild injection after compaction.
++
++```json
++{
++  "schema": 1,
++  "version": "reactive-v1",
++  "rules": [
++    {
++      "id": "inspect-command-result",
++      "scope": "lead",
++      "trigger": {
++        "event": "tool_finished",
++        "tool": "exec_command",
++        "outcome": "completed_host_success"
++      },
++      "instruction": "Inspect the exact command result and exit code before choosing any follow-up.",
++      "max_activations": 1,
++      "max_context_reactivations": 1
++    }
++  ]
++}
++```
++
++```sh
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- init /absolute/host-owned/guidelines
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- propose /absolute/host-owned/guidelines proposal.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- validate /absolute/host-owned/guidelines validation.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- promote /absolute/host-owned/guidelines promotion.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- rollback /absolute/host-owned/guidelines rollback.json
++```
++
++```sh
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- init /absolute/host-owned/knowledge owner/repository
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- retain-evidence /absolute/host-owned/knowledge evidence.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- retain-fact /absolute/host-owned/knowledge /absolute/repository fact.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- propose-lesson /absolute/host-owned/knowledge lesson.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- approve-lesson /absolute/host-owned/knowledge approval.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- inspect /absolute/host-owned/knowledge /absolute/repository
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- session /absolute/host-owned/knowledge /absolute/repository cold
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- remove /absolute/host-owned/knowledge removal.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- reset /absolute/host-owned/knowledge reset.json
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-graph -- snapshot /absolute/repository graph.json graph.html owner/repository REVISION
++cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-graph -- select /absolute/repository graph.json NODE_ID
++```
++
++`record_failure` journals a bounded typed failure with host-owned evidence
++references. `permit_escalation` permits each failure at most once, enforces the
++task's configured escalation cap, and fails closed after stop, deadline, request
++exhaustion, a missing failure, or reuse. It snapshots the remaining allowance
++before the caller dispatches through the ordinary shared admission path; it does
++not refund or create requests, exposure, or time.
++
++`capture_tracked` enumerates tracked files plus an explicit approved-untracked
++list and rejects a changed path set. `Snapshot` reads dirty contents through
++directory/file descriptors, revalidates the selected tree, and rejects symlinks
++and hardlinks. Materialization also uses descriptor-relative writes. These are
++Unix primitives, currently validated on macOS. `create_worktree`
++seeds a disposable repository and detached worker worktree; it does not change
++the source repository's index or commits. Git commands operate on local data
++with global configuration and hooks disabled. Host lifecycle code must bound
++and clean up these commands. Worktrees do not provide an OS sandbox.
++
++`merge_candidate` preserves unrelated current changes and rejects affected-file
++conflicts. It produces an in-memory candidate only. The host must validate
++candidate-bound executable checks and separate-model review, reconcile the final
++workspace version, and apply the delta through native permission enforcement.
++No integration or review gate is claimed by this primitive.
++
++Local validation uses the pinned installed toolchain and cached dependencies:
++
++```sh
++CARGO_TARGET_DIR=/private/tmp/omd-controlled-target cargo +1.95.0 test --offline --locked --manifest-path runtime/omd/Cargo.toml
++CARGO_TARGET_DIR=/private/tmp/omd-controlled-target cargo +1.95.0 clippy --offline --locked --manifest-path runtime/omd/Cargo.toml --all-targets -- -D warnings
++```
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000..06b5de3
+index 0000000000000000000000000000000000000000..06b5de3da5b08b616014d791514b6725f121905e
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
 @@ -0,0 +1,1956 @@
@@ -6902,9 +7086,96 @@ index 0000000..06b5de3
 +        Ok(state.attempts.values().cloned().collect())
 +    }
 +}
+diff --git a/codex-rs/omd/src/bin/omd-graph.rs b/codex-rs/omd/src/bin/omd-graph.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..83534dd77d69cc82e592ca5e6a365421f4cadcf4
+--- /dev/null
++++ b/codex-rs/omd/src/bin/omd-graph.rs
+@@ -0,0 +1,81 @@
++use codex_omd::CodeGraph;
++use codex_omd::GraphFreshness;
++use codex_omd::GraphLimits;
++use serde::Serialize;
++use std::error::Error;
++use std::io;
++use std::path::Path;
++
++type AppResult<T> = Result<T, Box<dyn Error>>;
++
++fn print<T: Serialize>(value: &T) -> AppResult<()> {
++    println!("{}", serde_json::to_string_pretty(value)?);
++    Ok(())
++}
++
++fn ensure_fresh(graph: &CodeGraph, repository: &Path) -> AppResult<()> {
++    match graph.freshness(repository)? {
++        GraphFreshness::Fresh => Ok(()),
++        stale => Err(io::Error::other(format!(
++            "graph snapshot is stale; regenerate it: {}",
++            serde_json::to_string(&stale)?
++        ))
++        .into()),
++    }
++}
++
++fn build(
++    repository: &str,
++    graph_path: &str,
++    identity: &str,
++    revision: &str,
++) -> AppResult<CodeGraph> {
++    let graph = CodeGraph::build(
++        Path::new(repository),
++        identity.to_string(),
++        revision.to_string(),
++        GraphLimits::default(),
++    )?;
++    graph.write(Path::new(graph_path))?;
++    Ok(graph)
++}
++
++fn run(args: Vec<String>) -> AppResult<()> {
++    match args.as_slice() {
++        [_, command, repository, graph_path, identity, revision] if command == "build" => {
++            print(&build(repository, graph_path, identity, revision)?.repository)
++        }
++        [_, command, repository, graph_path, html_path, identity, revision] if command == "snapshot" => {
++            let graph = build(repository, graph_path, identity, revision)?;
++            graph.write_html(Path::new(html_path))?;
++            print(&graph.repository)
++        }
++        [_, command, repository, graph_path, html_path] if command == "html" => {
++            let graph = CodeGraph::read(Path::new(graph_path))?;
++            ensure_fresh(&graph, Path::new(repository))?;
++            graph.write_html(Path::new(html_path))?;
++            print(&graph.repository)
++        }
++        [_, command, repository, graph_path] if command == "validate" => {
++            let graph = CodeGraph::read(Path::new(graph_path))?;
++            ensure_fresh(&graph, Path::new(repository))?;
++            print(&graph.repository)
++        }
++        [_, command, repository, graph_path, ids @ ..] if command == "select" && !ids.is_empty() => {
++            let graph = CodeGraph::read(Path::new(graph_path))?;
++            ensure_fresh(&graph, Path::new(repository))?;
++            print(&graph.select(ids)?)
++        }
++        _ => Err(io::Error::other(
++            "usage: omd-graph build REPOSITORY GRAPH REPOSITORY_ID REVISION | snapshot REPOSITORY GRAPH HTML REPOSITORY_ID REVISION | html REPOSITORY GRAPH HTML | validate REPOSITORY GRAPH | select REPOSITORY GRAPH NODE_ID [...]",
++        )
++        .into()),
++    }
++}
++
++fn main() {
++    if let Err(error) = run(std::env::args().collect()) {
++        eprintln!("{error}");
++        std::process::exit(1);
++    }
++}
 diff --git a/codex-rs/omd/src/bin/omd-guidelines.rs b/codex-rs/omd/src/bin/omd-guidelines.rs
 new file mode 100644
-index 0000000..3f3418a
+index 0000000000000000000000000000000000000000..3f3418a4c19fb709122190713e83f6ce5b3524df
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-guidelines.rs
 @@ -0,0 +1,58 @@
@@ -6968,7 +7239,7 @@ index 0000000..3f3418a
 +}
 diff --git a/codex-rs/omd/src/bin/omd-knowledge.rs b/codex-rs/omd/src/bin/omd-knowledge.rs
 new file mode 100644
-index 0000000..23ccec1
+index 0000000000000000000000000000000000000000..23ccec1e283eb91879661cd3536d07d2e45f2cef
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-knowledge.rs
 @@ -0,0 +1,90 @@
@@ -7064,7 +7335,7 @@ index 0000000..23ccec1
 +}
 diff --git a/codex-rs/omd/src/checkpoint.rs b/codex-rs/omd/src/checkpoint.rs
 new file mode 100644
-index 0000000..be18550
+index 0000000000000000000000000000000000000000..be185507bb8911c12554e132a6fa3e1700c31c19
 --- /dev/null
 +++ b/codex-rs/omd/src/checkpoint.rs
 @@ -0,0 +1,258 @@
@@ -7328,7 +7599,7 @@ index 0000000..be18550
 +}
 diff --git a/codex-rs/omd/src/communication.rs b/codex-rs/omd/src/communication.rs
 new file mode 100644
-index 0000000..de74f10
+index 0000000000000000000000000000000000000000..de74f1086d7a228166bd72a04dfd92337291bf7b
 --- /dev/null
 +++ b/codex-rs/omd/src/communication.rs
 @@ -0,0 +1,67 @@
@@ -7399,9 +7670,1228 @@ index 0000000..de74f10
 +        Ok(())
 +    }
 +}
+diff --git a/codex-rs/omd/src/graph.rs b/codex-rs/omd/src/graph.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..c834dddaccd9d17922b69f1646480e80c9a214fd
+--- /dev/null
++++ b/codex-rs/omd/src/graph.rs
+@@ -0,0 +1,1213 @@
++use serde::Deserialize;
++use serde::Serialize;
++use sha2::Digest;
++use sha2::Sha256;
++use std::collections::BTreeMap;
++use std::collections::BTreeSet;
++use std::fs;
++use std::fs::OpenOptions;
++use std::io;
++use std::io::Write;
++use std::path::Component;
++use std::path::Path;
++use std::path::PathBuf;
++
++pub const CODE_GRAPH_SCHEMA: u32 = 1;
++pub const CODE_GRAPH_GENERATOR: &str = "omd-bounded-code-graph-v1";
++const MAX_GRAPH_BYTES: usize = 16 * 1024 * 1024;
++const MAX_FILE_BYTES: usize = 1024 * 1024;
++const MAX_SELECTION_BYTES: usize = 256 * 1024;
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct GraphLimits {
++    pub max_files: usize,
++    pub max_source_bytes: usize,
++    pub max_nodes: usize,
++    pub max_edges: usize,
++    pub max_unknown_targets: usize,
++    pub max_selection_bytes: usize,
++}
++
++impl Default for GraphLimits {
++    fn default() -> Self {
++        Self {
++            max_files: 4_096,
++            max_source_bytes: 32 * 1024 * 1024,
++            max_nodes: 20_000,
++            max_edges: 50_000,
++            max_unknown_targets: 2_048,
++            max_selection_bytes: 64 * 1024,
++        }
++    }
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct GraphRepository {
++    pub identity: String,
++    pub root: PathBuf,
++    pub revision: String,
++    pub source_digest: String,
++}
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
++#[serde(rename_all = "snake_case")]
++pub enum GraphLanguage {
++    Rust,
++    Python,
++    TypeScript,
++    JavaScript,
++    Java,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct GraphSource {
++    pub path: PathBuf,
++    pub language: GraphLanguage,
++    pub bytes: usize,
++    pub sha256: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
++#[serde(deny_unknown_fields)]
++pub struct GraphAnchor {
++    pub path: PathBuf,
++    pub start_line: usize,
++    pub end_line: usize,
++    pub sha256: String,
++}
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
++#[serde(rename_all = "snake_case")]
++pub enum GraphNodeKind {
++    Module,
++    Symbol,
++    Test,
++    Unknown,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct GraphNode {
++    pub id: String,
++    pub kind: GraphNodeKind,
++    pub name: String,
++    pub symbol_kind: Option<String>,
++    pub anchor: Option<GraphAnchor>,
++}
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
++#[serde(rename_all = "snake_case")]
++pub enum GraphRelationship {
++    Contains,
++    Imports,
++    Calls,
++    Tests,
++}
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
++#[serde(rename_all = "snake_case")]
++pub enum GraphConfidence {
++    Extracted,
++    Inferred,
++    Unknown,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
++#[serde(deny_unknown_fields)]
++pub struct GraphEdge {
++    pub from: String,
++    pub to: String,
++    pub relationship: GraphRelationship,
++    pub confidence: GraphConfidence,
++    pub evidence: GraphAnchor,
++    pub detail: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct GraphCoverage {
++    pub path: PathBuf,
++    pub parser: String,
++    pub extracted_relationships: usize,
++    pub inferred_relationships: usize,
++    pub unknown_relationships: usize,
++    pub unknown_examples: Vec<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct CodeGraph {
++    pub schema: u32,
++    pub generator: String,
++    pub repository: GraphRepository,
++    pub limits: GraphLimits,
++    pub sources: Vec<GraphSource>,
++    pub nodes: Vec<GraphNode>,
++    pub edges: Vec<GraphEdge>,
++    pub coverage: Vec<GraphCoverage>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum GraphFreshness {
++    Fresh,
++    Stale {
++        added: Vec<PathBuf>,
++        changed: Vec<PathBuf>,
++        missing: Vec<PathBuf>,
++    },
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct GraphEvidenceSelection {
++    pub schema: u32,
++    pub graph_schema: u32,
++    pub graph_generator: String,
++    pub repository_identity: String,
++    pub revision: String,
++    pub source_digest: String,
++    pub nodes: Vec<GraphNode>,
++    pub relationships: Vec<GraphEdge>,
++    pub coverage: Vec<GraphCoverage>,
++}
++
++#[derive(Clone)]
++struct Definition {
++    name: String,
++    kind: String,
++    line: usize,
++    is_test: bool,
++    node_id: String,
++}
++
++struct ParsedFile {
++    source: GraphSource,
++    text: String,
++    definitions: Vec<Definition>,
++    imports: Vec<(usize, String)>,
++    calls: Vec<(usize, String)>,
++}
++
++fn invalid(message: impl Into<String>) -> io::Error {
++    io::Error::new(io::ErrorKind::InvalidData, message.into())
++}
++
++fn sha256(bytes: &[u8]) -> String {
++    format!("{:x}", Sha256::digest(bytes))
++}
++
++fn valid_sha256(value: &str) -> bool {
++    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
++}
++
++fn valid_limits(limits: GraphLimits) -> bool {
++    (1..=4_096).contains(&limits.max_files)
++        && (1..=32 * 1024 * 1024).contains(&limits.max_source_bytes)
++        && (1..=20_000).contains(&limits.max_nodes)
++        && (1..=50_000).contains(&limits.max_edges)
++        && (1..=2_048).contains(&limits.max_unknown_targets)
++        && (1..=MAX_SELECTION_BYTES).contains(&limits.max_selection_bytes)
++}
++
++fn clean_relative(path: &Path) -> bool {
++    !path.as_os_str().is_empty()
++        && path
++            .components()
++            .all(|part| matches!(part, Component::Normal(_)))
++}
++
++fn language(path: &Path) -> Option<GraphLanguage> {
++    match path.extension().and_then(|value| value.to_str())? {
++        "rs" => Some(GraphLanguage::Rust),
++        "py" => Some(GraphLanguage::Python),
++        "ts" | "tsx" => Some(GraphLanguage::TypeScript),
++        "js" | "jsx" | "mjs" | "cjs" => Some(GraphLanguage::JavaScript),
++        "java" => Some(GraphLanguage::Java),
++        _ => None,
++    }
++}
++
++fn skipped_directory(name: &str) -> bool {
++    name.starts_with('.')
++        || matches!(
++            name,
++            "node_modules"
++                | "target"
++                | "dist"
++                | "build"
++                | "vendor"
++                | "vendors"
++                | "venv"
++                | "__pycache__"
++                | "coverage"
++        )
++}
++
++fn collect_paths(root: &Path, directory: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
++    let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
++    entries.sort_by_key(|entry| entry.file_name());
++    for entry in entries {
++        let metadata = fs::symlink_metadata(entry.path())?;
++        if metadata.file_type().is_symlink() {
++            continue;
++        }
++        if metadata.is_dir() {
++            if !skipped_directory(&entry.file_name().to_string_lossy()) {
++                collect_paths(root, &entry.path(), out)?;
++            }
++        } else if metadata.is_file() {
++            let relative = entry
++                .path()
++                .strip_prefix(root)
++                .map_err(|_| invalid("source path escaped repository"))?
++                .to_path_buf();
++            if language(&relative).is_some() {
++                out.push(relative);
++            }
++        }
++    }
++    Ok(())
++}
++
++fn safe_source_path(root: &Path, relative: &Path) -> io::Result<PathBuf> {
++    if !clean_relative(relative) {
++        return Err(invalid("unsafe source path"));
++    }
++    let mut current = root.to_path_buf();
++    for component in relative.components() {
++        let Component::Normal(component) = component else {
++            return Err(invalid("unsafe source path"));
++        };
++        current.push(component);
++        if fs::symlink_metadata(&current)?.file_type().is_symlink() {
++            return Err(invalid("symlink in graph source path"));
++        }
++    }
++    Ok(current)
++}
++
++fn identifier_after(line: &str, marker: &str) -> Option<String> {
++    let index = line.find(marker)? + marker.len();
++    let rest = line[index..].trim_start();
++    let name = rest
++        .chars()
++        .take_while(|value| value.is_ascii_alphanumeric() || *value == '_')
++        .collect::<String>();
++    (!name.is_empty()).then_some(name)
++}
++
++fn rust_definition(line: &str) -> Option<(String, String)> {
++    let trimmed = line.trim_start();
++    for (marker, kind) in [
++        ("fn ", "function"),
++        ("struct ", "type"),
++        ("enum ", "type"),
++        ("trait ", "type"),
++        ("mod ", "module"),
++        ("type ", "type"),
++    ] {
++        if let Some(name) = identifier_after(trimmed, marker) {
++            let prefix = &trimmed[..trimmed.find(marker)?];
++            if prefix.split_whitespace().all(|part| {
++                matches!(
++                    part,
++                    "pub" | "async" | "unsafe" | "const" | "extern" | "default" | "(crate)"
++                ) || part.starts_with("pub(")
++            }) {
++                return Some((name, kind.to_string()));
++            }
++        }
++    }
++    None
++}
++
++fn python_definition(line: &str) -> Option<(String, String)> {
++    let trimmed = line.trim_start();
++    for (marker, kind) in [
++        ("def ", "function"),
++        ("async def ", "function"),
++        ("class ", "type"),
++    ] {
++        if trimmed.starts_with(marker) {
++            return identifier_after(trimmed, marker).map(|name| (name, kind.to_string()));
++        }
++    }
++    None
++}
++
++fn script_definition(line: &str) -> Option<(String, String)> {
++    let trimmed = line.trim_start();
++    for (marker, kind) in [
++        ("function ", "function"),
++        ("class ", "type"),
++        ("interface ", "type"),
++        ("type ", "type"),
++        ("enum ", "type"),
++    ] {
++        if let Some(name) = identifier_after(trimmed, marker) {
++            let prefix = &trimmed[..trimmed.find(marker)?];
++            if prefix
++                .split_whitespace()
++                .all(|part| matches!(part, "export" | "default" | "async" | "declare"))
++            {
++                return Some((name, kind.to_string()));
++            }
++        }
++    }
++    for marker in ["const ", "let ", "var "] {
++        if let Some(name) = identifier_after(trimmed, marker) {
++            let prefix = &trimmed[..trimmed.find(marker)?];
++            if prefix
++                .split_whitespace()
++                .all(|part| matches!(part, "export" | "default" | "declare"))
++                && (trimmed.contains("=>") || trimmed.contains("function"))
++            {
++                return Some((name, "function".to_string()));
++            }
++        }
++    }
++    None
++}
++
++fn java_definition(line: &str) -> Option<(String, String)> {
++    let trimmed = line.trim_start();
++    for (marker, kind) in [
++        ("class ", "type"),
++        ("interface ", "type"),
++        ("enum ", "type"),
++        ("record ", "type"),
++    ] {
++        if let Some(name) = identifier_after(trimmed, marker) {
++            return Some((name, kind.to_string()));
++        }
++    }
++    let before = trimmed.split_once('(')?.0.trim_end();
++    let name = before
++        .split_whitespace()
++        .last()?
++        .trim_matches(|value: char| !value.is_ascii_alphanumeric() && value != '_');
++    if name.is_empty() || matches!(name, "if" | "for" | "while" | "switch" | "catch") {
++        None
++    } else {
++        Some((name.to_string(), "function".to_string()))
++    }
++}
++
++fn definition(line: &str, language: GraphLanguage) -> Option<(String, String)> {
++    match language {
++        GraphLanguage::Rust => rust_definition(line),
++        GraphLanguage::Python => python_definition(line),
++        GraphLanguage::TypeScript | GraphLanguage::JavaScript => script_definition(line),
++        GraphLanguage::Java => java_definition(line),
++    }
++}
++
++fn quoted_value(line: &str) -> Option<String> {
++    let mut quote = None;
++    let mut start = 0;
++    for (index, value) in line.char_indices() {
++        if quote == Some(value) {
++            return Some(line[start..index].to_string());
++        }
++        if quote.is_none() && matches!(value, '\'' | '"') {
++            quote = Some(value);
++            start = index + value.len_utf8();
++        }
++    }
++    None
++}
++
++fn import_value(line: &str, language: GraphLanguage) -> Option<String> {
++    let trimmed = line.trim();
++    match language {
++        GraphLanguage::Rust => {
++            if let Some(import) = trimmed.strip_prefix("use ") {
++                Some(
++                    import
++                        .trim_end_matches(';')
++                        .split('{')
++                        .next()?
++                        .trim()
++                        .to_string(),
++                )
++            } else if trimmed.starts_with("mod ") {
++                identifier_after(trimmed, "mod ")
++            } else {
++                None
++            }
++        }
++        GraphLanguage::Python => {
++            if let Some(rest) = trimmed.strip_prefix("from ") {
++                Some(rest.split_whitespace().next()?.to_string())
++            } else {
++                trimmed.strip_prefix("import ").map(|rest| {
++                    rest.split_whitespace()
++                        .next()
++                        .unwrap_or(rest)
++                        .trim_end_matches(',')
++                        .to_string()
++                })
++            }
++        }
++        GraphLanguage::TypeScript | GraphLanguage::JavaScript => {
++            if trimmed.starts_with("import ") || trimmed.contains("require(") {
++                quoted_value(trimmed)
++            } else {
++                None
++            }
++        }
++        GraphLanguage::Java => trimmed
++            .strip_prefix("import ")
++            .map(|rest| rest.trim_end_matches(';').to_string()),
++    }
++}
++
++fn call_names(line: &str) -> Vec<String> {
++    let bytes = line.as_bytes();
++    let mut names = Vec::new();
++    let mut index = 0;
++    while index < bytes.len() {
++        if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
++            let start = index;
++            index += 1;
++            while index < bytes.len()
++                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
++            {
++                index += 1;
++            }
++            let mut cursor = index;
++            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
++                cursor += 1;
++            }
++            if cursor < bytes.len() && bytes[cursor] == b'(' {
++                let name = &line[start..index];
++                if !matches!(
++                    name,
++                    "if" | "for"
++                        | "while"
++                        | "match"
++                        | "loop"
++                        | "switch"
++                        | "catch"
++                        | "return"
++                        | "sizeof"
++                        | "Some"
++                        | "Ok"
++                        | "Err"
++                        | "println"
++                        | "print"
++                ) {
++                    names.push(name.to_string());
++                }
++            }
++        } else {
++            index += 1;
++        }
++    }
++    names
++}
++
++fn line_anchor(source: &GraphSource, line_number: usize, line: &str) -> GraphAnchor {
++    GraphAnchor {
++        path: source.path.clone(),
++        start_line: line_number,
++        end_line: line_number,
++        sha256: sha256(line.as_bytes()),
++    }
++}
++
++fn source_digest(sources: &[GraphSource]) -> String {
++    let mut hasher = Sha256::new();
++    for source in sources {
++        hasher.update(source.path.to_string_lossy().as_bytes());
++        hasher.update([0]);
++        hasher.update(source.sha256.as_bytes());
++        hasher.update([0]);
++    }
++    format!("{:x}", hasher.finalize())
++}
++
++fn unknown_id(label: &str) -> String {
++    format!("unknown:{}", &sha256(label.as_bytes())[..16])
++}
++
++fn module_id(path: &Path) -> String {
++    format!("module:{}", path.to_string_lossy())
++}
++
++fn resolve_import(path: &Path, raw: &str, sources: &BTreeSet<PathBuf>) -> Option<PathBuf> {
++    let parent = path.parent().unwrap_or_else(|| Path::new(""));
++    let mut bases = if raw.starts_with("./") || raw.starts_with("../") {
++        vec![parent.join(raw)]
++    } else if raw.starts_with("self::") {
++        let normalized = raw.replace("::", "/");
++        vec![parent.join(normalized.trim_start_matches("self/"))]
++    } else if raw.starts_with("super::") {
++        let normalized = raw.replace("::", "/");
++        vec![
++            parent
++                .parent()
++                .unwrap_or(parent)
++                .join(normalized.trim_start_matches("super/")),
++        ]
++    } else {
++        let normalized = PathBuf::from(
++            raw.trim_start_matches("crate::")
++                .replace("::", "/")
++                .replace('.', "/"),
++        );
++        vec![
++            normalized.clone(),
++            parent.join(&normalized),
++            Path::new("src").join(normalized),
++        ]
++    };
++    if path.extension().and_then(|value| value.to_str()) == Some("rs") {
++        let normalized = raw.trim_start_matches("crate::").replace("::", "/");
++        let parts = normalized.split('/').collect::<Vec<_>>();
++        for length in (1..parts.len()).rev() {
++            let prefix = parts[..length].join("/");
++            bases.push(parent.join(&prefix));
++            bases.push(Path::new("src").join(prefix));
++        }
++    }
++    let mut candidates = Vec::new();
++    for relative in bases {
++        if relative.extension().is_some() {
++            candidates.push(relative.clone());
++        }
++        for extension in ["rs", "py", "ts", "tsx", "js", "jsx", "java"] {
++            candidates.push(relative.with_extension(extension));
++        }
++        for name in [
++            "mod.rs",
++            "__init__.py",
++            "index.ts",
++            "index.tsx",
++            "index.js",
++            "index.jsx",
++        ] {
++            candidates.push(relative.join(name));
++        }
++    }
++    candidates
++        .into_iter()
++        .find(|candidate| sources.contains(candidate))
++}
++
++impl CodeGraph {
++    pub fn build(
++        repository: &Path,
++        repository_identity: String,
++        revision: String,
++        limits: GraphLimits,
++    ) -> io::Result<Self> {
++        if repository_identity.trim().is_empty() || revision.trim().is_empty() {
++            return Err(invalid("repository identity and revision are required"));
++        }
++        if !valid_limits(limits) {
++            return Err(invalid("graph limits are outside global bounds"));
++        }
++        let root = repository.canonicalize()?;
++        if !root.is_dir() {
++            return Err(invalid("repository root must be a directory"));
++        }
++        let mut paths = Vec::new();
++        collect_paths(&root, &root, &mut paths)?;
++        paths.sort();
++        if paths.len() > limits.max_files {
++            return Err(invalid("graph source file limit exceeded"));
++        }
++        let mut total_bytes = 0usize;
++        let mut parsed = Vec::new();
++        for path in paths {
++            if !clean_relative(&path) {
++                return Err(invalid("unsafe source path"));
++            }
++            let bytes = fs::read(safe_source_path(&root, &path)?)?;
++            if bytes.len() > MAX_FILE_BYTES {
++                return Err(invalid(format!(
++                    "source file exceeds size limit: {}",
++                    path.display()
++                )));
++            }
++            total_bytes = total_bytes
++                .checked_add(bytes.len())
++                .ok_or_else(|| invalid("source size overflow"))?;
++            if total_bytes > limits.max_source_bytes {
++                return Err(invalid("graph source byte limit exceeded"));
++            }
++            let text = String::from_utf8(bytes.clone())
++                .map_err(|_| invalid(format!("source is not UTF-8: {}", path.display())))?;
++            let source = GraphSource {
++                language: language(&path).ok_or_else(|| invalid("unsupported source language"))?,
++                path: path.clone(),
++                bytes: bytes.len(),
++                sha256: sha256(&bytes),
++            };
++            let mut definitions = Vec::new();
++            let mut imports = Vec::new();
++            let mut calls = Vec::new();
++            for (offset, line) in text.lines().enumerate() {
++                let line_number = offset + 1;
++                if let Some((name, kind)) = definition(line, source.language) {
++                    let path_is_test = path.components().any(|part| {
++                        matches!(
++                            part.as_os_str().to_str(),
++                            Some("test" | "tests" | "__tests__")
++                        )
++                    });
++                    let is_test =
++                        path_is_test || name.starts_with("test_") || name.ends_with("Test");
++                    definitions.push(Definition {
++                        node_id: format!("symbol:{}:{line_number}:{name}", path.to_string_lossy()),
++                        name,
++                        kind,
++                        line: line_number,
++                        is_test,
++                    });
++                }
++                if let Some(value) = import_value(line, source.language) {
++                    imports.push((line_number, value));
++                }
++                for name in call_names(line) {
++                    calls.push((line_number, name));
++                }
++            }
++            parsed.push(ParsedFile {
++                source,
++                text,
++                definitions,
++                imports,
++                calls,
++            });
++        }
++        let sources = parsed
++            .iter()
++            .map(|file| file.source.clone())
++            .collect::<Vec<_>>();
++        let source_paths = sources
++            .iter()
++            .map(|source| source.path.clone())
++            .collect::<BTreeSet<_>>();
++        let mut nodes = BTreeMap::new();
++        let mut definitions_by_name: BTreeMap<String, Vec<(PathBuf, Definition)>> = BTreeMap::new();
++        let mut edges = Vec::new();
++        for file in &parsed {
++            let first_line = file.text.lines().next().unwrap_or("");
++            let module = GraphNode {
++                id: module_id(&file.source.path),
++                kind: GraphNodeKind::Module,
++                name: file.source.path.to_string_lossy().to_string(),
++                symbol_kind: Some(format!("{:?}", file.source.language).to_ascii_lowercase()),
++                anchor: Some(line_anchor(&file.source, 1, first_line)),
++            };
++            nodes.insert(module.id.clone(), module);
++            for definition in &file.definitions {
++                let line = file.text.lines().nth(definition.line - 1).unwrap_or("");
++                let node = GraphNode {
++                    id: definition.node_id.clone(),
++                    kind: if definition.is_test {
++                        GraphNodeKind::Test
++                    } else {
++                        GraphNodeKind::Symbol
++                    },
++                    name: definition.name.clone(),
++                    symbol_kind: Some(definition.kind.clone()),
++                    anchor: Some(line_anchor(&file.source, definition.line, line)),
++                };
++                nodes.insert(node.id.clone(), node);
++                definitions_by_name
++                    .entry(definition.name.clone())
++                    .or_default()
++                    .push((file.source.path.clone(), definition.clone()));
++                edges.push(GraphEdge {
++                    from: module_id(&file.source.path),
++                    to: definition.node_id.clone(),
++                    relationship: GraphRelationship::Contains,
++                    confidence: GraphConfidence::Extracted,
++                    evidence: line_anchor(&file.source, definition.line, line),
++                    detail: format!("{} definition", definition.kind),
++                });
++            }
++        }
++        if nodes.len() > limits.max_nodes {
++            return Err(invalid("graph node limit exceeded"));
++        }
++        let mut unknowns = BTreeSet::new();
++        let mut coverage = Vec::new();
++        for file in &parsed {
++            let mut extracted = file.definitions.len();
++            let mut inferred = 0usize;
++            let mut unknown = 0usize;
++            let mut unknown_examples = BTreeSet::new();
++            for (line_number, raw) in &file.imports {
++                let line = file.text.lines().nth(line_number - 1).unwrap_or("");
++                let (to, confidence, detail) =
++                    if let Some(target) = resolve_import(&file.source.path, raw, &source_paths) {
++                        (
++                            module_id(&target),
++                            GraphConfidence::Extracted,
++                            format!("resolved import {raw}"),
++                        )
++                    } else {
++                        let id = unknown_id(&format!("import:{raw}"));
++                        unknowns.insert(id.clone());
++                        nodes.entry(id.clone()).or_insert(GraphNode {
++                            id: id.clone(),
++                            kind: GraphNodeKind::Unknown,
++                            name: raw.clone(),
++                            symbol_kind: Some("unresolved_import".to_string()),
++                            anchor: None,
++                        });
++                        unknown += 1;
++                        unknown_examples.insert(format!("import:{raw}"));
++                        (
++                            id,
++                            GraphConfidence::Unknown,
++                            format!("unresolved import {raw}"),
++                        )
++                    };
++                if confidence == GraphConfidence::Extracted {
++                    extracted += 1;
++                }
++                edges.push(GraphEdge {
++                    from: module_id(&file.source.path),
++                    to,
++                    relationship: GraphRelationship::Imports,
++                    confidence,
++                    evidence: line_anchor(&file.source, *line_number, line),
++                    detail,
++                });
++            }
++            for (line_number, name) in &file.calls {
++                if file
++                    .definitions
++                    .iter()
++                    .any(|item| item.line == *line_number && item.name == *name)
++                {
++                    continue;
++                }
++                let caller = file
++                    .definitions
++                    .iter()
++                    .filter(|item| item.line <= *line_number)
++                    .max_by_key(|item| item.line)
++                    .map(|item| item.node_id.clone())
++                    .unwrap_or_else(|| module_id(&file.source.path));
++                let matches = definitions_by_name.get(name).cloned().unwrap_or_default();
++                let local = matches
++                    .iter()
++                    .filter(|(path, _)| path == &file.source.path)
++                    .collect::<Vec<_>>();
++                let target = if local.len() == 1 {
++                    Some(local[0].1.node_id.clone())
++                } else if matches.len() == 1 {
++                    Some(matches[0].1.node_id.clone())
++                } else {
++                    None
++                };
++                let (to, confidence, detail) = if let Some(target) = target {
++                    inferred += 1;
++                    (
++                        target,
++                        GraphConfidence::Inferred,
++                        format!("lexical call {name}"),
++                    )
++                } else {
++                    let label = if matches.is_empty() {
++                        format!("call:{name}")
++                    } else {
++                        format!("ambiguous_call:{name}")
++                    };
++                    let id = unknown_id(&label);
++                    unknowns.insert(id.clone());
++                    nodes.entry(id.clone()).or_insert(GraphNode {
++                        id: id.clone(),
++                        kind: GraphNodeKind::Unknown,
++                        name: name.clone(),
++                        symbol_kind: Some(
++                            if matches.is_empty() {
++                                "unresolved_call"
++                            } else {
++                                "ambiguous_call"
++                            }
++                            .to_string(),
++                        ),
++                        anchor: None,
++                    });
++                    unknown += 1;
++                    unknown_examples.insert(label.clone());
++                    (id, GraphConfidence::Unknown, label)
++                };
++                let relationship = if nodes
++                    .get(&caller)
++                    .is_some_and(|node| node.kind == GraphNodeKind::Test)
++                {
++                    GraphRelationship::Tests
++                } else {
++                    GraphRelationship::Calls
++                };
++                let line = file.text.lines().nth(line_number - 1).unwrap_or("");
++                edges.push(GraphEdge {
++                    from: caller,
++                    to,
++                    relationship,
++                    confidence,
++                    evidence: line_anchor(&file.source, *line_number, line),
++                    detail,
++                });
++            }
++            coverage.push(GraphCoverage {
++                path: file.source.path.clone(),
++                parser: "bounded_lexical_v1".to_string(),
++                extracted_relationships: extracted,
++                inferred_relationships: inferred,
++                unknown_relationships: unknown,
++                unknown_examples: unknown_examples.into_iter().take(8).collect(),
++            });
++        }
++        if unknowns.len() > limits.max_unknown_targets {
++            return Err(invalid("graph unknown-target limit exceeded"));
++        }
++        if nodes.len() > limits.max_nodes {
++            return Err(invalid("graph node limit exceeded"));
++        }
++        edges.sort_by(|left, right| {
++            (
++                &left.from,
++                &left.to,
++                left.relationship,
++                left.confidence,
++                &left.evidence.path,
++                left.evidence.start_line,
++            )
++                .cmp(&(
++                    &right.from,
++                    &right.to,
++                    right.relationship,
++                    right.confidence,
++                    &right.evidence.path,
++                    right.evidence.start_line,
++                ))
++        });
++        edges.dedup();
++        if edges.len() > limits.max_edges {
++            return Err(invalid("graph edge limit exceeded"));
++        }
++        let graph = Self {
++            schema: CODE_GRAPH_SCHEMA,
++            generator: CODE_GRAPH_GENERATOR.to_string(),
++            repository: GraphRepository {
++                identity: repository_identity,
++                root,
++                revision,
++                source_digest: source_digest(&sources),
++            },
++            limits,
++            sources,
++            nodes: nodes.into_values().collect(),
++            edges,
++            coverage,
++        };
++        graph.validate()?;
++        Ok(graph)
++    }
++
++    pub fn read(path: &Path) -> io::Result<Self> {
++        let bytes = fs::read(path)?;
++        if bytes.len() > MAX_GRAPH_BYTES {
++            return Err(invalid("graph snapshot exceeds size limit"));
++        }
++        let graph: Self =
++            serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
++        graph.validate()?;
++        Ok(graph)
++    }
++
++    pub fn write(&self, path: &Path) -> io::Result<()> {
++        self.validate()?;
++        let bytes = serde_json::to_vec_pretty(self).map_err(|error| invalid(error.to_string()))?;
++        if bytes.len() > MAX_GRAPH_BYTES {
++            return Err(invalid("graph snapshot exceeds size limit"));
++        }
++        atomic_write(path, &bytes)
++    }
++
++    pub fn validate(&self) -> io::Result<()> {
++        if self.schema != CODE_GRAPH_SCHEMA || self.generator != CODE_GRAPH_GENERATOR {
++            return Err(invalid("unsupported code graph version"));
++        }
++        if !valid_limits(self.limits)
++            || self.repository.identity.trim().is_empty()
++            || self.repository.identity.len() > 256
++            || self.repository.revision.trim().is_empty()
++            || self.repository.revision.len() > 256
++            || !self.repository.root.is_absolute()
++            || !valid_sha256(&self.repository.source_digest)
++        {
++            return Err(invalid("invalid graph metadata or limits"));
++        }
++        let total_source_bytes = self
++            .sources
++            .iter()
++            .try_fold(0usize, |total, source| total.checked_add(source.bytes));
++        if self.sources.len() > self.limits.max_files
++            || total_source_bytes.is_none_or(|total| total > self.limits.max_source_bytes)
++            || self.nodes.len() > self.limits.max_nodes
++            || self.edges.len() > self.limits.max_edges
++        {
++            return Err(invalid("graph exceeds recorded limits"));
++        }
++        if source_digest(&self.sources) != self.repository.source_digest {
++            return Err(invalid("graph source digest mismatch"));
++        }
++        let mut source_paths = BTreeSet::new();
++        for source in &self.sources {
++            if !clean_relative(&source.path)
++                || !valid_sha256(&source.sha256)
++                || language(&source.path) != Some(source.language)
++                || !source_paths.insert(source.path.clone())
++            {
++                return Err(invalid("invalid or duplicate graph source"));
++            }
++        }
++        if self
++            .sources
++            .windows(2)
++            .any(|pair| pair[0].path >= pair[1].path)
++        {
++            return Err(invalid("graph sources are not canonical"));
++        }
++        let mut node_ids = BTreeSet::new();
++        for node in &self.nodes {
++            if node.id.is_empty() || !node_ids.insert(node.id.clone()) {
++                return Err(invalid("invalid or duplicate graph node"));
++            }
++            if let Some(anchor) = &node.anchor {
++                validate_anchor(anchor, &source_paths)?;
++            } else if node.kind != GraphNodeKind::Unknown {
++                return Err(invalid("source node is missing its anchor"));
++            }
++        }
++        if self.nodes.windows(2).any(|pair| pair[0].id >= pair[1].id) {
++            return Err(invalid("graph nodes are not canonical"));
++        }
++        if self
++            .nodes
++            .iter()
++            .filter(|node| node.kind == GraphNodeKind::Unknown)
++            .count()
++            > self.limits.max_unknown_targets
++        {
++            return Err(invalid("graph exceeds recorded unknown-target limit"));
++        }
++        for edge in &self.edges {
++            if !node_ids.contains(&edge.from) || !node_ids.contains(&edge.to) {
++                return Err(invalid("graph edge references unknown node"));
++            }
++            validate_anchor(&edge.evidence, &source_paths)?;
++        }
++        if self.edges.windows(2).any(|pair| pair[0] >= pair[1]) {
++            return Err(invalid("graph relationships are not canonical"));
++        }
++        let coverage_paths = self
++            .coverage
++            .iter()
++            .map(|item| item.path.clone())
++            .collect::<BTreeSet<_>>();
++        if self.coverage.len() != self.sources.len() || coverage_paths != source_paths {
++            return Err(invalid("graph coverage does not match sources"));
++        }
++        Ok(())
++    }
++
++    pub fn freshness(&self, repository: &Path) -> io::Result<GraphFreshness> {
++        let root = repository.canonicalize()?;
++        if root != self.repository.root {
++            return Err(invalid("graph belongs to a different repository root"));
++        }
++        let mut current_paths = Vec::new();
++        collect_paths(&root, &root, &mut current_paths)?;
++        current_paths.sort();
++        let recorded = self
++            .sources
++            .iter()
++            .map(|source| source.path.clone())
++            .collect::<BTreeSet<_>>();
++        let added = current_paths
++            .into_iter()
++            .filter(|path| !recorded.contains(path))
++            .collect::<Vec<_>>();
++        let mut changed = Vec::new();
++        let mut missing = Vec::new();
++        for source in &self.sources {
++            match safe_source_path(&root, &source.path).and_then(fs::read) {
++                Ok(bytes) if sha256(&bytes) == source.sha256 => {}
++                Ok(_) => changed.push(source.path.clone()),
++                Err(error) if error.kind() == io::ErrorKind::NotFound => {
++                    missing.push(source.path.clone())
++                }
++                Err(error) => return Err(error),
++            }
++        }
++        if added.is_empty() && changed.is_empty() && missing.is_empty() {
++            Ok(GraphFreshness::Fresh)
++        } else {
++            Ok(GraphFreshness::Stale {
++                added,
++                changed,
++                missing,
++            })
++        }
++    }
++
++    pub fn select(&self, ids: &[String]) -> io::Result<GraphEvidenceSelection> {
++        if ids.is_empty() {
++            return Err(invalid("at least one graph node must be selected"));
++        }
++        let selected = ids.iter().cloned().collect::<BTreeSet<_>>();
++        if selected.len() != ids.len() {
++            return Err(invalid("duplicate graph selection"));
++        }
++        let nodes_by_id = self
++            .nodes
++            .iter()
++            .map(|node| (&node.id, node))
++            .collect::<BTreeMap<_, _>>();
++        if selected.iter().any(|id| !nodes_by_id.contains_key(id)) {
++            return Err(invalid("unknown graph selection"));
++        }
++        let relationships = self
++            .edges
++            .iter()
++            .filter(|edge| selected.contains(&edge.from) || selected.contains(&edge.to))
++            .cloned()
++            .collect::<Vec<_>>();
++        let related_ids = relationships
++            .iter()
++            .flat_map(|edge| [edge.from.clone(), edge.to.clone()])
++            .chain(selected.iter().cloned())
++            .collect::<BTreeSet<_>>();
++        let paths = related_ids
++            .iter()
++            .filter_map(|id| {
++                nodes_by_id
++                    .get(id)
++                    .and_then(|node| node.anchor.as_ref())
++                    .map(|anchor| anchor.path.clone())
++            })
++            .collect::<BTreeSet<_>>();
++        let selection = GraphEvidenceSelection {
++            schema: 1,
++            graph_schema: self.schema,
++            graph_generator: self.generator.clone(),
++            repository_identity: self.repository.identity.clone(),
++            revision: self.repository.revision.clone(),
++            source_digest: self.repository.source_digest.clone(),
++            nodes: related_ids
++                .into_iter()
++                .filter_map(|id| nodes_by_id.get(&id).map(|node| (*node).clone()))
++                .collect(),
++            relationships,
++            coverage: self
++                .coverage
++                .iter()
++                .filter(|item| paths.contains(&item.path))
++                .cloned()
++                .collect(),
++        };
++        let bytes = serde_json::to_vec(&selection).map_err(|error| invalid(error.to_string()))?;
++        if bytes.len() > self.limits.max_selection_bytes {
++            return Err(invalid("graph evidence selection exceeds size limit"));
++        }
++        Ok(selection)
++    }
++
++    pub fn selection_prompt(&self, ids: &[String]) -> io::Result<String> {
++        let selection = self.select(ids)?;
++        Ok(format!(
++            "Use this version-bound code-graph evidence. Verify inferred and unknown relationships against source before relying on them.\n```json\n{}\n```\n",
++            serde_json::to_string_pretty(&selection).map_err(|error| invalid(error.to_string()))?
++        ))
++    }
++
++    pub fn html(&self) -> io::Result<String> {
++        self.validate()?;
++        let mut json = serde_json::to_string(self).map_err(|error| invalid(error.to_string()))?;
++        json = json
++            .replace('<', "\\u003c")
++            .replace('>', "\\u003e")
++            .replace('&', "\\u0026");
++        Ok(HTML_TEMPLATE.replace("__GRAPH_JSON__", &json))
++    }
++
++    pub fn write_html(&self, path: &Path) -> io::Result<()> {
++        atomic_write(path, self.html()?.as_bytes())
++    }
++}
++
++fn validate_anchor(anchor: &GraphAnchor, sources: &BTreeSet<PathBuf>) -> io::Result<()> {
++    if !sources.contains(&anchor.path)
++        || anchor.start_line == 0
++        || anchor.end_line < anchor.start_line
++        || !valid_sha256(&anchor.sha256)
++    {
++        return Err(invalid("invalid graph source anchor"));
++    }
++    Ok(())
++}
++
++fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
++    let parent = path
++        .parent()
++        .ok_or_else(|| invalid("output parent is missing"))?;
++    fs::create_dir_all(parent)?;
++    for attempt in 0..16 {
++        let temporary = parent.join(format!(".omd-graph-{}-{attempt}.tmp", std::process::id()));
++        match OpenOptions::new()
++            .create_new(true)
++            .write(true)
++            .open(&temporary)
++        {
++            Ok(mut file) => {
++                file.write_all(bytes)?;
++                file.sync_all()?;
++                drop(file);
++                if let Err(error) = fs::rename(&temporary, path) {
++                    let _ = fs::remove_file(&temporary);
++                    return Err(error);
++                }
++                return Ok(());
++            }
++            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
++            Err(error) => return Err(error),
++        }
++    }
++    Err(invalid("could not reserve graph output"))
++}
++
++const HTML_TEMPLATE: &str = r#"<!doctype html>
++<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
++<title>Oh My Diff code graph</title><style>
++:root{color-scheme:dark;background:#101318;color:#e8edf2;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}*{box-sizing:border-box}body{margin:0}header{padding:16px 20px;border-bottom:1px solid #303944;display:flex;gap:18px;align-items:center;flex-wrap:wrap}h1{font-size:17px;margin:0;color:#8de3c2}input,select,button{font:inherit;color:inherit;background:#171c23;border:1px solid #3a4654;border-radius:5px;padding:7px 9px}button{cursor:pointer}.meta{color:#94a1ad}.layout{display:grid;grid-template-columns:minmax(260px,32%) 1fr;height:calc(100vh - 70px)}aside{overflow:auto;border-right:1px solid #303944;padding:10px}.node{padding:8px;border-radius:5px;cursor:pointer;border:1px solid transparent}.node:hover,.node.active{background:#1b242d;border-color:#3b8f77}.node small{display:block;color:#94a1ad;margin-top:3px}main{overflow:auto;padding:18px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}svg{width:100%;height:360px;background:#0c0f13;border:1px solid #303944;border-radius:6px}.edge{stroke:#657381;stroke-width:1.4}.edge.inferred{stroke-dasharray:5 4}.edge.unknown{stroke:#d7a34a;stroke-dasharray:2 4}.bubble{fill:#1b242d;stroke:#65c6a5;stroke-width:1.5;cursor:pointer}.bubble.unknown{stroke:#d7a34a}.label{fill:#e8edf2;font-size:11px;pointer-events:none}.details{white-space:pre-wrap;line-height:1.5;background:#171c23;padding:12px;border-radius:6px;margin-top:12px}.source{color:#8de3c2}.warning{color:#e5b95c}@media(max-width:760px){.layout{grid-template-columns:1fr;height:auto}aside{max-height:42vh;border-right:0;border-bottom:1px solid #303944}main{min-height:58vh}}
++</style></head><body><header><h1>Oh My Diff code/impact graph</h1><span id="version" class="meta"></span><span id="counts" class="meta"></span></header>
++<div class="layout"><aside><div class="toolbar"><input id="search" aria-label="Search graph" placeholder="Search symbols, files, edges"><select id="kind" aria-label="Node kind"><option value="">all nodes</option><option>module</option><option>symbol</option><option>test</option><option>unknown</option></select></div><div id="nodes"></div></aside>
++<main><div class="toolbar"><select id="confidence" aria-label="Relationship confidence"><option value="">all relationships</option><option>extracted</option><option>inferred</option><option>unknown</option></select><button id="select">Select current evidence</button><button id="copy">Copy selections</button><button id="clear">Clear</button></div><svg id="graph" viewBox="0 0 900 360" role="img" aria-label="Selected node neighborhood"></svg><div id="details" class="details">Choose a node. Solid edges are extracted, dashed edges inferred, and amber edges unknown.</div></main></div>
++<script id="graph-data" type="application/json">__GRAPH_JSON__</script><script>
++const g=JSON.parse(document.getElementById('graph-data').textContent),byId=new Map(g.nodes.map(n=>[n.id,n])),chosen=new Set();let current=g.nodes.find(n=>n.kind!=='unknown')||g.nodes[0];
++const q=id=>document.getElementById(id),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
++q('version').textContent=`${g.repository.identity} · ${g.repository.revision} · ${g.generator}`;q('counts').textContent=`${g.sources.length} files · ${g.nodes.length} nodes · ${g.edges.length} edges`;
++function href(a){return 'file://'+encodeURI(g.repository.root.replace(/\/$/,'')+'/'+a.path)+'#L'+a.start_line}function matches(n){const text=(n.name+' '+n.id+' '+(n.symbol_kind||'')).toLowerCase(),s=q('search').value.toLowerCase();return(!q('kind').value||n.kind===q('kind').value)&&(!s||text.includes(s))}
++function list(){q('nodes').innerHTML=g.nodes.filter(matches).map(n=>`<div class="node ${current&&n.id===current.id?'active':''}" data-id="${esc(n.id)}"><b>${chosen.has(n.id)?'☑ ':'□ '}${esc(n.name)}</b><small>${n.kind}${n.anchor?' · '+esc(n.anchor.path)+':'+n.anchor.start_line:''}</small></div>`).join('');document.querySelectorAll('.node').forEach(e=>e.onclick=()=>{current=byId.get(e.dataset.id);render()})}
++function visibleEdges(){return g.edges.filter(e=>(e.from===current.id||e.to===current.id)&&(!q('confidence').value||e.confidence===q('confidence').value))}
++function renderGraph(edges){const ids=[current.id,...new Set(edges.flatMap(e=>[e.from,e.to]).filter(id=>id!==current.id))].slice(0,18),cx=450,cy=180,r=145,pos=new Map([[current.id,[cx,cy]]]);ids.slice(1).forEach((id,i)=>{const a=2*Math.PI*i/Math.max(1,ids.length-1);pos.set(id,[cx+Math.cos(a)*r,cy+Math.sin(a)*r])});let svg='';for(const e of edges){if(!pos.has(e.from)||!pos.has(e.to))continue;const a=pos.get(e.from),b=pos.get(e.to);svg+=`<line class="edge ${e.confidence}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"><title>${esc(e.relationship+' · '+e.confidence+' · '+e.detail)}</title></line>`}for(const id of ids){const n=byId.get(id),p=pos.get(id),label=n.name.length>20?n.name.slice(0,18)+'…':n.name;svg+=`<g data-id="${esc(id)}"><circle class="bubble ${n.kind}" cx="${p[0]}" cy="${p[1]}" r="${id===current.id?38:28}"><title>${esc(n.id)}</title></circle><text class="label" x="${p[0]}" y="${p[1]+4}" text-anchor="middle">${esc(label)}</text></g>`}q('graph').innerHTML=svg;document.querySelectorAll('#graph g').forEach(e=>e.onclick=()=>{current=byId.get(e.dataset.id);render()})}
++function render(){list();const edges=visibleEdges();renderGraph(edges);const a=current.anchor,coverage=a&&g.coverage.find(c=>c.path===a.path),source=a?`<a class="source" href="${esc(href(a))}">${esc(a.path)}:${a.start_line}</a>`:'<span class="warning">No resolved source target</span>';q('details').innerHTML=`<b>${esc(current.name)}</b> · ${current.kind}${current.symbol_kind?' · '+esc(current.symbol_kind):''}\n${source}\n\n${edges.map(e=>`${e.relationship} · ${e.confidence} · ${esc(byId.get(e.from).name)} → ${esc(byId.get(e.to).name)} · <a class="source" href="${esc(href(e.evidence))}">${esc(e.evidence.path)}:${e.evidence.start_line}</a>`).join('\n')||'No relationships under this filter.'}${coverage?`\n\nCoverage: ${coverage.extracted_relationships} extracted, ${coverage.inferred_relationships} inferred, ${coverage.unknown_relationships} unknown${coverage.unknown_examples.length?'\nUnknown examples: '+esc(coverage.unknown_examples.join(', ')):''}`:''}`}
++function packet(){const ids=new Set(chosen),relationships=g.edges.filter(e=>ids.has(e.from)||ids.has(e.to)),related=new Set([...ids,...relationships.flatMap(e=>[e.from,e.to])]),paths=new Set([...related].map(id=>byId.get(id).anchor).filter(Boolean).map(a=>a.path));return{schema:1,graph_schema:g.schema,graph_generator:g.generator,repository_identity:g.repository.identity,revision:g.repository.revision,source_digest:g.repository.source_digest,nodes:[...related].map(id=>byId.get(id)),relationships,coverage:g.coverage.filter(c=>paths.has(c.path))}}
++async function copyText(text){if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(text);return}const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();const copied=document.execCommand('copy');area.remove();if(!copied)throw new Error('clipboard unavailable')}
++q('search').oninput=list;q('kind').onchange=list;q('confidence').onchange=render;q('select').onclick=()=>{chosen.add(current.id);list()};q('clear').onclick=()=>{chosen.clear();list()};q('copy').onclick=async()=>{if(!chosen.size){chosen.add(current.id)}const text='Use this version-bound code-graph evidence. Verify inferred and unknown relationships against source before relying on them.\n```json\n'+JSON.stringify(packet(),null,2)+'\n```\n';if(new TextEncoder().encode(text).length>g.limits.max_selection_bytes){q('copy').textContent='Selection too large';setTimeout(()=>q('copy').textContent='Copy selections',1600);return}try{await copyText(text);q('copy').textContent='Copied'}catch(_){q('copy').textContent='Copy unavailable'}setTimeout(()=>q('copy').textContent='Copy selections',1200);list()};render();
++</script></body></html>"#;
 diff --git a/codex-rs/omd/src/guideline.rs b/codex-rs/omd/src/guideline.rs
 new file mode 100644
-index 0000000..6d04bd1
+index 0000000000000000000000000000000000000000..6d04bd123f2ed2af2c0ac0cbc66dd9ecea546433
 --- /dev/null
 +++ b/codex-rs/omd/src/guideline.rs
 @@ -0,0 +1,658 @@
@@ -8065,7 +9555,7 @@ index 0000000..6d04bd1
 +}
 diff --git a/codex-rs/omd/src/knowledge.rs b/codex-rs/omd/src/knowledge.rs
 new file mode 100644
-index 0000000..1b27bbc
+index 0000000000000000000000000000000000000000..1b27bbcae6bee86c2d0988b11d7427685c4e8841
 --- /dev/null
 +++ b/codex-rs/omd/src/knowledge.rs
 @@ -0,0 +1,1023 @@
@@ -9094,13 +10584,14 @@ index 0000000..1b27bbc
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..67206c8
+index 0000000000000000000000000000000000000000..1a3f646baf99f5ffcd90f0797c1a82a3a904b449
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,94 @@
 +mod admission;
 +mod checkpoint;
 +mod communication;
++mod graph;
 +mod guideline;
 +mod knowledge;
 +mod reactive;
@@ -9126,6 +10617,22 @@ index 0000000..67206c8
 +pub use checkpoint::WorkerStatus;
 +pub use communication::WorkerReport;
 +pub use communication::WorkerReportStatus;
++pub use graph::CODE_GRAPH_GENERATOR;
++pub use graph::CODE_GRAPH_SCHEMA;
++pub use graph::CodeGraph;
++pub use graph::GraphAnchor;
++pub use graph::GraphConfidence;
++pub use graph::GraphCoverage;
++pub use graph::GraphEdge;
++pub use graph::GraphEvidenceSelection;
++pub use graph::GraphFreshness;
++pub use graph::GraphLanguage;
++pub use graph::GraphLimits;
++pub use graph::GraphNode;
++pub use graph::GraphNodeKind;
++pub use graph::GraphRelationship;
++pub use graph::GraphRepository;
++pub use graph::GraphSource;
 +pub use guideline::ActiveGuideline;
 +pub use guideline::EvidenceReference;
 +pub use guideline::EvidenceSplit;
@@ -9177,7 +10684,7 @@ index 0000000..67206c8
 +pub use workspace::tracked_paths;
 diff --git a/codex-rs/omd/src/reactive.rs b/codex-rs/omd/src/reactive.rs
 new file mode 100644
-index 0000000..f28113b
+index 0000000000000000000000000000000000000000..f28113be53133c6b1b3112fcbd7b6e14fe034f8a
 --- /dev/null
 +++ b/codex-rs/omd/src/reactive.rs
 @@ -0,0 +1,264 @@
@@ -9447,7 +10954,7 @@ index 0000000..f28113b
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000..74978b9
+index 0000000000000000000000000000000000000000..74978b9b0cd65020174ff06d5501179226be9484
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
 @@ -0,0 +1,422 @@
@@ -9875,7 +11382,7 @@ index 0000000..74978b9
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000..8025d9f
+index 0000000000000000000000000000000000000000..8025d9f797e291fa0ec43b6099785bf13ead49bf
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
 @@ -0,0 +1,756 @@
@@ -10637,7 +12144,7 @@ index 0000000..8025d9f
 +}
 diff --git a/codex-rs/omd/tests/communication.rs b/codex-rs/omd/tests/communication.rs
 new file mode 100644
-index 0000000..f64cb6e
+index 0000000000000000000000000000000000000000..f64cb6ee619a7b50ac560f11a4e9bd118cd08ea3
 --- /dev/null
 +++ b/codex-rs/omd/tests/communication.rs
 @@ -0,0 +1,49 @@
@@ -10690,9 +12197,213 @@ index 0000000..f64cb6e
 +    assert!(WorkerReport::parse(missing).is_err());
 +    assert!(WorkerReport::parse(unknown).is_err());
 +}
+diff --git a/codex-rs/omd/tests/graph.rs b/codex-rs/omd/tests/graph.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..8bc935dfa1c4f2f169c9bcdd32d1728ec7dec8ad
+--- /dev/null
++++ b/codex-rs/omd/tests/graph.rs
+@@ -0,0 +1,198 @@
++use codex_omd::CodeGraph;
++use codex_omd::GraphConfidence;
++use codex_omd::GraphFreshness;
++use codex_omd::GraphLimits;
++use codex_omd::GraphNodeKind;
++use codex_omd::GraphRelationship;
++use std::fs;
++use std::path::PathBuf;
++
++fn fixture() -> tempfile::TempDir {
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path();
++    fs::create_dir_all(root.join("src")).unwrap();
++    fs::create_dir_all(root.join("tests")).unwrap();
++    fs::write(
++        root.join("src/lib.rs"),
++        "mod worker;\nuse crate::worker::run;\npub fn entry() { run(); mystery(); }\n",
++    )
++    .unwrap();
++    fs::write(
++        root.join("src/worker.rs"),
++        "pub fn run() { service(); }\nfn service() {}\n",
++    )
++    .unwrap();
++    fs::write(
++        root.join("tests/graph_test.rs"),
++        "use crate::worker::run;\n#[test]\nfn test_run() { run(); }\n",
++    )
++    .unwrap();
++    fs::write(
++        root.join("app.py"),
++        "from service import handle\ndef py_call():\n    handle()\n",
++    )
++    .unwrap();
++    fs::write(root.join("service.py"), "def handle():\n    pass\n").unwrap();
++    fs::write(
++        root.join("client.ts"),
++        "import { helper } from './helper';\nexport function invoke() { helper(); }\n",
++    )
++    .unwrap();
++    fs::write(root.join("helper.ts"), "export function helper() {}\n").unwrap();
++    fs::write(
++        root.join("Demo.java"),
++        "import demo.Missing;\nclass Demo { void execute() { absent(); } }\n",
++    )
++    .unwrap();
++    temp
++}
++
++#[test]
++fn one_versioned_graph_supports_both_views_and_evidence_selection() {
++    let temp = fixture();
++    let graph = CodeGraph::build(
++        temp.path(),
++        "fixture/repository".to_string(),
++        "fixture-revision".to_string(),
++        GraphLimits::default(),
++    )
++    .unwrap();
++    assert_eq!(graph.schema, 1);
++    assert!(graph.nodes.iter().any(|node| node.name == "entry"));
++    assert!(
++        graph
++            .nodes
++            .iter()
++            .any(|node| node.kind == GraphNodeKind::Test)
++    );
++    assert!(graph.edges.iter().any(|edge| {
++        edge.relationship == GraphRelationship::Imports
++            && edge.confidence == GraphConfidence::Extracted
++    }));
++    assert!(graph.edges.iter().any(|edge| {
++        edge.relationship == GraphRelationship::Calls
++            && edge.confidence == GraphConfidence::Inferred
++    }));
++    assert!(
++        graph
++            .edges
++            .iter()
++            .any(|edge| edge.confidence == GraphConfidence::Unknown)
++    );
++    assert!(
++        graph
++            .coverage
++            .iter()
++            .any(|item| item.unknown_relationships > 0)
++    );
++
++    let selected = graph
++        .nodes
++        .iter()
++        .find(|node| node.name == "entry")
++        .unwrap();
++    let evidence = graph.select(std::slice::from_ref(&selected.id)).unwrap();
++    assert!(evidence.nodes.iter().any(|node| node.id == selected.id));
++    assert!(!evidence.relationships.is_empty());
++    let prompt = graph
++        .selection_prompt(std::slice::from_ref(&selected.id))
++        .unwrap();
++    assert!(prompt.contains("Verify inferred and unknown"));
++
++    let graph_path = temp.path().join("snapshot/graph.json");
++    let html_path = temp.path().join("snapshot/graph.html");
++    graph.write(&graph_path).unwrap();
++    graph.write_html(&html_path).unwrap();
++    let loaded = CodeGraph::read(&graph_path).unwrap();
++    assert_eq!(loaded, graph);
++    let html = fs::read_to_string(html_path).unwrap();
++    assert!(html.contains("graph-data"));
++    assert!(html.contains("Copy selections"));
++    assert!(html.contains(&graph.repository.source_digest));
++    assert_eq!(graph.freshness(temp.path()).unwrap(), GraphFreshness::Fresh);
++}
++
++#[test]
++fn regeneration_is_deterministic_and_detects_changed_missing_and_added_sources() {
++    let temp = fixture();
++    let first = CodeGraph::build(
++        temp.path(),
++        "fixture/repository".to_string(),
++        "revision".to_string(),
++        GraphLimits::default(),
++    )
++    .unwrap();
++    let second = CodeGraph::build(
++        temp.path(),
++        "fixture/repository".to_string(),
++        "revision".to_string(),
++        GraphLimits::default(),
++    )
++    .unwrap();
++    assert_eq!(first, second);
++    fs::write(temp.path().join("src/lib.rs"), "pub fn changed() {}\n").unwrap();
++    fs::remove_file(temp.path().join("service.py")).unwrap();
++    fs::write(temp.path().join("added.js"), "export function added() {}\n").unwrap();
++    let GraphFreshness::Stale {
++        added,
++        changed,
++        missing,
++    } = first.freshness(temp.path()).unwrap()
++    else {
++        panic!("graph should be stale")
++    };
++    assert_eq!(added, [PathBuf::from("added.js")]);
++    assert_eq!(changed, [PathBuf::from("src/lib.rs")]);
++    assert_eq!(missing, [PathBuf::from("service.py")]);
++}
++
++#[test]
++fn bounds_and_tampering_fail_closed() {
++    let temp = fixture();
++    let limits = GraphLimits {
++        max_files: 1,
++        ..GraphLimits::default()
++    };
++    assert!(
++        CodeGraph::build(
++            temp.path(),
++            "fixture/repository".to_string(),
++            "revision".to_string(),
++            limits,
++        )
++        .is_err()
++    );
++
++    let mut graph = CodeGraph::build(
++        temp.path(),
++        "fixture/repository".to_string(),
++        "revision".to_string(),
++        GraphLimits::default(),
++    )
++    .unwrap();
++    graph.repository.source_digest = "tampered".to_string();
++    assert!(graph.validate().is_err());
++}
++
++#[test]
++fn html_escapes_embedded_repository_metadata() {
++    let temp = fixture();
++    fs::write(
++        temp.path().join("evil&quot;onmouseover=alert(1).rs"),
++        "pub fn linked() {}\n",
++    )
++    .unwrap();
++    let graph = CodeGraph::build(
++        temp.path(),
++        "</script><script>alert(1)</script>".to_string(),
++        "revision".to_string(),
++        GraphLimits::default(),
++    )
++    .unwrap();
++    let html = graph.html().unwrap();
++    assert!(!html.contains("</script><script>alert(1)</script>"));
++    assert!(html.contains("\\u003c/script\\u003e"));
++    assert!(html.contains("evil\\u0026quot;onmouseover=alert(1).rs"));
++    assert!(html.contains("href=\"${esc(href(a))}\""));
++    assert!(html.contains("href=\"${esc(href(e.evidence))}\""));
++}
 diff --git a/codex-rs/omd/tests/guideline.rs b/codex-rs/omd/tests/guideline.rs
 new file mode 100644
-index 0000000..163f95b
+index 0000000000000000000000000000000000000000..163f95b6a6f50bd8c738dc99dd5210d91e7cd6a3
 --- /dev/null
 +++ b/codex-rs/omd/tests/guideline.rs
 @@ -0,0 +1,286 @@
@@ -10984,7 +12695,7 @@ index 0000000..163f95b
 +}
 diff --git a/codex-rs/omd/tests/knowledge.rs b/codex-rs/omd/tests/knowledge.rs
 new file mode 100644
-index 0000000..aef9c99
+index 0000000000000000000000000000000000000000..aef9c99b6cd1b1cac9eb08e141796e42f6b808ad
 --- /dev/null
 +++ b/codex-rs/omd/tests/knowledge.rs
 @@ -0,0 +1,279 @@
@@ -11269,7 +12980,7 @@ index 0000000..aef9c99
 +}
 diff --git a/codex-rs/omd/tests/reactive.rs b/codex-rs/omd/tests/reactive.rs
 new file mode 100644
-index 0000000..6e4431e
+index 0000000000000000000000000000000000000000..6e4431eaa998f8a9ef10b657b148230dc6fccba6
 --- /dev/null
 +++ b/codex-rs/omd/tests/reactive.rs
 @@ -0,0 +1,155 @@
@@ -11430,7 +13141,7 @@ index 0000000..6e4431e
 +}
 diff --git a/codex-rs/omd/tests/workspace.rs b/codex-rs/omd/tests/workspace.rs
 new file mode 100644
-index 0000000..03463c9
+index 0000000000000000000000000000000000000000..03463c997925ae2a797718c426f581b486aee6a5
 --- /dev/null
 +++ b/codex-rs/omd/tests/workspace.rs
 @@ -0,0 +1,249 @@
@@ -11683,8 +13394,20 @@ index 0000000..03463c9
 +        0o600
 +    );
 +}
+diff --git a/codex-rs/tui/Cargo.toml b/codex-rs/tui/Cargo.toml
+index 040f44f502e691cac5451d5aa6ee8a8c4ba5025b..216c43a17db3107f1db0560cb034c1af63a11f62 100644
+--- a/codex-rs/tui/Cargo.toml
++++ b/codex-rs/tui/Cargo.toml
+@@ -50,6 +50,7 @@ codex-message-history = { workspace = true }
+ codex-model-provider = { workspace = true }
+ codex-model-provider-info = { workspace = true }
+ codex-models-manager = { workspace = true }
++codex-omd = { path = "../omd" }
+ codex-otel = { workspace = true }
+ codex-plugin = { workspace = true }
+ codex-protocol = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index e7140a6..1a39285 100644
+index e7140a6533a6a8a3e719ba67019f7e810ab8b083..1a39285d2e1aa9769c0ee3014667fa3ce330c997 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -174,7 +174,11 @@ use crossterm::event::KeyCode;
@@ -11811,10 +13534,10 @@ index e7140a6..1a39285 100644
                  if let Some((x, y)) = chat_widget.cursor_pos(area) {
                      frame.set_cursor_style(chat_widget.cursor_style(area));
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index cc16390..b4497a0 100644
+index cc16390c17de1c2dcc3f87456dd667bee44eb787..230a2b17f540bd116bad0a9848501f369ee62e78 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -250,6 +250,12 @@ impl App {
+@@ -250,6 +250,15 @@ impl App {
              AppEvent::CopySelection { text, label, format } => {
                  self.chat_widget.copy_selection(text, label, format);
              }
@@ -11824,11 +13547,14 @@ index cc16390..b4497a0 100644
 +                    .chat_widget
 +                    .add_error_message(format!("Contributor revocation failed: {error}")),
 +            },
++            AppEvent::OmdGraphSelection { prompt } => {
++                self.chat_widget.insert_omd_graph_selection(&prompt);
++            }
              AppEvent::ClearUi { name } => {
                  self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
                  self.reset_app_ui_state_after_clear();
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index 64c8bda..5a65198 100644
+index 64c8bda18db957a6990441ffd57f96be606a7556..5a651989760166d55a3a9a52de52c566baed7cc4 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
 @@ -218,6 +218,80 @@ async fn pasted_text_normalizes_mixed_line_endings_at_app_boundary() -> Result<(
@@ -11913,7 +13639,7 @@ index 64c8bda..5a65198 100644
  async fn duplicate_named_resume_renders_error_without_replacing_current_session() -> Result<()> {
      let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
 diff --git a/codex-rs/tui/src/app_backtrack/legacy_input.rs b/codex-rs/tui/src/app_backtrack/legacy_input.rs
-index c36e83b..20b1d93 100644
+index c36e83bd768785d26d8dd74ccdba446a1347df70..20b1d931f1e8f9f16d947e108a7944a8ecd492b3 100644
 --- a/codex-rs/tui/src/app_backtrack/legacy_input.rs
 +++ b/codex-rs/tui/src/app_backtrack/legacy_input.rs
 @@ -35,12 +35,15 @@ impl App {
@@ -11934,21 +13660,24 @@ index c36e83b..20b1d93 100644
          }
          Ok(true)
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 1df5a1a..d48a83d 100644
+index 1df5a1a7f4f00a61a1fa8a263ccca3752ffeee7a..787e6623efed8bae20c896a13134e8166ea153be 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -390,6 +390,9 @@ pub(crate) enum AppEvent {
+@@ -390,6 +390,12 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
 +    OmdContributorRevocation {
 +        result: Result<String, String>,
 +    },
++    OmdGraphSelection {
++        prompt: String,
++    },
  
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 967c712..a55e53f 100644
+index 967c712fe9a5f0d95999be28ae847647db8a27c0..a55e53fd3429605b7f46d6112bb386fb33579bb0 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -347,6 +347,7 @@ use codex_file_search::FileMatch;
@@ -12076,7 +13805,7 @@ index 967c712..a55e53f 100644
      fn footer_hint_row_is_separated_from_composer() {
          let (tx, _rx) = unbounded_channel::<AppEvent>();
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index f249fad..afc30b4 100644
+index f249fad8b2eb8c02a6d4cd04008e39d173cb3c15..afc30b4a14e56c73e3471cbd46631d2f1f592aec 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
 @@ -1031,6 +1031,40 @@ impl BottomPane {
@@ -12121,7 +13850,7 @@ index f249fad..afc30b4 100644
      pub(crate) fn composer_cursor(&self) -> usize {
          self.composer.cursor()
 diff --git a/codex-rs/tui/src/bottom_pane/textarea.rs b/codex-rs/tui/src/bottom_pane/textarea.rs
-index e8900ad..f73a018 100644
+index e8900ad606f14612d6611ac3e6339c0cc3cf500c..f73a0181db5047984e58e86592e236f43b1bc7cc 100644
 --- a/codex-rs/tui/src/bottom_pane/textarea.rs
 +++ b/codex-rs/tui/src/bottom_pane/textarea.rs
 @@ -527,6 +527,37 @@ impl TextArea {
@@ -12227,18 +13956,19 @@ index e8900ad..f73a018 100644
      fn insert_str_at_clamps_to_char_boundary() {
          let mut t = TextArea::new();
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 16d4a6e..e33410f 100644
+index 16d4a6e5932e63f4e8185a59c00dfe1d5dd91b35..0978f515b2792cdab29761910cdbbd3e551bc879 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
-@@ -381,6 +381,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+@@ -381,6 +381,8 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
  mod model_popup_state;
  mod model_popups;
  mod notifications;
++mod omd_graph;
 +mod omd_inspector;
  use self::notifications::Notification;
  mod permission_discovery;
  mod permission_popups;
-@@ -1681,6 +1682,22 @@ impl ChatWidget {
+@@ -1681,6 +1683,22 @@ impl ChatWidget {
          self.bottom_pane.composer_is_empty() && !self.bottom_pane.is_in_paste_burst()
      }
  
@@ -12262,7 +13992,7 @@ index 16d4a6e..e33410f 100644
          self.bottom_pane.composer_is_vim_enabled()
      }
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index f45ae82..7ba8abf 100644
+index f45ae82fef827e04dfa35cd771ad3f501ff0afbc..7ba8abfce25cacf2ac9f75b9c3ce41e08a6ca910 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -37,7 +37,11 @@ impl ChatWidget {
@@ -12278,9 +14008,220 @@ index f45ae82..7ba8abf 100644
          let side_placeholder = SIDE_PLACEHOLDER.to_string();
  
          let model_override = model.as_deref();
+diff --git a/codex-rs/tui/src/chatwidget/omd_graph.rs b/codex-rs/tui/src/chatwidget/omd_graph.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..4282243df9ca4a3e18dcc4ea32ebaa1b6442e428
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/omd_graph.rs
+@@ -0,0 +1,205 @@
++use super::*;
++use crate::app_event::AppEvent;
++use crate::bottom_pane::SelectionDescriptionLayout;
++use crate::bottom_pane::SelectionItem;
++use crate::bottom_pane::SelectionViewParams;
++use crate::bottom_pane::popup_consts::standard_popup_hint_line;
++use codex_omd::CodeGraph;
++use codex_omd::GraphConfidence;
++use codex_omd::GraphNode;
++use codex_omd::GraphNodeKind;
++use ratatui::text::Line;
++use ratatui::widgets::Paragraph;
++
++fn node_kind(kind: GraphNodeKind) -> &'static str {
++    match kind {
++        GraphNodeKind::Module => "module",
++        GraphNodeKind::Symbol => "symbol",
++        GraphNodeKind::Test => "test",
++        GraphNodeKind::Unknown => "unknown",
++    }
++}
++
++fn confidence(value: GraphConfidence) -> &'static str {
++    match value {
++        GraphConfidence::Extracted => "extracted",
++        GraphConfidence::Inferred => "inferred",
++        GraphConfidence::Unknown => "unknown",
++    }
++}
++
++fn source_link(node: &GraphNode) -> String {
++    node.anchor
++        .as_ref()
++        .map(|anchor| format!("{}:{}", anchor.path.display(), anchor.start_line))
++        .unwrap_or_else(|| "unresolved source target".to_string())
++}
++
++fn selection_params(graph: &CodeGraph, snapshot: &Path) -> SelectionViewParams {
++    let header = Paragraph::new(vec![
++        Line::from(format!(
++            "{} · {}",
++            graph.repository.identity, graph.repository.revision
++        )),
++        Line::from(format!(
++            "{} files · {} nodes · {} relationships",
++            graph.sources.len(),
++            graph.nodes.len(),
++            graph.edges.len()
++        )),
++        Line::from(format!(
++            "Source {} · snapshot {}",
++            &graph.repository.source_digest[..12],
++            snapshot.display()
++        ))
++        .dim(),
++        Line::from("Enter adds one node and its bounded impact neighborhood to the composer."),
++    ]);
++    let items = graph
++        .nodes
++        .iter()
++        .map(|node| {
++            let selected_id = node.id.clone();
++            let packet = graph.selection_prompt(std::slice::from_ref(&selected_id));
++            let relationships = graph
++                .edges
++                .iter()
++                .filter(|edge| edge.from == node.id || edge.to == node.id)
++                .collect::<Vec<_>>();
++            let extracted = relationships
++                .iter()
++                .filter(|edge| edge.confidence == GraphConfidence::Extracted)
++                .count();
++            let inferred = relationships
++                .iter()
++                .filter(|edge| edge.confidence == GraphConfidence::Inferred)
++                .count();
++            let unknown = relationships
++                .iter()
++                .filter(|edge| edge.confidence == GraphConfidence::Unknown)
++                .count();
++            let description = format!(
++                "{} · {} · {} extracted / {} inferred / {} unknown",
++                node_kind(node.kind),
++                source_link(node),
++                extracted,
++                inferred,
++                unknown
++            );
++            let search_value = relationships
++                .iter()
++                .map(|edge| {
++                    format!(
++                        "{} {} {} {}",
++                        edge.from,
++                        edge.to,
++                        confidence(edge.confidence),
++                        edge.detail
++                    )
++                })
++                .chain(std::iter::once(description.clone()))
++                .collect::<Vec<_>>()
++                .join(" ");
++            SelectionItem {
++                name: node.name.clone(),
++                description: Some(description),
++                search_value: Some(search_value),
++                is_disabled: packet.is_err(),
++                disabled_reason: packet.as_ref().err().map(ToString::to_string),
++                actions: packet
++                    .ok()
++                    .map(|prompt| {
++                        vec![Box::new(move |tx: &AppEventSender| {
++                            tx.send(AppEvent::OmdGraphSelection {
++                                prompt: prompt.clone(),
++                            });
++                        })
++                            as crate::bottom_pane::SelectionAction]
++                    })
++                    .unwrap_or_default(),
++                dismiss_on_select: true,
++                ..Default::default()
++            }
++        })
++        .collect();
++    SelectionViewParams {
++        view_id: Some("omd-code-graph"),
++        title: Some("Oh My Diff code/impact graph".to_string()),
++        subtitle: Some(
++            "Search symbols, modules, tests, source paths, or relationship confidence".to_string(),
++        ),
++        header: Box::new(header),
++        items,
++        is_searchable: true,
++        search_placeholder: Some("Type to filter graph evidence...".to_string()),
++        description_layout: SelectionDescriptionLayout::StackBelowWhenNarrow {
++            min_description_width: 34,
++        },
++        footer_hint: Some(standard_popup_hint_line()),
++        ..Default::default()
++    }
++}
++
++impl ChatWidget {
++    pub(super) fn open_omd_graph(&mut self) {
++        let (graph, path) = match crate::omd::load_graph(self.config.cwd.as_path()) {
++            Ok(value) => value,
++            Err(error) => {
++                self.add_error_message(format!("Oh My Diff graph unavailable: {error}"));
++                return;
++            }
++        };
++        self.bottom_pane
++            .show_selection_view(selection_params(&graph, &path));
++        self.request_redraw();
++    }
++
++    pub(crate) fn insert_omd_graph_selection(&mut self, prompt: &str) {
++        if !self.bottom_pane.composer_is_empty() {
++            self.insert_str("\n");
++        }
++        self.insert_str(prompt);
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use codex_omd::GraphLimits;
++    use std::fs;
++
++    #[test]
++    fn navigator_uses_the_canonical_graph_for_search_and_selection() {
++        let temp = tempfile::tempdir().unwrap();
++        fs::write(
++            temp.path().join("lib.rs"),
++            "pub fn entry() { helper(); }\nfn helper() {}\n",
++        )
++        .unwrap();
++        let graph = CodeGraph::build(
++            temp.path(),
++            "fixture/repository".to_string(),
++            "fixture-revision".to_string(),
++            GraphLimits::default(),
++        )
++        .unwrap();
++        let params = selection_params(&graph, &temp.path().join("graph.json"));
++        assert!(params.is_searchable);
++        assert_eq!(params.items.len(), graph.nodes.len());
++        let entry = params
++            .items
++            .iter()
++            .find(|item| item.name == "entry")
++            .unwrap();
++        assert!(!entry.is_disabled);
++        assert!(entry.description.as_deref().unwrap().contains("inferred"));
++        assert_eq!(entry.actions.len(), 1);
++        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
++        entry.actions[0](&AppEventSender::new(tx));
++        let AppEvent::OmdGraphSelection { prompt } = rx.try_recv().unwrap() else {
++            panic!("selection should emit graph evidence")
++        };
++        assert!(prompt.contains("fixture-revision"));
++        assert!(prompt.contains("source_digest"));
++    }
++}
 diff --git a/codex-rs/tui/src/chatwidget/omd_inspector.rs b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 new file mode 100644
-index 0000000..67f0a55
+index 0000000000000000000000000000000000000000..67f0a55f91f27dee3c768303ec017b380674d7e4
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 @@ -0,0 +1,114 @@
@@ -12399,27 +14340,29 @@ index 0000000..67f0a55
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index b8db07e..d46ab69 100644
+index b8db07ee74123aba2691a17e19915b31bd8a03a4..ef1e8f1c283ef34f628553b6a0398d56386d35a7 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-@@ -492,6 +492,7 @@ impl ChatWidget {
+@@ -492,6 +492,8 @@ impl ChatWidget {
                      );
                  }
              }
 +            SlashCommand::Omd => self.open_omd_inspector(),
++            SlashCommand::Graph => self.open_omd_graph(),
              SlashCommand::Cd => {
                  self.dispatch_command_with_args(SlashCommand::Cd, "~".to_string(), Vec::new());
              }
-@@ -1166,6 +1167,7 @@ impl ChatWidget {
+@@ -1166,6 +1168,8 @@ impl ChatWidget {
          match cmd {
              SlashCommand::Ide
              | SlashCommand::Status
 +            | SlashCommand::Omd
++            | SlashCommand::Graph
              | SlashCommand::Pwd
              | SlashCommand::Usage
              | SlashCommand::DebugConfig
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 17f437c..8e5a0dd 100644
+index 17f437c48899cb5394d6413fad41240de29c15e9..8e5a0dd77ea30b41bfa3fdfb38e471eb766868fe 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 @@ -200,7 +200,7 @@ impl ChatWidget {
@@ -12456,7 +14399,7 @@ index 17f437c..8e5a0dd 100644
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
 diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
-index 64e163f..1b94f6b 100644
+index 64e163f18b22dcdae60de1b6757ec0d97f4e7645..1b94f6b786983eed190459567752e4a4e851cfe2 100644
 --- a/codex-rs/tui/src/custom_terminal.rs
 +++ b/codex-rs/tui/src/custom_terminal.rs
 @@ -268,6 +268,10 @@ where
@@ -12471,7 +14414,7 @@ index 64e163f..1b94f6b 100644
      fn previous_buffer_mut(&mut self) -> &mut Buffer {
          &mut self.buffers[1 - self.current]
 diff --git a/codex-rs/tui/src/cwd_prompt.rs b/codex-rs/tui/src/cwd_prompt.rs
-index b0d6205..dd77c7e 100644
+index b0d6205602884906fc9ed851220c70f16d283d3b..dd77c7ee2acc480659e4353262c29a92fb5eb4c3 100644
 --- a/codex-rs/tui/src/cwd_prompt.rs
 +++ b/codex-rs/tui/src/cwd_prompt.rs
 @@ -134,7 +134,7 @@ pub(crate) async fn run_cwd_selection_prompt(
@@ -12484,7 +14427,7 @@ index b0d6205..dd77c7e 100644
                      tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/external_agent_config_migration/mod.rs b/codex-rs/tui/src/external_agent_config_migration/mod.rs
-index a80fe03..bd6683a 100644
+index a80fe03af1e0106bcebdef5dba939949cd5c376f..bd6683a491aa09c0f3b8460b5b4720a4a1dc7d6f 100644
 --- a/codex-rs/tui/src/external_agent_config_migration/mod.rs
 +++ b/codex-rs/tui/src/external_agent_config_migration/mod.rs
 @@ -108,7 +108,7 @@ pub(crate) async fn run_external_agent_config_migration_prompt(
@@ -12497,7 +14440,7 @@ index a80fe03..bd6683a 100644
                      let _ = tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/external_agent_config_migration/source.rs b/codex-rs/tui/src/external_agent_config_migration/source.rs
-index bc01ad7..c20e910 100644
+index bc01ad78c39722c13fb4c1a08676238ea34bba23..c20e910642e4a5a77b18fff6d66731b150ee1ea1 100644
 --- a/codex-rs/tui/src/external_agent_config_migration/source.rs
 +++ b/codex-rs/tui/src/external_agent_config_migration/source.rs
 @@ -65,7 +65,7 @@ pub(crate) async fn run_external_agent_config_source_prompt(
@@ -12510,7 +14453,7 @@ index bc01ad7..c20e910 100644
                      let _ = tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 3d9650d..2dd9cd9 100644
+index 3d9650d3d4c5391dc15fe5bc5b79386aab2ae4d7..2dd9cd9208f8eca84ab9c5781797c9e2363fa084 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
 @@ -177,6 +177,7 @@ mod named_session_lookup;
@@ -12543,7 +14486,7 @@ index 3d9650d..2dd9cd9 100644
      // Mark the end of the recorded session.
      session_log::log_session_end();
 diff --git a/codex-rs/tui/src/model_migration.rs b/codex-rs/tui/src/model_migration.rs
-index 094fb73..56dec6b 100644
+index 094fb731b0f44d50c1d6e2a447ec6e80fb5ddbc5..56dec6bc918300d269739fb18b679dfd2a87061b 100644
 --- a/codex-rs/tui/src/model_migration.rs
 +++ b/codex-rs/tui/src/model_migration.rs
 @@ -154,7 +154,7 @@ pub(crate) async fn run_model_migration_prompt(
@@ -12557,10 +14500,10 @@ index 094fb73..56dec6b 100644
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000..ecc5228
+index 0000000000000000000000000000000000000000..6456f3f8e95ee0b8043a994b2ffb1dfa2902ece3
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,510 @@
+@@ -0,0 +1,564 @@
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Position;
 +use ratatui::style::Modifier;
@@ -12579,6 +14522,7 @@ index 0000000..ecc5228
 +use std::time::UNIX_EPOCH;
 +
 +pub(crate) const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
++pub(crate) const GRAPH_ENV: &str = "OMD_GRAPH_SNAPSHOT";
 +pub(crate) const REVOCATION_FILE: &str = "contributor-revoked.json";
 +static FULLSCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 +
@@ -12643,6 +14587,36 @@ index 0000000..ecc5228
 +
 +pub(crate) fn is_active() -> bool {
 +    std::env::var_os(MANIFEST_ENV).is_some()
++}
++
++pub(crate) fn load_graph(cwd: &Path) -> Result<(codex_omd::CodeGraph, PathBuf), String> {
++    let path = std::env::var_os(GRAPH_ENV)
++        .map(PathBuf::from)
++        .unwrap_or_else(|| cwd.join(".omd/code-graph.json"));
++    let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
++        format!(
++            "code graph unavailable at {}: {error}. Run omd-graph snapshot to generate it",
++            path.display()
++        )
++    })?;
++    if metadata.file_type().is_symlink() {
++        return Err("code graph snapshot cannot be a symbolic link".to_string());
++    }
++    let graph = codex_omd::CodeGraph::read(&path).map_err(|error| error.to_string())?;
++    let canonical_cwd = cwd.canonicalize().map_err(|error| error.to_string())?;
++    if !canonical_cwd.starts_with(&graph.repository.root) {
++        return Err("code graph belongs to a different working directory".to_string());
++    }
++    match graph
++        .freshness(&graph.repository.root)
++        .map_err(|error| error.to_string())?
++    {
++        codex_omd::GraphFreshness::Fresh => Ok((graph, path)),
++        stale => Err(format!(
++            "code graph snapshot is stale; regenerate it with omd-graph snapshot: {}",
++            serde_json::to_string(&stale).map_err(|error| error.to_string())?
++        )),
++    }
 +}
 +
 +pub(crate) fn ligatures_enabled() -> bool {
@@ -13070,9 +15044,32 @@ index 0000000..ecc5228
 +        assert!(!buffer[(0, 0)].modifier.contains(Modifier::REVERSED));
 +        assert_eq!(buffer.area, Rect::new(0, 0, 5, 2));
 +    }
++
++    #[test]
++    fn graph_loader_accepts_fresh_data_and_rejects_stale_sources() {
++        let root = TempDir::new().unwrap();
++        std::fs::write(root.path().join("lib.rs"), "pub fn entry() {}\n").unwrap();
++        let graph = codex_omd::CodeGraph::build(
++            root.path(),
++            "fixture/repository".to_string(),
++            "fixture-revision".to_string(),
++            codex_omd::GraphLimits::default(),
++        )
++        .unwrap();
++        std::fs::create_dir(root.path().join(".omd")).unwrap();
++        graph
++            .write(&root.path().join(".omd/code-graph.json"))
++            .unwrap();
++        assert_eq!(
++            load_graph(root.path()).unwrap().0.repository.revision,
++            "fixture-revision"
++        );
++        std::fs::write(root.path().join("lib.rs"), "pub fn changed() {}\n").unwrap();
++        assert!(load_graph(root.path()).unwrap_err().contains("stale"));
++    }
 +}
 diff --git a/codex-rs/tui/src/onboarding/onboarding_screen.rs b/codex-rs/tui/src/onboarding/onboarding_screen.rs
-index 756e231..f8c7b44 100644
+index 756e231b501fa21d6ad824b9b2c101e5a1f7aeb4..f8c7b444ac2e2a45d030c5726de732373a084a0d 100644
 --- a/codex-rs/tui/src/onboarding/onboarding_screen.rs
 +++ b/codex-rs/tui/src/onboarding/onboarding_screen.rs
 @@ -580,7 +580,7 @@ pub(crate) async fn run_onboarding_app(
@@ -13085,7 +15082,7 @@ index 756e231..f8c7b44 100644
                  }
              }
 diff --git a/codex-rs/tui/src/pager_overlay.rs b/codex-rs/tui/src/pager_overlay.rs
-index 9b6c763..d807bce 100644
+index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d490fe7ab53 100644
 --- a/codex-rs/tui/src/pager_overlay.rs
 +++ b/codex-rs/tui/src/pager_overlay.rs
 @@ -40,6 +40,8 @@ use crate::tui;
@@ -13477,7 +15474,7 @@ index 9b6c763..d807bce 100644
          renderables: Vec<Box<dyn Renderable>>,
          title: &str,
 diff --git a/codex-rs/tui/src/resume_picker.rs b/codex-rs/tui/src/resume_picker.rs
-index ef4dd6d..a27f1dc 100644
+index ef4dd6df726755663c90dde0e5b3fd62820d3197..a27f1dc03e1ac51d92b19d13fac6b058c80884fe 100644
 --- a/codex-rs/tui/src/resume_picker.rs
 +++ b/codex-rs/tui/src/resume_picker.rs
 @@ -621,7 +621,7 @@ async fn run_session_picker_with_loader(
@@ -13490,51 +15487,56 @@ index ef4dd6d..a27f1dc 100644
              }
              Some(event) = background_events.next() => {
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
-index ca83861..65898fb 100644
+index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..27c42929f90096906b30a236a940d4aa6a0c07ea 100644
 --- a/codex-rs/tui/src/slash_command.rs
 +++ b/codex-rs/tui/src/slash_command.rs
-@@ -51,6 +51,7 @@ pub enum SlashCommand {
+@@ -51,6 +51,8 @@ pub enum SlashCommand {
      Diff,
      Mention,
      Status,
 +    Omd,
++    Graph,
      Cd,
      #[strum(to_string = "pwd", serialize = "cwd")]
      Pwd,
-@@ -112,6 +113,7 @@ impl SlashCommand {
+@@ -112,6 +114,8 @@ impl SlashCommand {
              SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
              SlashCommand::Hooks => "view and manage lifecycle hooks",
              SlashCommand::Status => "show current session configuration and token usage",
 +            SlashCommand::Omd => "inspect Oh My Diff runtime state and authorization",
++            SlashCommand::Graph => "navigate a versioned Oh My Diff code graph",
              SlashCommand::Cd => "change the current working directory",
              SlashCommand::Pwd => "show the current working directory",
              SlashCommand::Usage => "view account usage or use a usage limit reset",
-@@ -199,6 +201,7 @@ impl SlashCommand {
+@@ -199,6 +203,8 @@ impl SlashCommand {
                  | SlashCommand::Diff
                  | SlashCommand::Mention
                  | SlashCommand::Status
 +                | SlashCommand::Omd
++                | SlashCommand::Graph
                  | SlashCommand::Pwd
                  | SlashCommand::Usage
                  | SlashCommand::Ide
-@@ -243,6 +246,7 @@ impl SlashCommand {
+@@ -243,6 +249,8 @@ impl SlashCommand {
              | SlashCommand::Skills
              | SlashCommand::Hooks
              | SlashCommand::Status
 +            | SlashCommand::Omd
++            | SlashCommand::Graph
              | SlashCommand::Pwd
              | SlashCommand::Usage
              | SlashCommand::DebugConfig
-@@ -274,6 +278,7 @@ impl SlashCommand {
+@@ -274,6 +282,8 @@ impl SlashCommand {
              SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
              SlashCommand::Copy => !cfg!(target_os = "android"),
              SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),
 +            SlashCommand::Omd => crate::omd::is_active(),
++            SlashCommand::Graph => crate::omd::is_active(),
              SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
              _ => true,
          }
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
-index 24ce94e..b6546c7 100644
+index 24ce94e912c387fcad0a6375a4080ec2a02352c8..b6546c75b3dfa4064995e01908ac658f7d623095 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
 @@ -12,4 +12,4 @@ expression: snapshot
@@ -13544,7 +15546,7 @@ index 24ce94e..b6546c7 100644
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
-index 9ed198f..e23377b 100644
+index 9ed198f5546f78916ef9d845ebf018bf453a6700..e23377b7fd8d580c076b7ec1a089193bfd63ed7d 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
 @@ -10,4 +10,4 @@ last
@@ -13554,7 +15556,7 @@ index 9ed198f..e23377b 100644
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
-index 84cb5db..64c6708 100644
+index 84cb5dbcec4bdccf25ce3ef52e5d541a3b19cc7e..64c6708a2f7c37bdbbeb512fe7c6f2c6a9e493c0 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
 @@ -14,5 +14,5 @@ expression: term.backend()
@@ -13565,7 +15567,7 @@ index 84cb5db..64c6708 100644
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
-index b8106e6..7837b6e 100644
+index b8106e6caef92d7de8e63cb0b4241f11675e3d2a..7837b6ed3cb60159f3b159a551b78a5a01c28329 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
 @@ -11,7 +11,7 @@ recent transcript
@@ -13602,7 +15604,7 @@ index b8106e6..7837b6e 100644
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
-index b823027..c80df9c 100644
+index b823027c570dbea84685b917d57a9758b757d757..c80df9c44ff561da34046d2303bff99d1412f2bd 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
 @@ -10,5 +10,5 @@ expression: term.backend()
@@ -13613,7 +15615,7 @@ index b823027..c80df9c 100644
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
-index 024964c..22d7a69 100644
+index 024964cea06ed1bf48ceb8e082914e66778c3285..22d7a69975834151b7d7d3340be8b6c818f945d4 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
 @@ -10,5 +10,5 @@ expression: term.backend()
@@ -13624,7 +15626,7 @@ index 024964c..22d7a69 100644
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
-index 4c3dbe0..2de94ee 100644
+index 4c3dbe00cd981d3c71eb87ed622f6f5bfe78c2be..2de94ee4e4f526798367d53f89dedcacc72323be 100644
 --- a/codex-rs/tui/src/startup_draft.rs
 +++ b/codex-rs/tui/src/startup_draft.rs
 @@ -312,7 +312,7 @@ impl StartupDraftPump {
@@ -13650,7 +15652,7 @@ index 4c3dbe0..2de94ee 100644
          }
          if self.initial_screen == StartupDraftInitialScreen::Composer {
 diff --git a/codex-rs/tui/src/startup_hooks_review.rs b/codex-rs/tui/src/startup_hooks_review.rs
-index 002e58b..9090b62 100644
+index 002e58b14417a33e8984e61c9e69f4b34f18edcb..9090b6280e9b18729e1dce83ff21791c3048a0db 100644
 --- a/codex-rs/tui/src/startup_hooks_review.rs
 +++ b/codex-rs/tui/src/startup_hooks_review.rs
 @@ -182,7 +182,7 @@ async fn run_startup_hooks_review_app(
@@ -13663,7 +15665,7 @@ index 002e58b..9090b62 100644
                  draw_view(tui, &view)?;
              }
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 96b3fbc..968fd3a 100644
+index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32d5fc6394 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -19,10 +19,13 @@ use crossterm::SynchronizedUpdate;
@@ -13895,7 +15897,7 @@ index 96b3fbc..968fd3a 100644
      }
  
 diff --git a/codex-rs/tui/src/tui/event_stream.rs b/codex-rs/tui/src/tui/event_stream.rs
-index de4ceae..e8fd753 100644
+index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aae7d7fbdc 100644
 --- a/codex-rs/tui/src/tui/event_stream.rs
 +++ b/codex-rs/tui/src/tui/event_stream.rs
 @@ -186,12 +186,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
@@ -13963,7 +15965,7 @@ index de4ceae..e8fd753 100644
          match next {
              TuiEvent::Key(key) => {
 diff --git a/codex-rs/tui/src/tui/job_control.rs b/codex-rs/tui/src/tui/job_control.rs
-index 2db1fc0..29cbf36 100644
+index 2db1fc04f58fc9d701cf2c3a6719ad5658b0ae12..29cbf3609cb67cc457920844bd8aee7bb13eb497 100644
 --- a/codex-rs/tui/src/tui/job_control.rs
 +++ b/codex-rs/tui/src/tui/job_control.rs
 @@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
@@ -13986,7 +15988,7 @@ index 2db1fc0..29cbf36 100644
                  terminal.clear()?;
              }
 diff --git a/codex-rs/tui/src/tui/screen_size.rs b/codex-rs/tui/src/tui/screen_size.rs
-index c9f6578..3865caf 100644
+index c9f657886e67fd00d2def92a2ba3a9ae0888b982..3865caf67b964bdfa7d4fb812dd3dc827542683f 100644
 --- a/codex-rs/tui/src/tui/screen_size.rs
 +++ b/codex-rs/tui/src/tui/screen_size.rs
 @@ -47,11 +47,13 @@ impl Tui {
@@ -14006,7 +16008,7 @@ index c9f6578..3865caf 100644
          .then_some(size);
          Ok(size)
 diff --git a/codex-rs/tui/src/unarchive_prompt.rs b/codex-rs/tui/src/unarchive_prompt.rs
-index 3f51822..b6aceca 100644
+index 3f5182276287ba064bca920c049ac38fdce6f9a6..b6aceca3c4edb3a10a03527c656ed65682507397 100644
 --- a/codex-rs/tui/src/unarchive_prompt.rs
 +++ b/codex-rs/tui/src/unarchive_prompt.rs
 @@ -54,6 +54,7 @@ pub(crate) async fn run_unarchive_prompt(

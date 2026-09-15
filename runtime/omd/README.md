@@ -69,6 +69,23 @@ source excerpts and approved lessons. The configured store is external to the
 repository, repository-identity bound, context-size bounded, and denied to model
 workers.
 
+`CodeGraph` is the bounded, source-backed representation shared by the patched
+TUI `/graph` navigator and generated HTML. It recursively indexes supported
+source files without following symlinks, fails closed at global file/byte/node/
+edge/unknown/selection limits, and produces deterministic JSON for an explicit
+repository identity and revision. Every relationship has a source line and hash.
+Local imports are extracted; uniquely resolved lexical calls and related tests
+are inferred; unresolved imports, calls, and ambiguous targets remain unknown.
+Per-file coverage preserves those limitations instead of implying whole-program
+analysis.
+
+`omd-graph snapshot` writes the JSON and static HTML together. Subsequent
+validation, HTML generation, evidence selection, and TUI loading compare the
+recorded source set and hashes with the repository, so added, changed, or missing
+source requires regeneration. HTML search/filtering, graph neighborhoods, local
+source links, and copyable evidence run entirely in the generated file. The CLI
+does not launch a service or provide architecture editing.
+
 `ReactiveRules` validates a separately versioned, SHA-bound rule source used by
 the native post-tool hook. Each rule selects an exact `lead` or `worker` scope,
 tool name, and one of `completed_host_success`, `completed_host_failure`,
@@ -118,6 +135,8 @@ cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge --
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- session /absolute/host-owned/knowledge /absolute/repository cold
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- remove /absolute/host-owned/knowledge removal.json
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- reset /absolute/host-owned/knowledge reset.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-graph -- snapshot /absolute/repository graph.json graph.html owner/repository REVISION
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-graph -- select /absolute/repository graph.json NODE_ID
 ```
 
 `record_failure` journals a bounded typed failure with host-owned evidence

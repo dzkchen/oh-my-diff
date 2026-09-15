@@ -105,6 +105,28 @@ The separate `omd-knowledge` operator handles retention, candidate approval,
 inspection, removal, and generation-advancing reset. Omitting the object disables
 repository knowledge injection.
 
+The offline `omd-graph` operator builds one schema-versioned JSON code/impact
+graph for the patched TUI and a self-contained interactive HTML snapshot. Its
+bounded lexical index covers Rust, Python, TypeScript/JavaScript, and Java source
+files while skipping hidden, generated, dependency, and build directories. It
+records module/symbol/test nodes, local imports, call/test relationships, exact
+line-hash evidence, per-file coverage, and explicit `extracted`, `inferred`, or
+`unknown` confidence. Syntax-level results do not claim complete runtime impact.
+
+Use `snapshot` to regenerate both outputs after source changes. `validate`,
+`html`, `select`, and the TUI reject stale source bytes or newly added/missing
+source files. In a controlled session, `/graph` opens the searchable terminal
+navigator and adds the selected node plus its bounded neighborhood to the
+composer. Set `OMD_GRAPH_SNAPSHOT` to the JSON path, or place it at
+`.omd/code-graph.json` under the repository root. The HTML is a local static
+file with search, node/confidence filters, source links, a neighborhood view,
+and bounded copyable selections; it starts no server and edits no architecture.
+
+```sh
+cargo run --locked -p codex-omd --bin omd-graph -- snapshot /absolute/repository /absolute/repository/.omd/code-graph.json /absolute/repository/.omd/code-graph.html owner/repository REVISION
+cargo run --locked -p codex-omd --bin omd-graph -- validate /absolute/repository /absolute/repository/.omd/code-graph.json
+```
+
 ```json
 {
   "knowledge": {

@@ -4,12 +4,12 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "f7957974d4536ac8e5a2a5b608170dc7d66c874bccbe38654f3736b0bbd9acec"
+    "sha256": "75768592f7e3cb3a5668e8cad2c12ecdd333c90ae2baaf48af99cdcb2ff4ec4a"
   },
   "files": {
     "codex-rs/Cargo.lock": {
       "before": "34726731e842976085e3c122f62ddd5c8d6555bdcb32f5e9361c8e27fb0795bf",
-      "after": "fd720551e5c782cdfff97e5e66fb7d47c8b68cbaf2f2e4794edd9eeb8ba2ee78"
+      "after": "9a52d7151b93de13c4c4f7938d5338fbe0eb4d3c0583a90001a9f89a4f173f72"
     },
     "codex-rs/Cargo.toml": {
       "before": "be81959425540d70c4735936293a8e119e498573d5b57121849eee0539c127d1",
@@ -127,9 +127,17 @@
       "before": null,
       "after": "5f81a0804167c2d1b2d3a270cfd2a712b14f222a20645f77282080dc32690128"
     },
+    "codex-rs/omd/README.md": {
+      "before": null,
+      "after": "04a01fa1baa34c7b25598d0f9a2df389f66e198303aeea9967510fc6edd9c38c"
+    },
     "codex-rs/omd/src/admission.rs": {
       "before": null,
       "after": "4a0bb2b04136ebf33f4c8900b4ef1e71a0b72270b2abada80ca7da0c57b907e6"
+    },
+    "codex-rs/omd/src/bin/omd-graph.rs": {
+      "before": null,
+      "after": "6a17cd89be0094258ead36634f11a13d44ce78bb0c9e52fff11bc9f2803b5702"
     },
     "codex-rs/omd/src/bin/omd-guidelines.rs": {
       "before": null,
@@ -147,6 +155,10 @@
       "before": null,
       "after": "0a598f3576267719384aa7b8beaf7207b32e4cb974738bb0b6c27cea309a5e73"
     },
+    "codex-rs/omd/src/graph.rs": {
+      "before": null,
+      "after": "ed5c5cec356047b023bfd669da4b4c12d994f92bd37bb4fc25a9874a220daf84"
+    },
     "codex-rs/omd/src/guideline.rs": {
       "before": null,
       "after": "96cfe0cc070760732dd84a52aa03b9fb2c55a8d6b6a4104b088b07df00671ad3"
@@ -157,7 +169,7 @@
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "217daeb06c7761b3d809eabfe382723d43a28b736c270912ed183e9fffb72154"
+      "after": "ccfbb84b78b442c6dbeab542a5ac3a64df1eeac110e4b76da139f88269a2e548"
     },
     "codex-rs/omd/src/reactive.rs": {
       "before": null,
@@ -175,6 +187,10 @@
       "before": null,
       "after": "68a9524da35b01e775400e1b4bc76886ad0a64c45bf5aecd585d06e789478033"
     },
+    "codex-rs/omd/tests/graph.rs": {
+      "before": null,
+      "after": "07cf6f8fcf0265992f2b2d05f8d02d1be6518cf014ddc1151a3744d15dc3a2eb"
+    },
     "codex-rs/omd/tests/guideline.rs": {
       "before": null,
       "after": "92f09d361f193c589a3417cd5264165119cb3d75501885e8deaa6f3ea9e75d4d"
@@ -191,13 +207,17 @@
       "before": null,
       "after": "2b4dcb203e2d462a502f93d1875a5dc2b104d9f1dcdf9e3c5799b46028b506c2"
     },
+    "codex-rs/tui/Cargo.toml": {
+      "before": "41ad17495e28ff9f5a2da2ffe8b766e5c1cfb3a9f0f65574a1b728da9de84c9d",
+      "after": "88da673e5011f260baffef7f2018f764fe840ff9f486e289ed5312c041bf1ddf"
+    },
     "codex-rs/tui/src/app.rs": {
       "before": "44550f918c415442d964ea2842676b34b3c3f860670ffcdac29b118cc1118565",
       "after": "3b157ee3ba51098db20fc854f514c28b9fa51aea52ec7c67fbe9cfc01b8c01e2"
     },
     "codex-rs/tui/src/app/event_dispatch.rs": {
       "before": "a5c99ed4eeddfaefeb888842cfb45a79fa4aa3fa8d142b78949bff688f3d5f69",
-      "after": "54d7dcb270d7baccfa4938a1832f86dcfae4f4935892876539f6cd792f54711d"
+      "after": "d0aedb70f699008d7d048e72cf5914b2d51565b7be52d50e0ae41fe233783b9e"
     },
     "codex-rs/tui/src/app/tests.rs": {
       "before": "d5b13497f00df919cc13866c0abec1a635d8d6433919775bbc8ad425483a4e21",
@@ -209,7 +229,7 @@
     },
     "codex-rs/tui/src/app_event.rs": {
       "before": "bd290bb5b041e0bc1a3b7c4c09e23a35e89ac184afa60a6433f29a4fd630e86c",
-      "after": "27d1e0ec647d8721a9b207ececa36c6c915000ebe49199a6ab14b3bac483f0dc"
+      "after": "fc262497127b58b952e27d8c7842612978354e1cdefb3769f835e245ed32b0cf"
     },
     "codex-rs/tui/src/bottom_pane/chat_composer.rs": {
       "before": "6f9d2dccdca4822cb4586e726442f6ecba004dda547c0348638dfe3100b54504",
@@ -225,11 +245,15 @@
     },
     "codex-rs/tui/src/chatwidget.rs": {
       "before": "c1e51f9cda0d2dbd7ceb863aaf6b533e79ddf257f196efe189dde9672a4fdb19",
-      "after": "9cea354da5c0698bc68b34d97dc6cc6a98fba7c89a446ba12c3052bbd7771e87"
+      "after": "f1d7d5e5330aa000c9258292f50e3d2c49d54aeda4c2d81bb24a9b1710b7da8c"
     },
     "codex-rs/tui/src/chatwidget/constructor.rs": {
       "before": "dee851cb84d4560d93d41104573e83cd81878b914c27d8cb9c55eb0af5b73283",
       "after": "a69866a30172ee34a4c7b6d6c07176f22bc132b31333ecfce361bbf8a2fcc09f"
+    },
+    "codex-rs/tui/src/chatwidget/omd_graph.rs": {
+      "before": null,
+      "after": "8b827e6adb546d1bc364ac81bf1f5c36e7597534ee631b23b479113b7a2532d1"
     },
     "codex-rs/tui/src/chatwidget/omd_inspector.rs": {
       "before": null,
@@ -237,7 +261,7 @@
     },
     "codex-rs/tui/src/chatwidget/slash_dispatch.rs": {
       "before": "795f6fe86162088914de82a139331330369bc2670f1477f89322d1d7d2edfee0",
-      "after": "b55a251fdf31e9fee7a18d58718bb28834e07721b71d7d5599fe8513d9f5aa96"
+      "after": "6bee8f642131d6973d0eadf38cbf463d9698636a589185d5d6396c683f3d40aa"
     },
     "codex-rs/tui/src/chatwidget/status_surfaces.rs": {
       "before": "f8e32fa54e3634597806ce8c4d89d089ea8a1e7b69897ce9777ff43e0163343f",
@@ -269,7 +293,7 @@
     },
     "codex-rs/tui/src/omd.rs": {
       "before": null,
-      "after": "da1d54e9fb401a0b5de33e0f5895b05bc96c112eef047060513af9b1789364cf"
+      "after": "73a2d57379e801fefb72b58cec223251f2c284aa8b99379e3e1dbb61abcc6b84"
     },
     "codex-rs/tui/src/onboarding/onboarding_screen.rs": {
       "before": "72bd385a08646d24ee787b4bcfcbdefec84ba5f5bca9b6de517e7df92fa0ec94",
@@ -285,7 +309,7 @@
     },
     "codex-rs/tui/src/slash_command.rs": {
       "before": "fb451b239e2b426498665491cc46fe0406553310c6cbf3e790689866959078e1",
-      "after": "beaae7f25cbff416627e6d9d11fe6d5b68c12742757e8dfab167465f38e38fde"
+      "after": "b46a02dda33055be9df2328e4133e78ca1617a96d867178ac4ff7fb8bfb962e7"
     },
     "codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap": {
       "before": "b660dc97a6c7f8f5f1ceb417c78f365b0e7241fc6fbb5e561dfb4221c5b0192e",
