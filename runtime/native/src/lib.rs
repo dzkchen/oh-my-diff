@@ -36,6 +36,9 @@ use codex_omd::ActiveGuideline;
 use codex_omd::CheckpointUpdate;
 use codex_omd::FailureClass;
 use codex_omd::GuidelineStore;
+use codex_omd::KnowledgeMode;
+use codex_omd::KnowledgeSession;
+use codex_omd::KnowledgeStore;
 use codex_omd::Limits;
 use codex_omd::LiveState;
 use codex_omd::ProcessSnapshot;
@@ -87,6 +90,8 @@ struct Manifest {
     #[serde(default)]
     guideline_store: Option<PathBuf>,
     #[serde(default)]
+    knowledge: Option<KnowledgePolicy>,
+    #[serde(default)]
     communication: CommunicationPolicy,
     #[serde(default)]
     reactive_rules: Option<PacketReference>,
@@ -124,6 +129,14 @@ struct RecoveryPolicy {
 struct CommunicationPolicy {
     concise_user_updates: bool,
     structured_worker_reports: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KnowledgePolicy {
+    store: PathBuf,
+    mode: KnowledgeMode,
+    max_context_bytes: usize,
 }
 
 impl CommunicationPolicy {
@@ -272,6 +285,7 @@ struct Host {
     lead_completed: std::sync::atomic::AtomicBool,
     pending_calls: std::sync::Mutex<BTreeMap<String, PendingCall>>,
     active_guideline: Option<ActiveGuideline>,
+    knowledge_prompt: Option<String>,
     reactive_rules: Option<ReactiveRules>,
 }
 
@@ -311,6 +325,17 @@ fn guideline_prompt(guideline: &ActiveGuideline) -> String {
         guideline.selection.proposal_sha256,
         guideline.variant.render()
     )
+}
+
+fn knowledge_prompt(
+    policy: &KnowledgePolicy,
+    session: &KnowledgeSession,
+) -> Result<String, String> {
+    Ok(format!(
+        "Host-owned repository knowledge store {}. {}",
+        policy.store.display(),
+        session.render().map_err(|error| error.to_string())?
+    ))
 }
 
 fn user_update_prompt() -> &'static str {
@@ -516,6 +541,32 @@ pub fn install(
         Some(_) => return Err("guideline store must be canonical and host-owned".into()),
         None => None,
     };
+    let knowledge_session = match &manifest.knowledge {
+        Some(policy)
+            if policy.store.canonicalize().map_err(|e| e.to_string())? == policy.store
+                && !policy.store.starts_with(&manifest.repository)
+                && policy.max_context_bytes > 0
+                && policy.max_context_bytes <= manifest.max_request_bytes =>
+        {
+            let store = KnowledgeStore::open(policy.store.clone()).map_err(|e| e.to_string())?;
+            if store.repository_identity().map_err(|e| e.to_string())?
+                != manifest.repository_identity
+            {
+                return Err("knowledge store repository identity mismatch".into());
+            }
+            Some(
+                store
+                    .session(&manifest.repository, policy.mode, policy.max_context_bytes)
+                    .map_err(|e| e.to_string())?,
+            )
+        }
+        Some(_) => return Err("knowledge store must be canonical, host-owned, and bounded".into()),
+        None => None,
+    };
+    let frozen_knowledge_prompt = match (&manifest.knowledge, &knowledge_session) {
+        (Some(policy), Some(session)) => Some(knowledge_prompt(policy, session)?),
+        _ => None,
+    };
     if manifest.lifecycle.explicit_resume.is_some() && manifest.scratch.exists() {
         codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
             .map_err(|e| e.to_string())?;
@@ -544,6 +595,7 @@ pub fn install(
         lead_completed: std::sync::atomic::AtomicBool::new(false),
         pending_calls: std::sync::Mutex::new(BTreeMap::new()),
         active_guideline,
+        knowledge_prompt: frozen_knowledge_prompt,
         reactive_rules,
     });
     let _ = host.authorize();
@@ -817,6 +869,12 @@ impl ContextContributor for Extension {
                     fragments.push(PromptFragment::developer_capability(
                         guideline_prompt(guideline),
                         ContentItemKind("oh_my_diff.guideline".into()),
+                    ));
+                }
+                if let Some(prompt) = &self.knowledge_prompt {
+                    fragments.push(PromptFragment::developer_capability(
+                        prompt.clone(),
+                        ContentItemKind("oh_my_diff.repository_knowledge".into()),
                     ));
                 }
                 if lead.owner == "lead"
@@ -1630,5 +1688,36 @@ mod guideline_tests {
         }));
         assert!(tiny.contains("tiny shared simplicity core"));
         assert!(tiny.contains("selected one-line rules"));
+    }
+}
+
+#[cfg(test)]
+mod knowledge_tests {
+    use super::*;
+
+    #[test]
+    fn cold_state_is_explicit_in_native_context() {
+        let policy = KnowledgePolicy {
+            store: PathBuf::from("/host/knowledge"),
+            mode: KnowledgeMode::Cold,
+            max_context_bytes: 4096,
+        };
+        let session = KnowledgeSession {
+            schema: 1,
+            mode: KnowledgeMode::Cold,
+            repository_identity: "fixture/repository".into(),
+            generation: 3,
+            revision: 9,
+            refreshed_fact_ids: Vec::new(),
+            invalidated_ids: Vec::new(),
+            facts: Vec::new(),
+            approved_lessons: Vec::new(),
+        };
+        let prompt = knowledge_prompt(&policy, &session).unwrap();
+        assert!(prompt.contains("/host/knowledge"));
+        assert!(prompt.contains("state: cold"));
+        assert!(prompt.contains("no retained task evidence"));
+        assert!(prompt.contains("generation 3"));
+        assert!(prompt.contains("Unapproved candidates are excluded"));
     }
 }

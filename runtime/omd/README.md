@@ -50,6 +50,25 @@ and injects the version, proposal hash, and rules below current user and project
 instructions. Omitting the field or leaving the store unpromoted preserves the
 existing default.
 
+`KnowledgeStore` retains immutable copies of bounded task evidence with task,
+workspace, kind, source-path, and hash provenance. Source facts are exact bounded
+UTF-8 line excerpts rather than model-authored summaries. Reuse refreshes their
+file and excerpt hashes from canonical repository files, records changes, and
+excludes missing, unsafe, or unreadable sources. Evidence integrity changes also
+invalidate dependent lessons. Inferred lessons begin as candidates and enter a
+later session only after an operator records an approval with actor, reason, and
+the current store revision.
+
+Every mutation uses an expected-revision compare-and-set under the store's writer
+lock, so concurrent writers cannot silently replace one another. `inspect`
+returns active records and the revisioned provenance journal. `remove` deletes a
+selected record, and `reset` clears all active evidence, facts, and lessons while
+advancing the store generation. Each native session must explicitly select
+`cold`, which exposes no retained content, or `reuse`, which exposes only fresh
+source excerpts and approved lessons. The configured store is external to the
+repository, repository-identity bound, context-size bounded, and denied to model
+workers.
+
 `ReactiveRules` validates a separately versioned, SHA-bound rule source used by
 the native post-tool hook. Each rule selects an exact `lead` or `worker` scope,
 tool name, and one of `completed_host_success`, `completed_host_failure`,
@@ -87,6 +106,18 @@ cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- validate /absolute/host-owned/guidelines validation.json
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- promote /absolute/host-owned/guidelines promotion.json
 cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-guidelines -- rollback /absolute/host-owned/guidelines rollback.json
+```
+
+```sh
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- init /absolute/host-owned/knowledge owner/repository
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- retain-evidence /absolute/host-owned/knowledge evidence.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- retain-fact /absolute/host-owned/knowledge /absolute/repository fact.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- propose-lesson /absolute/host-owned/knowledge lesson.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- approve-lesson /absolute/host-owned/knowledge approval.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- inspect /absolute/host-owned/knowledge /absolute/repository
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- session /absolute/host-owned/knowledge /absolute/repository cold
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- remove /absolute/host-owned/knowledge removal.json
+cargo run --locked --manifest-path runtime/omd/Cargo.toml --bin omd-knowledge -- reset /absolute/host-owned/knowledge reset.json
 ```
 
 `record_failure` journals a bounded typed failure with host-owned evidence

@@ -361,6 +361,9 @@ fn protected_paths(manifest: &Manifest) -> Vec<PathBuf> {
     if let Some(path) = &manifest.guideline_store {
         paths.push(path.clone());
     }
+    if let Some(policy) = &manifest.knowledge {
+        paths.push(policy.store.clone());
+    }
     if let WorkerContextPolicy::SharedTaskPacket { packet, .. } = &manifest.context_policy {
         paths.push(packet.path.clone());
     }
@@ -499,6 +502,10 @@ async fn run_child(
     if let Some(guideline) = &host.active_guideline {
         developer_instructions.push('\n');
         developer_instructions.push_str(&guideline_prompt(guideline));
+    }
+    if let Some(prompt) = &host.knowledge_prompt {
+        developer_instructions.push('\n');
+        developer_instructions.push_str(prompt);
     }
     if let Some(instruction) = output_instruction {
         developer_instructions.push('\n');

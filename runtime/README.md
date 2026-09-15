@@ -94,6 +94,27 @@ version below current user/project instructions, and denies worker access to the
 store. With the field absent or no promoted version, guidance behavior is
 unchanged. See [`runtime/omd/README.md`](omd/README.md) for the operator commands.
 
+The optional `knowledge` manifest object binds a canonical external store to the
+exact `repository_identity`, a context byte limit, and an explicit `cold` or
+`reuse` state. Cold sessions receive the store generation/revision but no retained
+content. Reuse sessions refresh exact source excerpts before startup and inject
+only fresh facts plus operator-approved inferred lessons, below current user and
+project instructions. The store and retained task evidence are denied to workers
+as filesystem paths; only the bounded frozen session snapshot is contributed.
+The separate `omd-knowledge` operator handles retention, candidate approval,
+inspection, removal, and generation-advancing reset. Omitting the object disables
+repository knowledge injection.
+
+```json
+{
+  "knowledge": {
+    "store": "/absolute/host-owned/knowledge",
+    "mode": "cold",
+    "max_context_bytes": 65536
+  }
+}
+```
+
 The optional `communication` manifest object selects user updates and worker
 reports independently. Both switches default to `false`, preserving ordinary
 Codex behavior when omitted:
