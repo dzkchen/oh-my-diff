@@ -6,3 +6,10 @@ __pycache__/
 .DS_Store
 /.omd/
 /.omd-tmp/
+/.pnpm-store/
+/browser/node_modules/
+/browser/browsers/
+/browser/runtime/
+/browser/artifacts/
+/browser/bundle.json
+/browser/*.tar.xz

@@ -13,6 +13,11 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
+try:
+    from scripts import browser_bundle
+except ModuleNotFoundError:
+    import browser_bundle
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = 1
@@ -125,7 +130,20 @@ def load_manifest(prefix):
     return manifest
 
 
-def wrapper_text(binary, selection, mode=None, controlled_manifest=None):
+def browser_config_args(browser):
+    command = browser["launcher"]
+    return [
+        "--config", f"mcp_servers.omd_browser.command={json.dumps(command)}",
+        "--config", "mcp_servers.omd_browser.args=[]",
+        "--config", "mcp_servers.omd_browser.enabled=true",
+        "--config", "mcp_servers.omd_browser.required=false",
+        "--config", "mcp_servers.omd_browser.startup_timeout_sec=30",
+        "--config", "mcp_servers.omd_browser.tool_timeout_sec=120",
+        "--config", 'mcp_servers.omd_browser.default_tools_approval_mode="prompt"',
+    ]
+
+
+def wrapper_text(binary, selection, mode=None, controlled_manifest=None, browser=None):
     lines = ["#!/bin/sh"]
     if selection == "omd":
         lines.append(f"export OMD_MODE={shlex.quote(mode)}")
@@ -135,7 +153,10 @@ def wrapper_text(binary, selection, mode=None, controlled_manifest=None):
             lines.append("unset OMD_CONTROLLED_MANIFEST")
     else:
         lines.extend(["unset OMD_MODE", "unset OMD_CONTROLLED_MANIFEST"])
-    lines.append(f"exec {shlex.quote(str(binary))} \"$@\"")
+    command = [str(binary)]
+    if selection == "omd" and browser:
+        command.extend(browser_config_args(browser))
+    lines.append(f"exec {shlex.join(command)} \"$@\"")
     return "\n".join(lines) + "\n"
 
 
@@ -160,6 +181,11 @@ def activate(prefix, bin_dir, selection, mode=None, controlled_manifest=None):
         if mode is not None or controlled_manifest is not None:
             raise ValueError("upstream activation does not accept OMD settings")
         binary = prefix / "artifacts/upstream/codex"
+    browser = manifest.get("browser")
+    if browser:
+        verified = browser_bundle.verify(prefix / "browser")
+        if verified["tree"] != browser["tree"]:
+            raise ValueError("installed browser bundle differs from the installation manifest")
     expected = manifest["artifacts"][selection]["sha256"]
     if digest(binary) != expected:
         raise ValueError(f"refusing to activate modified {selection} artifact")
@@ -168,7 +194,7 @@ def activate(prefix, bin_dir, selection, mode=None, controlled_manifest=None):
     if wrapper.is_symlink() or (wrapper.exists()
                                 and (not current or digest(wrapper) != current.get("wrapper_sha256"))):
         raise ValueError(f"refusing to replace unmanaged or modified launcher: {wrapper}")
-    text = wrapper_text(binary, selection, mode, controlled_manifest)
+    text = wrapper_text(binary, selection, mode, controlled_manifest, browser)
     atomic_text(wrapper, text, 0o755)
     manifest["activation"] = {
         "selection": selection,
@@ -217,6 +243,10 @@ def install(args):
         for protected in (*state_roots(), prefix, bin_dir):
             if within(target, protected) or within(protected, target):
                 raise ValueError("build target must be separate from state, install and launcher paths")
+    browser_archive = getattr(args, "browser_archive", None)
+    browser_archive_sha256 = getattr(args, "browser_archive_sha256", None)
+    if bool(browser_archive) != bool(browser_archive_sha256):
+        raise ValueError("prebuilt browser provisioning requires both --browser-archive and --browser-archive-sha256")
     toolchain = output(["rustc", f"+{upstream_lock['rust_toolchain']}", "--version"])
     parent = prefix.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +276,12 @@ def install(args):
             destination.parent.mkdir(parents=True)
             shutil.copy2(source, destination)
             destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        if browser_archive:
+            browser = browser_bundle.install_archive(browser_archive, browser_archive_sha256,
+                                                     staging / "browser")
+        else:
+            browser = browser_bundle.build_bundle(staging / "browser",
+                                                  getattr(args, "browser_node_archive", None))
         if not args.target_dir:
             shutil.rmtree(cargo_target)
         home, sqlite = state_roots()
@@ -272,6 +308,18 @@ def install(args):
                 "upstream": {**upstream, "installed_path": str(staging / "artifacts/upstream/codex")},
                 "omd": {**candidate, "installed_path": str(staging / "artifacts/omd/codex")},
             },
+            "browser": {
+                "installed_path": str(prefix / "browser"),
+                "launcher": str(prefix / "browser" / browser["launcher"]),
+                "provisioning": browser["provisioning"],
+                "node": browser["node"],
+                "mcp": browser["mcp"],
+                "browser": browser["browser"],
+                "tree": browser["tree"],
+                "approval": browser["approval"],
+                "sandbox": browser["sandbox"],
+                "cleanup": browser["cleanup"],
+            },
             "activation": None,
             "linux_benchmark": {"retained": True, "runtime_install_target": False,
                                 "guide": "benchmarks/README.md"},
@@ -281,16 +329,24 @@ def install(args):
         write_manifest(staging, manifest)
         staging.rename(prefix)
         moved = True
+        browser_manifest = json.loads((prefix / "browser/bundle.json").read_text())
+        if (browser_manifest.get("schema") != browser_bundle.SCHEMA
+                or browser_manifest.get("product") != browser_bundle.PRODUCT):
+            raise ValueError("installed browser bundle manifest is unrecognized")
+        browser_manifest["destination"] = str(prefix / "browser")
+        browser_bundle.write_json(prefix / "browser/bundle.json", browser_manifest)
         activate(prefix, bin_dir, "omd", "upstream_direct")
         return load_manifest(prefix)
     except BaseException:
         if staging.exists():
             shutil.rmtree(staging)
         if moved and prefix.exists():
-            activation = json.loads((prefix / "install.json").read_text()).get("activation")
+            installed_manifest = json.loads((prefix / "install.json").read_text())
+            activation = installed_manifest.get("activation")
             wrapper = bin_dir / "codex"
             expected_wrapper = hashlib.sha256(wrapper_text(
-                prefix / "artifacts/omd/codex", "omd", "upstream_direct").encode()).hexdigest()
+                prefix / "artifacts/omd/codex", "omd", "upstream_direct",
+                browser=installed_manifest.get("browser")).encode()).hexdigest()
             recorded_wrapper = activation.get("wrapper_sha256") if activation else expected_wrapper
             if not wrapper.is_symlink() and wrapper.is_file() and digest(wrapper) == recorded_wrapper:
                 wrapper.unlink()
@@ -312,6 +368,10 @@ def status(prefix, bin_dir):
     artifact = prefix / f"artifacts/{selected}/codex"
     if digest(artifact) != manifest["artifacts"][selected]["sha256"]:
         raise ValueError("active artifact is modified")
+    if manifest.get("browser"):
+        browser = browser_bundle.verify(prefix / "browser")
+        if browser["tree"] != manifest["browser"]["tree"]:
+            raise ValueError("installed browser bundle differs from the installation manifest")
     return manifest
 
 
@@ -341,6 +401,9 @@ def parser():
     install_parser.add_argument("--upstream", type=Path, required=True)
     install_parser.add_argument("--repository", default="https://github.com/openai/codex.git")
     install_parser.add_argument("--target-dir", type=Path)
+    install_parser.add_argument("--browser-node-archive", type=Path)
+    install_parser.add_argument("--browser-archive", type=Path)
+    install_parser.add_argument("--browser-archive-sha256")
     activate_parser = commands.add_parser("activate")
     activate_parser.add_argument("selection", choices=("omd", "upstream"))
     activate_parser.add_argument("--mode", choices=("upstream_direct", "enabled"))

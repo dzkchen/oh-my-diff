@@ -7,4 +7,4 @@ sessions.
 
 [Comparison measurement tools and offline validation](benchmarks/README.md)
 
-[Private Apple Silicon lean-v1 installation and operation](PRIVATE_LEAN_V1.md)
+[Private Apple Silicon foundation installation and operation](PRIVATE_BUILD.md)

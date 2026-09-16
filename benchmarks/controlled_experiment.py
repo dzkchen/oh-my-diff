@@ -33,7 +33,7 @@ def freeze_file(root, name, source):
         return {"path": name, "sha256": hashlib.file_digest(stream, "sha256").hexdigest()}
 
 
-def prepare(source, binary, output):
+def prepare(source, binary, output, prior_attempt=None):
     require(not output.exists(), "experiment destination exists")
     previous = read(source / "manifest.json")
     m = copy.deepcopy(previous)
@@ -111,16 +111,27 @@ def prepare(source, binary, output):
                          "account_alias": "user-openai-api", "billing": "estimate", "request_exposure_usd": str(reservation),
                          "timeout_seconds": 115, "bounds": {"input_token_ceiling": 40000, "output_tokens": 4096, "requests_per_session": 1},
                          "rates": {"semantics": "input-includes-disjoint-cache;output-includes-reasoning", "input": inp, "cache_read": cache, "cache_write": str(write_rate), "output": out},
-                         "rate_card": "https://developers.openai.com/api/docs/models/" + model + " verified 2026-09-14; USD per 1M, default tier, short context; cache writes reserved at 1.25x input."}
+                         "rate_card": "https://developers.openai.com/api/docs/models/" + model + " verified 2026-09-15; USD per 1M, default tier, short context; cache writes reserved at 1.25x input."}
     m["execution"]["routes"] = routes
     m["execution"]["assessors"] = [{**copy.deepcopy(m["arms"]["default-upstream"]), "model": model, "provider": ASSESSOR_ROUTES[model]} for model in MODELS]
     m["execution"]["authorization"] = {"manifest_purpose": "development", "paid_requests_approved": False, "subscription_requests_approved": False, "data_approved": True, "reference": "Pending approval of this concrete experiment plan; repository submission authorization retained."}
     m["execution"]["guideline_cost"] = "unknown-development-overhead-retained"
+    prior = None
+    if prior_attempt is not None:
+        names = ("started.json", "experiment-failure.json", "budget-summary.json", "all-overhead.json", "decision.json")
+        refs = {name: freeze_file(output, "prior-attempt/" + name, prior_attempt / name) for name in names}
+        summary = read(prior_attempt / "budget-summary.json")
+        overhead = read(prior_attempt / "all-overhead.json")
+        require(summary["requests"] == 0 and summary["reserved_or_settled_upper_usd"] == "0", "retry plan may only retain a zero-request preflight failure")
+        require(overhead["attempts"] == [] and overhead["admissions"] == 0, "prior provider attempt cannot be reset")
+        prior = {"status": "zero-request-preflight-failure", "artifacts": refs}
     m["cost_experiment"] = {"source_manifest_sha256": identity(previous), "catalog_sha256": identity(catalog),
                             "freeze_sha256": identity(read(ROOT / "benchmarks/corpus/freeze.json")),
                             "assessment_mode": "Two distinct models, one fresh source-excerpt packet per candidate; no in-task reviewer overlap; 32KB packet limit, 4096 output tokens, no retry.",
                             "development_overhead": "Retain all synthetic failures, build/test/review evidence and unknown orchestration usage separately; unknown development cost cannot certify total-cost savings.",
                             "decision_rule": "Keep only for further development validation if both suites retain executable and assessor quality and measured full task cost improves by at least 20% against qualified configured upstream. Unknown usage/pricing/overhead or incomplete schedule is inconclusive. No held-out claim."}
+    if prior is not None:
+        m["cost_experiment"]["prior_attempt"] = prior
     validate_manifest(m, output)
     write(output / "manifest.json", m)
     reservation = Decimal("3.10") + 19 * sum(Decimal(routes[ASSESSOR_ROUTES[model]]["request_exposure_usd"]) for model in MODELS)
@@ -131,12 +142,22 @@ def prepare(source, binary, output):
             "core_schedule": schedule(m), "allowance_approved": False,
             "controller_sha256": {p.name: digest(p.read_bytes()) for p in Path(__file__).parent.glob("*.py")},
             "pricing_assumptions": {"unit": "USD per one million tokens", "contributor_input": "0.10", "contributor_cached_input": "0.002", "contributor_output": "0.20", "contributor_cache_write": "ordinary input rate; no separate price displayed"}}
+    if prior is not None:
+        plan["prior_attempt"] = prior
     write(output / "plan.json", plan)
     return plan
 
 
-def load_credentials():
+def bind_subscription_credentials(m):
+    route = m["execution"]["routes"]["subscription"]
+    require(route.get("native_subscription") is True, "subscription route must use native authentication")
+    os.environ[route["credential_env"]] = os.environ["OMD_SUBSCRIPTION_ACCESS"]
+    os.environ[route["account_env"]] = os.environ["OMD_SUBSCRIPTION_ACCOUNT"]
+
+
+def load_credentials(m):
     credentials()
+    bind_subscription_credentials(m)
     for line in (ROOT / ".env").read_text().splitlines():
         name, separator, value = line.strip().removeprefix("export ").partition("=")
         target = {"museapi": "OMD_CONTRIBUTOR_KEY", "OPENAI_API_KEY": "OPENAI_API_KEY"}.get(name.strip())
@@ -305,7 +326,7 @@ def run(plan_path, approved_sha256):
     budget.started = overall_started
     failure = None
     try:
-        load_credentials()
+        load_credentials(m)
         validate_execution(validated, root)
         write(root / "quota-start.json", quota())
         for model, provider in (("gpt-5.6-sol", "subscription"), ("gpt-6-astra", "subscription"), ("muse-spark-1.3-contributor", "contributor")):
@@ -409,12 +430,13 @@ def main():
     setup.add_argument("source", type=Path)
     setup.add_argument("binary", type=Path)
     setup.add_argument("destination", type=Path)
+    setup.add_argument("--prior-attempt", type=Path)
     execute = commands.add_parser("run")
     execute.add_argument("plan", type=Path)
     execute.add_argument("--approved-plan-sha256", required=True)
     args = parser.parse_args()
     if args.command == "prepare":
-        result = prepare(args.source.resolve(), args.binary.resolve(), args.destination.resolve())
+        result = prepare(args.source.resolve(), args.binary.resolve(), args.destination.resolve(), args.prior_attempt.resolve() if args.prior_attempt else None)
     else:
         result = run(args.plan.resolve(), args.approved_plan_sha256)
     print(json.dumps(result, indent=2))

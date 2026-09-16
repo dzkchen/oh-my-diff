@@ -24,7 +24,7 @@ fails closed. Disabling Oh My Diff changes behavior inside the custom binary;
 restoring upstream means selecting or reinstalling the retained upstream
 executable and is a separate operation.
 
-Enabled manifests may select each lean-v1 capability explicitly through the
+Enabled manifests may select each foundation capability explicitly through the
 required boolean fields in `capabilities`: `delegation`, `escalation`,
 `checkpoints`, `guidelines`, `repository_knowledge`, `code_graph`, `code_health`,
 `semantic_lsp`, `reactive_rules`, `unified_review`, `completion_gate`, and
@@ -33,7 +33,8 @@ behavior. Delegation requires unified review; the completion gate requires both
 unified review and checkpoints. Disabling delegation selects direct single-agent
 work without disabling unrelated OMD controls. Inactive guideline, knowledge,
 LSP, or reactive-rule configuration is rejected instead of being silently
-ignored. The exact Phase 9 profiles and supported build matrix are frozen in
+ignored. The exact Phase 8 foundation profiles and supported build matrix are
+frozen in
 [`lean-v1.lock.json`](lean-v1.lock.json).
 
 Every enabled task writes `effective-settings.json` and `task-cost.json` to its

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
+from scripts import browser_bundle
 from scripts import private_lean_v1 as installer
 
 
@@ -43,6 +44,27 @@ class PrivateLeanV1Tests(unittest.TestCase):
         installer.write_manifest(prefix, manifest)
         return prefix, bin_dir, upstream_original
 
+    def browser(self, destination, *_args):
+        self.executable(destination / "runtime/bin/node", "v24.21.0")
+        self.executable(destination / "bin/omd-browser-mcp", "Version 0.0.81")
+        (destination / "artifacts").mkdir()
+        manifest = {
+            "schema": browser_bundle.SCHEMA,
+            "product": browser_bundle.PRODUCT,
+            "destination": str(destination.resolve()),
+            "provisioning": "source",
+            "node": {"version": "24.21.0"},
+            "mcp": {"version": "0.0.81"},
+            "browser": {"revision": "1244"},
+            "launcher": "bin/omd-browser-mcp",
+            "approval": "Codex default_tools_approval_mode=prompt",
+            "sandbox": "fixture",
+            "cleanup": "fixture",
+        }
+        manifest["tree"] = browser_bundle.tree_identity(destination)
+        browser_bundle.write_json(destination / "bundle.json", manifest)
+        return browser_bundle.verify(destination)
+
     def test_activation_is_explicit_and_inherits_shared_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -71,6 +93,24 @@ class PrivateLeanV1Tests(unittest.TestCase):
             controlled.write_text("{}\n")
             manifest = installer.activate(prefix, bin_dir, "omd", "enabled", controlled)
             self.assertEqual(manifest["activation"]["controlled_manifest"], str(controlled.resolve()))
+
+    def test_omd_activation_registers_prompt_gated_browser_but_upstream_does_not(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix, bin_dir, _ = self.managed(root)
+            browser = self.browser(prefix / "browser")
+            manifest = installer.load_manifest(prefix)
+            manifest["browser"] = {
+                "launcher": str(prefix / "browser/bin/omd-browser-mcp"),
+                "tree": browser["tree"],
+            }
+            installer.write_manifest(prefix, manifest)
+            installer.activate(prefix, bin_dir, "omd", "upstream_direct")
+            wrapper = (bin_dir / "codex").read_text()
+            self.assertIn("mcp_servers.omd_browser.command", wrapper)
+            self.assertIn('default_tools_approval_mode="prompt"', wrapper)
+            installer.activate(prefix, bin_dir, "upstream")
+            self.assertNotIn("omd_browser", (bin_dir / "codex").read_text())
 
     def test_modified_launcher_is_not_replaced_or_removed(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -161,11 +201,15 @@ class PrivateLeanV1Tests(unittest.TestCase):
                     mock.patch.object(installer, "lock_inputs", return_value=(upstream_lock, lean_lock)), \
                     mock.patch.object(installer, "clone_pinned", side_effect=clone), \
                     mock.patch.object(installer, "output", side_effect=command_output), \
-                    mock.patch.object(installer, "run", side_effect=command_run):
+                    mock.patch.object(installer, "run", side_effect=command_run), \
+                    mock.patch.object(installer.browser_bundle, "build_bundle", side_effect=self.browser):
                 manifest = installer.install(args)
             self.assertEqual(manifest["activation"]["selection"], "omd")
             self.assertTrue((prefix / "source/codex-rs").is_dir())
             self.assertTrue((prefix / "artifacts/omd/codex").is_file())
+            self.assertTrue((prefix / "browser/bin/omd-browser-mcp").is_file())
+            self.assertEqual(manifest["browser"]["approval"],
+                             "Codex default_tools_approval_mode=prompt")
             self.assertFalse((prefix / "target").exists())
 
 

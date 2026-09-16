@@ -1,18 +1,34 @@
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 
-from benchmarks.controlled_experiment import controlled_attribution, final_candidate_matches, fixed_roles, fresh_spawns
+from benchmarks.controlled_experiment import bind_subscription_credentials, controlled_attribution, final_candidate_matches, fixed_roles, fresh_spawns
 from benchmarks.gateway import bounded_request
 from benchmarks.isolation import snapshot
 from benchmarks.runner import config_literal
 
 
 class ControlledTests(unittest.TestCase):
+    def test_subscription_credentials_bind_to_frozen_route_names(self):
+        manifest = {"execution": {"routes": {"subscription": {
+            "native_subscription": True,
+            "credential_env": "CAI_SUBSCRIPTION_ACCESS",
+            "account_env": "CAI_SUBSCRIPTION_ACCOUNT",
+        }}}}
+        with patch.dict(os.environ, {
+            "OMD_SUBSCRIPTION_ACCESS": "access",
+            "OMD_SUBSCRIPTION_ACCOUNT": "account",
+        }, clear=True):
+            bind_subscription_credentials(manifest)
+            self.assertEqual(os.environ["CAI_SUBSCRIPTION_ACCESS"], "access")
+            self.assertEqual(os.environ["CAI_SUBSCRIPTION_ACCOUNT"], "account")
+
     def test_native_permission_paths_survive_cli_toml_serialization(self):
         path = "/private/tmp/example.with.dots/source"
         filesystem = {":minimal": "read", path: "write", "/usr/bin": "read"}

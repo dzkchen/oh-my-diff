@@ -1,6 +1,6 @@
-# Private lean-v1 operator guide
+# Private foundation operator guide
 
-This is the minimum maintainer path for the pinned Oh My Diff private lean v1.
+This is the minimum maintainer path for the pinned Oh My Diff private foundation.
 It is supported only on Apple Silicon macOS and is not a prebuilt package or a
 public release.
 
@@ -9,6 +9,7 @@ public release.
 - This Oh My Diff checkout, including `runtime/lean-v1.lock.json`.
 - The supported upstream `codex-cli 0.154.0` executable on `PATH`.
 - Rust `1.95.0` available through rustup.
+- Standalone pnpm `11.14.0` for source browser provisioning.
 - A new install prefix and a new launcher directory outside `CODEX_HOME` and
   `CODEX_SQLITE_HOME`.
 
@@ -21,7 +22,7 @@ databases.
 From this repository:
 
 ```sh
-OMD_PREFIX="$HOME/.local/share/oh-my-diff/private-lean-v1"
+OMD_PREFIX="$HOME/.local/share/oh-my-diff/private-build"
 OMD_BIN_DIR="$HOME/.local/share/oh-my-diff/bin"
 UPSTREAM_CODEX="$(command -v codex)"
 
@@ -40,7 +41,11 @@ verifies and applies the recorded patch, builds an arm64 release, retains exact
 upstream and OMD executables, and initially selects upstream-style direct mode.
 Use `--repository /absolute/local/codex-mirror` for an offline local mirror. An
 optional external `--target-dir` build cache is not owned or removed by
-uninstall.
+uninstall. The same install provisions the pinned browser bundle from source so
+it is ready when OMD mode is selected. To use a previously packaged browser
+bundle instead, pass both `--browser-archive /absolute/browser.tar.xz` and
+`--browser-archive-sha256 HASH`. Source provisioning can avoid a Node download
+with the matching `--browser-node-archive` input.
 
 ## Inspect and choose a mode
 
@@ -98,13 +103,23 @@ python3 scripts/private_lean_v1.py \
 Selecting `upstream` or `upstream_direct` is reversible. Only uninstall restores
 normal `PATH` resolution to the separately installed upstream executable.
 
+OMD selection registers `omd_browser` from the managed prefix with a fresh
+in-memory browser profile and per-tool approval prompts. Retained upstream
+selection does not inject the server. Browser downloads, profiles, or arbitrary
+system Chrome installations are never selected at session start. See
+[`browser/README.md`](browser/README.md) for packaging, verification, update,
+artifact, and sandbox details.
+
 ## Limitations
 
 - Live provider access, account eligibility, repository-data authorization,
   quotas, prices, model availability, and route behavior must be checked in the
   current environment. Synthetic fixtures do not verify them.
-- The private build does not bundle browser tooling, TypeScript mods, Kiro, a
-  code-mode host, or the later breadth features.
+- The private build does not bundle TypeScript mods, Kiro, a code-mode host, or
+  the later breadth features.
+- Browser automation is headless Chromium on Apple Silicon macOS. Browser and
+  MCP network or remote side effects are outside the shell filesystem sandbox;
+  every browser tool defaults to an explicit Codex approval prompt.
 - Language servers are detected but never installed. Unsupported or unavailable
   semantic operations fall back explicitly.
 - The supported validation surface excludes the voice host and V8 cloud-task
@@ -120,6 +135,9 @@ installation method and fails closed. Update by returning to supported upstream,
 uninstalling, updating this repository's reviewed pin and patch through the
 normal maintenance process, and running a fresh install. Never apply a moving
 upstream revision to the old patch or overwrite the managed prefix in place.
+The standalone browser manager supports separately reviewed atomic source or
+prebuilt-archive updates with rollback; its exact commands are in
+[`browser/README.md`](browser/README.md).
 
 ## Uninstall
 
@@ -147,3 +165,5 @@ Uninstall fails closed unless the launcher and retained artifacts still match an
 the exact supported upstream executable will resolve without the managed launcher.
 It removes only the managed launcher and install prefix. It does not log out,
 delete shared Codex state, remove an external build cache, or uninstall upstream.
+The browser runtime, browser binary, MCP package, and bounded browser artifacts
+live under that managed prefix and are removed with it.
