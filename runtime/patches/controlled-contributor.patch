@@ -24684,6 +24684,19 @@ index 002e58b..9090b62 100644
              TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
                  draw_view(tui, &view)?;
              }
+diff --git a/codex-rs/tui/src/update_prompt.rs b/codex-rs/tui/src/update_prompt.rs
+index aa01f17..266eec3 100644
+--- a/codex-rs/tui/src/update_prompt.rs
++++ b/codex-rs/tui/src/update_prompt.rs
+@@ -59,7 +59,7 @@ pub(crate) async fn run_update_prompt_if_needed(
+             tui.screen_size_for_event(&event)?;
+             match event {
+                 TuiEvent::Key(key_event) => screen.handle_key(key_event),
+-                TuiEvent::Paste(_) | TuiEvent::FocusLost => {}
++                TuiEvent::Paste(_) | TuiEvent::Mouse(_) | TuiEvent::FocusLost => {}
+                 TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
+                     tui.draw(u16::MAX, |frame| {
+                         frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
 index 96b3fbc..968fd3a 100644
 --- a/codex-rs/tui/src/tui.rs

@@ -12,7 +12,15 @@
   },
   "runtime_patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "91f8fad3177a65960a837455b8b5bc5360790b1cce5620877baef4f7c181bdc3"
+    "sha256": "8b9cc772ed50182a2ae4de1d83ca9947a4277bb3656fb90e7a8daf3ba2a96c49"
+  },
+  "private_installation": {
+    "manager": "scripts/private_lean_v1.py",
+    "build": "cargo +1.95.0 build --locked --release -p codex-cli --bin codex",
+    "default_activation": "omd:upstream_direct",
+    "supported_upstream": "codex-cli 0.154.0",
+    "shared_state": "inherit CODEX_HOME and CODEX_SQLITE_HOME unchanged",
+    "linux_benchmark_runtime": false
   },
   "profiles": {
     "upstream_direct": {
