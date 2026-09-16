@@ -50,6 +50,7 @@ fn setup() -> (
             authorization,
             repository_identity: "fixture".into(),
             revocation: root.path().join("evidence").join(REVOCATION_FILE),
+            cost_capture: root.path().join("evidence").join("task-cost.json"),
         },
     );
     task.start_worker(
@@ -76,7 +77,7 @@ fn setup() -> (
 
 #[test]
 fn raw_usage_keeps_unknown_fields_and_prices_cached_input_once() {
-    let (_root, accounts, task, mut request, body) = setup();
+    let (root, accounts, task, mut request, body) = setup();
     let mut attempt = accounts
         .before_send(&mut request, Some(&body))
         .unwrap()
@@ -93,6 +94,13 @@ fn raw_usage_keeps_unknown_fields_and_prices_cached_input_once() {
     assert_eq!(record.raw_usage, Some(usage));
     assert_eq!(record.settled_microusd, Some(8));
     assert_eq!(record.status, "completed");
+    let capture: codex_omd::TaskCostCapture = serde_json::from_slice(
+        &std::fs::read(root.path().join("evidence/task-cost.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(capture.settled_task_charge_microusd, 8);
+    assert_eq!(capture.retained_exposure_upper_bound_microusd, 8);
+    assert_eq!(capture.raw_usage_attempts, 1);
 }
 
 #[test]

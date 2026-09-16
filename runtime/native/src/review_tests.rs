@@ -51,6 +51,45 @@ fn upstream_direct_install_registers_no_omd_task_behavior() {
 }
 
 #[test]
+fn capabilities_are_independent_with_only_required_dependencies() {
+    let mut capabilities = Capabilities {
+        delegation: false,
+        escalation: true,
+        checkpoints: false,
+        guidelines: true,
+        repository_knowledge: false,
+        code_graph: true,
+        code_health: false,
+        semantic_lsp: false,
+        reactive_rules: true,
+        unified_review: false,
+        completion_gate: false,
+        terminal: false,
+    };
+    capabilities.validate().unwrap();
+    assert_eq!(
+        capabilities.enabled_names(&CommunicationPolicy::default()),
+        vec!["escalation", "guidelines", "code_graph", "reactive_rules"]
+    );
+
+    capabilities.completion_gate = true;
+    assert!(capabilities.validate().unwrap_err().contains("requires"));
+    capabilities.completion_gate = false;
+    capabilities.delegation = true;
+    assert!(capabilities.validate().unwrap_err().contains("requires"));
+}
+
+#[test]
+fn legacy_manifests_keep_the_pre_integration_capability_set() {
+    let capabilities = Capabilities::default();
+    assert!(capabilities.delegation);
+    assert!(capabilities.checkpoints);
+    assert!(capabilities.unified_review);
+    assert!(capabilities.completion_gate);
+    assert!(capabilities.terminal);
+}
+
+#[test]
 fn every_turn_review_stays_off_in_the_default_manifest_policy() {
     let policy = ReviewPolicy::default();
     assert!(!policy.every_turn_advice);

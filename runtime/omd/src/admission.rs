@@ -57,6 +57,16 @@ pub struct Attempt {
     pub settled_microusd: Option<u64>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct TaskCostCapture {
+    pub schema: u32,
+    pub attempts: Vec<Attempt>,
+    pub settled_task_charge_microusd: u64,
+    pub retained_exposure_upper_bound_microusd: u64,
+    pub raw_usage_attempts: u32,
+    pub uncertain_requests: Vec<u32>,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureClass {
@@ -1930,6 +1940,34 @@ impl Task {
         self.refresh_checkpoint(&mut state)
     }
 
+    pub fn complete_direct(&self, reference: &str) -> io::Result<()> {
+        if reference.is_empty() || reference.len() > 4096 {
+            return Err(denied("completion evidence reference required"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if state.status != TaskStatus::Active
+            || state
+                .workers
+                .values()
+                .any(|worker| worker.status == WorkerStatus::Active)
+            || state
+                .attempts
+                .values()
+                .any(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
+        {
+            return Err(denied("direct task still has active or uncertain work"));
+        }
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "direct_task_completed", "reference": reference}),
+        )?;
+        state.status = TaskStatus::Completed;
+        self.refresh_checkpoint(&mut state)
+    }
+
     pub fn remaining(&self) -> io::Result<(Duration, u32, u64)> {
         let state = self
             .state
@@ -1952,5 +1990,44 @@ impl Task {
             .lock()
             .map_err(|_| denied("task lock poisoned"))?;
         Ok(state.attempts.values().cloned().collect())
+    }
+
+    pub fn cost_capture(&self) -> io::Result<TaskCostCapture> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        let attempts = state.attempts.values().cloned().collect::<Vec<_>>();
+        let settled_task_charge_microusd = attempts
+            .iter()
+            .filter_map(|attempt| attempt.settled_microusd)
+            .sum();
+        let retained_exposure_upper_bound_microusd = attempts
+            .iter()
+            .map(|attempt| {
+                attempt
+                    .settled_microusd
+                    .unwrap_or(attempt.reserved_microusd)
+            })
+            .sum();
+        let raw_usage_attempts = attempts
+            .iter()
+            .filter(|attempt| attempt.raw_usage.is_some())
+            .count()
+            .try_into()
+            .map_err(|_| denied("raw usage attempt count overflow"))?;
+        let uncertain_requests = attempts
+            .iter()
+            .filter(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
+            .map(|attempt| attempt.request)
+            .collect();
+        Ok(TaskCostCapture {
+            schema: 1,
+            attempts,
+            settled_task_charge_microusd,
+            retained_exposure_upper_bound_microusd,
+            raw_usage_attempts,
+            uncertain_requests,
+        })
     }
 }

@@ -38,6 +38,7 @@ pub struct Account {
     pub authorization_sha256: String,
     pub repository_identity: String,
     pub revocation: std::path::PathBuf,
+    pub cost_capture: std::path::PathBuf,
 }
 
 #[derive(Default)]
@@ -281,6 +282,28 @@ struct Attempt {
 }
 
 impl Attempt {
+    fn persist_cost_capture(&self) -> Result<(), TransportError> {
+        use std::io::Write;
+
+        let bytes = serde_json::to_vec(&self.account.task.cost_capture().map_err(denied)?)
+            .map_err(denied)?;
+        let temporary = self.account.cost_capture.with_extension(format!(
+            "json.{}.{}.tmp",
+            std::process::id(),
+            self.admission.request_id()
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(denied)?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(denied)?;
+        std::fs::rename(&temporary, &self.account.cost_capture).map_err(denied)?;
+        Ok(())
+    }
+
     fn event(&mut self, event: &Value, valid: bool) -> Result<(), TransportError> {
         if !valid
             && !matches!(
@@ -343,6 +366,7 @@ impl Attempt {
                             .settle(&self.admission, usage.clone(), amount)
                             .map_err(denied)?;
                         self.settled = true;
+                        self.persist_cost_capture()?;
                     }
                 }
                 if !self.settled {
@@ -364,6 +388,7 @@ impl ResponseAttempt for Attempt {
     fn failed(&mut self, reason: &str) {
         if !self.failed && !self.settled {
             let _ = self.account.task.fail(&self.admission, reason);
+            let _ = self.persist_cost_capture();
             self.failed = true;
         }
     }

@@ -926,10 +926,10 @@ index 0000000..75ca38e
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000..4ab33da
+index 0000000..d924d1f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,407 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -970,6 +970,7 @@ index 0000000..4ab33da
 +    pub authorization_sha256: String,
 +    pub repository_identity: String,
 +    pub revocation: std::path::PathBuf,
++    pub cost_capture: std::path::PathBuf,
 +}
 +
 +#[derive(Default)]
@@ -1213,6 +1214,28 @@ index 0000000..4ab33da
 +}
 +
 +impl Attempt {
++    fn persist_cost_capture(&self) -> Result<(), TransportError> {
++        use std::io::Write;
++
++        let bytes = serde_json::to_vec(&self.account.task.cost_capture().map_err(denied)?)
++            .map_err(denied)?;
++        let temporary = self.account.cost_capture.with_extension(format!(
++            "json.{}.{}.tmp",
++            std::process::id(),
++            self.admission.request_id()
++        ));
++        let mut file = std::fs::OpenOptions::new()
++            .create_new(true)
++            .write(true)
++            .open(&temporary)
++            .map_err(denied)?;
++        file.write_all(&bytes)
++            .and_then(|_| file.sync_all())
++            .map_err(denied)?;
++        std::fs::rename(&temporary, &self.account.cost_capture).map_err(denied)?;
++        Ok(())
++    }
++
 +    fn event(&mut self, event: &Value, valid: bool) -> Result<(), TransportError> {
 +        if !valid
 +            && !matches!(
@@ -1275,6 +1298,7 @@ index 0000000..4ab33da
 +                            .settle(&self.admission, usage.clone(), amount)
 +                            .map_err(denied)?;
 +                        self.settled = true;
++                        self.persist_cost_capture()?;
 +                    }
 +                }
 +                if !self.settled {
@@ -1296,6 +1320,7 @@ index 0000000..4ab33da
 +    fn failed(&mut self, reason: &str) {
 +        if !self.failed && !self.settled {
 +            let _ = self.account.task.fail(&self.admission, reason);
++            let _ = self.persist_cost_capture();
 +            self.failed = true;
 +        }
 +    }
@@ -1314,10 +1339,10 @@ index 0000000..4ab33da
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000..b2f4487
+index 0000000..22b0c73
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,228 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::WorkerLimits;
@@ -1370,6 +1395,7 @@ index 0000000..b2f4487
 +            authorization,
 +            repository_identity: "fixture".into(),
 +            revocation: root.path().join("evidence").join(REVOCATION_FILE),
++            cost_capture: root.path().join("evidence").join("task-cost.json"),
 +        },
 +    );
 +    task.start_worker(
@@ -1396,7 +1422,7 @@ index 0000000..b2f4487
 +
 +#[test]
 +fn raw_usage_keeps_unknown_fields_and_prices_cached_input_once() {
-+    let (_root, accounts, task, mut request, body) = setup();
++    let (root, accounts, task, mut request, body) = setup();
 +    let mut attempt = accounts
 +        .before_send(&mut request, Some(&body))
 +        .unwrap()
@@ -1413,6 +1439,13 @@ index 0000000..b2f4487
 +    assert_eq!(record.raw_usage, Some(usage));
 +    assert_eq!(record.settled_microusd, Some(8));
 +    assert_eq!(record.status, "completed");
++    let capture: codex_omd::TaskCostCapture = serde_json::from_slice(
++        &std::fs::read(root.path().join("evidence/task-cost.json")).unwrap(),
++    )
++    .unwrap();
++    assert_eq!(capture.settled_task_charge_microusd, 8);
++    assert_eq!(capture.retained_exposure_upper_bound_microusd, 8);
++    assert_eq!(capture.raw_usage_attempts, 1);
 +}
 +
 +#[test]
@@ -3990,10 +4023,10 @@ index 0000000..58c0303
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..19498c8
+index 0000000..ed2d051
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,2902 @@
+@@ -0,0 +1,3158 @@
 +mod accounting;
 +mod execution;
 +
@@ -4079,6 +4112,7 @@ index 0000000..19498c8
 +use codex_tools::ToolName;
 +use codex_tools::ToolSpec;
 +use serde::Deserialize;
++use serde::Serialize;
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
@@ -4098,6 +4132,8 @@ index 0000000..19498c8
 +    approved_untracked: Vec<String>,
 +    limits: Limits,
 +    worker_limits: WorkerLimits,
++    #[serde(default)]
++    capabilities: Capabilities,
 +    #[serde(default)]
 +    guideline_store: Option<PathBuf>,
 +    #[serde(default)]
@@ -4125,6 +4161,84 @@ index 0000000..19498c8
 +    toolchain_reads: Vec<PathBuf>,
 +    snapshot_bytes: usize,
 +    max_request_bytes: usize,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++struct Capabilities {
++    delegation: bool,
++    escalation: bool,
++    checkpoints: bool,
++    guidelines: bool,
++    repository_knowledge: bool,
++    code_graph: bool,
++    code_health: bool,
++    semantic_lsp: bool,
++    reactive_rules: bool,
++    unified_review: bool,
++    completion_gate: bool,
++    terminal: bool,
++}
++
++impl Default for Capabilities {
++    fn default() -> Self {
++        Self {
++            delegation: true,
++            escalation: true,
++            checkpoints: true,
++            guidelines: true,
++            repository_knowledge: true,
++            code_graph: true,
++            code_health: true,
++            semantic_lsp: true,
++            reactive_rules: true,
++            unified_review: true,
++            completion_gate: true,
++            terminal: true,
++        }
++    }
++}
++
++impl Capabilities {
++    fn validate(&self) -> Result<(), String> {
++        if self.completion_gate && (!self.unified_review || !self.checkpoints) {
++            return Err("completion_gate requires unified_review and checkpoints".into());
++        }
++        if self.delegation && !self.unified_review {
++            return Err(
++                "delegation requires unified_review for conflict-checked integration".into(),
++            );
++        }
++        Ok(())
++    }
++
++    fn enabled_names(&self, communication: &CommunicationPolicy) -> Vec<&'static str> {
++        let mut enabled = Vec::new();
++        for (active, name) in [
++            (self.delegation, "delegation"),
++            (self.escalation, "escalation"),
++            (self.checkpoints, "checkpoints"),
++            (self.guidelines, "guidelines"),
++            (self.repository_knowledge, "repository_knowledge"),
++            (self.code_graph, "code_graph"),
++            (self.code_health, "code_health"),
++            (self.semantic_lsp, "semantic_lsp"),
++            (self.reactive_rules, "reactive_rules"),
++            (self.unified_review, "unified_review"),
++            (self.completion_gate, "completion_gate"),
++            (self.terminal, "terminal"),
++            (communication.concise_user_updates, "concise_user_updates"),
++            (
++                communication.structured_worker_reports,
++                "structured_worker_reports",
++            ),
++        ] {
++            if active {
++                enabled.push(name);
++            }
++        }
++        enabled
++    }
 +}
 +
 +#[derive(Clone, Deserialize)]
@@ -4315,6 +4429,7 @@ index 0000000..19498c8
 +    reactive_rules: Option<ReactiveRules>,
 +    review: std::sync::Mutex<ReviewRuntime>,
 +    completion: std::sync::Mutex<CompletionGate>,
++    effective_settings: Value,
 +}
 +
 +#[derive(Clone)]
@@ -4351,6 +4466,8 @@ index 0000000..19498c8
 +struct ReviewTool(Arc<Lead>);
 +
 +struct CompletionTool(Arc<Lead>);
++
++struct StatusTool(Arc<Lead>);
 +
 +struct ReviewRuntime {
 +    ledger: UnifiedReview,
@@ -4955,8 +5072,16 @@ index 0000000..19498c8
 +        return Err("controlled manifest exceeds limit".into());
 +    }
 +    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
++    manifest.capabilities.validate()?;
 +    manifest.review.validate().map_err(|e| e.to_string())?;
 +    manifest.completion.validate().map_err(|e| e.to_string())?;
++    if (!manifest.capabilities.guidelines && manifest.guideline_store.is_some())
++        || (!manifest.capabilities.repository_knowledge && manifest.knowledge.is_some())
++        || (!manifest.capabilities.semantic_lsp && manifest.lsp.is_some())
++        || (!manifest.capabilities.reactive_rules && manifest.reactive_rules.is_some())
++    {
++        return Err("disabled capability has active configuration material".into());
++    }
 +    if manifest.leads.sol.model != "gpt-5.6-sol"
 +        || manifest.leads.astra.model != "gpt-6-astra"
 +        || manifest.worker.model != "muse-spark-1.3-contributor"
@@ -5027,8 +5152,11 @@ index 0000000..19498c8
 +            return Err("shared task packet must be canonical and host-owned".into());
 +        }
 +    }
-+    let reactive_rules = match &manifest.reactive_rules {
-+        Some(reference) => {
++    let reactive_rules = match (
++        &manifest.capabilities.reactive_rules,
++        &manifest.reactive_rules,
++    ) {
++        (true, Some(reference)) => {
 +            let canonical = reference.path.canonicalize().map_err(|e| e.to_string())?;
 +            if canonical != reference.path || reference.path.starts_with(&manifest.repository) {
 +                return Err("reactive rules must be canonical and host-owned".into());
@@ -5048,10 +5176,10 @@ index 0000000..19498c8
 +                .map_err(|e| e.to_string())?,
 +            )
 +        }
-+        None => None,
++        _ => None,
 +    };
-+    let active_guideline = match &manifest.guideline_store {
-+        Some(path)
++    let active_guideline = match (&manifest.capabilities.guidelines, &manifest.guideline_store) {
++        (true, Some(path))
 +            if path.canonicalize().map_err(|e| e.to_string())? == *path
 +                && !path.starts_with(&manifest.repository) =>
 +        {
@@ -5059,11 +5187,14 @@ index 0000000..19498c8
 +                .and_then(|store| store.active())
 +                .map_err(|e| e.to_string())?
 +        }
-+        Some(_) => return Err("guideline store must be canonical and host-owned".into()),
-+        None => None,
++        (true, Some(_)) => return Err("guideline store must be canonical and host-owned".into()),
++        _ => None,
 +    };
-+    let knowledge_session = match &manifest.knowledge {
-+        Some(policy)
++    let knowledge_session = match (
++        &manifest.capabilities.repository_knowledge,
++        &manifest.knowledge,
++    ) {
++        (true, Some(policy))
 +            if policy.store.canonicalize().map_err(|e| e.to_string())? == policy.store
 +                && !policy.store.starts_with(&manifest.repository)
 +                && policy.max_context_bytes > 0
@@ -5081,11 +5212,13 @@ index 0000000..19498c8
 +                    .map_err(|e| e.to_string())?,
 +            )
 +        }
-+        Some(_) => return Err("knowledge store must be canonical, host-owned, and bounded".into()),
-+        None => None,
++        (true, Some(_)) => {
++            return Err("knowledge store must be canonical, host-owned, and bounded".into());
++        }
++        _ => None,
 +    };
-+    let lsp_enabled = match &manifest.lsp {
-+        Some(policy) => {
++    let lsp_enabled = match (&manifest.capabilities.semantic_lsp, &manifest.lsp) {
++        (true, Some(policy)) => {
 +            policy
 +                .limits
 +                .validate()
@@ -5104,7 +5237,7 @@ index 0000000..19498c8
 +                .preference(&manifest.repository_identity)
 +                .is_some_and(|preference| preference.enabled)
 +        }
-+        None => false,
++        _ => false,
 +    };
 +    let frozen_knowledge_prompt = match (&manifest.knowledge, &knowledge_session) {
 +        (Some(policy), Some(session)) => Some(knowledge_prompt(policy, session)?),
@@ -5131,6 +5264,31 @@ index 0000000..19498c8
 +        .map_err(str::to_owned)?;
 +    let review = review_runtime(&manifest)?;
 +    let completion = completion_runtime(&manifest, &initial_candidate_sha256, &review)?;
++    let effective_settings = json!({
++        "schema": 1,
++        "mode": "enabled",
++        "upstream": codex_omd::PINNED_UPSTREAM,
++        "manifest_sha256": execution::hash(&bytes),
++        "direct_single_agent": !manifest.capabilities.delegation,
++        "selected_capabilities": manifest.capabilities.enabled_names(&manifest.communication),
++        "capabilities": manifest.capabilities,
++        "communication": manifest.communication,
++        "active": {
++            "guideline": active_guideline.as_ref().map(|guideline| json!({
++                "version": guideline.selection.version,
++                "proposal_sha256": guideline.selection.proposal_sha256,
++            })),
++            "repository_knowledge": knowledge_session.is_some(),
++            "semantic_lsp": lsp_enabled,
++            "reactive_rules": reactive_rules.is_some(),
++        },
++        "routing": {
++            "lead_policy": manifest.lead_policy.name(),
++            "worker_context": manifest.context_policy.name(),
++        },
++        "limits": manifest.limits,
++        "task_cost_capture": manifest.evidence.join("task-cost.json"),
++    });
 +    let host = Arc::new(Host {
 +        lsp: lsp_enabled.then(|| {
 +            let policy = manifest.lsp.as_ref().expect("enabled LSP policy");
@@ -5154,9 +5312,16 @@ index 0000000..19498c8
 +        reactive_rules,
 +        review: std::sync::Mutex::new(review),
 +        completion: std::sync::Mutex::new(completion),
++        effective_settings,
 +    });
-+    host.persist_completion()?;
-+    let _ = host.authorize();
++    host.persist_effective_settings()?;
++    host.persist_cost_capture()?;
++    if host.manifest.capabilities.completion_gate {
++        host.persist_completion()?;
++    }
++    if host.manifest.capabilities.delegation {
++        let _ = host.authorize();
++    }
 +    let deadline_host = host.clone();
 +    tokio::spawn(async move {
 +        tokio::time::sleep(std::time::Duration::from_secs(
@@ -5239,13 +5404,24 @@ index 0000000..19498c8
 +                    (reviewed, completed)
 +                })
 +                .unwrap_or((false, false));
++            let review_satisfied = !self.manifest.capabilities.unified_review || reviewed_current;
++            let completion_satisfied =
++                !self.manifest.capabilities.completion_gate || completion_current;
++            let task_completed = if self.manifest.capabilities.checkpoints {
++                self.task
++                    .complete(if self.manifest.capabilities.completion_gate {
++                        "adversarial completion receipt"
++                    } else {
++                        "checkpoint acceptance"
++                    })
++                    .is_ok()
++            } else {
++                self.task.complete_direct("direct task completion").is_ok()
++            };
 +            if reason != "completed"
-+                || !reviewed_current
-+                || !completion_current
-+                || self
-+                    .task
-+                    .complete("adversarial completion receipt")
-+                    .is_err()
++                || !review_satisfied
++                || !completion_satisfied
++                || !task_completed
 +            {
 +                let _ = self.task.stop();
 +            }
@@ -5323,6 +5499,7 @@ index 0000000..19498c8
 +            authorization_sha256: self.manifest.authorization_sha256.clone(),
 +            repository_identity: self.manifest.repository_identity.clone(),
 +            revocation: self.manifest.evidence.join(accounting::REVOCATION_FILE),
++            cost_capture: self.manifest.evidence.join("task-cost.json"),
 +        };
 +        let mut accounts = self
 +            .accounts
@@ -5357,7 +5534,49 @@ index 0000000..19498c8
 +        Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
 +    }
 +
++    fn persist_runtime_file<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
++        use std::io::Write;
++
++        let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
++        if bytes.len() > 8_388_608 {
++            return Err("runtime state exceeds persistence limit".into());
++        }
++        let path = self.manifest.evidence.join(name);
++        let temporary = self.manifest.evidence.join(format!(
++            ".{name}-{}-{}.tmp",
++            std::process::id(),
++            execution::hash(&bytes)
++        ));
++        let mut file = std::fs::OpenOptions::new()
++            .create_new(true)
++            .write(true)
++            .open(&temporary)
++            .map_err(|error| error.to_string())?;
++        file.write_all(&bytes)
++            .and_then(|_| file.sync_all())
++            .map_err(|error| error.to_string())?;
++        std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
++        std::fs::File::open(&self.manifest.evidence)
++            .and_then(|directory| directory.sync_all())
++            .map_err(|error| error.to_string())
++    }
++
++    fn persist_effective_settings(&self) -> Result<(), String> {
++        self.persist_runtime_file("effective-settings.json", &self.effective_settings)
++    }
++
++    fn persist_cost_capture(&self) -> Result<(), String> {
++        let capture = self
++            .task
++            .cost_capture()
++            .map_err(|error| error.to_string())?;
++        self.persist_runtime_file("task-cost.json", &capture)
++    }
++
 +    fn persist_review(&self) -> Result<(), String> {
++        if !self.manifest.capabilities.unified_review {
++            return Ok(());
++        }
 +        use std::io::Write;
 +        let bytes = serde_json::to_vec(
 +            &self
@@ -5393,6 +5612,9 @@ index 0000000..19498c8
 +    }
 +
 +    fn persist_completion(&self) -> Result<(), String> {
++        if !self.manifest.capabilities.completion_gate {
++            return Ok(());
++        }
 +        use std::io::Write;
 +        let bytes = serde_json::to_vec(
 +            &self
@@ -5547,7 +5769,8 @@ index 0000000..19498c8
 +            }
 +            let mut fragments = Vec::new();
 +            if let Some(lead) = lead {
-+                if let Ok(Some(checkpoint)) = self.task.checkpoint()
++                if self.manifest.capabilities.checkpoints
++                    && let Ok(Some(checkpoint)) = self.task.checkpoint()
 +                    && let Ok(rendered) = serde_json::to_string(&checkpoint)
 +                {
 +                    fragments.push(PromptFragment::developer_capability(
@@ -5557,25 +5780,31 @@ index 0000000..19498c8
 +                        ContentItemKind("oh_my_diff.task_checkpoint".into()),
 +                    ));
 +                }
-+                if let Some(guideline) = &self.active_guideline {
++                if self.manifest.capabilities.guidelines
++                    && let Some(guideline) = &self.active_guideline
++                {
 +                    fragments.push(PromptFragment::developer_capability(
 +                        guideline_prompt(guideline),
 +                        ContentItemKind("oh_my_diff.guideline".into()),
 +                    ));
 +                }
-+                if let Some(prompt) = &self.knowledge_prompt {
++                if self.manifest.capabilities.repository_knowledge
++                    && let Some(prompt) = &self.knowledge_prompt
++                {
 +                    fragments.push(PromptFragment::developer_capability(
 +                        prompt.clone(),
 +                        ContentItemKind("oh_my_diff.repository_knowledge".into()),
 +                    ));
 +                }
-+                if self.lsp.is_some() {
++                if self.manifest.capabilities.semantic_lsp && self.lsp.is_some() {
 +                    fragments.push(PromptFragment::developer_capability(
 +                        "This repository has remembered semantic-feedback opt-in. Use omd_lsp on demand for the supported five languages. Synchronize each coherent write batch before navigation or diagnostics; semantic writes require an exact declared scope and current SHA256 for every affected existing or absent path. Use intermediate_check after meaningful changes. Treat unsupported or unavailable results as an explicit fallback, not success. Servers start on demand, stop after bounded idle time, and are never installed automatically.",
 +                        ContentItemKind("oh_my_diff.lsp".into()),
 +                    ));
 +                }
-+                if let Ok(review) = self.review.lock() {
++                if self.manifest.capabilities.unified_review
++                    && let Ok(review) = self.review.lock()
++                {
 +                    let snapshot = review.ledger.snapshot();
 +                    let current_candidate = self
 +                        .live_state()
@@ -5599,7 +5828,9 @@ index 0000000..19498c8
 +                        ContentItemKind("oh_my_diff.review".into()),
 +                    ));
 +                }
-+                if let Ok(completion) = self.completion.lock() {
++                if self.manifest.capabilities.completion_gate
++                    && let Ok(completion) = self.completion.lock()
++                {
 +                    let snapshot = completion.snapshot();
 +                    let current_candidate = self
 +                        .live_state()
@@ -5630,7 +5861,8 @@ index 0000000..19498c8
 +                    ));
 +                }
 +            }
-+            if let Some(reactive) = &self.reactive_rules
++            if self.manifest.capabilities.reactive_rules
++                && let Some(reactive) = &self.reactive_rules
 +                && let Ok(prompts) = reactive.context_prompts(&input.thread_id.to_string())
 +            {
 +                fragments.extend(prompts.into_iter().map(|prompt| {
@@ -6008,24 +6240,81 @@ index 0000000..19498c8
 +        let Some(lead) = thread.get::<Lead>() else {
 +            return Vec::new();
 +        };
-+        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> = vec![
-+            Arc::new(CheckpointTool(lead.clone())),
-+            Arc::new(EscalationTool(lead.clone())),
-+            Arc::new(ReviewTool(lead.clone())),
-+            Arc::new(CompletionTool(lead.clone())),
-+        ];
-+        if self.lsp.is_some() {
++        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> =
++            vec![Arc::new(StatusTool(lead.clone()))];
++        if self.manifest.capabilities.checkpoints {
++            tools.push(Arc::new(CheckpointTool(lead.clone())));
++        }
++        if self.manifest.capabilities.escalation {
++            tools.push(Arc::new(EscalationTool(lead.clone())));
++        }
++        if self.manifest.capabilities.unified_review {
++            tools.push(Arc::new(ReviewTool(lead.clone())));
++        }
++        if self.manifest.capabilities.completion_gate {
++            tools.push(Arc::new(CompletionTool(lead.clone())));
++        }
++        if self.manifest.capabilities.semantic_lsp && self.lsp.is_some() {
 +            tools.push(Arc::new(LspTool(lead.clone())));
 +        }
-+        if accounting::authorized(
-+            &self.manifest.authorization,
-+            &self.manifest.authorization_sha256,
-+            &self.manifest.repository_identity,
-+            &self.manifest.evidence.join(accounting::REVOCATION_FILE),
-+        ) {
++        if self.manifest.capabilities.delegation
++            && accounting::authorized(
++                &self.manifest.authorization,
++                &self.manifest.authorization_sha256,
++                &self.manifest.repository_identity,
++                &self.manifest.evidence.join(accounting::REVOCATION_FILE),
++            )
++        {
 +            tools.push(Arc::new(ContributionTool(lead)));
 +        }
 +        tools
++    }
++}
++
++impl<'call> ToolExecutor<ToolCall<'call>> for StatusTool {
++    fn tool_name(&self) -> ToolName {
++        ToolName::plain("omd_status")
++    }
++
++    fn spec(&self) -> ToolSpec {
++        ToolSpec::Function(ResponsesApiTool {
++            name: "omd_status".into(),
++            description: "Inspect effective Oh My Diff capability settings, task allowance, raw usage attribution, settled task charge, and retained exposure upper bound. This tool is read-only and available for direct single-agent work without delegation.".into(),
++            strict: false,
++            defer_loading: None,
++            output_schema: None,
++            parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
++        })
++    }
++
++    fn exposure(&self) -> ToolExposure {
++        ToolExposure::Deferred
++    }
++
++    fn handle<'a>(&'a self, _call: ToolCall<'call>) -> ToolExecutorFuture<'a>
++    where
++        'call: 'a,
++    {
++        Box::pin(async move {
++            let cost = self
++                .0
++                .host
++                .task
++                .cost_capture()
++                .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
++            let checkpoint = self
++                .0
++                .host
++                .task
++                .checkpoint()
++                .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
++            Ok(Box::new(JsonToolOutput::new(json!({
++                "schema": 1,
++                "effective_settings": self.0.host.effective_settings,
++                "checkpoint": checkpoint,
++                "task_cost": cost,
++            }))) as Box<dyn ToolOutput>)
++        })
 +    }
 +}
 +
@@ -6898,10 +7187,10 @@ index 0000000..19498c8
 +}
 diff --git a/codex-rs/ext/omd/src/review_tests.rs b/codex-rs/ext/omd/src/review_tests.rs
 new file mode 100644
-index 0000000..9b43dd3
+index 0000000..5235efc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/review_tests.rs
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,162 @@
 +use super::*;
 +
 +struct ModeEnvGuard {
@@ -6952,6 +7241,45 @@ index 0000000..9b43dd3
 +    assert!(registry.tool_lifecycle_contributors().is_empty());
 +    assert!(registry.tool_reaction_contributors().is_empty());
 +    assert!(registry.turn_item_contributors().is_empty());
++}
++
++#[test]
++fn capabilities_are_independent_with_only_required_dependencies() {
++    let mut capabilities = Capabilities {
++        delegation: false,
++        escalation: true,
++        checkpoints: false,
++        guidelines: true,
++        repository_knowledge: false,
++        code_graph: true,
++        code_health: false,
++        semantic_lsp: false,
++        reactive_rules: true,
++        unified_review: false,
++        completion_gate: false,
++        terminal: false,
++    };
++    capabilities.validate().unwrap();
++    assert_eq!(
++        capabilities.enabled_names(&CommunicationPolicy::default()),
++        vec!["escalation", "guidelines", "code_graph", "reactive_rules"]
++    );
++
++    capabilities.completion_gate = true;
++    assert!(capabilities.validate().unwrap_err().contains("requires"));
++    capabilities.completion_gate = false;
++    capabilities.delegation = true;
++    assert!(capabilities.validate().unwrap_err().contains("requires"));
++}
++
++#[test]
++fn legacy_manifests_keep_the_pre_integration_capability_set() {
++    let capabilities = Capabilities::default();
++    assert!(capabilities.delegation);
++    assert!(capabilities.checkpoints);
++    assert!(capabilities.unified_review);
++    assert!(capabilities.completion_gate);
++    assert!(capabilities.terminal);
 +}
 +
 +#[test]
@@ -7364,10 +7692,10 @@ index 0000000..b5801b5
 +```
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000..06b5de3
+index 0000000..bade467
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1956 @@
+@@ -0,0 +1,2033 @@
 +use crate::checkpoint::AllowanceCheckpoint;
 +use crate::checkpoint::CallDecision;
 +use crate::checkpoint::CheckpointTaskStatus;
@@ -7425,6 +7753,16 @@ index 0000000..06b5de3
 +    pub failure_reason: Option<String>,
 +    pub raw_usage: Option<Value>,
 +    pub settled_microusd: Option<u64>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++pub struct TaskCostCapture {
++    pub schema: u32,
++    pub attempts: Vec<Attempt>,
++    pub settled_task_charge_microusd: u64,
++    pub retained_exposure_upper_bound_microusd: u64,
++    pub raw_usage_attempts: u32,
++    pub uncertain_requests: Vec<u32>,
 +}
 +
 +#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
@@ -9300,6 +9638,34 @@ index 0000000..06b5de3
 +        self.refresh_checkpoint(&mut state)
 +    }
 +
++    pub fn complete_direct(&self, reference: &str) -> io::Result<()> {
++        if reference.is_empty() || reference.len() > 4096 {
++            return Err(denied("completion evidence reference required"));
++        }
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if state.status != TaskStatus::Active
++            || state
++                .workers
++                .values()
++                .any(|worker| worker.status == WorkerStatus::Active)
++            || state
++                .attempts
++                .values()
++                .any(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
++        {
++            return Err(denied("direct task still has active or uncertain work"));
++        }
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "direct_task_completed", "reference": reference}),
++        )?;
++        state.status = TaskStatus::Completed;
++        self.refresh_checkpoint(&mut state)
++    }
++
 +    pub fn remaining(&self) -> io::Result<(Duration, u32, u64)> {
 +        let state = self
 +            .state
@@ -9322,6 +9688,45 @@ index 0000000..06b5de3
 +            .lock()
 +            .map_err(|_| denied("task lock poisoned"))?;
 +        Ok(state.attempts.values().cloned().collect())
++    }
++
++    pub fn cost_capture(&self) -> io::Result<TaskCostCapture> {
++        let state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        let attempts = state.attempts.values().cloned().collect::<Vec<_>>();
++        let settled_task_charge_microusd = attempts
++            .iter()
++            .filter_map(|attempt| attempt.settled_microusd)
++            .sum();
++        let retained_exposure_upper_bound_microusd = attempts
++            .iter()
++            .map(|attempt| {
++                attempt
++                    .settled_microusd
++                    .unwrap_or(attempt.reserved_microusd)
++            })
++            .sum();
++        let raw_usage_attempts = attempts
++            .iter()
++            .filter(|attempt| attempt.raw_usage.is_some())
++            .count()
++            .try_into()
++            .map_err(|_| denied("raw usage attempt count overflow"))?;
++        let uncertain_requests = attempts
++            .iter()
++            .filter(|attempt| matches!(attempt.status.as_str(), "unknown" | "in_flight"))
++            .map(|attempt| attempt.request)
++            .collect();
++        Ok(TaskCostCapture {
++            schema: 1,
++            attempts,
++            settled_task_charge_microusd,
++            retained_exposure_upper_bound_microusd,
++            raw_usage_attempts,
++            uncertain_requests,
++        })
 +    }
 +}
 diff --git a/codex-rs/omd/src/bin/omd-graph.rs b/codex-rs/omd/src/bin/omd-graph.rs
@@ -15388,10 +15793,10 @@ index 0000000..1b27bbc
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..6a3081c
+index 0000000..ebf98f8
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,170 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
@@ -15413,6 +15818,7 @@ index 0000000..6a3081c
 +pub use admission::FailureClass;
 +pub use admission::Limits;
 +pub use admission::Task;
++pub use admission::TaskCostCapture;
 +pub use admission::WorkerLimits;
 +pub use checkpoint::AcceptanceEvidence;
 +pub use checkpoint::CallDecision;
@@ -17810,16 +18216,15 @@ index 0000000..4202822
 +}
 diff --git a/codex-rs/omd/src/mode.rs b/codex-rs/omd/src/mode.rs
 new file mode 100644
-index 0000000..9fb838c
+index 0000000..270274f
 --- /dev/null
 +++ b/codex-rs/omd/src/mode.rs
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,141 @@
 +use std::ffi::OsStr;
 +
 +pub const MODE_ENV: &str = "OMD_MODE";
 +pub const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
-+pub const PINNED_UPSTREAM: &str =
-+    "rust-v0.154.0 / 6b9826e3aa83b1a5947db50f4332cb9c65f1b340";
++pub const PINNED_UPSTREAM: &str = "rust-v0.154.0 / 6b9826e3aa83b1a5947db50f4332cb9c65f1b340";
 +
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 +pub enum RuntimeMode {
@@ -19434,10 +19839,10 @@ index 0000000..74978b9
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000..8025d9f
+index 0000000..53aa5b9
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
-@@ -0,0 +1,756 @@
+@@ -0,0 +1,776 @@
 +use codex_omd::AcceptanceEvidence;
 +use codex_omd::CallDecision;
 +use codex_omd::CheckpointTaskStatus;
@@ -20191,6 +20596,26 @@ index 0000000..8025d9f
 +        .unwrap();
 +    assert_eq!(
 +        resumed.checkpoint().unwrap().unwrap().task_status,
++        CheckpointTaskStatus::Completed
++    );
++}
++
++#[test]
++fn direct_completion_does_not_require_checkpoint_acceptance() {
++    let dir = tempfile::tempdir().unwrap();
++    let task = Task::create_checkpointed(
++        limits(),
++        dir.path().join("task"),
++        contract(),
++        live('a', Vec::new()),
++    )
++    .unwrap();
++
++    task.complete_direct("direct single-agent completion")
++        .unwrap();
++
++    assert_eq!(
++        task.checkpoint().unwrap().unwrap().task_status,
 +        CheckpointTaskStatus::Completed
 +    );
 +}
@@ -22301,7 +22726,7 @@ index 16d4a6e..0978f51 100644
          self.bottom_pane.composer_is_vim_enabled()
      }
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index f45ae82..7ba8abf 100644
+index f45ae82..430e134 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -37,7 +37,11 @@ impl ChatWidget {
@@ -22309,7 +22734,7 @@ index f45ae82..7ba8abf 100644
          config.model = model.clone();
          let prevent_idle_sleep = config.features.enabled(Feature::PreventIdleSleep);
 -        let placeholder = PLACEHOLDER.to_string();
-+        let placeholder = if crate::omd::is_active() {
++        let placeholder = if crate::omd::terminal_active() {
 +            "Ask Oh My Diff to do anything".to_string()
 +        } else {
 +            PLACEHOLDER.to_string()
@@ -22530,10 +22955,10 @@ index 0000000..4282243
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_inspector.rs b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 new file mode 100644
-index 0000000..7f80f2d
+index 0000000..22223e0
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_inspector.rs
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,172 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -22588,6 +23013,7 @@ index 0000000..7f80f2d
 +            crate::omd::ContributorAuthorization::Authorized => "authorized",
 +            crate::omd::ContributorAuthorization::Revoked => "revoked",
 +            crate::omd::ContributorAuthorization::Invalid => "blocked",
++            crate::omd::ContributorAuthorization::Disabled => "disabled",
 +        };
 +        let renderer = if crate::omd::ligatures_enabled() {
 +            "Unicode ligatures (OMD_TUI_ASCII=1 for literal ASCII)"
@@ -22628,6 +23054,28 @@ index 0000000..7f80f2d
 +                    .exposure_consumed_microusd
 +                    .saturating_add(snapshot.exposure_remaining_microusd) as f64
 +                    / 1_000_000.0,
++            )),
++            Line::from(format!(
++                "Task cost ${:.6} settled charge · ${:.6} retained upper bound · {} raw usage records",
++                snapshot.settled_task_charge_microusd as f64 / 1_000_000.0,
++                snapshot.retained_exposure_upper_bound_microusd as f64 / 1_000_000.0,
++                snapshot.raw_usage_attempts,
++            )),
++            Line::from(format!(
++                "Work path {}",
++                if snapshot.direct_single_agent {
++                    "direct single-agent; delegation disabled"
++                } else {
++                    "direct or delegated"
++                }
++            )),
++            Line::from(format!(
++                "Capabilities {}",
++                if snapshot.selected_capabilities.is_empty() {
++                    "none".to_string()
++                } else {
++                    snapshot.selected_capabilities.join(", ")
++                }
 +            )),
 +            Line::from(format!("Contributor {authorization}")),
 +            Line::from(format!("Permissions {permissions} · approvals {approval}")),
@@ -22846,10 +23294,10 @@ index 094fb73..56dec6b 100644
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000..e3b7dab
+index 0000000..24ab364
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,625 @@
+@@ -0,0 +1,790 @@
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Position;
 +use ratatui::style::Modifier;
@@ -22886,6 +23334,7 @@ index 0000000..e3b7dab
 +    Authorized,
 +    Revoked,
 +    Invalid,
++    Disabled,
 +}
 +
 +#[derive(Clone, Debug, Eq, PartialEq)]
@@ -22899,6 +23348,11 @@ index 0000000..e3b7dab
 +    pub(crate) exposure_consumed_microusd: u64,
 +    pub(crate) exposure_remaining_microusd: u64,
 +    pub(crate) authorization: ContributorAuthorization,
++    pub(crate) direct_single_agent: bool,
++    pub(crate) selected_capabilities: Vec<String>,
++    pub(crate) settled_task_charge_microusd: u64,
++    pub(crate) retained_exposure_upper_bound_microusd: u64,
++    pub(crate) raw_usage_attempts: u64,
 +}
 +
 +#[derive(Deserialize)]
@@ -22907,6 +23361,50 @@ index 0000000..e3b7dab
 +    authorization: PathBuf,
 +    authorization_sha256: String,
 +    repository_identity: String,
++    #[serde(default)]
++    capabilities: Capabilities,
++}
++
++#[derive(Deserialize)]
++struct Capabilities {
++    #[serde(default = "enabled_by_default")]
++    delegation: bool,
++    #[serde(default = "enabled_by_default")]
++    code_graph: bool,
++    #[serde(default = "enabled_by_default")]
++    terminal: bool,
++}
++
++impl Default for Capabilities {
++    fn default() -> Self {
++        Self {
++            delegation: true,
++            code_graph: true,
++            terminal: true,
++        }
++    }
++}
++
++fn enabled_by_default() -> bool {
++    true
++}
++
++#[derive(Default, Deserialize)]
++struct EffectiveSettings {
++    #[serde(default)]
++    direct_single_agent: bool,
++    #[serde(default)]
++    selected_capabilities: Vec<String>,
++}
++
++#[derive(Default, Deserialize)]
++struct TaskCostCapture {
++    #[serde(default)]
++    settled_task_charge_microusd: u64,
++    #[serde(default)]
++    retained_exposure_upper_bound_microusd: u64,
++    #[serde(default)]
++    raw_usage_attempts: u64,
 +}
 +
 +#[derive(Default, Deserialize)]
@@ -22937,6 +23435,19 @@ index 0000000..e3b7dab
 +    effective_mode().is_ok_and(|mode| mode.mode.task_hooks_enabled())
 +}
 +
++fn manifest() -> Option<Manifest> {
++    let path = std::env::var_os(MANIFEST_ENV).map(PathBuf::from)?;
++    serde_json::from_slice(&bounded_read(&path, 65_536).ok()?).ok()
++}
++
++pub(crate) fn terminal_active() -> bool {
++    is_active() && manifest().is_some_and(|manifest| manifest.capabilities.terminal)
++}
++
++pub(crate) fn graph_active() -> bool {
++    is_active() && manifest().is_some_and(|manifest| manifest.capabilities.code_graph)
++}
++
 +pub(crate) fn effective_mode() -> Result<codex_omd::EffectiveMode, String> {
 +    codex_omd::effective_mode()
 +}
@@ -22957,6 +23468,9 @@ index 0000000..e3b7dab
 +}
 +
 +pub(crate) fn load_graph(cwd: &Path) -> Result<(codex_omd::CodeGraph, PathBuf), String> {
++    if !graph_active() {
++        return Err("code graph capability is disabled in the effective OMD settings".to_string());
++    }
 +    let path = std::env::var_os(GRAPH_ENV)
 +        .map(PathBuf::from)
 +        .unwrap_or_else(|| cwd.join(".omd/code-graph.json"));
@@ -22987,11 +23501,13 @@ index 0000000..e3b7dab
 +}
 +
 +pub(crate) fn ligatures_enabled() -> bool {
-+    is_active() && std::env::var("OMD_TUI_ASCII").as_deref() != Ok("1") && locale_supports_unicode()
++    terminal_active()
++        && std::env::var("OMD_TUI_ASCII").as_deref() != Ok("1")
++        && locale_supports_unicode()
 +}
 +
 +pub(crate) fn mouse_enabled() -> bool {
-+    is_active() && std::env::var("OMD_TUI_MOUSE").as_deref() != Ok("off")
++    terminal_active() && std::env::var("OMD_TUI_MOUSE").as_deref() != Ok("off")
 +}
 +
 +pub(crate) fn set_fullscreen_active(active: bool) {
@@ -23058,7 +23574,21 @@ index 0000000..e3b7dab
 +        65_536,
 +    )?)
 +    .map_err(|error| error.to_string())?;
-+    let authorization = authorization_state(&manifest);
++    let settings: EffectiveSettings = serde_json::from_slice(&bounded_read(
++        &manifest.evidence.join("effective-settings.json"),
++        65_536,
++    )?)
++    .map_err(|error| error.to_string())?;
++    let cost: TaskCostCapture = serde_json::from_slice(&bounded_read(
++        &manifest.evidence.join("task-cost.json"),
++        8_388_608,
++    )?)
++    .map_err(|error| error.to_string())?;
++    let authorization = if manifest.capabilities.delegation {
++        authorization_state(&manifest)
++    } else {
++        ContributorAuthorization::Disabled
++    };
 +    Ok(Snapshot {
 +        evidence: manifest.evidence,
 +        task_status: checkpoint.task_status,
@@ -23069,6 +23599,11 @@ index 0000000..e3b7dab
 +        exposure_consumed_microusd: checkpoint.allowance.exposure_consumed_microusd,
 +        exposure_remaining_microusd: checkpoint.allowance.exposure_remaining_microusd,
 +        authorization,
++        direct_single_agent: settings.direct_single_agent,
++        selected_capabilities: settings.selected_capabilities,
++        settled_task_charge_microusd: cost.settled_task_charge_microusd,
++        retained_exposure_upper_bound_microusd: cost.retained_exposure_upper_bound_microusd,
++        raw_usage_attempts: cost.raw_usage_attempts,
 +    })
 +}
 +
@@ -23140,10 +23675,15 @@ index 0000000..e3b7dab
 +                .allowance
 +                .requests_consumed
 +                .saturating_add(checkpoint.allowance.requests_remaining),
-+            match authorization_state(&manifest) {
++            match if manifest.capabilities.delegation {
++                authorization_state(&manifest)
++            } else {
++                ContributorAuthorization::Disabled
++            } {
 +                ContributorAuthorization::Authorized => "on",
 +                ContributorAuthorization::Revoked => "revoked",
 +                ContributorAuthorization::Invalid => "blocked",
++                ContributorAuthorization::Disabled => "off",
 +            }
 +        ))
 +    })();
@@ -23316,6 +23856,25 @@ index 0000000..e3b7dab
 +            .unwrap(),
 +        )
 +        .unwrap();
++        std::fs::write(
++            evidence.join("effective-settings.json"),
++            serde_json::to_vec(&serde_json::json!({
++                "direct_single_agent": false,
++                "selected_capabilities": ["delegation", "checkpoints", "terminal"]
++            }))
++            .unwrap(),
++        )
++        .unwrap();
++        std::fs::write(
++            evidence.join("task-cost.json"),
++            serde_json::to_vec(&serde_json::json!({
++                "settled_task_charge_microusd": 7,
++                "retained_exposure_upper_bound_microusd": 10,
++                "raw_usage_attempts": 2
++            }))
++            .unwrap(),
++        )
++        .unwrap();
 +        let manifest = root.path().join("manifest.json");
 +        std::fs::write(
 +            &manifest,
@@ -23343,7 +23902,9 @@ index 0000000..e3b7dab
 +    #[test]
 +    #[serial]
 +    fn ascii_fallback_keeps_literal_input() {
-+        let _manifest = EnvGuard::set(MANIFEST_ENV, Some("fixture.json"));
++        let root = TempDir::new().unwrap();
++        let manifest = runtime_fixture(&root);
++        let _manifest = EnvGuard::set(MANIFEST_ENV, manifest.to_str());
 +        let _locale = EnvGuard::set("LC_ALL", Some("en_CA.UTF-8"));
 +        let _ascii = EnvGuard::set("OMD_TUI_ASCII", Some("1"));
 +        let _mouse = EnvGuard::set("OMD_TUI_MOUSE", Some("off"));
@@ -23355,7 +23916,9 @@ index 0000000..e3b7dab
 +    #[test]
 +    #[serial]
 +    fn non_unicode_locale_automatically_uses_ascii() {
-+        let _manifest = EnvGuard::set(MANIFEST_ENV, Some("fixture.json"));
++        let root = TempDir::new().unwrap();
++        let manifest = runtime_fixture(&root);
++        let _manifest = EnvGuard::set(MANIFEST_ENV, manifest.to_str());
 +        let _locale = EnvGuard::set("LC_ALL", Some("C"));
 +        let _ascii = EnvGuard::set("OMD_TUI_ASCII", None);
 +
@@ -23365,7 +23928,9 @@ index 0000000..e3b7dab
 +    #[test]
 +    #[serial]
 +    fn active_unicode_mode_is_visual_only() {
-+        let _manifest = EnvGuard::set(MANIFEST_ENV, Some("fixture.json"));
++        let root = TempDir::new().unwrap();
++        let manifest = runtime_fixture(&root);
++        let _manifest = EnvGuard::set(MANIFEST_ENV, manifest.to_str());
 +        let _locale = EnvGuard::set("LC_ALL", Some("en_CA.UTF-8"));
 +        let _ascii = EnvGuard::set("OMD_TUI_ASCII", None);
 +        let source = String::from("=== -> <=");
@@ -23387,6 +23952,14 @@ index 0000000..e3b7dab
 +        assert_eq!(before.archived_workers, 1);
 +        assert_eq!(before.requests_consumed, 2);
 +        assert_eq!(before.authorization, ContributorAuthorization::Authorized);
++        assert_eq!(before.settled_task_charge_microusd, 7);
++        assert_eq!(before.retained_exposure_upper_bound_microusd, 10);
++        assert_eq!(before.raw_usage_attempts, 2);
++        assert!(
++            before
++                .selected_capabilities
++                .contains(&"terminal".to_string())
++        );
 +        assert_eq!(
 +            compact_status(),
 +            "Oh My Diff · OMD enabled · active · 2/5 req · Contributor on"
@@ -23429,6 +24002,43 @@ index 0000000..e3b7dab
 +
 +    #[test]
 +    #[serial]
++    fn enabled_mode_respects_independent_terminal_and_graph_switches() {
++        let root = TempDir::new().unwrap();
++        let manifest_path = runtime_fixture(&root);
++        let mut value: Value =
++            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++        value["capabilities"] = serde_json::json!({
++            "delegation": false,
++            "code_graph": false,
++            "terminal": false
++        });
++        std::fs::write(&manifest_path, serde_json::to_vec(&value).unwrap()).unwrap();
++        let _mode = EnvGuard::set(MODE_ENV, Some("enabled"));
++        let _manifest = EnvGuard::set(MANIFEST_ENV, manifest_path.to_str());
++        let _locale = EnvGuard::set("LC_ALL", Some("en_CA.UTF-8"));
++
++        assert!(is_active());
++        assert!(!terminal_active());
++        assert!(!graph_active());
++        assert!(!ligatures_enabled());
++        assert!(!mouse_enabled());
++        assert!(
++            load_graph(root.path())
++                .unwrap_err()
++                .contains("capability is disabled")
++        );
++        assert_eq!(
++            snapshot().unwrap().authorization,
++            ContributorAuthorization::Disabled
++        );
++        assert_eq!(
++            compact_status(),
++            "Oh My Diff · OMD enabled · active · 2/5 req · Contributor off"
++        );
++    }
++
++    #[test]
++    #[serial]
 +    fn direct_mode_refuses_a_leaked_controlled_manifest() {
 +        let _mode = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
 +        let _manifest = EnvGuard::set(MANIFEST_ENV, Some("unexpected.json"));
@@ -23453,8 +24063,11 @@ index 0000000..e3b7dab
 +    }
 +
 +    #[test]
++    #[serial]
 +    fn graph_loader_accepts_fresh_data_and_rejects_stale_sources() {
 +        let root = TempDir::new().unwrap();
++        let manifest = runtime_fixture(&root);
++        let _manifest = EnvGuard::set(MANIFEST_ENV, manifest.to_str());
 +        std::fs::write(root.path().join("lib.rs"), "pub fn entry() {}\n").unwrap();
 +        let graph = codex_omd::CodeGraph::build(
 +            root.path(),
@@ -23894,7 +24507,7 @@ index ef4dd6d..a27f1dc 100644
              }
              Some(event) = background_events.next() => {
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
-index ca83861..8871f4c 100644
+index ca83861..36910c9 100644
 --- a/codex-rs/tui/src/slash_command.rs
 +++ b/codex-rs/tui/src/slash_command.rs
 @@ -51,6 +51,8 @@ pub enum SlashCommand {
@@ -23938,7 +24551,7 @@ index ca83861..8871f4c 100644
              SlashCommand::Copy => !cfg!(target_os = "android"),
              SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),
 +            SlashCommand::Omd => true,
-+            SlashCommand::Graph => crate::omd::is_active(),
++            SlashCommand::Graph => crate::omd::graph_active(),
              SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
              _ => true,
          }

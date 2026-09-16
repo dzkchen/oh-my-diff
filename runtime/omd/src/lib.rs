@@ -19,6 +19,7 @@ pub use admission::Failure;
 pub use admission::FailureClass;
 pub use admission::Limits;
 pub use admission::Task;
+pub use admission::TaskCostCapture;
 pub use admission::WorkerLimits;
 pub use checkpoint::AcceptanceEvidence;
 pub use checkpoint::CallDecision;

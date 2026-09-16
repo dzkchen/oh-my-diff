@@ -754,3 +754,23 @@ fn restart_reconciles_workspace_processes_and_preserves_terminal_semantics() {
         CheckpointTaskStatus::Completed
     );
 }
+
+#[test]
+fn direct_completion_does_not_require_checkpoint_acceptance() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = Task::create_checkpointed(
+        limits(),
+        dir.path().join("task"),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+
+    task.complete_direct("direct single-agent completion")
+        .unwrap();
+
+    assert_eq!(
+        task.checkpoint().unwrap().unwrap().task_status,
+        CheckpointTaskStatus::Completed
+    );
+}

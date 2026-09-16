@@ -83,6 +83,7 @@ use codex_tools::ToolExposure;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -102,6 +103,8 @@ struct Manifest {
     approved_untracked: Vec<String>,
     limits: Limits,
     worker_limits: WorkerLimits,
+    #[serde(default)]
+    capabilities: Capabilities,
     #[serde(default)]
     guideline_store: Option<PathBuf>,
     #[serde(default)]
@@ -129,6 +132,84 @@ struct Manifest {
     toolchain_reads: Vec<PathBuf>,
     snapshot_bytes: usize,
     max_request_bytes: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct Capabilities {
+    delegation: bool,
+    escalation: bool,
+    checkpoints: bool,
+    guidelines: bool,
+    repository_knowledge: bool,
+    code_graph: bool,
+    code_health: bool,
+    semantic_lsp: bool,
+    reactive_rules: bool,
+    unified_review: bool,
+    completion_gate: bool,
+    terminal: bool,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self {
+            delegation: true,
+            escalation: true,
+            checkpoints: true,
+            guidelines: true,
+            repository_knowledge: true,
+            code_graph: true,
+            code_health: true,
+            semantic_lsp: true,
+            reactive_rules: true,
+            unified_review: true,
+            completion_gate: true,
+            terminal: true,
+        }
+    }
+}
+
+impl Capabilities {
+    fn validate(&self) -> Result<(), String> {
+        if self.completion_gate && (!self.unified_review || !self.checkpoints) {
+            return Err("completion_gate requires unified_review and checkpoints".into());
+        }
+        if self.delegation && !self.unified_review {
+            return Err(
+                "delegation requires unified_review for conflict-checked integration".into(),
+            );
+        }
+        Ok(())
+    }
+
+    fn enabled_names(&self, communication: &CommunicationPolicy) -> Vec<&'static str> {
+        let mut enabled = Vec::new();
+        for (active, name) in [
+            (self.delegation, "delegation"),
+            (self.escalation, "escalation"),
+            (self.checkpoints, "checkpoints"),
+            (self.guidelines, "guidelines"),
+            (self.repository_knowledge, "repository_knowledge"),
+            (self.code_graph, "code_graph"),
+            (self.code_health, "code_health"),
+            (self.semantic_lsp, "semantic_lsp"),
+            (self.reactive_rules, "reactive_rules"),
+            (self.unified_review, "unified_review"),
+            (self.completion_gate, "completion_gate"),
+            (self.terminal, "terminal"),
+            (communication.concise_user_updates, "concise_user_updates"),
+            (
+                communication.structured_worker_reports,
+                "structured_worker_reports",
+            ),
+        ] {
+            if active {
+                enabled.push(name);
+            }
+        }
+        enabled
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -319,6 +400,7 @@ struct Host {
     reactive_rules: Option<ReactiveRules>,
     review: std::sync::Mutex<ReviewRuntime>,
     completion: std::sync::Mutex<CompletionGate>,
+    effective_settings: Value,
 }
 
 #[derive(Clone)]
@@ -355,6 +437,8 @@ struct LspTool(Arc<Lead>);
 struct ReviewTool(Arc<Lead>);
 
 struct CompletionTool(Arc<Lead>);
+
+struct StatusTool(Arc<Lead>);
 
 struct ReviewRuntime {
     ledger: UnifiedReview,
@@ -959,8 +1043,16 @@ pub fn install(
         return Err("controlled manifest exceeds limit".into());
     }
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    manifest.capabilities.validate()?;
     manifest.review.validate().map_err(|e| e.to_string())?;
     manifest.completion.validate().map_err(|e| e.to_string())?;
+    if (!manifest.capabilities.guidelines && manifest.guideline_store.is_some())
+        || (!manifest.capabilities.repository_knowledge && manifest.knowledge.is_some())
+        || (!manifest.capabilities.semantic_lsp && manifest.lsp.is_some())
+        || (!manifest.capabilities.reactive_rules && manifest.reactive_rules.is_some())
+    {
+        return Err("disabled capability has active configuration material".into());
+    }
     if manifest.leads.sol.model != "gpt-5.6-sol"
         || manifest.leads.astra.model != "gpt-6-astra"
         || manifest.worker.model != "muse-spark-1.3-contributor"
@@ -1031,8 +1123,11 @@ pub fn install(
             return Err("shared task packet must be canonical and host-owned".into());
         }
     }
-    let reactive_rules = match &manifest.reactive_rules {
-        Some(reference) => {
+    let reactive_rules = match (
+        &manifest.capabilities.reactive_rules,
+        &manifest.reactive_rules,
+    ) {
+        (true, Some(reference)) => {
             let canonical = reference.path.canonicalize().map_err(|e| e.to_string())?;
             if canonical != reference.path || reference.path.starts_with(&manifest.repository) {
                 return Err("reactive rules must be canonical and host-owned".into());
@@ -1052,10 +1147,10 @@ pub fn install(
                 .map_err(|e| e.to_string())?,
             )
         }
-        None => None,
+        _ => None,
     };
-    let active_guideline = match &manifest.guideline_store {
-        Some(path)
+    let active_guideline = match (&manifest.capabilities.guidelines, &manifest.guideline_store) {
+        (true, Some(path))
             if path.canonicalize().map_err(|e| e.to_string())? == *path
                 && !path.starts_with(&manifest.repository) =>
         {
@@ -1063,11 +1158,14 @@ pub fn install(
                 .and_then(|store| store.active())
                 .map_err(|e| e.to_string())?
         }
-        Some(_) => return Err("guideline store must be canonical and host-owned".into()),
-        None => None,
+        (true, Some(_)) => return Err("guideline store must be canonical and host-owned".into()),
+        _ => None,
     };
-    let knowledge_session = match &manifest.knowledge {
-        Some(policy)
+    let knowledge_session = match (
+        &manifest.capabilities.repository_knowledge,
+        &manifest.knowledge,
+    ) {
+        (true, Some(policy))
             if policy.store.canonicalize().map_err(|e| e.to_string())? == policy.store
                 && !policy.store.starts_with(&manifest.repository)
                 && policy.max_context_bytes > 0
@@ -1085,11 +1183,13 @@ pub fn install(
                     .map_err(|e| e.to_string())?,
             )
         }
-        Some(_) => return Err("knowledge store must be canonical, host-owned, and bounded".into()),
-        None => None,
+        (true, Some(_)) => {
+            return Err("knowledge store must be canonical, host-owned, and bounded".into());
+        }
+        _ => None,
     };
-    let lsp_enabled = match &manifest.lsp {
-        Some(policy) => {
+    let lsp_enabled = match (&manifest.capabilities.semantic_lsp, &manifest.lsp) {
+        (true, Some(policy)) => {
             policy
                 .limits
                 .validate()
@@ -1108,7 +1208,7 @@ pub fn install(
                 .preference(&manifest.repository_identity)
                 .is_some_and(|preference| preference.enabled)
         }
-        None => false,
+        _ => false,
     };
     let frozen_knowledge_prompt = match (&manifest.knowledge, &knowledge_session) {
         (Some(policy), Some(session)) => Some(knowledge_prompt(policy, session)?),
@@ -1135,6 +1235,31 @@ pub fn install(
         .map_err(str::to_owned)?;
     let review = review_runtime(&manifest)?;
     let completion = completion_runtime(&manifest, &initial_candidate_sha256, &review)?;
+    let effective_settings = json!({
+        "schema": 1,
+        "mode": "enabled",
+        "upstream": codex_omd::PINNED_UPSTREAM,
+        "manifest_sha256": execution::hash(&bytes),
+        "direct_single_agent": !manifest.capabilities.delegation,
+        "selected_capabilities": manifest.capabilities.enabled_names(&manifest.communication),
+        "capabilities": manifest.capabilities,
+        "communication": manifest.communication,
+        "active": {
+            "guideline": active_guideline.as_ref().map(|guideline| json!({
+                "version": guideline.selection.version,
+                "proposal_sha256": guideline.selection.proposal_sha256,
+            })),
+            "repository_knowledge": knowledge_session.is_some(),
+            "semantic_lsp": lsp_enabled,
+            "reactive_rules": reactive_rules.is_some(),
+        },
+        "routing": {
+            "lead_policy": manifest.lead_policy.name(),
+            "worker_context": manifest.context_policy.name(),
+        },
+        "limits": manifest.limits,
+        "task_cost_capture": manifest.evidence.join("task-cost.json"),
+    });
     let host = Arc::new(Host {
         lsp: lsp_enabled.then(|| {
             let policy = manifest.lsp.as_ref().expect("enabled LSP policy");
@@ -1158,9 +1283,16 @@ pub fn install(
         reactive_rules,
         review: std::sync::Mutex::new(review),
         completion: std::sync::Mutex::new(completion),
+        effective_settings,
     });
-    host.persist_completion()?;
-    let _ = host.authorize();
+    host.persist_effective_settings()?;
+    host.persist_cost_capture()?;
+    if host.manifest.capabilities.completion_gate {
+        host.persist_completion()?;
+    }
+    if host.manifest.capabilities.delegation {
+        let _ = host.authorize();
+    }
     let deadline_host = host.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(
@@ -1243,13 +1375,24 @@ impl Host {
                     (reviewed, completed)
                 })
                 .unwrap_or((false, false));
+            let review_satisfied = !self.manifest.capabilities.unified_review || reviewed_current;
+            let completion_satisfied =
+                !self.manifest.capabilities.completion_gate || completion_current;
+            let task_completed = if self.manifest.capabilities.checkpoints {
+                self.task
+                    .complete(if self.manifest.capabilities.completion_gate {
+                        "adversarial completion receipt"
+                    } else {
+                        "checkpoint acceptance"
+                    })
+                    .is_ok()
+            } else {
+                self.task.complete_direct("direct task completion").is_ok()
+            };
             if reason != "completed"
-                || !reviewed_current
-                || !completion_current
-                || self
-                    .task
-                    .complete("adversarial completion receipt")
-                    .is_err()
+                || !review_satisfied
+                || !completion_satisfied
+                || !task_completed
             {
                 let _ = self.task.stop();
             }
@@ -1327,6 +1470,7 @@ impl Host {
             authorization_sha256: self.manifest.authorization_sha256.clone(),
             repository_identity: self.manifest.repository_identity.clone(),
             revocation: self.manifest.evidence.join(accounting::REVOCATION_FILE),
+            cost_capture: self.manifest.evidence.join("task-cost.json"),
         };
         let mut accounts = self
             .accounts
@@ -1361,7 +1505,49 @@ impl Host {
         Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
     }
 
+    fn persist_runtime_file<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
+        use std::io::Write;
+
+        let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
+        if bytes.len() > 8_388_608 {
+            return Err("runtime state exceeds persistence limit".into());
+        }
+        let path = self.manifest.evidence.join(name);
+        let temporary = self.manifest.evidence.join(format!(
+            ".{name}-{}-{}.tmp",
+            std::process::id(),
+            execution::hash(&bytes)
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| error.to_string())?;
+        std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+        std::fs::File::open(&self.manifest.evidence)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| error.to_string())
+    }
+
+    fn persist_effective_settings(&self) -> Result<(), String> {
+        self.persist_runtime_file("effective-settings.json", &self.effective_settings)
+    }
+
+    fn persist_cost_capture(&self) -> Result<(), String> {
+        let capture = self
+            .task
+            .cost_capture()
+            .map_err(|error| error.to_string())?;
+        self.persist_runtime_file("task-cost.json", &capture)
+    }
+
     fn persist_review(&self) -> Result<(), String> {
+        if !self.manifest.capabilities.unified_review {
+            return Ok(());
+        }
         use std::io::Write;
         let bytes = serde_json::to_vec(
             &self
@@ -1397,6 +1583,9 @@ impl Host {
     }
 
     fn persist_completion(&self) -> Result<(), String> {
+        if !self.manifest.capabilities.completion_gate {
+            return Ok(());
+        }
         use std::io::Write;
         let bytes = serde_json::to_vec(
             &self
@@ -1551,7 +1740,8 @@ impl ContextContributor for Extension {
             }
             let mut fragments = Vec::new();
             if let Some(lead) = lead {
-                if let Ok(Some(checkpoint)) = self.task.checkpoint()
+                if self.manifest.capabilities.checkpoints
+                    && let Ok(Some(checkpoint)) = self.task.checkpoint()
                     && let Ok(rendered) = serde_json::to_string(&checkpoint)
                 {
                     fragments.push(PromptFragment::developer_capability(
@@ -1561,25 +1751,31 @@ impl ContextContributor for Extension {
                         ContentItemKind("oh_my_diff.task_checkpoint".into()),
                     ));
                 }
-                if let Some(guideline) = &self.active_guideline {
+                if self.manifest.capabilities.guidelines
+                    && let Some(guideline) = &self.active_guideline
+                {
                     fragments.push(PromptFragment::developer_capability(
                         guideline_prompt(guideline),
                         ContentItemKind("oh_my_diff.guideline".into()),
                     ));
                 }
-                if let Some(prompt) = &self.knowledge_prompt {
+                if self.manifest.capabilities.repository_knowledge
+                    && let Some(prompt) = &self.knowledge_prompt
+                {
                     fragments.push(PromptFragment::developer_capability(
                         prompt.clone(),
                         ContentItemKind("oh_my_diff.repository_knowledge".into()),
                     ));
                 }
-                if self.lsp.is_some() {
+                if self.manifest.capabilities.semantic_lsp && self.lsp.is_some() {
                     fragments.push(PromptFragment::developer_capability(
                         "This repository has remembered semantic-feedback opt-in. Use omd_lsp on demand for the supported five languages. Synchronize each coherent write batch before navigation or diagnostics; semantic writes require an exact declared scope and current SHA256 for every affected existing or absent path. Use intermediate_check after meaningful changes. Treat unsupported or unavailable results as an explicit fallback, not success. Servers start on demand, stop after bounded idle time, and are never installed automatically.",
                         ContentItemKind("oh_my_diff.lsp".into()),
                     ));
                 }
-                if let Ok(review) = self.review.lock() {
+                if self.manifest.capabilities.unified_review
+                    && let Ok(review) = self.review.lock()
+                {
                     let snapshot = review.ledger.snapshot();
                     let current_candidate = self
                         .live_state()
@@ -1603,7 +1799,9 @@ impl ContextContributor for Extension {
                         ContentItemKind("oh_my_diff.review".into()),
                     ));
                 }
-                if let Ok(completion) = self.completion.lock() {
+                if self.manifest.capabilities.completion_gate
+                    && let Ok(completion) = self.completion.lock()
+                {
                     let snapshot = completion.snapshot();
                     let current_candidate = self
                         .live_state()
@@ -1634,7 +1832,8 @@ impl ContextContributor for Extension {
                     ));
                 }
             }
-            if let Some(reactive) = &self.reactive_rules
+            if self.manifest.capabilities.reactive_rules
+                && let Some(reactive) = &self.reactive_rules
                 && let Ok(prompts) = reactive.context_prompts(&input.thread_id.to_string())
             {
                 fragments.extend(prompts.into_iter().map(|prompt| {
@@ -2012,24 +2211,81 @@ impl ToolContributor for Extension {
         let Some(lead) = thread.get::<Lead>() else {
             return Vec::new();
         };
-        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> = vec![
-            Arc::new(CheckpointTool(lead.clone())),
-            Arc::new(EscalationTool(lead.clone())),
-            Arc::new(ReviewTool(lead.clone())),
-            Arc::new(CompletionTool(lead.clone())),
-        ];
-        if self.lsp.is_some() {
+        let mut tools: Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> =
+            vec![Arc::new(StatusTool(lead.clone()))];
+        if self.manifest.capabilities.checkpoints {
+            tools.push(Arc::new(CheckpointTool(lead.clone())));
+        }
+        if self.manifest.capabilities.escalation {
+            tools.push(Arc::new(EscalationTool(lead.clone())));
+        }
+        if self.manifest.capabilities.unified_review {
+            tools.push(Arc::new(ReviewTool(lead.clone())));
+        }
+        if self.manifest.capabilities.completion_gate {
+            tools.push(Arc::new(CompletionTool(lead.clone())));
+        }
+        if self.manifest.capabilities.semantic_lsp && self.lsp.is_some() {
             tools.push(Arc::new(LspTool(lead.clone())));
         }
-        if accounting::authorized(
-            &self.manifest.authorization,
-            &self.manifest.authorization_sha256,
-            &self.manifest.repository_identity,
-            &self.manifest.evidence.join(accounting::REVOCATION_FILE),
-        ) {
+        if self.manifest.capabilities.delegation
+            && accounting::authorized(
+                &self.manifest.authorization,
+                &self.manifest.authorization_sha256,
+                &self.manifest.repository_identity,
+                &self.manifest.evidence.join(accounting::REVOCATION_FILE),
+            )
+        {
             tools.push(Arc::new(ContributionTool(lead)));
         }
         tools
+    }
+}
+
+impl<'call> ToolExecutor<ToolCall<'call>> for StatusTool {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("omd_status")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::Function(ResponsesApiTool {
+            name: "omd_status".into(),
+            description: "Inspect effective Oh My Diff capability settings, task allowance, raw usage attribution, settled task charge, and retained exposure upper bound. This tool is read-only and available for direct single-agent work without delegation.".into(),
+            strict: false,
+            defer_loading: None,
+            output_schema: None,
+            parameters: JsonSchema::object(BTreeMap::new(), Some(Vec::new()), Some(false.into())),
+        })
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Deferred
+    }
+
+    fn handle<'a>(&'a self, _call: ToolCall<'call>) -> ToolExecutorFuture<'a>
+    where
+        'call: 'a,
+    {
+        Box::pin(async move {
+            let cost = self
+                .0
+                .host
+                .task
+                .cost_capture()
+                .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
+            let checkpoint = self
+                .0
+                .host
+                .task
+                .checkpoint()
+                .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
+            Ok(Box::new(JsonToolOutput::new(json!({
+                "schema": 1,
+                "effective_settings": self.0.host.effective_settings,
+                "checkpoint": checkpoint,
+                "task_cost": cost,
+            }))) as Box<dyn ToolOutput>)
+        })
     }
 }
 

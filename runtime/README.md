@@ -24,6 +24,25 @@ fails closed. Disabling Oh My Diff changes behavior inside the custom binary;
 restoring upstream means selecting or reinstalling the retained upstream
 executable and is a separate operation.
 
+Enabled manifests may select each lean-v1 capability explicitly through the
+required boolean fields in `capabilities`: `delegation`, `escalation`,
+`checkpoints`, `guidelines`, `repository_knowledge`, `code_graph`, `code_health`,
+`semantic_lsp`, `reactive_rules`, `unified_review`, `completion_gate`, and
+`terminal`. Older manifests that omit the object retain the legacy all-enabled
+behavior. Delegation requires unified review; the completion gate requires both
+unified review and checkpoints. Disabling delegation selects direct single-agent
+work without disabling unrelated OMD controls. Inactive guideline, knowledge,
+LSP, or reactive-rule configuration is rejected instead of being silently
+ignored. The exact Phase 9 profiles and supported build matrix are frozen in
+[`lean-v1.lock.json`](lean-v1.lock.json).
+
+Every enabled task writes `effective-settings.json` and `task-cost.json` to its
+external evidence directory. The first records the manifest hash, effective mode,
+capability and communication switches, active optional sources, routing, limits,
+and cost-record path. The second retains every raw usage attempt, settled task
+charge, retained exposure upper bound, and uncertain request IDs. Deferred
+`omd_status` returns both records plus the compact checkpoint during a task.
+
 Apply to a clean checkout of the commit in `upstream.lock.json`:
 
 ```sh
@@ -353,11 +372,15 @@ Run the no-provider macOS end-to-end fixture from this repository:
 python3 -m benchmarks.controlled_fixture /path/to/codex/codex-rs/target/debug/codex /private/tmp/omd-fixture-new --scenario runner
 ```
 
-Other scenarios are `direct`, `escalation`, `permissions`, `conflict`,
+Other scenarios are `direct`, `omd-off`, `escalation`, `permissions`, `conflict`,
 `index-conflict`, `review-reject`, `request-cap`, `revoked`, `deadline`,
 `recursion`, `outage-fallback`, and `client-loss-resume`. Use
 `checkpoint` to retain incomplete steering without false completion and
-`no-progress` to exercise bounded identical-result detection. Use
+`completion` to exercise the integrated final gate, and `no-progress` to
+exercise bounded identical-result detection. `direct` uses an explicit
+no-delegation capability profile and validates effective settings plus durable
+cost capture; `omd-off` selects upstream direct mode and rejects any OMD tool,
+admission ID, worker route, or evidence. Use
 `--failure-class environment|edit|diagnosis|model` with `escalation`. Each scenario
 requires a fresh destination. These
 fixtures need loopback listening and native sandbox execution, and use synthetic

@@ -37,10 +37,11 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             model = body["model"]
-            owner = self.headers.get("x-omd-owner")
-            if scenario == "runner" and owner is None:
+            native_owner = self.headers.get("x-omd-owner")
+            owner = native_owner
+            if scenario in ("runner", "omd-off") and owner is None:
                 owner = {"gpt-5.6-sol": "lead", "muse-spark-1.3-contributor": "contributor", "gpt-6-astra": "reviewer"}[model]
-            requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": owner, "body": body})
+            requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": native_owner, "body": body})
             if scenario == "client-loss-resume" and owner and owner.startswith("contributor-") and not Provider.abrupt_delay_started:
                 Provider.abrupt_delay_started = True
                 time.sleep(30)
@@ -58,6 +59,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             escalation_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_escalate"]
             checkpoint_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_checkpoint"]
             completion_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_complete"]
+            status_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_status"]
             spawn_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "spawn_agent"]
             wait_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "wait_agent"]
             text = json.dumps(body.get("input", []))
@@ -77,7 +79,11 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 criteria = manifest["checkpoint"]["acceptance_criteria"]
                 sequence = len(checkpoint_outputs) + 1
                 item = {"type": "function_call", "id": f"unchanged-checkpoint-{sequence}", "call_id": f"unchanged-checkpoint-{sequence}", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": [], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [], "check_versions": []})}
-            elif owner == "lead" and scenario == "direct" and not exec_outputs:
+            elif owner == "lead" and scenario == "direct" and not search_outputs:
+                item = {"type": "tool_search_call", "id": "search-status", "call_id": "search-status", "status": "completed", "execution": "client", "arguments": {"query": "effective settings task cost capture"}}
+            elif owner == "lead" and scenario == "direct" and not status_outputs:
+                item = {"type": "function_call", "id": "status", "call_id": "status", "name": "omd_status", "arguments": "{}"}
+            elif owner == "lead" and scenario in ("direct", "omd-off") and not exec_outputs:
                 item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
             elif owner == "lead" and scenario == "reactive" and not exec_outputs:
                 item = {"type": "function_call", "id": "reactive-failure", "call_id": "reactive-failure", "name": "exec_command", "arguments": json.dumps({"cmd": "/usr/bin/false", "max_output_tokens": 500})}
@@ -91,9 +97,9 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "function_call", "id": "escalate", "call_id": "escalate", "name": "omd_escalate", "arguments": json.dumps({"failure_class": failure_class, "summary": "The first direct edit command failed.", "call_ids": ["failed-edit"]})}
             elif owner == "lead" and scenario == "escalation" and not any(i.get("call_id") == "direct-fix" for i in exec_outputs):
                 item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
-            elif owner == "lead" and scenario not in ("direct", "escalation") and not search_outputs:
+            elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation") and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-delegation", "call_id": "search-delegation", "status": "completed", "execution": "client", "arguments": {"query": "delegate isolated contributor implementation"}}
-            elif owner == "lead" and scenario not in ("direct", "escalation") and not outputs:
+            elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation") and not outputs:
                 arguments = {
                     "focused_brief": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files.", "selected_evidence": ["solution.py"]},
                     "shared_task_packet": {},
@@ -183,7 +189,10 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     context = {"mode": context_policy, "max_bytes": 2000000}
     if context_policy == "shared_task_packet":
         context["packet"] = {"path": str(task_packet.resolve()), "sha256": hashlib.sha256(task_packet.read_bytes()).hexdigest()}
-    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "communication": {"concise_user_updates": concise_user_updates, "structured_worker_reports": structured_worker_reports}, "checkpoint": {"objective": "Fix solution.py so add returns the sum while preserving unrelated work.", "acceptance_criteria": ["candidate check passes", "separate review approves the exact candidate", "reviewed candidate integrates without losing unrelated work"], "max_no_progress_calls": 2}, "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"], "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
+    capabilities = {"delegation": True, "escalation": True, "checkpoints": True, "guidelines": True, "repository_knowledge": True, "code_graph": True, "code_health": True, "semantic_lsp": True, "reactive_rules": True, "unified_review": True, "completion_gate": True, "terminal": True}
+    if scenario == "direct":
+        capabilities.update({"delegation": False, "checkpoints": False, "unified_review": False, "completion_gate": False})
+    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "capabilities": capabilities, "communication": {"concise_user_updates": concise_user_updates, "structured_worker_reports": structured_worker_reports}, "checkpoint": {"objective": "Fix solution.py so add returns the sum while preserving unrelated work.", "acceptance_criteria": ["candidate check passes", "separate review approves the exact candidate", "reviewed candidate integrates without losing unrelated work"], "max_no_progress_calls": 2}, "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"], "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
     if reactive_rules or scenario == "reactive":
         reactive_source = destination / "reactive-rules.json"
         reactive_source.write_text(json.dumps({"schema": 1, "version": "fixture-reactive-v1", "rules": [{"id": "inspect-command-result", "scope": "lead", "trigger": {"event": "tool_finished", "tool": "exec_command", "outcome": "completed_host_success"}, "instruction": "Inspect the exact command result and exit code before choosing any follow-up.", "max_activations": 1, "max_context_reactivations": 1}, {"id": "inspect-worker-command-result", "scope": "worker", "trigger": {"event": "tool_finished", "tool": "exec_command", "outcome": "completed_host_success"}, "instruction": "Inspect the exact worker command result before reporting completion.", "max_activations": 1, "max_context_reactivations": 1}]}, sort_keys=True))
@@ -244,7 +253,11 @@ enabled = false
 "/sbin" = "read"
 "/Library/Developer/CommandLineTools/usr" = "read"
 ''')
-    env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home), "CODEX_HOME": str(home), "CODEX_SQLITE_HOME": str(home), "OMD_CONTROLLED_MANIFEST": str(manifest_path), "NO_PROXY": "127.0.0.1,localhost", "TERM": "dumb"}
+    env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home), "CODEX_HOME": str(home), "CODEX_SQLITE_HOME": str(home), "NO_PROXY": "127.0.0.1,localhost", "TERM": "dumb"}
+    if scenario == "omd-off":
+        env["OMD_MODE"] = "upstream_direct"
+    else:
+        env.update({"OMD_MODE": "enabled", "OMD_CONTROLLED_MANIFEST": str(manifest_path)})
     started = time.monotonic()
     try:
         if scenario == "runner":
@@ -278,7 +291,7 @@ enabled = false
             shutil.copytree(destination / "native/controlled-evidence", destination / "evidence")
         elif scenario == "client-loss-resume":
             command = [str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."]
-            first = subprocess.Popen(command, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            first = subprocess.Popen(command, cwd=repo, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             deadline = time.monotonic() + 20
             while not Provider.abrupt_delay_started and time.monotonic() < deadline:
                 time.sleep(0.05)
@@ -288,9 +301,9 @@ enabled = false
             (repo / "notes.txt").write_text("intervening tracked user notes\n")
             manifest["lifecycle"]["explicit_resume"] = "fixture explicit resume after abrupt client loss"
             manifest_path.write_text(json.dumps(manifest, indent=2))
-            process = subprocess.run(command, cwd=repo, env=env, capture_output=True, text=True, timeout=150)
+            process = subprocess.run(command, cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=150)
         else:
-            process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."], cwd=repo, env=env, capture_output=True, text=True, timeout=150)
+            process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."], cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=150)
         (destination / "stdout.txt").write_text(process.stdout)
         (destination / "stderr.txt").write_text(process.stderr)
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
@@ -313,7 +326,7 @@ enabled = false
         reviewer_requests = [request for request in requests if (request["native_owner"] or "").startswith("reviewer-")]
         completion_verifier_requests = [request for request in requests if (request["native_owner"] or "").startswith("completion-verifier-")]
         escalation_requests = [request for request in requests if (request["native_owner"] or "").startswith("escalation-")]
-        if scenario not in ("request-cap", "direct", "escalation", "reactive", "recursion", "no-progress"):
+        if scenario not in ("request-cap", "direct", "omd-off", "escalation", "reactive", "recursion", "no-progress"):
             assert worker_requests, "worker route was not observed"
         if worker_requests:
             assert all("GLOBAL_INSTRUCTION_SENTINEL" in json.dumps(request) for request in worker_requests + reviewer_requests), "project instructions were not inherited"
@@ -325,10 +338,14 @@ enabled = false
             assert ("required_clarification" in worker_context) == structured_worker_reports, "worker report schema selection drifted"
         lead_context = json.dumps(requests[0]["body"].get("input", []))
         assert ("concise ordinary-language sentences" in lead_context) == concise_user_updates, "user update policy selection drifted"
-        assert requests[0]["model"] == lead_model and requests[0]["native_owner"] == "lead", "lead route drifted"
+        assert requests[0]["model"] == lead_model
+        assert (requests[0]["native_owner"] == "lead") == (scenario != "omd-off"), "lead route drifted"
         first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
-        assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools and "omd_checkpoint" not in first_tools and "omd_complete" not in first_tools, "controlled tools were not deferred"
-        if scenario not in ("direct", "reactive", "request-cap", "recursion"):
+        if scenario == "omd-off":
+            assert all(name not in first_tools for name in ("omd_contribute", "omd_escalate", "omd_checkpoint", "omd_complete", "omd_status")), "OMD-off exposed OMD tools"
+        else:
+            assert "tool_search" in first_tools and "omd_contribute" not in first_tools and "omd_escalate" not in first_tools and "omd_checkpoint" not in first_tools and "omd_complete" not in first_tools, "controlled tools were not deferred"
+        if scenario not in ("direct", "omd-off", "reactive", "request-cap", "recursion"):
             assert any(i.get("type") == "tool_search_call" for request in requests for i in request["body"].get("input", [])), "task-scoped tool discovery was not exercised"
         if reviewer_requests:
             expected_reviewer = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead] if scenario == "outage-fallback" else {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
@@ -341,14 +358,17 @@ enabled = false
             assert "weakened or removed tests/checks" in json.dumps(completion_verifier_requests[0])
             assert "relevant negative cases" in json.dumps(completion_verifier_requests[0])
         ids = [request["native_request_id"] for request in (gateway.records if scenario == "runner" else requests)]
-        assert all(ids) and len(ids) == len(set(ids)), "wire attempts lack unique native admission IDs"
+        if scenario == "omd-off":
+            assert not any(ids), "OMD-off requests unexpectedly carried native admission IDs"
+        else:
+            assert all(ids) and len(ids) == len(set(ids)), "wire attempts lack unique native admission IDs"
         if scenario == "escalation":
             assert escalation_result.get("status") == "consulted", escalation_result or process.stderr[-2000:]
             assert escalation_result["failure"]["class"] == failure_class
             assert escalation_requests and escalation_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
             source = json.loads(next((destination / "evidence").glob("failure-source-*.json")).read_text())
             assert source["call_ids"] == ["failed-edit"] and any(i.get("type") == "function_call_output" for i in source["items"]), source
-        elif scenario in ("direct", "reactive", "recursion"):
+        elif scenario in ("direct", "omd-off", "reactive", "recursion"):
             assert not result and not worker_requests and not reviewer_requests and not escalation_requests
             if scenario == "recursion":
                 recursive_requests = [request for request in requests if (request["native_owner"] or "").startswith("agent:")]
@@ -421,7 +441,7 @@ enabled = false
         assert "SYNTHETIC_SECRET_MUST_NOT_REACH_WORKER" not in json.dumps(requests)
         if scenario in ("review-reject", "index-conflict", "request-cap", "revoked", "deadline", "structured-clarification"):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
-        if scenario in ("direct", "escalation", "reactive"):
+        if scenario in ("direct", "omd-off", "escalation", "reactive"):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
         if scenario == "conflict":
             assert (repo / "solution.py").read_text() == "intervening user edit\n"
@@ -435,6 +455,26 @@ enabled = false
             assert worker_activations[0]["activation"]["executed_effects_rolled_back"] is False
             assert worker_activations[0]["stream_interrupted"] is False
         assert not (repo / ".omd").exists(), "owned runtime scratch was not cleaned"
+        if scenario == "direct":
+            settings = json.loads((destination / "evidence/effective-settings.json").read_text())
+            cost = json.loads((destination / "evidence/task-cost.json").read_text())
+            checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
+            assert settings["direct_single_agent"] is True
+            assert settings["capabilities"]["delegation"] is False
+            assert settings["capabilities"]["checkpoints"] is False
+            assert cost["raw_usage_attempts"] == len(requests)
+            assert len(cost["attempts"]) == len(requests)
+            assert checkpoint["task_status"] == "completed"
+            status = next(
+                json.loads(item["output"])["effective_settings"]
+                for request in requests
+                for item in request["body"].get("input", [])
+                if item.get("type") == "function_call_output"
+                and item.get("call_id") == "status"
+            )
+            assert status["direct_single_agent"] is True
+        if scenario == "omd-off":
+            assert not (destination / "evidence").exists()
         if scenario not in ("direct", "escalation", "reactive") and (destination / "evidence/context.json").exists():
             context_record = json.loads((destination / "evidence/context.json").read_text())
             assert context_record["context"]["policy"] == context_policy
@@ -452,7 +492,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "escalation", "reactive", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified"), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "omd-off", "escalation", "reactive", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified"), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")
