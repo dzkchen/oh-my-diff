@@ -17,6 +17,9 @@ class BrowserBundleTests(unittest.TestCase):
     def managed(self, destination):
         self.executable(destination / "runtime/bin/node", "v24.21.0")
         self.executable(destination / "bin/omd-browser-mcp", "Version 0.0.81")
+        self.executable(destination / "bin/omd-bridge-mcp", "Version 1")
+        (destination / "bridge").mkdir()
+        (destination / "bridge/host.mjs").write_text("host\n")
         (destination / "artifacts").mkdir()
         manifest = {
             "schema": browser_bundle.SCHEMA,
@@ -27,6 +30,9 @@ class BrowserBundleTests(unittest.TestCase):
             "mcp": {"version": "0.0.81"},
             "browser": {"revision": "1244"},
             "launcher": "bin/omd-browser-mcp",
+            "bridge": {"launcher": "bin/omd-bridge-mcp", "protocol": 1,
+                       "transport": "loopback HTTP with MCP stdio control",
+                       "adapters": ["browser", "node", "rust", "python", "java"]},
         }
         manifest["tree"] = browser_bundle.tree_identity(destination)
         browser_bundle.write_json(destination / "bundle.json", manifest)
@@ -86,6 +92,17 @@ class BrowserBundleTests(unittest.TestCase):
         self.assertIn("--sandbox", launcher)
         self.assertNotIn("--no-sandbox", launcher)
         self.assertIn('cd "$artifacts_dir"', launcher)
+
+    def test_bridge_launcher_uses_the_managed_node_runtime(self):
+        launcher = browser_bundle.bridge_launcher_text()
+        self.assertIn('runtime/bin/node', launcher)
+        self.assertIn('bridge/host.mjs', launcher)
+
+    def test_bridge_copy_excludes_generated_artifacts(self):
+        ignored = browser_bundle.bridge_copy_ignore("unused", {
+            "host.mjs", "target", "out", "__pycache__", "connection.json", "client.pyc",
+        })
+        self.assertEqual(ignored, {"target", "out", "__pycache__", "connection.json", "client.pyc"})
 
     def test_failed_post_swap_update_restores_the_verified_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:

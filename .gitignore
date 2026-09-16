@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 /benchmark-results/
 /runtime/**/target/
+/bridge/rust/target/
+/bridge/java/out/
+/bridge/connection.json
 .DS_Store
 /.omd/
 /.omd-tmp/

@@ -47,6 +47,9 @@ class PrivateLeanV1Tests(unittest.TestCase):
     def browser(self, destination, *_args):
         self.executable(destination / "runtime/bin/node", "v24.21.0")
         self.executable(destination / "bin/omd-browser-mcp", "Version 0.0.81")
+        self.executable(destination / "bin/omd-bridge-mcp", "Version 1")
+        (destination / "bridge").mkdir()
+        (destination / "bridge/host.mjs").write_text("host\n")
         (destination / "artifacts").mkdir()
         manifest = {
             "schema": browser_bundle.SCHEMA,
@@ -57,6 +60,9 @@ class PrivateLeanV1Tests(unittest.TestCase):
             "mcp": {"version": "0.0.81"},
             "browser": {"revision": "1244"},
             "launcher": "bin/omd-browser-mcp",
+            "bridge": {"launcher": "bin/omd-bridge-mcp", "protocol": 1,
+                       "transport": "loopback HTTP with MCP stdio control",
+                       "adapters": ["browser", "node", "rust", "python", "java"]},
             "approval": "Codex default_tools_approval_mode=prompt",
             "sandbox": "fixture",
             "cleanup": "fixture",
@@ -102,6 +108,7 @@ class PrivateLeanV1Tests(unittest.TestCase):
             manifest = installer.load_manifest(prefix)
             manifest["browser"] = {
                 "launcher": str(prefix / "browser/bin/omd-browser-mcp"),
+                "bridge": {"launcher": str(prefix / "browser/bin/omd-bridge-mcp")},
                 "tree": browser["tree"],
             }
             installer.write_manifest(prefix, manifest)
@@ -111,6 +118,36 @@ class PrivateLeanV1Tests(unittest.TestCase):
             self.assertIn('default_tools_approval_mode="prompt"', wrapper)
             installer.activate(prefix, bin_dir, "upstream")
             self.assertNotIn("omd_browser", (bin_dir / "codex").read_text())
+
+    def test_bridge_is_registered_only_for_a_hash_bound_enabled_policy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix, bin_dir, _ = self.managed(root)
+            browser = self.browser(prefix / "browser")
+            manifest = installer.load_manifest(prefix)
+            manifest["browser"] = {
+                "launcher": str(prefix / "browser/bin/omd-browser-mcp"),
+                "bridge": {"launcher": str(prefix / "browser/bin/omd-bridge-mcp")},
+                "tree": browser["tree"],
+            }
+            installer.write_manifest(prefix, manifest)
+            policy = root / "bridge-policy.json"
+            policy.write_text("{}\n")
+            controlled = root / "controlled.json"
+            controlled.write_text(json.dumps({
+                "capabilities": {"application_bridge": True},
+                "bridge": {"path": str(policy.resolve()), "sha256": installer.digest(policy)},
+            }))
+            installer.activate(prefix, bin_dir, "omd", "enabled", controlled)
+            wrapper = (bin_dir / "codex").read_text()
+            self.assertIn("mcp_servers.omd_bridge.command", wrapper)
+            self.assertIn("OMD_BRIDGE_POLICY_SHA256", wrapper)
+            policy.write_text("changed\n")
+            with self.assertRaisesRegex(ValueError, "absent or changed"):
+                installer.activate(prefix, bin_dir, "omd", "enabled", controlled)
+            controlled.write_text(json.dumps({"capabilities": {"application_bridge": False}}))
+            installer.activate(prefix, bin_dir, "omd", "enabled", controlled)
+            self.assertNotIn("omd_bridge", (bin_dir / "codex").read_text())
 
     def test_modified_launcher_is_not_replaced_or_removed(self):
         with tempfile.TemporaryDirectory() as temporary:

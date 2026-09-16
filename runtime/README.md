@@ -27,8 +27,8 @@ executable and is a separate operation.
 Enabled manifests may select each foundation capability explicitly through the
 required boolean fields in `capabilities`: `delegation`, `escalation`,
 `checkpoints`, `guidelines`, `repository_knowledge`, `code_graph`, `code_health`,
-`semantic_lsp`, `reactive_rules`, `unified_review`, `completion_gate`, and
-`terminal`. Older manifests that omit the object retain the legacy all-enabled
+`semantic_lsp`, `reactive_rules`, `unified_review`, `completion_gate`, `terminal`,
+and the default-off `application_bridge`. Older manifests that omit the object retain the legacy all-enabled
 behavior. Delegation requires unified review; the completion gate requires both
 unified review and checkpoints. Disabling delegation selects direct single-agent
 work without disabling unrelated OMD controls. Inactive guideline, knowledge,
@@ -36,6 +36,13 @@ LSP, or reactive-rule configuration is rejected instead of being silently
 ignored. The exact Phase 8 foundation profiles and supported build matrix are
 frozen in
 [`lean-v1.lock.json`](lean-v1.lock.json).
+
+`application_bridge` requires a canonical external `bridge` policy reference
+with its exact SHA-256. The managed launcher registers the prompt-gated bridge
+MCP only for that capability. The policy binds adapter, application version,
+reproduction, browser origin, exposed state, redaction, event bytes/count,
+pending state, and timeout limits. See
+[`../bridge/README.md`](../bridge/README.md).
 
 Every enabled task writes `effective-settings.json` and `task-cost.json` to its
 external evidence directory. The first records the manifest hash, effective mode,

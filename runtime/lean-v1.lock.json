@@ -12,7 +12,7 @@
   },
   "runtime_patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "8b9cc772ed50182a2ae4de1d83ca9947a4277bb3656fb90e7a8daf3ba2a96c49"
+    "sha256": "e76103feac939a9579e909c89dc9150b4e3529f475374a9fc450c524502de9d9"
   },
   "private_installation": {
     "manager": "scripts/private_lean_v1.py",
@@ -45,7 +45,8 @@
         "reactive_rules": true,
         "unified_review": false,
         "completion_gate": false,
-        "terminal": true
+        "terminal": true,
+        "application_bridge": false
       }
     },
     "omd_enabled": {
@@ -64,7 +65,8 @@
         "reactive_rules": true,
         "unified_review": true,
         "completion_gate": true,
-        "terminal": true
+        "terminal": true,
+        "application_bridge": false
       }
     }
   },

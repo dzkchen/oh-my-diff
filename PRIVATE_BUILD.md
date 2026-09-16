@@ -82,7 +82,10 @@ python3 scripts/private_lean_v1.py \
 The manifest binds one repository, an external evidence directory, an external
 revocable authorization file and its SHA256, exact Sol/Astra/Contributor routes,
 shared and worker limits, permissions, checks, recovery, context policy, and all
-twelve capability switches. Start with every switch explicit. For OMD direct
+thirteen capability switches. Start with every switch explicit. The optional
+`application_bridge` switch is default-off and also requires the external,
+hash-bound `bridge` policy described in [`bridge/README.md`](bridge/README.md).
+For OMD direct
 work set `delegation`, `checkpoints`, `unified_review`, and `completion_gate` to
 `false`. Delegation requires `unified_review`; `completion_gate` requires both
 `unified_review` and `checkpoints`. Omit inactive guideline, knowledge, LSP, and
@@ -109,6 +112,12 @@ selection does not inject the server. Browser downloads, profiles, or arbitrary
 system Chrome installations are never selected at session start. See
 [`browser/README.md`](browser/README.md) for packaging, verification, update,
 artifact, and sandbox details.
+
+When an enabled manifest selects `application_bridge`, OMD also registers the
+prompt-gated `omd_bridge` MCP from the managed prefix. It is never registered in
+retained upstream or upstream-direct mode, and an absent or changed policy fails
+activation. The bridge is loopback-only and development-only; instrumentation
+is added explicitly to the selected application and removed during teardown.
 
 ## Limitations
 

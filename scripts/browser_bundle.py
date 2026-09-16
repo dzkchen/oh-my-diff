@@ -18,9 +18,11 @@ from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "browser"
+BRIDGE_SOURCE = ROOT / "bridge"
 LOCK_PATH = SOURCE / "browser.lock.json"
 PRODUCT = "oh-my-diff-browser-bundle"
 SCHEMA = 1
+BRIDGE_GENERATED_NAMES = {"__pycache__", "target", "out", "connection.json", ".DS_Store"}
 
 
 def digest(path):
@@ -174,6 +176,18 @@ exec "$bundle_dir/runtime/bin/node" "$bundle_dir/package/node_modules/@playwrigh
 """
 
 
+def bridge_launcher_text():
+    return """#!/bin/sh
+set -eu
+bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$bundle_dir/runtime/bin/node" "$bundle_dir/bridge/host.mjs"
+"""
+
+
+def bridge_copy_ignore(_directory, names):
+    return {name for name in names if name in BRIDGE_GENERATED_NAMES or name.endswith((".pyc", ".pyo"))}
+
+
 def build_bundle(destination, node_archive=None):
     lock, pnpm_lock_sha256 = load_lock()
     destination = validate_destination(destination)
@@ -230,6 +244,10 @@ def build_bundle(destination, node_archive=None):
         launcher.parent.mkdir()
         launcher.write_text(launcher_text(lock))
         launcher.chmod(0o755)
+        shutil.copytree(BRIDGE_SOURCE, staging / "bridge", ignore=bridge_copy_ignore)
+        bridge_launcher = staging / "bin/omd-bridge-mcp"
+        bridge_launcher.write_text(bridge_launcher_text())
+        bridge_launcher.chmod(0o755)
         (staging / "artifacts").mkdir(mode=0o700)
         manifest = {
             "schema": SCHEMA,
@@ -242,6 +260,12 @@ def build_bundle(destination, node_archive=None):
             "mcp": lock["mcp"],
             "browser": lock["browser"],
             "launcher": "bin/omd-browser-mcp",
+            "bridge": {
+                "launcher": "bin/omd-bridge-mcp",
+                "protocol": 1,
+                "transport": "loopback HTTP with MCP stdio control",
+                "adapters": ["browser", "node", "rust", "python", "java"],
+            },
             "approval": "Codex default_tools_approval_mode=prompt",
             "profile": "isolated in memory",
             "sandbox": "Chromium sandbox explicitly enabled; MCP/browser network and remote side effects remain outside the shell filesystem sandbox",
@@ -282,6 +306,12 @@ def verify(destination):
         raise ValueError("browser bundle Node version mismatch")
     if mcp_version != f"Version {manifest['mcp']['version']}":
         raise ValueError("browser bundle MCP version mismatch")
+    bridge = manifest.get("bridge", {})
+    bridge_launcher = destination / bridge.get("launcher", "")
+    if bridge.get("protocol") != 1 or not bridge_launcher.is_file() or not os.access(bridge_launcher, os.X_OK):
+        raise ValueError("browser bundle bridge launcher is invalid")
+    if not (destination / "bridge/host.mjs").is_file():
+        raise ValueError("browser bundle bridge host is absent")
     return {**manifest, "verified": True, "node_version": node_version, "mcp_version": mcp_version}
 
 

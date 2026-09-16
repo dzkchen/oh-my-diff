@@ -65,6 +65,7 @@ fn capabilities_are_independent_with_only_required_dependencies() {
         unified_review: false,
         completion_gate: false,
         terminal: false,
+        application_bridge: false,
     };
     capabilities.validate().unwrap();
     assert_eq!(
@@ -87,6 +88,38 @@ fn legacy_manifests_keep_the_pre_integration_capability_set() {
     assert!(capabilities.unified_review);
     assert!(capabilities.completion_gate);
     assert!(capabilities.terminal);
+    assert!(!capabilities.application_bridge);
+}
+
+#[test]
+fn bridge_policy_is_external_hash_bound_bounded_and_default_off() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let repository = root.join("repository");
+    let external = root.join("external");
+    std::fs::create_dir_all(&repository).unwrap();
+    std::fs::create_dir_all(&external).unwrap();
+    let policy = external.join("policy.json");
+    std::fs::write(&policy, b"{}\n").unwrap();
+    let mut reference = PacketReference {
+        path: policy.clone(),
+        sha256: execution::hash(b"{}\n"),
+    };
+
+    validate_bridge_policy(true, &repository, Some(&reference)).unwrap();
+    assert!(validate_bridge_policy(false, &repository, Some(&reference)).is_err());
+    assert!(validate_bridge_policy(true, &repository, None).is_err());
+
+    reference.sha256 = "0".repeat(64);
+    assert!(validate_bridge_policy(true, &repository, Some(&reference)).is_err());
+    reference.path = repository.join("policy.json");
+    std::fs::write(&reference.path, b"{}\n").unwrap();
+    reference.sha256 = execution::hash(b"{}\n");
+    assert!(validate_bridge_policy(true, &repository, Some(&reference)).is_err());
+    reference.path = external.join("large.json");
+    std::fs::write(&reference.path, vec![b'x'; 65_537]).unwrap();
+    reference.sha256 = execution::hash(&vec![b'x'; 65_537]);
+    assert!(validate_bridge_policy(true, &repository, Some(&reference)).is_err());
 }
 
 #[test]

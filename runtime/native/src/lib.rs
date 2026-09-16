@@ -116,6 +116,8 @@ struct Manifest {
     #[serde(default)]
     reactive_rules: Option<PacketReference>,
     #[serde(default)]
+    bridge: Option<PacketReference>,
+    #[serde(default)]
     review: ReviewPolicy,
     #[serde(default)]
     completion: CompletionPolicy,
@@ -149,6 +151,8 @@ struct Capabilities {
     unified_review: bool,
     completion_gate: bool,
     terminal: bool,
+    #[serde(default)]
+    application_bridge: bool,
 }
 
 impl Default for Capabilities {
@@ -166,6 +170,7 @@ impl Default for Capabilities {
             unified_review: true,
             completion_gate: true,
             terminal: true,
+            application_bridge: false,
         }
     }
 }
@@ -198,6 +203,7 @@ impl Capabilities {
             (self.unified_review, "unified_review"),
             (self.completion_gate, "completion_gate"),
             (self.terminal, "terminal"),
+            (self.application_bridge, "application_bridge"),
             (communication.concise_user_updates, "concise_user_updates"),
             (
                 communication.structured_worker_reports,
@@ -1025,6 +1031,34 @@ fn completion_runtime(
     Ok(gate)
 }
 
+fn validate_bridge_policy(
+    enabled: bool,
+    repository: &std::path::Path,
+    reference: Option<&PacketReference>,
+) -> Result<(), String> {
+    if !enabled {
+        return if reference.is_some() {
+            Err("disabled capability has active configuration material".into())
+        } else {
+            Ok(())
+        };
+    }
+    let reference = reference.ok_or("application_bridge requires a bridge policy")?;
+    let canonical = reference
+        .path
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(&reference.path).map_err(|error| error.to_string())?;
+    if canonical != reference.path
+        || reference.path.starts_with(repository)
+        || bytes.len() > 65_536
+        || execution::hash(&bytes) != reference.sha256
+    {
+        return Err("bridge policy must be canonical, host-owned, hash-bound, and bounded".into());
+    }
+    Ok(())
+}
+
 pub fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     manager: Weak<ThreadManager>,
@@ -1053,6 +1087,11 @@ pub fn install(
     {
         return Err("disabled capability has active configuration material".into());
     }
+    validate_bridge_policy(
+        manifest.capabilities.application_bridge,
+        &manifest.repository,
+        manifest.bridge.as_ref(),
+    )?;
     if manifest.leads.sol.model != "gpt-5.6-sol"
         || manifest.leads.astra.model != "gpt-6-astra"
         || manifest.worker.model != "muse-spark-1.3-contributor"
@@ -1252,6 +1291,7 @@ pub fn install(
             "repository_knowledge": knowledge_session.is_some(),
             "semantic_lsp": lsp_enabled,
             "reactive_rules": reactive_rules.is_some(),
+            "application_bridge": manifest.capabilities.application_bridge,
         },
         "routing": {
             "lead_policy": manifest.lead_policy.name(),

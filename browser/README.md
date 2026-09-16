@@ -5,6 +5,11 @@ Oh My Diff pins one Apple Silicon browser stack in `browser.lock.json`: Node
 and Chromium headless-shell revision 1244. The lock includes the official Node
 archive URL and hash; `pnpm-lock.yaml` freezes the complete JavaScript graph.
 
+The same managed Node runtime carries the optional application bridge host and
+browser/Node plus Rust/Python/Java adapter sources from
+[`../bridge`](../bridge). The bridge is registered only by an enabled,
+hash-bound bridge policy; see [`../bridge/README.md`](../bridge/README.md).
+
 The private installer provisions this bundle automatically. Source installs use
 the checked-in package and lock, while prebuilt installs accept a hash-verified
 archive produced from the same managed tree:
