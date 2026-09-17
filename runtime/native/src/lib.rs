@@ -1,5 +1,6 @@
 mod accounting;
 mod execution;
+mod mods;
 
 #[cfg(test)]
 #[path = "review_tests.rs"]
@@ -117,6 +118,8 @@ struct Manifest {
     reactive_rules: Option<PacketReference>,
     #[serde(default)]
     bridge: Option<PacketReference>,
+    #[serde(default)]
+    mods: Option<PathBuf>,
     #[serde(default)]
     review: ReviewPolicy,
     #[serde(default)]
@@ -1370,7 +1373,8 @@ pub fn install(
     registry.tool_lifecycle_contributor(Arc::new(Extension(host.clone())));
     registry.tool_reaction_contributor(Arc::new(Extension(host.clone())));
     registry.turn_item_contributor(Arc::new(Extension(host.clone())));
-    registry.tool_contributor(Arc::new(Extension(host)));
+    registry.tool_contributor(Arc::new(Extension(host.clone())));
+    mods::install(registry, host)?;
     Ok(())
 }
 

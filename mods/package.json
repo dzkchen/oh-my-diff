@@ -1,0 +1,14 @@
+{
+  "name": "@oh-my-diff/mod-api",
+  "version": "0.1.0-experimental.1",
+  "private": true,
+  "type": "module",
+  "types": "api.d.ts",
+  "scripts": {
+    "test": "node --test runner.test.mjs",
+    "check": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

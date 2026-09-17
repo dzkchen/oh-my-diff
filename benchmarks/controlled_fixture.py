@@ -13,7 +13,9 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False):
+def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None):
+    if mod_node is not None and scenario not in ("direct", "omd-off"):
+        raise ValueError("mod fixture requires direct or omd-off scenario")
     destination.mkdir(parents=True, exist_ok=False)
     repo, home = destination / "repo", destination / "home"
     repo.mkdir()
@@ -59,6 +61,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             escalation_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_escalate"]
             checkpoint_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_checkpoint"]
             completion_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_complete"]
+            mod_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_fixture_count"]
             status_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_status"]
             spawn_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "spawn_agent"]
             wait_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "wait_agent"]
@@ -79,6 +82,10 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 criteria = manifest["checkpoint"]["acceptance_criteria"]
                 sequence = len(checkpoint_outputs) + 1
                 item = {"type": "function_call", "id": f"unchanged-checkpoint-{sequence}", "call_id": f"unchanged-checkpoint-{sequence}", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": [], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [], "check_versions": []})}
+            elif owner == "lead" and mod_node is not None and scenario == "direct" and not search_outputs:
+                item = {"type": "tool_search_call", "id": "search-mod", "call_id": "search-mod", "status": "completed", "execution": "client", "arguments": {"query": "mod_fixture_count persistent mod counter effective settings task cost capture"}}
+            elif owner == "lead" and mod_node is not None and scenario == "direct" and not mod_outputs:
+                item = {"type": "function_call", "id": "mod-count", "call_id": "mod-count", "name": "mod_fixture_count", "arguments": "{}"}
             elif owner == "lead" and scenario == "direct" and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-status", "call_id": "search-status", "status": "completed", "execution": "client", "arguments": {"query": "effective settings task cost capture"}}
             elif owner == "lead" and scenario == "direct" and not status_outputs:
@@ -204,6 +211,17 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
         manifest["limits"]["seconds"] = 3
         manifest["worker_limits"]["seconds"] = 3
         manifest["check_command"] = ["/bin/sleep", "30"]
+    if mod_node is not None:
+        package = destination / "fixture-mod"
+        package.mkdir()
+        package_manifest = json.dumps({"schema": 1, "id": "fixture", "version": "1.0.0", "api": "0.1.0-experimental.1", "state_version": 1, "capabilities": ["context", "tools", "state"]}).encode()
+        source = b"export default api => { api.on('context', () => ({text:'MOD_CONTEXT_SENTINEL'})); api.tool({name:'count',description:'persistent mod counter',parameters:{type:'object',properties:{}}}, () => { api.state.set(Number(api.state.get() ?? 0)+1); return {count:api.state.get()}; }); }"
+        (package / "mod.json").write_bytes(package_manifest)
+        (package / "index.ts").write_bytes(source)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(mod_node.resolve()), "mods": [{"path": str(package), "sha256": hashlib.sha256(package_manifest + b"\x00" + source).hexdigest(), "enabled": True, "capabilities": ["context", "tools", "state"], "settings": {}}]}))
+        manifest["mods"] = str(store)
     manifest_path = destination / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     catalog = json.loads((ROOT / "benchmarks/fixtures/controlled-models.json").read_text())
@@ -473,6 +491,15 @@ enabled = false
                 and item.get("call_id") == "status"
             )
             assert status["direct_single_agent"] is True
+        if mod_node is not None:
+            assert ("MOD_CONTEXT_SENTINEL" in json.dumps(requests)) == (scenario == "direct")
+            if scenario == "direct":
+                state = json.loads((destination / "mod-store/state-fixture.json").read_text())
+                assert state["value"] == 1
+                mod_results = [json.loads(i["output"]) for request in requests for i in request["body"].get("input", []) if i.get("type") == "function_call_output" and i.get("call_id") == "mod-count"]
+                assert mod_results and all(value == {"count": 1} for value in mod_results)
+            else:
+                assert not (destination / "mod-store/state-fixture.json").exists()
         if scenario == "omd-off":
             assert not (destination / "evidence").exists()
         if scenario not in ("direct", "escalation", "reactive") and (destination / "evidence/context.json").exists():
@@ -480,7 +507,7 @@ enabled = false
             assert context_record["context"]["policy"] == context_policy
             assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == lead
             assert context_record["communication"] == manifest["communication"]
-        record = {"status": "pass", "scenario": scenario, "failure_class": failure_class if scenario == "escalation" else None, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "communication": manifest["communication"], "reactive_rules": manifest.get("reactive_rules"), "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "escalation_result": escalation_result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
+        record = {"status": "pass", "scenario": scenario, "failure_class": failure_class if scenario == "escalation" else None, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "communication": manifest["communication"], "reactive_rules": manifest.get("reactive_rules"), "mods": mod_node is not None, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "escalation_result": escalation_result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
         (destination / "verification.json").write_text(json.dumps(record, indent=2))
         return record
     finally:
@@ -500,8 +527,9 @@ def main():
     parser.add_argument("--concise-user-updates", action="store_true")
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
+    parser.add_argument("--mod-node", type=Path)
     args = parser.parse_args()
-    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules), indent=2))
+    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node), indent=2))
 
 
 if __name__ == "__main__":
