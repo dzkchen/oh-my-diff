@@ -38,3 +38,59 @@ test('infinite loops interrupted and oversized output rejected', () => {
   assert.match(run('export default () => { while(true) {} }').error, /timed out/);
   assert.match(run('export default api => api.command("large", () => "x".repeat(70000))', {capabilities:['commands'],event:'command',name:'large'}).error, /output_limit/);
 });
+test('Pi 0.74 tools/commands subset uses the same registration and denial path', () => {
+  const adapter = 'pi-0.74-tools-commands-v1';
+  const source = `import {Type} from 'typebox'; export default pi => {
+    pi.registerTool({name:'echo',label:'Echo',description:'Echo text',parameters:Type.Object({text:Type.String(),count:Type.Optional(Type.Integer())}),execute:async (id,args,signal,update,ctx)=>({content:[{type:'text',text:args.text}],details:{hasUI:ctx.hasUI}})});
+    pi.registerCommand('hello',{description:'Hello',handler:async args=>({text:args})});
+  }`;
+  const reply = run(source, {adapter,capabilities:['tools','commands'],event:'tool',name:'echo',payload:{text:'hello'}});
+  assert.deepEqual(reply.value,{content:[{type:'text',text:'hello'}],details:{hasUI:false}});
+  assert.deepEqual(reply.registrations.tools[0].parameters.required,['text']);
+  assert.deepEqual(run(source,{adapter,capabilities:['tools','commands'],event:'command',name:'hello',payload:'world'}).value,{text:'world'});
+  assert.match(run('export default pi => pi.registerShortcut("ctrl+x",{})',{adapter}).error,/unsupported_pi_operation/);
+  assert.match(run(source,{adapter}).error,/capability_denied/);
+});
+test('commands carry descriptions and tools carry labels and bounded progress', () => {
+  const source = `export default api => {
+    api.command('reset', () => ({display:'done'}), {description:'Reset state'});
+    api.tool({name:'work',label:'Work hard',description:'Work',parameters:{type:'object',properties:{}}}, () => { api.progress('half'); api.progress('all'); return 1; });
+    api.command('bad', () => api.progress('no'));
+  }`;
+  const inspect = run(source, { capabilities: ['commands', 'tools'] });
+  assert.deepEqual(inspect.registrations.commands, [{ name: 'reset', description: 'Reset state' }, { name: 'bad' }]);
+  assert.equal(inspect.registrations.tools[0].label, 'Work hard');
+  const tool = run(source, { capabilities: ['commands', 'tools'], event: 'tool', name: 'work', payload: {} });
+  assert.deepEqual(tool.updates, ['half', 'all']);
+  assert.match(run(source, { capabilities: ['commands', 'tools'], event: 'command', name: 'bad' }).error, /progress_outside_tool/);
+  assert.match(run('export default api => api.command("x", () => null, {hidden:true})', { capabilities: ['commands'] }).error, /unsupported_command_option/);
+});
+test('input and lifecycle events require their capabilities', () => {
+  const events = ['turn_start', 'turn_end', 'compaction_start', 'compaction_end', 'agent_end'];
+  const lifecycle = run(`export default api => { for (const e of ${JSON.stringify(events)}) api.on(e, () => null); }`, { capabilities: ['lifecycle'] });
+  assert.deepEqual(lifecycle.registrations.events, events);
+  assert.match(run('export default api => api.replace("input", () => null)', { capabilities: ['lifecycle'] }).error, /capability_denied: input/);
+  const input = run('export default api => api.replace("input", ({text}) => ({text: text + "!"}))', { capabilities: ['input'], event: 'input', payload: { text: 'hi', attachments: 0 } });
+  assert.deepEqual(input.value, { text: 'hi!' });
+  assert.deepEqual(input.registrations.replacements, ['input']);
+});
+test('Pi labels, command descriptions, onUpdate and sendUserMessage map onto the native API', () => {
+  const adapter = 'pi-0.74-tools-commands-v1';
+  const source = `import {Type} from 'typebox'; export default pi => {
+    pi.registerTool({name:'echo',label:'Echo',description:'Echo text',parameters:Type.Object({text:Type.String()}),execute:async (id,args,signal,update)=>{ update({content:[{type:'text',text:'working'}]}); update({content:[{type:'text',text:'almost'}]}); return {content:[{type:'text',text:args.text}],details:{}}; }});
+    pi.registerCommand('ask',{description:'Ask the agent',handler:async args=>{ pi.sendUserMessage('Please ' + args); }});
+    pi.registerCommand('twice',{handler:async ()=>{ pi.sendUserMessage('a'); pi.sendUserMessage('b'); }});
+    pi.registerCommand('steer',{handler:async ()=>{ pi.sendUserMessage('a',{deliverAs:'steer'}); }});
+  }`;
+  const capabilities = ['tools', 'commands'];
+  const inspect = run(source, { adapter, capabilities });
+  assert.equal(inspect.registrations.tools[0].label, 'Echo');
+  assert.deepEqual(inspect.registrations.commands[0], { name: 'ask', description: 'Ask the agent' });
+  const tool = run(source, { adapter, capabilities, event: 'tool', name: 'echo', payload: { text: 'hello' } });
+  assert.deepEqual(tool.updates, ['working', 'almost']);
+  assert.deepEqual(tool.value, { content: [{ type: 'text', text: 'hello' }], details: {}, last_update: 'almost' });
+  assert.deepEqual(run(source, { adapter, capabilities, event: 'command', name: 'ask', payload: 'review' }).value, { submit: 'Please review' });
+  assert.match(run(source, { adapter, capabilities, event: 'command', name: 'twice', payload: '' }).error, /multiple_user_messages/);
+  assert.match(run(source, { adapter, capabilities, event: 'command', name: 'steer', payload: '' }).error, /sendUserMessage.options/);
+  assert.match(run('export default pi => pi.sendUserMessage("x")', { adapter }).error, /sendUserMessage outside command/);
+});

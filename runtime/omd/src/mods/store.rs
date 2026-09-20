@@ -18,7 +18,7 @@ use std::path::PathBuf;
 pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32)
         .open(path)?;
     if !file.metadata()?.is_file() {
         return Err(failure("regular_file_required"));
@@ -74,7 +74,7 @@ impl ModStore {
         Ok(Self { root })
     }
 
-    fn lock(&self) -> Result<File> {
+    pub(super) fn lock(&self) -> Result<File> {
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -86,7 +86,7 @@ impl ModStore {
         Ok(file)
     }
 
-    fn write(&self, name: &str, value: &Value) -> Result<()> {
+    pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(value)?;
         if bytes.len() > 65_536 {
             return Err(failure("state_or_configuration_limit"));

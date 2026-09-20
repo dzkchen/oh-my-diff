@@ -352,10 +352,11 @@ impl Task {
         let mut records = fs::read_dir(&evidence)?
             .filter_map(Result::ok)
             .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.len() == 13 && name.ends_with(".json"))
+                entry.file_name().to_str().is_some_and(|name| {
+                    name.strip_suffix(".json").is_some_and(|stem| {
+                        stem.len() == 8 && stem.bytes().all(|byte| byte.is_ascii_digit())
+                    })
+                })
             })
             .collect::<Vec<_>>();
         records.sort_by_key(fs::DirEntry::file_name);
@@ -488,6 +489,16 @@ impl Task {
                         .and_then(|id| state.workers.get_mut(id))
                         .ok_or_else(|| denied("consumed worker missing"))?;
                     worker.status = WorkerStatus::Consumed;
+                }
+                Some("worker_result_discarded") => {
+                    let worker = record["worker"]
+                        .as_str()
+                        .and_then(|id| state.workers.get_mut(id))
+                        .ok_or_else(|| denied("discarded worker missing"))?;
+                    if worker.status != WorkerStatus::Completed {
+                        return Err(denied("discarded worker was not completed"));
+                    }
+                    worker.status = WorkerStatus::Stopped;
                 }
                 Some("worker_archived") => {
                     let archived: ArchivedWorker =
@@ -1349,6 +1360,32 @@ impl Task {
             .get_mut(id)
             .ok_or_else(|| denied("worker disappeared"))?
             .status = WorkerStatus::Consumed;
+        self.archive_worker(&mut state, id)?;
+        self.refresh_checkpoint(&mut state)?;
+        Ok(())
+    }
+
+    pub fn discard_worker_result(&self, id: &str) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if !state
+            .workers
+            .get(id)
+            .is_some_and(|worker| worker.status == WorkerStatus::Completed)
+        {
+            return Err(denied("worker has no completed result to discard"));
+        }
+        self.record(
+            &mut state,
+            &serde_json::json!({"event":"worker_result_discarded","worker":id}),
+        )?;
+        state
+            .workers
+            .get_mut(id)
+            .ok_or_else(|| denied("worker disappeared"))?
+            .status = WorkerStatus::Stopped;
         self.archive_worker(&mut state, id)?;
         self.refresh_checkpoint(&mut state)?;
         Ok(())

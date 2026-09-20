@@ -13,9 +13,9 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None):
-    if mod_node is not None and scenario not in ("direct", "omd-off"):
-        raise ValueError("mod fixture requires direct or omd-off scenario")
+def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None, mod_profile="counter"):
+    if mod_node is not None and scenario not in ("direct", "omd-off", "success", "client-loss-resume", "completion", "escalation"):
+        raise ValueError("mod fixture requires direct, omd-off, success, or client-loss-resume scenario")
     destination.mkdir(parents=True, exist_ok=False)
     repo, home = destination / "repo", destination / "home"
     repo.mkdir()
@@ -32,6 +32,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
 
     class Provider(http.server.BaseHTTPRequestHandler):
         abrupt_delay_started = False
+        compacted = False
 
         def log_message(self, *_):
             pass
@@ -44,7 +45,9 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             if scenario in ("runner", "omd-off") and owner is None:
                 owner = {"gpt-5.6-sol": "lead", "muse-spark-1.3-contributor": "contributor", "gpt-6-astra": "reviewer"}[model]
             requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": native_owner, "body": body})
-            if scenario == "client-loss-resume" and owner and owner.startswith("contributor-") and not Provider.abrupt_delay_started:
+            if owner and owner.startswith("mod-") and "MOD_CANCEL" in json.dumps(body):
+                time.sleep(3)
+            if scenario == "client-loss-resume" and owner and ((mod_node is None and owner.startswith("contributor-")) or (mod_node is not None and owner.startswith("mod-") and "MOD_ADAPTER" in json.dumps(body))) and not Provider.abrupt_delay_started:
                 Provider.abrupt_delay_started = True
                 time.sleep(30)
             if scenario == "outage-fallback" and owner and owner.startswith("contributor-") and "fallback" not in owner:
@@ -62,6 +65,21 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             checkpoint_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_checkpoint"]
             completion_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_complete"]
             mod_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_fixture_count"]
+            if mod_profile == "lifecycle" and "MOD_COMPACT_PROMPT_SENTINEL" in json.dumps(inputs[-1:]):
+                Provider.compacted = True
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                summary = {"type": "message", "id": "summary", "role": "assistant", "content": [{"type": "output_text", "text": "MOD_COMPACTED_SUMMARY"}]}
+                for event in ({"type": "response.created", "response": {"id": str(len(requests))}}, {"type": "response.output_item.done", "item": summary}, {"type": "response.completed", "response": {"id": str(len(requests)), "model": model, "usage": {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 110}}}):
+                    self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
+                    self.wfile.flush()
+                return
+            if mod_profile == "failure" and owner == "lead" and mod_outputs:
+                import socket
+                with socket.socket() as probe:
+                    closed = probe.connect_ex(("127.0.0.1", int((destination / "adapter-port").read_text()))) != 0
+                (destination / "mod-cleanup-observed").write_text("closed" if closed else "still running")
             status_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_status"]
             spawn_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "spawn_agent"]
             wait_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "wait_agent"]
@@ -82,9 +100,9 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 criteria = manifest["checkpoint"]["acceptance_criteria"]
                 sequence = len(checkpoint_outputs) + 1
                 item = {"type": "function_call", "id": f"unchanged-checkpoint-{sequence}", "call_id": f"unchanged-checkpoint-{sequence}", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": [], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [], "check_versions": []})}
-            elif owner == "lead" and mod_node is not None and scenario == "direct" and not search_outputs:
-                item = {"type": "tool_search_call", "id": "search-mod", "call_id": "search-mod", "status": "completed", "execution": "client", "arguments": {"query": "mod_fixture_count persistent mod counter effective settings task cost capture"}}
-            elif owner == "lead" and mod_node is not None and scenario == "direct" and not mod_outputs:
+            elif owner == "lead" and mod_node is not None and scenario in ("direct", "success", "client-loss-resume") and not search_outputs:
+                item = {"type": "tool_search_call", "id": "search-mod", "call_id": "search-mod", "status": "completed", "execution": "client", "arguments": {"query": "mod_fixture_count persistent mod counter effective settings task cost capture delegate isolated contributor implementation"}}
+            elif owner == "lead" and mod_node is not None and scenario in ("direct", "success", "client-loss-resume") and not mod_outputs:
                 item = {"type": "function_call", "id": "mod-count", "call_id": "mod-count", "name": "mod_fixture_count", "arguments": "{}"}
             elif owner == "lead" and scenario == "direct" and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-status", "call_id": "search-status", "status": "completed", "execution": "client", "arguments": {"query": "effective settings task cost capture"}}
@@ -106,7 +124,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
             elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation") and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-delegation", "call_id": "search-delegation", "status": "completed", "execution": "client", "arguments": {"query": "delegate isolated contributor implementation"}}
-            elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation") and not outputs:
+            elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation") and not [output for output in outputs if calls.get(output.get("call_id")) != "mod_fixture_count"]:
                 arguments = {
                     "focused_brief": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files.", "selected_evidence": ["solution.py"]},
                     "shared_task_packet": {},
@@ -177,6 +195,8 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
             usage = {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 20}, "output_tokens": 30, "output_tokens_details": {"reasoning_tokens": 7}, "total_tokens": 130}
+            if mod_profile == "lifecycle" and owner == "lead" and not Provider.compacted:
+                usage = {"input_tokens": 40000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 30, "output_tokens_details": {"reasoning_tokens": 7}, "total_tokens": 40030}
             for event in ({"type": "response.created", "response": {"id": str(len(requests))}}, {"type": "response.output_item.done", "item": item}, {"type": "response.completed", "response": {"id": str(len(requests)), "model": model, "usage": usage}}):
                 try:
                     self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
@@ -212,16 +232,11 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
         manifest["worker_limits"]["seconds"] = 3
         manifest["check_command"] = ["/bin/sleep", "30"]
     if mod_node is not None:
-        package = destination / "fixture-mod"
-        package.mkdir()
-        package_manifest = json.dumps({"schema": 1, "id": "fixture", "version": "1.0.0", "api": "0.1.0-experimental.1", "state_version": 1, "capabilities": ["context", "tools", "state"]}).encode()
-        source = b"export default api => { api.on('context', () => ({text:'MOD_CONTEXT_SENTINEL'})); api.tool({name:'count',description:'persistent mod counter',parameters:{type:'object',properties:{}}}, () => { api.state.set(Number(api.state.get() ?? 0)+1); return {count:api.state.get()}; }); }"
-        (package / "mod.json").write_bytes(package_manifest)
-        (package / "index.ts").write_bytes(source)
-        store = destination / "mod-store"
-        store.mkdir()
-        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(mod_node.resolve()), "mods": [{"path": str(package), "sha256": hashlib.sha256(package_manifest + b"\x00" + source).hexdigest(), "enabled": True, "capabilities": ["context", "tools", "state"], "settings": {}}]}))
-        manifest["mods"] = str(store)
+        from benchmarks.mod_fixture import install
+        install(destination, manifest, mod_node, mod_profile)
+        if scenario == "client-loss-resume":
+            manifest["limits"]["requests"] = 24
+            manifest["limits"]["exposure_microusd"] = 2000000
     manifest_path = destination / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     catalog = json.loads((ROOT / "benchmarks/fixtures/controlled-models.json").read_text())
@@ -271,6 +286,9 @@ enabled = false
 "/sbin" = "read"
 "/Library/Developer/CommandLineTools/usr" = "read"
 ''')
+    if mod_node is not None:
+        from benchmarks.mod_fixture import configure
+        configure(destination, mod_profile)
     env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home), "CODEX_HOME": str(home), "CODEX_SQLITE_HOME": str(home), "NO_PROXY": "127.0.0.1,localhost", "TERM": "dumb"}
     if scenario == "omd-off":
         env["OMD_MODE"] = "upstream_direct"
@@ -316,6 +334,17 @@ enabled = false
             assert Provider.abrupt_delay_started, "Contributor request did not become in-flight"
             first.kill()
             first.communicate(timeout=10)
+            if mod_node is not None:
+                import socket
+                port = int((destination / "adapter-port").read_text())
+                deadline = time.monotonic() + 4
+                while time.monotonic() < deadline:
+                    with socket.socket() as probe:
+                        if probe.connect_ex(("127.0.0.1", port)) != 0:
+                            break
+                    time.sleep(.1)
+                else:
+                    raise AssertionError("managed provider survived abrupt host death")
             (repo / "notes.txt").write_text("intervening tracked user notes\n")
             manifest["lifecycle"]["explicit_resume"] = "fixture explicit resume after abrupt client loss"
             manifest_path.write_text(json.dumps(manifest, indent=2))
@@ -325,6 +354,9 @@ enabled = false
         (destination / "stdout.txt").write_text(process.stdout)
         (destination / "stderr.txt").write_text(process.stderr)
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
+        if mod_profile == "deny":
+            from benchmarks.mod_fixture import verify_denied
+            return verify_denied(destination, process, requests)
         results = list((destination / "evidence").glob("*worker-result-*.json"))
         result = json.loads(results[0].read_text()) if results else {}
         escalation_results = list((destination / "evidence").glob("escalation-result-*.json"))
@@ -356,7 +388,10 @@ enabled = false
             assert ("required_clarification" in worker_context) == structured_worker_reports, "worker report schema selection drifted"
         lead_context = json.dumps(requests[0]["body"].get("input", []))
         assert ("concise ordinary-language sentences" in lead_context) == concise_user_updates, "user update policy selection drifted"
-        assert requests[0]["model"] == lead_model
+        expected_lead = "gpt-6-astra" if mod_profile == "routing" and lead_policy == "task_entry" else lead_model
+        assert requests[0]["model"] == expected_lead
+        if mod_profile == "routing":
+            assert requests[0]["body"]["reasoning"]["effort"] == ("xhigh" if expected_lead == "gpt-6-astra" else "high")
         assert (requests[0]["native_owner"] == "lead") == (scenario != "omd-off"), "lead route drifted"
         first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
         if scenario == "omd-off":
@@ -447,7 +482,11 @@ enabled = false
                 assert any(event.get("event") == "task_resumed" for event in events)
                 reconciliation = json.loads(next((destination / "evidence").glob("resume-*-reconciliation.json")).read_text())
                 assert reconciliation["workspace"]["current_sha256"] != reconciliation["workspace"]["prior_sha256"]
-                assert reconciliation["workspace"]["changed_paths"] == ["notes.txt"]
+                if mod_node is None:
+                    assert reconciliation["workspace"]["changed_paths"] == ["notes.txt"]
+                else:
+                    assert reconciliation["workspace"]["changed_paths"] is None
+                    assert reconciliation["workspace"]["prior_sha256"] is None
                 assert reconciliation["permissions"]["effective_policy_rederived"] is True
                 assert reconciliation["uncertain_requests"]
                 assert (repo / "notes.txt").read_text() == "intervening tracked user notes\n"
@@ -492,12 +531,10 @@ enabled = false
             )
             assert status["direct_single_agent"] is True
         if mod_node is not None:
-            assert ("MOD_CONTEXT_SENTINEL" in json.dumps(requests)) == (scenario == "direct")
-            if scenario == "direct":
-                state = json.loads((destination / "mod-store/state-fixture.json").read_text())
-                assert state["value"] == 1
-                mod_results = [json.loads(i["output"]) for request in requests for i in request["body"].get("input", []) if i.get("type") == "function_call_output" and i.get("call_id") == "mod-count"]
-                assert mod_results and all(value == {"count": 1} for value in mod_results)
+            assert ("MOD_CONTEXT_SENTINEL" in json.dumps(requests)) == (scenario != "omd-off")
+            if scenario != "omd-off":
+                from benchmarks.mod_fixture import verify
+                verify(destination, requests, mod_profile, scenario)
             else:
                 assert not (destination / "mod-store/state-fixture.json").exists()
         if scenario == "omd-off":
@@ -528,8 +565,9 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
+    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny"), default="counter")
     args = parser.parse_args()
-    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node), indent=2))
+    print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 
 
 if __name__ == "__main__":

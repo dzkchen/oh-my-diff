@@ -1,6 +1,6 @@
 {
   "name": "@oh-my-diff/mod-api",
-  "version": "0.1.0-experimental.1",
+  "version": "0.1.0-experimental.2",
   "private": true,
   "type": "module",
   "types": "api.d.ts",

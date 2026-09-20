@@ -121,6 +121,12 @@ struct Manifest {
     #[serde(default)]
     mods: Option<PathBuf>,
     #[serde(default)]
+    mod_services: Vec<mods::services::Grant>,
+    #[serde(default)]
+    mod_secret_refs: BTreeMap<String, PathBuf>,
+    #[serde(default)]
+    mod_pi_user: Option<PathBuf>,
+    #[serde(default)]
     review: ReviewPolicy,
     #[serde(default)]
     completion: CompletionPolicy,

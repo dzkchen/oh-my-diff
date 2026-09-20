@@ -115,11 +115,11 @@ fn worker_result(
     Ok((report.summary.clone(), Some(report)))
 }
 
-struct Child {
-    thread: Arc<codex_core::CodexThread>,
-    task: Arc<Task>,
-    owner: String,
-    active: bool,
+pub(super) struct Child {
+    pub(super) thread: Arc<codex_core::CodexThread>,
+    pub(super) task: Arc<Task>,
+    pub(super) owner: String,
+    pub(super) active: bool,
 }
 
 #[derive(Clone)]
@@ -216,7 +216,7 @@ fn intersect(
     ))
 }
 
-fn isolated(
+pub(super) fn isolated(
     parent: &Config,
     root: &Path,
     reads: &[PathBuf],
@@ -392,8 +392,12 @@ fn shared_packet(reference: &PacketReference, max_bytes: usize) -> Result<(Strin
     ))
 }
 
-fn protected_paths(manifest: &Manifest) -> Vec<PathBuf> {
+pub(super) fn protected_paths(manifest: &Manifest) -> Vec<PathBuf> {
     let mut paths = vec![manifest.authorization.clone(), manifest.evidence.clone()];
+    paths.extend(manifest.mod_secret_refs.values().cloned());
+    if let Some(path) = &manifest.mods {
+        paths.push(path.clone());
+    }
     if let Some(path) = &manifest.guideline_store {
         paths.push(path.clone());
     }
@@ -687,7 +691,11 @@ async fn run_child(
     }
 }
 
-async fn command(host: &Host, config: &Config, argv: Vec<String>) -> Result<Value, String> {
+pub(super) async fn command(
+    host: &Host,
+    config: &Config,
+    argv: Vec<String>,
+) -> Result<Value, String> {
     host.task.check_active().map_err(error)?;
     let remaining = host.task.remaining().map_err(error)?.0;
     if remaining.is_zero() {

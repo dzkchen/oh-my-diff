@@ -774,3 +774,55 @@ fn direct_completion_does_not_require_checkpoint_acceptance() {
         CheckpointTaskStatus::Completed
     );
 }
+
+#[test]
+fn discarded_worker_result_replays_without_claiming_consumption() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence = dir.path().join("task");
+    let task = Task::create_checkpointed(
+        limits(),
+        evidence.clone(),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    task.start_worker("unused".into(), "lead".into(), 1, worker())
+        .unwrap();
+    assert!(task.discard_worker_result("unused").is_err());
+    task.complete_worker("unused", marker("unused-result", 'e'))
+        .unwrap();
+    task.discard_worker_result("unused").unwrap();
+    assert!(task.consume_worker_result("unused").is_err());
+    task.pause("restart", Vec::new()).unwrap();
+    drop(task);
+    std::fs::write(evidence.join("mod-view.json"), b"{\"panels\":[]}").unwrap();
+    let resumed = Task::open_checkpointed(
+        limits(),
+        evidence.clone(),
+        Some("discard replay"),
+        contract(),
+        live('a', Vec::new()),
+    )
+    .unwrap();
+    let checkpoint = resumed.checkpoint().unwrap().unwrap();
+    assert!(checkpoint.workers.is_empty());
+    assert_eq!(checkpoint.archived_workers, 1);
+    let records = std::fs::read_dir(evidence)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(entry.path()).ok()?).ok()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        records
+            .iter()
+            .any(|record| record["record"]["event"] == "worker_archived"
+                && record["record"]["archive"]["status"] == "stopped")
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|record| record["record"]["event"] == "worker_result_consumed")
+    );
+}

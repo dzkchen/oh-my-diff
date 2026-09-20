@@ -10,6 +10,7 @@ __pycache__/
 /.omd/
 /.omd-tmp/
 /.pnpm-store/
+/mods/node_modules/
 /browser/node_modules/
 /browser/browsers/
 /browser/runtime/

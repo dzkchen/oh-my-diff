@@ -1,4 +1,26 @@
+mod bridge;
+mod packages;
+mod pi;
+pub use pi::PiPrompt;
+pub use pi::parse_command_args;
+pub use pi::substitute_args;
+mod view;
+pub use view::MOD_KEY_LIMIT;
+pub use view::ModActivity;
+pub use view::ModColor;
+pub use view::ModKeyAction;
+pub use view::ModPanel;
+pub use view::ModSidebarSide;
+pub use view::ModTheme;
+pub use view::ModView;
+pub use view::ModViewSnapshot;
+pub use view::mod_command_reference;
+pub use view::mod_key_name;
+mod outcome;
+pub use outcome::ModCommandOutcome;
+pub use outcome::ModInputDecision;
 mod process;
+pub use bridge::ModHostCall;
 mod store;
 
 use serde::Deserialize;
@@ -15,8 +37,54 @@ use std::path::PathBuf;
 
 pub use store::ModStore;
 
-pub const MOD_API_VERSION: &str = "0.1.0-experimental.1";
-pub const MOD_CAPABILITIES: &[&str] = &["context", "tools", "commands", "lifecycle", "state"];
+pub const MOD_API_VERSION: &str = "0.1.0-experimental.2";
+pub const MOD_CAPABILITIES: &[&str] = &[
+    "context",
+    "tools",
+    "commands",
+    "lifecycle",
+    "state",
+    "task",
+    "agents",
+    "review",
+    "recovery",
+    "execution",
+    "interception",
+    "routing",
+    "terminal",
+    "providers",
+    "sidecars",
+    "compaction",
+    "pi_resources",
+    "input",
+];
+pub const MOD_EVENTS: &[(&str, &str)] = &[
+    ("context", "context"),
+    ("migrate", "state"),
+    ("tool_before", "interception"),
+    ("input", "input"),
+    ("routing", "routing"),
+    ("terminal", "terminal"),
+    ("compaction", "compaction"),
+    ("start", "lifecycle"),
+    ("idle", "lifecycle"),
+    ("stop", "lifecycle"),
+    ("resume", "lifecycle"),
+    ("tool_result", "lifecycle"),
+    ("turn_start", "lifecycle"),
+    ("turn_end", "lifecycle"),
+    ("compaction_start", "lifecycle"),
+    ("compaction_end", "lifecycle"),
+    ("agent_end", "lifecycle"),
+];
+pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
+    "tool_before",
+    "routing",
+    "terminal",
+    "compaction",
+    "context",
+    "input",
+];
 type Result<T> = io::Result<T>;
 
 fn failure(message: impl ToString) -> io::Error {
@@ -43,6 +111,8 @@ pub struct ModPackage {
     pub version: String,
     pub api: String,
     pub state_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<String>,
     pub capabilities: Vec<String>,
 }
 
@@ -54,11 +124,18 @@ impl ModPackage {
             || self.id.len() > 24
             || self.version.is_empty()
             || self.version.len() > 64
-            || self.state_version != 1
+            || self.state_version == 0
         {
             return Err(failure(
-                "incompatible_package: schema=1, exact experimental API and state_version=1 required",
+                "incompatible_package: schema=1, exact experimental API and positive state_version required",
             ));
+        }
+        if self
+            .adapter
+            .as_deref()
+            .is_some_and(|adapter| adapter != "pi-0.74-tools-commands-v1")
+        {
+            return Err(failure("unsupported_adapter"));
         }
         let capabilities: BTreeSet<_> = self.capabilities.iter().collect();
         if capabilities.len() != self.capabilities.len()
@@ -98,16 +175,28 @@ pub struct ModConfiguration {
 #[serde(deny_unknown_fields)]
 pub struct ModTool {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub description: String,
     pub parameters: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModCommand {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Registrations {
     tools: Vec<ModTool>,
-    commands: Vec<String>,
+    commands: Vec<ModCommand>,
     events: Vec<String>,
+    #[serde(default)]
+    replacements: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -116,6 +205,12 @@ struct Reply {
     registrations: Registrations,
     state: Value,
     value: Value,
+    #[serde(default)]
+    calls: Vec<ModHostCall>,
+    #[serde(default)]
+    host_call: Option<ModHostCall>,
+    #[serde(default)]
+    updates: Vec<String>,
 }
 
 struct Loaded {
@@ -134,10 +229,15 @@ pub struct ModHost {
     configuration_sha256: String,
     loaded: BTreeMap<String, Loaded>,
     reload_error: Option<String>,
+    tool_validator: fn(&Value) -> Result<()>,
 }
 
 impl ModHost {
     pub fn open(root: PathBuf) -> Result<Self> {
+        Self::open_validated(root, |_| Ok(()))
+    }
+
+    pub fn open_validated(root: PathBuf, tool_validator: fn(&Value) -> Result<()>) -> Result<Self> {
         let store = ModStore::open(root)?;
         let mut host = Self {
             store,
@@ -146,6 +246,7 @@ impl ModHost {
             configuration_sha256: String::new(),
             loaded: BTreeMap::new(),
             reload_error: None,
+            tool_validator,
         };
         host.reload()?;
         Ok(host)
@@ -178,6 +279,7 @@ impl ModHost {
         }
         let mut next = BTreeMap::new();
         let mut tool_names = BTreeSet::new();
+        let mut replacements = BTreeSet::new();
         for selection in config.mods.into_iter().filter(|m| m.enabled) {
             let (package, source, hash) = store::package(&selection.path)?;
             if hash != selection.sha256 {
@@ -210,8 +312,14 @@ impl ModHost {
                 return Err(failure("state_write_during_registration"));
             }
             for tool in &reply.registrations.tools {
+                (self.tool_validator)(&tool.parameters)?;
                 if !tool_names.insert(format!("mod_{}_{}", loaded.package.id, tool.name)) {
                     return Err(failure("tool_name_conflict"));
+                }
+            }
+            for point in &reply.registrations.replacements {
+                if !replacements.insert(point.clone()) {
+                    return Err(failure(format!("replacement_conflict: {point}")));
                 }
             }
             loaded.registrations = reply.registrations;
@@ -229,16 +337,23 @@ impl ModHost {
         let has = |cap: &str| package.capabilities.iter().any(|c| c == cap);
         if registrations.tools.len() > 16
             || registrations.commands.len() > 16
-            || registrations.events.len() > 6
+            || registrations.events.len() > MOD_EVENTS.len()
             || (!registrations.tools.is_empty() && !has("tools"))
             || (!registrations.commands.is_empty() && !has("commands"))
         {
             return Err(failure("registration_limit_or_capability_denied"));
         }
+        let visible = |text: &str, limit: usize| {
+            !text.is_empty() && text.len() <= limit && !text.chars().any(char::is_control)
+        };
         let mut names = BTreeSet::new();
         for tool in &registrations.tools {
             if !identifier(&tool.name)
                 || !names.insert(&tool.name)
+                || tool
+                    .label
+                    .as_deref()
+                    .is_some_and(|label| !visible(label, 64))
                 || tool.description.is_empty()
                 || tool.description.len() > 2048
                 || tool.parameters["type"] != "object"
@@ -249,21 +364,33 @@ impl ModHost {
             }
         }
         names.clear();
-        for name in &registrations.commands {
-            if !identifier(name) || !names.insert(name) {
-                return Err(failure("command_conflict"));
+        for command in &registrations.commands {
+            if !identifier(&command.name)
+                || !names.insert(&command.name)
+                || command
+                    .description
+                    .as_deref()
+                    .is_some_and(|description| !visible(description, 256))
+            {
+                return Err(failure("command_conflict_or_invalid_description"));
             }
         }
         names.clear();
         for event in &registrations.events {
-            let capability = match event.as_str() {
-                "context" => "context",
-                "start" | "idle" | "stop" | "resume" | "tool_result" => "lifecycle",
-                _ => return Err(failure("unsupported_event")),
-            };
+            let capability = MOD_EVENTS
+                .iter()
+                .find(|(name, _)| name == event)
+                .map(|(_, capability)| *capability)
+                .ok_or_else(|| failure("unsupported_event"))?;
             if !has(capability) || !names.insert(event) {
                 return Err(failure("event_capability_denied_or_conflict"));
             }
+        }
+        if registrations.replacements.iter().any(|point| {
+            !MOD_REPLACEMENT_POINTS.contains(&point.as_str())
+                || !registrations.events.contains(point)
+        }) {
+            return Err(failure("invalid_replacement_point"));
         }
         Ok(())
     }
@@ -276,10 +403,20 @@ impl ModHost {
         payload: Value,
         active: &dyn Fn() -> bool,
     ) -> Result<Reply> {
-        let request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
-            "capabilities": loaded.package.capabilities, "settings": loaded.selection.settings,
-            "state": loaded.state, "event": event, "name": name, "payload": payload});
-        serde_json::from_value(process::evaluate(node, &request, active)?).map_err(failure)
+        bridge::run(
+            node,
+            loaded,
+            event,
+            name,
+            payload,
+            active,
+            &mut |_| {
+                Err(failure(
+                    "host_operation_unavailable: requires a native task",
+                ))
+            },
+            &mut |_| {},
+        )
     }
 
     pub fn invoke(
@@ -302,6 +439,39 @@ impl ModHost {
         payload: Value,
         active: impl Fn() -> bool,
     ) -> Result<Value> {
+        self.invoke_with(id, generation, event, name, payload, active, |_| {
+            Err(failure(
+                "host_operation_unavailable: requires a native task",
+            ))
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn invoke_with(
+        &mut self,
+        id: &str,
+        generation: u64,
+        event: &str,
+        name: &str,
+        payload: Value,
+        active: impl Fn() -> bool,
+        host: impl FnMut(ModHostCall) -> Result<Value>,
+    ) -> Result<Value> {
+        self.invoke_streaming(id, generation, event, name, payload, active, host, |_| {})
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn invoke_streaming(
+        &mut self,
+        id: &str,
+        generation: u64,
+        event: &str,
+        name: &str,
+        payload: Value,
+        active: impl Fn() -> bool,
+        mut host: impl FnMut(ModHostCall) -> Result<Value>,
+        mut progress: impl FnMut(String),
+    ) -> Result<Value> {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
@@ -318,7 +488,7 @@ impl ModHost {
         let result = (|| {
             match event {
                 "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
-                "command" if loaded.registrations.commands.iter().any(|c| c == name) => (),
+                "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
                 e if loaded
                     .registrations
                     .events
@@ -326,7 +496,19 @@ impl ModHost {
                     .any(|registered| registered == e) => {}
                 _ => return Err(failure("unsupported_or_unregistered_operation")),
             }
-            let reply = Self::run(&self.node, loaded, event, name, payload, &active)?;
+            loaded.state = self
+                .store
+                .state(&loaded.package.id, loaded.package.state_version)?;
+            let reply = bridge::run(
+                &self.node,
+                loaded,
+                event,
+                name,
+                payload,
+                &active,
+                &mut host,
+                &mut progress,
+            )?;
             if !active() {
                 return Err(failure("callback_cancelled"));
             }
@@ -341,6 +523,31 @@ impl ModHost {
                     .ok_or_else(|| failure("invalid_context_result"))?;
                 if text.len() > 1024 {
                     return Err(failure("context_limit"));
+                }
+            }
+            if event == "tool_before"
+                && reply.value.get("arguments").is_some()
+                && !loaded
+                    .registrations
+                    .replacements
+                    .iter()
+                    .any(|p| p == "tool_before")
+            {
+                return Err(failure("exclusive_replacement_registration_required"));
+            }
+            if event == "terminal" && !reply.value.is_null() {
+                ModView::parse(reply.value.clone())?;
+            }
+            if event == "input" {
+                let decision = ModInputDecision::parse(&reply.value)?;
+                if matches!(decision, ModInputDecision::Rewrite(_))
+                    && !loaded
+                        .registrations
+                        .replacements
+                        .iter()
+                        .any(|p| p == "input")
+                {
+                    return Err(failure("exclusive_replacement_registration_required"));
                 }
             }
             if reply.state != loaded.state {
@@ -405,6 +612,25 @@ impl ModHost {
                     .map(|tool| (id.clone(), self.generation, tool.clone()))
             })
             .collect()
+    }
+
+    pub fn commands(&self) -> Vec<(String, ModCommand)> {
+        self.loaded
+            .iter()
+            .filter(|(_, m)| m.error.is_none())
+            .flat_map(|(id, m)| {
+                m.registrations
+                    .commands
+                    .iter()
+                    .map(|command| (id.clone(), command.clone()))
+            })
+            .collect()
+    }
+
+    pub fn registered(&self, id: &str, event: &str) -> bool {
+        self.loaded
+            .get(id)
+            .is_some_and(|m| m.error.is_none() && m.registrations.events.iter().any(|e| e == event))
     }
 
     pub fn generation(&self) -> u64 {
