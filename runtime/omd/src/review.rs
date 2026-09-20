@@ -1,3 +1,4 @@
+use crate::FinalReview;
 use crate::VersionMarker;
 use serde::Deserialize;
 use serde::Serialize;
@@ -10,6 +11,10 @@ use std::io;
 pub struct ReviewPolicy {
     #[serde(default)]
     pub every_turn_advice: bool,
+    #[serde(default)]
+    pub final_review: FinalReview,
+    #[serde(default = "enabled")]
+    pub milestone_review: bool,
     pub max_cycles: u32,
     pub max_findings_per_cycle: usize,
     pub max_open_findings: usize,
@@ -21,6 +26,8 @@ impl Default for ReviewPolicy {
     fn default() -> Self {
         Self {
             every_turn_advice: false,
+            final_review: FinalReview::Separate,
+            milestone_review: true,
             max_cycles: 16,
             max_findings_per_cycle: 64,
             max_open_findings: 128,
@@ -55,6 +62,11 @@ impl ReviewPolicy {
         stable: bool,
         risk: Option<&str>,
     ) -> io::Result<()> {
+        if !self.milestone_review && cadence != ReviewCadence::Final {
+            return Err(invalid(
+                "the selected workflow contract has no milestone review",
+            ));
+        }
         match cadence {
             ReviewCadence::StableMilestone if !stable => {
                 return Err(invalid("milestone review requires a stable candidate"));
@@ -453,12 +465,24 @@ fn validate_submission(policy: &ReviewPolicy, submission: &ReviewSubmission) -> 
     if submission.findings.len() > policy.max_findings_per_cycle {
         return Err(invalid("review finding limit exceeded"));
     }
-    if submission.cadence == ReviewCadence::Final
-        && (!submission.separate_reviewer || submission.checks.is_empty())
-    {
-        return Err(invalid(
-            "final review requires a stable candidate, executable checks, and a separate reviewer",
-        ));
+    if submission.cadence == ReviewCadence::Final {
+        if policy.final_review == FinalReview::None {
+            return Err(invalid(
+                "the selected workflow contract has no final review",
+            ));
+        }
+        if submission.checks.is_empty() {
+            return Err(invalid(
+                "final review requires a stable candidate and executable checks",
+            ));
+        }
+        if submission.separate_reviewer != (policy.final_review == FinalReview::Separate) {
+            return Err(invalid(if policy.final_review == FinalReview::Separate {
+                "final review requires a separate reviewer"
+            } else {
+                "a final self-review may not be recorded as an independent review"
+            }));
+        }
     }
     for check in &submission.checks {
         validate_marker(check)?;
@@ -507,6 +531,10 @@ fn validate_sha256(value: &str) -> io::Result<()> {
         return Err(invalid("exact lowercase SHA256 is required"));
     }
     Ok(())
+}
+
+fn enabled() -> bool {
+    true
 }
 
 fn unique<T: Ord>(values: &[T]) -> bool {

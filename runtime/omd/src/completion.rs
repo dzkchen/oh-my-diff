@@ -1,4 +1,6 @@
 use crate::AcceptanceEvidence;
+use crate::AssuranceLabel;
+use crate::CompletionMode;
 use crate::ReviewCadence;
 use crate::ReviewCycle;
 use crate::TaskContract;
@@ -137,6 +139,10 @@ pub struct RequirementReceipt {
 pub struct CompletionReceipt {
     pub schema: u32,
     pub attempt: u32,
+    #[serde(default = "independently_verified")]
+    pub assurance: AssuranceLabel,
+    #[serde(default = "yes")]
+    pub independent_review: bool,
     pub contract_sha256: String,
     pub initial_candidate_sha256: String,
     pub candidate: VersionMarker,
@@ -153,6 +159,8 @@ pub struct CompletionReceipt {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct CompletionSnapshot {
     pub schema: u32,
+    #[serde(default = "independently_verified")]
+    pub assurance: AssuranceLabel,
     pub policy: CompletionPolicy,
     pub contract: TaskContract,
     pub contract_sha256: String,
@@ -171,6 +179,20 @@ impl CompletionGate {
         contract: TaskContract,
         initial_candidate_sha256: String,
     ) -> io::Result<Self> {
+        Self::new_for(
+            policy,
+            contract,
+            initial_candidate_sha256,
+            CompletionMode::AdversarialSeparate,
+        )
+    }
+
+    pub fn new_for(
+        policy: CompletionPolicy,
+        contract: TaskContract,
+        initial_candidate_sha256: String,
+        mode: CompletionMode,
+    ) -> io::Result<Self> {
         policy.validate()?;
         contract.validate()?;
         validate_short_contract(&policy, &contract)?;
@@ -179,6 +201,7 @@ impl CompletionGate {
         Ok(Self {
             snapshot: CompletionSnapshot {
                 schema: 1,
+                assurance: assurance_for(mode)?,
                 policy,
                 contract,
                 contract_sha256,
@@ -195,6 +218,10 @@ impl CompletionGate {
         validate_short_contract(&snapshot.policy, &snapshot.contract)?;
         validate_sha256(&snapshot.initial_candidate_sha256)?;
         if snapshot.schema != 1
+            || !matches!(
+                snapshot.assurance,
+                AssuranceLabel::IndependentlyVerified | AssuranceLabel::SelfReviewed
+            )
             || snapshot.contract_sha256 != acceptance_contract_sha256(&snapshot.contract)?
             || snapshot.receipts.len() > snapshot.policy.max_attempts as usize
             || snapshot
@@ -266,6 +293,8 @@ impl CompletionGate {
         let receipt = CompletionReceipt {
             schema: 1,
             attempt: self.snapshot.receipts.len() as u32 + 1,
+            assurance: self.snapshot.assurance,
+            independent_review: submission.separate_verifier,
             contract_sha256: self.snapshot.contract_sha256.clone(),
             initial_candidate_sha256: self.snapshot.initial_candidate_sha256.clone(),
             candidate: submission.candidate,
@@ -334,6 +363,8 @@ impl CompletionGate {
         let receipt = CompletionReceipt {
             schema: 1,
             attempt: self.snapshot.receipts.len() as u32 + 1,
+            assurance: self.snapshot.assurance,
+            independent_review: false,
             contract_sha256: self.snapshot.contract_sha256.clone(),
             initial_candidate_sha256: self.snapshot.initial_candidate_sha256.clone(),
             candidate,
@@ -355,6 +386,24 @@ impl CompletionGate {
     }
 }
 
+fn independently_verified() -> AssuranceLabel {
+    AssuranceLabel::IndependentlyVerified
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn assurance_for(mode: CompletionMode) -> io::Result<AssuranceLabel> {
+    match mode {
+        CompletionMode::AdversarialSeparate => Ok(AssuranceLabel::IndependentlyVerified),
+        CompletionMode::SelfVerified => Ok(AssuranceLabel::SelfReviewed),
+        CompletionMode::None => Err(invalid(
+            "a completion gate requires an adversarial or self-verified contract",
+        )),
+    }
+}
+
 pub fn acceptance_contract_sha256(contract: &TaskContract) -> io::Result<String> {
     contract.validate()?;
     let bytes = serde_json::to_vec(contract).map_err(io::Error::other)?;
@@ -366,22 +415,25 @@ fn validate_submission(
     submission: &CompletionSubmission,
 ) -> io::Result<()> {
     submission.candidate.validate()?;
+    let independent = snapshot.assurance.claims_independent_verification();
     if submission.contract_sha256 != snapshot.contract_sha256
         || submission.verifier.trim().is_empty()
         || submission.verifier.len() > 128
-        || !submission.separate_verifier
+        || submission.separate_verifier != independent
         || submission.final_review.cadence != ReviewCadence::Final
         || !submission.final_review.final_approved
-        || !submission.final_review.separate_reviewer
+        || submission.final_review.separate_reviewer != independent
         || submission.final_review.candidate.sha256 != submission.candidate.sha256
         || submission.final_review.checks.is_empty()
         || submission.final_review.checks.iter().any(|marker| {
             marker.validate().is_err() || marker.sha256 != submission.candidate.sha256
         })
     {
-        return Err(invalid(
-            "completion requires the immutable contract and exact approved final review",
-        ));
+        return Err(invalid(if independent {
+            "completion requires the immutable contract and exact separately approved final review"
+        } else {
+            "self-verified completion requires the immutable contract and the lead's own exact approved final review"
+        }));
     }
     let criteria = snapshot
         .contract
@@ -542,6 +594,15 @@ fn ordered_challenges(challenges: Vec<ChallengeAssessment>) -> Vec<ChallengeAsse
 fn validate_receipt(snapshot: &CompletionSnapshot, receipt: &CompletionReceipt) -> io::Result<()> {
     receipt.candidate.validate()?;
     let criteria = &snapshot.contract.acceptance_criteria;
+    let independent = snapshot.assurance.claims_independent_verification();
+    if receipt.assurance != snapshot.assurance
+        || receipt.independent_review != (receipt.separate_verifier && independent)
+        || (!independent && receipt.assurance.independent())
+    {
+        return Err(invalid(
+            "completion receipt may not claim assurance the selected contract did not provide",
+        ));
+    }
     if receipt.schema != 1
         || receipt.contract_sha256 != snapshot.contract_sha256
         || receipt.initial_candidate_sha256 != snapshot.initial_candidate_sha256
@@ -592,7 +653,7 @@ fn validate_receipt(snapshot: &CompletionSnapshot, receipt: &CompletionReceipt) 
                 .verifier
                 .as_ref()
                 .is_none_or(|value| value.trim().is_empty())
-                || !receipt.separate_verifier
+                || receipt.separate_verifier != independent
                 || receipt.final_review_cycle.is_none()
                 || receipt.reason.is_some()
                 || receipt.requirements.iter().any(|entry| {
@@ -618,7 +679,7 @@ fn validate_receipt(snapshot: &CompletionSnapshot, receipt: &CompletionReceipt) 
             .verifier
             .as_ref()
             .is_none_or(|value| value.trim().is_empty())
-            || !receipt.separate_verifier
+            || receipt.separate_verifier != independent
             || receipt.final_review_cycle.is_none()
             || receipt.status
                 != completion_status(

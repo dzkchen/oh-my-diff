@@ -1,5 +1,5 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input';
+export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow';
 export interface ToolSpec {
   name: string;
   label?: string;
@@ -34,6 +34,22 @@ export interface TerminalView {
 export type CommandResult = Json | { display?: string; insert?: string; submit?: string };
 export type CompactionDecision = number | { threshold?: number; prompt?: string } | null;
 export type InputDecision = null | { text: string } | { deny: string };
+export type AssuranceLabel = 'unreviewed' | 'self_reviewed' | 'independently_reviewed' | 'independently_verified';
+export type FinalReview = 'none' | 'self_review' | 'separate';
+export type CompletionMode = 'none' | 'self_verified' | 'adversarial_separate';
+export type ContractOperation = 'delegate' | 'spawn_child_agent' | 'opposite_lead_advice' | 'escalate' | 'checkpoint' | 'milestone_review' | 'final_review' | 'completion';
+export type RestrictableOperation = Extract<ContractOperation, 'delegate' | 'spawn_child_agent' | 'opposite_lead_advice' | 'escalate'>;
+export interface ContractRequirements {
+  delegation: boolean;
+  child_agents: boolean;
+  opposite_lead: boolean;
+  escalation: boolean;
+  checkpoints: boolean;
+  milestone_review: boolean;
+  final_review: FinalReview;
+  completion: CompletionMode;
+}
+export interface WorkflowContract { schema: 1; id: string; version: number; requirements: ContractRequirements }
 export interface VersionMarker { label: string; sha256: string; evidence: string; evidence_sha256: string }
 export interface CheckpointUpdate {
   completed_acceptance: { criterion: string; evidence: VersionMarker[] }[];
@@ -70,6 +86,8 @@ export interface HostOperations {
   'sidecars.start': { arguments: { id: string }; result: Json };
   'sidecars.status': { arguments: { id: string }; result: Json };
   'sidecars.stop': { arguments: { id: string }; result: Json };
+  'workflow.status': { arguments: null; result: Json };
+  'workflow.restrict': { arguments: { operations: RestrictableOperation[]; reason: string }; result: Json };
 }
 export interface Events {
   context: { input: Context; output: ContextResult | null };
@@ -89,13 +107,15 @@ export interface Events {
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
   compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
   agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string }; output: void };
+  workflow: { input: Json; output: void };
 }
 export interface ModAPI {
-  readonly version: '0.1.0-experimental.2';
+  readonly version: '0.1.0-experimental.3';
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: { call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'] };
   on<K extends keyof Events>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   replace<K extends 'context' | 'routing' | 'compaction' | 'tool_before' | 'terminal' | 'input'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  contract(definition: WorkflowContract): void;
   tool(spec: ToolSpec, handler: (arguments_: Json) => Json | Promise<Json>): void;
   command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string }): void;
   progress(text: string): void;

@@ -13,6 +13,18 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
+SOLO_SCENARIOS = ("solo", "solo-denied")
+CONTRACT_SCENARIOS = SOLO_SCENARIOS + ("contract-downgrade", "contract-resume")
+
+
+def contract_plan(binary, choice):
+    surface = binary.parent / "omd-contract"
+    if not surface.exists():
+        raise AssertionError(f"omd-contract selection surface is missing beside {binary}")
+    plan = subprocess.run([str(surface), "plan", "-", "-", choice], capture_output=True, text=True, check=True)
+    return json.loads(plan.stdout)
+
+
 def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None, mod_profile="counter"):
     if mod_node is not None and scenario not in ("direct", "omd-off", "success", "client-loss-resume", "completion", "escalation"):
         raise ValueError("mod fixture requires direct, omd-off, success, or client-loss-resume scenario")
@@ -47,6 +59,9 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": native_owner, "body": body})
             if owner and owner.startswith("mod-") and "MOD_CANCEL" in json.dumps(body):
                 time.sleep(3)
+            if scenario in ("contract-downgrade", "contract-resume") and owner and owner.startswith("contributor-") and not Provider.abrupt_delay_started:
+                Provider.abrupt_delay_started = True
+                time.sleep(30)
             if scenario == "client-loss-resume" and owner and ((mod_node is None and owner.startswith("contributor-")) or (mod_node is not None and owner.startswith("mod-") and "MOD_ADAPTER" in json.dumps(body))) and not Provider.abrupt_delay_started:
                 Provider.abrupt_delay_started = True
                 time.sleep(30)
@@ -122,9 +137,9 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "function_call", "id": "escalate", "call_id": "escalate", "name": "omd_escalate", "arguments": json.dumps({"failure_class": failure_class, "summary": "The first direct edit command failed.", "call_ids": ["failed-edit"]})}
             elif owner == "lead" and scenario == "escalation" and not any(i.get("call_id") == "direct-fix" for i in exec_outputs):
                 item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
-            elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation") and not search_outputs:
+            elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation", *SOLO_SCENARIOS) and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-delegation", "call_id": "search-delegation", "status": "completed", "execution": "client", "arguments": {"query": "delegate isolated contributor implementation"}}
-            elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation") and not [output for output in outputs if calls.get(output.get("call_id")) != "mod_fixture_count"]:
+            elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation", *SOLO_SCENARIOS) and not [output for output in outputs if calls.get(output.get("call_id")) != "mod_fixture_count"]:
                 arguments = {
                     "focused_brief": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files.", "selected_evidence": ["solution.py"]},
                     "shared_task_packet": {},
@@ -137,6 +152,44 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 candidate = {"label": "integrated-candidate", "sha256": contribution["candidate_sha256"], "evidence": contribution["candidate"]["path"], "evidence_sha256": contribution["candidate"]["sha256"]}
                 check = {"label": "candidate-check", "sha256": contribution["candidate_sha256"], "evidence": contribution["checks"]["path"], "evidence_sha256": contribution["checks"]["sha256"]}
                 item = {"type": "function_call", "id": "checkpoint", "call_id": "checkpoint", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": ["Delegated the bounded implementation and retained its result."], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [candidate], "check_versions": [check]})}
+            elif owner == "lead" and scenario in SOLO_SCENARIOS:
+                review_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_review"]
+                criteria = manifest["checkpoint"]["acceptance_criteria"]
+                live = lambda: json.loads((destination / "evidence/checkpoint.json").read_text())["live"]["workspace_sha256"]
+                if not search_outputs:
+                    item = {"type": "tool_search_call", "id": "search-solo", "call_id": "search-solo", "status": "completed", "execution": "client", "arguments": {"query": "workflow contract status final review checkpoint acceptance evidence completion gate"}}
+                elif scenario == "solo-denied" and not spawn_outputs:
+                    item = {"type": "function_call", "id": "denied-spawn", "call_id": "denied-spawn", "namespace": "collaboration", "name": "spawn_agent", "arguments": json.dumps({"message": "SOLO_DENIED_CHILD", "task_name": "denied_child"})}
+                elif not exec_outputs:
+                    item = {"type": "function_call", "id": "solo-fix", "call_id": "solo-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
+                elif not checkpoint_outputs:
+                    item = {"type": "function_call", "id": "solo-progress", "call_id": "solo-progress", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": ["Edited the candidate directly under the solo contract."], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [], "check_versions": []})}
+                elif not status_outputs:
+                    item = {"type": "function_call", "id": "status", "call_id": "status", "name": "omd_status", "arguments": "{}"}
+                elif not review_outputs:
+                    item = {"type": "function_call", "id": "solo-review", "call_id": "solo-review", "name": "omd_review", "arguments": json.dumps({"cadence": "final", "candidate_sha256": live(), "stable": True})}
+                elif len(checkpoint_outputs) < 2:
+                    review = next(json.loads(output["output"]) for output in outputs if calls.get(output.get("call_id")) == "omd_review")
+                    assert review.get("status") == "approved", review
+                    cycle = review["cycle"]
+                    check = cycle["checks"][0]
+                    acceptance = [{"criterion": criterion, "evidence": [check]} for criterion in criteria]
+                    item = {"type": "function_call", "id": "solo-checkpoint", "call_id": "solo-checkpoint", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": acceptance, "completed_steering": ["Edited the candidate directly under the solo contract.", "Recorded the approved final self-review."], "remaining_work": [], "failed_hypotheses": [], "candidate_versions": [cycle["candidate"]], "check_versions": [check]})}
+                elif not completion_outputs:
+                    contract_sha256 = hashlib.sha256(json.dumps(manifest["checkpoint"], separators=(",", ":")).encode()).hexdigest()
+                    item = {"type": "function_call", "id": "solo-completion", "call_id": "solo-completion", "name": "omd_complete", "arguments": json.dumps({"candidate_sha256": live(), "contract_sha256": contract_sha256})}
+                else:
+                    item = {"type": "message", "id": "solo-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Solo completion recorded."}]}
+            elif owner and owner.startswith("completion-self-review-"):
+                candidate_match = re.search(r"Candidate SHA256: ([0-9a-f]{64})", text)
+                contract_match = re.search(r"Contract SHA256: ([0-9a-f]{64})", text)
+                checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
+                requirements = [{"criterion": acceptance["criterion"], "verdict": "satisfied", "summary": "The final self-review checked this criterion against host-recorded check evidence.", "evidence_sha256s": [acceptance["evidence"][0]["evidence_sha256"]]} for acceptance in checkpoint["completed_acceptance"]]
+                challenges = [{"kind": kind, "verdict": "passed", "summary": "The exact candidate retains the expected path and behavior.", "paths": ["solution.py"]} for kind in ("missing_wiring", "test_weakening", "negative_cases")]
+                verification = {"candidate_sha256": candidate_match.group(1) if candidate_match else "missing", "contract_sha256": contract_match.group(1) if contract_match else "missing", "requirements": requirements, "challenges": challenges}
+                if structured_worker_reports:
+                    verification["report"] = {"schema": 1, "status": "completed", "summary": "The final self-review finished.", "scope": ["Assessed every criterion and mandatory challenge category."], "uncertainty": ["No independent reviewer checked this work."], "evidence": ["host-owned checkpoint and final self-review"], "required_clarification": []}
+                item = {"type": "message", "id": "solo-self-review", "role": "assistant", "content": [{"type": "output_text", "text": json.dumps(verification)}]}
             elif owner == "lead" and scenario in ("completion", "completion-unverified") and not checkpoint_outputs:
                 criteria = manifest["checkpoint"]["acceptance_criteria"]
                 contribution = next(json.loads(output["output"])["result"] for output in outputs if calls.get(output.get("call_id")) == "omd_contribute")
@@ -224,6 +277,14 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
         reactive_source = destination / "reactive-rules.json"
         reactive_source.write_text(json.dumps({"schema": 1, "version": "fixture-reactive-v1", "rules": [{"id": "inspect-command-result", "scope": "lead", "trigger": {"event": "tool_finished", "tool": "exec_command", "outcome": "completed_host_success"}, "instruction": "Inspect the exact command result and exit code before choosing any follow-up.", "max_activations": 1, "max_context_reactivations": 1}, {"id": "inspect-worker-command-result", "scope": "worker", "trigger": {"event": "tool_finished", "tool": "exec_command", "outcome": "completed_host_success"}, "instruction": "Inspect the exact worker command result before reporting completion.", "max_activations": 1, "max_context_reactivations": 1}]}, sort_keys=True))
         manifest["reactive_rules"] = {"path": str(reactive_source.resolve()), "sha256": hashlib.sha256(reactive_source.read_bytes()).hexdigest()}
+    if scenario in SOLO_SCENARIOS:
+        plan = contract_plan(binary, "solo_evidence@1")
+        assert plan["weakens"] is True, plan
+        assert plan["before"]["assurance"] == "independently_verified", plan
+        assert plan["after"]["assurance"] == "self_reviewed", plan
+        (destination / "contract-plan.json").write_text(json.dumps(plan, indent=2))
+        manifest["workflow"] = {"task_selection": {"id": "solo_evidence", "version": 1}, "confirmation": plan["confirmation"]}
+        manifest["limits"]["requests"] = 16
     if scenario == "request-cap":
         manifest["limits"]["requests"] = 2
         manifest["worker_limits"]["requests"] = 1
@@ -325,6 +386,46 @@ enabled = false
             assert controlled_attribution(destination), "native/gateway admission join failed"
             process = SimpleNamespace(stdout=(destination / "native/stdout").read_text(), stderr=(destination / "native/stderr").read_text(), returncode=result["exit_code"])
             shutil.copytree(destination / "native/controlled-evidence", destination / "evidence")
+        elif scenario in ("contract-downgrade", "contract-resume"):
+            command = [str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."]
+            first = subprocess.Popen(command, cwd=repo, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            deadline = time.monotonic() + 20
+            while not Provider.abrupt_delay_started and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert Provider.abrupt_delay_started, "Contributor request did not become in-flight"
+            first.kill()
+            first.communicate(timeout=10)
+            activated = json.loads((destination / "evidence/workflow-contract.json").read_text())["provenance"]
+            assert activated["contract"]["id"] == "reviewed_omd", activated["contract"]
+            assert activated["assurance"] == "independently_verified", activated
+            before = (destination / "evidence/workflow-contract.json").read_bytes()
+            requested = {"id": "solo_evidence", "version": 1} if scenario == "contract-downgrade" else {"id": "reviewed_omd", "version": 1}
+            manifest["lifecycle"]["explicit_resume"] = f"fixture explicit resume requesting {requested['id']}"
+            manifest["workflow"] = {"task_selection": requested}
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+            before_requests = len(requests)
+            try:
+                resumed = subprocess.run(command, cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=45)
+                stderr, timed_out = resumed.stderr, False
+            except subprocess.TimeoutExpired as expired:
+                stderr, timed_out = (expired.stderr or b"").decode(errors="replace"), True
+            (destination / "resume-stderr.txt").write_text(stderr)
+            if scenario == "contract-downgrade":
+                assert "controlled runtime activation failed" in stderr, stderr[-2000:]
+                assert "confirmation is required to migrate" in stderr, stderr[-2000:]
+                assert len(requests) == before_requests, "the refused downgrade still reached the provider"
+            else:
+                assert "controlled runtime activation failed" not in stderr, stderr[-2000:]
+                assert len(requests) > before_requests, "the resumed task never reached the provider"
+            retained = json.loads((destination / "evidence/workflow-contract.json").read_text())["provenance"]
+            assert (destination / "evidence/workflow-contract.json").read_bytes() == before, "resume rewrote the contract record"
+            assert retained["contract"]["id"] == "reviewed_omd", retained["contract"]
+            assert retained["assurance"] == "independently_verified", retained
+            assert retained["migrations"] == [], retained["migrations"]
+            record = {"status": "pass", "scenario": scenario, "requested_contract": requested, "retained_contract": retained["contract"], "retained_assurance": retained["assurance"], "activation_refused": scenario == "contract-downgrade", "process_timed_out": timed_out, "requests_after_resume": len(requests) - before_requests, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            (destination / "requests.json").write_text(json.dumps(requests, indent=2))
+            return record
         elif scenario == "client-loss-resume":
             command = [str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."]
             first = subprocess.Popen(command, cwd=repo, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -350,7 +451,8 @@ enabled = false
             manifest_path.write_text(json.dumps(manifest, indent=2))
             process = subprocess.run(command, cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=150)
         else:
-            process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."], cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=150)
+            instruction = "PARENT_HISTORY_SENTINEL Fix the addition bug yourself, then run the final review and completion gate." if scenario in SOLO_SCENARIOS else "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."
+            process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", instruction], cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=150)
         (destination / "stdout.txt").write_text(process.stdout)
         (destination / "stderr.txt").write_text(process.stderr)
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
@@ -376,8 +478,10 @@ enabled = false
         reviewer_requests = [request for request in requests if (request["native_owner"] or "").startswith("reviewer-")]
         completion_verifier_requests = [request for request in requests if (request["native_owner"] or "").startswith("completion-verifier-")]
         escalation_requests = [request for request in requests if (request["native_owner"] or "").startswith("escalation-")]
-        if scenario not in ("request-cap", "direct", "omd-off", "escalation", "reactive", "recursion", "no-progress"):
+        if scenario not in ("request-cap", "direct", "omd-off", "escalation", "reactive", "recursion", "no-progress", *SOLO_SCENARIOS):
             assert worker_requests, "worker route was not observed"
+        if scenario in SOLO_SCENARIOS:
+            assert not worker_requests, "solo contract admitted a Contributor route"
         if worker_requests:
             assert all("GLOBAL_INSTRUCTION_SENTINEL" in json.dumps(request) for request in worker_requests + reviewer_requests), "project instructions were not inherited"
             worker_context = json.dumps(worker_requests)
@@ -401,8 +505,14 @@ enabled = false
         if scenario not in ("direct", "omd-off", "reactive", "request-cap", "recursion"):
             assert any(i.get("type") == "tool_search_call" for request in requests for i in request["body"].get("input", [])), "task-scoped tool discovery was not exercised"
         if reviewer_requests:
-            expected_reviewer = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead] if scenario == "outage-fallback" else {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
-            assert reviewer_requests[0]["model"] == expected_reviewer, "reviewer route did not remain separate from the implementer"
+            same_lead = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead]
+            opposite_lead = {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
+            expected_reviewer = same_lead if scenario in ("outage-fallback", *SOLO_SCENARIOS) else opposite_lead
+            if scenario in SOLO_SCENARIOS:
+                assert reviewer_requests[0]["model"] == expected_reviewer, "solo final review did not resolve to the lead's own route"
+                assert "your own final self-review" in json.dumps(reviewer_requests[0]), "solo review prompt did not name itself a self-review"
+            else:
+                assert reviewer_requests[0]["model"] == expected_reviewer, "reviewer route did not remain separate from the implementer"
             assert ("report field" in json.dumps(reviewer_requests[0])) == structured_worker_reports, "review report instruction selection drifted"
         if scenario in ("completion", "completion-unverified"):
             assert len(completion_verifier_requests) == 1
@@ -421,6 +531,61 @@ enabled = false
             assert escalation_requests and escalation_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
             source = json.loads(next((destination / "evidence").glob("failure-source-*.json")).read_text())
             assert source["call_ids"] == ["failed-edit"] and any(i.get("type") == "function_call_output" for i in source["items"]), source
+        elif scenario in SOLO_SCENARIOS:
+            assert not result and not worker_requests and not escalation_requests
+            snapshot = json.loads((destination / "evidence/workflow-contract.json").read_text())
+            provenance = snapshot["provenance"]
+            assert provenance["contract"]["id"] == "solo_evidence", provenance["contract"]
+            assert provenance["assurance"] == "self_reviewed", provenance
+            assert provenance["source"] == "task_selection", provenance
+            assert provenance["weakens_default"] is True, provenance
+            assert provenance["confirmation"]["token"] == manifest["workflow"]["confirmation"], provenance
+            assert provenance["binding"]["repository_identity"] == "synthetic-fixture", provenance["binding"]
+            requirements = provenance["contract"]["requirements"]
+            assert requirements["delegation"] is False and requirements["child_agents"] is False
+            assert requirements["opposite_lead"] is False and requirements["escalation"] is False
+            assert requirements["milestone_review"] is False
+            assert requirements["final_review"] == "self_review" and requirements["completion"] == "self_verified"
+
+            settings = json.loads((destination / "evidence/effective-settings.json").read_text())
+            assert settings["capabilities"]["delegation"] is False, settings["capabilities"]
+            assert settings["capabilities"]["escalation"] is False, settings["capabilities"]
+            assert settings["capabilities"]["unified_review"] is True and settings["capabilities"]["completion_gate"] is True
+            status = next(json.loads(item["output"])["workflow"] for request in requests for item in request["body"].get("input", []) if item.get("type") == "function_call_output" and item.get("call_id") == "status")
+            assert status["contract"] == "solo_evidence v1", status
+            assert status["assurance"] == "self-reviewed", status
+            discovered = json.dumps([item for request in requests for item in request["body"].get("input", []) if item.get("type") == "tool_search_output"])
+            assert "omd_review" in discovered and "omd_complete" in discovered, discovered[:2000]
+            assert "omd_contribute" not in discovered, "solo contract exposed the delegation tool"
+            assert "omd_escalate" not in discovered, "solo contract exposed the escalation tool"
+
+            receipts = list((destination / "evidence").glob("completion-receipt-*.json"))
+            assert len(receipts) == 1, receipts
+            receipt = json.loads(receipts[0].read_text())["receipt"]
+            assert receipt["status"] == "completed", receipt
+            assert receipt["assurance"] == "self_reviewed", receipt
+            assert receipt["independent_review"] is False, receipt
+            assert receipt["separate_verifier"] is False, receipt
+            assert [entry["criterion"] for entry in receipt["requirements"]] == manifest["checkpoint"]["acceptance_criteria"]
+            assert [entry["kind"] for entry in receipt["challenges"]] == ["missing_wiring", "test_weakening", "negative_cases"]
+            assert all(entry["verdict"] == "satisfied" for entry in receipt["requirements"])
+            self_review_requests = [request for request in requests if (request["native_owner"] or "").startswith("completion-self-review-")]
+            assert len(self_review_requests) == 1, self_review_requests
+            assert self_review_requests[0]["model"] == {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead]
+            assert not [request for request in requests if (request["native_owner"] or "").startswith("completion-verifier-")]
+            assert "No independent reviewer will check this work" in json.dumps(self_review_requests[0])
+            checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
+            assert checkpoint["task_status"] == "completed", checkpoint["task_status"]
+            review_state = json.loads((destination / "evidence/review-state.json").read_text())
+            assert review_state["policy"]["milestone_review"] is False, review_state["policy"]
+            assert review_state["policy"]["final_review"] == "self_review", review_state["policy"]
+            assert [cycle["cadence"] for cycle in review_state["cycles"]] == ["final"], review_state["cycles"]
+            assert review_state["cycles"][0]["separate_reviewer"] is False, review_state["cycles"][0]
+            assert review_state["cycles"][0]["final_approved"] is True, review_state["cycles"][0]
+            if scenario == "solo-denied":
+                assert snapshot["denied"], "the denied child-agent call was not recorded"
+                assert any(entry["operation"] == "spawn_child_agent" for entry in snapshot["denied"]), snapshot["denied"]
+                assert not [request for request in requests if (request["native_owner"] or "").startswith("agent:")], "solo contract admitted a child agent"
         elif scenario in ("direct", "omd-off", "reactive", "recursion"):
             assert not result and not worker_requests and not reviewer_requests and not escalation_requests
             if scenario == "recursion":
@@ -494,11 +659,18 @@ enabled = false
         if scenario == "permissions":
             output = " ".join(i.get("output", "") for r in requests if r["model"] == "muse-spark-1.3-contributor" for i in r["body"].get("input", []) if i.get("type") == "function_call_output")
             assert output.lower().count("operation not permitted") + output.lower().count("permission denied") >= 2, output
+        if scenario not in ("omd-off", *CONTRACT_SCENARIOS) and (destination / "evidence/workflow-contract.json").exists():
+            provenance = json.loads((destination / "evidence/workflow-contract.json").read_text())["provenance"]
+            expected_contract, expected_assurance = ("legacy_capabilities", "unreviewed") if scenario == "direct" else ("reviewed_omd", "independently_verified")
+            assert provenance["contract"]["id"] == expected_contract, provenance["contract"]
+            assert provenance["assurance"] == expected_assurance, provenance
+            assert provenance["contract"]["requirements"]["delegation"] == capabilities["delegation"], provenance["contract"]["requirements"]
+            assert provenance["confirmation"] is None, provenance["confirmation"]
         assert (repo / "unrelated.txt").read_text() == "Uncommitted user work\n"
         assert "SYNTHETIC_SECRET_MUST_NOT_REACH_WORKER" not in json.dumps(requests)
         if scenario in ("review-reject", "index-conflict", "request-cap", "revoked", "deadline", "structured-clarification"):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
-        if scenario in ("direct", "omd-off", "escalation", "reactive"):
+        if scenario in ("direct", "omd-off", "escalation", "reactive", *SOLO_SCENARIOS):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
         if scenario == "conflict":
             assert (repo / "solution.py").read_text() == "intervening user edit\n"
@@ -556,7 +728,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "omd-off", "escalation", "reactive", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified"), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "omd-off", "escalation", "reactive", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified", *CONTRACT_SCENARIOS), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")

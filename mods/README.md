@@ -1,6 +1,6 @@
 # TypeScript mods
 
-API `0.1.0-experimental.2` runs on the pinned Codex 0.154.0 OMD host,
+API `0.1.0-experimental.3` runs on the pinned Codex 0.154.0 OMD host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API,
 complete independent preview feedback, or introduce the separately planned solo
@@ -131,9 +131,8 @@ implemented with native agent handles and by replacing the corresponding tool
 entrypoints. `review.run`, `review.complete`, `delegation.contribute`, and
 `recovery.escalate` call the original native handlers, including their operation
 locks, one-shot limits, evidence capture, and authorization checks. Replacing a
-tool response does not satisfy the native completion gate. The selected reviewed
-contract cannot be silently weakened. The separate workflow-contract task owns
-activation of a weaker contract.
+tool response does not satisfy the native completion gate. The selected contract
+cannot be silently weakened.
 
 Agents are task-owned, read-only native threads. Writable reviewed integration
 uses `delegation.contribute`. Each spawned role has a unique native worker ID,
@@ -171,6 +170,52 @@ aborted, or error), `compaction_start`/`compaction_end` (`trigger` manual or
 auto), and `agent_end` for the owning mod's agent handles (`role`, `status`).
 `agent_end` is delivered after the agent finishes and after any running callback
 of that mod releases the runtime; it cannot run host operations.
+
+## Workflow contracts
+
+The host enforces one explicitly selected, versioned workflow contract per task.
+A contract states which second-party calls the task may make and what final
+review and completion it requires. Two contracts ship:
+
+| Contract | Delegation, child agents, opposite-lead, escalation | Milestone review | Final review | Completion | Assurance |
+| --- | --- | --- | --- | --- | --- |
+| `reviewed_omd@1` (bundled default) | allowed | required | separate reviewer | separate adversarial verifier | `independently-verified` |
+| `solo_evidence@1` | denied | none | the lead's own final self-review | self-verified against the immutable contract | `self-reviewed` |
+
+The assurance label is derived from the requirements, never asserted. A
+`solo_evidence` completion receipt records `self_reviewed` with
+`independent_review: false`, and the host rejects any receipt that claims more
+assurance than the active contract provided. A legacy manifest that reduces the
+old capability booleans activates a `legacy_capabilities@1` contract whose
+requirements and label match exactly what those booleans meant.
+
+Selection is native. `omd-contract list` shows the catalog, `omd-contract plan`
+prints the before/after requirement changes and the confirmation token for a
+weaker choice, `omd-contract select` records a user default, and
+`omd-contract require` records a project assurance floor. An explicit task
+selection outranks a user default, which outranks a project recommendation,
+which outranks the bundled default. A choice weaker than the bundled default
+does not activate without its exact confirmation token, and a choice weaker than
+a project floor fails closed with both sides named. Activation and migration
+failures retain the prior contract; nothing downgrades silently.
+
+With the `workflow` capability a mod may:
+
+- **observe** — register the `workflow` event and call `workflow.status` for the
+  active contract, its provenance, denied operations, and restrictions;
+- **alter** — call `workflow.restrict` with `delegate`, `spawn_child_agent`,
+  `opposite_lead_advice`, or `escalate` and a reason. Restrictions only remove
+  authority. Requesting a review, checkpoint, final-review, or completion
+  restriction fails, because removing recorded evidence would weaken the
+  contract;
+- **replace** — call `api.contract(definition)` during activation to register a
+  complete contract. Registration is exclusive: two mods registering the same
+  contract ID conflict before activation, and a registered contract may not
+  redefine or shadow a bundled one. A mod cannot select its own contract; only
+  the native surface activates it.
+
+`omd_status` reports the active contract, its assurance label and description,
+its requirements, and every denial and restriction recorded so far.
 
 ## Terminal extension points
 

@@ -20,7 +20,7 @@ const request = JSON.parse(${JSON.stringify(JSON.stringify(request))});
 const handlers = new Map();
 const tools = new Map();
 const commands = new Map();
-const registrations = { tools: [], commands: [], events: [], replacements: [] };
+const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [] };
 const updates = [];
 let submitted = null;
 let state = structuredCloneFallback(request.state);
@@ -59,12 +59,12 @@ function unique(map, name, handler) {
   map.set(name, handler);
 }
 const api = Object.freeze({
-  version: '0.1.0-experimental.2',
+  version: '0.1.0-experimental.3',
   host: Object.freeze({ call: hostCall }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
   on(event, handler) {
     const capability = { context: 'context', tool_before: 'interception', routing: 'routing', terminal: 'terminal', compaction: 'compaction', migrate: 'state', input: 'input', start: 'lifecycle', idle: 'lifecycle',
-      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle' }[event];
+      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow' }[event];
     if (!capability) throw new Error('unsupported_event: ' + event);
     requireCapability(capability);
     unique(handlers, event, handler);
@@ -74,6 +74,12 @@ const api = Object.freeze({
     if (!['tool_before','routing','terminal','compaction','context','input'].includes(point)) throw new Error('unsupported_replacement_point: ' + point);
     api.on(point, handler);
     registrations.replacements.push(point);
+  },
+  contract(definition) {
+    requireCapability('workflow');
+    if (!activating) throw new Error('contract_registration_outside_activation');
+    if (registrations.contracts.some(entry => entry.id === definition?.id)) throw new Error('conflict: ' + definition?.id);
+    registrations.contracts.push(structuredCloneFallback(definition));
   },
   tool(spec, handler) {
     requireCapability('tools');

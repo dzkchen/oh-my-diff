@@ -1,6 +1,6 @@
 # API coverage and composition
 
-All operations are experimental API `0.1.0-experimental.2`. Missing capabilities
+All operations are experimental API `0.1.0-experimental.3`. Missing capabilities
 fail before native dispatch. This contract describes implemented boundaries;
 arbitrary Rust internals are not exposed.
 
@@ -12,6 +12,7 @@ arbitrary Rust internals are not exposed.
 | Agent roles | Spawn read-only roles; message, list, cancel, wait, consume | Native threads/worker ledger; private handles; task and worker allowance/deadline |
 | Delegation/scheduling/coordination | Sequence native operations; replace built-in tool entrypoints with registered mod tools | Pre-dispatch, exclusive replacement; native recursion, isolation and accounting remain |
 | Review/recovery | Replace tool choice/cadence; invoke original native review/completion/contribution/escalation | Existing handlers preserve evidence and selected contract; no implicit downgrade |
+| Workflow contracts | Observe the active contract and provenance; restrict delegation, child-agent, opposite-lead or escalation authority; register a complete contract for native selection | Task-bound and versioned; restrictions only remove authority; registration is exclusive and cannot shadow, select or weaken a host contract |
 | Prompts/context | Add bounded fragments; exclusively select a mod context assembler; construct worker prompts | Each native context assembly; user/project instructions and native mandatory context retained |
 | Input | Observe or deny submitted prompts; exclusively rewrite prompt text | Before native prompt hooks, skill/mention resolution and history for TUI and exec; visible rewrite/denial notice; attachments retained |
 | Compaction | Replace automatic token threshold and the local summarization prompt | Thread creation/resume, bounded by host threshold/window; prompt only for native local compaction, remote-compaction routes keep native behavior with a visible diagnostic |

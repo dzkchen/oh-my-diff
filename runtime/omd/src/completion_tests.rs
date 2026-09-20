@@ -266,3 +266,94 @@ fn pre_implementation_contract_is_forced_to_stay_short() {
     too_long.acceptance_criteria[0] = "x".repeat(513);
     assert!(CompletionGate::new(CompletionPolicy::default(), too_long, sha('0')).is_err());
 }
+
+fn solo_gate() -> CompletionGate {
+    CompletionGate::new_for(
+        CompletionPolicy::default(),
+        contract(),
+        sha('0'),
+        CompletionMode::SelfVerified,
+    )
+    .unwrap()
+}
+
+fn solo_submission(candidate: char) -> CompletionSubmission {
+    let mut submission = submission(candidate);
+    submission.verifier = "sol".into();
+    submission.separate_verifier = false;
+    submission.final_review.reviewer = "sol".into();
+    submission.final_review.separate_reviewer = false;
+    submission
+}
+
+#[test]
+fn self_verified_completion_never_claims_independent_verification() {
+    let mut gate = solo_gate();
+    assert_eq!(gate.snapshot().assurance, AssuranceLabel::SelfReviewed);
+    let receipt = gate.submit(solo_submission('a')).unwrap();
+    assert_eq!(receipt.status, CompletionStatus::Completed);
+    assert_eq!(receipt.assurance, AssuranceLabel::SelfReviewed);
+    assert!(!receipt.independent_review);
+    assert!(!receipt.separate_verifier);
+    assert!(!receipt.assurance.claims_independent_verification());
+    assert_eq!(receipt.assurance.label(), "self-reviewed");
+    assert_eq!(gate.snapshot().approved_candidate_sha256, Some(sha('a')));
+}
+
+#[test]
+fn a_solo_contract_rejects_a_borrowed_independent_review() {
+    let mut gate = solo_gate();
+    assert!(gate.submit(submission('a')).is_err());
+    let mut borrowed = solo_submission('a');
+    borrowed.separate_verifier = true;
+    assert!(gate.submit(borrowed).is_err());
+    let mut borrowed_review = solo_submission('a');
+    borrowed_review.final_review.separate_reviewer = true;
+    assert!(gate.submit(borrowed_review).is_err());
+}
+
+#[test]
+fn a_reviewed_contract_still_requires_independent_verification() {
+    let mut gate = CompletionGate::new(CompletionPolicy::default(), contract(), sha('0')).unwrap();
+    assert!(gate.submit(solo_submission('a')).is_err());
+    assert_eq!(
+        gate.snapshot().assurance,
+        AssuranceLabel::IndependentlyVerified
+    );
+}
+
+#[test]
+fn a_self_reviewed_receipt_cannot_be_relabelled_on_disk() {
+    let mut gate = solo_gate();
+    gate.submit(solo_submission('a')).unwrap();
+    let mut snapshot = gate.snapshot();
+    snapshot.assurance = AssuranceLabel::IndependentlyVerified;
+    assert!(
+        CompletionGate::restore(snapshot.clone())
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+            .contains("invalid or contract-weakened")
+    );
+    let mut promoted = gate.snapshot();
+    promoted.receipts[0].assurance = AssuranceLabel::IndependentlyVerified;
+    promoted.receipts[0].independent_review = true;
+    assert!(CompletionGate::restore(promoted).is_err());
+}
+
+#[test]
+fn an_unavailable_self_verified_receipt_stays_unverified() {
+    let mut gate = solo_gate();
+    let receipt = gate
+        .record_unavailable(
+            marker("candidate", 'a', 'a'),
+            &acceptance_contract_sha256(&contract()).unwrap(),
+            CompletionStatus::Unverified,
+            true,
+            "host evidence is unavailable for this candidate".into(),
+        )
+        .unwrap();
+    assert_eq!(receipt.assurance, AssuranceLabel::SelfReviewed);
+    assert!(!receipt.independent_review);
+    assert_eq!(gate.snapshot().approved_candidate_sha256, None);
+}

@@ -54,6 +54,18 @@ pub(super) async fn dispatch(
             }
             Ok(expanded)
         }
+        "workflow.status" => Ok(host.contract.lock().map_err(|_| "workflow contract lock poisoned")?.view().map_err(|e| e.to_string())?),
+        "workflow.restrict" => {
+            let owner = host.mod_owners.get(id).cloned().ok_or("unknown_policy_owner")?;
+            let operations: Vec<codex_omd::ContractOperation> = serde_json::from_value(request.arguments["operations"].clone()).map_err(|e| e.to_string())?;
+            let reason = request.arguments["reason"].as_str().ok_or("invalid_restriction_reason")?;
+            if request.arguments.as_object().is_none_or(|object| object.keys().any(|key| key != "operations" && key != "reason")) {
+                return Err("invalid_restriction_arguments".into());
+            }
+            let restrictions = host.contract.lock().map_err(|_| "workflow contract lock poisoned")?.restrict(operations, owner, reason.to_string()).map_err(|e| e.to_string())?;
+            host.persist_contract()?;
+            Ok(json!({"restrictions": restrictions}))
+        }
         "task.status" => Ok(json!({"settings":host.effective_settings,"checkpoint":host.task.checkpoint().map_err(|e| e.to_string())?,"cost":host.task.cost_capture().map_err(|e| e.to_string())?})),
         "routes.list" => Ok(json!([LeadName::Sol, LeadName::Astra].map(|name| {
             let route = host.route(name);
@@ -67,6 +79,14 @@ pub(super) async fn dispatch(
         }
         "review.run" | "review.complete" | "delegation.contribute" | "recovery.escalate" => {
             let lead = Arc::new(lead.clone());
+            let final_cadence = request.arguments["cadence"] == "final";
+            host.authorize_contract(match request.operation.as_str() {
+                "review.run" if final_cadence => codex_omd::ContractOperation::FinalReview,
+                "review.run" => codex_omd::ContractOperation::MilestoneReview,
+                "review.complete" => codex_omd::ContractOperation::Completion,
+                "delegation.contribute" => codex_omd::ContractOperation::Delegate,
+                _ => codex_omd::ContractOperation::Escalate,
+            })?;
             let tool: Box<dyn for<'a> ToolExecutor<ToolCall<'a>>> = match request.operation.as_str() {
                 "review.run" if host.manifest.capabilities.unified_review => Box::new(ReviewTool(lead)),
                 "review.complete" if host.manifest.capabilities.completion_gate => Box::new(CompletionTool(lead)),

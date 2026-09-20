@@ -37,11 +37,20 @@ use codex_extension_api::ToolReactionContributor;
 use codex_extension_api::ToolStartInput;
 use codex_extension_api::TurnContextContributionInput;
 use codex_extension_api::TurnItemContributor;
+use codex_omd::ActiveContract;
 use codex_omd::ActiveGuideline;
+use codex_omd::AssuranceLabel;
 use codex_omd::CheckpointUpdate;
 use codex_omd::CompletionGate;
+use codex_omd::CompletionMode;
 use codex_omd::CompletionPolicy;
+use codex_omd::ContractCatalog;
+use codex_omd::ContractChoice;
+use codex_omd::ContractOperation;
+use codex_omd::ContractRequirements;
+use codex_omd::ContractSnapshot;
 use codex_omd::FailureClass;
+use codex_omd::FinalReview;
 use codex_omd::GuidelineStore;
 use codex_omd::KnowledgeMode;
 use codex_omd::KnowledgeSession;
@@ -63,6 +72,7 @@ use codex_omd::ReactiveTrigger;
 use codex_omd::ReviewPolicy;
 use codex_omd::Snapshot;
 use codex_omd::Task;
+use codex_omd::TaskBinding;
 use codex_omd::TaskContract;
 use codex_omd::UnifiedReview;
 use codex_omd::VersionMarker;
@@ -127,6 +137,8 @@ struct Manifest {
     #[serde(default)]
     mod_pi_user: Option<PathBuf>,
     #[serde(default)]
+    workflow: WorkflowManifest,
+    #[serde(default)]
     review: ReviewPolicy,
     #[serde(default)]
     completion: CompletionPolicy,
@@ -143,6 +155,19 @@ struct Manifest {
     toolchain_reads: Vec<PathBuf>,
     snapshot_bytes: usize,
     max_request_bytes: usize,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkflowManifest {
+    #[serde(default)]
+    user_selection: Option<PathBuf>,
+    #[serde(default)]
+    project_selection: Option<PathBuf>,
+    #[serde(default)]
+    task_selection: Option<ContractChoice>,
+    #[serde(default)]
+    confirmation: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -185,6 +210,25 @@ impl Default for Capabilities {
 }
 
 impl Capabilities {
+    fn legacy(&self) -> codex_omd::LegacyCapabilities {
+        codex_omd::LegacyCapabilities {
+            delegation: self.delegation,
+            escalation: self.escalation,
+            checkpoints: self.checkpoints,
+            unified_review: self.unified_review,
+            completion_gate: self.completion_gate,
+        }
+    }
+
+    fn apply(&mut self, requirements: &ContractRequirements) {
+        self.delegation = requirements.delegation;
+        self.escalation = requirements.escalation;
+        self.checkpoints = requirements.checkpoints;
+        self.unified_review =
+            requirements.milestone_review || requirements.final_review != FinalReview::None;
+        self.completion_gate = requirements.completion != CompletionMode::None;
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.completion_gate && (!self.unified_review || !self.checkpoints) {
             return Err("completion_gate requires unified_review and checkpoints".into());
@@ -405,6 +449,9 @@ struct Host {
     task: Arc<Task>,
     accounts: Arc<Accounts>,
     manager: Weak<ThreadManager>,
+    requirements: ContractRequirements,
+    contract: std::sync::Mutex<ActiveContract>,
+    mod_owners: PolicyOwners,
     contribution_started: std::sync::atomic::AtomicBool,
     operation: std::sync::atomic::AtomicBool,
     lead_completed: std::sync::atomic::AtomicBool,
@@ -910,6 +957,118 @@ fn capture_live_state(manifest: &Manifest, accounts: &Accounts) -> Result<LiveSt
     })
 }
 
+fn effective_review_policy(
+    policy: &ReviewPolicy,
+    requirements: &ContractRequirements,
+) -> ReviewPolicy {
+    let mut policy = policy.clone();
+    policy.milestone_review = requirements.milestone_review;
+    policy.final_review = requirements.final_review;
+    if !requirements.milestone_review {
+        policy.every_turn_advice = false;
+    }
+    policy
+}
+
+fn assurance_for(mode: CompletionMode) -> Result<AssuranceLabel, String> {
+    match mode {
+        CompletionMode::AdversarialSeparate => Ok(AssuranceLabel::IndependentlyVerified),
+        CompletionMode::SelfVerified => Ok(AssuranceLabel::SelfReviewed),
+        CompletionMode::None => Err("the selected contract has no completion gate".into()),
+    }
+}
+
+type PolicyOwners = BTreeMap<String, codex_omd::PolicyOwner>;
+
+fn contract_catalog(manifest: &Manifest) -> Result<(ContractCatalog, PolicyOwners), String> {
+    let mut catalog = ContractCatalog::bundled();
+    let Some(root) = &manifest.mods else {
+        return Ok((catalog, PolicyOwners::new()));
+    };
+    if root.starts_with(&manifest.repository) || !root.is_absolute() {
+        return Err("mod trust/state store must be outside the repository".into());
+    }
+    let Ok(host) = codex_omd::ModHost::open(root.clone()) else {
+        return Ok((catalog, PolicyOwners::new()));
+    };
+    for (contract, owner) in host.contracts() {
+        catalog
+            .register(contract, owner)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok((catalog, host.owners().into_iter().collect()))
+}
+
+fn resolve_contract(manifest: &Manifest) -> Result<(codex_omd::Resolution, PolicyOwners), String> {
+    let (catalog, owners) = contract_catalog(manifest)?;
+    let selections = codex_omd::collect_selections(
+        &catalog,
+        Some(manifest.capabilities.legacy()),
+        manifest.workflow.user_selection.as_deref(),
+        manifest.workflow.project_selection.as_deref(),
+        manifest.workflow.task_selection.as_ref(),
+    )
+    .map_err(|error| error.to_string())?;
+    let resolution = codex_omd::resolve_selection(selections.offers, selections.floor)
+        .map_err(|error| error.to_string())?;
+    Ok((resolution, owners))
+}
+
+fn contract_runtime(
+    manifest: &Manifest,
+    resolution: codex_omd::Resolution,
+    binding: TaskBinding,
+) -> Result<ActiveContract, String> {
+    let path = manifest.evidence.join("workflow-contract.json");
+    let requested = resolution.effective.contract.clone();
+    if !path.exists() {
+        if manifest.lifecycle.explicit_resume.is_some() {
+            return Err("explicit resume is missing its selected workflow contract".into());
+        }
+        return ActiveContract::activate(
+            resolution,
+            manifest.workflow.confirmation.as_deref(),
+            binding,
+            None,
+        )
+        .map_err(|error| error.to_string());
+    }
+    if manifest.lifecycle.explicit_resume.is_none() {
+        return Err("an existing workflow contract requires explicit resume".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+    if bytes.len() > 262_144 {
+        return Err("persisted workflow contract exceeds limit".into());
+    }
+    let snapshot: ContractSnapshot =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let mut active = ActiveContract::restore(snapshot, &binding).map_err(|e| e.to_string())?;
+    if *active.contract() == requested {
+        return Ok(active);
+    }
+    let confirmation = manifest
+        .workflow
+        .confirmation
+        .as_deref()
+        .ok_or("the resumed task keeps its selected workflow contract; an explicit confirmation is required to migrate")?;
+    active
+        .migrate(
+            requested,
+            confirmation,
+            "task_start",
+            vec![
+                "candidate".into(),
+                "evidence".into(),
+                "checks".into(),
+                "workers".into(),
+                "allowance".into(),
+                "resume".into(),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(active)
+}
+
 fn review_runtime(manifest: &Manifest) -> Result<ReviewRuntime, String> {
     let path = manifest.evidence.join("review-state.json");
     let ledger = if path.exists() {
@@ -963,6 +1122,7 @@ fn completion_runtime(
     manifest: &Manifest,
     initial_candidate_sha256: &str,
     review: &ReviewRuntime,
+    mode: CompletionMode,
 ) -> Result<CompletionGate, String> {
     let path = manifest.evidence.join("completion-state.json");
     let gate = if path.exists() {
@@ -981,15 +1141,17 @@ fn completion_runtime(
                 "explicit resume is missing the pre-implementation completion contract".into(),
             );
         }
-        CompletionGate::new(
+        CompletionGate::new_for(
             manifest.completion.clone(),
             manifest.checkpoint.clone(),
             initial_candidate_sha256.into(),
+            mode,
         )
         .map_err(|error| error.to_string())?
     };
     let snapshot = gate.snapshot();
-    if snapshot.policy != manifest.completion
+    if snapshot.assurance != assurance_for(mode)?
+        || snapshot.policy != manifest.completion
         || snapshot.contract != manifest.checkpoint
         || snapshot.contract_sha256
             != acceptance_contract_sha256(&manifest.checkpoint)
@@ -1085,8 +1247,18 @@ pub fn install(
     if bytes.len() > 65_536 {
         return Err("controlled manifest exceeds limit".into());
     }
-    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    let mut manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     manifest.capabilities.validate()?;
+    let (resolution, mod_owners) = resolve_contract(&manifest)?;
+    manifest
+        .capabilities
+        .apply(&resolution.effective.contract.requirements);
+    manifest.capabilities.validate()?;
+    manifest.review = effective_review_policy(
+        &manifest.review,
+        &resolution.effective.contract.requirements,
+    );
+    let manifest = manifest;
     manifest.review.validate().map_err(|e| e.to_string())?;
     manifest.completion.validate().map_err(|e| e.to_string())?;
     if (!manifest.capabilities.guidelines && manifest.guideline_store.is_some())
@@ -1281,8 +1453,28 @@ pub fn install(
     );
     codex_api::request_observer::install_response_observer(accounts.clone())
         .map_err(str::to_owned)?;
+    let requirements = resolution.effective.contract.requirements;
+    let contract = contract_runtime(
+        &manifest,
+        resolution,
+        TaskBinding {
+            acceptance_contract_sha256: acceptance_contract_sha256(&manifest.checkpoint)
+                .map_err(|error| error.to_string())?,
+            initial_candidate_sha256: initial_candidate_sha256.clone(),
+            repository_identity: manifest.repository_identity.clone(),
+        },
+    )?;
+    let completion_mode = match requirements.completion {
+        CompletionMode::None => CompletionMode::AdversarialSeparate,
+        selected => selected,
+    };
     let review = review_runtime(&manifest)?;
-    let completion = completion_runtime(&manifest, &initial_candidate_sha256, &review)?;
+    let completion = completion_runtime(
+        &manifest,
+        &initial_candidate_sha256,
+        &review,
+        completion_mode,
+    )?;
     let effective_settings = json!({
         "schema": 1,
         "mode": "enabled",
@@ -1291,6 +1483,7 @@ pub fn install(
         "direct_single_agent": !manifest.capabilities.delegation,
         "selected_capabilities": manifest.capabilities.enabled_names(&manifest.communication),
         "capabilities": manifest.capabilities,
+        "workflow": contract.view().map_err(|error| error.to_string())?,
         "communication": manifest.communication,
         "active": {
             "guideline": active_guideline.as_ref().map(|guideline| json!({
@@ -1323,6 +1516,9 @@ pub fn install(
         task,
         accounts,
         manager,
+        requirements,
+        contract: std::sync::Mutex::new(contract),
+        mod_owners,
         contribution_started: std::sync::atomic::AtomicBool::new(false),
         operation: std::sync::atomic::AtomicBool::new(false),
         lead_completed: std::sync::atomic::AtomicBool::new(false),
@@ -1336,6 +1532,7 @@ pub fn install(
     });
     host.persist_effective_settings()?;
     host.persist_cost_capture()?;
+    host.persist_contract()?;
     if host.manifest.capabilities.completion_gate {
         host.persist_completion()?;
     }
@@ -1669,6 +1866,42 @@ impl Host {
         Ok(())
     }
 
+    fn persist_contract(&self) -> Result<(), String> {
+        let snapshot = self
+            .contract
+            .lock()
+            .map_err(|_| "workflow contract lock poisoned")?
+            .snapshot();
+        self.persist_runtime_file(
+            "workflow-contract.json",
+            &serde_json::to_value(&snapshot).map_err(|error| error.to_string())?,
+        )
+    }
+
+    fn authorize_contract(&self, operation: ContractOperation) -> Result<(), String> {
+        let denial = self
+            .contract
+            .lock()
+            .map_err(|_| "workflow contract lock poisoned")?
+            .authorize(operation);
+        if denial.is_err() {
+            let _ = self.persist_contract();
+        }
+        denial
+    }
+
+    fn separate_review(&self) -> bool {
+        self.requirements.final_review == FinalReview::Separate
+    }
+
+    fn reviewer(&self, lead: LeadName) -> LeadName {
+        if self.separate_review() {
+            lead.opposite()
+        } else {
+            lead
+        }
+    }
+
     fn persist_completion_or_restore(
         &self,
         prior: codex_omd::CompletionSnapshot,
@@ -1833,7 +2066,17 @@ impl ContextContributor for Extension {
                         .map(|state| state.workspace_sha256)
                         .unwrap_or_else(|| "unavailable".into());
                     let prompt = format!(
-                        "Use the single host-owned omd_review system for stable milestones, explicit risk-triggered advice, and final review. Findings are candidate-bound and reconciled across cycles; repairs are limited to configured scope and count. Final review runs executable checks and uses the separately configured opposite lead before completion or integration. Every-turn advice is {} and remains independent of the required final review. Current candidate SHA256: {current_candidate}. Current review cycles: {}; unresolved findings: {}; repairs: {}/{}.",
+                        "Use the single host-owned omd_review system for {}. Findings are candidate-bound and reconciled across cycles; repairs are limited to configured scope and count. Final review runs executable checks and {} before completion or integration. Every-turn advice is {} and remains independent of the required final review. Current candidate SHA256: {current_candidate}. Current review cycles: {}; unresolved findings: {}; repairs: {}/{}.",
+                        if snapshot.policy.milestone_review {
+                            "stable milestones, explicit risk-triggered advice, and final review"
+                        } else {
+                            "final review only; milestone and risk-triggered cadences are denied by the selected workflow contract"
+                        },
+                        if self.separate_review() {
+                            "uses the separately configured opposite lead"
+                        } else {
+                            "uses your own final self-review, because the selected workflow contract authorizes no second party; no independent reviewer will check this work"
+                        },
                         if snapshot.policy.every_turn_advice {
                             "enabled"
                         } else {
@@ -1865,8 +2108,13 @@ impl ContextContributor for Extension {
                         .unwrap_or_else(|| "not_run".into());
                     fragments.push(PromptFragment::developer_capability(
                         format!(
-                            "The immutable pre-implementation acceptance contract SHA256 is {}. Before reporting completion, use omd_complete on the exact final candidate after its final unified review and evidence-backed checkpoint. A separate read-only verifier must assess every criterion and explicitly challenge missing wiring, test weakening, and relevant negative cases. Unavailable evidence is not success. Continue actionable unfinished work while allowance remains; otherwise report blocked or unverified. Current candidate SHA256: {current_candidate}. Completion attempts: {}/{}; latest status: {latest}.",
+                            "The immutable pre-implementation acceptance contract SHA256 is {}. Before reporting completion, use omd_complete on the exact final candidate after its final unified review and evidence-backed checkpoint. {} Unavailable evidence is not success. Continue actionable unfinished work while allowance remains; otherwise report blocked or unverified. Current candidate SHA256: {current_candidate}. Completion attempts: {}/{}; latest status: {latest}.",
                             snapshot.contract_sha256,
+                            if self.separate_review() {
+                                "A separate read-only verifier must assess every criterion and explicitly challenge missing wiring, test weakening, and relevant negative cases."
+                            } else {
+                                "You verify your own completion in a read-only worktree, because the selected workflow contract authorizes no second party. Assess every criterion and explicitly challenge missing wiring, test weakening, and relevant negative cases; the receipt is labelled self-reviewed and may never claim independent verification."
+                            },
                             snapshot.receipts.len(),
                             snapshot.policy.max_attempts,
                         ),
@@ -1979,6 +2227,21 @@ impl ToolReactionContributor for Extension {
 }
 
 impl ToolLifecycleContributor for Extension {
+    fn intercept_tool<'a>(
+        &'a self,
+        input: ToolStartInput<'a>,
+    ) -> ExtensionFuture<'a, Result<Option<(ToolName, codex_tools::ToolPayload)>, String>> {
+        Box::pin(async move {
+            if input.thread_store.get::<Lead>().is_none()
+                || !input.tool_name.to_string().ends_with("spawn_agent")
+            {
+                return Ok(None);
+            }
+            self.authorize_contract(ContractOperation::SpawnChildAgent)?;
+            Ok(None)
+        })
+    }
+
     fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
             let Some(lead) = input.thread_store.get::<Lead>() else {
@@ -2149,8 +2412,14 @@ impl ThreadLifecycleContributor<Config> for Extension {
                 }
                 _ => ("lead".into(), String::new(), 0),
             };
-            if owner != "lead"
-                && self
+            if owner != "lead" {
+                if self
+                    .authorize_contract(ContractOperation::SpawnChildAgent)
+                    .is_err()
+                {
+                    return;
+                }
+                if self
                     .task
                     .start_worker(
                         owner.clone(),
@@ -2159,8 +2428,9 @@ impl ThreadLifecycleContributor<Config> for Extension {
                         self.manifest.worker_limits.clone(),
                     )
                     .is_err()
-            {
-                return;
+                {
+                    return;
+                }
             }
             if self.enroll(thread, &owner, route).is_ok() {
                 input.thread_store.insert(Lead {
@@ -2329,9 +2599,20 @@ impl<'call> ToolExecutor<ToolCall<'call>> for StatusTool {
                 .task
                 .checkpoint()
                 .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
+            let contract = self.0.host.contract.lock().map_err(|_| {
+                FunctionCallError::RespondToModel("workflow contract lock poisoned".into())
+            })?;
             Ok(Box::new(JsonToolOutput::new(json!({
                 "schema": 1,
                 "effective_settings": self.0.host.effective_settings,
+                "workflow": {
+                    "contract": contract.contract().name(),
+                    "assurance": contract.assurance().label(),
+                    "assurance_description": contract.assurance().description(),
+                    "requirements": contract.requirements(),
+                    "denied": contract.denied(),
+                    "restrictions": contract.restrictions(),
+                },
                 "checkpoint": checkpoint,
                 "task_cost": cost,
             }))) as Box<dyn ToolOutput>)

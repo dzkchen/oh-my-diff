@@ -21,6 +21,7 @@ impl ModHostCall {
             "providers.register" | "providers.unregister" => Ok("providers"),
             "pi.discover" | "pi.expand" => Ok("pi_resources"),
             "sidecars.start" | "sidecars.stop" | "sidecars.status" => Ok("sidecars"),
+            "workflow.status" | "workflow.restrict" => Ok("workflow"),
             _ => Err(failure(format!(
                 "unsupported_host_operation: {}",
                 self.operation

@@ -960,7 +960,7 @@ pub async fn review_current(
         manifest.snapshot_bytes,
     )
     .map_err(error)?;
-    let reviewer_name = lead.route.opposite();
+    let reviewer_name = host.reviewer(lead.route);
     let reviewer_route = host.route(reviewer_name);
     let review_fields = if manifest.communication.structured_worker_reports {
         "candidate_sha256, findings, resolved_finding_ids, and report"
@@ -976,8 +976,12 @@ pub async fn review_current(
             role: &role,
             route: reviewer_route,
             prompt: format!(
-                "Perform a {:?} review of the exact read-only candidate. Inspect correctness, regressions, scope, and relevant negative cases. Candidate SHA256: {candidate_sha256}. Stable: {}. Risk: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this changed candidate proves it fixed or no longer applicable. Do not approve or edit files.",
-                request.cadence,
+                "{} of the exact read-only candidate. Inspect correctness, regressions, scope, and relevant negative cases. Candidate SHA256: {candidate_sha256}. Stable: {}. Risk: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this changed candidate proves it fixed or no longer applicable. Do not approve or edit files.",
+                if reviewer_name == lead.route {
+                    format!("Perform your own final self-review ({:?})", request.cadence)
+                } else {
+                    format!("Perform a {:?} review", request.cadence)
+                },
                 request.stable,
                 request.risk.as_deref().unwrap_or("none"),
                 serde_json::to_string(&unresolved).map_err(error)?,
@@ -1005,7 +1009,11 @@ pub async fn review_current(
             report.validate().is_ok() && report.status == WorkerReportStatus::Completed
         });
     if !structured_review_complete || review.candidate_sha256 != candidate_sha256 {
-        return Err("separate reviewer did not return a complete exact-candidate review".into());
+        return Err(if reviewer_name == lead.route {
+            "the final self-review did not return a complete exact-candidate review".to_string()
+        } else {
+            "separate reviewer did not return a complete exact-candidate review".to_string()
+        });
     }
     let cycle = {
         let mut runtime = host
@@ -1259,7 +1267,11 @@ pub async fn complete_current(
             host,
             candidate_marker,
             codex_omd::CompletionStatus::Blocked,
-            "shared task allowance is exhausted before independent verification".into(),
+            if host.separate_review() {
+                "shared task allowance is exhausted before independent verification".to_string()
+            } else {
+                "shared task allowance is exhausted before the final self-review".to_string()
+            },
             &call_hash,
         );
     }
@@ -1270,7 +1282,7 @@ pub async fn complete_current(
         manifest.snapshot_bytes,
     )
     .map_err(error)?;
-    let verifier_name = lead.route.opposite();
+    let verifier_name = host.reviewer(lead.route);
     let verifier_route = host.route(verifier_name);
     let report_mode = if manifest.communication.structured_worker_reports {
         ReviewReportMode::Structured
@@ -1285,7 +1297,12 @@ pub async fn complete_current(
         .receipts
         .len() as u32
         + 1;
-    let role = format!("completion-verifier-{attempt}");
+    let separate = verifier_name != lead.route;
+    let role = if separate {
+        format!("completion-verifier-{attempt}")
+    } else {
+        format!("completion-self-review-{attempt}")
+    };
     let output = run_child(
         lead,
         &parent,
@@ -1294,7 +1311,12 @@ pub async fn complete_current(
             role: &role,
             route: verifier_route,
             prompt: format!(
-                "Independently verify completion of this exact read-only candidate. Do not rely on the implementation owner's conclusion and do not edit files. Preserve each acceptance criterion byte-for-byte and assess it once. A satisfied requirement must cite one or more evidence_sha256s from its supplied host-owned evidence. Separately challenge missing public/runtime wiring, weakened or removed tests/checks, and relevant negative cases; return exactly one assessment for each challenge kind. A passed challenge must cite inspected repository-relative paths. Use unsatisfied/finding for actionable work, blocked for a concrete external blocker, and unverified whenever evidence is unavailable or inconclusive. Candidate SHA256: {candidate_sha256}. Contract SHA256: {contract_sha256}. Objective and criteria: {}. Acceptance evidence: {}. Approved final review cycle: {}.",
+                "{} Do not edit files. Preserve each acceptance criterion byte-for-byte and assess it once. A satisfied requirement must cite one or more evidence_sha256s from its supplied host-owned evidence. Separately challenge missing public/runtime wiring, weakened or removed tests/checks, and relevant negative cases; return exactly one assessment for each challenge kind. A passed challenge must cite inspected repository-relative paths. Use unsatisfied/finding for actionable work, blocked for a concrete external blocker, and unverified whenever evidence is unavailable or inconclusive. Candidate SHA256: {candidate_sha256}. Contract SHA256: {contract_sha256}. Objective and criteria: {}. Acceptance evidence: {}. Approved final review cycle: {}.",
+                if separate {
+                    "Independently verify completion of this exact read-only candidate. Do not rely on the implementation owner's conclusion."
+                } else {
+                    "Perform your own final self-review of completion for this exact read-only candidate. No independent reviewer will check this work, so assess it strictly against the immutable contract and record unverified whenever host evidence is missing."
+                },
                 serde_json::to_string(&manifest.checkpoint).map_err(error)?,
                 serde_json::to_string(&checkpoint.completed_acceptance).map_err(error)?,
                 serde_json::to_string(final_review.as_ref().expect("checked final review"))
@@ -1319,7 +1341,14 @@ pub async fn complete_current(
                 host,
                 candidate_marker,
                 codex_omd::CompletionStatus::Unverified,
-                format!("independent verifier unavailable: {reason}"),
+                format!(
+                    "{} unavailable: {reason}",
+                    if separate {
+                        "independent verifier"
+                    } else {
+                        "final self-review"
+                    }
+                ),
                 &call_hash,
             );
         }
@@ -1334,7 +1363,14 @@ pub async fn complete_current(
                 host,
                 candidate_marker,
                 codex_omd::CompletionStatus::Unverified,
-                format!("independent verifier returned invalid evidence: {parse_error}"),
+                format!(
+                    "{} returned invalid evidence: {parse_error}",
+                    if separate {
+                        "independent verifier"
+                    } else {
+                        "final self-review"
+                    }
+                ),
                 &call_hash,
             );
         }
@@ -1361,8 +1397,14 @@ pub async fn complete_current(
             host,
             candidate_marker,
             codex_omd::CompletionStatus::Unverified,
-            "independent verifier output is incomplete, stale, or cites absent passing evidence"
-                .into(),
+            format!(
+                "{} output is incomplete, stale, or cites absent passing evidence",
+                if separate {
+                    "independent verifier"
+                } else {
+                    "final self-review"
+                }
+            ),
             &call_hash,
         );
     }
@@ -1397,7 +1439,14 @@ pub async fn complete_current(
                 host,
                 candidate_marker,
                 codex_omd::CompletionStatus::Unverified,
-                format!("independent verifier evidence failed validation: {validation_error}"),
+                format!(
+                    "{} evidence failed validation: {validation_error}",
+                    if separate {
+                        "independent verifier"
+                    } else {
+                        "final self-review"
+                    }
+                ),
                 &call_hash,
             );
         }
@@ -1427,6 +1476,7 @@ pub async fn contribute(
     request: ContributionRequest,
 ) -> Result<Value, String> {
     let host = &lead.host;
+    host.authorize_contract(codex_omd::ContractOperation::Delegate)?;
     let manifest = &host.manifest;
     host.authorize()?;
     let manager = host
@@ -2081,6 +2131,7 @@ pub async fn escalate(
     request: EscalationRequest,
 ) -> Result<Value, String> {
     let host = &lead.host;
+    host.authorize_contract(codex_omd::ContractOperation::Escalate)?;
     let manifest = &host.manifest;
     if !manifest
         .escalation

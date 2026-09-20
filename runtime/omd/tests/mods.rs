@@ -40,14 +40,22 @@ fn fixture(source: &str, capabilities: &[&str]) -> (TempDir, ModStore, PathBuf) 
 
 fn trust(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
     let inspected = ModStore::inspect_package(path).unwrap();
-    store
-        .trust(
-            path.to_path_buf(),
-            inspected["sha256"].as_str().unwrap(),
-            capabilities.iter().map(|s| s.to_string()).collect(),
-        )
-        .unwrap();
-    store.enable(path, true).unwrap();
+    let granted: Vec<String> = capabilities.iter().map(|s| s.to_string()).collect();
+    let sha256 = inspected["sha256"].as_str().unwrap();
+    contended(|| store.trust(path.to_path_buf(), sha256, granted.clone()));
+    contended(|| store.enable(path, true));
+}
+
+fn contended<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> T {
+    for _ in 0..200 {
+        match operation() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            result => return result.unwrap(),
+        }
+    }
+    panic!("store lock stayed contended")
 }
 
 fn host(temp: &TempDir) -> ModHost {
@@ -919,4 +927,96 @@ fn native_schema_validation_applies_to_reload_before_activation() {
             .contains("native_schema_rejected")
     );
     assert_eq!(runtime.tools().len(), 1);
+}
+
+const WORKFLOW: &str = r#"export default api => {
+  api.contract({ schema: 1, id: 'paired_review', version: 1, requirements: {
+    delegation: false, child_agents: false, opposite_lead: true, escalation: true,
+    checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } });
+  api.on('workflow', event => { api.state.set(event); });
+}"#;
+
+#[test]
+fn a_workflow_mod_registers_a_contract_it_cannot_select_or_weaken() {
+    let (temp, _, path) = fixture(WORKFLOW, &["workflow", "state"]);
+    let mut host = host(&temp);
+    let contracts = host.contracts();
+    assert_eq!(contracts.len(), 1);
+    let (contract, owner) = &contracts[0];
+    assert_eq!(contract.id, "paired_review");
+    assert_eq!(
+        contract.assurance(),
+        codex_omd::AssuranceLabel::IndependentlyVerified
+    );
+    assert_eq!(owner.kind, codex_omd::OwnerKind::Mod);
+    assert_eq!(owner.id, "fixture");
+    assert_eq!(owner.source, path.display().to_string());
+
+    let mut catalog = codex_omd::ContractCatalog::bundled();
+    catalog.register(contract.clone(), owner.clone()).unwrap();
+    let selections = codex_omd::collect_selections(&catalog, None, None, None, None).unwrap();
+    let resolution = codex_omd::resolve_selection(selections.offers, None).unwrap();
+    assert_eq!(
+        resolution.effective.contract,
+        codex_omd::WorkflowContract::bundled_default()
+    );
+
+    let generation = host.generation();
+    host.invoke(
+        "fixture",
+        generation,
+        "workflow",
+        "",
+        json!({"contract": "reviewed_omd", "assurance": "independently_verified"}),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_registered_contract_may_not_redefine_a_bundled_contract_or_skip_its_capability() {
+    let forged = r#"export default api => api.contract({ schema: 1, id: 'solo_evidence', version: 1, requirements: {
+      delegation: true, child_agents: true, opposite_lead: true, escalation: true,
+      checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } })"#;
+    let (temp, _, _) = fixture(forged, &["workflow"]);
+    let error = ModHost::open(temp.path().canonicalize().unwrap().join("store"))
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("redefines a bundled contract"));
+
+    let shadowed = r#"export default api => api.contract({ schema: 1, id: 'solo_evidence', version: 1, requirements: {
+      delegation: false, child_agents: false, opposite_lead: false, escalation: false,
+      checkpoints: true, milestone_review: false, final_review: 'self_review', completion: 'self_verified' } })"#;
+    let (temp, _, _) = fixture(shadowed, &["workflow"]);
+    let error = ModHost::open(temp.path().canonicalize().unwrap().join("store"))
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("invalid_or_duplicate_contract_registration"));
+
+    let denied = r#"export default api => api.contract({ schema: 1, id: 'paired_review', version: 1, requirements: {
+      delegation: false, child_agents: false, opposite_lead: true, escalation: true,
+      checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } })"#;
+    let (temp, _, _) = fixture(denied, &["state"]);
+    let error = ModHost::open(temp.path().canonicalize().unwrap().join("store"))
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("capability_denied"));
+}
+
+#[test]
+fn two_mods_may_not_own_the_same_workflow_contract() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for id in ["first", "second"] {
+        let path = package(&root, id, WORKFLOW, &["workflow", "state"]);
+        trust(&store, &path, &["workflow", "state"]);
+    }
+    let error = ModHost::open(root.join("store"))
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("workflow_replacement_conflict: paired_review"));
 }

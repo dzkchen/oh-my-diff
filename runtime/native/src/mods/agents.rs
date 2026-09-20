@@ -287,6 +287,7 @@ impl Agents {
         if !host.manifest.capabilities.delegation {
             return Err("native_delegation_disabled".into());
         }
+        host.authorize_contract(codex_omd::ContractOperation::SpawnChildAgent)?;
         host.authorize()?;
         let mut records = self.records.lock().await;
         if records.len() >= 16 {

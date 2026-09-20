@@ -37,6 +37,39 @@ ignored. The exact Phase 8 foundation profiles and supported build matrix are
 frozen in
 [`lean-v1.lock.json`](lean-v1.lock.json).
 
+Every enabled task runs under exactly one versioned workflow contract, which
+owns the second-party calls the task may make and the final review and
+completion it requires. The bundled default `reviewed_omd@1` preserves today's
+delegation, milestone review, separate final reviewer, and separate adversarial
+completion verifier. `solo_evidence@1` is the explicitly selectable alternative:
+one authorized lead, no Contributor, child agents, opposite-lead advice, or
+escalation, no milestone review, the lead's own final self-review, and
+self-verified completion against the same immutable acceptance contract, exact
+candidate, current host evidence, and required checks. Its receipts record
+`self_reviewed` with `independent_review: false`; the host rejects any receipt
+claiming more assurance than the active contract provided.
+
+A manifest without a `workflow` object keeps working: the existing capability
+booleans are migrated to a contract with identical behavior. The unreduced
+defaults become `reviewed_omd@1`; any reduced combination becomes
+`legacy_capabilities@1`, whose requirements and derived assurance label state
+exactly what those booleans meant. A manifest may instead carry
+`workflow.user_selection`, `workflow.project_selection`,
+`workflow.task_selection`, and `workflow.confirmation`. An explicit task
+selection outranks a user default, which outranks a project recommendation,
+which outranks the bundled default; a project may also record a minimum
+assurance floor that fails closed, naming both sides, against a weaker choice.
+Any selection weaker than the bundled default needs its exact confirmation
+token. `omd-contract list|plan|status|select|require|clear` is the native
+selection surface and prints the before/after requirement changes. The active
+contract, its provenance, owners, configuration digest, precedence, denials, and
+restrictions are written to `workflow-contract.json` beside the other evidence,
+bound to the task's acceptance contract and initial candidate. Resume restores
+that record; a different requested contract needs an explicit confirmation and
+migrates only at a safe boundary after revalidating the candidate, evidence,
+checks, workers, allowance, and resume state. Failed activation or migration
+retains the prior contract or fails closed.
+
 `application_bridge` requires a canonical external `bridge` policy reference
 with its exact SHA-256. The managed launcher registers the prompt-gated bridge
 MCP only for that capability. The policy binds adapter, application version,
@@ -46,8 +79,8 @@ pending state, and timeout limits. See
 
 Every enabled task writes `effective-settings.json` and `task-cost.json` to its
 external evidence directory. The first records the manifest hash, effective mode,
-capability and communication switches, active optional sources, routing, limits,
-and cost-record path. The second retains every raw usage attempt, settled task
+capability and communication switches, the active workflow contract and its
+provenance, active optional sources, routing, limits, and cost-record path. The second retains every raw usage attempt, settled task
 charge, retained exposure upper bound, and uncertain request IDs. Deferred
 `omd_status` returns both records plus the compact checkpoint during a task.
 
@@ -388,7 +421,19 @@ Other scenarios are `direct`, `omd-off`, `escalation`, `permissions`, `conflict`
 exercise bounded identical-result detection. `direct` uses an explicit
 no-delegation capability profile and validates effective settings plus durable
 cost capture; `omd-off` selects upstream direct mode and rejects any OMD tool,
-admission ID, worker route, or evidence. Use
+admission ID, worker route, or evidence.
+
+`solo` selects `solo_evidence@1` through `workflow.task_selection` with the
+confirmation token taken from `omd-contract plan`, and validates the whole solo
+path: one authorized lead editing directly, a final self-review on the lead's own
+route, checkpoint acceptance evidence, a self-verified completion gate, and a
+receipt labelled `self_reviewed` with `independent_review: false`. `solo-denied`
+additionally attempts a child-agent spawn and requires the recorded denial.
+`contract-downgrade` starts a reviewed task, loses the client mid-flight, and
+attempts to resume onto the weaker contract without a confirmation; the resumed
+process must fail and the persisted record must still hold `reviewed_omd@1`. Every
+scenario without a `workflow` block exercises legacy-manifest migration and
+asserts the contract its capabilities migrate to. Use
 `--failure-class environment|edit|diagnosis|model` with `escalation`. Each scenario
 requires a fresh destination. These
 fixtures need loopback listening and native sandbox execution, and use synthetic

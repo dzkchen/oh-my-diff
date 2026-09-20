@@ -37,7 +37,7 @@ use std::path::PathBuf;
 
 pub use store::ModStore;
 
-pub const MOD_API_VERSION: &str = "0.1.0-experimental.2";
+pub const MOD_API_VERSION: &str = "0.1.0-experimental.3";
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",
@@ -57,6 +57,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "compaction",
     "pi_resources",
     "input",
+    "workflow",
 ];
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -76,6 +77,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("compaction_start", "lifecycle"),
     ("compaction_end", "lifecycle"),
     ("agent_end", "lifecycle"),
+    ("workflow", "workflow"),
 ];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "tool_before",
@@ -197,6 +199,8 @@ struct Registrations {
     events: Vec<String>,
     #[serde(default)]
     replacements: Vec<String>,
+    #[serde(default)]
+    contracts: Vec<crate::WorkflowContract>,
 }
 
 #[derive(Deserialize)]
@@ -280,6 +284,7 @@ impl ModHost {
         let mut next = BTreeMap::new();
         let mut tool_names = BTreeSet::new();
         let mut replacements = BTreeSet::new();
+        let mut contracts = BTreeSet::new();
         for selection in config.mods.into_iter().filter(|m| m.enabled) {
             let (package, source, hash) = store::package(&selection.path)?;
             if hash != selection.sha256 {
@@ -322,6 +327,14 @@ impl ModHost {
                     return Err(failure(format!("replacement_conflict: {point}")));
                 }
             }
+            for contract in &reply.registrations.contracts {
+                if !contracts.insert(contract.id.clone()) {
+                    return Err(failure(format!(
+                        "workflow_replacement_conflict: {}",
+                        contract.id
+                    )));
+                }
+            }
             loaded.registrations = reply.registrations;
             next.insert(loaded.package.id.clone(), loaded);
         }
@@ -340,8 +353,17 @@ impl ModHost {
             || registrations.events.len() > MOD_EVENTS.len()
             || (!registrations.tools.is_empty() && !has("tools"))
             || (!registrations.commands.is_empty() && !has("commands"))
+            || (!registrations.contracts.is_empty() && !has("workflow"))
+            || registrations.contracts.len() > 4
         {
             return Err(failure("registration_limit_or_capability_denied"));
+        }
+        let mut contract_ids = BTreeSet::new();
+        for contract in &registrations.contracts {
+            contract.validate().map_err(failure)?;
+            if contract.host_owned() || !contract_ids.insert(&contract.id) {
+                return Err(failure("invalid_or_duplicate_contract_registration"));
+            }
         }
         let visible = |text: &str, limit: usize| {
             !text.is_empty() && text.len() <= limit && !text.chars().any(char::is_control)
@@ -623,6 +645,37 @@ impl ModHost {
                     .commands
                     .iter()
                     .map(|command| (id.clone(), command.clone()))
+            })
+            .collect()
+    }
+
+    pub fn owners(&self) -> Vec<(String, crate::PolicyOwner)> {
+        self.loaded
+            .iter()
+            .filter(|(_, m)| m.error.is_none())
+            .map(|(id, m)| (id.clone(), Self::owner(m)))
+            .collect()
+    }
+
+    fn owner(loaded: &Loaded) -> crate::PolicyOwner {
+        crate::PolicyOwner {
+            kind: crate::OwnerKind::Mod,
+            id: loaded.package.id.clone(),
+            version: loaded.package.version.clone(),
+            source: loaded.selection.path.display().to_string(),
+            sha256: loaded.selection.sha256.clone(),
+        }
+    }
+
+    pub fn contracts(&self) -> Vec<(crate::WorkflowContract, crate::PolicyOwner)> {
+        self.loaded
+            .values()
+            .filter(|m| m.error.is_none())
+            .flat_map(|m| {
+                m.registrations
+                    .contracts
+                    .iter()
+                    .map(|contract| (contract.clone(), Self::owner(m)))
             })
             .collect()
     }
