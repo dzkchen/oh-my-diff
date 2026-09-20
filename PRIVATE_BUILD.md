@@ -119,13 +119,39 @@ retained upstream or upstream-direct mode, and an absent or changed policy fails
 activation. The bridge is loopback-only and development-only; instrumentation
 is added explicitly to the selected application and removed during teardown.
 
+## Mod preview
+
+The install also retains the `omd-mod` manager and can provision the two
+first-party preview packages into an external store:
+
+```sh
+OMD_STORE="$HOME/.local/share/oh-my-diff/mods"
+
+python3 scripts/private_lean_v1.py \
+  --prefix "$OMD_PREFIX" \
+  --bin-dir "$OMD_BIN_DIR" \
+  preview install --store "$OMD_STORE" --node /absolute/node-24.18.0/bin/node
+```
+
+Provisioning verifies the pinned source hashes, checks that the installed host
+and the packages agree on the exact mod API version, and refuses a store inside
+this repository, the install prefix, the launcher or Codex state. Add the
+printed `"mods"` line to the controlled manifest to load them. `preview status`,
+`preview disable [--id ID]`, `preview enable` and `preview uninstall` manage the
+store afterwards; uninstall refuses to delete locally edited sources without
+`--force` and never touches the build, Codex state or manifests.
+
+[`mods/PREVIEW.md`](mods/PREVIEW.md) is the first-use and customization guide.
+
 ## Limitations
 
 - Live provider access, account eligibility, repository-data authorization,
   quotas, prices, model availability, and route behavior must be checked in the
   current environment. Synthetic fixtures do not verify them.
-- The private build does not bundle TypeScript mods, Kiro, a code-mode host, or
-  the later breadth features.
+- The private build carries the two first-party preview mods described above; the
+  curated mod catalog, author tooling, registry/repository package installation,
+  the cross-release compatibility matrix, Kiro, a code-mode host, and the later
+  breadth features are not bundled.
 - Browser automation is headless Chromium on Apple Silicon macOS. Browser and
   MCP network or remote side effects are outside the shell filesystem sandbox;
   every browser tool defaults to an explicit Codex approval prompt.

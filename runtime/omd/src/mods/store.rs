@@ -82,8 +82,16 @@ impl ModStore {
             .mode(0o600)
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
             .open(self.root.join("store.lock"))?;
-        rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)?;
-        Ok(file)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => return Ok(file),
+                Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
 
     pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {

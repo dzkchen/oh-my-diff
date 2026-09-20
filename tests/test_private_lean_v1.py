@@ -2,16 +2,18 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 from scripts import browser_bundle
+from scripts import preview_lock
 from scripts import private_lean_v1 as installer
 
 
-class PrivateLeanV1Tests(unittest.TestCase):
+class ManagedFixture:
     def executable(self, path, version="codex-cli 0.154.0"):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"#!/bin/sh\nprintf '%s\\n' '{version}'\n")
@@ -44,6 +46,8 @@ class PrivateLeanV1Tests(unittest.TestCase):
         installer.write_manifest(prefix, manifest)
         return prefix, bin_dir, upstream_original
 
+
+class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
     def browser(self, destination, *_args):
         self.executable(destination / "runtime/bin/node", "v24.21.0")
         self.executable(destination / "bin/omd-browser-mcp", "Version 0.0.81")
@@ -229,6 +233,7 @@ class PrivateLeanV1Tests(unittest.TestCase):
             def command_run(arguments, cwd=None, env=None, capture=True):
                 target = Path(env["CARGO_TARGET_DIR"])
                 self.executable(target / "release/codex")
+                self.executable(target / "release/omd-mod", "omd-mod fixture")
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
             environment = {"PATH": str(upstream.parent), "CODEX_HOME": str(root / "state"),
@@ -247,7 +252,129 @@ class PrivateLeanV1Tests(unittest.TestCase):
             self.assertTrue((prefix / "browser/bin/omd-browser-mcp").is_file())
             self.assertEqual(manifest["browser"]["approval"],
                              "Codex default_tools_approval_mode=prompt")
+            self.assertTrue((prefix / "artifacts/omd/omd-mod").is_file())
+            self.assertEqual(manifest["mod_manager"]["installed_path"],
+                             str(prefix / "artifacts/omd/omd-mod"))
             self.assertFalse((prefix / "target").exists())
+
+
+class PreviewLockTests(unittest.TestCase):
+    def test_pinned_preview_lock_matches_the_first_party_sources(self):
+        self.assertEqual(preview_lock.build(), installer.preview_lock())
+
+    def test_every_pinned_package_declares_the_shipped_api_version(self):
+        lock = installer.preview_lock()
+        api = json.loads((installer.ROOT / "mods/package.json").read_text())["version"]
+        self.assertEqual(lock["mod_api"], api)
+        self.assertTrue(lock["packages"])
+        for identifier, package in lock["packages"].items():
+            manifest = json.loads((installer.ROOT / package["source"] / "mod.json").read_text())
+            self.assertEqual(manifest["api"], api, identifier)
+            self.assertEqual(manifest["capabilities"], package["capabilities"], identifier)
+
+
+@unittest.skipUnless(os.environ.get("OMD_TEST_MANAGER") and os.environ.get("OMD_TEST_NODE"),
+                     "set OMD_TEST_MANAGER and OMD_TEST_NODE to exercise the installable preview")
+class PreviewSliceTests(ManagedFixture, unittest.TestCase):
+    def preview_install(self, root):
+        prefix, bin_dir, _ = self.managed(root)
+        shutil.copy2(os.environ["OMD_TEST_MANAGER"], prefix / "artifacts/omd/omd-mod")
+        manifest = installer.load_manifest(prefix)
+        manifest["mod_manager"] = {"sha256": installer.digest(prefix / "artifacts/omd/omd-mod"),
+                                   "installed_path": str(prefix / "artifacts/omd/omd-mod"),
+                                   "mod_api": installer.preview_lock()["mod_api"]}
+        installer.write_manifest(prefix, manifest)
+        installer.activate(prefix, bin_dir, "omd", "upstream_direct")
+        store = root / "store"
+        installed = installer.preview_install(prefix, bin_dir, store, Path(os.environ["OMD_TEST_NODE"]))
+        return prefix, bin_dir, installer.resolved(store), installed
+
+    def test_preview_installs_pinned_sources_typed_exports_and_a_guide(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix, bin_dir, store, installed = self.preview_install(root)
+            lock = installer.preview_lock()
+            self.assertEqual(sorted(installed["packages"]), ["omd_coordination", "omd_workspace"])
+            self.assertEqual(installed["mod_api"], lock["mod_api"])
+            for identifier, package in installed["packages"].items():
+                self.assertEqual(package["sha256"], lock["packages"][identifier]["package_sha256"])
+                self.assertTrue((Path(package["path"]) / "index.ts").is_file())
+            self.assertTrue((store / "api.d.ts").is_file())
+            self.assertTrue((store / "PREVIEW.md").is_file())
+            self.assertIn(f'"mods": "{store}"', "\n".join(installed["next"]))
+            state = installer.preview_status(prefix, bin_dir, store)
+            self.assertTrue(state["mod_api"]["compatible"])
+            self.assertTrue(all(package["enabled"] for package in state["packages"]))
+            self.assertFalse(any(package["locally_edited"] for package in state["packages"]))
+            self.assertFalse(any(package["error"] for package in state["packages"]))
+
+    def test_preview_reports_local_edits_and_protects_them_from_removal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix, bin_dir, store, installed = self.preview_install(root)
+            source = Path(installed["packages"]["omd_workspace"]["path"]) / "index.ts"
+            source.write_text(source.read_text().replace("Oh My Diff workspace", "My workspace"))
+            edited = installer.preview_status(prefix, bin_dir, store)["packages"]
+            self.assertTrue(next(item for item in edited if item["id"] == "omd_workspace")["locally_edited"])
+            with self.assertRaisesRegex(ValueError, "locally edited"):
+                installer.preview_uninstall(prefix, bin_dir, store, False)
+            removed = installer.preview_uninstall(prefix, bin_dir, store, True)
+            self.assertEqual(removed["removed_local_edits"], ["omd_workspace"])
+            self.assertFalse(store.exists())
+
+    def test_preview_disable_is_explicit_and_reversible(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix, bin_dir, store, _ = self.preview_install(root)
+            disabled = installer.preview_select(prefix, bin_dir, store, "omd_workspace", False)
+            selected = {package["id"]: package["enabled"] for package in disabled["packages"]}
+            self.assertEqual(selected, {"omd_coordination": True, "omd_workspace": False})
+            enabled = installer.preview_select(prefix, bin_dir, store, None, True)
+            self.assertTrue(all(package["enabled"] for package in enabled["packages"]))
+
+    def test_preview_refuses_an_incompatible_host_api_and_an_internal_store(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix, bin_dir, store, _ = self.preview_install(root)
+            lock = {**installer.preview_lock(), "mod_api": "0.1.0-experimental.99"}
+            with mock.patch.object(installer, "preview_lock", return_value=lock), \
+                    self.assertRaisesRegex(ValueError, r"0\.1\.0-experimental\.99"):
+                installer.preview_install(prefix, bin_dir, root / "other-store",
+                                          Path(os.environ["OMD_TEST_NODE"]))
+            with self.assertRaisesRegex(ValueError, "outside this repository"):
+                installer.preview_install(prefix, bin_dir, installer.ROOT / "store",
+                                          Path(os.environ["OMD_TEST_NODE"]))
+
+    def test_preview_refuses_a_package_the_installed_host_cannot_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            prefix, bin_dir, _, _ = self.preview_install(root)
+            pinned = root / "pinned"
+            relative = installer.preview_lock()["packages"]["omd_workspace"]["source"]
+            source = pinned / relative
+            source.mkdir(parents=True)
+            manifest = json.loads((installer.ROOT / relative / "mod.json").read_text())
+            manifest["api"] = "0.1.0-experimental.99"
+            (source / "mod.json").write_text(json.dumps(manifest))
+            shutil.copy2(installer.ROOT / relative / "index.ts", source / "index.ts")
+            for name in ("api.d.ts", "PREVIEW.md"):
+                shutil.copy2(installer.ROOT / "mods" / name, pinned / "mods" / name)
+            lock = {
+                "schema": installer.PREVIEW_SCHEMA, "product": installer.PREVIEW_PRODUCT,
+                "mod_api": manifest["api"], "node": installer.preview_lock()["node"],
+                "types": {"path": "mods/api.d.ts", "sha256": installer.digest(pinned / "mods/api.d.ts")},
+                "guide": {"path": "mods/PREVIEW.md"},
+                "packages": {"omd_workspace": {
+                    "version": manifest["version"], "capabilities": manifest["capabilities"],
+                    "source": relative,
+                    "files": {name: installer.digest(source / name) for name in installer.PACKAGE_FILES},
+                    "package_sha256": installer.digest_of_package(source)}},
+            }
+            with mock.patch.object(installer, "ROOT", pinned), \
+                    mock.patch.object(installer, "preview_lock", return_value=lock), \
+                    self.assertRaisesRegex(ValueError, "installed host runs mod API"):
+                installer.preview_install(prefix, bin_dir, root / "mismatch",
+                                          Path(os.environ["OMD_TEST_NODE"]))
 
 
 if __name__ == "__main__":

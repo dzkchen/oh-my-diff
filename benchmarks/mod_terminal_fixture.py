@@ -263,6 +263,126 @@ def run_mod():
     )
 
 
+def retrust(store, package, capabilities):
+    omd_mod = BINARY.parent / "omd-mod"
+    for _ in range(50):
+        inspected = subprocess.run([str(omd_mod), "inspect", str(package)], capture_output=True, text=True)
+        if inspected.returncode:
+            time.sleep(0.2)
+            continue
+        sha256 = json.loads(inspected.stdout)["sha256"]
+        steps = [["trust", str(store), str(package), sha256, ",".join(capabilities)],
+                 ["enable", str(store), str(package)], ["reload", str(store)]]
+        if all(subprocess.run([str(omd_mod), *step], capture_output=True).returncode == 0 for step in steps):
+            return sha256
+        time.sleep(0.2)
+    raise AssertionError(f"could not re-trust {package}")
+
+
+def run_preview():
+    from benchmarks.mod_fixture import PREVIEW_SETTINGS, install
+
+    root, repo, home, manifest_path = fixture("preview")
+    url, requests = provider()
+    manifest = json.loads(manifest_path.read_text())
+    for route in (manifest["leads"]["sol"], manifest["leads"]["astra"], manifest["worker"]):
+        route["responses_url"] = url + "/responses"
+    manifest["limits"]["requests"] = 40
+    manifest["checkpoint"]["max_no_progress_calls"] = 16
+    install(root, manifest, NODE, "preview")
+    manifest_path.write_text(json.dumps(manifest))
+    store = root / "mod-store"
+    workspace = root / "omd_workspace"
+    capabilities = PREVIEW_SETTINGS and json.loads((workspace / "mod.json").read_text())["capabilities"]
+    original = (workspace / "index.ts").read_text()
+    config = home / "config.toml"
+    config.write_text(config.read_text().replace("http://127.0.0.1:9/v1", url))
+    master, slave = pty.openpty()
+    set_size(slave, 110, 34)
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": str(home),
+        "CODEX_HOME": str(home),
+        "CODEX_SQLITE_HOME": str(home),
+        "OMD_CONTROLLED_MANIFEST": str(manifest_path),
+        "OPENAI_API_KEY": "pty-fixture",
+        "TERM": "xterm-256color",
+        "COLORTERM": "truecolor",
+        "LANG": "en_CA.UTF-8",
+        "LC_ALL": "en_CA.UTF-8",
+        "NO_PROXY": "127.0.0.1,localhost",
+    }
+    child = subprocess.Popen([str(BINARY), "-C", str(repo)], stdin=slave, stdout=slave,
+                             stderr=slave, env=env, start_new_session=True)
+    os.close(slave)
+    output = bytearray()
+    checks = {}
+
+    def command(text, needle, timeout=20):
+        os.write(master, b"\x15" + text.encode())
+        drain(master, output, 0.6)
+        os.write(master, b"\r")
+        return drain_until(master, output, needle, timeout)
+
+    checks["first_use_workspace"] = drain_until(master, output, b"Oh My Diff workspace", 20)
+    checks["task_panel"] = drain_until(master, output, b"PTY terminal", 5)
+    checks["status_segment"] = drain_until(master, output, b"omd:compact", 5)
+    checks["coordination_policy_visible"] = command("/omd_coordination:policy", b"worker context focused")
+    checks["ordinary_turn"] = command("PREVIEW_TASK inspect the sample file", b"PTY_DONE", 40)
+    checks["lifecycle_recorded"] = command("/omd_workspace:activity", b"turn ")
+    checks["customized_density"] = command("/omd_workspace:layout full", b"density is now full")
+    checks["customized_panels"] = command("PREVIEW_FULL_DENSITY", b"Allowance", 40)
+    os.write(master, b"\x1bw")
+    checks["keybinding_toggles_density"] = drain_until(master, output, b"density is now compact", 15)
+    edited = original.replace("'Oh My Diff workspace'", "'PREVIEW_EDITED_WORKSPACE'")
+    assert edited != original
+    (workspace / "index.ts").write_text(edited)
+    retrust(store, workspace, capabilities)
+    checks["reload_applies_the_edit"] = command("PREVIEW_RELOADED", b"PREVIEW_EDITED_WORKSPACE", 40)
+    checks["session_preserved_across_reload"] = b"PREVIEW_TASK inspect the sample file" in bytes(output)
+    (workspace / "index.ts").write_text(
+        original.replace("export default function activate(api: ModAPI) {",
+                         "export default function activate(api: ModAPI) {\n  throw new Error('PREVIEW_PTY_BROKEN');", 1))
+    retrust(store, workspace, capabilities)
+    checks["broken_mod_recovery"] = command("PREVIEW_BROKEN", b"Mod errors", 40)
+    recorded = subprocess.run([str(BINARY.parent / "omd-mod"), "status", str(store)],
+                              capture_output=True, text=True)
+    failure = next((mod["error"] or "" for mod in json.loads(recorded.stdout or "{}").get("mods", [])
+                    if mod["id"] == "omd_workspace"), "")
+    checks["source_located_error"] = "PREVIEW_PTY_BROKEN" in failure and "index.ts:" in failure
+    checks["native_ui_usable_after_failure"] = command("/omd", b"Close inspector", 15)
+    os.write(master, b"\x1b")
+    drain(master, output, 0.5)
+    omd_mod = BINARY.parent / "omd-mod"
+    subprocess.run([str(omd_mod), "disable", str(store), str(workspace)], capture_output=True)
+    subprocess.run([str(omd_mod), "reload", str(store)], capture_output=True)
+    checks["disable_restores_native_terminal"] = command("PREVIEW_DISABLED", b"PTY_DONE", 40)
+    drain(master, output, 1)
+    os.write(master, b"\x15PREVIEW_CANCEL please wait")
+    drain(master, output, 0.5)
+    os.write(master, b"\r")
+    drain(master, output, 1.0)
+    os.write(master, b"\x1b")
+    drain(master, output, 2)
+    checks["cancelled_turn_recorded"] = command("/omd_coordination:policy", b"turn_end", 20)
+    os.write(master, b"\x03\x03")
+    drain(master, output, 2)
+    if child.poll() is None:
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except (PermissionError, ProcessLookupError):
+            child.terminate()
+    status = child.wait(timeout=5)
+    raw = bytes(output)
+    (root / "terminal.raw").write_bytes(raw)
+    (root / "requests.json").write_text(json.dumps(requests, indent=2))
+    checks["terminal_restored"] = b"\x1b[?1049l" in raw and b"\x1b[?25h" in raw
+    checks["mod_error_did_not_stop_the_host"] = status == 0
+    result = {"root": str(root), "exit_code": status, **checks}
+    print(json.dumps(result, indent=2))
+    assert status == 0 and all(checks.values()), result
+
+
 def provider():
     import http.server
     import threading
@@ -435,3 +555,4 @@ if __name__ == "__main__":
     run_mod()
     run_extensions()
     run_extensions(inline=True)
+    run_preview()

@@ -80,6 +80,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             checkpoint_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_checkpoint"]
             completion_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_complete"]
             mod_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_fixture_count"]
+            preview_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_omd_coordination_delegate"]
             if mod_profile == "lifecycle" and "MOD_COMPACT_PROMPT_SENTINEL" in json.dumps(inputs[-1:]):
                 Provider.compacted = True
                 self.send_response(200)
@@ -115,9 +116,13 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 criteria = manifest["checkpoint"]["acceptance_criteria"]
                 sequence = len(checkpoint_outputs) + 1
                 item = {"type": "function_call", "id": f"unchanged-checkpoint-{sequence}", "call_id": f"unchanged-checkpoint-{sequence}", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": [], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [], "check_versions": []})}
-            elif owner == "lead" and mod_node is not None and scenario in ("direct", "success", "client-loss-resume") and not search_outputs:
+            elif owner == "lead" and mod_node is not None and mod_profile.startswith("preview") and scenario == "direct" and not search_outputs:
+                item = {"type": "tool_search_call", "id": "search-preview", "call_id": "search-preview", "status": "completed", "execution": "client", "arguments": {"query": "coordination policy delegate worker context investigate"}}
+            elif owner == "lead" and mod_node is not None and mod_profile.startswith("preview") and scenario == "direct" and not preview_outputs:
+                item = {"type": "function_call", "id": "preview-delegate", "call_id": "preview-delegate", "name": "mod_omd_coordination_delegate", "arguments": json.dumps({"brief": "Fix solution.py: add must return the sum.", "selected_evidence": ["solution.py"]})}
+            elif owner == "lead" and mod_node is not None and not mod_profile.startswith("preview") and scenario in ("direct", "success", "client-loss-resume") and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-mod", "call_id": "search-mod", "status": "completed", "execution": "client", "arguments": {"query": "mod_fixture_count persistent mod counter effective settings task cost capture delegate isolated contributor implementation"}}
-            elif owner == "lead" and mod_node is not None and scenario in ("direct", "success", "client-loss-resume") and not mod_outputs:
+            elif owner == "lead" and mod_node is not None and not mod_profile.startswith("preview") and scenario in ("direct", "success", "client-loss-resume") and not mod_outputs:
                 item = {"type": "function_call", "id": "mod-count", "call_id": "mod-count", "name": "mod_fixture_count", "arguments": "{}"}
             elif owner == "lead" and scenario == "direct" and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-status", "call_id": "search-status", "status": "completed", "execution": "client", "arguments": {"query": "effective settings task cost capture"}}
@@ -141,7 +146,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "tool_search_call", "id": "search-delegation", "call_id": "search-delegation", "status": "completed", "execution": "client", "arguments": {"query": "delegate isolated contributor implementation"}}
             elif owner == "lead" and scenario not in ("direct", "omd-off", "escalation", *SOLO_SCENARIOS) and not [output for output in outputs if calls.get(output.get("call_id")) != "mod_fixture_count"]:
                 arguments = {
-                    "focused_brief": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files.", "selected_evidence": ["solution.py"]},
+                    "focused_brief": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files.", "selected_evidence": ["solution.py", "notes.txt"] if mod_profile.startswith("preview") else ["solution.py"]},
                     "shared_task_packet": {},
                     "parent_history": {"brief": "Fix solution.py: add must return the sum. Preserve unrelated files."},
                 }[context_policy]
@@ -492,9 +497,11 @@ enabled = false
             assert ("required_clarification" in worker_context) == structured_worker_reports, "worker report schema selection drifted"
         lead_context = json.dumps(requests[0]["body"].get("input", []))
         assert ("concise ordinary-language sentences" in lead_context) == concise_user_updates, "user update policy selection drifted"
-        expected_lead = "gpt-6-astra" if mod_profile == "routing" and lead_policy == "task_entry" else lead_model
+        mod_routed = mod_profile == "routing" or mod_profile.startswith("preview")
+        expected_lead = "gpt-6-astra" if mod_routed and lead_policy == "task_entry" else lead_model
+        effective_lead = {"gpt-5.6-sol": "sol", "gpt-6-astra": "astra"}[expected_lead]
         assert requests[0]["model"] == expected_lead
-        if mod_profile == "routing":
+        if mod_routed:
             assert requests[0]["body"]["reasoning"]["effort"] == ("xhigh" if expected_lead == "gpt-6-astra" else "high")
         assert (requests[0]["native_owner"] == "lead") == (scenario != "omd-off"), "lead route drifted"
         first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
@@ -505,8 +512,8 @@ enabled = false
         if scenario not in ("direct", "omd-off", "reactive", "request-cap", "recursion"):
             assert any(i.get("type") == "tool_search_call" for request in requests for i in request["body"].get("input", [])), "task-scoped tool discovery was not exercised"
         if reviewer_requests:
-            same_lead = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead]
-            opposite_lead = {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
+            same_lead = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[effective_lead]
+            opposite_lead = {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[effective_lead]
             expected_reviewer = same_lead if scenario in ("outage-fallback", *SOLO_SCENARIOS) else opposite_lead
             if scenario in SOLO_SCENARIOS:
                 assert reviewer_requests[0]["model"] == expected_reviewer, "solo final review did not resolve to the lead's own route"
@@ -703,18 +710,19 @@ enabled = false
             )
             assert status["direct_single_agent"] is True
         if mod_node is not None:
-            assert ("MOD_CONTEXT_SENTINEL" in json.dumps(requests)) == (scenario != "omd-off")
+            marker = "Coordination policy (omd_coordination" if mod_profile.startswith("preview") else "MOD_CONTEXT_SENTINEL"
+            assert (marker in json.dumps(requests)) == (scenario != "omd-off")
             if scenario != "omd-off":
                 from benchmarks.mod_fixture import verify
                 verify(destination, requests, mod_profile, scenario)
-            else:
+            elif not mod_profile.startswith("preview"):
                 assert not (destination / "mod-store/state-fixture.json").exists()
         if scenario == "omd-off":
             assert not (destination / "evidence").exists()
         if scenario not in ("direct", "escalation", "reactive") and (destination / "evidence/context.json").exists():
             context_record = json.loads((destination / "evidence/context.json").read_text())
             assert context_record["context"]["policy"] == context_policy
-            assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == lead
+            assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == effective_lead
             assert context_record["communication"] == manifest["communication"]
         record = {"status": "pass", "scenario": scenario, "failure_class": failure_class if scenario == "escalation" else None, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "communication": manifest["communication"], "reactive_rules": manifest.get("reactive_rules"), "mods": mod_node is not None, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "escalation_result": escalation_result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
         (destination / "verification.json").write_text(json.dumps(record, indent=2))
@@ -737,7 +745,7 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
-    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny"), default="counter")
+    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken"), default="counter")
     args = parser.parse_args()
     print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 

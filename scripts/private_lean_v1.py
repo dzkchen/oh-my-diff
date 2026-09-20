@@ -22,6 +22,9 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = 1
 PRODUCT = "oh-my-diff-private-lean-v1"
+PREVIEW_SCHEMA = 1
+PREVIEW_PRODUCT = "oh-my-diff-private-preview-v1"
+PACKAGE_FILES = ("mod.json", "index.ts")
 
 
 def digest(path):
@@ -302,18 +305,20 @@ def install(args):
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(cargo_target)
         build = ["cargo", f"+{upstream_lock['rust_toolchain']}", "build", "--locked",
-                 "--release", "-p", "codex-cli", "--bin", "codex"]
+                 "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd", "--bin", "omd-mod"]
         run(build, cwd=checkout / "codex-rs", env=environment, capture=False)
         candidate_source = cargo_target / "release/codex"
+        manager_source = cargo_target / "release/omd-mod"
         candidate = binary_identity(candidate_source)
         if candidate["version"] != upstream["version"]:
             raise ValueError("candidate and supported upstream versions differ")
         machine = output(["file", "-b", str(candidate_source)])
         if "arm64" not in machine:
             raise ValueError("candidate is not an arm64 executable")
-        for name, source in (("upstream", Path(upstream["path"])), ("omd", candidate_source)):
-            destination = staging / f"artifacts/{name}/codex"
-            destination.parent.mkdir(parents=True)
+        for name, source in (("upstream/codex", Path(upstream["path"])), ("omd/codex", candidate_source),
+                             ("omd/omd-mod", manager_source)):
+            destination = staging / f"artifacts/{name}"
+            destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
             destination.chmod(destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         if browser_archive:
@@ -348,6 +353,9 @@ def install(args):
                 "upstream": {**upstream, "installed_path": str(staging / "artifacts/upstream/codex")},
                 "omd": {**candidate, "installed_path": str(staging / "artifacts/omd/codex")},
             },
+            "mod_manager": {"sha256": digest(staging / "artifacts/omd/omd-mod"),
+                            "installed_path": str(staging / "artifacts/omd/omd-mod"),
+                            "mod_api": preview_lock()["mod_api"]},
             "browser": {
                 "installed_path": str(prefix / "browser"),
                 "launcher": str(prefix / "browser" / browser["launcher"]),
@@ -368,7 +376,7 @@ def install(args):
             "linux_benchmark": {"retained": True, "runtime_install_target": False,
                                 "guide": "benchmarks/README.md"},
         }
-        for artifact in manifest["artifacts"].values():
+        for artifact in (*manifest["artifacts"].values(), manifest["mod_manager"]):
             artifact["installed_path"] = artifact["installed_path"].replace(str(staging), str(prefix), 1)
         write_manifest(staging, manifest)
         staging.rename(prefix)
@@ -412,11 +420,186 @@ def status(prefix, bin_dir):
     artifact = prefix / f"artifacts/{selected}/codex"
     if digest(artifact) != manifest["artifacts"][selected]["sha256"]:
         raise ValueError("active artifact is modified")
+    recorded_manager = manifest.get("mod_manager")
+    if recorded_manager and digest(prefix / "artifacts/omd/omd-mod") != recorded_manager["sha256"]:
+        raise ValueError("installed omd-mod manager is modified")
     if manifest.get("browser"):
         browser = browser_bundle.verify(prefix / "browser")
         if browser["tree"] != manifest["browser"]["tree"]:
             raise ValueError("installed browser bundle differs from the installation manifest")
     return manifest
+
+
+def preview_lock():
+    lock = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
+    if lock.get("schema") != PREVIEW_SCHEMA or lock.get("product") != PREVIEW_PRODUCT:
+        raise ValueError("unrecognized preview lock")
+    return lock
+
+
+def preview_sources(lock):
+    if digest(ROOT / lock["types"]["path"]) != lock["types"]["sha256"]:
+        raise ValueError(f"pinned preview types changed: {lock['types']['path']}")
+    for identifier, package in lock["packages"].items():
+        base = ROOT / package["source"]
+        for name, expected in package["files"].items():
+            if digest(base / name) != expected:
+                raise ValueError(f"pinned preview source changed: {package['source']}/{name}")
+        declared = json.loads((base / "mod.json").read_text())
+        if declared["api"] != lock["mod_api"]:
+            raise ValueError(f"package {identifier} declares mod API {declared['api']}; "
+                             f"this preview is pinned to {lock['mod_api']}")
+        if declared["id"] != identifier:
+            raise ValueError(f"pinned preview package disagrees with the lock: {identifier}")
+    return lock
+
+
+def digest_of_package(path):
+    manifest = (path / "mod.json").read_bytes()
+    return hashlib.sha256(manifest + b"\x00" + (path / "index.ts").read_bytes()).hexdigest()
+
+
+def manager(prefix):
+    binary = prefix / "artifacts/omd/omd-mod"
+    if not binary.is_file():
+        raise ValueError("this installation has no omd-mod manager; reinstall to enable the mod preview")
+    recorded = load_manifest(prefix).get("mod_manager")
+    if not recorded or digest(binary) != recorded["sha256"]:
+        raise ValueError("installed omd-mod manager is absent or modified")
+    return binary
+
+
+def omd_mod(prefix, *arguments):
+    return json.loads(output([str(manager(prefix)), *arguments]) or "null")
+
+
+def validate_store(store, prefix, bin_dir):
+    store = resolved(store)
+    if store == Path(store.anchor):
+        raise ValueError("mod store must not be a filesystem root")
+    for protected in (ROOT, prefix, bin_dir, *state_roots()):
+        if within(store, protected) or within(protected, store):
+            raise ValueError("mod store must be outside this repository, the install prefix, the launcher and Codex state")
+    return store
+
+
+def preview_state(store):
+    record = store / "preview.json"
+    if not record.is_file():
+        raise ValueError(f"not a preview store: {store}")
+    state = json.loads(record.read_text())
+    if state.get("schema") != PREVIEW_SCHEMA or state.get("product") != PREVIEW_PRODUCT:
+        raise ValueError(f"unrecognized preview store: {store}")
+    return state
+
+
+def preview_install(prefix, bin_dir, store, node):
+    status(prefix, bin_dir)
+    lock = preview_sources(preview_lock())
+    node = resolved(node)
+    reported = output([str(node), "--version"])
+    if reported != f"v{lock['node']}":
+        raise ValueError(f"preview requires Node {lock['node']}; {node} reports {reported}")
+    store = validate_store(store, prefix, bin_dir)
+    if store.exists():
+        preview_state(store)
+    else:
+        store.parent.mkdir(parents=True, exist_ok=True)
+        omd_mod(prefix, "init", str(store), str(node))
+    host_api = omd_mod(prefix, "status", str(store))["api"]
+    if host_api != lock["mod_api"]:
+        raise ValueError(f"installed host runs mod API {host_api}; this preview is pinned to {lock['mod_api']}. "
+                         "Install a matching build or a matching preview revision.")
+    (store / "sources").mkdir(exist_ok=True)
+    shutil.copy2(ROOT / lock["types"]["path"], store / "api.d.ts")
+    shutil.copy2(ROOT / lock["guide"]["path"], store / "PREVIEW.md")
+    installed = {}
+    for identifier, package in sorted(lock["packages"].items()):
+        target = store / "sources" / identifier
+        target.mkdir(exist_ok=True)
+        for name in PACKAGE_FILES:
+            shutil.copy2(ROOT / package["source"] / name, target / name)
+        inspected = omd_mod(prefix, "inspect", str(target))
+        declared = inspected["manifest"]["api"]
+        if declared != host_api:
+            raise ValueError(f"package {identifier} declares mod API {declared}; this host runs {host_api}")
+        if inspected["sha256"] != package["package_sha256"]:
+            raise ValueError(f"installed package digest differs from the pinned digest: {identifier}")
+        if inspected["manifest"]["capabilities"] != package["capabilities"]:
+            raise ValueError(f"package {identifier} requests capabilities outside its pinned grant")
+        omd_mod(prefix, "trust", str(store), str(target), inspected["sha256"], ",".join(package["capabilities"]))
+        omd_mod(prefix, "enable", str(store), str(target))
+        installed[identifier] = {"path": str(target), "version": package["version"],
+                                 "sha256": inspected["sha256"], "capabilities": package["capabilities"]}
+    record = {"schema": PREVIEW_SCHEMA, "product": PREVIEW_PRODUCT,
+              "installed_at": datetime.now(timezone.utc).isoformat(),
+              "prefix": str(prefix), "store": str(store), "node": str(node),
+              "mod_api": host_api, "packages": installed,
+              "types": str(store / "api.d.ts"), "guide": str(store / "PREVIEW.md"),
+              "manager": str(manager(prefix))}
+    atomic_text(store / "preview.json", json.dumps(record, indent=2, sort_keys=True) + "\n")
+    return {**record, "next": [f'add "mods": "{store}" to the controlled manifest used by activate omd --mode enabled',
+                               f"edit {store}/sources/<id>/index.ts, then inspect, trust, enable and reload with {manager(prefix)}"]}
+
+
+def preview_status(prefix, bin_dir, store, controlled_manifest=None):
+    status(prefix, bin_dir)
+    store = validate_store(store, prefix, bin_dir)
+    state = preview_state(store)
+    try:
+        host = omd_mod(prefix, "status", str(store))
+        host_error = None
+    except RuntimeError as error:
+        host = {"api": load_manifest(prefix)["mod_manager"]["mod_api"], "mods": []}
+        host_error = str(error).strip().splitlines()[-1]
+    host_api = host["api"]
+    packages = []
+    for identifier, package in sorted(state["packages"].items()):
+        target = Path(package["path"])
+        edited = {name: digest(target / name) for name in PACKAGE_FILES}
+        pinned = preview_lock()["packages"].get(identifier, {}).get("files", {})
+        active = next((item for item in host.get("mods", []) if item.get("id") == identifier), None)
+        packages.append({"id": identifier, "path": str(target), "version": package["version"],
+                         "trusted_sha256": package["sha256"],
+                         "locally_edited": edited != pinned,
+                         "trusted_digest_current": digest_of_package(target) == package["sha256"],
+                         "enabled": bool(active), "error": (active or {}).get("error")})
+    selected = None
+    if controlled_manifest:
+        declared = json.loads(Path(controlled_manifest).read_text()).get("mods")
+        selected = bool(declared) and resolved(declared) == store
+    return {"store": str(store), "mod_api": {"host": host_api, "preview": state["mod_api"],
+                                             "compatible": host_api == state["mod_api"]},
+            "manager": str(manager(prefix)), "node": state["node"], "packages": packages,
+            "reload_error": host.get("reload_error"), "host_error": host_error,
+            "selected_by_manifest": selected}
+
+
+def preview_select(prefix, bin_dir, store, identifier, enabled):
+    status(prefix, bin_dir)
+    store = validate_store(store, prefix, bin_dir)
+    state = preview_state(store)
+    chosen = [state["packages"][identifier]] if identifier else list(state["packages"].values())
+    if identifier and identifier not in state["packages"]:
+        raise ValueError(f"unknown preview package: {identifier}")
+    for package in chosen:
+        omd_mod(prefix, "enable" if enabled else "disable", str(store), package["path"])
+    omd_mod(prefix, "reload", str(store))
+    return preview_status(prefix, bin_dir, store)
+
+
+def preview_uninstall(prefix, bin_dir, store, force):
+    status(prefix, bin_dir)
+    store = validate_store(store, prefix, bin_dir)
+    state = preview_state(store)
+    edits = [identifier for identifier, package in state["packages"].items()
+             if any(digest(Path(package["path"]) / name) != preview_lock()["packages"][identifier]["files"][name]
+                    for name in PACKAGE_FILES)]
+    if edits and not force:
+        raise ValueError(f"locally edited preview sources would be removed: {', '.join(sorted(edits))}; pass --force to remove them")
+    shutil.rmtree(store)
+    return {"removed": str(store), "removed_local_edits": sorted(edits),
+            "note": "the installed build, Codex state and controlled manifests are unchanged"}
 
 
 def uninstall(prefix, bin_dir):
@@ -454,6 +637,21 @@ def parser():
     activate_parser.add_argument("--manifest", type=Path)
     commands.add_parser("status")
     commands.add_parser("uninstall")
+    preview_parser = commands.add_parser("preview")
+    preview_commands = preview_parser.add_subparsers(dest="preview_command", required=True)
+    preview_install_parser = preview_commands.add_parser("install")
+    preview_install_parser.add_argument("--store", type=Path, required=True)
+    preview_install_parser.add_argument("--node", type=Path, required=True)
+    preview_status_parser = preview_commands.add_parser("status")
+    preview_status_parser.add_argument("--store", type=Path, required=True)
+    preview_status_parser.add_argument("--manifest", type=Path)
+    for name in ("enable", "disable"):
+        selection_parser = preview_commands.add_parser(name)
+        selection_parser.add_argument("--store", type=Path, required=True)
+        selection_parser.add_argument("--id")
+    preview_uninstall_parser = preview_commands.add_parser("uninstall")
+    preview_uninstall_parser.add_argument("--store", type=Path, required=True)
+    preview_uninstall_parser.add_argument("--force", action="store_true")
     return result
 
 
@@ -466,6 +664,15 @@ def main():
         result = activate(prefix, bin_dir, args.selection, args.mode, args.manifest)
     elif args.command == "status":
         result = status(prefix, bin_dir)
+    elif args.command == "preview":
+        if args.preview_command == "install":
+            result = preview_install(prefix, bin_dir, args.store, args.node)
+        elif args.preview_command == "status":
+            result = preview_status(prefix, bin_dir, args.store, args.manifest)
+        elif args.preview_command == "uninstall":
+            result = preview_uninstall(prefix, bin_dir, args.store, args.force)
+        else:
+            result = preview_select(prefix, bin_dir, args.store, args.id, args.preview_command == "enable")
     else:
         result = uninstall(prefix, bin_dir)
     print(json.dumps(result, indent=2, sort_keys=True))

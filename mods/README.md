@@ -2,9 +2,8 @@
 
 API `0.1.0-experimental.3` runs on the pinned Codex 0.154.0 OMD host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
-packages. The API remains experimental; this delivery does not freeze the API,
-complete independent preview feedback, or introduce the separately planned solo
-workflow contract.
+packages. The API remains experimental; this delivery does not freeze the API or
+complete independent preview feedback.
 
 ## Install, edit, and recover
 
@@ -29,8 +28,11 @@ Type-only SDK imports are erased by Node's erasable TypeScript loader.
 Set `"mods": "/absolute/external/mod-store"` in the existing OMD host manifest.
 The store must be outside the repository. Host permissions, spending, task
 contracts, credentials, and service grants remain host/user configuration.
-OMD-off never loads mods. An invalid initial selection fails visibly; disabling
-it or starting in native direct mode restores access.
+OMD-off never loads mods. A package whose own code fails at session start is
+disabled with a visible source-located error while the rest of the session runs
+normally; a selection the store itself rejects — an untrusted digest, a
+capability grant that is too narrow, or a conflicting registration — fails
+visibly, and disabling it or starting in native direct mode restores access.
 
 After editing, inspect and trust the new digest, then enable it. Updates preserve
 settings and state and initially remain disabled. These commands queue changes
@@ -78,6 +80,19 @@ Use [api.d.ts](api.d.ts) and the examples:
 | [terminal](examples/terminal/index.ts) | Left sidebar, header/footer, status segment, native theme, key actions, templates |
 | [guard](examples/guard/index.ts) | Input rewrite/denial and turn lifecycle events |
 | [context](examples/context/index.ts) | Bounded context contribution |
+
+Two first-party packages are shipped as an installable private preview of the
+selected signature workflows. They use the same public API and capabilities as
+any outside package:
+
+| Package | Workflow |
+| --- | --- |
+| [omd_workspace](first-party/omd_workspace/index.ts) | An editable, reloadable terminal workspace: task/worker/allowance panels, theme, keys, rendering |
+| [omd_coordination](first-party/omd_coordination/index.ts) | Replaceable coordination and context policy: lead route, operating brief, delegated worker evidence |
+
+[PREVIEW.md](PREVIEW.md) is the first-use and customization guide;
+`scripts/private_lean_v1.py preview install` provisions them from pinned
+sources into an external store.
 
 ```sh
 pnpm --dir mods install --frozen-lockfile
@@ -309,8 +324,10 @@ third-party executable behavior.
 
 State writes use atomic replacement and compare-before-write conflict detection.
 Each invocation reads the current state first, so the TUI, CLI and native host
-can use the same mod in turn; a write racing another process's write during a
-callback still fails instead of losing an update. To change its version,
+can use the same mod in turn; a write racing another write during a callback
+still fails instead of losing an update. A lost race fails that call with
+`state_conflict` and leaves the mod enabled, so the next invocation reads the
+current state and proceeds. To change its version,
 register `api.on('migrate', ({from,to}) => ...)` and set the migrated value with
 `api.state.set`. Trust the updated package while disabled, then run:
 
@@ -328,8 +345,12 @@ state/session version interchange is not claimed.
 Reload stages the entire enabled set. Broken new code retains eligible previous
 code, while explicit removals and capability revocations still take effect.
 Generation checks reject stale tools. An in-flight callback uses frozen source;
-queued edits do not change it. Runtime failures disable the affected mod until
-explicit reload. `mod-status.json` is a current native status snapshot, including
+queued edits do not change it. Runtime failures other than `state_conflict`
+disable the affected mod until explicit reload. A mod that throws while
+activating at session start is disabled on its own with its source-located
+error, so one broken package never prevents the host from starting or stops the
+others; the same failure during a reload keeps the previous working code
+instead. `mod-status.json` is a current native status snapshot, including
 source hashes, registrations, and bounded source-located failures.
 
 Each evaluation uses a fresh deny-by-default Seatbelt process, an empty inherited
@@ -408,6 +429,9 @@ python3 -m benchmarks.controlled_fixture /absolute/codex /new/opaque-fixture --s
 python3 -m benchmarks.controlled_fixture /absolute/codex /new/routing-fixture --scenario direct --lead-policy task_entry --mod-node /absolute/node/bin/node --mod-profile routing
 python3 -m benchmarks.controlled_fixture /absolute/codex /new/lifecycle-fixture --scenario direct --mod-node /absolute/node/bin/node --mod-profile lifecycle
 python3 -m benchmarks.controlled_fixture /absolute/codex /new/deny-fixture --scenario direct --mod-node /absolute/node/bin/node --mod-profile deny
+python3 -m benchmarks.controlled_fixture /absolute/codex /new/preview-fixture --scenario success --lead-policy task_entry --mod-node /absolute/node/bin/node --mod-profile preview
+python3 -m benchmarks.controlled_fixture /absolute/codex /new/preview-denied --scenario direct --lead-policy task_entry --mod-node /absolute/node/bin/node --mod-profile preview-denied
+python3 -m benchmarks.controlled_fixture /absolute/codex /new/preview-broken --scenario success --lead-policy task_entry --mod-node /absolute/node/bin/node --mod-profile preview-broken
 python3 -m benchmarks.mod_terminal_fixture /absolute/codex /absolute/node/bin/node
 python3 -m benchmarks.controlled_fixture /absolute/codex /new/off-fixture --scenario omd-off --mod-node /absolute/node/bin/node
 ```

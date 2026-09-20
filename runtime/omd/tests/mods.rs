@@ -46,6 +46,18 @@ fn trust(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
     contended(|| store.enable(path, true));
 }
 
+fn activation_error(temp: &TempDir, id: &str) -> String {
+    let runtime = ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap();
+    runtime.status()["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == id)
+        .and_then(|m| m["error"].as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
 fn contended<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> T {
     for _ in 0..200 {
         match operation() {
@@ -83,10 +95,11 @@ fn mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates() {
     });
     std::thread::sleep(std::time::Duration::from_millis(200));
     assert_eq!(invoke(&mut second, "count").unwrap(), json!(4));
-    let (_, result) = racing.join().unwrap();
+    let (mut first, result) = racing.join().unwrap();
     assert!(result.unwrap_err().to_string().contains("state_conflict"));
+    assert_eq!(invoke(&mut first, "count").unwrap(), json!(5));
     let mut resumed = host(&temp);
-    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(5));
+    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(6));
 }
 
 #[test]
@@ -633,7 +646,7 @@ fn input_rewrite_requires_exclusive_replacement_while_observers_may_deny() {
         "export default api => api.on('input', () => null)",
         &["lifecycle"],
     );
-    assert!(ModHost::open(temp.path().canonicalize().unwrap().join("store")).is_err());
+    assert!(activation_error(&temp, "fixture").contains("capability_denied: input"));
 }
 
 #[test]
@@ -671,10 +684,6 @@ fn command_descriptions_tool_labels_and_lifecycle_events_register() {
             "export default api => api.tool({name:'echo',label:'x'.repeat(65),description:'Echo',parameters:{type:'object',properties:{}}}, () => null)",
             &["tools"][..],
         ),
-        (
-            "export default api => api.on('turn_start', () => null)",
-            &["commands"][..],
-        ),
     ] {
         let (temp, _, _) = fixture(source, capabilities);
         assert!(
@@ -682,6 +691,11 @@ fn command_descriptions_tool_labels_and_lifecycle_events_register() {
             "{source}"
         );
     }
+    let (temp, _, _) = fixture(
+        "export default api => api.on('turn_start', () => null)",
+        &["commands"],
+    );
+    assert!(activation_error(&temp, "fixture").contains("capability_denied"));
 }
 
 #[test]
@@ -998,11 +1012,7 @@ fn a_registered_contract_may_not_redefine_a_bundled_contract_or_skip_its_capabil
       delegation: false, child_agents: false, opposite_lead: true, escalation: true,
       checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } })"#;
     let (temp, _, _) = fixture(denied, &["state"]);
-    let error = ModHost::open(temp.path().canonicalize().unwrap().join("store"))
-        .map(|_| ())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("capability_denied"));
+    assert!(activation_error(&temp, "fixture").contains("capability_denied"));
 }
 
 #[test]
@@ -1019,4 +1029,53 @@ fn two_mods_may_not_own_the_same_workflow_contract() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("workflow_replacement_conflict: paired_review"));
+}
+
+#[test]
+fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() {
+    let (temp, store, _) = fixture(
+        "export default api => { throw new Error('ACTIVATION_SENTINEL') }",
+        &["context"],
+    );
+    let root = temp.path().canonicalize().unwrap();
+    let healthy = package(
+        &root,
+        "healthy",
+        "export default api => api.on('context', () => ({text:'hello'}))",
+        &["context"],
+    );
+    trust(&store, &healthy, &["context"]);
+    let mut runtime = host(&temp);
+    let status = runtime.status();
+    let broken = status["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "fixture")
+        .unwrap();
+    let error = broken["error"].as_str().unwrap();
+    assert!(error.contains("ACTIVATION_SENTINEL"), "{error}");
+    assert!(error.contains("index.ts:1:"), "{error}");
+    let results = runtime.event("context", Value::Null);
+    assert_eq!(results.len(), 1);
+    assert_eq!(*results[0].1.as_ref().unwrap(), json!({"text":"hello"}));
+}
+
+#[test]
+fn an_incompatible_package_names_the_host_and_package_api_versions() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let path = root.join("stale");
+    std::fs::create_dir(&path).unwrap();
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(&json!({"schema":1,"id":"stale","version":"1.0.0",
+        "api":"0.1.0-experimental.1","state_version":1,"capabilities":[]}))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(path.join("index.ts"), "export default () => {}").unwrap();
+    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
+    assert!(error.contains(MOD_API_VERSION), "{error}");
+    assert!(error.contains("0.1.0-experimental.1"), "{error}");
 }

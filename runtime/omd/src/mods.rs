@@ -120,8 +120,13 @@ pub struct ModPackage {
 
 impl ModPackage {
     fn validate(&self) -> Result<()> {
+        if self.api != MOD_API_VERSION {
+            return Err(failure(format!(
+                "incompatible_api: this host runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Update the package's mod.json api field and re-trust it.",
+                self.id, self.api
+            )));
+        }
         if self.schema != 1
-            || self.api != MOD_API_VERSION
             || !identifier(&self.id)
             || self.id.len() > 24
             || self.version.is_empty()
@@ -266,6 +271,7 @@ impl ModHost {
         if config.schema != 1 || config.mods.len() > 16 || !config.node.is_absolute() {
             return Err(failure("invalid_mod_configuration"));
         }
+        let initial = self.configuration_sha256.is_empty();
         let retained = self.loaded.len();
         self.loaded.retain(|_, loaded| {
             config.mods.iter().any(|m| {
@@ -311,7 +317,16 @@ impl ModHost {
                 registrations: Registrations::default(),
                 error: None,
             };
-            let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;
+            let reply = match Self::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)
+            {
+                Ok(reply) => reply,
+                Err(error) if initial => {
+                    loaded.error = Some(error.to_string());
+                    next.insert(loaded.package.id.clone(), loaded);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             Self::validate_registrations(&loaded.package, &reply.registrations)?;
             if reply.state != loaded.state {
                 return Err(failure("state_write_during_registration"));
@@ -586,7 +601,9 @@ impl ModHost {
             }
             Ok(reply.value)
         })();
-        if let Err(error) = &result {
+        if let Err(error) = &result
+            && !error.to_string().starts_with("state_conflict")
+        {
             loaded.error = Some(error.to_string());
         }
         result

@@ -4,8 +4,50 @@ import socket
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+API_VERSION = json.loads((ROOT / "mods/package.json").read_text())["version"]
+
+
+PREVIEW_SETTINGS = {
+    "omd_coordination": {"lead_policy": "astra", "worker_context": "focused", "evidence": ["solution.py"]},
+    "omd_workspace": {"density": "compact", "side": "right", "review_prompt": "PREVIEW_REVIEW_PROMPT"},
+}
+
+
+def install_preview(destination, manifest, node, profile):
+    lock = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
+    store = destination / "mod-store"
+    store.mkdir()
+    selections = []
+    for identifier, pinned in sorted(lock["packages"].items()):
+        source = ROOT / pinned["source"]
+        package = destination / identifier
+        package.mkdir()
+        declared = json.loads((source / "mod.json").read_text())
+        body = (source / "index.ts").read_bytes()
+        if profile == "preview-denied" and identifier == "omd_coordination":
+            declared["capabilities"] = [c for c in declared["capabilities"] if c != "recovery"]
+        if profile == "preview-broken" and identifier == "omd_workspace":
+            body = body.replace(b"export default function activate(api: ModAPI) {",
+                                b"export default function activate(api: ModAPI) {\n  throw new Error('PREVIEW_BROKEN_SENTINEL');", 1)
+        package_manifest = json.dumps(declared).encode()
+        (package / "mod.json").write_bytes(package_manifest)
+        (package / "index.ts").write_bytes(body)
+        selections.append({
+            "path": str(package),
+            "sha256": hashlib.sha256(package_manifest + b"\x00" + body).hexdigest(),
+            "enabled": True,
+            "capabilities": declared["capabilities"],
+            "settings": PREVIEW_SETTINGS[identifier],
+        })
+    (store / "mods.json").write_text(json.dumps(
+        {"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": selections}))
+    manifest["mods"] = str(store)
+
 
 def install(destination, manifest, node, profile):
+    if profile.startswith("preview"):
+        return install_preview(destination, manifest, node, profile)
     package = destination / "fixture-mod"
     package.mkdir()
     capabilities = ["context", "tools", "state"]
@@ -229,7 +271,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
             "schema": 1,
             "id": "fixture",
             "version": "1.0.0",
-            "api": "0.1.0-experimental.2",
+            "api": API_VERSION,
             "state_version": 1,
             "capabilities": capabilities,
         }
@@ -269,7 +311,53 @@ def verify_denied(destination, process, requests):
     return {"status": "denied", "requests": 0}
 
 
+def verify_preview(destination, requests, profile, scenario):
+    lock = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
+    provenance = f"omd_coordination {lock['packages']['omd_coordination']['version']}"
+    status = json.loads((destination / "evidence/mod-status.json").read_text())
+    view = json.loads((destination / "evidence/mod-view.json").read_text())
+    errors = {mod["id"]: mod["error"] for mod in status["mods"]}
+    lead = [request for request in requests if request["native_owner"] == "lead"]
+    if profile == "preview-broken":
+        assert "PREVIEW_BROKEN_SENTINEL" in (errors.get("omd_workspace") or ""), errors
+        assert "index.ts:" in errors["omd_workspace"], "the broken-mod error is not source-located"
+        assert errors.get("omd_coordination") is None, errors
+        assert any("Mod errors" == panel["title"] for panel in view["view"]["panels"]), view["view"]
+        assert any(provenance in json.dumps(request["body"]["input"]) for request in lead), \
+            "the healthy mod stopped contributing after the other one broke"
+        return
+    if profile == "preview-denied":
+        outputs = [item for request in requests for item in request["body"].get("input", [])
+                   if item.get("type") == "function_call_output" and item.get("call_id") == "preview-delegate"]
+        assert {item["output"] for item in outputs} == {"capability_denied: recovery"}, outputs
+        assert errors.get("omd_coordination") == "capability_denied: recovery", errors
+        assert errors.get("omd_workspace") is None, "an unrelated mod was disabled by the denial"
+        assert view["view"]["title"] == "Mod recovery", view["view"]
+        assert any(panel["title"] == "Mod errors" for panel in view["view"]["panels"]), view["view"]
+        return
+    assert not any(errors.values()), errors
+    assert any(provenance in json.dumps(request["body"]["input"]) for request in lead), \
+        "the coordination brief never reached the lead"
+    decisions = json.loads((destination / "mod-store/state-omd_coordination.json").read_text())["value"]
+    delegation = next((item for item in decisions if item.get("operation") == "delegate"), None)
+    assert delegation == {"operation": "delegate", "policy": "focused", "selected": ["solution.py"]}, decisions
+    if scenario == "success":
+        worker = json.dumps([request["body"] for request in requests
+                             if request["native_owner"].startswith("contributor")])
+        assert provenance in worker, "the policy provenance did not reach the worker"
+        assert "return a - b" in worker, "the declared evidence did not reach the worker"
+        assert "tracked user notes" not in worker, "evidence outside the declared policy reached the worker"
+    activity = json.loads((destination / "mod-store/state-omd_workspace.json").read_text())["value"]["activity"]
+    assert any(entry.startswith("▸ turn") for entry in activity), activity
+    assert any("ran " in entry for entry in activity), activity
+    assert view["view"]["title"] == "Oh My Diff workspace", view["view"]
+    assert view["view"]["sidebar_side"] == "right" and view["view"]["status"] == ["omd:compact"], view["view"]
+    assert [panel["title"] for panel in view["view"]["panels"]] == ["Task", "Activity"], view["view"]
+
+
 def verify(destination, requests, profile, scenario="success"):
+    if profile.startswith("preview"):
+        return verify_preview(destination, requests, profile, scenario)
     if profile == "lifecycle":
         lead = [request for request in requests if request["native_owner"] == "lead"]
         assert "MOD_INPUT_SENTINEL" in json.dumps(lead[0]["body"]["input"])

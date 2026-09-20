@@ -1,0 +1,51 @@
+{
+  "guide": {
+    "path": "mods/PREVIEW.md"
+  },
+  "mod_api": "0.1.0-experimental.3",
+  "node": "24.18.0",
+  "packages": {
+    "omd_coordination": {
+      "capabilities": [
+        "agents",
+        "commands",
+        "context",
+        "interception",
+        "lifecycle",
+        "recovery",
+        "routing",
+        "state",
+        "task",
+        "tools"
+      ],
+      "files": {
+        "index.ts": "01f876dbf13fbd1428da61dcbba1c1525f04d5835588d1f63f91f1bc377181b6",
+        "mod.json": "1c73ac9deecdbe3e369f0b480af88427c11ebb65174a03ba846b7d6135dce9ab"
+      },
+      "package_sha256": "27fa7a897a7fbca333c838a69358c839d5f9076bdc256069bcccbcf7593ef491",
+      "source": "mods/first-party/omd_coordination",
+      "version": "0.1.0-preview.1"
+    },
+    "omd_workspace": {
+      "capabilities": [
+        "terminal",
+        "commands",
+        "lifecycle",
+        "state"
+      ],
+      "files": {
+        "index.ts": "1ba5ab05e7fdcb1bbe31418b9be4fe458ef232315e1df88848e1a285a2442425",
+        "mod.json": "b92b9fac1e1d1d4b7054bb7d286026d133b45248dae1077bb3fdb795cab99275"
+      },
+      "package_sha256": "a6acd8b26e3392c612f95cd24215717b2263e81a479139be873adcbd63766fd3",
+      "source": "mods/first-party/omd_workspace",
+      "version": "0.1.0-preview.1"
+    }
+  },
+  "product": "oh-my-diff-private-preview-v1",
+  "schema": 1,
+  "types": {
+    "path": "mods/api.d.ts",
+    "sha256": "4852882f75ac29a743aaa24bb5b83c1dceefacdfa7272b073490037d6c79475a"
+  }
+}

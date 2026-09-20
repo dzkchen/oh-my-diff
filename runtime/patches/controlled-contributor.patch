@@ -2132,10 +2132,10 @@ index 0000000000000000000000000000000000000000..22b0c737dc87f6e391681973ab99b815
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfba943ac6e
+index 0000000000000000000000000000000000000000..ba9578cf0a863b61e6e50f76f83aead5accfcf29
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,2300 @@
+@@ -0,0 +1,2351 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -3098,7 +3098,7 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +        manifest.snapshot_bytes,
 +    )
 +    .map_err(error)?;
-+    let reviewer_name = lead.route.opposite();
++    let reviewer_name = host.reviewer(lead.route);
 +    let reviewer_route = host.route(reviewer_name);
 +    let review_fields = if manifest.communication.structured_worker_reports {
 +        "candidate_sha256, findings, resolved_finding_ids, and report"
@@ -3114,8 +3114,12 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +            role: &role,
 +            route: reviewer_route,
 +            prompt: format!(
-+                "Perform a {:?} review of the exact read-only candidate. Inspect correctness, regressions, scope, and relevant negative cases. Candidate SHA256: {candidate_sha256}. Stable: {}. Risk: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this changed candidate proves it fixed or no longer applicable. Do not approve or edit files.",
-+                request.cadence,
++                "{} of the exact read-only candidate. Inspect correctness, regressions, scope, and relevant negative cases. Candidate SHA256: {candidate_sha256}. Stable: {}. Risk: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this changed candidate proves it fixed or no longer applicable. Do not approve or edit files.",
++                if reviewer_name == lead.route {
++                    format!("Perform your own final self-review ({:?})", request.cadence)
++                } else {
++                    format!("Perform a {:?} review", request.cadence)
++                },
 +                request.stable,
 +                request.risk.as_deref().unwrap_or("none"),
 +                serde_json::to_string(&unresolved).map_err(error)?,
@@ -3143,7 +3147,11 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +            report.validate().is_ok() && report.status == WorkerReportStatus::Completed
 +        });
 +    if !structured_review_complete || review.candidate_sha256 != candidate_sha256 {
-+        return Err("separate reviewer did not return a complete exact-candidate review".into());
++        return Err(if reviewer_name == lead.route {
++            "the final self-review did not return a complete exact-candidate review".to_string()
++        } else {
++            "separate reviewer did not return a complete exact-candidate review".to_string()
++        });
 +    }
 +    let cycle = {
 +        let mut runtime = host
@@ -3397,7 +3405,11 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +            host,
 +            candidate_marker,
 +            codex_omd::CompletionStatus::Blocked,
-+            "shared task allowance is exhausted before independent verification".into(),
++            if host.separate_review() {
++                "shared task allowance is exhausted before independent verification".to_string()
++            } else {
++                "shared task allowance is exhausted before the final self-review".to_string()
++            },
 +            &call_hash,
 +        );
 +    }
@@ -3408,7 +3420,7 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +        manifest.snapshot_bytes,
 +    )
 +    .map_err(error)?;
-+    let verifier_name = lead.route.opposite();
++    let verifier_name = host.reviewer(lead.route);
 +    let verifier_route = host.route(verifier_name);
 +    let report_mode = if manifest.communication.structured_worker_reports {
 +        ReviewReportMode::Structured
@@ -3423,7 +3435,12 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +        .receipts
 +        .len() as u32
 +        + 1;
-+    let role = format!("completion-verifier-{attempt}");
++    let separate = verifier_name != lead.route;
++    let role = if separate {
++        format!("completion-verifier-{attempt}")
++    } else {
++        format!("completion-self-review-{attempt}")
++    };
 +    let output = run_child(
 +        lead,
 +        &parent,
@@ -3432,7 +3449,12 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +            role: &role,
 +            route: verifier_route,
 +            prompt: format!(
-+                "Independently verify completion of this exact read-only candidate. Do not rely on the implementation owner's conclusion and do not edit files. Preserve each acceptance criterion byte-for-byte and assess it once. A satisfied requirement must cite one or more evidence_sha256s from its supplied host-owned evidence. Separately challenge missing public/runtime wiring, weakened or removed tests/checks, and relevant negative cases; return exactly one assessment for each challenge kind. A passed challenge must cite inspected repository-relative paths. Use unsatisfied/finding for actionable work, blocked for a concrete external blocker, and unverified whenever evidence is unavailable or inconclusive. Candidate SHA256: {candidate_sha256}. Contract SHA256: {contract_sha256}. Objective and criteria: {}. Acceptance evidence: {}. Approved final review cycle: {}.",
++                "{} Do not edit files. Preserve each acceptance criterion byte-for-byte and assess it once. A satisfied requirement must cite one or more evidence_sha256s from its supplied host-owned evidence. Separately challenge missing public/runtime wiring, weakened or removed tests/checks, and relevant negative cases; return exactly one assessment for each challenge kind. A passed challenge must cite inspected repository-relative paths. Use unsatisfied/finding for actionable work, blocked for a concrete external blocker, and unverified whenever evidence is unavailable or inconclusive. Candidate SHA256: {candidate_sha256}. Contract SHA256: {contract_sha256}. Objective and criteria: {}. Acceptance evidence: {}. Approved final review cycle: {}.",
++                if separate {
++                    "Independently verify completion of this exact read-only candidate. Do not rely on the implementation owner's conclusion."
++                } else {
++                    "Perform your own final self-review of completion for this exact read-only candidate. No independent reviewer will check this work, so assess it strictly against the immutable contract and record unverified whenever host evidence is missing."
++                },
 +                serde_json::to_string(&manifest.checkpoint).map_err(error)?,
 +                serde_json::to_string(&checkpoint.completed_acceptance).map_err(error)?,
 +                serde_json::to_string(final_review.as_ref().expect("checked final review"))
@@ -3457,7 +3479,14 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +                host,
 +                candidate_marker,
 +                codex_omd::CompletionStatus::Unverified,
-+                format!("independent verifier unavailable: {reason}"),
++                format!(
++                    "{} unavailable: {reason}",
++                    if separate {
++                        "independent verifier"
++                    } else {
++                        "final self-review"
++                    }
++                ),
 +                &call_hash,
 +            );
 +        }
@@ -3472,7 +3501,14 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +                host,
 +                candidate_marker,
 +                codex_omd::CompletionStatus::Unverified,
-+                format!("independent verifier returned invalid evidence: {parse_error}"),
++                format!(
++                    "{} returned invalid evidence: {parse_error}",
++                    if separate {
++                        "independent verifier"
++                    } else {
++                        "final self-review"
++                    }
++                ),
 +                &call_hash,
 +            );
 +        }
@@ -3499,8 +3535,14 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +            host,
 +            candidate_marker,
 +            codex_omd::CompletionStatus::Unverified,
-+            "independent verifier output is incomplete, stale, or cites absent passing evidence"
-+                .into(),
++            format!(
++                "{} output is incomplete, stale, or cites absent passing evidence",
++                if separate {
++                    "independent verifier"
++                } else {
++                    "final self-review"
++                }
++            ),
 +            &call_hash,
 +        );
 +    }
@@ -3535,7 +3577,14 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +                host,
 +                candidate_marker,
 +                codex_omd::CompletionStatus::Unverified,
-+                format!("independent verifier evidence failed validation: {validation_error}"),
++                format!(
++                    "{} evidence failed validation: {validation_error}",
++                    if separate {
++                        "independent verifier"
++                    } else {
++                        "final self-review"
++                    }
++                ),
 +                &call_hash,
 +            );
 +        }
@@ -3565,6 +3614,7 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +    request: ContributionRequest,
 +) -> Result<Value, String> {
 +    let host = &lead.host;
++    host.authorize_contract(codex_omd::ContractOperation::Delegate)?;
 +    let manifest = &host.manifest;
 +    host.authorize()?;
 +    let manager = host
@@ -4219,6 +4269,7 @@ index 0000000000000000000000000000000000000000..96618e32ff571b96588bf41af9fa6dfb
 +    request: EscalationRequest,
 +) -> Result<Value, String> {
 +    let host = &lead.host;
++    host.authorize_contract(codex_omd::ContractOperation::Escalate)?;
 +    let manifest = &host.manifest;
 +    if !manifest
 +        .escalation
@@ -4590,10 +4641,10 @@ index 0000000000000000000000000000000000000000..58c0303de24f46d76cfe6375511ec39b
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fdbd6a0991
+index 0000000000000000000000000000000000000000..97787798359f5f85578b5fa8ce7655d9a970698c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,3208 @@
+@@ -0,0 +1,3489 @@
 +mod accounting;
 +mod execution;
 +mod mods;
@@ -4633,11 +4684,20 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +use codex_extension_api::ToolStartInput;
 +use codex_extension_api::TurnContextContributionInput;
 +use codex_extension_api::TurnItemContributor;
++use codex_omd::ActiveContract;
 +use codex_omd::ActiveGuideline;
++use codex_omd::AssuranceLabel;
 +use codex_omd::CheckpointUpdate;
 +use codex_omd::CompletionGate;
++use codex_omd::CompletionMode;
 +use codex_omd::CompletionPolicy;
++use codex_omd::ContractCatalog;
++use codex_omd::ContractChoice;
++use codex_omd::ContractOperation;
++use codex_omd::ContractRequirements;
++use codex_omd::ContractSnapshot;
 +use codex_omd::FailureClass;
++use codex_omd::FinalReview;
 +use codex_omd::GuidelineStore;
 +use codex_omd::KnowledgeMode;
 +use codex_omd::KnowledgeSession;
@@ -4659,6 +4719,7 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +use codex_omd::ReviewPolicy;
 +use codex_omd::Snapshot;
 +use codex_omd::Task;
++use codex_omd::TaskBinding;
 +use codex_omd::TaskContract;
 +use codex_omd::UnifiedReview;
 +use codex_omd::VersionMarker;
@@ -4723,6 +4784,8 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +    #[serde(default)]
 +    mod_pi_user: Option<PathBuf>,
 +    #[serde(default)]
++    workflow: WorkflowManifest,
++    #[serde(default)]
 +    review: ReviewPolicy,
 +    #[serde(default)]
 +    completion: CompletionPolicy,
@@ -4739,6 +4802,19 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +    toolchain_reads: Vec<PathBuf>,
 +    snapshot_bytes: usize,
 +    max_request_bytes: usize,
++}
++
++#[derive(Clone, Debug, Default, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct WorkflowManifest {
++    #[serde(default)]
++    user_selection: Option<PathBuf>,
++    #[serde(default)]
++    project_selection: Option<PathBuf>,
++    #[serde(default)]
++    task_selection: Option<ContractChoice>,
++    #[serde(default)]
++    confirmation: Option<String>,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -4781,6 +4857,25 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +}
 +
 +impl Capabilities {
++    fn legacy(&self) -> codex_omd::LegacyCapabilities {
++        codex_omd::LegacyCapabilities {
++            delegation: self.delegation,
++            escalation: self.escalation,
++            checkpoints: self.checkpoints,
++            unified_review: self.unified_review,
++            completion_gate: self.completion_gate,
++        }
++    }
++
++    fn apply(&mut self, requirements: &ContractRequirements) {
++        self.delegation = requirements.delegation;
++        self.escalation = requirements.escalation;
++        self.checkpoints = requirements.checkpoints;
++        self.unified_review =
++            requirements.milestone_review || requirements.final_review != FinalReview::None;
++        self.completion_gate = requirements.completion != CompletionMode::None;
++    }
++
 +    fn validate(&self) -> Result<(), String> {
 +        if self.completion_gate && (!self.unified_review || !self.checkpoints) {
 +            return Err("completion_gate requires unified_review and checkpoints".into());
@@ -5001,6 +5096,9 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +    task: Arc<Task>,
 +    accounts: Arc<Accounts>,
 +    manager: Weak<ThreadManager>,
++    requirements: ContractRequirements,
++    contract: std::sync::Mutex<ActiveContract>,
++    mod_owners: PolicyOwners,
 +    contribution_started: std::sync::atomic::AtomicBool,
 +    operation: std::sync::atomic::AtomicBool,
 +    lead_completed: std::sync::atomic::AtomicBool,
@@ -5506,6 +5604,118 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +    })
 +}
 +
++fn effective_review_policy(
++    policy: &ReviewPolicy,
++    requirements: &ContractRequirements,
++) -> ReviewPolicy {
++    let mut policy = policy.clone();
++    policy.milestone_review = requirements.milestone_review;
++    policy.final_review = requirements.final_review;
++    if !requirements.milestone_review {
++        policy.every_turn_advice = false;
++    }
++    policy
++}
++
++fn assurance_for(mode: CompletionMode) -> Result<AssuranceLabel, String> {
++    match mode {
++        CompletionMode::AdversarialSeparate => Ok(AssuranceLabel::IndependentlyVerified),
++        CompletionMode::SelfVerified => Ok(AssuranceLabel::SelfReviewed),
++        CompletionMode::None => Err("the selected contract has no completion gate".into()),
++    }
++}
++
++type PolicyOwners = BTreeMap<String, codex_omd::PolicyOwner>;
++
++fn contract_catalog(manifest: &Manifest) -> Result<(ContractCatalog, PolicyOwners), String> {
++    let mut catalog = ContractCatalog::bundled();
++    let Some(root) = &manifest.mods else {
++        return Ok((catalog, PolicyOwners::new()));
++    };
++    if root.starts_with(&manifest.repository) || !root.is_absolute() {
++        return Err("mod trust/state store must be outside the repository".into());
++    }
++    let Ok(host) = codex_omd::ModHost::open(root.clone()) else {
++        return Ok((catalog, PolicyOwners::new()));
++    };
++    for (contract, owner) in host.contracts() {
++        catalog
++            .register(contract, owner)
++            .map_err(|error| error.to_string())?;
++    }
++    Ok((catalog, host.owners().into_iter().collect()))
++}
++
++fn resolve_contract(manifest: &Manifest) -> Result<(codex_omd::Resolution, PolicyOwners), String> {
++    let (catalog, owners) = contract_catalog(manifest)?;
++    let selections = codex_omd::collect_selections(
++        &catalog,
++        Some(manifest.capabilities.legacy()),
++        manifest.workflow.user_selection.as_deref(),
++        manifest.workflow.project_selection.as_deref(),
++        manifest.workflow.task_selection.as_ref(),
++    )
++    .map_err(|error| error.to_string())?;
++    let resolution = codex_omd::resolve_selection(selections.offers, selections.floor)
++        .map_err(|error| error.to_string())?;
++    Ok((resolution, owners))
++}
++
++fn contract_runtime(
++    manifest: &Manifest,
++    resolution: codex_omd::Resolution,
++    binding: TaskBinding,
++) -> Result<ActiveContract, String> {
++    let path = manifest.evidence.join("workflow-contract.json");
++    let requested = resolution.effective.contract.clone();
++    if !path.exists() {
++        if manifest.lifecycle.explicit_resume.is_some() {
++            return Err("explicit resume is missing its selected workflow contract".into());
++        }
++        return ActiveContract::activate(
++            resolution,
++            manifest.workflow.confirmation.as_deref(),
++            binding,
++            None,
++        )
++        .map_err(|error| error.to_string());
++    }
++    if manifest.lifecycle.explicit_resume.is_none() {
++        return Err("an existing workflow contract requires explicit resume".into());
++    }
++    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
++    if bytes.len() > 262_144 {
++        return Err("persisted workflow contract exceeds limit".into());
++    }
++    let snapshot: ContractSnapshot =
++        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
++    let mut active = ActiveContract::restore(snapshot, &binding).map_err(|e| e.to_string())?;
++    if *active.contract() == requested {
++        return Ok(active);
++    }
++    let confirmation = manifest
++        .workflow
++        .confirmation
++        .as_deref()
++        .ok_or("the resumed task keeps its selected workflow contract; an explicit confirmation is required to migrate")?;
++    active
++        .migrate(
++            requested,
++            confirmation,
++            "task_start",
++            vec![
++                "candidate".into(),
++                "evidence".into(),
++                "checks".into(),
++                "workers".into(),
++                "allowance".into(),
++                "resume".into(),
++            ],
++        )
++        .map_err(|error| error.to_string())?;
++    Ok(active)
++}
++
 +fn review_runtime(manifest: &Manifest) -> Result<ReviewRuntime, String> {
 +    let path = manifest.evidence.join("review-state.json");
 +    let ledger = if path.exists() {
@@ -5559,6 +5769,7 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +    manifest: &Manifest,
 +    initial_candidate_sha256: &str,
 +    review: &ReviewRuntime,
++    mode: CompletionMode,
 +) -> Result<CompletionGate, String> {
 +    let path = manifest.evidence.join("completion-state.json");
 +    let gate = if path.exists() {
@@ -5577,15 +5788,17 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +                "explicit resume is missing the pre-implementation completion contract".into(),
 +            );
 +        }
-+        CompletionGate::new(
++        CompletionGate::new_for(
 +            manifest.completion.clone(),
 +            manifest.checkpoint.clone(),
 +            initial_candidate_sha256.into(),
++            mode,
 +        )
 +        .map_err(|error| error.to_string())?
 +    };
 +    let snapshot = gate.snapshot();
-+    if snapshot.policy != manifest.completion
++    if snapshot.assurance != assurance_for(mode)?
++        || snapshot.policy != manifest.completion
 +        || snapshot.contract != manifest.checkpoint
 +        || snapshot.contract_sha256
 +            != acceptance_contract_sha256(&manifest.checkpoint)
@@ -5681,8 +5894,18 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +    if bytes.len() > 65_536 {
 +        return Err("controlled manifest exceeds limit".into());
 +    }
-+    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
++    let mut manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
 +    manifest.capabilities.validate()?;
++    let (resolution, mod_owners) = resolve_contract(&manifest)?;
++    manifest
++        .capabilities
++        .apply(&resolution.effective.contract.requirements);
++    manifest.capabilities.validate()?;
++    manifest.review = effective_review_policy(
++        &manifest.review,
++        &resolution.effective.contract.requirements,
++    );
++    let manifest = manifest;
 +    manifest.review.validate().map_err(|e| e.to_string())?;
 +    manifest.completion.validate().map_err(|e| e.to_string())?;
 +    if (!manifest.capabilities.guidelines && manifest.guideline_store.is_some())
@@ -5877,8 +6100,28 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +    );
 +    codex_api::request_observer::install_response_observer(accounts.clone())
 +        .map_err(str::to_owned)?;
++    let requirements = resolution.effective.contract.requirements;
++    let contract = contract_runtime(
++        &manifest,
++        resolution,
++        TaskBinding {
++            acceptance_contract_sha256: acceptance_contract_sha256(&manifest.checkpoint)
++                .map_err(|error| error.to_string())?,
++            initial_candidate_sha256: initial_candidate_sha256.clone(),
++            repository_identity: manifest.repository_identity.clone(),
++        },
++    )?;
++    let completion_mode = match requirements.completion {
++        CompletionMode::None => CompletionMode::AdversarialSeparate,
++        selected => selected,
++    };
 +    let review = review_runtime(&manifest)?;
-+    let completion = completion_runtime(&manifest, &initial_candidate_sha256, &review)?;
++    let completion = completion_runtime(
++        &manifest,
++        &initial_candidate_sha256,
++        &review,
++        completion_mode,
++    )?;
 +    let effective_settings = json!({
 +        "schema": 1,
 +        "mode": "enabled",
@@ -5887,6 +6130,7 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +        "direct_single_agent": !manifest.capabilities.delegation,
 +        "selected_capabilities": manifest.capabilities.enabled_names(&manifest.communication),
 +        "capabilities": manifest.capabilities,
++        "workflow": contract.view().map_err(|error| error.to_string())?,
 +        "communication": manifest.communication,
 +        "active": {
 +            "guideline": active_guideline.as_ref().map(|guideline| json!({
@@ -5919,6 +6163,9 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +        task,
 +        accounts,
 +        manager,
++        requirements,
++        contract: std::sync::Mutex::new(contract),
++        mod_owners,
 +        contribution_started: std::sync::atomic::AtomicBool::new(false),
 +        operation: std::sync::atomic::AtomicBool::new(false),
 +        lead_completed: std::sync::atomic::AtomicBool::new(false),
@@ -5932,6 +6179,7 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +    });
 +    host.persist_effective_settings()?;
 +    host.persist_cost_capture()?;
++    host.persist_contract()?;
 +    if host.manifest.capabilities.completion_gate {
 +        host.persist_completion()?;
 +    }
@@ -6265,6 +6513,42 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +        Ok(())
 +    }
 +
++    fn persist_contract(&self) -> Result<(), String> {
++        let snapshot = self
++            .contract
++            .lock()
++            .map_err(|_| "workflow contract lock poisoned")?
++            .snapshot();
++        self.persist_runtime_file(
++            "workflow-contract.json",
++            &serde_json::to_value(&snapshot).map_err(|error| error.to_string())?,
++        )
++    }
++
++    fn authorize_contract(&self, operation: ContractOperation) -> Result<(), String> {
++        let denial = self
++            .contract
++            .lock()
++            .map_err(|_| "workflow contract lock poisoned")?
++            .authorize(operation);
++        if denial.is_err() {
++            let _ = self.persist_contract();
++        }
++        denial
++    }
++
++    fn separate_review(&self) -> bool {
++        self.requirements.final_review == FinalReview::Separate
++    }
++
++    fn reviewer(&self, lead: LeadName) -> LeadName {
++        if self.separate_review() {
++            lead.opposite()
++        } else {
++            lead
++        }
++    }
++
 +    fn persist_completion_or_restore(
 +        &self,
 +        prior: codex_omd::CompletionSnapshot,
@@ -6429,7 +6713,17 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +                        .map(|state| state.workspace_sha256)
 +                        .unwrap_or_else(|| "unavailable".into());
 +                    let prompt = format!(
-+                        "Use the single host-owned omd_review system for stable milestones, explicit risk-triggered advice, and final review. Findings are candidate-bound and reconciled across cycles; repairs are limited to configured scope and count. Final review runs executable checks and uses the separately configured opposite lead before completion or integration. Every-turn advice is {} and remains independent of the required final review. Current candidate SHA256: {current_candidate}. Current review cycles: {}; unresolved findings: {}; repairs: {}/{}.",
++                        "Use the single host-owned omd_review system for {}. Findings are candidate-bound and reconciled across cycles; repairs are limited to configured scope and count. Final review runs executable checks and {} before completion or integration. Every-turn advice is {} and remains independent of the required final review. Current candidate SHA256: {current_candidate}. Current review cycles: {}; unresolved findings: {}; repairs: {}/{}.",
++                        if snapshot.policy.milestone_review {
++                            "stable milestones, explicit risk-triggered advice, and final review"
++                        } else {
++                            "final review only; milestone and risk-triggered cadences are denied by the selected workflow contract"
++                        },
++                        if self.separate_review() {
++                            "uses the separately configured opposite lead"
++                        } else {
++                            "uses your own final self-review, because the selected workflow contract authorizes no second party; no independent reviewer will check this work"
++                        },
 +                        if snapshot.policy.every_turn_advice {
 +                            "enabled"
 +                        } else {
@@ -6461,8 +6755,13 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +                        .unwrap_or_else(|| "not_run".into());
 +                    fragments.push(PromptFragment::developer_capability(
 +                        format!(
-+                            "The immutable pre-implementation acceptance contract SHA256 is {}. Before reporting completion, use omd_complete on the exact final candidate after its final unified review and evidence-backed checkpoint. A separate read-only verifier must assess every criterion and explicitly challenge missing wiring, test weakening, and relevant negative cases. Unavailable evidence is not success. Continue actionable unfinished work while allowance remains; otherwise report blocked or unverified. Current candidate SHA256: {current_candidate}. Completion attempts: {}/{}; latest status: {latest}.",
++                            "The immutable pre-implementation acceptance contract SHA256 is {}. Before reporting completion, use omd_complete on the exact final candidate after its final unified review and evidence-backed checkpoint. {} Unavailable evidence is not success. Continue actionable unfinished work while allowance remains; otherwise report blocked or unverified. Current candidate SHA256: {current_candidate}. Completion attempts: {}/{}; latest status: {latest}.",
 +                            snapshot.contract_sha256,
++                            if self.separate_review() {
++                                "A separate read-only verifier must assess every criterion and explicitly challenge missing wiring, test weakening, and relevant negative cases."
++                            } else {
++                                "You verify your own completion in a read-only worktree, because the selected workflow contract authorizes no second party. Assess every criterion and explicitly challenge missing wiring, test weakening, and relevant negative cases; the receipt is labelled self-reviewed and may never claim independent verification."
++                            },
 +                            snapshot.receipts.len(),
 +                            snapshot.policy.max_attempts,
 +                        ),
@@ -6575,6 +6874,21 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +}
 +
 +impl ToolLifecycleContributor for Extension {
++    fn intercept_tool<'a>(
++        &'a self,
++        input: ToolStartInput<'a>,
++    ) -> ExtensionFuture<'a, Result<Option<(ToolName, codex_tools::ToolPayload)>, String>> {
++        Box::pin(async move {
++            if input.thread_store.get::<Lead>().is_none()
++                || !input.tool_name.to_string().ends_with("spawn_agent")
++            {
++                return Ok(None);
++            }
++            self.authorize_contract(ContractOperation::SpawnChildAgent)?;
++            Ok(None)
++        })
++    }
++
 +    fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
 +        Box::pin(async move {
 +            let Some(lead) = input.thread_store.get::<Lead>() else {
@@ -6745,8 +7059,14 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +                }
 +                _ => ("lead".into(), String::new(), 0),
 +            };
-+            if owner != "lead"
-+                && self
++            if owner != "lead" {
++                if self
++                    .authorize_contract(ContractOperation::SpawnChildAgent)
++                    .is_err()
++                {
++                    return;
++                }
++                if self
 +                    .task
 +                    .start_worker(
 +                        owner.clone(),
@@ -6755,8 +7075,9 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +                        self.manifest.worker_limits.clone(),
 +                    )
 +                    .is_err()
-+            {
-+                return;
++                {
++                    return;
++                }
 +            }
 +            if self.enroll(thread, &owner, route).is_ok() {
 +                input.thread_store.insert(Lead {
@@ -6925,9 +7246,20 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +                .task
 +                .checkpoint()
 +                .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
++            let contract = self.0.host.contract.lock().map_err(|_| {
++                FunctionCallError::RespondToModel("workflow contract lock poisoned".into())
++            })?;
 +            Ok(Box::new(JsonToolOutput::new(json!({
 +                "schema": 1,
 +                "effective_settings": self.0.host.effective_settings,
++                "workflow": {
++                    "contract": contract.contract().name(),
++                    "assurance": contract.assurance().label(),
++                    "assurance_description": contract.assurance().description(),
++                    "requirements": contract.requirements(),
++                    "denied": contract.denied(),
++                    "restrictions": contract.restrictions(),
++                },
 +                "checkpoint": checkpoint,
 +                "task_cost": cost,
 +            }))) as Box<dyn ToolOutput>)
@@ -7804,10 +8136,10 @@ index 0000000000000000000000000000000000000000..253403d9c45219fa2c01a82d481711fd
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88c31f672f5dabf6fba7325646d890144e939436
+index 0000000000000000000000000000000000000000..c4881e6c080afd2bf62b17492c1b5dbfcafc81fa
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,500 @@
+@@ -0,0 +1,501 @@
 +mod agents;
 +mod operations;
 +mod policy;
@@ -7980,6 +8312,7 @@ index 0000000000000000000000000000000000000000..88c31f672f5dabf6fba7325646d89014
 +            if !errors.is_empty() {
 +                view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
 +                view.panels.push(codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
++                supplier = None;
 +            }
 +            views.base(&owner, view, supplier);
 +            if let Some(error) = status["reload_error"].as_str() {
@@ -8310,10 +8643,10 @@ index 0000000000000000000000000000000000000000..88c31f672f5dabf6fba7325646d89014
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2adb65570cfd39ea0144d1e9011a1260ed27c184
+index 0000000000000000000000000000000000000000..aec9e21c12d957d93c10db8ab4878943aad205f2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,478 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -8603,6 +8936,7 @@ index 0000000000000000000000000000000000000000..2adb65570cfd39ea0144d1e9011a1260
 +        if !host.manifest.capabilities.delegation {
 +            return Err("native_delegation_disabled".into());
 +        }
++        host.authorize_contract(codex_omd::ContractOperation::SpawnChildAgent)?;
 +        host.authorize()?;
 +        let mut records = self.records.lock().await;
 +        if records.len() >= 16 {
@@ -8793,10 +9127,10 @@ index 0000000000000000000000000000000000000000..2adb65570cfd39ea0144d1e9011a1260
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3050263ebd5b4ff40b932b8dc947a9e421d469f5
+index 0000000000000000000000000000000000000000..8aaa5db0a05726f2958357c652733f970ddad47c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,118 @@
 +use super::*;
 +use codex_omd::ModHostCall;
 +use std::path::Path;
@@ -8853,6 +9187,18 @@ index 0000000000000000000000000000000000000000..3050263ebd5b4ff40b932b8dc947a9e4
 +            }
 +            Ok(expanded)
 +        }
++        "workflow.status" => Ok(host.contract.lock().map_err(|_| "workflow contract lock poisoned")?.view().map_err(|e| e.to_string())?),
++        "workflow.restrict" => {
++            let owner = host.mod_owners.get(id).cloned().ok_or("unknown_policy_owner")?;
++            let operations: Vec<codex_omd::ContractOperation> = serde_json::from_value(request.arguments["operations"].clone()).map_err(|e| e.to_string())?;
++            let reason = request.arguments["reason"].as_str().ok_or("invalid_restriction_reason")?;
++            if request.arguments.as_object().is_none_or(|object| object.keys().any(|key| key != "operations" && key != "reason")) {
++                return Err("invalid_restriction_arguments".into());
++            }
++            let restrictions = host.contract.lock().map_err(|_| "workflow contract lock poisoned")?.restrict(operations, owner, reason.to_string()).map_err(|e| e.to_string())?;
++            host.persist_contract()?;
++            Ok(json!({"restrictions": restrictions}))
++        }
 +        "task.status" => Ok(json!({"settings":host.effective_settings,"checkpoint":host.task.checkpoint().map_err(|e| e.to_string())?,"cost":host.task.cost_capture().map_err(|e| e.to_string())?})),
 +        "routes.list" => Ok(json!([LeadName::Sol, LeadName::Astra].map(|name| {
 +            let route = host.route(name);
@@ -8866,6 +9212,14 @@ index 0000000000000000000000000000000000000000..3050263ebd5b4ff40b932b8dc947a9e4
 +        }
 +        "review.run" | "review.complete" | "delegation.contribute" | "recovery.escalate" => {
 +            let lead = Arc::new(lead.clone());
++            let final_cadence = request.arguments["cadence"] == "final";
++            host.authorize_contract(match request.operation.as_str() {
++                "review.run" if final_cadence => codex_omd::ContractOperation::FinalReview,
++                "review.run" => codex_omd::ContractOperation::MilestoneReview,
++                "review.complete" => codex_omd::ContractOperation::Completion,
++                "delegation.contribute" => codex_omd::ContractOperation::Delegate,
++                _ => codex_omd::ContractOperation::Escalate,
++            })?;
 +            let tool: Box<dyn for<'a> ToolExecutor<ToolCall<'a>>> = match request.operation.as_str() {
 +                "review.run" if host.manifest.capabilities.unified_review => Box::new(ReviewTool(lead)),
 +                "review.complete" if host.manifest.capabilities.completion_gate => Box::new(CompletionTool(lead)),
@@ -12617,6 +12971,246 @@ index 0000000000000000000000000000000000000000..2a678e971dfa741cd87e1ed4a6eecfc5
 +        })
 +    }
 +}
+diff --git a/codex-rs/omd/src/bin/omd-contract.rs b/codex-rs/omd/src/bin/omd-contract.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..234f37c257f2b5e3436415ac3c67f579d2fcaff9
+--- /dev/null
++++ b/codex-rs/omd/src/bin/omd-contract.rs
+@@ -0,0 +1,234 @@
++use codex_omd::AssuranceLabel;
++use codex_omd::ContractCatalog;
++use codex_omd::ContractChoice;
++use codex_omd::SelectionFile;
++use codex_omd::SelectionSource;
++use codex_omd::WorkflowContract;
++use codex_omd::collect_selections;
++use codex_omd::confirmation_token;
++use codex_omd::read_selection;
++use codex_omd::resolve_selection;
++use codex_omd::write_selection;
++use serde_json::Value;
++use serde_json::json;
++use std::io;
++use std::path::Path;
++use std::path::PathBuf;
++
++fn usage() -> io::Error {
++    io::Error::other(
++        "usage: omd-contract list | status USER_SELECTION PROJECT_SELECTION [ID@VERSION] | plan USER_SELECTION PROJECT_SELECTION ID@VERSION | select USER_SELECTION ID@VERSION [CONFIRMATION] | require PROJECT_SELECTION ASSURANCE | clear SELECTION",
++    )
++}
++
++fn optional(path: &str) -> Option<PathBuf> {
++    (!path.is_empty() && path != "-").then(|| PathBuf::from(path))
++}
++
++fn assurance(value: &str) -> io::Result<AssuranceLabel> {
++    serde_json::from_value(json!(value)).map_err(|_| {
++        io::Error::other(
++            "expected unreviewed, self_reviewed, independently_reviewed, or independently_verified",
++        )
++    })
++}
++
++fn resolve(
++    user: Option<&Path>,
++    project: Option<&Path>,
++    task: Option<&ContractChoice>,
++) -> io::Result<Value> {
++    let catalog = ContractCatalog::bundled();
++    let selections = collect_selections(&catalog, None, user, project, task)?;
++    let confirmation = selections.confirmation.clone();
++    match resolve_selection(selections.offers, selections.floor) {
++        Ok(resolution) => {
++            let satisfied =
++                !resolution.requires_confirmation || resolution.confirmation_token == confirmation;
++            Ok(json!({
++                "schema": 1,
++                "effective": resolution.effective.contract.summary()?,
++                "requirements": resolution.effective.contract.requirements,
++                "source": resolution.effective.source,
++                "owner": resolution.effective.owner,
++                "precedence": resolution.considered,
++                "floor": resolution.floor,
++                "weakens_default": resolution.weakens_default,
++                "requires_confirmation": resolution.requires_confirmation,
++                "confirmation_recorded": satisfied,
++                "activates": satisfied,
++                "note": if satisfied {
++                    "this contract activates for the next task"
++                } else {
++                    "recorded selection is weaker than the bundled default and is not confirmed; the prior contract is retained"
++                },
++            }))
++        }
++        Err(conflict) => Ok(json!({
++            "schema": 1,
++            "activates": false,
++            "conflict": conflict.to_string(),
++            "retained": WorkflowContract::bundled_default().summary()?,
++            "note": "resolve the conflict explicitly; no contract is selected and nothing is downgraded",
++        })),
++    }
++}
++
++fn plan(user: Option<&Path>, project: Option<&Path>, choice: &ContractChoice) -> io::Result<Value> {
++    let catalog = ContractCatalog::bundled();
++    let (next, owner) = catalog.get(choice)?;
++    let current = collect_selections(&catalog, None, user, project, None)
++        .and_then(|selections| resolve_selection(selections.offers, selections.floor))
++        .map(|resolution| resolution.effective.contract)
++        .unwrap_or_else(|_| WorkflowContract::bundled_default());
++    let before = current.summary()?;
++    let after = next.summary()?;
++    let weakens = after.assurance < before.assurance;
++    Ok(json!({
++        "schema": 1,
++        "before": before,
++        "before_requirements": current.requirements,
++        "after": after,
++        "after_requirements": next.requirements,
++        "owner": owner,
++        "weakens": weakens,
++        "changes": changes(&current, &next),
++        "confirmation": weakens.then(|| confirmation_token(&before, &after)),
++        "note": if weakens {
++            "this selection reduces assurance; pass the confirmation to omd-contract select"
++        } else {
++            "this selection does not reduce assurance"
++        },
++    }))
++}
++
++fn changes(before: &WorkflowContract, after: &WorkflowContract) -> Vec<String> {
++    let (old, new) = (before.requirements, after.requirements);
++    let mut changes = Vec::new();
++    for (label, was, now) in [
++        ("delegation", old.delegation, new.delegation),
++        ("child agents", old.child_agents, new.child_agents),
++        ("opposite-lead calls", old.opposite_lead, new.opposite_lead),
++        ("escalation", old.escalation, new.escalation),
++        ("checkpoints", old.checkpoints, new.checkpoints),
++        (
++            "milestone review",
++            old.milestone_review,
++            new.milestone_review,
++        ),
++    ] {
++        if was != now {
++            changes.push(format!(
++                "{label}: {} -> {}",
++                if was { "allowed" } else { "denied" },
++                if now { "allowed" } else { "denied" }
++            ));
++        }
++    }
++    if old.final_review != new.final_review {
++        changes.push(format!(
++            "final review: {:?} -> {:?}",
++            old.final_review, new.final_review
++        ));
++    }
++    if old.completion != new.completion {
++        changes.push(format!(
++            "completion: {:?} -> {:?}",
++            old.completion, new.completion
++        ));
++    }
++    if before.assurance() != after.assurance() {
++        changes.push(format!(
++            "assurance: {} -> {}",
++            before.assurance().label(),
++            after.assurance().label()
++        ));
++    }
++    changes
++}
++
++fn run(args: &[String]) -> io::Result<Value> {
++    match args {
++        [command] if command == "list" => ContractCatalog::bundled().list(),
++        [command, user, project] if command == "status" => resolve(
++            optional(user).as_deref(),
++            optional(project).as_deref(),
++            None,
++        ),
++        [command, user, project, choice] if command == "status" => resolve(
++            optional(user).as_deref(),
++            optional(project).as_deref(),
++            Some(&ContractChoice::parse(choice)?),
++        ),
++        [command, user, project, choice] if command == "plan" => plan(
++            optional(user).as_deref(),
++            optional(project).as_deref(),
++            &ContractChoice::parse(choice)?,
++        ),
++        [command, user, choice] | [command, user, choice, _] if command == "select" => {
++            let confirmation = match args {
++                [_, _, _, token] => Some(token.clone()),
++                _ => None,
++            };
++            let path = PathBuf::from(user);
++            let choice = ContractChoice::parse(choice)?;
++            let catalog = ContractCatalog::bundled();
++            let (next, _) = catalog.get(&choice)?;
++            let existing = path
++                .exists()
++                .then(|| read_selection(&path, SelectionSource::UserDefault))
++                .transpose()?;
++            let selection = SelectionFile {
++                schema: 1,
++                contract: Some(choice.clone()),
++                minimum_assurance: None,
++                confirmation: confirmation.clone(),
++            };
++            write_selection(&path, &selection, SelectionSource::UserDefault)?;
++            Ok(json!({
++                "schema": 1,
++                "selected": next.summary()?,
++                "previous": existing.map(|(file, _)| file.contract).unwrap_or_default(),
++                "path": path,
++                "confirmation_recorded": confirmation.is_some(),
++                "note": "selection applies to the next task; run omd-contract status to see whether it activates",
++            }))
++        }
++        [command, project, minimum] if command == "require" => {
++            let path = PathBuf::from(project);
++            let selection = SelectionFile {
++                schema: 1,
++                contract: None,
++                minimum_assurance: Some(assurance(minimum)?),
++                confirmation: None,
++            };
++            write_selection(&path, &selection, SelectionSource::ProjectRecommendation)?;
++            Ok(json!({
++                "schema": 1,
++                "minimum_assurance": selection.minimum_assurance,
++                "path": path,
++                "note": "a weaker selection now conflicts visibly and fails closed",
++            }))
++        }
++        [command, path] if command == "clear" => {
++            std::fs::remove_file(path)?;
++            Ok(
++                json!({"schema": 1, "cleared": path, "note": "the bundled default applies unless another selection remains"}),
++            )
++        }
++        _ => Err(usage()),
++    }
++}
++
++fn main() {
++    match run(&std::env::args().skip(1).collect::<Vec<_>>()) {
++        Ok(value) => println!(
++            "{}",
++            serde_json::to_string_pretty(&value).unwrap_or_default()
++        ),
++        Err(error) => {
++            eprintln!("{error}");
++            std::process::exit(1);
++        }
++    }
++}
 diff --git a/codex-rs/omd/src/bin/omd-graph.rs b/codex-rs/omd/src/bin/omd-graph.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..83534dd77d69cc82e592ca5e6a365421f4cadcf4
@@ -13751,11 +14345,13 @@ index 0000000000000000000000000000000000000000..de74f1086d7a228166bd72a04dfd9233
 +}
 diff --git a/codex-rs/omd/src/completion.rs b/codex-rs/omd/src/completion.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12eebee40121
+index 0000000000000000000000000000000000000000..970adebcde353aaa22cbbdb03e16485cbd550221
 --- /dev/null
 +++ b/codex-rs/omd/src/completion.rs
-@@ -0,0 +1,694 @@
+@@ -0,0 +1,755 @@
 +use crate::AcceptanceEvidence;
++use crate::AssuranceLabel;
++use crate::CompletionMode;
 +use crate::ReviewCadence;
 +use crate::ReviewCycle;
 +use crate::TaskContract;
@@ -13894,6 +14490,10 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +pub struct CompletionReceipt {
 +    pub schema: u32,
 +    pub attempt: u32,
++    #[serde(default = "independently_verified")]
++    pub assurance: AssuranceLabel,
++    #[serde(default = "yes")]
++    pub independent_review: bool,
 +    pub contract_sha256: String,
 +    pub initial_candidate_sha256: String,
 +    pub candidate: VersionMarker,
@@ -13910,6 +14510,8 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 +pub struct CompletionSnapshot {
 +    pub schema: u32,
++    #[serde(default = "independently_verified")]
++    pub assurance: AssuranceLabel,
 +    pub policy: CompletionPolicy,
 +    pub contract: TaskContract,
 +    pub contract_sha256: String,
@@ -13928,6 +14530,20 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +        contract: TaskContract,
 +        initial_candidate_sha256: String,
 +    ) -> io::Result<Self> {
++        Self::new_for(
++            policy,
++            contract,
++            initial_candidate_sha256,
++            CompletionMode::AdversarialSeparate,
++        )
++    }
++
++    pub fn new_for(
++        policy: CompletionPolicy,
++        contract: TaskContract,
++        initial_candidate_sha256: String,
++        mode: CompletionMode,
++    ) -> io::Result<Self> {
 +        policy.validate()?;
 +        contract.validate()?;
 +        validate_short_contract(&policy, &contract)?;
@@ -13936,6 +14552,7 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +        Ok(Self {
 +            snapshot: CompletionSnapshot {
 +                schema: 1,
++                assurance: assurance_for(mode)?,
 +                policy,
 +                contract,
 +                contract_sha256,
@@ -13952,6 +14569,10 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +        validate_short_contract(&snapshot.policy, &snapshot.contract)?;
 +        validate_sha256(&snapshot.initial_candidate_sha256)?;
 +        if snapshot.schema != 1
++            || !matches!(
++                snapshot.assurance,
++                AssuranceLabel::IndependentlyVerified | AssuranceLabel::SelfReviewed
++            )
 +            || snapshot.contract_sha256 != acceptance_contract_sha256(&snapshot.contract)?
 +            || snapshot.receipts.len() > snapshot.policy.max_attempts as usize
 +            || snapshot
@@ -14023,6 +14644,8 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +        let receipt = CompletionReceipt {
 +            schema: 1,
 +            attempt: self.snapshot.receipts.len() as u32 + 1,
++            assurance: self.snapshot.assurance,
++            independent_review: submission.separate_verifier,
 +            contract_sha256: self.snapshot.contract_sha256.clone(),
 +            initial_candidate_sha256: self.snapshot.initial_candidate_sha256.clone(),
 +            candidate: submission.candidate,
@@ -14091,6 +14714,8 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +        let receipt = CompletionReceipt {
 +            schema: 1,
 +            attempt: self.snapshot.receipts.len() as u32 + 1,
++            assurance: self.snapshot.assurance,
++            independent_review: false,
 +            contract_sha256: self.snapshot.contract_sha256.clone(),
 +            initial_candidate_sha256: self.snapshot.initial_candidate_sha256.clone(),
 +            candidate,
@@ -14112,6 +14737,24 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +    }
 +}
 +
++fn independently_verified() -> AssuranceLabel {
++    AssuranceLabel::IndependentlyVerified
++}
++
++fn yes() -> bool {
++    true
++}
++
++fn assurance_for(mode: CompletionMode) -> io::Result<AssuranceLabel> {
++    match mode {
++        CompletionMode::AdversarialSeparate => Ok(AssuranceLabel::IndependentlyVerified),
++        CompletionMode::SelfVerified => Ok(AssuranceLabel::SelfReviewed),
++        CompletionMode::None => Err(invalid(
++            "a completion gate requires an adversarial or self-verified contract",
++        )),
++    }
++}
++
 +pub fn acceptance_contract_sha256(contract: &TaskContract) -> io::Result<String> {
 +    contract.validate()?;
 +    let bytes = serde_json::to_vec(contract).map_err(io::Error::other)?;
@@ -14123,22 +14766,25 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +    submission: &CompletionSubmission,
 +) -> io::Result<()> {
 +    submission.candidate.validate()?;
++    let independent = snapshot.assurance.claims_independent_verification();
 +    if submission.contract_sha256 != snapshot.contract_sha256
 +        || submission.verifier.trim().is_empty()
 +        || submission.verifier.len() > 128
-+        || !submission.separate_verifier
++        || submission.separate_verifier != independent
 +        || submission.final_review.cadence != ReviewCadence::Final
 +        || !submission.final_review.final_approved
-+        || !submission.final_review.separate_reviewer
++        || submission.final_review.separate_reviewer != independent
 +        || submission.final_review.candidate.sha256 != submission.candidate.sha256
 +        || submission.final_review.checks.is_empty()
 +        || submission.final_review.checks.iter().any(|marker| {
 +            marker.validate().is_err() || marker.sha256 != submission.candidate.sha256
 +        })
 +    {
-+        return Err(invalid(
-+            "completion requires the immutable contract and exact approved final review",
-+        ));
++        return Err(invalid(if independent {
++            "completion requires the immutable contract and exact separately approved final review"
++        } else {
++            "self-verified completion requires the immutable contract and the lead's own exact approved final review"
++        }));
 +    }
 +    let criteria = snapshot
 +        .contract
@@ -14299,6 +14945,15 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +fn validate_receipt(snapshot: &CompletionSnapshot, receipt: &CompletionReceipt) -> io::Result<()> {
 +    receipt.candidate.validate()?;
 +    let criteria = &snapshot.contract.acceptance_criteria;
++    let independent = snapshot.assurance.claims_independent_verification();
++    if receipt.assurance != snapshot.assurance
++        || receipt.independent_review != (receipt.separate_verifier && independent)
++        || (!independent && receipt.assurance.independent())
++    {
++        return Err(invalid(
++            "completion receipt may not claim assurance the selected contract did not provide",
++        ));
++    }
 +    if receipt.schema != 1
 +        || receipt.contract_sha256 != snapshot.contract_sha256
 +        || receipt.initial_candidate_sha256 != snapshot.initial_candidate_sha256
@@ -14349,7 +15004,7 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +                .verifier
 +                .as_ref()
 +                .is_none_or(|value| value.trim().is_empty())
-+                || !receipt.separate_verifier
++                || receipt.separate_verifier != independent
 +                || receipt.final_review_cycle.is_none()
 +                || receipt.reason.is_some()
 +                || receipt.requirements.iter().any(|entry| {
@@ -14375,7 +15030,7 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +            .verifier
 +            .as_ref()
 +            .is_none_or(|value| value.trim().is_empty())
-+            || !receipt.separate_verifier
++            || receipt.separate_verifier != independent
 +            || receipt.final_review_cycle.is_none()
 +            || receipt.status
 +                != completion_status(
@@ -14451,10 +15106,10 @@ index 0000000000000000000000000000000000000000..7951c647cb442dbaebcab8bb9c7d12ee
 +mod tests;
 diff --git a/codex-rs/omd/src/completion_tests.rs b/codex-rs/omd/src/completion_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1009af302a62f105016a2f24ec2c75fdc823c28d
+index 0000000000000000000000000000000000000000..d71ecfade0794b2b42d8aea25e0a0060e17c36bb
 --- /dev/null
 +++ b/codex-rs/omd/src/completion_tests.rs
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,359 @@
 +use super::*;
 +
 +fn sha(value: char) -> String {
@@ -14722,6 +15377,2451 @@ index 0000000000000000000000000000000000000000..1009af302a62f105016a2f24ec2c75fd
 +    let mut too_long = contract();
 +    too_long.acceptance_criteria[0] = "x".repeat(513);
 +    assert!(CompletionGate::new(CompletionPolicy::default(), too_long, sha('0')).is_err());
++}
++
++fn solo_gate() -> CompletionGate {
++    CompletionGate::new_for(
++        CompletionPolicy::default(),
++        contract(),
++        sha('0'),
++        CompletionMode::SelfVerified,
++    )
++    .unwrap()
++}
++
++fn solo_submission(candidate: char) -> CompletionSubmission {
++    let mut submission = submission(candidate);
++    submission.verifier = "sol".into();
++    submission.separate_verifier = false;
++    submission.final_review.reviewer = "sol".into();
++    submission.final_review.separate_reviewer = false;
++    submission
++}
++
++#[test]
++fn self_verified_completion_never_claims_independent_verification() {
++    let mut gate = solo_gate();
++    assert_eq!(gate.snapshot().assurance, AssuranceLabel::SelfReviewed);
++    let receipt = gate.submit(solo_submission('a')).unwrap();
++    assert_eq!(receipt.status, CompletionStatus::Completed);
++    assert_eq!(receipt.assurance, AssuranceLabel::SelfReviewed);
++    assert!(!receipt.independent_review);
++    assert!(!receipt.separate_verifier);
++    assert!(!receipt.assurance.claims_independent_verification());
++    assert_eq!(receipt.assurance.label(), "self-reviewed");
++    assert_eq!(gate.snapshot().approved_candidate_sha256, Some(sha('a')));
++}
++
++#[test]
++fn a_solo_contract_rejects_a_borrowed_independent_review() {
++    let mut gate = solo_gate();
++    assert!(gate.submit(submission('a')).is_err());
++    let mut borrowed = solo_submission('a');
++    borrowed.separate_verifier = true;
++    assert!(gate.submit(borrowed).is_err());
++    let mut borrowed_review = solo_submission('a');
++    borrowed_review.final_review.separate_reviewer = true;
++    assert!(gate.submit(borrowed_review).is_err());
++}
++
++#[test]
++fn a_reviewed_contract_still_requires_independent_verification() {
++    let mut gate = CompletionGate::new(CompletionPolicy::default(), contract(), sha('0')).unwrap();
++    assert!(gate.submit(solo_submission('a')).is_err());
++    assert_eq!(
++        gate.snapshot().assurance,
++        AssuranceLabel::IndependentlyVerified
++    );
++}
++
++#[test]
++fn a_self_reviewed_receipt_cannot_be_relabelled_on_disk() {
++    let mut gate = solo_gate();
++    gate.submit(solo_submission('a')).unwrap();
++    let mut snapshot = gate.snapshot();
++    snapshot.assurance = AssuranceLabel::IndependentlyVerified;
++    assert!(
++        CompletionGate::restore(snapshot.clone())
++            .map(|_| ())
++            .unwrap_err()
++            .to_string()
++            .contains("invalid or contract-weakened")
++    );
++    let mut promoted = gate.snapshot();
++    promoted.receipts[0].assurance = AssuranceLabel::IndependentlyVerified;
++    promoted.receipts[0].independent_review = true;
++    assert!(CompletionGate::restore(promoted).is_err());
++}
++
++#[test]
++fn an_unavailable_self_verified_receipt_stays_unverified() {
++    let mut gate = solo_gate();
++    let receipt = gate
++        .record_unavailable(
++            marker("candidate", 'a', 'a'),
++            &acceptance_contract_sha256(&contract()).unwrap(),
++            CompletionStatus::Unverified,
++            true,
++            "host evidence is unavailable for this candidate".into(),
++        )
++        .unwrap();
++    assert_eq!(receipt.assurance, AssuranceLabel::SelfReviewed);
++    assert!(!receipt.independent_review);
++    assert_eq!(gate.snapshot().approved_candidate_sha256, None);
++}
+diff --git a/codex-rs/omd/src/contract.rs b/codex-rs/omd/src/contract.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..3652af2c9e97411c4f8ef3f5e98b206bd7899af1
+--- /dev/null
++++ b/codex-rs/omd/src/contract.rs
+@@ -0,0 +1,1162 @@
++use serde::Deserialize;
++use serde::Serialize;
++use sha2::Digest;
++use sha2::Sha256;
++use std::collections::BTreeSet;
++use std::io;
++
++pub const CONTRACT_SCHEMA: u32 = 1;
++pub const MAX_DENIED_OPERATIONS: usize = 64;
++pub const LEGACY_CONTRACT_ID: &str = "legacy_capabilities";
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum FinalReview {
++    None,
++    SelfReview,
++    #[default]
++    Separate,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum CompletionMode {
++    None,
++    SelfVerified,
++    AdversarialSeparate,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(rename_all = "snake_case")]
++pub enum AssuranceLabel {
++    Unreviewed,
++    SelfReviewed,
++    IndependentlyReviewed,
++    IndependentlyVerified,
++}
++
++impl AssuranceLabel {
++    pub fn label(self) -> &'static str {
++        match self {
++            Self::Unreviewed => "unreviewed",
++            Self::SelfReviewed => "self-reviewed",
++            Self::IndependentlyReviewed => "independently-reviewed",
++            Self::IndependentlyVerified => "independently-verified",
++        }
++    }
++
++    pub fn description(self) -> &'static str {
++        match self {
++            Self::Unreviewed => "no final review of the completed candidate",
++            Self::SelfReviewed => {
++                "final self-review by the implementing lead; no independent review occurred"
++            }
++            Self::IndependentlyReviewed => {
++                "separate final reviewer; no adversarial completion verifier"
++            }
++            Self::IndependentlyVerified => {
++                "separate final reviewer and separate adversarial completion verifier"
++            }
++        }
++    }
++
++    pub fn claims_independent_verification(self) -> bool {
++        self == Self::IndependentlyVerified
++    }
++
++    pub fn independent(self) -> bool {
++        matches!(
++            self,
++            Self::IndependentlyReviewed | Self::IndependentlyVerified
++        )
++    }
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ContractRequirements {
++    pub delegation: bool,
++    pub child_agents: bool,
++    pub opposite_lead: bool,
++    pub escalation: bool,
++    pub checkpoints: bool,
++    pub milestone_review: bool,
++    pub final_review: FinalReview,
++    pub completion: CompletionMode,
++}
++
++impl ContractRequirements {
++    pub fn assurance(&self) -> AssuranceLabel {
++        match (self.final_review, self.completion) {
++            (FinalReview::Separate, CompletionMode::AdversarialSeparate) => {
++                AssuranceLabel::IndependentlyVerified
++            }
++            (FinalReview::Separate, _) => AssuranceLabel::IndependentlyReviewed,
++            (FinalReview::SelfReview, _) => AssuranceLabel::SelfReviewed,
++            (FinalReview::None, _) => AssuranceLabel::Unreviewed,
++        }
++    }
++
++    pub fn validate(&self) -> io::Result<()> {
++        if self.completion != CompletionMode::None && !self.checkpoints {
++            return Err(invalid("a completion gate requires checkpoint evidence"));
++        }
++        if self.completion == CompletionMode::AdversarialSeparate
++            && (self.final_review != FinalReview::Separate || !self.opposite_lead)
++        {
++            return Err(invalid(
++                "an adversarial completion gate requires a separate final reviewer and verifier",
++            ));
++        }
++        if self.completion == CompletionMode::SelfVerified
++            && self.final_review != FinalReview::SelfReview
++        {
++            return Err(invalid(
++                "self-verified completion requires a final self-review",
++            ));
++        }
++        if self.final_review == FinalReview::Separate
++            && (!self.milestone_review || !self.opposite_lead)
++        {
++            return Err(invalid(
++                "a separate final reviewer requires the unified review ledger and opposite-lead calls",
++            ));
++        }
++        if self.final_review == FinalReview::SelfReview && self.opposite_lead {
++            return Err(invalid(
++                "a final self-review contract may not retain opposite-lead calls",
++            ));
++        }
++        if self.delegation && !self.milestone_review {
++            return Err(invalid(
++                "delegation requires unified review for conflict-checked integration",
++            ));
++        }
++        if self.delegation && !self.opposite_lead {
++            return Err(invalid(
++                "delegation requires opposite-lead review of the contributed candidate",
++            ));
++        }
++        if self.child_agents && !self.delegation {
++            return Err(invalid("child agents require delegation authority"));
++        }
++        if self.escalation && !self.opposite_lead {
++            return Err(invalid("escalation requires opposite-lead advice"));
++        }
++        Ok(())
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct WorkflowContract {
++    pub schema: u32,
++    pub id: String,
++    pub version: u32,
++    pub requirements: ContractRequirements,
++}
++
++impl WorkflowContract {
++    pub fn reviewed_omd_v1() -> Self {
++        Self {
++            schema: CONTRACT_SCHEMA,
++            id: "reviewed_omd".into(),
++            version: 1,
++            requirements: ContractRequirements {
++                delegation: true,
++                child_agents: true,
++                opposite_lead: true,
++                escalation: true,
++                checkpoints: true,
++                milestone_review: true,
++                final_review: FinalReview::Separate,
++                completion: CompletionMode::AdversarialSeparate,
++            },
++        }
++    }
++
++    pub fn solo_evidence_v1() -> Self {
++        Self {
++            schema: CONTRACT_SCHEMA,
++            id: "solo_evidence".into(),
++            version: 1,
++            requirements: ContractRequirements {
++                delegation: false,
++                child_agents: false,
++                opposite_lead: false,
++                escalation: false,
++                checkpoints: true,
++                milestone_review: false,
++                final_review: FinalReview::SelfReview,
++                completion: CompletionMode::SelfVerified,
++            },
++        }
++    }
++
++    pub fn bundled() -> Vec<Self> {
++        vec![Self::reviewed_omd_v1(), Self::solo_evidence_v1()]
++    }
++
++    pub fn bundled_default() -> Self {
++        Self::reviewed_omd_v1()
++    }
++
++    pub fn is_bundled(&self) -> bool {
++        Self::bundled().contains(self)
++    }
++
++    pub fn host_owned(&self) -> bool {
++        self.is_bundled() || (self.id == LEGACY_CONTRACT_ID && self.version == 1)
++    }
++
++    pub fn validate(&self) -> io::Result<()> {
++        if self.schema != CONTRACT_SCHEMA
++            || self.version == 0
++            || !identifier(&self.id)
++            || Self::bundled()
++                .iter()
++                .any(|bundled| bundled.id == self.id && bundled != self)
++        {
++            return Err(invalid(
++                "workflow contract identity is invalid or redefines a bundled contract",
++            ));
++        }
++        self.requirements.validate()
++    }
++
++    pub fn assurance(&self) -> AssuranceLabel {
++        self.requirements.assurance()
++    }
++
++    pub fn name(&self) -> String {
++        format!("{} v{}", self.id, self.version)
++    }
++
++    pub fn digest(&self) -> io::Result<String> {
++        self.validate()?;
++        Ok(digest(&serde_json::to_vec(self).map_err(io::Error::other)?))
++    }
++
++    pub fn summary(&self) -> io::Result<ContractSummary> {
++        Ok(ContractSummary {
++            id: self.id.clone(),
++            version: self.version,
++            sha256: self.digest()?,
++            assurance: self.assurance(),
++            assurance_description: self.assurance().description().into(),
++        })
++    }
++
++    pub fn from_legacy(capabilities: LegacyCapabilities) -> io::Result<Self> {
++        if capabilities == Self::reviewed_omd_v1().legacy_capabilities() {
++            return Ok(Self::reviewed_omd_v1());
++        }
++        let contract = Self {
++            schema: CONTRACT_SCHEMA,
++            id: LEGACY_CONTRACT_ID.into(),
++            version: 1,
++            requirements: ContractRequirements {
++                delegation: capabilities.delegation,
++                child_agents: capabilities.delegation,
++                opposite_lead: capabilities.delegation
++                    || capabilities.escalation
++                    || capabilities.unified_review
++                    || capabilities.completion_gate,
++                escalation: capabilities.escalation,
++                checkpoints: capabilities.checkpoints,
++                milestone_review: capabilities.unified_review,
++                final_review: if capabilities.unified_review {
++                    FinalReview::Separate
++                } else {
++                    FinalReview::None
++                },
++                completion: if capabilities.completion_gate {
++                    CompletionMode::AdversarialSeparate
++                } else {
++                    CompletionMode::None
++                },
++            },
++        };
++        contract.validate()?;
++        Ok(contract)
++    }
++
++    pub fn legacy_capabilities(&self) -> LegacyCapabilities {
++        LegacyCapabilities {
++            delegation: self.requirements.delegation,
++            escalation: self.requirements.escalation,
++            checkpoints: self.requirements.checkpoints,
++            unified_review: self.requirements.milestone_review,
++            completion_gate: self.requirements.completion == CompletionMode::AdversarialSeparate,
++        }
++    }
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct LegacyCapabilities {
++    pub delegation: bool,
++    pub escalation: bool,
++    pub checkpoints: bool,
++    pub unified_review: bool,
++    pub completion_gate: bool,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct ContractSummary {
++    pub id: String,
++    pub version: u32,
++    pub sha256: String,
++    pub assurance: AssuranceLabel,
++    pub assurance_description: String,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Ord, PartialEq, PartialOrd)]
++#[serde(rename_all = "snake_case")]
++pub enum SelectionSource {
++    Bundle,
++    LegacyManifest,
++    ProjectRecommendation,
++    UserDefault,
++    TaskSelection,
++}
++
++impl SelectionSource {
++    fn priority(self) -> u8 {
++        match self {
++            Self::Bundle => 0,
++            Self::LegacyManifest => 1,
++            Self::ProjectRecommendation => 2,
++            Self::UserDefault => 3,
++            Self::TaskSelection => 4,
++        }
++    }
++
++    pub fn label(self) -> &'static str {
++        match self {
++            Self::Bundle => "bundled default",
++            Self::LegacyManifest => "legacy manifest capabilities",
++            Self::ProjectRecommendation => "project recommendation",
++            Self::UserDefault => "explicit user default",
++            Self::TaskSelection => "explicit task selection",
++        }
++    }
++
++    pub fn explicit_user_choice(self) -> bool {
++        matches!(self, Self::UserDefault | Self::TaskSelection)
++    }
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum SelectionScope {
++    Session,
++    Task,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum OwnerKind {
++    Bundled,
++    Mod,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct PolicyOwner {
++    pub kind: OwnerKind,
++    pub id: String,
++    pub version: String,
++    pub source: String,
++    pub sha256: String,
++}
++
++impl PolicyOwner {
++    pub fn bundled() -> Self {
++        Self {
++            kind: OwnerKind::Bundled,
++            id: "oh-my-diff".into(),
++            version: crate::PINNED_UPSTREAM.into(),
++            source: "bundled native host".into(),
++            sha256: digest(crate::PINNED_UPSTREAM.as_bytes()),
++        }
++    }
++
++    fn validate(&self) -> io::Result<()> {
++        if !bounded(&self.id, 64)
++            || !bounded(&self.version, 128)
++            || !bounded(&self.source, 512)
++            || validate_sha256(&self.sha256).is_err()
++            || (self.kind == OwnerKind::Bundled && *self != Self::bundled())
++        {
++            return Err(invalid("policy owner provenance is incomplete or forged"));
++        }
++        Ok(())
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ConfigurationSource {
++    pub scope: SelectionSource,
++    pub path: Option<String>,
++    pub sha256: String,
++}
++
++impl ConfigurationSource {
++    fn validate(&self) -> io::Result<()> {
++        if self
++            .path
++            .as_deref()
++            .is_some_and(|path| !bounded(path, 4096))
++            || validate_sha256(&self.sha256).is_err()
++        {
++            return Err(invalid("configuration provenance is incomplete"));
++        }
++        Ok(())
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ContractOffer {
++    pub source: SelectionSource,
++    pub scope: SelectionScope,
++    pub contract: WorkflowContract,
++    pub configuration: ConfigurationSource,
++    pub owner: PolicyOwner,
++}
++
++impl ContractOffer {
++    fn validate(&self) -> io::Result<()> {
++        self.contract.validate()?;
++        self.configuration.validate()?;
++        self.owner.validate()?;
++        if self.configuration.scope != self.source {
++            return Err(invalid(
++                "offer configuration provenance does not match its selection source",
++            ));
++        }
++        if self.owner.kind == OwnerKind::Bundled && !self.contract.host_owned() {
++            return Err(invalid(
++                "only a registered policy owner may offer a non-bundled contract",
++            ));
++        }
++        Ok(())
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct AssuranceFloor {
++    pub source: SelectionSource,
++    pub minimum: AssuranceLabel,
++    pub configuration: ConfigurationSource,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct OfferSummary {
++    pub source: SelectionSource,
++    pub scope: SelectionScope,
++    pub contract: ContractSummary,
++    pub owner: PolicyOwner,
++    pub configuration: ConfigurationSource,
++    pub effective: bool,
++    pub reason: String,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct Resolution {
++    pub effective: ContractOffer,
++    pub bundled_default: ContractSummary,
++    pub considered: Vec<OfferSummary>,
++    pub floor: Option<AssuranceFloor>,
++    pub weakens_default: bool,
++    pub requires_confirmation: bool,
++    pub confirmation_token: Option<String>,
++}
++
++pub fn confirmation_token(prior: &ContractSummary, next: &ContractSummary) -> String {
++    digest(format!("omd-workflow-confirm\n{}\n{}", prior.sha256, next.sha256).as_bytes())
++}
++
++pub fn resolve_selection(
++    offers: Vec<ContractOffer>,
++    floor: Option<AssuranceFloor>,
++) -> io::Result<Resolution> {
++    if offers.is_empty() || offers.len() > 8 {
++        return Err(invalid("workflow selection requires one bundled default"));
++    }
++    for offer in &offers {
++        offer.validate()?;
++    }
++    if let Some(floor) = &floor {
++        floor.configuration.validate()?;
++        if floor.source != SelectionSource::ProjectRecommendation {
++            return Err(invalid("only a project may declare an assurance floor"));
++        }
++    }
++    let sources = offers
++        .iter()
++        .map(|offer| offer.source)
++        .collect::<BTreeSet<_>>();
++    if sources.len() != offers.len() {
++        return Err(invalid(
++            "conflicting workflow offers from one source; resolve the conflict before activation",
++        ));
++    }
++    let bundled = offers
++        .iter()
++        .find(|offer| offer.source == SelectionSource::Bundle)
++        .ok_or_else(|| invalid("workflow selection requires one bundled default"))?
++        .clone();
++    if bundled.contract != WorkflowContract::bundled_default() {
++        return Err(invalid("the bundled default contract was replaced"));
++    }
++    let effective = offers
++        .iter()
++        .max_by_key(|offer| offer.source.priority())
++        .expect("validated non-empty offers")
++        .clone();
++    let bundled_default = bundled.contract.summary()?;
++    let effective_summary = effective.contract.summary()?;
++    let considered = offers
++        .iter()
++        .map(|offer| {
++            Ok(OfferSummary {
++                source: offer.source,
++                scope: offer.scope,
++                contract: offer.contract.summary()?,
++                owner: offer.owner.clone(),
++                configuration: offer.configuration.clone(),
++                effective: offer.source == effective.source,
++                reason: if offer.source == effective.source {
++                    format!("{} has the highest precedence", offer.source.label())
++                } else {
++                    format!(
++                        "{} is overridden by {}",
++                        offer.source.label(),
++                        effective.source.label()
++                    )
++                },
++            })
++        })
++        .collect::<io::Result<Vec<_>>>()?;
++    if let Some(floor) = &floor
++        && effective.contract.assurance() < floor.minimum
++    {
++        return Err(invalid(&format!(
++            "workflow conflict: {} offers {} ({}) but the project requires at least {}; resolve the conflict explicitly",
++            effective.source.label(),
++            effective.contract.name(),
++            effective.contract.assurance().label(),
++            floor.minimum.label(),
++        )));
++    }
++    let weakens_default = effective.contract.assurance() < bundled.contract.assurance();
++    let requires_confirmation =
++        weakens_default && effective.source != SelectionSource::LegacyManifest;
++    let confirmation_token =
++        requires_confirmation.then(|| confirmation_token(&bundled_default, &effective_summary));
++    Ok(Resolution {
++        effective,
++        bundled_default,
++        considered,
++        floor,
++        weakens_default,
++        requires_confirmation,
++        confirmation_token,
++    })
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct TaskBinding {
++    pub acceptance_contract_sha256: String,
++    pub initial_candidate_sha256: String,
++    pub repository_identity: String,
++}
++
++impl TaskBinding {
++    fn validate(&self) -> io::Result<()> {
++        validate_sha256(&self.acceptance_contract_sha256)?;
++        validate_sha256(&self.initial_candidate_sha256)?;
++        if !bounded(&self.repository_identity, 256) {
++            return Err(invalid("task binding is incomplete"));
++        }
++        Ok(())
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct ConfirmationReceipt {
++    pub prior: ContractSummary,
++    pub next: ContractSummary,
++    pub weakens: bool,
++    pub token: String,
++    pub at: u64,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct MigrationReceipt {
++    pub from: ContractSummary,
++    pub to: ContractSummary,
++    pub boundary: String,
++    pub revalidated: Vec<String>,
++    pub confirmation: ConfirmationReceipt,
++    pub at: u64,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum ContractOperation {
++    Delegate,
++    SpawnChildAgent,
++    OppositeLeadAdvice,
++    Escalate,
++    Checkpoint,
++    MilestoneReview,
++    FinalReview,
++    Completion,
++}
++
++impl ContractOperation {
++    pub fn restrictable(self) -> bool {
++        matches!(
++            self,
++            Self::Delegate | Self::SpawnChildAgent | Self::OppositeLeadAdvice | Self::Escalate
++        )
++    }
++
++    pub fn label(self) -> &'static str {
++        match self {
++            Self::Delegate => "delegation.contribute",
++            Self::SpawnChildAgent => "agents.spawn",
++            Self::OppositeLeadAdvice => "opposite_lead.advice",
++            Self::Escalate => "recovery.escalate",
++            Self::Checkpoint => "checkpoint.update",
++            Self::MilestoneReview => "review.run",
++            Self::FinalReview => "review.final",
++            Self::Completion => "review.complete",
++        }
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct DeniedOperation {
++    pub operation: ContractOperation,
++    pub contract_sha256: String,
++    pub reason: String,
++    pub at: u64,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct ContractProvenance {
++    pub schema: u32,
++    pub contract_schema: u32,
++    pub contract: WorkflowContract,
++    pub contract_sha256: String,
++    pub assurance: AssuranceLabel,
++    pub assurance_description: String,
++    pub bundled_default_sha256: String,
++    pub owners: Vec<PolicyOwner>,
++    pub configuration_sha256: String,
++    pub configuration_sources: Vec<ConfigurationSource>,
++    pub source: SelectionSource,
++    pub scope: SelectionScope,
++    pub considered: Vec<OfferSummary>,
++    pub floor: Option<AssuranceFloor>,
++    pub weakens_default: bool,
++    pub confirmation: Option<ConfirmationReceipt>,
++    pub prior: Option<ContractSummary>,
++    pub binding: TaskBinding,
++    pub migrations: Vec<MigrationReceipt>,
++    pub selected_at: u64,
++}
++
++impl ContractProvenance {
++    pub fn summary(&self) -> io::Result<ContractSummary> {
++        self.contract.summary()
++    }
++
++    fn validate(&self) -> io::Result<()> {
++        self.contract.validate()?;
++        self.binding.validate()?;
++        if self.schema != 1
++            || self.contract_schema != CONTRACT_SCHEMA
++            || self.contract_sha256 != self.contract.digest()?
++            || self.assurance != self.contract.assurance()
++            || self.assurance_description != self.assurance.description()
++            || self.bundled_default_sha256 != WorkflowContract::bundled_default().digest()?
++            || self.owners.is_empty()
++            || self.owners.len() > 8
++            || self.configuration_sources.is_empty()
++            || self.configuration_sources.len() > 8
++            || self.considered.is_empty()
++            || self.considered.len() > 8
++            || self.migrations.len() > 8
++            || self.weakens_default
++                != (self.assurance < WorkflowContract::bundled_default().assurance())
++            || validate_sha256(&self.configuration_sha256).is_err()
++        {
++            return Err(invalid(
++                "workflow provenance is incomplete or does not match its contract",
++            ));
++        }
++        for owner in &self.owners {
++            owner.validate()?;
++        }
++        for source in &self.configuration_sources {
++            source.validate()?;
++        }
++        if self.configuration_sha256 != configuration_digest(&self.configuration_sources)? {
++            return Err(invalid(
++                "workflow configuration digest does not match its sources",
++            ));
++        }
++        if !self
++            .considered
++            .iter()
++            .any(|offer| offer.effective && offer.source == self.source)
++        {
++            return Err(invalid(
++                "workflow provenance does not record the effective selection",
++            ));
++        }
++        if let Some(floor) = &self.floor {
++            floor.configuration.validate()?;
++            if self.assurance < floor.minimum {
++                return Err(invalid(
++                    "active contract is weaker than the recorded project assurance floor",
++                ));
++            }
++        }
++        let confirmation_required =
++            self.weakens_default && self.source != SelectionSource::LegacyManifest;
++        match (&self.confirmation, confirmation_required) {
++            (None, true) => Err(invalid(
++                "a weaker contract requires an explicit native confirmation receipt",
++            )),
++            (Some(receipt), _) => {
++                if receipt.next != self.contract.summary()?
++                    || receipt.token != confirmation_token(&receipt.prior, &receipt.next)
++                    || receipt.weakens != (receipt.next.assurance < receipt.prior.assurance)
++                {
++                    return Err(invalid("workflow confirmation receipt is forged or stale"));
++                }
++                Ok(())
++            }
++            (None, false) => Ok(()),
++        }
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct ContractSnapshot {
++    pub schema: u32,
++    pub provenance: ContractProvenance,
++    pub provenance_sha256: String,
++    pub denied: Vec<DeniedOperation>,
++    #[serde(default)]
++    pub restrictions: Vec<Restriction>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++pub struct Restriction {
++    pub operation: ContractOperation,
++    pub owner: PolicyOwner,
++    pub reason: String,
++    pub at: u64,
++}
++
++#[derive(Debug)]
++pub struct ActiveContract {
++    snapshot: ContractSnapshot,
++}
++
++impl ActiveContract {
++    pub fn activate(
++        resolution: Resolution,
++        confirmation: Option<&str>,
++        binding: TaskBinding,
++        prior: Option<ContractSummary>,
++    ) -> io::Result<Self> {
++        binding.validate()?;
++        let summary = resolution.effective.contract.summary()?;
++        let before = prior.clone().unwrap_or(resolution.bundled_default.clone());
++        let expected = resolution
++            .requires_confirmation
++            .then(|| confirmation_token(&before, &summary));
++        let confirmation_receipt = match (&expected, confirmation) {
++            (Some(expected), Some(supplied)) if expected == supplied => Some(ConfirmationReceipt {
++                weakens: summary.assurance < before.assurance,
++                prior: before,
++                next: summary.clone(),
++                token: expected.clone(),
++                at: now(),
++            }),
++            (Some(_), _) => {
++                return Err(invalid(
++                    "explicit confirmation is required before a weaker workflow contract activates",
++                ));
++            }
++            (None, Some(_)) => {
++                return Err(invalid(
++                    "no confirmation is expected for this workflow selection",
++                ));
++            }
++            (None, None) => None,
++        };
++        let owners = vec![resolution.effective.owner.clone()];
++        let configuration_sources = resolution
++            .considered
++            .iter()
++            .map(|offer| offer.configuration.clone())
++            .collect::<Vec<_>>();
++        let provenance = ContractProvenance {
++            schema: 1,
++            contract_schema: CONTRACT_SCHEMA,
++            contract: resolution.effective.contract.clone(),
++            contract_sha256: summary.sha256.clone(),
++            assurance: summary.assurance,
++            assurance_description: summary.assurance.description().into(),
++            bundled_default_sha256: resolution.bundled_default.sha256.clone(),
++            owners,
++            configuration_sha256: configuration_digest(&configuration_sources)?,
++            configuration_sources,
++            source: resolution.effective.source,
++            scope: resolution.effective.scope,
++            considered: resolution.considered,
++            floor: resolution.floor,
++            weakens_default: resolution.weakens_default,
++            confirmation: confirmation_receipt,
++            prior,
++            binding,
++            migrations: Vec::new(),
++            selected_at: now(),
++        };
++        provenance.validate()?;
++        Ok(Self {
++            snapshot: seal(provenance, Vec::new())?,
++        })
++    }
++
++    pub fn restore(snapshot: ContractSnapshot, binding: &TaskBinding) -> io::Result<Self> {
++        binding.validate()?;
++        if snapshot.schema != 1
++            || snapshot.denied.len() > MAX_DENIED_OPERATIONS
++            || snapshot.restrictions.len() > 8
++            || snapshot.restrictions.iter().any(|entry| {
++                !entry.operation.restrictable()
++                    || entry.owner.validate().is_err()
++                    || !bounded(&entry.reason, 512)
++            })
++        {
++            return Err(invalid("persisted workflow state is invalid"));
++        }
++        snapshot.provenance.validate()?;
++        if snapshot.provenance_sha256 != provenance_digest(&snapshot.provenance)? {
++            return Err(invalid(
++                "persisted workflow provenance was modified outside the host",
++            ));
++        }
++        if &snapshot.provenance.binding != binding {
++            return Err(invalid(
++                "persisted workflow contract belongs to a different task or workspace",
++            ));
++        }
++        for denial in &snapshot.denied {
++            if denial.contract_sha256 != snapshot.provenance.contract_sha256
++                || !bounded(&denial.reason, 512)
++            {
++                return Err(invalid("persisted workflow denial record is invalid"));
++            }
++        }
++        Ok(Self { snapshot })
++    }
++
++    pub fn snapshot(&self) -> ContractSnapshot {
++        self.snapshot.clone()
++    }
++
++    pub fn contract(&self) -> &WorkflowContract {
++        &self.snapshot.provenance.contract
++    }
++
++    pub fn requirements(&self) -> &ContractRequirements {
++        &self.snapshot.provenance.contract.requirements
++    }
++
++    pub fn assurance(&self) -> AssuranceLabel {
++        self.snapshot.provenance.assurance
++    }
++
++    pub fn provenance(&self) -> &ContractProvenance {
++        &self.snapshot.provenance
++    }
++
++    pub fn restrict(
++        &mut self,
++        operations: Vec<ContractOperation>,
++        owner: PolicyOwner,
++        reason: String,
++    ) -> io::Result<Vec<Restriction>> {
++        owner.validate()?;
++        if operations.is_empty()
++            || operations.len() > 4
++            || operations.iter().any(|operation| !operation.restrictable())
++            || !bounded(&reason, 512)
++        {
++            return Err(invalid(
++                "a workflow restriction may only remove delegation, child-agent, opposite-lead, or escalation authority",
++            ));
++        }
++        let mut staged = self.snapshot.restrictions.clone();
++        for operation in operations {
++            if staged.iter().any(|entry| entry.operation == operation) {
++                continue;
++            }
++            staged.push(Restriction {
++                operation,
++                owner: owner.clone(),
++                reason: reason.clone(),
++                at: now(),
++            });
++        }
++        if staged.len() > 8 {
++            return Err(invalid("workflow restriction limit"));
++        }
++        self.snapshot.restrictions = staged;
++        Ok(self.snapshot.restrictions.clone())
++    }
++
++    pub fn restrictions(&self) -> &[Restriction] {
++        &self.snapshot.restrictions
++    }
++
++    pub fn permits(&self, operation: ContractOperation) -> bool {
++        if self
++            .snapshot
++            .restrictions
++            .iter()
++            .any(|entry| entry.operation == operation)
++        {
++            return false;
++        }
++        let requirements = self.requirements();
++        match operation {
++            ContractOperation::Delegate => requirements.delegation,
++            ContractOperation::SpawnChildAgent => requirements.child_agents,
++            ContractOperation::OppositeLeadAdvice => requirements.opposite_lead,
++            ContractOperation::Escalate => requirements.escalation,
++            ContractOperation::Checkpoint => requirements.checkpoints,
++            ContractOperation::MilestoneReview => requirements.milestone_review,
++            ContractOperation::FinalReview => requirements.final_review != FinalReview::None,
++            ContractOperation::Completion => requirements.completion != CompletionMode::None,
++        }
++    }
++
++    pub fn authorize(&mut self, operation: ContractOperation) -> Result<(), String> {
++        if self.permits(operation) {
++            return Ok(());
++        }
++        let reason = match self
++            .snapshot
++            .restrictions
++            .iter()
++            .find(|entry| entry.operation == operation)
++        {
++            Some(restriction) => format!(
++                "{} is restricted by {}: {}",
++                operation.label(),
++                restriction.owner.id,
++                restriction.reason
++            ),
++            None => format!(
++                "{} is denied by the selected {} contract ({})",
++                operation.label(),
++                self.contract().name(),
++                self.assurance().label()
++            ),
++        };
++        if self.snapshot.denied.len() < MAX_DENIED_OPERATIONS
++            && !self
++                .snapshot
++                .denied
++                .iter()
++                .any(|denial| denial.operation == operation)
++        {
++            self.snapshot.denied.push(DeniedOperation {
++                operation,
++                contract_sha256: self.snapshot.provenance.contract_sha256.clone(),
++                reason: reason.clone(),
++                at: now(),
++            });
++        }
++        Err(reason)
++    }
++
++    pub fn denied(&self) -> &[DeniedOperation] {
++        &self.snapshot.denied
++    }
++
++    pub fn migrate(
++        &mut self,
++        next: WorkflowContract,
++        confirmation: &str,
++        boundary: &str,
++        revalidated: Vec<String>,
++    ) -> io::Result<MigrationReceipt> {
++        const BOUNDARIES: [&str; 2] = ["task_start", "turn_boundary"];
++        const REQUIRED: [&str; 6] = [
++            "candidate",
++            "evidence",
++            "checks",
++            "workers",
++            "allowance",
++            "resume",
++        ];
++        let prior = self.contract().summary()?;
++        let target = next.summary()?;
++        if !BOUNDARIES.contains(&boundary) {
++            return Err(invalid(
++                "a mid-task contract change requires a host-declared safe boundary",
++            ));
++        }
++        let revalidation = revalidated
++            .iter()
++            .map(String::as_str)
++            .collect::<BTreeSet<_>>();
++        if REQUIRED.iter().any(|item| !revalidation.contains(item))
++            || revalidation.len() != revalidated.len()
++            || revalidated.len() > 16
++        {
++            return Err(invalid(
++                "migration must revalidate the candidate, evidence, checks, workers, allowance, and resume state",
++            ));
++        }
++        if target == prior {
++            return Err(invalid("the requested contract is already active"));
++        }
++        if confirmation != confirmation_token(&prior, &target) {
++            return Err(invalid(
++                "a mid-task contract change requires an explicit native confirmation",
++            ));
++        }
++        if let Some(floor) = &self.snapshot.provenance.floor
++            && target.assurance < floor.minimum
++        {
++            return Err(invalid(
++                "the requested contract is weaker than the project assurance floor",
++            ));
++        }
++        let receipt = MigrationReceipt {
++            from: prior.clone(),
++            to: target.clone(),
++            boundary: boundary.into(),
++            revalidated,
++            confirmation: ConfirmationReceipt {
++                prior: prior.clone(),
++                next: target.clone(),
++                weakens: target.assurance < prior.assurance,
++                token: confirmation.into(),
++                at: now(),
++            },
++            at: now(),
++        };
++        let mut staged = self.snapshot.provenance.clone();
++        staged.contract = next;
++        staged.contract_sha256 = target.sha256.clone();
++        staged.assurance = target.assurance;
++        staged.assurance_description = target.assurance.description().into();
++        staged.weakens_default = target.assurance < WorkflowContract::bundled_default().assurance();
++        staged.prior = Some(prior);
++        staged.confirmation = Some(receipt.confirmation.clone());
++        staged.migrations.push(receipt.clone());
++        if staged.migrations.len() > 8 {
++            return Err(invalid("workflow migration limit exhausted"));
++        }
++        staged.validate()?;
++        let restrictions = self.snapshot.restrictions.clone();
++        self.snapshot = seal(staged, self.snapshot.denied.clone())?;
++        self.snapshot.restrictions = restrictions;
++        Ok(receipt)
++    }
++
++    pub fn view(&self) -> io::Result<serde_json::Value> {
++        serde_json::to_value(&self.snapshot).map_err(io::Error::other)
++    }
++}
++
++fn seal(
++    provenance: ContractProvenance,
++    denied: Vec<DeniedOperation>,
++) -> io::Result<ContractSnapshot> {
++    Ok(ContractSnapshot {
++        schema: 1,
++        provenance_sha256: provenance_digest(&provenance)?,
++        provenance,
++        denied,
++        restrictions: Vec::new(),
++    })
++}
++
++fn provenance_digest(provenance: &ContractProvenance) -> io::Result<String> {
++    Ok(digest(
++        &serde_json::to_vec(provenance).map_err(io::Error::other)?,
++    ))
++}
++
++pub fn configuration_digest(sources: &[ConfigurationSource]) -> io::Result<String> {
++    let normalized = sources
++        .iter()
++        .map(|source| {
++            (
++                source.scope,
++                source.path.clone().unwrap_or_default(),
++                source.sha256.clone(),
++            )
++        })
++        .collect::<Vec<_>>();
++    Ok(digest(
++        &serde_json::to_vec(&normalized).map_err(io::Error::other)?,
++    ))
++}
++
++fn now() -> u64 {
++    std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map(|elapsed| elapsed.as_secs())
++        .unwrap_or_default()
++}
++
++fn digest(bytes: &[u8]) -> String {
++    format!("{:x}", Sha256::digest(bytes))
++}
++
++fn identifier(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 32
++        && value
++            .bytes()
++            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
++}
++
++fn bounded(value: &str, limit: usize) -> bool {
++    !value.trim().is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
++}
++
++fn validate_sha256(value: &str) -> io::Result<()> {
++    if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
++        return Err(invalid("expected a lowercase sha256 digest"));
++    }
++    Ok(())
++}
++
++fn invalid(message: &str) -> io::Error {
++    io::Error::new(io::ErrorKind::InvalidData, message.to_string())
++}
++
++#[cfg(test)]
++#[path = "contract_tests.rs"]
++mod tests;
+diff --git a/codex-rs/omd/src/contract_store.rs b/codex-rs/omd/src/contract_store.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..fce49b97890f15a310f1b79f4c2018c0c371f484
+--- /dev/null
++++ b/codex-rs/omd/src/contract_store.rs
+@@ -0,0 +1,350 @@
++use crate::AssuranceFloor;
++use crate::AssuranceLabel;
++use crate::ConfigurationSource;
++use crate::ContractOffer;
++use crate::LegacyCapabilities;
++use crate::OwnerKind;
++use crate::PolicyOwner;
++use crate::SelectionScope;
++use crate::SelectionSource;
++use crate::WorkflowContract;
++use serde::Deserialize;
++use serde::Serialize;
++use sha2::Digest;
++use sha2::Sha256;
++use std::collections::BTreeSet;
++use std::io;
++use std::io::Read;
++use std::os::unix::fs::OpenOptionsExt;
++use std::path::Path;
++
++pub const SELECTION_LIMIT: u64 = 8192;
++pub const USER_SELECTION_FILE: &str = "workflow.json";
++pub const PROJECT_SELECTION_FILE: &str = ".codex/workflow.json";
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ContractChoice {
++    pub id: String,
++    pub version: u32,
++}
++
++impl ContractChoice {
++    pub fn parse(value: &str) -> io::Result<Self> {
++        let (id, version) = value
++            .split_once('@')
++            .ok_or_else(|| invalid("expected a contract choice as id@version"))?;
++        Ok(Self {
++            id: id.to_string(),
++            version: version
++                .parse()
++                .map_err(|_| invalid("contract version must be a positive integer"))?,
++        })
++    }
++
++    pub fn label(&self) -> String {
++        format!("{}@{}", self.id, self.version)
++    }
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct SelectionFile {
++    pub schema: u32,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub contract: Option<ContractChoice>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub minimum_assurance: Option<AssuranceLabel>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub confirmation: Option<String>,
++}
++
++impl SelectionFile {
++    fn validate(&self, scope: SelectionSource) -> io::Result<()> {
++        if self.schema != 1 {
++            return Err(invalid("unsupported workflow selection schema"));
++        }
++        if self.contract.is_none() && self.minimum_assurance.is_none() {
++            return Err(invalid("workflow selection file selects nothing"));
++        }
++        if self.minimum_assurance.is_some() && scope != SelectionSource::ProjectRecommendation {
++            return Err(invalid(
++                "only a project may declare a minimum assurance floor",
++            ));
++        }
++        if self.confirmation.is_some() && !scope.explicit_user_choice() {
++            return Err(invalid(
++                "only an explicit user selection may carry a confirmation",
++            ));
++        }
++        if self
++            .confirmation
++            .as_deref()
++            .is_some_and(|token| token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()))
++        {
++            return Err(invalid("workflow confirmation token is malformed"));
++        }
++        Ok(())
++    }
++}
++
++pub struct ContractCatalog {
++    entries: Vec<(WorkflowContract, PolicyOwner)>,
++}
++
++impl Default for ContractCatalog {
++    fn default() -> Self {
++        Self::bundled()
++    }
++}
++
++impl ContractCatalog {
++    pub fn bundled() -> Self {
++        Self {
++            entries: WorkflowContract::bundled()
++                .into_iter()
++                .map(|contract| (contract, PolicyOwner::bundled()))
++                .collect(),
++        }
++    }
++
++    pub fn register(&mut self, contract: WorkflowContract, owner: PolicyOwner) -> io::Result<()> {
++        contract.validate()?;
++        if owner.kind != OwnerKind::Mod {
++            return Err(invalid("a registered contract requires a mod policy owner"));
++        }
++        if contract.host_owned() {
++            return Err(invalid(
++                "a registered contract may not shadow a host-owned contract",
++            ));
++        }
++        if self.entries.len() >= 8 {
++            return Err(invalid("registered workflow contract limit"));
++        }
++        if self.entries.iter().any(|(existing, existing_owner)| {
++            existing.id == contract.id && *existing_owner != owner
++        }) {
++            return Err(invalid(
++                "workflow replacement conflict: two owners registered the same contract",
++            ));
++        }
++        if self
++            .entries
++            .iter()
++            .any(|(existing, _)| existing.id == contract.id && existing.version == contract.version)
++        {
++            return Err(invalid("duplicate workflow contract registration"));
++        }
++        self.entries.push((contract, owner));
++        Ok(())
++    }
++
++    pub fn get(&self, choice: &ContractChoice) -> io::Result<(WorkflowContract, PolicyOwner)> {
++        self.entries
++            .iter()
++            .find(|(contract, _)| contract.id == choice.id && contract.version == choice.version)
++            .map(|(contract, owner)| (contract.clone(), owner.clone()))
++            .ok_or_else(|| {
++                invalid(&format!(
++                    "unknown workflow contract {}; the prior contract is retained",
++                    choice.label()
++                ))
++            })
++    }
++
++    pub fn list(&self) -> io::Result<serde_json::Value> {
++        let entries = self
++            .entries
++            .iter()
++            .map(|(contract, owner)| {
++                Ok(serde_json::json!({
++                    "choice": ContractChoice { id: contract.id.clone(), version: contract.version },
++                    "contract": contract.summary()?,
++                    "requirements": contract.requirements,
++                    "owner": owner,
++                    "bundled_default": *contract == WorkflowContract::bundled_default(),
++                }))
++            })
++            .collect::<io::Result<Vec<_>>>()?;
++        Ok(serde_json::json!({
++            "schema": 1,
++            "api": crate::CONTRACT_SCHEMA,
++            "contracts": entries,
++        }))
++    }
++}
++
++pub fn read_selection(path: &Path, scope: SelectionSource) -> io::Result<(SelectionFile, String)> {
++    let file = std::fs::OpenOptions::new()
++        .read(true)
++        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
++        .open(path)?;
++    if !file.metadata()?.is_file() {
++        return Err(invalid("workflow selection must be a regular file"));
++    }
++    let mut bytes = Vec::new();
++    file.take(SELECTION_LIMIT + 1).read_to_end(&mut bytes)?;
++    if bytes.len() as u64 > SELECTION_LIMIT {
++        return Err(invalid("workflow selection file exceeds its bound"));
++    }
++    let selection: SelectionFile = serde_json::from_slice(&bytes)?;
++    selection.validate(scope)?;
++    Ok((selection, digest(&bytes)))
++}
++
++#[derive(Debug)]
++pub struct Selections {
++    pub offers: Vec<ContractOffer>,
++    pub floor: Option<AssuranceFloor>,
++    pub confirmation: Option<String>,
++}
++
++pub fn collect(
++    catalog: &ContractCatalog,
++    legacy: Option<LegacyCapabilities>,
++    user: Option<&Path>,
++    project: Option<&Path>,
++    task: Option<&ContractChoice>,
++) -> io::Result<Selections> {
++    let mut offers = vec![ContractOffer {
++        source: SelectionSource::Bundle,
++        scope: SelectionScope::Session,
++        contract: WorkflowContract::bundled_default(),
++        configuration: ConfigurationSource {
++            scope: SelectionSource::Bundle,
++            path: None,
++            sha256: digest(crate::PINNED_UPSTREAM.as_bytes()),
++        },
++        owner: PolicyOwner::bundled(),
++    }];
++    let mut floor = None;
++    let mut confirmation = None;
++    if let Some(capabilities) = legacy {
++        let contract = WorkflowContract::from_legacy(capabilities)?;
++        if contract != WorkflowContract::bundled_default() {
++            offers.push(ContractOffer {
++                source: SelectionSource::LegacyManifest,
++                scope: SelectionScope::Task,
++                contract,
++                configuration: ConfigurationSource {
++                    scope: SelectionSource::LegacyManifest,
++                    path: None,
++                    sha256: digest(&serde_json::to_vec(&capabilities)?),
++                },
++                owner: PolicyOwner::bundled(),
++            });
++        }
++    }
++    for (path, source) in [
++        (project, SelectionSource::ProjectRecommendation),
++        (user, SelectionSource::UserDefault),
++    ] {
++        let Some(path) = path else { continue };
++        if !path.exists() {
++            continue;
++        }
++        let (selection, sha256) = read_selection(path, source)?;
++        let configuration = ConfigurationSource {
++            scope: source,
++            path: Some(path.display().to_string()),
++            sha256,
++        };
++        if let Some(minimum) = selection.minimum_assurance {
++            floor = Some(AssuranceFloor {
++                source,
++                minimum,
++                configuration: configuration.clone(),
++            });
++        }
++        if let Some(choice) = &selection.contract {
++            let (contract, owner) = catalog.get(choice)?;
++            offers.push(ContractOffer {
++                source,
++                scope: SelectionScope::Session,
++                contract,
++                configuration,
++                owner,
++            });
++        }
++        if source == SelectionSource::UserDefault {
++            confirmation = selection.confirmation;
++        }
++    }
++    if let Some(choice) = task {
++        let (contract, owner) = catalog.get(choice)?;
++        offers.push(ContractOffer {
++            source: SelectionSource::TaskSelection,
++            scope: SelectionScope::Task,
++            contract,
++            configuration: ConfigurationSource {
++                scope: SelectionSource::TaskSelection,
++                path: None,
++                sha256: digest(choice.label().as_bytes()),
++            },
++            owner,
++        });
++    }
++    let sources = offers
++        .iter()
++        .map(|offer| offer.source)
++        .collect::<BTreeSet<_>>();
++    if sources.len() != offers.len() {
++        return Err(invalid(
++            "conflicting workflow selections; resolve them before activation",
++        ));
++    }
++    Ok(Selections {
++        offers,
++        floor,
++        confirmation,
++    })
++}
++
++pub fn write_selection(
++    path: &Path,
++    selection: &SelectionFile,
++    scope: SelectionSource,
++) -> io::Result<()> {
++    selection.validate(scope)?;
++    let bytes = serde_json::to_vec_pretty(selection)?;
++    if bytes.len() as u64 > SELECTION_LIMIT {
++        return Err(invalid("workflow selection exceeds its bound"));
++    }
++    let parent = path
++        .parent()
++        .ok_or_else(|| invalid("workflow selection needs a parent directory"))?;
++    std::fs::create_dir_all(parent)?;
++    let temporary = parent.join(format!(
++        ".workflow.{}.{}.tmp",
++        std::process::id(),
++        digest(&bytes)
++    ));
++    let result = (|| {
++        use std::io::Write;
++        let mut file = std::fs::OpenOptions::new()
++            .create_new(true)
++            .write(true)
++            .mode(0o600)
++            .open(&temporary)?;
++        file.write_all(&bytes)?;
++        file.sync_all()?;
++        std::fs::rename(&temporary, path)?;
++        std::fs::File::open(parent)?.sync_all()
++    })();
++    if result.is_err() {
++        let _ = std::fs::remove_file(&temporary);
++    }
++    result
++}
++
++fn digest(bytes: &[u8]) -> String {
++    format!("{:x}", Sha256::digest(bytes))
++}
++
++fn invalid(message: &str) -> io::Error {
++    io::Error::new(io::ErrorKind::InvalidData, message.to_string())
++}
++
++#[cfg(test)]
++#[path = "contract_store_tests.rs"]
++mod tests;
+diff --git a/codex-rs/omd/src/contract_store_tests.rs b/codex-rs/omd/src/contract_store_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d85d9667eddfab115f9d85b3847aaf38d6abac64
+--- /dev/null
++++ b/codex-rs/omd/src/contract_store_tests.rs
+@@ -0,0 +1,320 @@
++use super::*;
++use crate::ActiveContract;
++use crate::ContractRequirements;
++use crate::TaskBinding;
++use crate::confirmation_token;
++use crate::resolve_selection;
++
++fn binding() -> TaskBinding {
++    TaskBinding {
++        acceptance_contract_sha256: digest(b"acceptance"),
++        initial_candidate_sha256: digest(b"candidate"),
++        repository_identity: "synthetic-fixture".into(),
++    }
++}
++
++fn write(path: &Path, value: serde_json::Value) {
++    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
++    std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
++}
++
++fn mod_owner() -> PolicyOwner {
++    PolicyOwner {
++        kind: OwnerKind::Mod,
++        id: "strict_pairs".into(),
++        version: "1.2.0".into(),
++        source: "/user/mods/strict-pairs".into(),
++        sha256: digest(b"strict-pairs"),
++    }
++}
++
++fn stricter_contract() -> WorkflowContract {
++    WorkflowContract {
++        schema: crate::CONTRACT_SCHEMA,
++        id: "strict_pairs".into(),
++        version: 1,
++        requirements: ContractRequirements {
++            delegation: false,
++            child_agents: false,
++            opposite_lead: true,
++            escalation: true,
++            checkpoints: true,
++            milestone_review: true,
++            final_review: crate::FinalReview::Separate,
++            completion: crate::CompletionMode::AdversarialSeparate,
++        },
++    }
++}
++
++#[test]
++fn the_bundled_catalog_offers_both_decided_contracts() {
++    let catalog = ContractCatalog::bundled();
++    let reviewed = catalog
++        .get(&ContractChoice::parse("reviewed_omd@1").unwrap())
++        .unwrap();
++    let solo = catalog
++        .get(&ContractChoice::parse("solo_evidence@1").unwrap())
++        .unwrap();
++    assert_eq!(reviewed.0, WorkflowContract::reviewed_omd_v1());
++    assert_eq!(solo.0, WorkflowContract::solo_evidence_v1());
++    assert_eq!(reviewed.1, PolicyOwner::bundled());
++    assert!(
++        catalog
++            .get(&ContractChoice::parse("no_review@1").unwrap())
++            .unwrap_err()
++            .to_string()
++            .contains("prior contract is retained")
++    );
++    let listed = catalog.list().unwrap();
++    assert_eq!(listed["contracts"].as_array().unwrap().len(), 2);
++}
++
++#[test]
++fn a_mod_contract_registers_exclusively_and_never_shadows_a_host_contract() {
++    let mut catalog = ContractCatalog::bundled();
++    assert!(
++        catalog
++            .register(WorkflowContract::solo_evidence_v1(), mod_owner())
++            .unwrap_err()
++            .to_string()
++            .contains("shadow a host-owned contract")
++    );
++    assert!(
++        catalog
++            .register(stricter_contract(), PolicyOwner::bundled())
++            .unwrap_err()
++            .to_string()
++            .contains("mod policy owner")
++    );
++    catalog.register(stricter_contract(), mod_owner()).unwrap();
++    let mut other = mod_owner();
++    other.id = "other_pairs".into();
++    other.sha256 = digest(b"other");
++    assert!(
++        catalog
++            .register(stricter_contract(), other)
++            .unwrap_err()
++            .to_string()
++            .contains("replacement conflict")
++    );
++    assert!(catalog.register(stricter_contract(), mod_owner()).is_err());
++    assert_eq!(
++        catalog
++            .get(&ContractChoice::parse("strict_pairs@1").unwrap())
++            .unwrap()
++            .1,
++        mod_owner()
++    );
++}
++
++#[test]
++fn a_registered_contract_is_selectable_only_through_the_native_surface() {
++    let temporary = tempfile::TempDir::new().unwrap();
++    let user = temporary.path().join(USER_SELECTION_FILE);
++    let mut catalog = ContractCatalog::bundled();
++    catalog.register(stricter_contract(), mod_owner()).unwrap();
++    write(
++        &user,
++        serde_json::json!({"schema": 1, "contract": {"id": "strict_pairs", "version": 1}}),
++    );
++    let selections = collect(&catalog, None, Some(&user), None, None).unwrap();
++    let resolution = resolve_selection(selections.offers, selections.floor).unwrap();
++    assert_eq!(resolution.effective.owner, mod_owner());
++    assert!(!resolution.requires_confirmation);
++    let active = ActiveContract::activate(resolution, None, binding(), None).unwrap();
++    assert_eq!(active.contract().id, "strict_pairs");
++    assert_eq!(active.provenance().owners, vec![mod_owner()]);
++    assert_eq!(active.provenance().source, SelectionSource::UserDefault);
++}
++
++#[test]
++fn a_legacy_manifest_keeps_its_exact_capabilities_as_the_default() {
++    let catalog = ContractCatalog::bundled();
++    let default = WorkflowContract::reviewed_omd_v1().legacy_capabilities();
++    let selections = collect(&catalog, Some(default), None, None, None).unwrap();
++    assert_eq!(selections.offers.len(), 1);
++    let resolution = resolve_selection(selections.offers, None).unwrap();
++    assert_eq!(resolution.effective.source, SelectionSource::Bundle);
++    assert!(!resolution.weakens_default);
++
++    let direct = LegacyCapabilities {
++        delegation: false,
++        escalation: true,
++        checkpoints: false,
++        unified_review: false,
++        completion_gate: false,
++    };
++    let selections = collect(&catalog, Some(direct), None, None, None).unwrap();
++    let resolution = resolve_selection(selections.offers, selections.floor).unwrap();
++    assert_eq!(resolution.effective.source, SelectionSource::LegacyManifest);
++    assert!(resolution.weakens_default);
++    assert!(!resolution.requires_confirmation);
++    let active = ActiveContract::activate(resolution, None, binding(), None).unwrap();
++    assert_eq!(active.contract().legacy_capabilities(), direct);
++    assert_eq!(active.assurance(), AssuranceLabel::Unreviewed);
++}
++
++#[test]
++fn an_explicit_task_selection_outranks_the_legacy_manifest() {
++    let catalog = ContractCatalog::bundled();
++    let direct = LegacyCapabilities {
++        delegation: false,
++        escalation: true,
++        checkpoints: false,
++        unified_review: false,
++        completion_gate: false,
++    };
++    let choice = ContractChoice::parse("reviewed_omd@1").unwrap();
++    let selections = collect(&catalog, Some(direct), None, None, Some(&choice)).unwrap();
++    let resolution = resolve_selection(selections.offers, selections.floor).unwrap();
++    assert_eq!(resolution.effective.source, SelectionSource::TaskSelection);
++    assert!(!resolution.weakens_default);
++}
++
++#[test]
++fn a_project_floor_and_a_user_downgrade_fail_closed_together() {
++    let temporary = tempfile::TempDir::new().unwrap();
++    let user = temporary.path().join(USER_SELECTION_FILE);
++    let project = temporary.path().join(PROJECT_SELECTION_FILE);
++    write(
++        &project,
++        serde_json::json!({"schema": 1, "minimum_assurance": "independently_verified"}),
++    );
++    write(
++        &user,
++        serde_json::json!({"schema": 1, "contract": {"id": "solo_evidence", "version": 1}}),
++    );
++    let catalog = ContractCatalog::bundled();
++    let selections = collect(&catalog, None, Some(&user), Some(&project), None).unwrap();
++    assert_eq!(
++        selections.floor.as_ref().unwrap().minimum,
++        AssuranceLabel::IndependentlyVerified
++    );
++    let error = resolve_selection(selections.offers, selections.floor)
++        .unwrap_err()
++        .to_string();
++    assert!(error.contains("workflow conflict"));
++    assert!(error.contains("explicit user default"));
++}
++
++#[test]
++fn a_user_downgrade_activates_only_with_the_recorded_confirmation() {
++    let temporary = tempfile::TempDir::new().unwrap();
++    let user = temporary.path().join(USER_SELECTION_FILE);
++    let catalog = ContractCatalog::bundled();
++    write(
++        &user,
++        serde_json::json!({"schema": 1, "contract": {"id": "solo_evidence", "version": 1}}),
++    );
++    let selections = collect(&catalog, None, Some(&user), None, None).unwrap();
++    let resolution = resolve_selection(selections.offers, selections.floor).unwrap();
++    assert!(resolution.requires_confirmation);
++    assert!(
++        ActiveContract::activate(
++            resolution.clone(),
++            selections.confirmation.as_deref(),
++            binding(),
++            None
++        )
++        .unwrap_err()
++        .to_string()
++        .contains("explicit confirmation is required")
++    );
++
++    let token = confirmation_token(
++        &WorkflowContract::bundled_default().summary().unwrap(),
++        &WorkflowContract::solo_evidence_v1().summary().unwrap(),
++    );
++    write(
++        &user,
++        serde_json::json!({"schema": 1, "contract": {"id": "solo_evidence", "version": 1}, "confirmation": token}),
++    );
++    let selections = collect(&catalog, None, Some(&user), None, None).unwrap();
++    let resolution = resolve_selection(selections.offers, selections.floor).unwrap();
++    let active = ActiveContract::activate(
++        resolution,
++        selections.confirmation.as_deref(),
++        binding(),
++        None,
++    )
++    .unwrap();
++    assert_eq!(active.assurance(), AssuranceLabel::SelfReviewed);
++    assert_eq!(
++        active.provenance().configuration_sources.len(),
++        active.provenance().considered.len()
++    );
++}
++
++#[test]
++fn tampered_and_unsupported_selection_files_fail_closed() {
++    let temporary = tempfile::TempDir::new().unwrap();
++    let user = temporary.path().join(USER_SELECTION_FILE);
++    let catalog = ContractCatalog::bundled();
++
++    write(
++        &user,
++        serde_json::json!({"schema": 2, "contract": {"id": "solo_evidence", "version": 1}}),
++    );
++    assert!(collect(&catalog, None, Some(&user), None, None).is_err());
++
++    write(&user, serde_json::json!({"schema": 1}));
++    assert!(collect(&catalog, None, Some(&user), None, None).is_err());
++
++    write(
++        &user,
++        serde_json::json!({"schema": 1, "minimum_assurance": "self_reviewed"}),
++    );
++    assert!(
++        collect(&catalog, None, Some(&user), None, None)
++            .unwrap_err()
++            .to_string()
++            .contains("only a project may declare")
++    );
++
++    write(
++        &user,
++        serde_json::json!({"schema": 1, "contract": {"id": "solo_evidence", "version": 1}, "confirmation": "short"}),
++    );
++    assert!(
++        collect(&catalog, None, Some(&user), None, None)
++            .unwrap_err()
++            .to_string()
++            .contains("malformed")
++    );
++
++    write(
++        &user,
++        serde_json::json!({"schema": 1, "contract": {"id": "solo_evidence", "version": 4}}),
++    );
++    assert!(
++        collect(&catalog, None, Some(&user), None, None)
++            .unwrap_err()
++            .to_string()
++            .contains("prior contract is retained")
++    );
++}
++
++#[test]
++fn a_written_selection_round_trips_with_its_exact_digest() {
++    let temporary = tempfile::TempDir::new().unwrap();
++    let user = temporary.path().join(USER_SELECTION_FILE);
++    let selection = SelectionFile {
++        schema: 1,
++        contract: Some(ContractChoice::parse("reviewed_omd@1").unwrap()),
++        minimum_assurance: None,
++        confirmation: None,
++    };
++    write_selection(&user, &selection, SelectionSource::UserDefault).unwrap();
++    let (read_back, sha256) = read_selection(&user, SelectionSource::UserDefault).unwrap();
++    assert_eq!(read_back, selection);
++    assert_eq!(sha256, digest(&std::fs::read(&user).unwrap()));
++
++    let floor = SelectionFile {
++        schema: 1,
++        contract: None,
++        minimum_assurance: Some(AssuranceLabel::IndependentlyVerified),
++        confirmation: None,
++    };
++    assert!(write_selection(&user, &floor, SelectionSource::UserDefault).is_err());
++    write_selection(&user, &floor, SelectionSource::ProjectRecommendation).unwrap();
++}
+diff --git a/codex-rs/omd/src/contract_tests.rs b/codex-rs/omd/src/contract_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..eccb5b92a4594bfa48d32d0987fcf89fd425a333
+--- /dev/null
++++ b/codex-rs/omd/src/contract_tests.rs
+@@ -0,0 +1,498 @@
++use super::*;
++
++fn source(scope: SelectionSource, seed: &str) -> ConfigurationSource {
++    ConfigurationSource {
++        scope,
++        path: Some(format!("/host/{seed}.json")),
++        sha256: digest(seed.as_bytes()),
++    }
++}
++
++fn offer(source_scope: SelectionSource, contract: WorkflowContract) -> ContractOffer {
++    ContractOffer {
++        source: source_scope,
++        scope: SelectionScope::Task,
++        configuration: source(source_scope, contract.id.as_str()),
++        contract,
++        owner: PolicyOwner::bundled(),
++    }
++}
++
++fn binding() -> TaskBinding {
++    TaskBinding {
++        acceptance_contract_sha256: digest(b"acceptance"),
++        initial_candidate_sha256: digest(b"candidate"),
++        repository_identity: "synthetic-fixture".into(),
++    }
++}
++
++fn bundled_offers(alternative: Option<WorkflowContract>) -> Vec<ContractOffer> {
++    let mut offers = vec![offer(
++        SelectionSource::Bundle,
++        WorkflowContract::bundled_default(),
++    )];
++    if let Some(contract) = alternative {
++        offers.push(offer(SelectionSource::TaskSelection, contract));
++    }
++    offers
++}
++
++#[test]
++fn bundled_contracts_carry_truthful_assurance_labels() {
++    let reviewed = WorkflowContract::reviewed_omd_v1();
++    let solo = WorkflowContract::solo_evidence_v1();
++    reviewed.validate().unwrap();
++    solo.validate().unwrap();
++    assert_eq!(reviewed.assurance(), AssuranceLabel::IndependentlyVerified);
++    assert_eq!(solo.assurance(), AssuranceLabel::SelfReviewed);
++    assert!(reviewed.assurance().claims_independent_verification());
++    assert!(!solo.assurance().claims_independent_verification());
++    assert!(!solo.assurance().independent());
++    assert!(solo.assurance() < reviewed.assurance());
++    assert_ne!(reviewed.digest().unwrap(), solo.digest().unwrap());
++}
++
++#[test]
++fn solo_contract_denies_every_second_party_call() {
++    let mut active = ActiveContract::activate(
++        resolve_selection(
++            bundled_offers(Some(WorkflowContract::solo_evidence_v1())),
++            None,
++        )
++        .unwrap(),
++        Some(&confirmation_token(
++            &WorkflowContract::bundled_default().summary().unwrap(),
++            &WorkflowContract::solo_evidence_v1().summary().unwrap(),
++        )),
++        binding(),
++        None,
++    )
++    .unwrap();
++    for operation in [
++        ContractOperation::Delegate,
++        ContractOperation::SpawnChildAgent,
++        ContractOperation::OppositeLeadAdvice,
++        ContractOperation::Escalate,
++        ContractOperation::MilestoneReview,
++    ] {
++        let error = active.authorize(operation).unwrap_err();
++        assert!(error.contains("denied by the selected solo_evidence v1 contract"));
++    }
++    active.authorize(ContractOperation::Checkpoint).unwrap();
++    active.authorize(ContractOperation::FinalReview).unwrap();
++    active.authorize(ContractOperation::Completion).unwrap();
++    assert_eq!(active.denied().len(), 5);
++    assert!(
++        active
++            .denied()
++            .iter()
++            .all(|denial| denial.contract_sha256 == active.provenance().contract_sha256)
++    );
++}
++
++#[test]
++fn legacy_capabilities_migrate_without_changing_behaviour() {
++    let default = LegacyCapabilities {
++        delegation: true,
++        escalation: true,
++        checkpoints: true,
++        unified_review: true,
++        completion_gate: true,
++    };
++    let migrated = WorkflowContract::from_legacy(default).unwrap();
++    assert_eq!(migrated, WorkflowContract::reviewed_omd_v1());
++    assert_eq!(migrated.legacy_capabilities(), default);
++
++    let direct = LegacyCapabilities {
++        delegation: false,
++        escalation: true,
++        checkpoints: false,
++        unified_review: false,
++        completion_gate: false,
++    };
++    let migrated = WorkflowContract::from_legacy(direct).unwrap();
++    assert_eq!(migrated.legacy_capabilities(), direct);
++    assert_eq!(migrated.id, LEGACY_CONTRACT_ID);
++    assert_eq!(migrated.assurance(), AssuranceLabel::Unreviewed);
++    assert!(migrated.requirements.opposite_lead);
++    assert!(!migrated.is_bundled() && migrated.host_owned());
++    assert_ne!(migrated, WorkflowContract::solo_evidence_v1());
++}
++
++#[test]
++fn inconsistent_requirements_never_validate() {
++    let mut requirements = WorkflowContract::solo_evidence_v1().requirements;
++    requirements.completion = CompletionMode::AdversarialSeparate;
++    assert!(
++        requirements
++            .validate()
++            .unwrap_err()
++            .to_string()
++            .contains("separate final reviewer")
++    );
++
++    let mut requirements = WorkflowContract::reviewed_omd_v1().requirements;
++    requirements.milestone_review = false;
++    assert!(requirements.validate().is_err());
++
++    let mut requirements = WorkflowContract::solo_evidence_v1().requirements;
++    requirements.checkpoints = false;
++    assert!(requirements.validate().is_err());
++
++    let mut requirements = WorkflowContract::solo_evidence_v1().requirements;
++    requirements.escalation = true;
++    assert!(requirements.validate().is_err());
++}
++
++#[test]
++fn a_mod_may_not_redefine_a_bundled_contract() {
++    let mut forged = WorkflowContract::solo_evidence_v1();
++    forged.requirements.final_review = FinalReview::None;
++    forged.requirements.completion = CompletionMode::None;
++    assert!(
++        forged
++            .validate()
++            .unwrap_err()
++            .to_string()
++            .contains("redefines a bundled contract")
++    );
++}
++
++#[test]
++fn explicit_user_selection_outranks_a_project_recommendation() {
++    let mut offers = bundled_offers(None);
++    offers.push(offer(
++        SelectionSource::ProjectRecommendation,
++        WorkflowContract::solo_evidence_v1(),
++    ));
++    offers.push(offer(
++        SelectionSource::UserDefault,
++        WorkflowContract::reviewed_omd_v1(),
++    ));
++    let resolution = resolve_selection(offers, None).unwrap();
++    assert_eq!(resolution.effective.source, SelectionSource::UserDefault);
++    assert!(!resolution.requires_confirmation);
++    assert!(resolution.considered.iter().any(|entry| entry.source
++        == SelectionSource::ProjectRecommendation
++        && entry.reason.contains("overridden by explicit user default")));
++}
++
++#[test]
++fn a_project_assurance_floor_fails_closed_against_a_weaker_choice() {
++    let mut offers = bundled_offers(Some(WorkflowContract::solo_evidence_v1()));
++    offers.push(offer(
++        SelectionSource::ProjectRecommendation,
++        WorkflowContract::reviewed_omd_v1(),
++    ));
++    let floor = AssuranceFloor {
++        source: SelectionSource::ProjectRecommendation,
++        minimum: AssuranceLabel::IndependentlyVerified,
++        configuration: source(SelectionSource::ProjectRecommendation, "floor"),
++    };
++    let error = resolve_selection(offers, Some(floor))
++        .unwrap_err()
++        .to_string();
++    assert!(error.contains("workflow conflict"));
++    assert!(error.contains("solo_evidence v1"));
++    assert!(error.contains("independently-verified"));
++}
++
++#[test]
++fn a_weaker_selection_requires_an_exact_confirmation() {
++    let resolution = resolve_selection(
++        bundled_offers(Some(WorkflowContract::solo_evidence_v1())),
++        None,
++    )
++    .unwrap();
++    assert!(resolution.weakens_default);
++    assert!(resolution.requires_confirmation);
++    let token = resolution.confirmation_token.clone().unwrap();
++
++    assert!(
++        ActiveContract::activate(resolution.clone(), None, binding(), None)
++            .unwrap_err()
++            .to_string()
++            .contains("explicit confirmation is required")
++    );
++    assert!(ActiveContract::activate(resolution.clone(), Some("forged"), binding(), None).is_err());
++    let active = ActiveContract::activate(resolution, Some(&token), binding(), None).unwrap();
++    assert_eq!(active.assurance(), AssuranceLabel::SelfReviewed);
++    assert!(active.provenance().weakens_default);
++    assert!(active.provenance().confirmation.is_some());
++}
++
++#[test]
++fn selecting_the_default_needs_no_confirmation_and_records_provenance() {
++    let resolution = resolve_selection(bundled_offers(None), None).unwrap();
++    assert!(!resolution.requires_confirmation);
++    let active = ActiveContract::activate(resolution, None, binding(), None).unwrap();
++    let provenance = active.provenance();
++    assert_eq!(provenance.source, SelectionSource::Bundle);
++    assert_eq!(provenance.assurance, AssuranceLabel::IndependentlyVerified);
++    assert_eq!(
++        provenance.contract_sha256,
++        provenance.bundled_default_sha256
++    );
++    assert_eq!(
++        provenance.configuration_sha256,
++        configuration_digest(&provenance.configuration_sources).unwrap()
++    );
++    assert_eq!(provenance.owners, vec![PolicyOwner::bundled()]);
++}
++
++#[test]
++fn persisted_state_is_task_bound_and_tamper_evident() {
++    let resolution = resolve_selection(bundled_offers(None), None).unwrap();
++    let active = ActiveContract::activate(resolution, None, binding(), None).unwrap();
++    let snapshot = active.snapshot();
++    ActiveContract::restore(snapshot.clone(), &binding()).unwrap();
++
++    let mut other = binding();
++    other.initial_candidate_sha256 = digest(b"intervening change");
++    assert!(
++        ActiveContract::restore(snapshot.clone(), &other)
++            .unwrap_err()
++            .to_string()
++            .contains("different task or workspace")
++    );
++
++    let mut relabelled = snapshot.clone();
++    relabelled.provenance.assurance = AssuranceLabel::IndependentlyVerified;
++    relabelled.provenance.contract = WorkflowContract::solo_evidence_v1();
++    assert!(ActiveContract::restore(relabelled, &binding()).is_err());
++
++    let mut downgraded = snapshot.clone();
++    downgraded.provenance.contract = WorkflowContract::solo_evidence_v1();
++    downgraded.provenance.contract_sha256 = WorkflowContract::solo_evidence_v1().digest().unwrap();
++    downgraded.provenance.assurance = AssuranceLabel::SelfReviewed;
++    downgraded.provenance.assurance_description = AssuranceLabel::SelfReviewed.description().into();
++    downgraded.provenance.weakens_default = true;
++    assert!(
++        ActiveContract::restore(downgraded, &binding())
++            .unwrap_err()
++            .to_string()
++            .contains("requires an explicit native confirmation receipt")
++    );
++
++    let mut resealed = snapshot.clone();
++    resealed.provenance.selected_at += 3600;
++    assert!(
++        ActiveContract::restore(resealed, &binding())
++            .unwrap_err()
++            .to_string()
++            .contains("modified outside the host")
++    );
++}
++
++#[test]
++fn mid_task_downgrade_requires_a_safe_boundary_and_full_revalidation() {
++    let resolution = resolve_selection(bundled_offers(None), None).unwrap();
++    let mut active = ActiveContract::activate(resolution, None, binding(), None).unwrap();
++    let solo = WorkflowContract::solo_evidence_v1();
++    let token = confirmation_token(
++        &WorkflowContract::bundled_default().summary().unwrap(),
++        &solo.summary().unwrap(),
++    );
++    let full = [
++        "candidate",
++        "evidence",
++        "checks",
++        "workers",
++        "allowance",
++        "resume",
++    ]
++    .map(str::to_string)
++    .to_vec();
++
++    assert!(
++        active
++            .migrate(solo.clone(), &token, "mid_turn", full.clone())
++            .unwrap_err()
++            .to_string()
++            .contains("safe boundary")
++    );
++    assert!(
++        active
++            .migrate(
++                solo.clone(),
++                &token,
++                "turn_boundary",
++                vec!["candidate".into(), "evidence".into()]
++            )
++            .unwrap_err()
++            .to_string()
++            .contains("revalidate")
++    );
++    assert!(
++        active
++            .migrate(solo.clone(), "forged", "turn_boundary", full.clone())
++            .unwrap_err()
++            .to_string()
++            .contains("explicit native confirmation")
++    );
++    assert_eq!(active.assurance(), AssuranceLabel::IndependentlyVerified);
++
++    let receipt = active
++        .migrate(solo.clone(), &token, "turn_boundary", full)
++        .unwrap();
++    assert!(receipt.confirmation.weakens);
++    assert_eq!(receipt.to.assurance, AssuranceLabel::SelfReviewed);
++    assert_eq!(active.assurance(), AssuranceLabel::SelfReviewed);
++    assert!(!active.permits(ContractOperation::Delegate));
++    ActiveContract::restore(active.snapshot(), &binding()).unwrap();
++}
++
++#[test]
++fn migration_may_not_break_the_project_assurance_floor() {
++    let mut offers = bundled_offers(None);
++    offers.push(offer(
++        SelectionSource::ProjectRecommendation,
++        WorkflowContract::reviewed_omd_v1(),
++    ));
++    let floor = AssuranceFloor {
++        source: SelectionSource::ProjectRecommendation,
++        minimum: AssuranceLabel::IndependentlyReviewed,
++        configuration: source(SelectionSource::ProjectRecommendation, "floor"),
++    };
++    let resolution = resolve_selection(offers, Some(floor)).unwrap();
++    let mut active = ActiveContract::activate(resolution, None, binding(), None).unwrap();
++    let solo = WorkflowContract::solo_evidence_v1();
++    let token = confirmation_token(
++        &WorkflowContract::reviewed_omd_v1().summary().unwrap(),
++        &solo.summary().unwrap(),
++    );
++    let full = [
++        "candidate",
++        "evidence",
++        "checks",
++        "workers",
++        "allowance",
++        "resume",
++    ]
++    .map(str::to_string)
++    .to_vec();
++    assert!(
++        active
++            .migrate(solo, &token, "turn_boundary", full)
++            .unwrap_err()
++            .to_string()
++            .contains("assurance floor")
++    );
++    assert_eq!(active.assurance(), AssuranceLabel::IndependentlyVerified);
++}
++
++#[test]
++fn conflicting_offers_from_one_source_fail_before_activation() {
++    let mut offers = bundled_offers(Some(WorkflowContract::solo_evidence_v1()));
++    offers.push(offer(
++        SelectionSource::TaskSelection,
++        WorkflowContract::reviewed_omd_v1(),
++    ));
++    assert!(
++        resolve_selection(offers, None)
++            .unwrap_err()
++            .to_string()
++            .contains("conflicting workflow offers")
++    );
++}
++
++#[test]
++fn a_replaced_bundled_default_is_rejected() {
++    let mut forged = WorkflowContract::bundled_default();
++    forged.requirements.delegation = false;
++    forged.requirements.child_agents = false;
++    let offers = vec![offer(SelectionSource::Bundle, forged)];
++    assert!(resolve_selection(offers, None).is_err());
++}
++
++fn mod_owner() -> PolicyOwner {
++    PolicyOwner {
++        kind: OwnerKind::Mod,
++        id: "house_rules".into(),
++        version: "0.3.1".into(),
++        source: "/user/mods/house-rules".into(),
++        sha256: digest(b"house-rules"),
++    }
++}
++
++#[test]
++fn a_mod_may_restrict_authority_but_never_widen_it() {
++    let resolution = resolve_selection(bundled_offers(None), None).unwrap();
++    let mut active = ActiveContract::activate(resolution, None, binding(), None).unwrap();
++    assert!(active.permits(ContractOperation::Delegate));
++
++    for forbidden in [
++        ContractOperation::MilestoneReview,
++        ContractOperation::FinalReview,
++        ContractOperation::Completion,
++        ContractOperation::Checkpoint,
++    ] {
++        assert!(
++            active
++                .restrict(vec![forbidden], mod_owner(), "house rule".into())
++                .unwrap_err()
++                .to_string()
++                .contains("only remove delegation")
++        );
++    }
++
++    active
++        .restrict(
++            vec![
++                ContractOperation::Delegate,
++                ContractOperation::SpawnChildAgent,
++            ],
++            mod_owner(),
++            "this repository forbids delegated contributions".into(),
++        )
++        .unwrap();
++    assert!(!active.permits(ContractOperation::Delegate));
++    let error = active.authorize(ContractOperation::Delegate).unwrap_err();
++    assert!(error.contains("restricted by house_rules"));
++    assert!(error.contains("forbids delegated contributions"));
++
++    assert_eq!(active.assurance(), AssuranceLabel::IndependentlyVerified);
++    assert!(active.permits(ContractOperation::Completion));
++    ActiveContract::restore(active.snapshot(), &binding()).unwrap();
++}
++
++#[test]
++fn restrictions_survive_migration_and_cannot_be_forged_on_disk() {
++    let resolution = resolve_selection(bundled_offers(None), None).unwrap();
++    let mut active = ActiveContract::activate(resolution, None, binding(), None).unwrap();
++    active
++        .restrict(
++            vec![ContractOperation::Escalate],
++            mod_owner(),
++            "escalation is disabled for this repository".into(),
++        )
++        .unwrap();
++    let solo = WorkflowContract::solo_evidence_v1();
++    let token = confirmation_token(
++        &WorkflowContract::bundled_default().summary().unwrap(),
++        &solo.summary().unwrap(),
++    );
++    active
++        .migrate(
++            solo,
++            &token,
++            "turn_boundary",
++            [
++                "candidate",
++                "evidence",
++                "checks",
++                "workers",
++                "allowance",
++                "resume",
++            ]
++            .map(str::to_string)
++            .to_vec(),
++        )
++        .unwrap();
++    assert_eq!(active.restrictions().len(), 1);
++    assert!(!active.permits(ContractOperation::Escalate));
++
++    let mut forged = active.snapshot();
++    forged.restrictions[0].operation = ContractOperation::Completion;
++    assert!(ActiveContract::restore(forged, &binding()).is_err());
 +}
 diff --git a/codex-rs/omd/src/graph.rs b/codex-rs/omd/src/graph.rs
 new file mode 100644
@@ -18782,15 +21882,17 @@ index 0000000000000000000000000000000000000000..1b27bbcae6bee86c2d0988b11d742768
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc8ee132e5ffd1f0622df748fd37724201348d7e
+index 0000000000000000000000000000000000000000..aac2b871d52ccfb3968d69a81436b83c52488bdf
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,242 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
 +mod communication;
 +mod completion;
++mod contract;
++mod contract_store;
 +mod graph;
 +mod guideline;
 +mod health;
@@ -18839,6 +21941,46 @@ index 0000000000000000000000000000000000000000..bc8ee132e5ffd1f0622df748fd377242
 +pub use completion::RequirementReceipt;
 +pub use completion::RequirementVerdict;
 +pub use completion::acceptance_contract_sha256;
++pub use contract::ActiveContract;
++pub use contract::AssuranceFloor;
++pub use contract::AssuranceLabel;
++pub use contract::CONTRACT_SCHEMA;
++pub use contract::CompletionMode;
++pub use contract::ConfigurationSource;
++pub use contract::ConfirmationReceipt;
++pub use contract::ContractOffer;
++pub use contract::ContractOperation;
++pub use contract::ContractProvenance;
++pub use contract::ContractRequirements;
++pub use contract::ContractSnapshot;
++pub use contract::ContractSummary;
++pub use contract::DeniedOperation;
++pub use contract::FinalReview;
++pub use contract::LEGACY_CONTRACT_ID;
++pub use contract::LegacyCapabilities;
++pub use contract::MigrationReceipt;
++pub use contract::OfferSummary;
++pub use contract::OwnerKind;
++pub use contract::PolicyOwner;
++pub use contract::Resolution;
++pub use contract::Restriction;
++pub use contract::SelectionScope;
++pub use contract::SelectionSource;
++pub use contract::TaskBinding;
++pub use contract::WorkflowContract;
++pub use contract::configuration_digest;
++pub use contract::confirmation_token;
++pub use contract::resolve_selection;
++pub use contract_store::ContractCatalog;
++pub use contract_store::ContractChoice;
++pub use contract_store::PROJECT_SELECTION_FILE;
++pub use contract_store::SELECTION_LIMIT;
++pub use contract_store::SelectionFile;
++pub use contract_store::Selections;
++pub use contract_store::USER_SELECTION_FILE;
++pub use contract_store::collect as collect_selections;
++pub use contract_store::read_selection;
++pub use contract_store::write_selection;
 +pub use graph::CODE_GRAPH_GENERATOR;
 +pub use graph::CODE_GRAPH_SCHEMA;
 +pub use graph::CodeGraph;
@@ -21382,10 +24524,10 @@ index 0000000000000000000000000000000000000000..270274fcaa9a31f19c9f036c462cbff3
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906b8125f57
+index 0000000000000000000000000000000000000000..58edc7fcc26c079e54e47678c21c218ee3862073
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,646 @@
+@@ -0,0 +1,716 @@
 +mod bridge;
 +mod packages;
 +mod pi;
@@ -21425,7 +24567,7 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +
 +pub use store::ModStore;
 +
-+pub const MOD_API_VERSION: &str = "0.1.0-experimental.2";
++pub const MOD_API_VERSION: &str = "0.1.0-experimental.3";
 +pub const MOD_CAPABILITIES: &[&str] = &[
 +    "context",
 +    "tools",
@@ -21445,6 +24587,7 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +    "compaction",
 +    "pi_resources",
 +    "input",
++    "workflow",
 +];
 +pub const MOD_EVENTS: &[(&str, &str)] = &[
 +    ("context", "context"),
@@ -21464,6 +24607,7 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +    ("compaction_start", "lifecycle"),
 +    ("compaction_end", "lifecycle"),
 +    ("agent_end", "lifecycle"),
++    ("workflow", "workflow"),
 +];
 +pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
 +    "tool_before",
@@ -21506,8 +24650,13 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +
 +impl ModPackage {
 +    fn validate(&self) -> Result<()> {
++        if self.api != MOD_API_VERSION {
++            return Err(failure(format!(
++                "incompatible_api: this host runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Update the package's mod.json api field and re-trust it.",
++                self.id, self.api
++            )));
++        }
 +        if self.schema != 1
-+            || self.api != MOD_API_VERSION
 +            || !identifier(&self.id)
 +            || self.id.len() > 24
 +            || self.version.is_empty()
@@ -21585,6 +24734,8 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +    events: Vec<String>,
 +    #[serde(default)]
 +    replacements: Vec<String>,
++    #[serde(default)]
++    contracts: Vec<crate::WorkflowContract>,
 +}
 +
 +#[derive(Deserialize)]
@@ -21650,6 +24801,7 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +        if config.schema != 1 || config.mods.len() > 16 || !config.node.is_absolute() {
 +            return Err(failure("invalid_mod_configuration"));
 +        }
++        let initial = self.configuration_sha256.is_empty();
 +        let retained = self.loaded.len();
 +        self.loaded.retain(|_, loaded| {
 +            config.mods.iter().any(|m| {
@@ -21668,6 +24820,7 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +        let mut next = BTreeMap::new();
 +        let mut tool_names = BTreeSet::new();
 +        let mut replacements = BTreeSet::new();
++        let mut contracts = BTreeSet::new();
 +        for selection in config.mods.into_iter().filter(|m| m.enabled) {
 +            let (package, source, hash) = store::package(&selection.path)?;
 +            if hash != selection.sha256 {
@@ -21694,7 +24847,16 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +                registrations: Registrations::default(),
 +                error: None,
 +            };
-+            let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;
++            let reply = match Self::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)
++            {
++                Ok(reply) => reply,
++                Err(error) if initial => {
++                    loaded.error = Some(error.to_string());
++                    next.insert(loaded.package.id.clone(), loaded);
++                    continue;
++                }
++                Err(error) => return Err(error),
++            };
 +            Self::validate_registrations(&loaded.package, &reply.registrations)?;
 +            if reply.state != loaded.state {
 +                return Err(failure("state_write_during_registration"));
@@ -21708,6 +24870,14 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +            for point in &reply.registrations.replacements {
 +                if !replacements.insert(point.clone()) {
 +                    return Err(failure(format!("replacement_conflict: {point}")));
++                }
++            }
++            for contract in &reply.registrations.contracts {
++                if !contracts.insert(contract.id.clone()) {
++                    return Err(failure(format!(
++                        "workflow_replacement_conflict: {}",
++                        contract.id
++                    )));
 +                }
 +            }
 +            loaded.registrations = reply.registrations;
@@ -21728,8 +24898,17 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +            || registrations.events.len() > MOD_EVENTS.len()
 +            || (!registrations.tools.is_empty() && !has("tools"))
 +            || (!registrations.commands.is_empty() && !has("commands"))
++            || (!registrations.contracts.is_empty() && !has("workflow"))
++            || registrations.contracts.len() > 4
 +        {
 +            return Err(failure("registration_limit_or_capability_denied"));
++        }
++        let mut contract_ids = BTreeSet::new();
++        for contract in &registrations.contracts {
++            contract.validate().map_err(failure)?;
++            if contract.host_owned() || !contract_ids.insert(&contract.id) {
++                return Err(failure("invalid_or_duplicate_contract_registration"));
++            }
 +        }
 +        let visible = |text: &str, limit: usize| {
 +            !text.is_empty() && text.len() <= limit && !text.chars().any(char::is_control)
@@ -21952,7 +25131,9 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +            }
 +            Ok(reply.value)
 +        })();
-+        if let Err(error) = &result {
++        if let Err(error) = &result
++            && !error.to_string().starts_with("state_conflict")
++        {
 +            loaded.error = Some(error.to_string());
 +        }
 +        result
@@ -22015,6 +25196,37 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +            .collect()
 +    }
 +
++    pub fn owners(&self) -> Vec<(String, crate::PolicyOwner)> {
++        self.loaded
++            .iter()
++            .filter(|(_, m)| m.error.is_none())
++            .map(|(id, m)| (id.clone(), Self::owner(m)))
++            .collect()
++    }
++
++    fn owner(loaded: &Loaded) -> crate::PolicyOwner {
++        crate::PolicyOwner {
++            kind: crate::OwnerKind::Mod,
++            id: loaded.package.id.clone(),
++            version: loaded.package.version.clone(),
++            source: loaded.selection.path.display().to_string(),
++            sha256: loaded.selection.sha256.clone(),
++        }
++    }
++
++    pub fn contracts(&self) -> Vec<(crate::WorkflowContract, crate::PolicyOwner)> {
++        self.loaded
++            .values()
++            .filter(|m| m.error.is_none())
++            .flat_map(|m| {
++                m.registrations
++                    .contracts
++                    .iter()
++                    .map(|contract| (contract.clone(), Self::owner(m)))
++            })
++            .collect()
++    }
++
 +    pub fn registered(&self, id: &str, event: &str) -> bool {
 +        self.loaded
 +            .get(id)
@@ -22034,10 +25246,10 @@ index 0000000000000000000000000000000000000000..d1b7e1361c6768823328e73861958906
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e10e8b7b63122eea34125b37af1de417d08586ea
+index 0000000000000000000000000000000000000000..80dfab81a918fe406614220925f7d5951ee54c17
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,116 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -22061,6 +25273,7 @@ index 0000000000000000000000000000000000000000..e10e8b7b63122eea34125b37af1de417
 +            "providers.register" | "providers.unregister" => Ok("providers"),
 +            "pi.discover" | "pi.expand" => Ok("pi_resources"),
 +            "sidecars.start" | "sidecars.stop" | "sidecars.status" => Ok("sidecars"),
++            "workflow.status" | "workflow.restrict" => Ok("workflow"),
 +            _ => Err(failure(format!(
 +                "unsupported_host_operation: {}",
 +                self.operation
@@ -23097,10 +26310,10 @@ index 0000000000000000000000000000000000000000..4f51961c1fd8701d3b2812f05d3ed021
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 0000000000000000000000000000000000000000..24043287a8225ed1f64529d3923bd27121072a0a
+index 0000000000000000000000000000000000000000..2fa93d339ee4808d9167bb5bca0f37271a898241
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,205 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule } from 'node:vm';
 +
@@ -23123,7 +26336,7 @@ index 0000000000000000000000000000000000000000..24043287a8225ed1f64529d3923bd271
 +const handlers = new Map();
 +const tools = new Map();
 +const commands = new Map();
-+const registrations = { tools: [], commands: [], events: [], replacements: [] };
++const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [] };
 +const updates = [];
 +let submitted = null;
 +let state = structuredCloneFallback(request.state);
@@ -23162,12 +26375,12 @@ index 0000000000000000000000000000000000000000..24043287a8225ed1f64529d3923bd271
 +  map.set(name, handler);
 +}
 +const api = Object.freeze({
-+  version: '0.1.0-experimental.2',
++  version: '0.1.0-experimental.3',
 +  host: Object.freeze({ call: hostCall }),
 +  settings: Object.freeze(structuredCloneFallback(request.settings)),
 +  on(event, handler) {
 +    const capability = { context: 'context', tool_before: 'interception', routing: 'routing', terminal: 'terminal', compaction: 'compaction', migrate: 'state', input: 'input', start: 'lifecycle', idle: 'lifecycle',
-+      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle' }[event];
++      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow' }[event];
 +    if (!capability) throw new Error('unsupported_event: ' + event);
 +    requireCapability(capability);
 +    unique(handlers, event, handler);
@@ -23177,6 +26390,12 @@ index 0000000000000000000000000000000000000000..24043287a8225ed1f64529d3923bd271
 +    if (!['tool_before','routing','terminal','compaction','context','input'].includes(point)) throw new Error('unsupported_replacement_point: ' + point);
 +    api.on(point, handler);
 +    registrations.replacements.push(point);
++  },
++  contract(definition) {
++    requireCapability('workflow');
++    if (!activating) throw new Error('contract_registration_outside_activation');
++    if (registrations.contracts.some(entry => entry.id === definition?.id)) throw new Error('conflict: ' + definition?.id);
++    registrations.contracts.push(structuredCloneFallback(definition));
 +  },
 +  tool(spec, handler) {
 +    requireCapability('tools');
@@ -23302,10 +26521,10 @@ index 0000000000000000000000000000000000000000..24043287a8225ed1f64529d3923bd271
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f8749f56ac4dfc7bd7f7e50872aa5263047d2211
+index 0000000000000000000000000000000000000000..3d97221eb3795b0109299ec10fd51e59d06409cd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,229 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -23390,8 +26609,16 @@ index 0000000000000000000000000000000000000000..f8749f56ac4dfc7bd7f7e50872aa5263
 +            .mode(0o600)
 +            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
 +            .open(self.root.join("store.lock"))?;
-+        rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)?;
-+        Ok(file)
++        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
++        loop {
++            match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
++                Ok(()) => return Ok(file),
++                Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
++                    std::thread::sleep(std::time::Duration::from_millis(20));
++                }
++                Err(error) => return Err(error.into()),
++            }
++        }
 +    }
 +
 +    pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
@@ -24112,10 +27339,11 @@ index 0000000000000000000000000000000000000000..f28113be53133c6b1b3112fcbd7b6e14
 +}
 diff --git a/codex-rs/omd/src/review.rs b/codex-rs/omd/src/review.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cc385a5f3b28b4a710505a968b424fe6f7f31a4a
+index 0000000000000000000000000000000000000000..499aef9b91d118c9df23b76df3309d9ff4fdd6b2
 --- /dev/null
 +++ b/codex-rs/omd/src/review.rs
-@@ -0,0 +1,538 @@
+@@ -0,0 +1,566 @@
++use crate::FinalReview;
 +use crate::VersionMarker;
 +use serde::Deserialize;
 +use serde::Serialize;
@@ -24128,6 +27356,10 @@ index 0000000000000000000000000000000000000000..cc385a5f3b28b4a710505a968b424fe6
 +pub struct ReviewPolicy {
 +    #[serde(default)]
 +    pub every_turn_advice: bool,
++    #[serde(default)]
++    pub final_review: FinalReview,
++    #[serde(default = "enabled")]
++    pub milestone_review: bool,
 +    pub max_cycles: u32,
 +    pub max_findings_per_cycle: usize,
 +    pub max_open_findings: usize,
@@ -24139,6 +27371,8 @@ index 0000000000000000000000000000000000000000..cc385a5f3b28b4a710505a968b424fe6
 +    fn default() -> Self {
 +        Self {
 +            every_turn_advice: false,
++            final_review: FinalReview::Separate,
++            milestone_review: true,
 +            max_cycles: 16,
 +            max_findings_per_cycle: 64,
 +            max_open_findings: 128,
@@ -24173,6 +27407,11 @@ index 0000000000000000000000000000000000000000..cc385a5f3b28b4a710505a968b424fe6
 +        stable: bool,
 +        risk: Option<&str>,
 +    ) -> io::Result<()> {
++        if !self.milestone_review && cadence != ReviewCadence::Final {
++            return Err(invalid(
++                "the selected workflow contract has no milestone review",
++            ));
++        }
 +        match cadence {
 +            ReviewCadence::StableMilestone if !stable => {
 +                return Err(invalid("milestone review requires a stable candidate"));
@@ -24571,12 +27810,24 @@ index 0000000000000000000000000000000000000000..cc385a5f3b28b4a710505a968b424fe6
 +    if submission.findings.len() > policy.max_findings_per_cycle {
 +        return Err(invalid("review finding limit exceeded"));
 +    }
-+    if submission.cadence == ReviewCadence::Final
-+        && (!submission.separate_reviewer || submission.checks.is_empty())
-+    {
-+        return Err(invalid(
-+            "final review requires a stable candidate, executable checks, and a separate reviewer",
-+        ));
++    if submission.cadence == ReviewCadence::Final {
++        if policy.final_review == FinalReview::None {
++            return Err(invalid(
++                "the selected workflow contract has no final review",
++            ));
++        }
++        if submission.checks.is_empty() {
++            return Err(invalid(
++                "final review requires a stable candidate and executable checks",
++            ));
++        }
++        if submission.separate_reviewer != (policy.final_review == FinalReview::Separate) {
++            return Err(invalid(if policy.final_review == FinalReview::Separate {
++                "final review requires a separate reviewer"
++            } else {
++                "a final self-review may not be recorded as an independent review"
++            }));
++        }
 +    }
 +    for check in &submission.checks {
 +        validate_marker(check)?;
@@ -24625,6 +27876,10 @@ index 0000000000000000000000000000000000000000..cc385a5f3b28b4a710505a968b424fe6
 +        return Err(invalid("exact lowercase SHA256 is required"));
 +    }
 +    Ok(())
++}
++
++fn enabled() -> bool {
++    true
 +}
 +
 +fn unique<T: Ord>(values: &[T]) -> bool {
@@ -27245,10 +30500,10 @@ index 0000000000000000000000000000000000000000..aef9c99b6cd1b1cac9eb08e141796e42
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9cef873b4d2eea772a41c2ef99297201ac692d72
+index 0000000000000000000000000000000000000000..cfe92b50f8cb0c3ffff04a78f669c681b11858e2
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,922 @@
+@@ -0,0 +1,1081 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModStore;
@@ -27291,14 +30546,34 @@ index 0000000000000000000000000000000000000000..9cef873b4d2eea772a41c2ef99297201
 +
 +fn trust(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
 +    let inspected = ModStore::inspect_package(path).unwrap();
-+    store
-+        .trust(
-+            path.to_path_buf(),
-+            inspected["sha256"].as_str().unwrap(),
-+            capabilities.iter().map(|s| s.to_string()).collect(),
-+        )
-+        .unwrap();
-+    store.enable(path, true).unwrap();
++    let granted: Vec<String> = capabilities.iter().map(|s| s.to_string()).collect();
++    let sha256 = inspected["sha256"].as_str().unwrap();
++    contended(|| store.trust(path.to_path_buf(), sha256, granted.clone()));
++    contended(|| store.enable(path, true));
++}
++
++fn activation_error(temp: &TempDir, id: &str) -> String {
++    let runtime = ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap();
++    runtime.status()["mods"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|m| m["id"] == id)
++        .and_then(|m| m["error"].as_str())
++        .unwrap_or_default()
++        .to_string()
++}
++
++fn contended<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> T {
++    for _ in 0..200 {
++        match operation() {
++            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
++                std::thread::sleep(std::time::Duration::from_millis(20))
++            }
++            result => return result.unwrap(),
++        }
++    }
++    panic!("store lock stayed contended")
 +}
 +
 +fn host(temp: &TempDir) -> ModHost {
@@ -27326,10 +30601,11 @@ index 0000000000000000000000000000000000000000..9cef873b4d2eea772a41c2ef99297201
 +    });
 +    std::thread::sleep(std::time::Duration::from_millis(200));
 +    assert_eq!(invoke(&mut second, "count").unwrap(), json!(4));
-+    let (_, result) = racing.join().unwrap();
++    let (mut first, result) = racing.join().unwrap();
 +    assert!(result.unwrap_err().to_string().contains("state_conflict"));
++    assert_eq!(invoke(&mut first, "count").unwrap(), json!(5));
 +    let mut resumed = host(&temp);
-+    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(5));
++    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(6));
 +}
 +
 +#[test]
@@ -27876,7 +31152,7 @@ index 0000000000000000000000000000000000000000..9cef873b4d2eea772a41c2ef99297201
 +        "export default api => api.on('input', () => null)",
 +        &["lifecycle"],
 +    );
-+    assert!(ModHost::open(temp.path().canonicalize().unwrap().join("store")).is_err());
++    assert!(activation_error(&temp, "fixture").contains("capability_denied: input"));
 +}
 +
 +#[test]
@@ -27914,10 +31190,6 @@ index 0000000000000000000000000000000000000000..9cef873b4d2eea772a41c2ef99297201
 +            "export default api => api.tool({name:'echo',label:'x'.repeat(65),description:'Echo',parameters:{type:'object',properties:{}}}, () => null)",
 +            &["tools"][..],
 +        ),
-+        (
-+            "export default api => api.on('turn_start', () => null)",
-+            &["commands"][..],
-+        ),
 +    ] {
 +        let (temp, _, _) = fixture(source, capabilities);
 +        assert!(
@@ -27925,6 +31197,11 @@ index 0000000000000000000000000000000000000000..9cef873b4d2eea772a41c2ef99297201
 +            "{source}"
 +        );
 +    }
++    let (temp, _, _) = fixture(
++        "export default api => api.on('turn_start', () => null)",
++        &["commands"],
++    );
++    assert!(activation_error(&temp, "fixture").contains("capability_denied"));
 +}
 +
 +#[test]
@@ -28170,6 +31447,143 @@ index 0000000000000000000000000000000000000000..9cef873b4d2eea772a41c2ef99297201
 +            .contains("native_schema_rejected")
 +    );
 +    assert_eq!(runtime.tools().len(), 1);
++}
++
++const WORKFLOW: &str = r#"export default api => {
++  api.contract({ schema: 1, id: 'paired_review', version: 1, requirements: {
++    delegation: false, child_agents: false, opposite_lead: true, escalation: true,
++    checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } });
++  api.on('workflow', event => { api.state.set(event); });
++}"#;
++
++#[test]
++fn a_workflow_mod_registers_a_contract_it_cannot_select_or_weaken() {
++    let (temp, _, path) = fixture(WORKFLOW, &["workflow", "state"]);
++    let mut host = host(&temp);
++    let contracts = host.contracts();
++    assert_eq!(contracts.len(), 1);
++    let (contract, owner) = &contracts[0];
++    assert_eq!(contract.id, "paired_review");
++    assert_eq!(
++        contract.assurance(),
++        codex_omd::AssuranceLabel::IndependentlyVerified
++    );
++    assert_eq!(owner.kind, codex_omd::OwnerKind::Mod);
++    assert_eq!(owner.id, "fixture");
++    assert_eq!(owner.source, path.display().to_string());
++
++    let mut catalog = codex_omd::ContractCatalog::bundled();
++    catalog.register(contract.clone(), owner.clone()).unwrap();
++    let selections = codex_omd::collect_selections(&catalog, None, None, None, None).unwrap();
++    let resolution = codex_omd::resolve_selection(selections.offers, None).unwrap();
++    assert_eq!(
++        resolution.effective.contract,
++        codex_omd::WorkflowContract::bundled_default()
++    );
++
++    let generation = host.generation();
++    host.invoke(
++        "fixture",
++        generation,
++        "workflow",
++        "",
++        json!({"contract": "reviewed_omd", "assurance": "independently_verified"}),
++    )
++    .unwrap();
++}
++
++#[test]
++fn a_registered_contract_may_not_redefine_a_bundled_contract_or_skip_its_capability() {
++    let forged = r#"export default api => api.contract({ schema: 1, id: 'solo_evidence', version: 1, requirements: {
++      delegation: true, child_agents: true, opposite_lead: true, escalation: true,
++      checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } })"#;
++    let (temp, _, _) = fixture(forged, &["workflow"]);
++    let error = ModHost::open(temp.path().canonicalize().unwrap().join("store"))
++        .map(|_| ())
++        .unwrap_err()
++        .to_string();
++    assert!(error.contains("redefines a bundled contract"));
++
++    let shadowed = r#"export default api => api.contract({ schema: 1, id: 'solo_evidence', version: 1, requirements: {
++      delegation: false, child_agents: false, opposite_lead: false, escalation: false,
++      checkpoints: true, milestone_review: false, final_review: 'self_review', completion: 'self_verified' } })"#;
++    let (temp, _, _) = fixture(shadowed, &["workflow"]);
++    let error = ModHost::open(temp.path().canonicalize().unwrap().join("store"))
++        .map(|_| ())
++        .unwrap_err()
++        .to_string();
++    assert!(error.contains("invalid_or_duplicate_contract_registration"));
++
++    let denied = r#"export default api => api.contract({ schema: 1, id: 'paired_review', version: 1, requirements: {
++      delegation: false, child_agents: false, opposite_lead: true, escalation: true,
++      checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } })"#;
++    let (temp, _, _) = fixture(denied, &["state"]);
++    assert!(activation_error(&temp, "fixture").contains("capability_denied"));
++}
++
++#[test]
++fn two_mods_may_not_own_the_same_workflow_contract() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    for id in ["first", "second"] {
++        let path = package(&root, id, WORKFLOW, &["workflow", "state"]);
++        trust(&store, &path, &["workflow", "state"]);
++    }
++    let error = ModHost::open(root.join("store"))
++        .map(|_| ())
++        .unwrap_err()
++        .to_string();
++    assert!(error.contains("workflow_replacement_conflict: paired_review"));
++}
++
++#[test]
++fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() {
++    let (temp, store, _) = fixture(
++        "export default api => { throw new Error('ACTIVATION_SENTINEL') }",
++        &["context"],
++    );
++    let root = temp.path().canonicalize().unwrap();
++    let healthy = package(
++        &root,
++        "healthy",
++        "export default api => api.on('context', () => ({text:'hello'}))",
++        &["context"],
++    );
++    trust(&store, &healthy, &["context"]);
++    let mut runtime = host(&temp);
++    let status = runtime.status();
++    let broken = status["mods"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|m| m["id"] == "fixture")
++        .unwrap();
++    let error = broken["error"].as_str().unwrap();
++    assert!(error.contains("ACTIVATION_SENTINEL"), "{error}");
++    assert!(error.contains("index.ts:1:"), "{error}");
++    let results = runtime.event("context", Value::Null);
++    assert_eq!(results.len(), 1);
++    assert_eq!(*results[0].1.as_ref().unwrap(), json!({"text":"hello"}));
++}
++
++#[test]
++fn an_incompatible_package_names_the_host_and_package_api_versions() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let path = root.join("stale");
++    std::fs::create_dir(&path).unwrap();
++    std::fs::write(
++        path.join("mod.json"),
++        serde_json::to_vec(&json!({"schema":1,"id":"stale","version":"1.0.0",
++        "api":"0.1.0-experimental.1","state_version":1,"capabilities":[]}))
++        .unwrap(),
++    )
++    .unwrap();
++    std::fs::write(path.join("index.ts"), "export default () => {}").unwrap();
++    let error = ModStore::inspect_package(&path).unwrap_err().to_string();
++    assert!(error.contains(MOD_API_VERSION), "{error}");
++    assert!(error.contains("0.1.0-experimental.1"), "{error}");
 +}
 diff --git a/codex-rs/omd/tests/reactive.rs b/codex-rs/omd/tests/reactive.rs
 new file mode 100644
