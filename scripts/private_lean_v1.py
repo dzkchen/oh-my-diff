@@ -15,8 +15,10 @@ from datetime import datetime, timezone
 
 try:
     from scripts import browser_bundle
+    from scripts.preview_lock import package_digest
 except ModuleNotFoundError:
     import browser_bundle
+    from preview_lock import package_digest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -455,8 +457,7 @@ def preview_sources(lock):
 
 
 def digest_of_package(path):
-    manifest = (path / "mod.json").read_bytes()
-    return hashlib.sha256(manifest + b"\x00" + (path / "index.ts").read_bytes()).hexdigest()
+    return package_digest(path)
 
 
 def manager(prefix):

@@ -1639,8 +1639,10 @@ impl ModHost {
             .get(id)
             .cloned()
             .ok_or_else(|| failure("mod_disabled"))?;
-        if loaded.error.is_some() {
-            return Err(failure("mod_failed: explicitly reload to recover"));
+        if let Some(error) = &loaded.error {
+            return Err(failure(format!(
+                "mod_failed: {error}; explicitly reload to recover"
+            )));
         }
         loaded.state = self.store.state(
             &loaded.package.id,

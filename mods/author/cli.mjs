@@ -153,7 +153,8 @@ async function createProject(directory, name) {
   if (!/^[a-z0-9_]{1,24}$/.test(name)) fail(`invalid_mod_id: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
   mkdirSync(directory, { recursive: true });
-  await writeJson(join(directory, 'mod.json'), { schema: 1, id: name, version: '0.1.0', api: apiVersion, state_version: 1, capabilities: ['commands'] });
+  await writeJson(join(directory, 'mod.json'), { schema: 1, id: name, version: '0.1.0', api: apiVersion, state_version: 1,
+    license: 'UNLICENSED', provenance: { maintainer: 'CHANGE ME', source: 'CHANGE ME' }, capabilities: ['commands'] });
   await writeFile(join(directory, 'index.ts'), minimalSource());
   await writeProjectFiles(directory, name);
 }
@@ -184,6 +185,7 @@ function trustPackage(store, directory) {
   const capabilities = inspected.manifest.capabilities.join(',');
   engineJson(['trust', store, inspected.path, inspected.sha256, capabilities, 'user']);
   engineJson(['enable', store, inspected.path]);
+  return inspected;
 }
 
 function copyDeclarations(store, directory) {
@@ -202,7 +204,14 @@ function runScenario(directory, file) {
   try {
     engineJson(['init', store, node]);
     const packages = [directory, ...(scenario.packages || []).map(path => resolve(directory, path))];
-    for (const packagePath of packages) trustPackage(store, resolve(packagePath));
+    const installed = new Map(packages.map(packagePath => {
+      const inspected = trustPackage(store, resolve(packagePath));
+      return [inspected.manifest.id, inspected.path];
+    }));
+    for (const [id, settings] of Object.entries(scenario.settings || {})) {
+      const path = installed.get(id) || fail(`settings_for_uninstalled_mod: ${id}`);
+      engineJson(['settings', store, path, JSON.stringify(settings)]);
+    }
     const result = engineJson(['test', store, scenarioPath]);
     copyDeclarations(store, directory);
     checkProject(directory);

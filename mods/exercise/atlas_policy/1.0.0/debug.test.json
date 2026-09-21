@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "atlas_policy",
+      "event": "command",
+      "name": "__intentional_missing__",
+      "payload": null,
+      "expect_error": "unsupported_or_unregistered_operation"
+    }
+  ]
+}

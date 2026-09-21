@@ -17,6 +17,17 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def package_digest(base):
+    manifest = (base / "mod.json").read_bytes()
+    declared = json.loads(manifest)
+    if declared.get("lifecycle"):
+        raise ValueError(f"{base.name} declares lifecycle scripts; install it through the package manager")
+    entrypoint = declared.get("entrypoint", "index.ts")
+    return hashlib.sha256(
+        manifest + b"\x00" + entrypoint.encode() + b"\x00" + (base / entrypoint).read_bytes()
+    ).hexdigest()
+
+
 def build():
     api = json.loads((ROOT / "mods/package.json").read_text())["version"]
     packages = {}
@@ -31,9 +42,7 @@ def build():
             "capabilities": manifest["capabilities"],
             "source": str(base.relative_to(ROOT)),
             "files": {name: digest(base / name) for name in FILES},
-            "package_sha256": hashlib.sha256(
-                (base / "mod.json").read_bytes() + b"\x00" + (base / "index.ts").read_bytes()
-            ).hexdigest(),
+            "package_sha256": package_digest(base),
         }
     if not packages:
         raise ValueError("no first-party preview packages found")

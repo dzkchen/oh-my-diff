@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "virtual_time_ms": 1000,
+  "steps": [
+    {
+      "type": "event",
+      "event": "routing",
+      "payload": {
+        "routes": [
+          { "name": "sol", "model": "sol-model", "provider": "fixture", "reasoning": "high" },
+          { "name": "astra", "model": "astra-model", "provider": "fixture", "reasoning": "xhigh" }
+        ],
+        "model": "sol-model",
+        "provider": "fixture",
+        "reasoning": null
+      },
+      "expect": [{ "mod": "atlas_policy", "value": "astra" }]
+    },
+    {
+      "type": "invoke",
+      "mod": "atlas_policy",
+      "event": "command",
+      "name": "atlas",
+      "payload": null,
+      "expect": { "display": "atlas_policy 1.0.0 routes every turn to astra." }
+    }
+  ]
+}

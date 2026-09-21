@@ -63,6 +63,11 @@ A package-index file is bounded JSON with schema 1:
 }
 ```
 
+A managed package manifest must declare `license` and `provenance`; the
+scaffold emits both with placeholders to change. Package rollback repoints the
+selection at the immutable store cache, so returning to editable local
+development is a fresh local install of the rolled-back source.
+
 Resolution selects the highest exact/caret-compatible semantic version and then
 checks the index integrity against the manifest, entrypoint, and every declared
 lifecycle script. Each dependency needs its own exact trust entry. Index files
@@ -74,6 +79,14 @@ A `mod.test.json` file uses schema 1. `virtual_time_ms` fixes `Date.now()` and
 zero-argument `new Date()` inside every callback. `host_operations` supplies an
 ordered result/error queue for each approved host operation. Any unmocked call
 fails before external work, and every result records `paid_requests: 0`.
+`settings` is a map from mod ID to that mod's explicit settings; the author
+commands apply it through `omd-mod settings` before the run, so configured
+behaviour is testable offline. A store-level `omd-mod test STORE SCENARIO` uses
+the store's own settings instead.
+
+A mod that fails to activate reports its retained cause, so a missing service
+provider, denied capability or source error names itself instead of only asking
+for a reload.
 
 Steps can advance virtual time, invoke tools or commands, dispatch ordinary
 events, model-request and response-stream middleware, tool outcomes and agent
@@ -97,6 +110,12 @@ unused grants are reported. Diagnostics explain how to narrow or explicitly
 approve authority, but tooling cannot grant permissions by itself.
 
 ## Composition and safety
+
+The mod runtime is single-threaded and never runs re-entrantly. A request a mod
+causes from inside its own in-flight callback — a spawned agent, or a native
+contribution — is sent on the route already authorized for it, without that
+runtime's request, stream or thread-configuration hooks. Requests a mod did not
+cause from inside a callback still run every registered hook.
 
 Dependencies run before consumers and remaining mods use lexical ID order.
 Project scope shadows user scope without inheriting its state or grants.

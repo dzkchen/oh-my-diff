@@ -75,6 +75,16 @@ impl Accounts {
         self.1.lock().ok().and_then(|installed| installed.clone())
     }
 
+    fn idle_runtime(
+        runtime: &Mutex<codex_omd::ModHost>,
+    ) -> Result<Option<std::sync::MutexGuard<'_, codex_omd::ModHost>>, TransportError> {
+        match runtime.try_lock() {
+            Ok(runtime) => Ok(Some(runtime)),
+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => Err(denied("mod runtime poisoned")),
+        }
+    }
+
     fn record_middleware(account: &Account, value: &Value) -> Result<(), TransportError> {
         use std::io::Write;
         let path = account
@@ -183,11 +193,13 @@ impl ResponseObserver for Accounts {
                 "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
                 "kind":if account.owner == "lead" {"main"} else {"subagent"}},
                 "authorized_presets":presets,"original":route,"effective":route,"provenance":[]});
-            let effective = mods
-                .lock()
-                .map_err(|_| denied("mod runtime poisoned"))?
+            let Some(mut runtime) = Self::idle_runtime(&mods)? else {
+                return Ok(());
+            };
+            let effective = runtime
                 .model_request(payload, || account.task.check_active().is_ok())
                 .map_err(denied)?;
+            drop(runtime);
             let selected = effective["effective"]["name"]
                 .as_str()
                 .and_then(|name| {
@@ -501,11 +513,13 @@ impl Attempt {
             let payload = json!({"kind":kind,"raw_sha256":crate::execution::hash(&serde_json::to_vec(&raw).map_err(denied)?),
                 "raw_usage":raw.pointer("/response/usage").cloned().unwrap_or(Value::Null),
                 "opaque_reasoning":kind.contains("reasoning"),"protected":text_key.is_none(),"text":text});
-            let transformed = mods
-                .lock()
-                .map_err(|_| denied("mod runtime poisoned"))?
+            let Some(mut runtime) = Accounts::idle_runtime(mods)? else {
+                return Ok(());
+            };
+            let transformed = runtime
                 .response_stream(payload, || self.account.task.check_active().is_ok())
                 .map_err(denied)?;
+            drop(runtime);
             if let Some(key) = text_key
                 && let Some(text) = transformed["effective"].as_str()
             {

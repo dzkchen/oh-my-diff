@@ -64,7 +64,16 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             let route = self.owner.route(*name);
             json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
         }).collect::<Vec<_>>();
-        let mut runtime = self.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+        let acquired = match self.runtime.try_lock() {
+            Ok(runtime) => Some(runtime),
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        };
+        let Some(mut runtime) = acquired else {
+            self.views
+                .diagnostic(&self.owner, "compaction_prompt", None);
+            return Ok(());
+        };
         let compaction = runtime.event("compaction", json!({"token_limit":config.model_auto_compact_token_limit,"context_window":config.model_context_window}));
         let mut selected_compaction: Option<(String, Option<i64>, Option<String>)> = None;
         for (id, result) in compaction {

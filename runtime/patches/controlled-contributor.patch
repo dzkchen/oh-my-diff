@@ -1510,10 +1510,10 @@ index 0000000000000000000000000000000000000000..fa486dbe8f6af2b23926f55c6e83f0a3
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..30ad6abf09321a007d3cce8a263d056590df2205
+index 0000000000000000000000000000000000000000..9659b7d8d294018028a5f332ed615a727352a56d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,547 @@
+@@ -0,0 +1,561 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -1589,6 +1589,16 @@ index 0000000000000000000000000000000000000000..30ad6abf09321a007d3cce8a263d0565
 +
 +    fn mods(&self) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
 +        self.1.lock().ok().and_then(|installed| installed.clone())
++    }
++
++    fn idle_runtime(
++        runtime: &Mutex<codex_omd::ModHost>,
++    ) -> Result<Option<std::sync::MutexGuard<'_, codex_omd::ModHost>>, TransportError> {
++        match runtime.try_lock() {
++            Ok(runtime) => Ok(Some(runtime)),
++            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
++            Err(std::sync::TryLockError::Poisoned(_)) => Err(denied("mod runtime poisoned")),
++        }
 +    }
 +
 +    fn record_middleware(account: &Account, value: &Value) -> Result<(), TransportError> {
@@ -1699,11 +1709,13 @@ index 0000000000000000000000000000000000000000..30ad6abf09321a007d3cce8a263d0565
 +                "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
 +                "kind":if account.owner == "lead" {"main"} else {"subagent"}},
 +                "authorized_presets":presets,"original":route,"effective":route,"provenance":[]});
-+            let effective = mods
-+                .lock()
-+                .map_err(|_| denied("mod runtime poisoned"))?
++            let Some(mut runtime) = Self::idle_runtime(&mods)? else {
++                return Ok(());
++            };
++            let effective = runtime
 +                .model_request(payload, || account.task.check_active().is_ok())
 +                .map_err(denied)?;
++            drop(runtime);
 +            let selected = effective["effective"]["name"]
 +                .as_str()
 +                .and_then(|name| {
@@ -2017,11 +2029,13 @@ index 0000000000000000000000000000000000000000..30ad6abf09321a007d3cce8a263d0565
 +            let payload = json!({"kind":kind,"raw_sha256":crate::execution::hash(&serde_json::to_vec(&raw).map_err(denied)?),
 +                "raw_usage":raw.pointer("/response/usage").cloned().unwrap_or(Value::Null),
 +                "opaque_reasoning":kind.contains("reasoning"),"protected":text_key.is_none(),"text":text});
-+            let transformed = mods
-+                .lock()
-+                .map_err(|_| denied("mod runtime poisoned"))?
++            let Some(mut runtime) = Accounts::idle_runtime(mods)? else {
++                return Ok(());
++            };
++            let transformed = runtime
 +                .response_stream(payload, || self.account.task.check_active().is_ok())
 +                .map_err(denied)?;
++            drop(runtime);
 +            if let Some(key) = text_key
 +                && let Some(text) = transformed["effective"].as_str()
 +            {
@@ -9642,10 +9656,10 @@ index 0000000000000000000000000000000000000000..8aaa5db0a05726f2958357c652733f97
 +}
 diff --git a/codex-rs/ext/omd/src/mods/policy.rs b/codex-rs/ext/omd/src/mods/policy.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3170fc6ce07aeca83635d9e61cf3b46acd45f8d7
+index 0000000000000000000000000000000000000000..6de1fb279f8bd48540f1d18ecc55e7d6f7cc09d5
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/policy.rs
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,189 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -9712,7 +9726,16 @@ index 0000000000000000000000000000000000000000..3170fc6ce07aeca83635d9e61cf3b46a
 +            let route = self.owner.route(*name);
 +            json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
 +        }).collect::<Vec<_>>();
-+        let mut runtime = self.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
++        let acquired = match self.runtime.try_lock() {
++            Ok(runtime) => Some(runtime),
++            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
++            Err(std::sync::TryLockError::WouldBlock) => None,
++        };
++        let Some(mut runtime) = acquired else {
++            self.views
++                .diagnostic(&self.owner, "compaction_prompt", None);
++            return Ok(());
++        };
 +        let compaction = runtime.event("compaction", json!({"token_limit":config.model_auto_compact_token_limit,"context_window":config.model_context_window}));
 +        let mut selected_compaction: Option<(String, Option<i64>, Option<String>)> = None;
 +        for (id, result) in compaction {
@@ -24866,10 +24889,10 @@ index 0000000000000000000000000000000000000000..270274fcaa9a31f19c9f036c462cbff3
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..870d6a34ee82d89c70a3e5bc39a6dc2e5110ee19
+index 0000000000000000000000000000000000000000..2a6e234c5ea1e21104f2418a3bb70a46dd2f54fc
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,2235 @@
+@@ -0,0 +1,2237 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -26511,8 +26534,10 @@ index 0000000000000000000000000000000000000000..870d6a34ee82d89c70a3e5bc39a6dc2e
 +            .get(id)
 +            .cloned()
 +            .ok_or_else(|| failure("mod_disabled"))?;
-+        if loaded.error.is_some() {
-+            return Err(failure("mod_failed: explicitly reload to recover"));
++        if let Some(error) = &loaded.error {
++            return Err(failure(format!(
++                "mod_failed: {error}; explicitly reload to recover"
++            )));
 +        }
 +        loaded.state = self.store.state(
 +            &loaded.package.id,

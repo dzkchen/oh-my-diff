@@ -4,12 +4,26 @@
   "version": "1.0.0",
   "api": "0.1.0-experimental.6",
   "state_version": 1,
-  "capabilities": ["services"],
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/examples"
+  },
+  "capabilities": [
+    "services"
+  ],
   "services": {
-    "exports": [{
-      "name": "example.formatter",
-      "version": "1.0.0",
-      "methods": {"format": {"input": "string", "output": "string"}}
-    }]
+    "exports": [
+      {
+        "name": "example.formatter",
+        "version": "1.0.0",
+        "methods": {
+          "format": {
+            "input": "string",
+            "output": "string"
+          }
+        }
+      }
+    ]
   }
 }

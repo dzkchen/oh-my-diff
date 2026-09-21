@@ -619,6 +619,7 @@ python3 -m benchmarks.controlled_fixture /absolute/codex /new/deny-fixture --sce
 python3 -m benchmarks.controlled_fixture /absolute/codex /new/preview-fixture --scenario success --lead-policy task_entry --mod-node /absolute/node/bin/node --mod-profile preview
 python3 -m benchmarks.controlled_fixture /absolute/codex /new/preview-denied --scenario direct --lead-policy task_entry --mod-node /absolute/node/bin/node --mod-profile preview-denied
 python3 -m benchmarks.controlled_fixture /absolute/codex /new/preview-broken --scenario success --lead-policy task_entry --mod-node /absolute/node/bin/node --mod-profile preview-broken
+python3 -m benchmarks.controlled_fixture /absolute/codex /new/exercise-fixture --scenario success --lead-policy task_entry --mod-node /absolute/node/bin/node --mod-profile exercise
 python3 -m benchmarks.mod_terminal_fixture /absolute/codex /absolute/node/bin/node
 python3 -m benchmarks.controlled_fixture /absolute/codex /new/off-fixture --scenario omd-off --mod-node /absolute/node/bin/node
 ```

@@ -742,7 +742,7 @@
       "replace": null,
       "timing": "before each main-thread or subagent request, on each Responses stream item, and at the named native lifecycle boundary",
       "ownership": "host: preset admission, raw response parsing, reasoning, usage, permission and tool outcomes, accounting, cancellation, transcript/evidence records and workflow enforcement",
-      "limits": "no arbitrary model/provider/reasoning tuple, endpoint, usage rewrite, reasoning rewrite, tool-result fabrication, completion action or assurance receipt; each hook has a declared wall-time budget and cancellation check",
+      "limits": "no arbitrary model/provider/reasoning tuple, endpoint, usage rewrite, reasoning rewrite, tool-result fabrication, completion action or assurance receipt; each hook has a declared wall-time budget and cancellation check; the mod runtime is single-threaded and never re-entrant, so a request a mod causes from inside its own in-flight callback is sent on its already-authorized native route without that runtime's request, stream or thread-configuration hooks",
       "native": "upstream hooks expose selected lifecycle and tool boundaries but not this request/stream preset and provenance contract",
       "covers": {
         "capabilities": [

@@ -1,1 +1,17 @@
-{"schema":1,"id":"counter","version":"1.0.0","api":"0.1.0-experimental.6","state_version":1,"capabilities":["tools","commands","state"]}
+{
+  "schema": 1,
+  "id": "counter",
+  "version": "1.0.0",
+  "api": "0.1.0-experimental.6",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/examples"
+  },
+  "capabilities": [
+    "tools",
+    "commands",
+    "state"
+  ]
+}

@@ -22,7 +22,7 @@
         "index.ts": "01f876dbf13fbd1428da61dcbba1c1525f04d5835588d1f63f91f1bc377181b6",
         "mod.json": "97686e543409655de45614b452a19afb446f224b4f87699ca40735c0a218f9d3"
       },
-      "package_sha256": "83d16c3645e9e3f6d8009ec7870153c89d890a9f62f1932c67281befc91ca894",
+      "package_sha256": "2254f8e758efe1b4e745b9eb28ba98a9a83b4d89d3b2603f0a2b87ce557c6a7e",
       "source": "mods/first-party/omd_coordination",
       "version": "0.1.0-preview.1"
     },
@@ -37,7 +37,7 @@
         "index.ts": "1ba5ab05e7fdcb1bbe31418b9be4fe458ef232315e1df88848e1a285a2442425",
         "mod.json": "1c6ecf493cda9a61e492ccccc74b2dfed57a2177d31589b7a2c127c67b18f3b5"
       },
-      "package_sha256": "f7fbec99a02fd5fd71a69c74e1ccdf3e2dd6cc73143d1072b33b7a840cbbc46e",
+      "package_sha256": "65d8765e683f02be158fe4af67b0a2a705107ed06906bc0ed24b5e51756b045d",
       "source": "mods/first-party/omd_workspace",
       "version": "0.1.0-preview.1"
     }

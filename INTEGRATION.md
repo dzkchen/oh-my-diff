@@ -114,6 +114,7 @@ section names what is deliberately out of scope.
 | **five_language_lsp_with_host** | lsp_rust, lsp_typescript, lsp_javascript, lsp_python, lsp_java, omd_host | optional_integration_isolation | The five-language protocol matrix stays version and scope bound, an absent server produces an explicit non-success fallback rather than a failure, and a failed post-edit synchronisation rolls the filesystem change back. | `rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound` · `rust:omd/src/lsp.rs::unavailable_server_has_an_explicit_non_success_fallback` · `rust:omd/src/lsp.rs::failed_post_edit_synchronization_rolls_back_filesystem_change` |
 | **mod_interception_beside_native_handlers** | upstream_hooks, mod_api, omd_host | upstream_plugin_coexistence, duplicate_tools | A mod observes, denies or retargets a tool call before the native handler, permission check and hook chain run; it cannot forge the native outcome, and upstream hook dispatch itself stays unmodified. | `patch:mod_interception_denies_or_routes_through_registered_native_handler` · `rust:omd/tests/mods.rs::input_rewrite_requires_exclusive_replacement_while_observers_may_deny` · `fixture:deny/success` |
 | **approved_sidecar_with_mods** | provider_sidecars, mod_api, omd_host | optional_integration_isolation, streaming_reload | An approved sidecar and provider route start, serve and are torn down inside the owning task and generation; unapproved service IDs are refused, secrets stay opaque references and nothing survives task completion. | `fixture:provider/success` · `rust:omd/tests/mods.rs::native_host_bridge_preserves_once_only_effects_and_rust_capability_checks` · `node:typed middleware and services register without ambient authority` |
+| **outside_author_packages_with_examples** | omd_host, mod_api, mod_package_lifecycle | duplicate_keybindings, disabled_dependencies, host_upgrade | Two outside-author packages that replace coordination, context and the terminal run in one live session beside two published examples; the terminal's cross-mod keys reach both other packages, the context replacement drops evidence outside the declared scope before the worker sees it, and the same four packages install, upgrade from mod API `.5` to `.6` with a state migration, roll back and re-upgrade through the package manager. | `fixture:exercise/success` · `script:scripts/mod_full_api_exercise.py` |
 
 ## Retained regression cases
 
@@ -128,7 +129,7 @@ section names what is deliberately out of scope.
 
 ## Tested versus untested
 
-Tested: 13 combinations across 9 shared boundaries and 22 maintained components, plus 6 regression cases retained across versions.
+Tested: 14 combinations across 9 shared boundaries and 22 maintained components, plus 6 regression cases retained across versions.
 
 Untested and not claimed:
 

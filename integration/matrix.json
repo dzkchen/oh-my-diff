@@ -685,6 +685,24 @@
         "rust:omd/tests/mods.rs::native_host_bridge_preserves_once_only_effects_and_rust_capability_checks",
         "node:typed middleware and services register without ambient authority"
       ]
+    },
+    {
+      "id": "outside_author_packages_with_examples",
+      "components": [
+        "omd_host",
+        "mod_api",
+        "mod_package_lifecycle"
+      ],
+      "boundaries": [
+        "duplicate_keybindings",
+        "disabled_dependencies",
+        "host_upgrade"
+      ],
+      "result": "Two outside-author packages that replace coordination, context and the terminal run in one live session beside two published examples; the terminal's cross-mod keys reach both other packages, the context replacement drops evidence outside the declared scope before the worker sees it, and the same four packages install, upgrade from mod API `.5` to `.6` with a state migration, roll back and re-upgrade through the package manager.",
+      "evidence": [
+        "fixture:exercise/success",
+        "script:scripts/mod_full_api_exercise.py"
+      ]
     }
   ],
   "regression": [

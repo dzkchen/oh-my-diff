@@ -8,6 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 API_VERSION = json.loads((ROOT / "mods/package.json").read_text())["version"]
 
 
+def package_digest(manifest, source, entrypoint=b"index.ts"):
+    return hashlib.sha256(manifest + b"\x00" + entrypoint + b"\x00" + source).hexdigest()
+
+
 PREVIEW_SETTINGS = {
     "omd_coordination": {"lead_policy": "astra", "worker_context": "focused", "evidence": ["solution.py"]},
     "omd_workspace": {"density": "compact", "side": "right", "review_prompt": "PREVIEW_REVIEW_PROMPT"},
@@ -35,7 +39,7 @@ def install_preview(destination, manifest, node, profile):
         (package / "index.ts").write_bytes(body)
         selections.append({
             "path": str(package),
-            "sha256": hashlib.sha256(package_manifest + b"\x00" + body).hexdigest(),
+            "sha256": package_digest(package_manifest, body),
             "enabled": True,
             "capabilities": declared["capabilities"],
             "settings": PREVIEW_SETTINGS[identifier],
@@ -94,7 +98,7 @@ def conformance_selection(store, identifier, package, scope="user"):
     body = package["source"].encode()
     (directory / "mod.json").write_bytes(declared)
     (directory / "index.ts").write_bytes(body)
-    return {"path": str(directory), "sha256": hashlib.sha256(declared + b"\x00" + body).hexdigest(),
+    return {"path": str(directory), "sha256": package_digest(declared, body),
             "enabled": True, "capabilities": package["capabilities"], "scope": scope,
             "settings": CONFORMANCE_SETTINGS.get(identifier, {})}
 
@@ -116,7 +120,7 @@ def install_conformance(destination, manifest, node, profile):
             (package / "index.ts").write_bytes(variant)
             selections.append({
                 "path": str(package),
-                "sha256": hashlib.sha256(declared + b"\x00" + variant).hexdigest(),
+                "sha256": package_digest(declared, variant),
                 "enabled": True,
                 "capabilities": json.loads(declared)["capabilities"],
                 "scope": scope,
@@ -131,7 +135,45 @@ def install_conformance(destination, manifest, node, profile):
     manifest["mods"] = str(store)
 
 
+EXERCISE_SETTINGS = {
+    "atlas_policy": {"mode": "paired", "focus": ["solution.py"]},
+    "atlas_console": {"density": "roomy", "side": "right"},
+}
+
+EXERCISE_PACKAGES = {
+    "atlas_policy": ROOT / "mods/exercise/atlas_policy/2.0.0",
+    "atlas_console": ROOT / "mods/exercise/atlas_console/2.0.0",
+    "counter": ROOT / "mods/examples/counter",
+    "service_provider": ROOT / "mods/examples/service-provider",
+}
+
+
+def install_exercise(destination, manifest, node, profile):
+    store = destination / "mod-store"
+    store.mkdir()
+    selections = []
+    for identifier, source in sorted(EXERCISE_PACKAGES.items()):
+        package = destination / f"exercise-{identifier}"
+        package.mkdir()
+        declared = (source / "mod.json").read_bytes()
+        body = (source / "index.ts").read_bytes()
+        (package / "mod.json").write_bytes(declared)
+        (package / "index.ts").write_bytes(body)
+        selections.append({
+            "path": str(package),
+            "sha256": package_digest(declared, body),
+            "enabled": True,
+            "capabilities": json.loads(declared)["capabilities"],
+            "settings": EXERCISE_SETTINGS.get(identifier, {}),
+        })
+    (store / "mods.json").write_text(json.dumps(
+        {"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": selections}))
+    manifest["mods"] = str(store)
+
+
 def install(destination, manifest, node, profile):
+    if profile.startswith("exercise"):
+        return install_exercise(destination, manifest, node, profile)
     if profile.startswith("conformance"):
         return install_conformance(destination, manifest, node, profile)
     if profile.startswith("preview"):
@@ -362,6 +404,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
             "api": API_VERSION,
             "state_version": 1,
             "capabilities": capabilities,
+            "hook_budget_ms": 2000,
         }
     ).encode()
     (package / "mod.json").write_bytes(package_manifest)
@@ -377,9 +420,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
                 "mods": [
                     {
                         "path": str(package),
-                        "sha256": hashlib.sha256(
-                            package_manifest + b"\x00" + source
-                        ).hexdigest(),
+                        "sha256": package_digest(package_manifest, source),
                         "enabled": True,
                         "capabilities": capabilities,
                         "settings": {},
@@ -417,8 +458,8 @@ def verify_preview(destination, requests, profile, scenario):
     if profile == "preview-denied":
         outputs = [item for request in requests for item in request["body"].get("input", [])
                    if item.get("type") == "function_call_output" and item.get("call_id") == "preview-delegate"]
-        assert {item["output"] for item in outputs} == {"capability_denied: recovery"}, outputs
-        assert errors.get("omd_coordination") == "capability_denied: recovery", errors
+        assert outputs and {item["output"] for item in outputs} == {"unsupported call: mod_omd_coordination_delegate"}, outputs
+        assert errors.get("omd_coordination") == "undeclared_operation_use: delegation.contribute", errors
         assert errors.get("omd_workspace") is None, "an unrelated mod was disabled by the denial"
         assert view["view"]["title"] == "Oh My Diff workspace", "a healthy UI mod lost the terminal to an unrelated failure"
         assert any(panel["title"] == "Mod errors" for panel in view["view"]["panels"]), view["view"]
@@ -491,7 +532,39 @@ def verify_conformance(destination, requests, profile, scenario):
         assert "tracked user notes" not in worker, "evidence outside the declared policy reached the worker"
 
 
+def verify_exercise(destination, requests, profile, scenario):
+    provenance = "atlas_policy 2.0.0 (paired)"
+    status = json.loads((destination / "evidence/mod-status.json").read_text())
+    view = json.loads((destination / "evidence/mod-view.json").read_text())
+    errors = {mod["id"]: mod["error"] for mod in status["mods"]}
+    assert not any(errors.values()) and not status["rejected"], (errors, status["rejected"])
+    assert status["order"] == ["atlas_console", "counter", "service_provider", "atlas_policy"], status["order"]
+
+    lead = json.dumps([request["body"] for request in requests if request["native_owner"] == "lead"])
+    assert f"{provenance} assembled turn" in lead, "the authored context replacement never reached the lead"
+    worker = json.dumps([request["body"] for request in requests
+                         if (request["native_owner"] or "").startswith("contributor")])
+    assert provenance in worker, "the authored policy provenance did not reach the worker"
+    assert "return a - b" in worker, "the declared evidence did not reach the worker"
+    assert "tracked user notes" not in worker, "evidence outside the declared policy reached the worker"
+
+    decisions = json.loads((destination / "mod-store/state-atlas_policy.json").read_text())["value"]["decisions"]
+    delegate = next(entry for entry in decisions if entry.get("decision") == "delegate")
+    assert delegate["requested"] == ["solution.py", "notes.txt"] and delegate["selected"] == ["solution.py"], delegate
+    assert any(entry.get("decision") == "routing" and entry.get("route") == "astra" for entry in decisions), decisions
+
+    activity = json.loads((destination / "mod-store/state-atlas_console.json").read_text())["value"]["activity"]
+    assert any(entry.startswith("▸ turn") for entry in activity), activity
+    assert view["view"]["title"] == "Atlas console 2.0.0", view["view"]
+    assert view["view"]["sidebar_side"] == "right" and view["view"]["status"] == ["atlas:roomy"], view["view"]
+    assert [panel["title"] for panel in view["view"]["panels"]] == ["Scope", "Activity"], view["view"]
+    assert view["view"]["keybindings"]["Alt+x"] == {"command": "counter:reset", "args": ""}, view["view"]
+    assert view["view"]["keybindings"]["Alt+p"] == {"command": "atlas_policy:atlas", "args": ""}, view["view"]
+
+
 def verify(destination, requests, profile, scenario="success"):
+    if profile.startswith("exercise"):
+        return verify_exercise(destination, requests, profile, scenario)
     if profile.startswith("conformance"):
         return verify_conformance(destination, requests, profile, scenario)
     if profile.startswith("preview"):
