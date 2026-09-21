@@ -126,9 +126,17 @@ impl Mods {
 
             let mut fragments = Vec::new();
             let mut remaining_bytes = 6144;
+            let assembler = (event == "context").then(|| runtime.replacement_owner("context")).flatten();
+            let mut replaced: Vec<String> = Vec::new();
             for (id, result) in runtime.event_guarded(event, payload, || !cancelled.load(std::sync::atomic::Ordering::Acquire)) {
                 match result {
                     Ok(value) if event == "context" => {
+                        if assembler.as_ref().is_some_and(|owner| *owner != id) {
+                            if value.get("text").is_some() {
+                                replaced.push(id);
+                            }
+                            continue;
+                        }
                         if let Some(text) = value.get("text").and_then(Value::as_str) {
                             if text.len() + 256 > remaining_bytes {
                                 fragments.push(PromptFragment::developer_capability(
@@ -154,6 +162,12 @@ impl Mods {
                     _ => (),
                 }
             }
+            if let Some(assembler) = assembler.filter(|_| !replaced.is_empty()) {
+                fragments.push(PromptFragment::developer_capability(
+                    format!("Mod {assembler} assembles mod context; contributions from {} were replaced.", replaced.join(", ")),
+                    ContentItemKind("oh_my_diff.mod_context".into()),
+                ));
+            }
             let terminal_views = runtime.event_guarded("terminal", json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()}), || !cancelled.load(std::sync::atomic::Ordering::Acquire));
             let mut view = codex_omd::ModView::default();
             let mut supplier = None;
@@ -166,11 +180,15 @@ impl Mods {
             }
             let status = runtime.status();
             let mut errors = status["mods"].as_array().into_iter().flatten().filter_map(|item| item["error"].as_str().map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))).collect::<Vec<_>>();
+            errors.extend(status["rejected"].as_array().into_iter().flatten()
+                .filter_map(|item| item["reason"].as_str().filter(|reason| !reason.starts_with("shadowed_"))
+                    .map(|reason| format!("{}: {reason}", item["id"].as_str().or(item["path"].as_str()).unwrap_or("selection")))));
             if let Some(error) = status["reload_error"].as_str() { errors.push(format!("Reload: {error}")); }
             if !errors.is_empty() {
-                view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
-                view.panels.push(codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
-                supplier = None;
+                if supplier.is_none() {
+                    view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
+                }
+                view.panels.insert(0, codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
             }
             views.base(&owner, view, supplier);
             if let Some(error) = status["reload_error"].as_str() {

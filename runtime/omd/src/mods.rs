@@ -37,7 +37,7 @@ use std::path::PathBuf;
 
 pub use store::ModStore;
 
-pub const MOD_API_VERSION: &str = "0.1.0-experimental.3";
+pub const MOD_API_VERSION: &str = "0.1.0-experimental.4";
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",
@@ -87,6 +87,7 @@ pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "context",
     "input",
 ];
+pub const MOD_SCOPES: &[&str] = &["user", "project"];
 type Result<T> = io::Result<T>;
 
 fn failure(message: impl ToString) -> io::Error {
@@ -95,6 +96,36 @@ fn failure(message: impl ToString) -> io::Error {
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+/// A selection that never reaches activation; a later reload stays transactional.
+fn reject(
+    initial: bool,
+    rejected: &mut Vec<ModRejection>,
+    selection: &ModSelection,
+    id: Option<&str>,
+    reason: String,
+) -> Result<()> {
+    if !initial {
+        return Err(failure(reason));
+    }
+    rejected.push(ModRejection {
+        path: selection.path.clone(),
+        id: id.map(str::to_owned),
+        scope: selection.scope.clone(),
+        reason,
+    });
+    Ok(())
+}
+
+fn fail(initial: bool, loaded: &mut Loaded, error: io::Error) -> Result<()> {
+    if !initial {
+        return Err(error);
+    }
+    if loaded.error.is_none() {
+        loaded.error = Some(error.to_string());
+    }
+    Ok(())
 }
 
 fn identifier(value: &str) -> bool {
@@ -116,6 +147,8 @@ pub struct ModPackage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<String>,
     pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
 }
 
 impl ModPackage {
@@ -153,6 +186,18 @@ impl ModPackage {
         {
             return Err(failure("unsupported_or_duplicate_capability"));
         }
+        let requires: BTreeSet<_> = self.requires.iter().collect();
+        if self.requires.len() > 4
+            || requires.len() != self.requires.len()
+            || self
+                .requires
+                .iter()
+                .any(|id| !identifier(id) || id == &self.id)
+        {
+            return Err(failure(
+                "invalid_requires: up to four distinct other mod IDs",
+            ));
+        }
         Ok(())
     }
 }
@@ -166,6 +211,20 @@ pub struct ModSelection {
     pub capabilities: Vec<String>,
     #[serde(default)]
     pub settings: BTreeMap<String, Value>,
+    #[serde(default = "user_scope")]
+    pub scope: String,
+}
+
+fn user_scope() -> String {
+    "user".to_owned()
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ModRejection {
+    pub path: PathBuf,
+    pub id: Option<String>,
+    pub scope: String,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -237,6 +296,8 @@ pub struct ModHost {
     generation: u64,
     configuration_sha256: String,
     loaded: BTreeMap<String, Loaded>,
+    order: Vec<String>,
+    rejected: Vec<ModRejection>,
     reload_error: Option<String>,
     tool_validator: fn(&Value) -> Result<()>,
 }
@@ -254,6 +315,8 @@ impl ModHost {
             generation: 0,
             configuration_sha256: String::new(),
             loaded: BTreeMap::new(),
+            order: Vec::new(),
+            rejected: Vec::new(),
             reload_error: None,
             tool_validator,
         };
@@ -287,78 +350,226 @@ impl ModHost {
         if self.loaded.len() != retained {
             self.generation += 1;
         }
+        let mut rejected = Vec::new();
+        let selected = Self::select(&config, initial, &mut rejected)?;
         let mut next = BTreeMap::new();
-        let mut tool_names = BTreeSet::new();
-        let mut replacements = BTreeSet::new();
-        let mut contracts = BTreeSet::new();
-        for selection in config.mods.into_iter().filter(|m| m.enabled) {
-            let (package, source, hash) = store::package(&selection.path)?;
-            if hash != selection.sha256 {
-                return Err(failure(format!("untrusted_source: {}", package.id)));
-            }
-            let granted: BTreeSet<_> = selection.capabilities.iter().collect();
-            if package.capabilities.iter().any(|c| !granted.contains(c))
-                || selection
-                    .capabilities
-                    .iter()
-                    .any(|c| !MOD_CAPABILITIES.contains(&c.as_str()))
-            {
-                return Err(failure(format!("capability_denied: {}", package.id)));
-            }
-            if next.contains_key(&package.id) {
-                return Err(failure(format!("mod_conflict: {}", package.id)));
-            }
-            let state = self.store.state(&package.id, package.state_version)?;
+        for (id, (selection, package, source)) in selected {
             let mut loaded = Loaded {
                 package,
                 source,
                 selection,
-                state,
+                state: Value::Null,
                 registrations: Registrations::default(),
                 error: None,
             };
-            let reply = match Self::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)
-            {
-                Ok(reply) => reply,
-                Err(error) if initial => {
-                    loaded.error = Some(error.to_string());
-                    next.insert(loaded.package.id.clone(), loaded);
-                    continue;
+            let prepared = (|| {
+                loaded.state = self.store.state(
+                    &loaded.package.id,
+                    &loaded.selection.scope,
+                    loaded.package.state_version,
+                )?;
+                let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;
+                Self::validate_registrations(&loaded.package, &reply.registrations)?;
+                if reply.state != loaded.state {
+                    return Err(failure("state_write_during_registration"));
                 }
-                Err(error) => return Err(error),
-            };
-            Self::validate_registrations(&loaded.package, &reply.registrations)?;
-            if reply.state != loaded.state {
-                return Err(failure("state_write_during_registration"));
-            }
-            for tool in &reply.registrations.tools {
-                (self.tool_validator)(&tool.parameters)?;
-                if !tool_names.insert(format!("mod_{}_{}", loaded.package.id, tool.name)) {
-                    return Err(failure("tool_name_conflict"));
+                for tool in &reply.registrations.tools {
+                    (self.tool_validator)(&tool.parameters)?;
                 }
+                Ok(reply.registrations)
+            })();
+            match prepared {
+                Ok(registrations) => loaded.registrations = registrations,
+                Err(error) => fail(initial, &mut loaded, error)?,
             }
-            for point in &reply.registrations.replacements {
-                if !replacements.insert(point.clone()) {
-                    return Err(failure(format!("replacement_conflict: {point}")));
-                }
-            }
-            for contract in &reply.registrations.contracts {
-                if !contracts.insert(contract.id.clone()) {
-                    return Err(failure(format!(
-                        "workflow_replacement_conflict: {}",
-                        contract.id
-                    )));
-                }
-            }
-            loaded.registrations = reply.registrations;
-            next.insert(loaded.package.id.clone(), loaded);
+            next.insert(id, loaded);
         }
+        Self::resolve_conflicts(&mut next, initial)?;
+        let order = Self::resolve_dependencies(&mut next, initial)?;
         self.node = config.node;
         self.loaded = next;
+        self.order = order;
+        self.rejected = rejected;
         self.configuration_sha256 = hash;
         self.generation += 1;
         self.reload_error = None;
         Ok(true)
+    }
+
+    /// Trusted, enabled selections keyed by mod ID after scope precedence.
+    fn select(
+        config: &ModConfiguration,
+        initial: bool,
+        rejected: &mut Vec<ModRejection>,
+    ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
+        let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
+        for selection in config.mods.iter().filter(|m| m.enabled) {
+            let loaded = (|| {
+                if !MOD_SCOPES.contains(&selection.scope.as_str()) {
+                    return Err(failure(format!("unsupported_scope: {}", selection.scope)));
+                }
+                let (package, source, hash) = store::package(&selection.path)?;
+                if hash != selection.sha256 {
+                    return Err(failure(format!("untrusted_source: {}", package.id)));
+                }
+                let granted: BTreeSet<_> = selection.capabilities.iter().collect();
+                if package.capabilities.iter().any(|c| !granted.contains(c))
+                    || selection
+                        .capabilities
+                        .iter()
+                        .any(|c| !MOD_CAPABILITIES.contains(&c.as_str()))
+                {
+                    return Err(failure(format!("capability_denied: {}", package.id)));
+                }
+                Ok((package, source))
+            })();
+            let (package, source) = match loaded {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    reject(initial, rejected, selection, None, error.to_string())?;
+                    continue;
+                }
+            };
+            let id = package.id.clone();
+            let Some((previous, ..)) = selected.get(&id) else {
+                selected.insert(id, (selection.clone(), package, source));
+                continue;
+            };
+            if previous.scope != selection.scope {
+                let (loser, winner) = match selection.scope.as_str() {
+                    "project" => {
+                        let (previous, ..) = selected
+                            .insert(id.clone(), (selection.clone(), package, source))
+                            .expect("checked above");
+                        (previous, selection.path.clone())
+                    }
+                    _ => (selection.clone(), previous.path.clone()),
+                };
+                rejected.push(ModRejection {
+                    path: loser.path,
+                    id: Some(id),
+                    scope: loser.scope,
+                    reason: format!("shadowed_by_project_scope: {}", winner.display()),
+                });
+                continue;
+            }
+            let reason = format!(
+                "mod_conflict: {id} is enabled twice in the {} scope",
+                selection.scope
+            );
+            let (previous, ..) = selected.remove(&id).expect("checked above");
+            reject(initial, rejected, &previous, Some(&id), reason.clone())?;
+            reject(initial, rejected, selection, Some(&id), reason)?;
+        }
+        Ok(selected)
+    }
+
+    /// Every claimant of a contested slot is disabled; none silently wins.
+    fn resolve_conflicts(next: &mut BTreeMap<String, Loaded>, initial: bool) -> Result<()> {
+        let mut tools: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut points: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut contracts: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (id, loaded) in next.iter().filter(|(_, m)| m.error.is_none()) {
+            for tool in &loaded.registrations.tools {
+                tools
+                    .entry(format!("mod_{id}_{}", tool.name))
+                    .or_default()
+                    .push(id.clone());
+            }
+            for point in &loaded.registrations.replacements {
+                points.entry(point.clone()).or_default().push(id.clone());
+            }
+            for contract in &loaded.registrations.contracts {
+                contracts
+                    .entry(contract.id.clone())
+                    .or_default()
+                    .push(id.clone());
+            }
+        }
+        let contested = |kind: &'static str, claims: BTreeMap<String, Vec<String>>| {
+            claims
+                .into_iter()
+                .filter(|(_, ids)| ids.len() > 1)
+                .flat_map(move |(slot, ids)| {
+                    let reason = format!("{kind}: {slot} claimed by {}", ids.join(", "));
+                    ids.into_iter().map(move |id| (id, reason.clone()))
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut conflicts = contested("tool_name_conflict", tools);
+        conflicts.extend(contested("replacement_conflict", points));
+        conflicts.extend(contested("workflow_replacement_conflict", contracts));
+        for (id, reason) in conflicts {
+            if let Some(loaded) = next.get_mut(&id) {
+                fail(initial, loaded, failure(reason))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolves declared dependencies and returns the activation order.
+    fn resolve_dependencies(
+        next: &mut BTreeMap<String, Loaded>,
+        initial: bool,
+    ) -> Result<Vec<String>> {
+        loop {
+            let unavailable: Vec<(String, String)> = next
+                .iter()
+                .filter(|(_, m)| m.error.is_none())
+                .filter_map(|(id, m)| {
+                    m.package
+                        .requires
+                        .iter()
+                        .find(|required| next.get(*required).is_none_or(|m| m.error.is_some()))
+                        .map(|required| {
+                            (
+                                id.clone(),
+                                format!("dependency_unavailable: {id} requires {required}"),
+                            )
+                        })
+                })
+                .collect();
+            if unavailable.is_empty() {
+                break;
+            }
+            for (id, reason) in unavailable {
+                if let Some(loaded) = next.get_mut(&id) {
+                    fail(initial, loaded, failure(reason))?;
+                }
+            }
+        }
+        let mut remaining: BTreeSet<String> = next
+            .iter()
+            .filter(|(_, m)| m.error.is_none())
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut order = Vec::new();
+        while let Some(id) = remaining
+            .iter()
+            .find(|id| {
+                next[*id]
+                    .package
+                    .requires
+                    .iter()
+                    .all(|required| !remaining.contains(required))
+            })
+            .cloned()
+        {
+            remaining.remove(&id);
+            order.push(id);
+        }
+        if !remaining.is_empty() {
+            let reason = format!(
+                "dependency_cycle: {}",
+                remaining.iter().cloned().collect::<Vec<_>>().join(" -> ")
+            );
+            for id in remaining {
+                if let Some(loaded) = next.get_mut(&id) {
+                    fail(initial, loaded, failure(reason.clone()))?;
+                }
+            }
+        }
+        Ok(order)
     }
 
     fn validate_registrations(package: &ModPackage, registrations: &Registrations) -> Result<()> {
@@ -533,9 +744,11 @@ impl ModHost {
                     .any(|registered| registered == e) => {}
                 _ => return Err(failure("unsupported_or_unregistered_operation")),
             }
-            loaded.state = self
-                .store
-                .state(&loaded.package.id, loaded.package.state_version)?;
+            loaded.state = self.store.state(
+                &loaded.package.id,
+                &loaded.selection.scope,
+                loaded.package.state_version,
+            )?;
             let reply = bridge::run(
                 &self.node,
                 loaded,
@@ -552,6 +765,19 @@ impl ModHost {
             if reply.registrations != loaded.registrations {
                 return Err(failure("registration_changed_during_callback"));
             }
+            let replaces = |point: &str| {
+                loaded
+                    .registrations
+                    .replacements
+                    .iter()
+                    .any(|registered| registered == point)
+            };
+            if matches!(event, "routing" | "compaction" | "terminal")
+                && !reply.value.is_null()
+                && !replaces(event)
+            {
+                return Err(failure("exclusive_replacement_registration_required"));
+            }
             if event == "context" && !reply.value.is_null() {
                 let text = reply
                     .value
@@ -564,11 +790,7 @@ impl ModHost {
             }
             if event == "tool_before"
                 && reply.value.get("arguments").is_some()
-                && !loaded
-                    .registrations
-                    .replacements
-                    .iter()
-                    .any(|p| p == "tool_before")
+                && !replaces("tool_before")
             {
                 return Err(failure("exclusive_replacement_registration_required"));
             }
@@ -577,13 +799,7 @@ impl ModHost {
             }
             if event == "input" {
                 let decision = ModInputDecision::parse(&reply.value)?;
-                if matches!(decision, ModInputDecision::Rewrite(_))
-                    && !loaded
-                        .registrations
-                        .replacements
-                        .iter()
-                        .any(|p| p == "input")
-                {
+                if matches!(decision, ModInputDecision::Rewrite(_)) && !replaces("input") {
                     return Err(failure("exclusive_replacement_registration_required"));
                 }
             }
@@ -593,6 +809,7 @@ impl ModHost {
                 }
                 self.store.write_state(
                     &loaded.package.id,
+                    &loaded.selection.scope,
                     loaded.package.state_version,
                     &loaded.state,
                     &reply.state,
@@ -620,9 +837,8 @@ impl ModHost {
         active: impl Fn() -> bool,
     ) -> Vec<(String, Result<Value>)> {
         let ids: Vec<_> = self
-            .loaded
-            .iter()
-            .filter(|(_, m)| m.error.is_none() && m.registrations.events.iter().any(|e| e == event))
+            .active()
+            .filter(|(_, m)| m.registrations.events.iter().any(|e| e == event))
             .map(|(id, _)| id.clone())
             .collect();
         ids.into_iter()
@@ -640,10 +856,18 @@ impl ModHost {
         }
     }
 
+    /// Activated mods in composition order: dependencies first, mod ID otherwise.
+    fn active(&self) -> impl Iterator<Item = (&String, &Loaded)> {
+        self.order.iter().filter_map(|id| {
+            self.loaded
+                .get(id)
+                .filter(|m| m.error.is_none())
+                .map(|m| (id, m))
+        })
+    }
+
     pub fn tools(&self) -> Vec<(String, u64, ModTool)> {
-        self.loaded
-            .iter()
-            .filter(|(_, m)| m.error.is_none())
+        self.active()
             .flat_map(|(id, m)| {
                 m.registrations
                     .tools
@@ -654,9 +878,7 @@ impl ModHost {
     }
 
     pub fn commands(&self) -> Vec<(String, ModCommand)> {
-        self.loaded
-            .iter()
-            .filter(|(_, m)| m.error.is_none())
+        self.active()
             .flat_map(|(id, m)| {
                 m.registrations
                     .commands
@@ -667,11 +889,16 @@ impl ModHost {
     }
 
     pub fn owners(&self) -> Vec<(String, crate::PolicyOwner)> {
-        self.loaded
-            .iter()
-            .filter(|(_, m)| m.error.is_none())
+        self.active()
             .map(|(id, m)| (id.clone(), Self::owner(m)))
             .collect()
+    }
+
+    /// The mod holding the exclusive replacement slot for a decision point.
+    pub fn replacement_owner(&self, point: &str) -> Option<String> {
+        self.active()
+            .find(|(_, m)| m.registrations.replacements.iter().any(|p| p == point))
+            .map(|(id, _)| id.clone())
     }
 
     fn owner(loaded: &Loaded) -> crate::PolicyOwner {
@@ -685,9 +912,8 @@ impl ModHost {
     }
 
     pub fn contracts(&self) -> Vec<(crate::WorkflowContract, crate::PolicyOwner)> {
-        self.loaded
-            .values()
-            .filter(|m| m.error.is_none())
+        self.active()
+            .map(|(_, m)| m)
             .flat_map(|m| {
                 m.registrations
                     .contracts
@@ -709,8 +935,10 @@ impl ModHost {
 
     pub fn status(&self) -> Value {
         json!({"api": MOD_API_VERSION, "generation": self.generation, "reload_error": self.reload_error,
+            "order": self.order, "rejected": self.rejected,
             "mods": self.loaded.iter().map(|(id, m)| json!({"id": id, "version": m.package.version,
                 "sha256": m.selection.sha256, "capabilities": m.package.capabilities,
+                "scope": m.selection.scope, "requires": m.package.requires,
                 "registrations": m.registrations, "error": m.error})).collect::<Vec<_>>()})
     }
 }

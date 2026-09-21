@@ -79,7 +79,7 @@ impl ModStore {
                 "migration_requires_disabled_trusted_state_capability",
             ));
         }
-        let name = format!("state-{}.json", package.id);
+        let name = ModStore::state_name(&package.id, &selection.scope);
         let previous: Value =
             serde_json::from_slice(&store::read(&self.root.join(&name), 65_536)?)?;
         let from = previous["version"]

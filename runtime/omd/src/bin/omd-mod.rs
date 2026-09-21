@@ -7,7 +7,7 @@ use std::path::PathBuf;
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV | enable/disable STORE PACKAGE | status/reload STORE | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | command STORE MOD NAME JSON",
+            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | status/reload STORE | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | command STORE MOD NAME JSON",
         )
     };
     match args {
@@ -37,7 +37,13 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, path] if command == "inspect" => {
             ModStore::inspect_package(&PathBuf::from(path).canonicalize()?)
         }
-        [command, root, path, sha, capabilities] if command == "trust" => {
+        [command, root, path, sha, capabilities] | [command, root, path, sha, capabilities, _]
+            if command == "trust" =>
+        {
+            let scope = match args {
+                [.., scope] if args.len() == 6 => scope.as_str(),
+                _ => "user",
+            };
             ModStore::open(PathBuf::from(root).canonicalize()?)?.trust(
                 PathBuf::from(path).canonicalize()?,
                 sha,
@@ -46,10 +52,11 @@ fn run(args: &[String]) -> io::Result<Value> {
                     .filter(|s| !s.is_empty())
                     .map(str::to_string)
                     .collect(),
+                scope,
             )?;
-            Ok(Value::String(
-                "trusted; disabled until explicitly enabled".into(),
-            ))
+            Ok(Value::String(format!(
+                "trusted in the {scope} scope; disabled until explicitly enabled"
+            )))
         }
         [command, root, path] if command == "enable" || command == "disable" => {
             ModStore::open(PathBuf::from(root).canonicalize()?)?

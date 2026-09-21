@@ -110,7 +110,7 @@ export interface Events {
   workflow: { input: Json; output: void };
 }
 export interface ModAPI {
-  readonly version: '0.1.0-experimental.3';
+  readonly version: '0.1.0-experimental.4';
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: { call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'] };
   on<K extends keyof Events>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;

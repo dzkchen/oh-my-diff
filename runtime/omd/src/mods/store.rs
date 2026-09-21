@@ -129,8 +129,17 @@ impl ModStore {
         Ok(json!({"manifest": manifest, "sha256": sha256, "path": path}))
     }
 
-    pub fn trust(&self, path: PathBuf, sha256: &str, capabilities: Vec<String>) -> Result<()> {
+    pub fn trust(
+        &self,
+        path: PathBuf,
+        sha256: &str,
+        capabilities: Vec<String>,
+        scope: &str,
+    ) -> Result<()> {
         let _lock = self.lock()?;
+        if !super::MOD_SCOPES.contains(&scope) {
+            return Err(failure("unsupported_scope: user or project"));
+        }
         let (package, _, actual) = package(&path)?;
         if sha256 != actual {
             return Err(failure("trust_digest_mismatch"));
@@ -156,6 +165,7 @@ impl ModStore {
             enabled: false,
             capabilities,
             settings,
+            scope: scope.to_owned(),
         });
         self.write("mods.json", &serde_json::to_value(config)?)
     }
@@ -192,11 +202,18 @@ impl ModStore {
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 
-    pub(super) fn state(&self, id: &str, version: u32) -> Result<Value> {
+    pub(super) fn state_name(id: &str, scope: &str) -> String {
+        match scope {
+            "project" => format!("state-{id}.project.json"),
+            _ => format!("state-{id}.json"),
+        }
+    }
+
+    pub(super) fn state(&self, id: &str, scope: &str, version: u32) -> Result<Value> {
         if !identifier(id) {
             return Err(failure("invalid_mod_id"));
         }
-        let bytes = match read(&self.root.join(format!("state-{id}.json")), 65_536) {
+        let bytes = match read(&self.root.join(Self::state_name(id, scope)), 65_536) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
             Err(e) => return Err(e),
@@ -213,16 +230,17 @@ impl ModStore {
     pub(super) fn write_state(
         &self,
         id: &str,
+        scope: &str,
         version: u32,
         previous: &Value,
         value: &Value,
     ) -> Result<()> {
         let _lock = self.lock()?;
-        if &self.state(id, version)? != previous {
+        if &self.state(id, scope, version)? != previous {
             return Err(failure("state_conflict: reload before retry"));
         }
         self.write(
-            &format!("state-{id}.json"),
+            &Self::state_name(id, scope),
             &json!({"schema": 1, "version": version, "value": value}),
         )
     }

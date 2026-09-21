@@ -9,13 +9,27 @@ use std::sync::atomic::Ordering;
 use tempfile::TempDir;
 
 fn package(root: &std::path::Path, id: &str, source: &str, capabilities: &[&str]) -> PathBuf {
-    let path = root.join(id);
+    packaged(root, id, id, source, capabilities, &[])
+}
+
+fn packaged(
+    root: &std::path::Path,
+    directory: &str,
+    id: &str,
+    source: &str,
+    capabilities: &[&str],
+    requires: &[&str],
+) -> PathBuf {
+    let path = root.join(directory);
     std::fs::create_dir(&path).unwrap();
+    let mut manifest = json!({"schema":1,"id":id,"version":"1.0.0",
+        "api":MOD_API_VERSION,"state_version":1,"capabilities":capabilities});
+    if !requires.is_empty() {
+        manifest["requires"] = json!(requires);
+    }
     std::fs::write(
         path.join("mod.json"),
-        serde_json::to_vec(&json!({"schema":1,"id":id,"version":"1.0.0",
-        "api":MOD_API_VERSION,"state_version":1,"capabilities":capabilities}))
-        .unwrap(),
+        serde_json::to_vec(&manifest).unwrap(),
     )
     .unwrap();
     std::fs::write(path.join("index.ts"), source).unwrap();
@@ -39,10 +53,14 @@ fn fixture(source: &str, capabilities: &[&str]) -> (TempDir, ModStore, PathBuf) 
 }
 
 fn trust(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
+    trust_scoped(store, path, capabilities, "user");
+}
+
+fn trust_scoped(store: &ModStore, path: &std::path::Path, capabilities: &[&str], scope: &str) {
     let inspected = ModStore::inspect_package(path).unwrap();
     let granted: Vec<String> = capabilities.iter().map(|s| s.to_string()).collect();
     let sha256 = inspected["sha256"].as_str().unwrap();
-    contended(|| store.trust(path.to_path_buf(), sha256, granted.clone()));
+    contended(|| store.trust(path.to_path_buf(), sha256, granted.clone(), scope));
     contended(|| store.enable(path, true));
 }
 
@@ -378,7 +396,12 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
         .unwrap()
         .to_owned();
     store
-        .trust(path.clone(), &sha, vec!["commands".into(), "state".into()])
+        .trust(
+            path.clone(),
+            &sha,
+            vec!["commands".into(), "state".into()],
+            "user",
+        )
         .unwrap();
     let receipt = store.migrate(&path).unwrap();
     let backup: Value =
@@ -687,7 +710,7 @@ fn command_descriptions_tool_labels_and_lifecycle_events_register() {
     ] {
         let (temp, _, _) = fixture(source, capabilities);
         assert!(
-            ModHost::open(temp.path().canonicalize().unwrap().join("store")).is_err(),
+            activation_error(&temp, "fixture").contains("invalid"),
             "{source}"
         );
     }
@@ -992,21 +1015,15 @@ fn a_registered_contract_may_not_redefine_a_bundled_contract_or_skip_its_capabil
       delegation: true, child_agents: true, opposite_lead: true, escalation: true,
       checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } })"#;
     let (temp, _, _) = fixture(forged, &["workflow"]);
-    let error = ModHost::open(temp.path().canonicalize().unwrap().join("store"))
-        .map(|_| ())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("redefines a bundled contract"));
+    assert!(activation_error(&temp, "fixture").contains("redefines a bundled contract"));
 
     let shadowed = r#"export default api => api.contract({ schema: 1, id: 'solo_evidence', version: 1, requirements: {
       delegation: false, child_agents: false, opposite_lead: false, escalation: false,
       checkpoints: true, milestone_review: false, final_review: 'self_review', completion: 'self_verified' } })"#;
     let (temp, _, _) = fixture(shadowed, &["workflow"]);
-    let error = ModHost::open(temp.path().canonicalize().unwrap().join("store"))
-        .map(|_| ())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("invalid_or_duplicate_contract_registration"));
+    assert!(
+        activation_error(&temp, "fixture").contains("invalid_or_duplicate_contract_registration")
+    );
 
     let denied = r#"export default api => api.contract({ schema: 1, id: 'paired_review', version: 1, requirements: {
       delegation: false, child_agents: false, opposite_lead: true, escalation: true,
@@ -1024,11 +1041,22 @@ fn two_mods_may_not_own_the_same_workflow_contract() {
         let path = package(&root, id, WORKFLOW, &["workflow", "state"]);
         trust(&store, &path, &["workflow", "state"]);
     }
-    let error = ModHost::open(root.join("store"))
-        .map(|_| ())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("workflow_replacement_conflict: paired_review"));
+    let runtime = ModHost::open(root.join("store")).unwrap();
+    for id in ["first", "second"] {
+        let error = runtime.status()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["id"] == id)
+            .and_then(|m| m["error"].as_str())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            error.contains("workflow_replacement_conflict: paired_review claimed by first, second"),
+            "{id}: {error}"
+        );
+    }
+    assert!(runtime.contracts().is_empty());
 }
 
 #[test]
@@ -1078,4 +1106,268 @@ fn an_incompatible_package_names_the_host_and_package_api_versions() {
     let error = ModStore::inspect_package(&path).unwrap_err().to_string();
     assert!(error.contains(MOD_API_VERSION), "{error}");
     assert!(error.contains("0.1.0-experimental.1"), "{error}");
+}
+
+fn error_of(runtime: &ModHost, id: &str) -> String {
+    runtime.status()["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == id)
+        .and_then(|m| m["error"].as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn context_mod(id: &str) -> String {
+    format!("export default api => api.on('context', () => ({{text:'{id}'}}))")
+}
+
+fn composed(temp: &TempDir, packages: &[(&str, &[&str])]) -> ModStore {
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for (id, requires) in packages {
+        let path = packaged(&root, id, id, &context_mod(id), &["context"], requires);
+        trust(&store, &path, &["context"]);
+    }
+    store
+}
+
+#[test]
+fn composition_order_is_declared_dependencies_first_then_mod_id() {
+    let temp = TempDir::new().unwrap();
+    composed(
+        &temp,
+        &[("alpha", &["gamma"]), ("beta", &[]), ("gamma", &[])],
+    );
+    let mut runtime = host(&temp);
+    assert_eq!(
+        runtime.status()["order"],
+        json!(["beta", "gamma", "alpha"]),
+        "{}",
+        runtime.status()
+    );
+    let observed: Vec<String> = runtime
+        .event(
+            "context",
+            json!({"thread_id":"t","turn_id":"u","checkpoint":null}),
+        )
+        .into_iter()
+        .map(|(id, result)| {
+            assert!(result.is_ok(), "{id}: {result:?}");
+            id
+        })
+        .collect();
+    assert_eq!(observed, ["beta", "gamma", "alpha"]);
+}
+
+#[test]
+fn a_dependency_cycle_is_rejected_before_activation_and_isolated() {
+    let temp = TempDir::new().unwrap();
+    composed(
+        &temp,
+        &[("alpha", &["beta"]), ("beta", &["alpha"]), ("healthy", &[])],
+    );
+    let runtime = host(&temp);
+    for id in ["alpha", "beta"] {
+        assert!(
+            error_of(&runtime, id).contains("dependency_cycle: alpha -> beta"),
+            "{id}: {}",
+            error_of(&runtime, id)
+        );
+    }
+    assert_eq!(runtime.status()["order"], json!(["healthy"]));
+}
+
+#[test]
+fn an_unavailable_dependency_disables_only_the_dependent_chain() {
+    let temp = TempDir::new().unwrap();
+    composed(
+        &temp,
+        &[
+            ("alpha", &["absent"]),
+            ("beta", &["alpha"]),
+            ("healthy", &[]),
+        ],
+    );
+    let runtime = host(&temp);
+    assert!(error_of(&runtime, "alpha").contains("dependency_unavailable: alpha requires absent"));
+    assert!(error_of(&runtime, "beta").contains("dependency_unavailable: beta requires alpha"));
+    assert_eq!(runtime.status()["order"], json!(["healthy"]));
+}
+
+#[test]
+fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let counter = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
+    let user = packaged(
+        &root,
+        "user-copy",
+        "shared",
+        counter,
+        &["commands", "state"],
+        &[],
+    );
+    let project = packaged(
+        &root,
+        "project-copy",
+        "shared",
+        &format!("{counter};\n"),
+        &["commands", "state"],
+        &[],
+    );
+    trust_scoped(&store, &user, &["commands", "state"], "user");
+    trust_scoped(&store, &project, &["commands", "state"], "project");
+    let mut runtime = host(&temp);
+    let status = runtime.status();
+    assert_eq!(status["order"], json!(["shared"]));
+    assert_eq!(status["mods"][0]["scope"], "project");
+    assert_eq!(status["rejected"][0]["id"], "shared");
+    assert_eq!(status["rejected"][0]["scope"], "user");
+    assert_eq!(status["rejected"][0]["path"], json!(user));
+    assert!(
+        status["rejected"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("shadowed_by_project_scope"),
+        "{status}"
+    );
+    let generation = runtime.generation();
+    runtime
+        .invoke("shared", generation, "command", "count", Value::Null)
+        .unwrap();
+    let store_root = root.join("store");
+    assert!(store_root.join("state-shared.project.json").exists());
+    assert!(!store_root.join("state-shared.json").exists());
+}
+
+#[test]
+fn two_selections_of_one_id_in_the_same_scope_both_fail_closed() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for directory in ["first-copy", "second-copy"] {
+        let path = packaged(
+            &root,
+            directory,
+            "shared",
+            &format!("export default api => api.on('context', () => ({{text:'{directory}'}}))"),
+            &["context"],
+            &[],
+        );
+        trust(&store, &path, &["context"]);
+    }
+    let healthy = packaged(
+        &root,
+        "healthy",
+        "healthy",
+        &context_mod("healthy"),
+        &["context"],
+        &[],
+    );
+    trust(&store, &healthy, &["context"]);
+    let runtime = host(&temp);
+    assert_eq!(runtime.status()["order"], json!(["healthy"]));
+    let rejected = runtime.status()["rejected"].clone();
+    assert_eq!(rejected.as_array().unwrap().len(), 2, "{rejected}");
+    for entry in rejected.as_array().unwrap() {
+        assert!(
+            entry["reason"]
+                .as_str()
+                .unwrap()
+                .contains("mod_conflict: shared is enabled twice in the user scope"),
+            "{entry}"
+        );
+    }
+}
+
+#[test]
+fn contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for id in ["first", "second"] {
+        let path = packaged(
+            &root,
+            id,
+            id,
+            &format!("export default api => api.replace('terminal', () => ({{title:'{id}'}}))"),
+            &["terminal"],
+            &[],
+        );
+        trust(&store, &path, &["terminal"]);
+    }
+    let healthy = packaged(
+        &root,
+        "healthy",
+        "healthy",
+        &context_mod("healthy"),
+        &["context"],
+        &[],
+    );
+    trust(&store, &healthy, &["context"]);
+    let runtime = host(&temp);
+    for id in ["first", "second"] {
+        assert!(
+            error_of(&runtime, id)
+                .contains("replacement_conflict: terminal claimed by first, second"),
+            "{id}: {}",
+            error_of(&runtime, id)
+        );
+    }
+    assert_eq!(runtime.status()["order"], json!(["healthy"]));
+    assert_eq!(runtime.replacement_owner("terminal"), None);
+}
+
+#[test]
+fn exclusive_decisions_require_a_replacement_registration_while_observers_compose() {
+    let routes = json!({"routes":[{"name":"sol","model":"m","provider":"p","reasoning":"medium"}],
+        "model":null,"provider":"p","reasoning":null});
+    let (temp, _, _) = fixture(
+        "export default api => api.on('routing', ({routes}) => routes[0].name)",
+        &["routing"],
+    );
+    let mut runtime = host(&temp);
+    let error = runtime.event("routing", routes.clone())[0]
+        .1
+        .as_ref()
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("exclusive_replacement_registration_required"),
+        "{error}"
+    );
+
+    let (temp, _, _) = fixture(
+        "export default api => api.replace('routing', ({routes}) => routes[0].name)",
+        &["routing"],
+    );
+    let mut runtime = host(&temp);
+    assert_eq!(
+        runtime.event("routing", routes)[0].1.as_ref().unwrap(),
+        &json!("sol")
+    );
+    assert_eq!(
+        runtime.replacement_owner("routing").as_deref(),
+        Some("fixture")
+    );
+
+    let temp = TempDir::new().unwrap();
+    composed(&temp, &[("alpha", &[]), ("beta", &[])]);
+    let mut runtime = host(&temp);
+    let composed_context: Vec<Value> = runtime
+        .event(
+            "context",
+            json!({"thread_id":"t","turn_id":"u","checkpoint":null}),
+        )
+        .into_iter()
+        .map(|(_, result)| result.unwrap())
+        .collect();
+    assert_eq!(
+        composed_context,
+        [json!({"text":"alpha"}), json!({"text":"beta"})]
+    );
+    assert_eq!(runtime.replacement_owner("context"), None);
 }

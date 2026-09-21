@@ -1,49 +1,180 @@
-# API coverage and composition
+# Public API coverage and composition contract
 
-All operations are experimental API `0.1.0-experimental.3`. Missing capabilities
-fail before native dispatch. This contract describes implemented boundaries;
-arbitrary Rust internals are not exposed.
+<!-- Generated from conformance/contract.json by scripts/mod_conformance.py --write. -->
 
-| Surface | Observe / alter / replace | Timing and ownership |
+Mod API `0.1.0-experimental.4`. Every decision a mod can reach through the published
+API is listed below with the support it has, when it takes effect, who owns the
+outcome, and its limits. Capabilities not granted to a package fail before native
+dispatch. Arbitrary host internals are not exposed, and the table is checked
+against the host source: an event, capability, replacement point or host
+operation that is not documented here fails `scripts/mod_conformance.py`.
+
+`observe` is middleware (`api.on`): several mods compose. `replace` is exclusive
+(`api.replace`): one mod per point, claimed before activation.
+
+## Coordination decisions
+
+| Decision | Observe | Alter | Replace | Timing | Ownership | Limits |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Lead model, provider and reasoning preset** | `routes.list` returns the host-configured presets | no partial edit; a preset is selected whole | `routing` | thread creation and resume, before the first request of the session | host: the preset table, the fixed/task-entry lead policy and native admission | only host-configured presets; an unauthorized name fails the turn visibly; a fixed host selection wins; arbitrary models, endpoints or credentials are never reachable |
+| **Read-only worker agents: spawn, message, cancel, wait, list, consume** | `agents.list`, `agents.result`, and the `agent_end` event | role, route and prompt of each spawn | no | inside a native tool callback, within the current task | host: worker threads, the worker ledger, permissions, deadlines and the shared allowance | read-only permissions; private handles owned by the spawning mod and generation; recursion, isolation and accounting stay native; handles die with the turn |
+| **Delegated contribution: brief and evidence selection** | the request the model made | brief text and selected evidence before dispatch | `tool_before` (redirects `omd_contribute` to a mod tool) | pre-dispatch, inside the replacing mod tool | host: worker context assembly, review, integration and the recorded result | cannot widen evidence beyond what the host exposes, forge a contribution result, or bypass the native reviewed path |
+| **Review cadence and final review invocation** | the active contract requirements | when review runs and on which candidate | `tool_before` (redirects `omd_complete`) | inside a native tool callback during the task | host: reviewer route, the candidate-bound findings ledger, shared limits and acceptance | no implicit downgrade of the selected contract; evidence and findings stay native; a stale candidate digest fails closed |
+| **Escalation choice after a preserved failure** | preserved failure evidence through the checkpoint | failure class, summary and the cited call IDs | `tool_before` (redirects `omd_escalate`) | inside a native tool callback during the task | host: bounded attempts, advice routes, worker lifecycle and the retained evidence | advice only; the mod cannot move worker lifecycle into TypeScript or exceed native attempt bounds |
+| **Workflow contract: registration, restriction and observation** | `workflow.status` reports the active contract and its provenance; the `workflow` event | `workflow.restrict` removes authority for the task | exclusive contract registration per contract ID, not a replacement point | registration at activation; restriction inside a task; selection stays native | host: contract selection, enforcement, the assurance floor and durable evidence | restrictions only remove authority; a registration cannot shadow, weaken or select a host contract; two mods claiming one contract ID both fail closed |
+| **Provider adapter route registration** | registration status | register or unregister an explicitly host-approved local service route | no | within the owning mod, generation and task | host: the approved executable, its hashes, rates, credentials and the Responses transport | only pre-approved service IDs; no arbitrary endpoints, credentials or wire protocols; the route dies with the task |
+| **Task status and effective settings observation** | `task.status` returns the effective settings, allowance and task state | not alterable | no | inside a native tool callback | host: all reported state | read-only; secrets, credentials and store digests are never included |
+
+## Context and recovery decisions
+
+| Decision | Observe | Alter | Replace | Timing | Ownership | Limits |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Mod context block added to each native context assembly** | `on('context')` contributes a bounded fragment | fragments compose in activation order under one aggregate limit | `context` (the exclusive assembler; observer fragments are dropped with a visible notice) | every native turn-context assembly, lead thread only | host: user/project instructions, native mandatory context, ordering and the aggregate budget | 1 KiB per fragment, 6 KiB aggregate; mod context is always subordinate developer context and names its mod |
+| **Submitted prompt: observe, deny or rewrite** | text and attachment count | deny with a reason (any observer may veto) | `input` (exclusive rewrite) | before native prompt hooks, skill/mention resolution and history, in TUI and exec | host: submission path, attachments, history and the visible notice | a rewrite or denial is always shown to the user; attachments are retained; two rewrites cannot compose |
+| **Automatic compaction threshold and local summarization prompt** | the host token limit and context window | threshold within host bounds | `compaction` | thread creation and resume | host: the compaction engine, the window and remote-compaction behaviour | 256 tokens to the host ceiling; the prompt applies only to native local compaction, remote compaction keeps native behaviour with a visible diagnostic |
+| **Durable task checkpoint: read and evidence-backed update** | `checkpoint.read` and the checkpoint passed to context and terminal events | `checkpoint.update` appends evidence-backed progress | no | inside a native tool callback | host: validation, workspace integrity, version markers and completed-evidence retention | cannot discard completed evidence, rewrite history or record a stale candidate digest |
+| **Per-mod durable state and explicit migration** | `state.get` refreshed on every invocation | `state.set` with compare-and-set on write | no | any callback; migration only through the disabled-package manager command | host: the store, the lock, atomic writes, the backup and scope separation | 64 KiB; a lost race reports `state_conflict`; no writes during activation; user and project scopes never share a state file |
+| **Session and turn lifecycle observation** | start, resume, idle, stop, tool_result, turn_start, turn_end, compaction_start, compaction_end, agent_end | not alterable | no | at each native lifecycle point, lead thread only | host: cancellation, turn cleanup and ordering | observers cannot run host operations, cannot delay the turn past their budget, and cannot intercept cancellation |
+| **Pi skill and prompt discovery and expansion** | `pi.discover` lists eligible resources with diagnostics | `pi.expand` renders a named prompt with arguments | no | inside a native tool callback | host: the eligible directories, ignore rules, symlink rejection and protected-resource omission | protected or symlinked resources are refused and reported, never silently omitted |
+
+## Tool decisions
+
+| Decision | Observe | Alter | Replace | Timing | Ownership | Limits |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Deferred mod tools offered to the model** | the model's arguments | the tool's own result | no | registered at activation; callable for the whole generation | host: the executor, permissions, deadlines, accounting and the tool lifecycle | 16 tools per mod, namespaced `mod_<id>_<name>`, 8 KiB schema validated by the native tool registry |
+| **Tool call interception: observe, deny, rewrite arguments or retarget** | tool name, arguments and call ID | deny with a reason from any observer | `tool_before (exclusive argument rewrite or retarget)` | before native hooks and permission checks | host: permissions, the executor and completion evidence | a replacement cannot forge native completion evidence or escape the sandbox; only one rewrite may exist |
+| **Slash commands and their results** | the argument text | display, insert or submit text | no | outside native tasks, from the CLI, the `/` popup or a keybinding | host: the submission path, queueing and command precedence | 16 per mod; namespaced `/<id>:<name>` always exists, a bare alias only when unique; submitted text uses the native path with no shell escape; host operations that need a task fail with `host_operation_unavailable` |
+| **Bounded native command execution** | exit code and bounded output | the argument vector | no | inside a native tool callback | host: the sandbox, permission profile, deadlines and accounting | the same sandbox and permission profile as any native exec; the mod store and host secrets stay denied |
+| **Approved local service lifecycle** | `sidecars.status` | start and stop an approved service ID | no | within the owning mod, generation and task | host: the executable hash, sandbox intersection, process group, secrets and cleanup | opaque secret references only; process-group cancellation and bounded task lifetime; unapproved IDs are refused |
+| **Streamed progress and the transcript activity line** | not applicable | up to 32 bounded progress updates per tool call | no | during a mod tool call only | host: rendering, the live progress panel and the completed activity line | 1 KiB per update; forwarded once across host-call replay; refused outside a tool callback |
+
+## Terminal decisions
+
+| Decision | Observe | Alter | Replace | Timing | Ownership | Limits |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Terminal view: title, sidebar side and width, status segments** | the triggering event and the checkpoint | not alterable piecemeal; the view is returned whole | `terminal (exclusive)` | every mod event, redrawn inline and fullscreen | host: layout, fallbacks, the native composer and recovery controls | panels need fullscreen with size fallbacks; a failed or contested view falls back to the native recovery panel; a mod error panel is inserted above a healthy mod view |
+| **Sidebar, header, footer, progress and diagnostics panels** | not applicable | panel titles and lines each redraw | `terminal` | fullscreen, with inline fallbacks | host: available space, truncation and the native inspector | bounded panel and line counts; control characters and raw escapes are rejected at parse time |
+| **Accent, user-message background, success/attention/failure tones and syntax theme** | not applicable | named theme slots | `terminal` | inline and fullscreen | host: the terminal colour depth and the configured theme | 256-colour index or `#rrggbb` mapped to the terminal depth; the configured theme is restored when the mod is removed |
+| **F2-F12, Ctrl+letter and Alt+letter actions** | not applicable | insert a draft, submit a message or run a command | `terminal` | inline and fullscreen while the mod view is active | host: the native keymap, modal input and cancellation keys | active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M and modal input are never interceptable |
+| **Assistant message and tool cell presentation templates** | not applicable | a template that retains `{text}` exactly once | `terminal` | rich assistant and exec cells as they render | host: the raw transcript, stored messages and durable evidence | presentation only; the transcript, stored messages and evidence remain native |
+
+## What this adds over the native plugins and hooks
+
+Pinned Codex 0.154.0 ships plugins (`plugin.json`: skills, prompts, MCP servers,
+hook files) and hooks for `pre_tool_use`, `permission_request`, `post_tool_use`,
+`pre_compact`, `post_compact`, `session_start`, `session_end`,
+`user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
+A hook is an external command or MCP tool that returns a decision document: it can
+block a call, add context, or rewrite a tool's input. It cannot hold state, stream,
+render, route a model, run an agent, or take part in delegation, review, recovery
+or workflow enforcement, and competing `pre_tool_use` rewrites are resolved by
+whichever hook finishes last. The mod API is in-process, capability-scoped,
+deterministic and composable; the added control per decision is:
+
+| Decision | Native plugins and hooks today | Added by the mod API |
 | --- | --- | --- |
-| Model/provider/reasoning | List configured presets; replace lead preset; select agent preset or registered adapter alias | Lead creation/resume, each agent spawn; fixed host selection and native admission win |
-| Provider adapters | Register/unregister an explicitly host-approved local service route | Owning mod/generation/turn; exact executable and host rates; existing Responses transport |
-| Sidecars/secrets | Start/status/stop an approved service ID; opaque references | Native sandbox intersection, process-group cancellation, bounded task lifetime; no callback secret access |
-| Agent roles | Spawn read-only roles; message, list, cancel, wait, consume | Native threads/worker ledger; private handles; task and worker allowance/deadline |
-| Delegation/scheduling/coordination | Sequence native operations; replace built-in tool entrypoints with registered mod tools | Pre-dispatch, exclusive replacement; native recursion, isolation and accounting remain |
-| Review/recovery | Replace tool choice/cadence; invoke original native review/completion/contribution/escalation | Existing handlers preserve evidence and selected contract; no implicit downgrade |
-| Workflow contracts | Observe the active contract and provenance; restrict delegation, child-agent, opposite-lead or escalation authority; register a complete contract for native selection | Task-bound and versioned; restrictions only remove authority; registration is exclusive and cannot shadow, select or weaken a host contract |
-| Prompts/context | Add bounded fragments; exclusively select a mod context assembler; construct worker prompts | Each native context assembly; user/project instructions and native mandatory context retained |
-| Input | Observe or deny submitted prompts; exclusively rewrite prompt text | Before native prompt hooks, skill/mention resolution and history for TUI and exec; visible rewrite/denial notice; attachments retained |
-| Compaction | Replace automatic token threshold and the local summarization prompt | Thread creation/resume, bounded by host threshold/window; prompt only for native local compaction, remote-compaction routes keep native behavior with a visible diagnostic |
-| Session/checkpoints | Observe IDs and checkpoint; submit evidence-backed updates | Native checkpoint validation and integrity checks; no arbitrary history rewriting |
-| Lifecycle | Start/resume/idle/stop/tool outcome, turn start/end, compaction start/end, owned agent end | Lead only; observers cannot run host operations; native cancellation/turn cleanup cannot be intercepted |
-| Tools | Register deferred tools with labels; stream bounded progress; call native exec and task operations | Native executor, permissions, deadlines, accounting and tool lifecycle; transcript activity line and live progress panel |
-| Interception | Observe/deny; exclusively rewrite arguments or select another registered function tool | Before normal hooks and permission checks; replacement cannot forge native completion evidence |
-| Commands | Register described commands; invoke from the CLI, `/` popup (`/<id>:<name>` plus conflict-free bare alias) or keybindings; display, insert or submit results | Outside native tasks; submitted text uses the native submission path without shell escape |
-| Settings/state | Read configured JSON; host CLI edits; atomic state refreshed per call; explicit migration | Turn-boundary settings/reload; state CAS and migration backup |
-| Terminal theme | Native accent, user-message background, success/attention/failure tones, installed syntax theme; panel colors | Inline and fullscreen; 256-color index or `#rrggbb` mapped to the terminal color depth; configured theme restored when removed |
-| Panels/widgets/layout | Left/right sidebar panels, header and footer panels, status-line segments, progress and diagnostics panels | Panels need fullscreen with size fallbacks; status segments inline and fullscreen; native composer/recovery controls retained |
-| Input/keybindings | F2–F12, Ctrl+letter, Alt+letter: insert draft, submit message, or run a command | Inline and fullscreen; active native keymap bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M and modal input retained |
-| Tool/message rendering | Replace presentation templates, retaining `{text}` exactly once; mod tool activity lines | Rich assistant and exec cells; raw transcript, stored messages and evidence remain native |
-| Pi | Named v0.74.0 tool/command subset (labels, descriptions, `onUpdate`, `sendUserMessage`), nested skill and prompt discovery with ignore rules and frontmatter, prompt expansion as `pi.expand` and `/pi:<name>` | Optional adapter over the same registry and host operations; gaps in README |
+| Lead model, provider and reasoning preset | native plugins and hooks cannot change model, provider or reasoning effort at all | exclusive `routing` replacement; no partial edit; a preset is selected whole |
+| Read-only worker agents: spawn, message, cancel, wait, list, consume | native plugins cannot spawn or steer agents; `subagent_start`/`subagent_stop` hooks only observe | role, route and prompt of each spawn |
+| Delegated contribution: brief and evidence selection | `pre_tool_use` can block a tool or rewrite its JSON input, but cannot route it to another implementation | exclusive `tool_before` replacement; brief text and selected evidence before dispatch |
+| Review cadence and final review invocation | no native hook can run or replace a review | exclusive `tool_before` replacement; when review runs and on which candidate |
+| Escalation choice after a preserved failure | no native hook participates in recovery | exclusive `tool_before` replacement; failure class, summary and the cited call IDs |
+| Workflow contract: registration, restriction and observation | native plugins have no workflow contract concept | `workflow.restrict` removes authority for the task |
+| Provider adapter route registration | native plugins cannot add provider routes at runtime | register or unregister an explicitly host-approved local service route |
+| Task status and effective settings observation | hooks receive only their own event payload | not alterable |
+| Mod context block added to each native context assembly | `session_start`/`user_prompt_submit` hooks can inject additional context, but there is no exclusive assembler and no declared ordering | exclusive `context` replacement; fragments compose in activation order under one aggregate limit |
+| Submitted prompt: observe, deny or rewrite | `user_prompt_submit` hooks can block a prompt or add context; competing rewrites are resolved by whichever hook finishes last | exclusive `input` replacement; deny with a reason (any observer may veto) |
+| Automatic compaction threshold and local summarization prompt | `pre_compact`/`post_compact` hooks observe and can add context; they cannot set the threshold or the prompt | exclusive `compaction` replacement; threshold within host bounds |
+| Durable task checkpoint: read and evidence-backed update | no native hook can read or write task state | `checkpoint.update` appends evidence-backed progress |
+| Per-mod durable state and explicit migration | native hooks are stateless between runs | `state.set` with compare-and-set on write |
+| Session and turn lifecycle observation | hooks cover session_start/end, stop, interrupt and subagent start/stop with comparable observation | not alterable |
+| Pi skill and prompt discovery and expansion | native plugins ship skills and prompts but expose no discovery API to code | `pi.expand` renders a named prompt with arguments |
+| Deferred mod tools offered to the model | native plugins add tools only through MCP servers, as a separate process with its own transport | the tool's own result |
+| Tool call interception: observe, deny, rewrite arguments or retarget | `pre_tool_use` blocks or rewrites input; the last-finishing hook silently wins a contested rewrite and no hook can retarget the call | exclusive `tool_before (exclusive argument rewrite or retarget)` replacement; deny with a reason from any observer |
+| Slash commands and their results | plugins contribute prompt-style slash commands, not code-backed commands with structured results | display, insert or submit text |
+| Bounded native command execution | hooks run their own commands outside the agent sandbox contract | the argument vector |
+| Approved local service lifecycle | native plugins declare MCP servers but have no in-task service lifecycle | start and stop an approved service ID |
+| Streamed progress and the transcript activity line | hooks can show a status message; there is no streaming progress channel | up to 32 bounded progress updates per tool call |
+| Terminal view: title, sidebar side and width, status segments | native plugins cannot change the terminal at all | exclusive `terminal (exclusive)` replacement; not alterable piecemeal; the view is returned whole |
+| Sidebar, header, footer, progress and diagnostics panels | no equivalent | exclusive `terminal` replacement; panel titles and lines each redraw |
+| Accent, user-message background, success/attention/failure tones and syntax theme | no equivalent | exclusive `terminal` replacement; named theme slots |
+| F2-F12, Ctrl+letter and Alt+letter actions | no equivalent | exclusive `terminal` replacement; insert a draft, submit a message or run a command |
+| Assistant message and tool cell presentation templates | no equivalent | exclusive `terminal` replacement; a template that retains `{text}` exactly once |
 
-Exclusive replacements conflict before activation. Context observers compose in
-mod-ID order under the aggregate limit; `replace('context')` reserves the mod
-assembler slot. Multiple non-null routing/compaction/terminal decisions fail
-visibly. Runtime effects cannot run in policy/lifecycle/standalone-command
-callbacks. A native tool callback can call the documented effect operations.
+## Composition rules
 
-Native workflow-contract enforcement, permissions, spending grants, cancellation,
-provider credentials, workspace integrity, durable evidence, and final acceptance
-are not replaceable. Raw history rewriting, custom prompts for provider-side
-remote compaction, arbitrary compaction engines, raw terminal escape sequences,
-clipboard authorization bypass, unrestricted UI components, overriding native
-key bindings, and arbitrary provider compatibility remain unsupported. These are
-visible API limits, not silent successful no-ops.
+- **order** — Activation and dispatch order is deterministic: declared dependencies first, then mod ID ascending. The same order is used for every event, tool listing, command listing and contract listing, and is published in `omd-mod status` as `order`.
 
-Executable coverage lives in `runtime/omd/tests/mods.rs`, `mods/runner.test.mjs`,
-the patched native tool-registry and terminal tests (`mod_ui_tests.rs`,
-`mod_runtime_tests.rs`), `benchmarks/mod_fixture.py` and
-`benchmarks/mod_terminal_fixture.py`. The maintained cross-release/cross-mod matrix,
-independent preview and first-party migrations remain separate roadmap tasks.
+- **exclusive_versus_middleware** — `api.on` is middleware: observers compose, may veto (`deny`) and, for `context`, contribute additive fragments. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing`, `compaction` or `terminal` decision without the replacement registration fails visibly instead of quietly applying, and a `context` replacer drops observer fragments with a notice naming both sides.
+
+- **conflict_before_activation** — Contested exclusive claims — a replacement point, a workflow contract ID or a namespaced tool name — are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.
+
+- **dependencies_and_cycles** — `requires` lists up to four other mod IDs. A dependency that is absent, disabled or itself failed disables the dependent chain before activation; a cycle disables every mod in it. Both are reported per mod and neither stops the host.
+
+- **user_project_precedence** — Discovery reports project packages shadowing user packages by ID. Trust and activation stay explicit and per path: each selection records its scope, a project-scoped selection takes precedence over a user-scoped one with the same ID, the shadowed selection is recorded and not activated, and the two scopes never share mod state. Two selections of one ID in the same scope both fail closed.
+
+- **failed_mod_isolation** — A mod that throws while activating, loses a capability, or is rejected by the store is disabled alone with a source-located error. Every other mod keeps running, its owned agents and services are cleaned up, and a healthy mod keeps its terminal view with the error panel inserted above it. The failure is reported to the user through that panel, `omd-mod status` and the persisted `mod-status.json`; a failure inside a callback is additionally reported to the model for that turn.
+
+- **reload** — Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.
+
+- **cancellation** — Every callback is cancellable. Cancellation discards the callback's state write, cancels its owned agents and services, records the turn outcome, and leaves the terminal usable; an explicit reload recovers the mod.
+
+- **streaming** — Mod tool progress streams into the live panel during the call and leaves one labelled activity line when it completes; replayed host calls never duplicate an update.
+
+- **limits** — Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a 6 s execution budget and 64 KiB state.
+
+- **first_party_parity** — First-party mods use the published API only. `omd_coordination` and `omd_workspace` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run in the conformance fixture beside outside packages under the same rules.
+
+## Not supported and not replaceable
+
+- Native workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace integrity, durable evidence and final acceptance.
+- Raw history rewriting, arbitrary compaction engines, custom prompts for provider-side remote compaction.
+- Raw terminal escape sequences, unrestricted UI components, overriding native key bindings, clipboard authorization bypass.
+- Arbitrary provider compatibility, runtime imports other than the documented Pi `typebox` shim, and any second scheduler or uncontrolled execution path.
+- Mod-to-mod calls: `requires` declares presence and order only; mods never call each other or share state.
+
+## Conformance evidence
+
+`rust:` `runtime/omd/tests/mods.rs` · `patch:` patched native/TUI tests ·
+`node:` `mods/runner.test.mjs` · `python:` `tests/` · `fixture:` profile/scenario of
+`benchmarks.controlled_fixture` · `terminal:` check of `benchmarks.mod_terminal_fixture`.
+Each reference is resolved by `scripts/mod_conformance.py`.
+
+| Decision or rule | Executable evidence |
+| --- | --- |
+| coordination.lead_route | `rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `fixture:routing/success` · `fixture:conformance/success` |
+| coordination.agents | `fixture:full/success` · `fixture:cancel/success` · `rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks` |
+| coordination.delegation | `fixture:conformance/success` · `fixture:preview/success` · `fixture:preview-denied/direct` |
+| coordination.review | `fixture:policy/completion` |
+| coordination.recovery | `fixture:policy/escalation` |
+| coordination.workflow_contract | `rust:a_workflow_mod_registers_a_contract_it_cannot_select_or_weaken` · `rust:a_registered_contract_may_not_redefine_a_bundled_contract_or_skip_its_capability` · `rust:two_mods_may_not_own_the_same_workflow_contract` |
+| coordination.providers | `fixture:provider/success` |
+| coordination.task_status | `fixture:full/success` · `fixture:opaque/direct` |
+| context.assembly | `rust:mod_context_is_bounded_and_callback_failure_is_isolated` · `rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `fixture:conformance/success` |
+| context.input | `rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny` · `fixture:lifecycle/success` · `fixture:deny/success` |
+| context.compaction | `fixture:lifecycle/success` |
+| context.checkpoint | `fixture:full/success` |
+| context.state | `rust:mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates` · `rust:migration_is_explicit_bounded_and_preserves_previous_state` · `rust:project_scope_takes_precedence_over_user_scope_without_sharing_state` |
+| context.lifecycle | `rust:command_descriptions_tool_labels_and_lifecycle_events_register` · `fixture:lifecycle/success` · `fixture:conformance/success` |
+| context.pi_resources | `rust:pi_nested_skills_honor_ignore_rules_and_frontmatter` · `rust:pi_prompt_expansion_matches_pi_0_74_oracle` · `fixture:opaque/direct` |
+| tool.registration | `rust:native_schema_validation_applies_to_reload_before_activation` · `rust:tool_progress_is_forwarded_once_across_host_call_replay` · `fixture:counter/success` |
+| tool.interception | `rust:exclusive_replacement_conflicts_fail_before_activation` · `fixture:opaque/direct` · `fixture:conformance/success` |
+| tool.commands | `rust:command_outcomes_and_input_decisions_are_validated` · `patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique` · `terminal:namespaced_command` |
+| tool.execution | `fixture:full/success` · `fixture:opaque/direct` |
+| tool.sidecars | `fixture:full/success` · `fixture:failure/success` |
+| tool.progress | `rust:tool_progress_is_forwarded_once_across_host_call_replay` · `fixture:conformance/success` · `terminal:activity_line` |
+| terminal.view | `patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer` · `rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` · `fixture:conformance/success` · `fixture:conformance-conflict/success` |
+| terminal.panels | `patch:left_sidebar_header_progress_and_diagnostics_share_the_layout` · `terminal:task_panel` · `terminal:customized_panels` |
+| terminal.theme | `patch:theme_slots_map_indexed_and_rgb_colors` · `terminal:accent_color` · `terminal:user_message_background` |
+| terminal.keybindings | `patch:native_escape_and_cancel_keys_cannot_be_intercepted` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `terminal:key_submit` · `terminal:key_conflict_visible` |
+| terminal.rendering | `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `fixture:full/success` |
+| order | `rust:composition_order_is_declared_dependencies_first_then_mod_id` · `fixture:conformance/success` |
+| exclusive_versus_middleware | `rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny` · `fixture:conformance/success` |
+| conflict_before_activation | `rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` · `rust:two_mods_may_not_own_the_same_workflow_contract` · `fixture:conformance-conflict/success` |
+| dependencies_and_cycles | `rust:a_dependency_cycle_is_rejected_before_activation_and_isolated` · `rust:an_unavailable_dependency_disables_only_the_dependent_chain` |
+| user_project_precedence | `rust:project_scope_takes_precedence_over_user_scope_without_sharing_state` · `rust:two_selections_of_one_id_in_the_same_scope_both_fail_closed` · `rust:pi_and_native_discovery_preserve_project_precedence_without_trust` · `fixture:conformance-conflict/success` |
+| failed_mod_isolation | `rust:a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error` · `fixture:conformance/success` · `fixture:preview-denied/direct` · `terminal:mod_error_did_not_stop_the_host` |
+| reload | `rust:mod_reload_is_transactional_and_stale_calls_are_rejected` · `rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation` · `terminal:reload_applies_the_edit` · `terminal:session_preserved_across_reload` |
+| cancellation | `rust:mod_cancellation_discards_state_and_explicit_reload_recovers` · `rust:mod_pending_callback_has_a_host_deadline` · `fixture:cancel/success` · `terminal:cancelled_turn_recorded` |
+| streaming | `rust:tool_progress_is_forwarded_once_across_host_call_replay` · `fixture:conformance/success` · `terminal:activity_line` |
+| limits | `rust:mod_context_is_bounded_and_callback_failure_is_isolated` · `rust:mod_pending_callback_has_a_host_deadline` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` |
+| first_party_parity | `python:test_first_party_mods_use_only_the_published_api` · `fixture:conformance/success` |

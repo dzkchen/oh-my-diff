@@ -45,7 +45,95 @@ def install_preview(destination, manifest, node, profile):
     manifest["mods"] = str(store)
 
 
+CONFORMANCE_SETTINGS = {
+    "conformance_context": {"note": "CONFORMANCE_SETTING"},
+}
+
+CONFORMANCE_PACKAGES = {
+    "conformance_context": {
+        "capabilities": ["context", "lifecycle", "state", "tools"],
+        "requires": ["omd_coordination"],
+        "source": """export default api => {
+  api.on('context', () => ({text:'CONFORMANCE_OBSERVER_CONTEXT'}));
+  api.on('turn_start', () => { const state = Object(api.state.get()); api.state.set({...state, turns: Number(state.turns ?? 0) + 1}); });
+  api.tool({name:'note',label:'Conformance note',description:'Record a composition note and stream bounded progress',
+    parameters:{type:'object',properties:{},additionalProperties:false}}, () => {
+    api.progress('CONFORMANCE_PROGRESS_ONE');
+    api.progress('CONFORMANCE_PROGRESS_TWO');
+    const state = Object(api.state.get());
+    const notes = Array.isArray(state.notes) ? state.notes : [];
+    const note = typeof api.settings.note === 'string' ? api.settings.note : 'none';
+    api.state.set({...state, notes: [...notes, note]});
+    return {recorded: note, api: api.version};
+  });
+}
+""",
+    },
+    "conformance_broken": {
+        "capabilities": ["context"],
+        "requires": [],
+        "source": "export default api => { throw new Error('CONFORMANCE_BROKEN_SENTINEL'); }\n",
+    },
+}
+
+CONFORMANCE_CONTENDER = {
+    "capabilities": ["terminal"],
+    "requires": [],
+    "source": "export default api => api.replace('terminal', () => ({title:'CONFORMANCE_CONTENDER'}));\n",
+}
+
+
+def conformance_selection(store, identifier, package, scope="user"):
+    directory = store / "packages" / identifier
+    directory.mkdir(parents=True)
+    manifest = {"schema": 1, "id": identifier, "version": "1.0.0", "api": API_VERSION,
+                "state_version": 1, "capabilities": package["capabilities"]}
+    if package["requires"]:
+        manifest["requires"] = package["requires"]
+    declared = json.dumps(manifest).encode()
+    body = package["source"].encode()
+    (directory / "mod.json").write_bytes(declared)
+    (directory / "index.ts").write_bytes(body)
+    return {"path": str(directory), "sha256": hashlib.sha256(declared + b"\x00" + body).hexdigest(),
+            "enabled": True, "capabilities": package["capabilities"], "scope": scope,
+            "settings": CONFORMANCE_SETTINGS.get(identifier, {})}
+
+
+def install_conformance(destination, manifest, node, profile):
+    lock = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
+    store = destination / "mod-store"
+    store.mkdir()
+    selections = []
+    for identifier, pinned in sorted(lock["packages"].items()):
+        source = ROOT / pinned["source"]
+        declared = (source / "mod.json").read_bytes()
+        body = (source / "index.ts").read_bytes()
+        for scope in ("user", "project") if profile == "conformance-conflict" and identifier == "omd_coordination" else ("user",):
+            package = destination / f"{identifier}-{scope}"
+            package.mkdir()
+            variant = body.replace(b"0.1.0-preview.1'", b"0.1.0-preview.1+project'") if scope == "project" else body
+            (package / "mod.json").write_bytes(declared)
+            (package / "index.ts").write_bytes(variant)
+            selections.append({
+                "path": str(package),
+                "sha256": hashlib.sha256(declared + b"\x00" + variant).hexdigest(),
+                "enabled": True,
+                "capabilities": json.loads(declared)["capabilities"],
+                "scope": scope,
+                "settings": PREVIEW_SETTINGS[identifier],
+            })
+    for identifier, package in sorted(CONFORMANCE_PACKAGES.items()):
+        selections.append(conformance_selection(store, identifier, package))
+    if profile == "conformance-conflict":
+        selections.append(conformance_selection(store, "conformance_terminal", CONFORMANCE_CONTENDER))
+    (store / "mods.json").write_text(json.dumps(
+        {"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": selections}))
+    manifest["mods"] = str(store)
+
+
 def install(destination, manifest, node, profile):
+    if profile.startswith("conformance"):
+        return install_conformance(destination, manifest, node, profile)
     if profile.startswith("preview"):
         return install_preview(destination, manifest, node, profile)
     package = destination / "fixture-mod"
@@ -332,7 +420,7 @@ def verify_preview(destination, requests, profile, scenario):
         assert {item["output"] for item in outputs} == {"capability_denied: recovery"}, outputs
         assert errors.get("omd_coordination") == "capability_denied: recovery", errors
         assert errors.get("omd_workspace") is None, "an unrelated mod was disabled by the denial"
-        assert view["view"]["title"] == "Mod recovery", view["view"]
+        assert view["view"]["title"] == "Oh My Diff workspace", "a healthy UI mod lost the terminal to an unrelated failure"
         assert any(panel["title"] == "Mod errors" for panel in view["view"]["panels"]), view["view"]
         return
     assert not any(errors.values()), errors
@@ -355,7 +443,57 @@ def verify_preview(destination, requests, profile, scenario):
     assert [panel["title"] for panel in view["view"]["panels"]] == ["Task", "Activity"], view["view"]
 
 
+def verify_conformance(destination, requests, profile, scenario):
+    lock = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
+    version = lock["packages"]["omd_coordination"]["version"]
+    provenance = f"omd_coordination {version}+project" if profile == "conformance-conflict" else f"omd_coordination {version}"
+    status = json.loads((destination / "evidence/mod-status.json").read_text())
+    view = json.loads((destination / "evidence/mod-view.json").read_text())
+    errors = {mod["id"]: mod["error"] for mod in status["mods"]}
+    rejected = {(entry["id"], entry["scope"]): entry["reason"] for entry in status["rejected"]}
+    lead = json.dumps([request["body"] for request in requests if request["native_owner"] == "lead"])
+
+    assert "CONFORMANCE_BROKEN_SENTINEL" in (errors.get("conformance_broken") or ""), errors
+    assert "index.ts:" in errors["conformance_broken"], "the broken-mod error is not source-located"
+    assert errors.get("omd_coordination") is None and errors.get("conformance_context") is None, errors
+    assert provenance in lead, "the coordination assembler never reached the lead"
+    assert "CONFORMANCE_OBSERVER_CONTEXT" not in lead, "an observer contribution survived the context replacement"
+    assert "Mod omd_coordination assembles mod context; contributions from conformance_context were replaced." in lead, lead[-4000:]
+
+    notes = [json.loads(item["output"]) for request in requests
+             for item in request["body"].get("input", [])
+             if item.get("type") == "function_call_output" and item.get("call_id") == "conformance-note"]
+    assert notes and all(note == {"recorded": "CONFORMANCE_SETTING", "api": API_VERSION} for note in notes), notes
+    state = json.loads((destination / "mod-store/state-conformance_context.json").read_text())["value"]
+    assert state["notes"] == ["CONFORMANCE_SETTING"] and state["turns"] >= 1, state
+    assert any(activity["label"] == "Conformance note" and activity["tool"] == "mod_conformance_context_note"
+               and activity["status"] == "completed" for activity in view["activity"]), view["activity"]
+    assert view["progress"] is None, view["progress"]
+
+    if profile == "conformance-conflict":
+        for identifier in ("conformance_terminal", "omd_workspace"):
+            assert "replacement_conflict: terminal claimed by conformance_terminal, omd_workspace" in (errors.get(identifier) or ""), errors
+        assert status["order"] == ["omd_coordination", "conformance_context"], status["order"]
+        assert rejected[("omd_coordination", "user")].startswith("shadowed_by_project_scope"), rejected
+        assert view["view"]["title"] == "Mod recovery", view["view"]
+        assert any(panel["title"] == "Mod errors" for panel in view["view"]["panels"]), view["view"]
+        return
+    assert status["order"] == ["omd_coordination", "conformance_context", "omd_workspace"], status["order"]
+    assert not rejected, rejected
+    assert errors.get("omd_workspace") is None, errors
+    assert view["view"]["title"] == "Oh My Diff workspace", view["view"]
+    assert [panel["title"] for panel in view["view"]["panels"]] == ["Mod errors", "Task", "Activity"], view["view"]
+    if scenario == "success":
+        worker = json.dumps([request["body"] for request in requests
+                             if request["native_owner"].startswith("contributor")])
+        assert provenance in worker, "the policy provenance did not reach the worker"
+        assert "return a - b" in worker, "the declared evidence did not reach the worker"
+        assert "tracked user notes" not in worker, "evidence outside the declared policy reached the worker"
+
+
 def verify(destination, requests, profile, scenario="success"):
+    if profile.startswith("conformance"):
+        return verify_conformance(destination, requests, profile, scenario)
     if profile.startswith("preview"):
         return verify_preview(destination, requests, profile, scenario)
     if profile == "lifecycle":

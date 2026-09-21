@@ -1,6 +1,6 @@
 # TypeScript mods
 
-API `0.1.0-experimental.3` runs on the pinned Codex 0.154.0 OMD host,
+API `0.1.0-experimental.4` runs on the pinned Codex 0.154.0 OMD host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.
@@ -62,9 +62,12 @@ registered native tool for work that needs agents or task operations.
 `omd-mod discover USER_DIRECTORY PROJECT_DIRECTORY` inspects packages without
 activating them. Project IDs shadow user IDs in discovery output, which includes
 the shadowed path. Explicit trust selections remain authoritative: enabling two
-packages with the same ID is an activation conflict, never a silent privilege
-transfer. Immutable registry/repository fetching and dependency resolution belong
-to the separately queued package-manager task.
+packages with the same ID in one scope is an activation conflict, and a
+project-scoped package that takes precedence over a user-scoped one is recorded
+with both paths and keeps its own state — never a silent privilege transfer.
+Immutable registry/repository fetching and dependency installation belong to the
+separately queued package-manager task; `requires` declares presence and order
+between already-trusted mods, and never installs or fetches anything.
 
 ## Write a mod
 
@@ -102,7 +105,8 @@ pnpm --dir mods test
 
 A manifest has schema 1, an ID of at most 24 lowercase ASCII letters/digits/
 underscores, a package version label, the exact API version, a positive
-`state_version`, and declared capabilities. Activation registers callbacks and
+`state_version`, declared capabilities, and an optional `requires` list of up to
+four other mod IDs. Activation registers callbacks and
 must not write state or call host operations. Settings are read-only JSON.
 Modules have fresh globals on every invocation. Persist data through
 `api.state.get/set`; never store secrets there.
@@ -130,9 +134,37 @@ across crashes. Native accounting and checkpoint evidence remain authoritative.
 
 ## Native operations and composition
 
-See [coverage and limits](COVERAGE.md) for every extension point. Unknown APIs,
-capabilities, imports, events, adapters, and host operations fail explicitly.
+[COVERAGE.md](COVERAGE.md) is the public coverage and composition contract: every
+decision, its observe/alter/replace support, timing, ownership and limits, what it
+adds over the native plugins and hooks, and the executable case that proves each
+row. It is generated from [conformance/contract.json](conformance/contract.json)
+and checked against the host source by `python3 scripts/mod_conformance.py`, so an
+undocumented capability, event, replacement point or host operation fails. Unknown
+APIs, capabilities, imports, events, adapters, and host operations fail explicitly.
 First-party and external packages use identical capabilities.
+
+`api.on` composes; `api.replace` is exclusive. Mods run in one deterministic
+order: declared dependencies first, then mod ID ascending. `omd-mod status`
+publishes that `order`, each selection's `scope`, and any `rejected` selection
+with its reason.
+
+Everything that can stop a mod is resolved before it is activated, and each
+outcome disables only the mods involved:
+
+| Situation | Result |
+| --- | --- |
+| Two mods claim one replacement point, workflow contract ID or namespaced tool name | every claimant is disabled and named; the rest keep running |
+| `requires` names a mod that is absent, disabled or itself failed | the dependent chain is disabled |
+| `requires` forms a cycle | every mod in the cycle is disabled |
+| One ID is enabled twice in the same scope | both selections are rejected |
+| One ID is enabled in both scopes | the project-scoped selection wins; the user-scoped one is recorded as shadowed and never activated; the two scopes never share mod state |
+| A package throws while activating, loses a capability, or fails the store | that package alone is disabled with a source-located error |
+
+`omd-mod trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project]` records the
+scope; it defaults to `user`. Discovery reports project packages shadowing user
+packages by ID, and never grants trust. The initial load isolates each selection;
+a later reload is transactional, so a broken edit keeps the previous working set
+loaded and shows the reason once.
 
 `api.on` observes lifecycle or contributes context. `api.replace` exclusively
 claims `routing`, `compaction`, `context`, `tool_before`, `terminal`, or `input`.

@@ -10,7 +10,7 @@ both of them without rebuilding Codex.
 | `omd_coordination` | Coordination policy: which configured route leads, what operating brief the model receives, and which evidence a delegated worker is given |
 
 This is a preview slice, not the release bundle. It is API
-`0.1.0-experimental.3`, which is experimental and not frozen.
+`0.1.0-experimental.4`, which is experimental and not frozen.
 
 ## Install
 

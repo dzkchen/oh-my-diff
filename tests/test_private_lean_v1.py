@@ -273,6 +273,24 @@ class PreviewLockTests(unittest.TestCase):
             self.assertEqual(manifest["capabilities"], package["capabilities"], identifier)
 
 
+class ShippedPatchTests(unittest.TestCase):
+    def test_shipped_patch_matches_the_runtime_sources_it_installs(self):
+        manifest = json.loads((installer.ROOT / "runtime/patches/manifest.json").read_text())
+        patch = installer.ROOT / manifest["patch"]["path"]
+        self.assertEqual(hashlib.sha256(patch.read_bytes()).hexdigest(), manifest["patch"]["sha256"])
+        lock = json.loads((installer.ROOT / "runtime/lean-v1.lock.json").read_text())
+        self.assertEqual(lock["runtime_patch"]["sha256"], manifest["patch"]["sha256"])
+        checked = 0
+        for name, hashes in manifest["files"].items():
+            for prefix, source in (("codex-rs/omd/", "runtime/omd/"), ("codex-rs/ext/omd/", "runtime/native/")):
+                if name.startswith(prefix):
+                    path = installer.ROOT / source / name[len(prefix):]
+                    self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), hashes["after"],
+                                     f"{path} changed without regenerating the shipped patch")
+                    checked += 1
+        self.assertGreater(checked, 20)
+
+
 @unittest.skipUnless(os.environ.get("OMD_TEST_MANAGER") and os.environ.get("OMD_TEST_NODE"),
                      "set OMD_TEST_MANAGER and OMD_TEST_NODE to exercise the installable preview")
 class PreviewSliceTests(ManagedFixture, unittest.TestCase):

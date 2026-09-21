@@ -59,7 +59,7 @@ function unique(map, name, handler) {
   map.set(name, handler);
 }
 const api = Object.freeze({
-  version: '0.1.0-experimental.3',
+  version: '0.1.0-experimental.4',
   host: Object.freeze({ call: hostCall }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
   on(event, handler) {
