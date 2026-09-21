@@ -3,12 +3,18 @@ use super::*;
 impl ModStore {
     pub fn settings(&self, path: &Path, settings: BTreeMap<String, Value>) -> Result<()> {
         let _lock = self.lock()?;
+        self.recover_package_transaction()?;
         let mut config = self.configuration()?;
         let selection = config
             .mods
             .iter_mut()
             .find(|m| m.path == path)
             .ok_or_else(|| failure("package_not_trusted"))?;
+        let (package, _, hash) = store::package(path)?;
+        if hash != selection.sha256 {
+            return Err(failure("source_changed: inspect and trust the new digest"));
+        }
+        validate_settings(&package, &settings)?;
         selection.settings = settings;
         config.revision = config
             .revision
@@ -63,6 +69,7 @@ impl ModStore {
 
     pub fn migrate(&self, path: &Path) -> Result<Value> {
         let _lock = self.lock()?;
+        self.recover_package_transaction()?;
         let config = self.configuration()?;
         let selection = config
             .mods
@@ -145,6 +152,7 @@ impl ModStore {
 
     pub fn rollback(&self, path: &Path, backup: &Path) -> Result<Value> {
         let _lock = self.lock()?;
+        self.recover_package_transaction()?;
         let config = self.configuration()?;
         let selection = config
             .mods

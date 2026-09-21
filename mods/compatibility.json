@@ -14,6 +14,7 @@
       "author_offline_runner_v1",
       "author_tooling_v1",
       "installed_contract_types_v1",
+      "package_manager_v1",
       "service_contracts_v1",
       "source_use_v1",
       "state_migration_v1",

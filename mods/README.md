@@ -87,9 +87,67 @@ the shadowed path. Explicit trust selections remain authoritative: enabling two
 packages with the same ID in one scope is an activation conflict, and a
 project-scoped package that takes precedence over a user-scoped one is recorded
 with both paths and keeps its own state — never a silent privilege transfer.
-Immutable registry/repository fetching and dependency installation belong to the
-separately queued package-manager task; `requires` declares presence and order
-between already-trusted mods, and never installs or fetches anything.
+For unmanaged editable packages, `requires` still declares presence and order
+between already-trusted mods. Managed installation, exact repository revisions,
+versioned package indexes, dependency resolution, integrity locks, previewed
+updates, offline reuse, rollback, disable, and uninstall use the package manager
+described below.
+
+## Reproducible package lifecycle
+
+`omd-mod package-plan STORE REQUEST_JSON` resolves a complete package graph and
+prints every version, integrity, source, license, provenance, entrypoint, API,
+dependency, capability, settings-schema, explicit-setting, lifecycle-script,
+and activation change. Nothing is activated until the unchanged request and the
+printed `confirmation` are passed to `package-apply`:
+
+```sh
+request='{"source":{"kind":"local","path":"/absolute/my_mod"},"scope":"user","activate":true,"offline":false,"trust":{"packages":{"my_mod":{"capabilities":["commands"],"dependencies":false,"lifecycle":[]}}},"settings":{"my_mod":{"mode":"safe"}}}'
+omd-mod package-plan /absolute/mod-store "$request"
+omd-mod package-apply /absolute/mod-store "$request" CONFIRMATION
+omd-mod package-lock /absolute/mod-store
+```
+
+Local packages remain in place and are never overwritten; each approved version
+is also copied into the integrity-addressed offline cache. A repository source
+uses `{"kind":"repository","repository":"LOCAL_PATH_OR_HTTPS_GIT_URL","revision":"FULL_40_HEX_COMMIT","subdirectory":"optional/path"}`.
+Remote repositories require HTTPS and are retained as bare Git caches. A versioned source uses
+`{"kind":"package","index":"/absolute/index.json","id":"my_mod","version":"^1.2.0"}`;
+the index maps IDs to exact versions, sources, and expected integrity digests.
+Package locks retain the exact resolved graph and prior versions.
+
+Managed manifests require `license` and `provenance`, may select a safe relative
+TypeScript `entrypoint`, declare exact or caret-compatible `dependencies`, and
+may publish the bounded settings-schema subset (`object`, typed properties,
+`enum`, `default`, `required`, and `additionalProperties`). Updates preserve
+explicit settings. A changed state version remains disabled until the existing
+state migration command succeeds and a new activation plan is confirmed.
+
+Every resolved package needs its own exact capability grant. Installing a
+dependency never inherits the parent package's trust or adds permissions,
+credentials, providers, spending authority, environment access, or lifecycle
+authority. `dependencies: true` approves resolution for that one package.
+`lifecycle` must exactly list its declared `install`, `update`, and `uninstall`
+scripts; approved scripts run through the same bounded Node version, timeout,
+empty environment, import denial, and macOS Seatbelt containment as mods. Scripts
+cannot run package-manager commands or install ambient Node dependencies.
+
+```sh
+omd-mod package-disable /absolute/mod-store my_mod
+omd-mod package-rollback-plan /absolute/mod-store my_mod
+omd-mod package-rollback /absolute/mod-store my_mod CONFIRMATION
+omd-mod package-uninstall-plan /absolute/mod-store my_mod
+omd-mod package-uninstall /absolute/mod-store my_mod CONFIRMATION
+```
+
+Rollback activates nothing automatically. Uninstall removes only the managed
+selection and active lock; it leaves local sources, state, history, and cached
+bytes available for recovery or offline reinstall. An unavailable source may be
+reused with `offline: true` only when its exact locked integrity is cached.
+Integrity mismatches, unavailable dependencies, incompatible versions, cycles,
+stale confirmations, and untrusted capability/script changes fail before the
+configuration changes. A small journal restores the prior lock and selection if
+an update is interrupted between their atomic writes.
 
 ## Write a mod
 

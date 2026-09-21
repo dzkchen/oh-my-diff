@@ -28,6 +28,46 @@ development build is not already on `PATH`; set `OMD_MOD_NODE` to the supported
 Node 24.18.0 executable. pnpm is the package manager. The repository also
 publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
 
+## Package commands
+
+| Command | Result |
+| --- | --- |
+| `omd-mod package-plan STORE REQUEST_JSON` | Resolve and preview the exact graph, authority, settings, and activation changes |
+| `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION` | Re-resolve and atomically apply only the unchanged preview |
+| `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
+| `omd-mod package-disable STORE ID` | Disable a managed package without deleting source, state, or cache |
+| `omd-mod package-rollback-plan STORE ID` | Preview the prior integrity-addressed package version |
+| `omd-mod package-rollback STORE ID CONFIRMATION` | Restore the prior cached package disabled, preserving explicit settings |
+| `omd-mod package-uninstall-plan STORE ID` | Preview removal and reject installed dependents |
+| `omd-mod package-uninstall STORE ID CONFIRMATION` | Remove the managed selection while retaining local source, state, cache, and history |
+
+A package-index file is bounded JSON with schema 1:
+
+```json
+{
+  "schema": 1,
+  "packages": {
+    "example": [
+      {
+        "version": "1.2.3",
+        "source": {
+          "kind": "repository",
+          "repository": "https://example.invalid/example.git",
+          "revision": "0123456789abcdef0123456789abcdef01234567",
+          "subdirectory": "mod"
+        },
+        "integrity": "SHA256_FROM_OMD_MOD_INSPECT"
+      }
+    ]
+  }
+}
+```
+
+Resolution selects the highest exact/caret-compatible semantic version and then
+checks the index integrity against the manifest, entrypoint, and every declared
+lifecycle script. Each dependency needs its own exact trust entry. Index files
+do not grant capabilities or script execution.
+
 ## Offline scenarios
 
 A `mod.test.json` file uses schema 1. `virtual_time_ms` fixes `Date.now()` and

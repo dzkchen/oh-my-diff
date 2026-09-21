@@ -23,7 +23,7 @@ unavailable optional features.
 Host features in this release are `author_tooling_v1`,
 `author_offline_runner_v1`, `author_diagnostics_v1`,
 `installed_contract_types_v1`, `service_contracts_v1`, `source_use_v1`,
-`state_migration_v1`, and `transactional_reload_v1`. A package may omit
+`package_manager_v1`, `state_migration_v1`, and `transactional_reload_v1`. A package may omit
 compatibility metadata and rely on its supported API row, or declare `compatibility.releases`,
 `required_features`, and `optional_features`. A missing required feature or an
 excluded host release rejects the package before activation and tells the user

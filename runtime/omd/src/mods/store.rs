@@ -36,12 +36,22 @@ pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
         return Err(failure("canonical_package_path_required"));
     }
     let manifest = read(&path.join("mod.json"), 8192)?;
-    let source = read(&path.join("index.ts"), 65_536)?;
     let package: ModPackage = serde_json::from_slice(&manifest)?;
     package.validate()?;
+    let source = read(&path.join(&package.entrypoint), 65_536)?;
     let mut bytes = manifest;
     bytes.push(0);
+    bytes.extend_from_slice(package.entrypoint.as_bytes());
+    bytes.push(0);
     bytes.extend_from_slice(&source);
+    for (event, script) in &package.lifecycle {
+        bytes.push(0);
+        bytes.extend_from_slice(event.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(script.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&read(&path.join(script), 65_536)?);
+    }
     Ok((
         package,
         String::from_utf8(source).map_err(failure)?,
@@ -141,6 +151,7 @@ impl ModStore {
         scope: &str,
     ) -> Result<()> {
         let _lock = self.lock()?;
+        self.recover_package_transaction()?;
         if !super::MOD_SCOPES.contains(&scope) {
             return Err(failure("unsupported_scope: user or project"));
         }
@@ -158,6 +169,7 @@ impl ModStore {
             .find(|m| m.path == path)
             .map(|m| m.settings.clone())
             .unwrap_or_default();
+        super::validate_settings(&package, &settings)?;
         config.mods.retain(|m| m.path != path);
         config.revision = config
             .revision
@@ -176,6 +188,19 @@ impl ModStore {
 
     pub fn enable(&self, path: &Path, enabled: bool) -> Result<()> {
         let _lock = self.lock()?;
+        self.recover_package_transaction()?;
+        if self
+            .read_package_lock()?
+            .packages
+            .values()
+            .any(|package| package.path == path)
+        {
+            return Err(failure(if enabled {
+                "managed_package_activation_requires_package_plan"
+            } else {
+                "managed_package_disable_requires_package_disable"
+            }));
+        }
         let mut config = self.configuration()?;
         let selection = config
             .mods
@@ -198,6 +223,7 @@ impl ModStore {
 
     pub fn reload(&self) -> Result<()> {
         let _lock = self.lock()?;
+        self.recover_package_transaction()?;
         let mut config = self.configuration()?;
         config.revision = config
             .revision
@@ -241,6 +267,7 @@ impl ModStore {
         value: &Value,
     ) -> Result<()> {
         let _lock = self.lock()?;
+        self.recover_package_transaction()?;
         if &self.state(id, scope, version)? != previous {
             return Err(failure("state_conflict: reload before retry"));
         }

@@ -13816,11 +13816,12 @@ index 0000000..1e2ad90
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000..a860bd5
+index 0000000..a0af0b8
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,185 @@
 +use codex_omd::ModHost;
++use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
 +use serde_json::Value;
 +use std::io;
@@ -13829,10 +13830,55 @@ index 0000000..a860bd5
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(
-+            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
++            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
 +        )
 +    };
 +    match args {
++        [command, root, request] if command == "package-plan" => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?
++                .package_plan(serde_json::from_str::<ModInstallRequest>(request)?)
++                .and_then(|plan| serde_json::to_value(plan).map_err(io::Error::other))
++        }
++        [command, root, request, confirmation] if command == "package-apply" => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?
++                .package_apply(
++                    serde_json::from_str::<ModInstallRequest>(request)?,
++                    confirmation,
++                )
++                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++        }
++        [command, root] if command == "package-lock" => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?
++                .package_lock()
++                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++        }
++        [command, root, id] if command == "package-disable" => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?
++                .package_disable(id)
++                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++        }
++        [command, root, id]
++            if command == "package-rollback-plan" || command == "package-uninstall-plan" =>
++        {
++            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
++            let plan = if command == "package-rollback-plan" {
++                store.package_rollback_plan(id)?
++            } else {
++                store.package_uninstall_plan(id)?
++            };
++            serde_json::to_value(plan).map_err(io::Error::other)
++        }
++        [command, root, id, confirmation]
++            if command == "package-rollback" || command == "package-uninstall" =>
++        {
++            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
++            let lock = if command == "package-rollback" {
++                store.package_rollback(id, confirmation)?
++            } else {
++                store.package_uninstall(id, confirmation)?
++            };
++            serde_json::to_value(lock).map_err(io::Error::other)
++        }
 +        [command, user, project] if command == "pi-discover" => {
 +            ModStore::discover_pi(&PathBuf::from(user), &PathBuf::from(project))
 +        }
@@ -22164,10 +22210,10 @@ index 0000000..1b27bbc
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..db9a06c
+index 0000000..b30a80b
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,256 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
@@ -22401,8 +22447,14 @@ index 0000000..db9a06c
 +pub use mods::ModHost;
 +pub use mods::ModHostCall;
 +pub use mods::ModInputDecision;
++pub use mods::ModInstallRequest;
 +pub use mods::ModKeyAction;
 +pub use mods::ModPackage;
++pub use mods::ModPackageGrant;
++pub use mods::ModPackageLock;
++pub use mods::ModPackagePlan;
++pub use mods::ModPackageSource;
++pub use mods::ModPackageTrust;
 +pub use mods::ModPanel;
 +pub use mods::ModSelection;
 +pub use mods::ModSidebarSide;
@@ -24814,10 +24866,10 @@ index 0000000..270274f
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000..cb872c4
+index 0000000..870d6a3
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,1967 @@
+@@ -0,0 +1,2235 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -24840,6 +24892,7 @@ index 0000000..cb872c4
 +mod outcome;
 +pub use outcome::ModCommandOutcome;
 +pub use outcome::ModInputDecision;
++mod package_manager;
 +mod process;
 +pub use bridge::ModHostCall;
 +mod store;
@@ -24857,6 +24910,12 @@ index 0000000..cb872c4
 +use std::path::PathBuf;
 +use std::time::Instant;
 +
++pub use package_manager::ModInstallRequest;
++pub use package_manager::ModPackageGrant;
++pub use package_manager::ModPackageLock;
++pub use package_manager::ModPackagePlan;
++pub use package_manager::ModPackageSource;
++pub use package_manager::ModPackageTrust;
 +pub use store::ModStore;
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.154.0";
@@ -24870,6 +24929,7 @@ index 0000000..cb872c4
 +    "author_offline_runner_v1",
 +    "author_tooling_v1",
 +    "installed_contract_types_v1",
++    "package_manager_v1",
 +    "service_contracts_v1",
 +    "source_use_v1",
 +    "state_migration_v1",
@@ -25304,7 +25364,13 @@ index 0000000..cb872c4
 +    pub id: String,
 +    pub version: String,
 +    pub api: String,
++    #[serde(default = "default_entrypoint")]
++    pub entrypoint: String,
 +    pub state_version: u32,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub license: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub provenance: Option<ModProvenance>,
 +    #[serde(default)]
 +    pub compatibility: ModHostCompatibility,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25312,12 +25378,38 @@ index 0000000..cb872c4
 +    pub capabilities: Vec<String>,
 +    #[serde(default, skip_serializing_if = "Vec::is_empty")]
 +    pub requires: Vec<String>,
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub dependencies: Vec<ModDependency>,
 +    #[serde(default)]
 +    pub services: ModServiceManifest,
 +    #[serde(default, skip_serializing_if = "Vec::is_empty")]
 +    pub environment: Vec<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub settings_schema: Option<Value>,
++    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
++    pub lifecycle: BTreeMap<String, String>,
 +    #[serde(default = "default_hook_budget_ms")]
 +    pub hook_budget_ms: u64,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModProvenance {
++    pub maintainer: String,
++    pub source: String,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub revision: Option<String>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModDependency {
++    pub id: String,
++    pub version: String,
++}
++
++fn default_entrypoint() -> String {
++    "index.ts".to_owned()
 +}
 +
 +fn default_hook_budget_ms() -> u64 {
@@ -25396,6 +25488,7 @@ index 0000000..cb872c4
 +            || self.state_version == 0
 +            || !version(&self.version)
 +            || !(25..=2000).contains(&self.hook_budget_ms)
++            || !package_file(&self.entrypoint)
 +        {
 +            return Err(failure(
 +                "incompatible_package: valid identity/version, supported API and positive state_version required",
@@ -25428,6 +25521,52 @@ index 0000000..cb872c4
 +            return Err(failure(
 +                "invalid_requires: up to four distinct other mod IDs",
 +            ));
++        }
++        let dependencies: BTreeSet<_> = self.dependencies.iter().map(|item| &item.id).collect();
++        if self.dependencies.len() > 16
++            || dependencies.len() != self.dependencies.len()
++            || self.dependencies.iter().any(|dependency| {
++                !identifier(&dependency.id)
++                    || dependency.id == self.id
++                    || !version_requirement(&dependency.version)
++            })
++        {
++            return Err(failure("invalid_dependencies"));
++        }
++        if self.requires.iter().any(|id| dependencies.contains(id)) {
++            return Err(failure("dependency_declared_twice"));
++        }
++        if let Some(license) = &self.license
++            && (license.is_empty()
++                || license.len() > 128
++                || !license.bytes().all(|byte| {
++                    byte.is_ascii_alphanumeric()
++                        || matches!(byte, b'-' | b'.' | b'+' | b'(' | b')' | b' ')
++                }))
++        {
++            return Err(failure("invalid_license"));
++        }
++        if let Some(provenance) = &self.provenance
++            && (provenance.maintainer.is_empty()
++                || provenance.maintainer.len() > 128
++                || provenance.source.is_empty()
++                || provenance.source.len() > 1024
++                || provenance
++                    .revision
++                    .as_deref()
++                    .is_some_and(|value| value.is_empty() || value.len() > 128))
++        {
++            return Err(failure("invalid_provenance"));
++        }
++        if let Some(schema) = &self.settings_schema {
++            validate_settings_schema(schema)?;
++        }
++        if self.lifecycle.len() > 3
++            || self.lifecycle.iter().any(|(event, path)| {
++                !["install", "update", "uninstall"].contains(&event.as_str()) || !package_file(path)
++            })
++        {
++            return Err(failure("invalid_lifecycle_scripts"));
 +        }
 +        let environments: BTreeSet<_> = self.environment.iter().collect();
 +        if environments.len() != self.environment.len()
@@ -25491,6 +25630,158 @@ index 0000000..cb872c4
 +        }
 +        Ok(())
 +    }
++}
++
++fn package_file(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 128
++        && value.ends_with(".ts")
++        && !value.starts_with('/')
++        && value.split('/').all(|part| {
++            !part.is_empty()
++                && part != "."
++                && part != ".."
++                && part
++                    .bytes()
++                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
++        })
++}
++
++fn version_requirement(value: &str) -> bool {
++    SemanticVersion::parse(value.strip_prefix('^').unwrap_or(value)).is_some()
++}
++
++fn validate_settings_schema(schema: &Value) -> Result<()> {
++    let object = schema
++        .as_object()
++        .ok_or_else(|| failure("settings_schema_must_be_object"))?;
++    if object.keys().any(|key| {
++        !["type", "properties", "required", "additionalProperties"].contains(&key.as_str())
++    }) || object.get("type") != Some(&json!("object"))
++        || object
++            .get("additionalProperties")
++            .is_some_and(|value| !value.is_boolean())
++    {
++        return Err(failure("unsupported_settings_schema"));
++    }
++    let properties = object
++        .get("properties")
++        .and_then(Value::as_object)
++        .ok_or_else(|| failure("settings_schema_properties_required"))?;
++    if properties.len() > 64 {
++        return Err(failure("settings_schema_limit"));
++    }
++    for (name, definition) in properties {
++        if !identifier(name) {
++            return Err(failure("invalid_setting_name"));
++        }
++        let definition = definition
++            .as_object()
++            .ok_or_else(|| failure("invalid_setting_schema"))?;
++        if definition
++            .keys()
++            .any(|key| !["type", "enum", "default"].contains(&key.as_str()))
++        {
++            return Err(failure("unsupported_setting_schema"));
++        }
++        let kind = definition
++            .get("type")
++            .and_then(Value::as_str)
++            .ok_or_else(|| failure("setting_type_required"))?;
++        if !["boolean", "number", "string", "array", "object", "null"].contains(&kind) {
++            return Err(failure("unsupported_setting_type"));
++        }
++        if let Some(values) = definition.get("enum") {
++            let values = values
++                .as_array()
++                .filter(|values| !values.is_empty() && values.len() <= 32)
++                .ok_or_else(|| failure("invalid_setting_enum"))?;
++            if values.iter().any(|value| !setting_type(value, kind)) {
++                return Err(failure("setting_enum_type_mismatch"));
++            }
++        }
++        if let Some(default) = definition.get("default")
++            && !setting_value(default, definition)
++        {
++            return Err(failure("setting_default_invalid"));
++        }
++    }
++    if let Some(required) = object.get("required") {
++        let required = required
++            .as_array()
++            .ok_or_else(|| failure("invalid_required_settings"))?;
++        let mut unique = BTreeSet::new();
++        if required.len() > properties.len()
++            || required.iter().any(|name| {
++                name.as_str()
++                    .is_none_or(|name| !properties.contains_key(name) || !unique.insert(name))
++            })
++        {
++            return Err(failure("invalid_required_settings"));
++        }
++    }
++    Ok(())
++}
++
++fn setting_type(value: &Value, kind: &str) -> bool {
++    match kind {
++        "boolean" => value.is_boolean(),
++        "number" => value.is_number(),
++        "string" => value.is_string(),
++        "array" => value.is_array(),
++        "object" => value.is_object(),
++        "null" => value.is_null(),
++        _ => false,
++    }
++}
++
++fn setting_value(value: &Value, definition: &serde_json::Map<String, Value>) -> bool {
++    definition
++        .get("type")
++        .and_then(Value::as_str)
++        .is_some_and(|kind| setting_type(value, kind))
++        && definition
++            .get("enum")
++            .and_then(Value::as_array)
++            .is_none_or(|values| values.contains(value))
++}
++
++fn validate_settings(package: &ModPackage, settings: &BTreeMap<String, Value>) -> Result<()> {
++    let Some(schema) = &package.settings_schema else {
++        return Ok(());
++    };
++    let object = schema
++        .as_object()
++        .ok_or_else(|| failure("invalid_settings_schema"))?;
++    let properties = object["properties"]
++        .as_object()
++        .ok_or_else(|| failure("invalid_settings_schema"))?;
++    if object.get("additionalProperties") == Some(&json!(false))
++        && settings.keys().any(|name| !properties.contains_key(name))
++    {
++        return Err(failure("unknown_setting"));
++    }
++    for required in object
++        .get("required")
++        .and_then(Value::as_array)
++        .into_iter()
++        .flatten()
++    {
++        if required
++            .as_str()
++            .is_none_or(|name| !settings.contains_key(name))
++        {
++            return Err(failure("required_setting_missing"));
++        }
++    }
++    for (name, value) in settings {
++        if let Some(definition) = properties.get(name).and_then(Value::as_object)
++            && !setting_value(value, definition)
++        {
++            return Err(failure(format!("invalid_setting: {name}")));
++        }
++    }
++    Ok(())
 +}
 +
 +fn identifier_list(values: &[String], limit: usize) -> bool {
@@ -25770,6 +26061,7 @@ index 0000000..cb872c4
 +                {
 +                    return Err(failure(format!("capability_denied: {}", package.id)));
 +                }
++                validate_settings(&package, &selection.settings)?;
 +                Ok((package, source))
 +            })();
 +            let (package, source) = match loaded {
@@ -25951,6 +26243,13 @@ index 0000000..cb872c4
 +        dependencies.extend(
 +            loaded
 +                .package
++                .dependencies
++                .iter()
++                .map(|dependency| dependency.id.clone()),
++        );
++        dependencies.extend(
++            loaded
++                .package
 +                .services
 +                .imports
 +                .iter()
@@ -25972,7 +26271,25 @@ index 0000000..cb872c4
 +            let unavailable: Vec<(String, String)> = next
 +                .iter()
 +                .filter(|(_, m)| m.error.is_none())
-+                .filter_map(|(id, _)| {
++                .filter_map(|(id, loaded)| {
++                    if let Some(dependency) = loaded.package.dependencies.iter().find(|dependency| {
++                        next.get(&dependency.id).is_some_and(|candidate| {
++                            candidate.error.is_none()
++                                && !service_version_satisfies(
++                                    &dependency.version,
++                                    &candidate.package.version,
++                                )
++                        })
++                    }) {
++                        let actual = &next[&dependency.id].package.version;
++                        return Some((
++                            id.clone(),
++                            format!(
++                                "dependency_version_incompatible: {id} requires {} {} but {} is active",
++                                dependency.id, dependency.version, actual
++                            ),
++                        ));
++                    }
 +                    Self::dependencies(id, next)
 +                        .iter()
 +                        .find(|required| next.get(*required).is_none_or(|m| m.error.is_some()))
@@ -26761,6 +27078,9 @@ index 0000000..cb872c4
 +            "service_calls": self.service_calls,
 +            "mods": self.loaded.iter().map(|(id, m)| json!({"id": id, "version": m.package.version,
 +                "api":m.package.api,"api_stability":api_support(&m.package.api).map(|support|support.0),
++                "entrypoint":m.package.entrypoint,"license":m.package.license,
++                "provenance":m.package.provenance,"dependencies":m.package.dependencies,
++                "settings_schema":m.package.settings_schema,"lifecycle":m.package.lifecycle.keys().collect::<Vec<_>>(),
 +                "package_schema":m.package.schema,"state_version":m.package.state_version,
 +                "host_compatibility":m.package.compatibility,
 +                "negotiated_features":{"required":m.package.compatibility.required_features,
@@ -27426,23 +27746,1135 @@ index 0000000..1a7b669
 +        }
 +    }
 +}
+diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
+new file mode 100644
+index 0000000..a6f761a
+--- /dev/null
++++ b/codex-rs/omd/src/mods/package_manager.rs
+@@ -0,0 +1,1100 @@
++use super::*;
++use serde_json::Map;
++use std::process::Command;
++
++const PACKAGE_LOCK_SCHEMA: u32 = 1;
++const PACKAGE_LIMIT: usize = 16;
++const PACKAGE_HISTORY_LIMIT: usize = 8;
++const PACKAGE_HISTORY_ID_LIMIT: usize = 64;
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
++pub enum ModPackageSource {
++    Local {
++        path: PathBuf,
++    },
++    Repository {
++        repository: String,
++        revision: String,
++        #[serde(default)]
++        subdirectory: String,
++    },
++    Package {
++        index: PathBuf,
++        id: String,
++        version: String,
++    },
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModPackageGrant {
++    pub capabilities: Vec<String>,
++    #[serde(default)]
++    pub dependencies: bool,
++    #[serde(default)]
++    pub lifecycle: Vec<String>,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModPackageTrust {
++    pub packages: BTreeMap<String, ModPackageGrant>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModInstallRequest {
++    pub source: ModPackageSource,
++    #[serde(default)]
++    pub index: Option<PathBuf>,
++    #[serde(default = "user_scope")]
++    pub scope: String,
++    #[serde(default)]
++    pub activate: bool,
++    #[serde(default)]
++    pub offline: bool,
++    #[serde(default)]
++    pub trust: ModPackageTrust,
++    #[serde(default)]
++    pub settings: BTreeMap<String, BTreeMap<String, Value>>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModLockedPackage {
++    pub id: String,
++    pub version: String,
++    pub integrity: String,
++    pub source: ModPackageSource,
++    pub path: PathBuf,
++    pub cache_path: PathBuf,
++    pub license: String,
++    pub provenance: ModProvenance,
++    pub entrypoint: String,
++    pub api: String,
++    pub state_version: u32,
++    pub dependencies: Vec<ModDependency>,
++    pub capabilities: Vec<String>,
++    pub settings_schema_sha256: String,
++    pub lifecycle: Vec<String>,
++    pub scope: String,
++    pub enabled: bool,
++    pub settings: BTreeMap<String, Value>,
++    pub trust: ModPackageGrant,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModPackageLock {
++    pub schema: u32,
++    pub revision: u64,
++    pub packages: BTreeMap<String, ModLockedPackage>,
++    #[serde(default)]
++    pub history: BTreeMap<String, Vec<ModLockedPackage>>,
++}
++
++impl Default for ModPackageLock {
++    fn default() -> Self {
++        Self {
++            schema: PACKAGE_LOCK_SCHEMA,
++            revision: 0,
++            packages: BTreeMap::new(),
++            history: BTreeMap::new(),
++        }
++    }
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModPackagePlan {
++    pub schema: u32,
++    pub action: String,
++    pub root: String,
++    pub packages: Vec<ModLockedPackage>,
++    pub changes: Value,
++    pub confirmation: String,
++}
++
++#[derive(Clone, Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct PackageIndex {
++    schema: u32,
++    packages: BTreeMap<String, Vec<IndexRelease>>,
++}
++
++#[derive(Clone, Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct IndexRelease {
++    version: String,
++    source: ModPackageSource,
++    integrity: String,
++}
++
++#[derive(Clone)]
++struct ResolvedPackage {
++    locked: ModLockedPackage,
++    package: ModPackage,
++}
++
++impl ModStore {
++    pub fn package_lock(&self) -> Result<ModPackageLock> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        self.read_package_lock()
++    }
++
++    pub(super) fn read_package_lock(&self) -> Result<ModPackageLock> {
++        match store::read(&self.root.join("packages.lock.json"), 524_288) {
++            Ok(bytes) => {
++                let lock: ModPackageLock = serde_json::from_slice(&bytes)?;
++                if lock.schema != PACKAGE_LOCK_SCHEMA {
++                    return Err(failure("unsupported_package_lock_schema"));
++                }
++                validate_package_lock(&lock)?;
++                Ok(lock)
++            }
++            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(ModPackageLock::default()),
++            Err(error) => Err(error),
++        }
++    }
++
++    pub fn package_plan(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        self.package_plan_locked(request)
++    }
++
++    fn package_plan_locked(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
++        if !MOD_SCOPES.contains(&request.scope.as_str()) {
++            return Err(failure("unsupported_scope: user or project"));
++        }
++        let existing = self.read_package_lock()?;
++        let mut resolved = BTreeMap::new();
++        let mut visiting = Vec::new();
++        let root = self.resolve_requested(
++            &request.source,
++            None,
++            &request,
++            &mut resolved,
++            &mut visiting,
++        )?;
++        let root_id = root.package.id.clone();
++        resolved.insert(root_id.clone(), root);
++        let mut packages = resolved
++            .into_values()
++            .map(|mut resolved| {
++                let previous = existing.packages.get(&resolved.package.id);
++                let settings = request
++                    .settings
++                    .get(&resolved.package.id)
++                    .cloned()
++                    .or_else(|| previous.map(|locked| locked.settings.clone()))
++                    .unwrap_or_default();
++                validate_settings(&resolved.package, &settings)?;
++                resolved.locked.settings = settings;
++                let state_migration_required = previous.is_some_and(|locked| {
++                    locked.state_version != resolved.package.state_version
++                        && self
++                            .root
++                            .join(ModStore::state_name(&resolved.package.id, &request.scope))
++                            .exists()
++                });
++                resolved.locked.enabled = request.activate && !state_migration_required;
++                Ok(resolved.locked)
++            })
++            .collect::<Result<Vec<_>>>()?;
++        packages.sort_by(|a, b| a.id.cmp(&b.id));
++        let action = if existing.packages.contains_key(&root_id) {
++            "update"
++        } else {
++            "install"
++        };
++        let changes = package_changes(&existing, &packages);
++        let mut plan = ModPackagePlan {
++            schema: PACKAGE_LOCK_SCHEMA,
++            action: action.to_owned(),
++            root: root_id,
++            packages,
++            changes,
++            confirmation: String::new(),
++        };
++        plan.confirmation = digest(&serde_json::to_vec(&plan)?);
++        Ok(plan)
++    }
++
++    pub fn package_apply(
++        &self,
++        request: ModInstallRequest,
++        confirmation: &str,
++    ) -> Result<ModPackageLock> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        let plan = self.package_plan_locked(request)?;
++        if plan.confirmation != confirmation {
++            return Err(failure("package_plan_changed: preview again"));
++        }
++        let mut lock = self.read_package_lock()?;
++        let mut config = self.configuration()?;
++        let old_lock = serde_json::to_value(&lock)?;
++        let old_config = serde_json::to_value(&config)?;
++        let mut lifecycle = Vec::new();
++        for package in &plan.packages {
++            match lock.packages.get(&package.id) {
++                None => lifecycle.push((package.clone(), "install")),
++                Some(previous) if previous.integrity != package.integrity => {
++                    lifecycle.push((package.clone(), "update"))
++                }
++                Some(_) => {}
++            }
++            if let Some(previous) = lock.packages.insert(package.id.clone(), package.clone())
++                && previous.integrity != package.integrity
++            {
++                push_history(&mut lock, &package.id, previous)?;
++            }
++            let selection = config.mods.iter_mut().find(|selection| {
++                selection.scope == package.scope
++                    && store::package(&selection.path)
++                        .is_ok_and(|(manifest, _, _)| manifest.id == package.id)
++            });
++            let next = ModSelection {
++                path: package.path.clone(),
++                sha256: package.integrity.clone(),
++                enabled: package.enabled,
++                capabilities: package.trust.capabilities.clone(),
++                settings: package.settings.clone(),
++                scope: package.scope.clone(),
++            };
++            if let Some(selection) = selection {
++                *selection = next;
++            } else {
++                config.mods.push(next);
++            }
++        }
++        validate_locked_graph(&lock.packages)?;
++        config.revision = config
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        lock.revision = lock
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        self.write(
++            "package-transaction.json",
++            &json!({"old_lock":old_lock,"old_config":old_config}),
++        )?;
++        let result = (|| {
++            for (package, event) in &lifecycle {
++                self.run_lifecycle(package, event)?;
++            }
++            self.write("mods.json", &serde_json::to_value(&config)?)?;
++            self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
++            std::fs::remove_file(self.root.join("package-transaction.json"))?;
++            std::fs::File::open(&self.root)?.sync_all()?;
++            Ok(lock)
++        })();
++        if result.is_err() {
++            self.recover_package_transaction()?;
++        }
++        result
++    }
++
++    pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        self.package_uninstall_plan_locked(id)
++    }
++
++    fn package_uninstall_plan_locked(&self, id: &str) -> Result<ModPackagePlan> {
++        let lock = self.read_package_lock()?;
++        let package = lock
++            .packages
++            .get(id)
++            .cloned()
++            .ok_or_else(|| failure("package_not_installed"))?;
++        if lock.packages.values().any(|candidate| {
++            candidate.id != id
++                && candidate
++                    .dependencies
++                    .iter()
++                    .any(|dependency| dependency.id == id)
++        }) {
++            return Err(failure("package_has_installed_dependents"));
++        }
++        let mut plan = ModPackagePlan {
++            schema: PACKAGE_LOCK_SCHEMA,
++            action: "uninstall".into(),
++            root: id.to_owned(),
++            packages: vec![package.clone()],
++            changes: json!({"removed":[{"id":id,"version":package.version,"integrity":package.integrity}],
++                "cache_retained_for_offline_reuse":true,"state_retained":true,"local_source_untouched":true}),
++            confirmation: String::new(),
++        };
++        plan.confirmation = digest(&serde_json::to_vec(&plan)?);
++        Ok(plan)
++    }
++
++    pub fn package_disable(&self, id: &str) -> Result<ModPackageLock> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        let mut lock = self.read_package_lock()?;
++        let package = lock
++            .packages
++            .get_mut(id)
++            .ok_or_else(|| failure("package_not_installed"))?;
++        package.enabled = false;
++        let path = package.path.clone();
++        let scope = package.scope.clone();
++        lock.revision = lock
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        let mut config = self.configuration()?;
++        let selection = config
++            .mods
++            .iter_mut()
++            .find(|selection| selection.path == path && selection.scope == scope)
++            .ok_or_else(|| failure("package_selection_missing"))?;
++        selection.enabled = false;
++        config.revision = config
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        self.commit_package_transaction(lock, config)
++    }
++
++    pub fn package_uninstall(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        let plan = self.package_uninstall_plan_locked(id)?;
++        if plan.confirmation != confirmation {
++            return Err(failure("package_plan_changed: preview again"));
++        }
++        let mut lock = self.read_package_lock()?;
++        let package = lock
++            .packages
++            .remove(id)
++            .ok_or_else(|| failure("package_not_installed"))?;
++        self.run_lifecycle(&package, "uninstall")?;
++        push_history(&mut lock, id, package.clone())?;
++        lock.revision = lock
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        let mut config = self.configuration()?;
++        config.mods.retain(|selection| {
++            !(selection.scope == package.scope
++                && store::package(&selection.path).is_ok_and(|(manifest, _, _)| manifest.id == id))
++        });
++        config.revision = config
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        self.commit_package_transaction(lock, config)
++    }
++
++    pub fn package_rollback_plan(&self, id: &str) -> Result<ModPackagePlan> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        self.package_rollback_plan_locked(id)
++    }
++
++    fn package_rollback_plan_locked(&self, id: &str) -> Result<ModPackagePlan> {
++        let lock = self.read_package_lock()?;
++        let current = lock
++            .packages
++            .get(id)
++            .ok_or_else(|| failure("package_not_installed"))?;
++        let previous = lock
++            .history
++            .get(id)
++            .and_then(|history| history.last())
++            .cloned()
++            .ok_or_else(|| failure("package_rollback_unavailable"))?;
++        let mut plan = ModPackagePlan {
++            schema: PACKAGE_LOCK_SCHEMA,
++            action: "rollback".into(),
++            root: id.to_owned(),
++            packages: vec![previous.clone()],
++            changes: json!({"version":{"from":current.version,"to":previous.version},
++                "integrity":{"from":current.integrity,"to":previous.integrity},
++                "capabilities":{"from":current.capabilities,"to":previous.capabilities},
++                "dependencies":{"from":current.dependencies,"to":previous.dependencies},
++                "settings_preserved":current.settings}),
++            confirmation: String::new(),
++        };
++        plan.confirmation = digest(&serde_json::to_vec(&plan)?);
++        Ok(plan)
++    }
++
++    pub fn package_rollback(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        let plan = self.package_rollback_plan_locked(id)?;
++        if plan.confirmation != confirmation {
++            return Err(failure("package_plan_changed: preview again"));
++        }
++        let mut lock = self.read_package_lock()?;
++        let mut previous = plan.packages[0].clone();
++        if store::package(&previous.cache_path)?.2 != previous.integrity {
++            return Err(failure("cached_package_integrity_failure"));
++        }
++        let current = lock
++            .packages
++            .remove(id)
++            .ok_or_else(|| failure("package_not_installed"))?;
++        let current_path = current.path.clone();
++        previous.path = previous.cache_path.clone();
++        previous.settings = current.settings.clone();
++        previous.enabled = false;
++        validate_settings(&store::package(&previous.path)?.0, &previous.settings)?;
++        let history = lock.history.entry(id.to_owned()).or_default();
++        history.pop();
++        history.push(current);
++        lock.packages.insert(id.to_owned(), previous.clone());
++        validate_locked_graph(&lock.packages)?;
++        lock.revision = lock
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        let mut config = self.configuration()?;
++        let selection = config
++            .mods
++            .iter_mut()
++            .find(|selection| selection.scope == previous.scope && selection.path == current_path)
++            .ok_or_else(|| failure("package_selection_missing"))?;
++        *selection = ModSelection {
++            path: previous.path,
++            sha256: previous.integrity,
++            enabled: false,
++            capabilities: previous.trust.capabilities,
++            settings: previous.settings,
++            scope: previous.scope,
++        };
++        config.revision = config
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        self.commit_package_transaction(lock, config)
++    }
++
++    fn commit_package_transaction(
++        &self,
++        lock: ModPackageLock,
++        config: ModConfiguration,
++    ) -> Result<ModPackageLock> {
++        let old_lock = serde_json::to_value(self.read_package_lock()?)?;
++        let old_config = serde_json::to_value(self.configuration()?)?;
++        self.write(
++            "package-transaction.json",
++            &json!({"old_lock":old_lock,"old_config":old_config}),
++        )?;
++        let result = (|| {
++            self.write("mods.json", &serde_json::to_value(&config)?)?;
++            self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
++            std::fs::remove_file(self.root.join("package-transaction.json"))?;
++            std::fs::File::open(&self.root)?.sync_all()?;
++            Ok(lock)
++        })();
++        if result.is_err() {
++            self.recover_package_transaction()?;
++        }
++        result
++    }
++
++    pub(super) fn recover_package_transaction(&self) -> Result<()> {
++        let path = self.root.join("package-transaction.json");
++        let bytes = match store::read(&path, 1_048_576) {
++            Ok(bytes) => bytes,
++            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
++            Err(error) => return Err(error),
++        };
++        let transaction: Value = serde_json::from_slice(&bytes)?;
++        self.write("mods.json", &transaction["old_config"])?;
++        self.write("packages.lock.json", &transaction["old_lock"])?;
++        std::fs::remove_file(path)?;
++        std::fs::File::open(&self.root)?.sync_all()
++    }
++
++    fn resolve_requested(
++        &self,
++        source: &ModPackageSource,
++        requirement: Option<(&str, &str)>,
++        request: &ModInstallRequest,
++        resolved: &mut BTreeMap<String, ResolvedPackage>,
++        visiting: &mut Vec<String>,
++    ) -> Result<ResolvedPackage> {
++        let (path, normalized_source, expected_integrity) =
++            self.materialize_source(source, request.offline)?;
++        let (package, _, integrity) = store::package(&path)?;
++        if let Some(expected) = expected_integrity
++            && expected != integrity
++        {
++            return Err(failure("package_integrity_failure"));
++        }
++        if let Some((id, version)) = requirement
++            && (package.id != id || !service_version_satisfies(version, &package.version))
++        {
++            return Err(failure("resolved_dependency_identity_or_version_mismatch"));
++        }
++        if visiting.contains(&package.id) {
++            visiting.push(package.id.clone());
++            return Err(failure(format!(
++                "dependency_cycle: {}",
++                visiting.join(" -> ")
++            )));
++        }
++        if let Some(existing) = resolved.get(&package.id) {
++            if existing.locked.integrity == integrity {
++                return Ok(existing.clone());
++            }
++            return Err(failure("dependency_resolution_conflict"));
++        }
++        if resolved.len() >= PACKAGE_LIMIT {
++            return Err(failure("package_dependency_limit"));
++        }
++        visiting.push(package.id.clone());
++        let license = package
++            .license
++            .clone()
++            .ok_or_else(|| failure("managed_package_license_required"))?;
++        let provenance = package
++            .provenance
++            .clone()
++            .ok_or_else(|| failure("managed_package_provenance_required"))?;
++        validate_provenance(&normalized_source, &provenance)?;
++        let grant = request
++            .trust
++            .packages
++            .get(&package.id)
++            .cloned()
++            .ok_or_else(|| failure(format!("package_trust_required: {}", package.id)))?;
++        if grant.capabilities != package.capabilities {
++            return Err(failure(format!(
++                "explicit_exact_capability_grant_required: {}",
++                package.id
++            )));
++        }
++        let declared_lifecycle = package.lifecycle.keys().cloned().collect::<Vec<_>>();
++        if grant.lifecycle != declared_lifecycle {
++            return Err(failure(format!(
++                "explicit_exact_lifecycle_trust_required: {}",
++                package.id
++            )));
++        }
++        if !package.dependencies.is_empty() && !grant.dependencies {
++            return Err(failure(format!(
++                "dependency_installation_trust_required: {}",
++                package.id
++            )));
++        }
++        let cache_path = self.cache_package(&path, &package, &integrity)?;
++        let active_path = match normalized_source {
++            ModPackageSource::Local { .. } => path,
++            _ => {
++                if path.starts_with(&self.root) && path != cache_path {
++                    std::fs::remove_dir_all(&path)?;
++                }
++                cache_path.clone()
++            }
++        };
++        let locked = ModLockedPackage {
++            id: package.id.clone(),
++            version: package.version.clone(),
++            integrity,
++            source: normalized_source,
++            path: active_path,
++            cache_path,
++            license,
++            provenance,
++            entrypoint: package.entrypoint.clone(),
++            api: package.api.clone(),
++            state_version: package.state_version,
++            dependencies: package.dependencies.clone(),
++            capabilities: package.capabilities.clone(),
++            settings_schema_sha256: digest(
++                &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
++            ),
++            lifecycle: declared_lifecycle,
++            scope: request.scope.clone(),
++            enabled: false,
++            settings: BTreeMap::new(),
++            trust: grant,
++        };
++        let provisional = ResolvedPackage {
++            locked,
++            package: package.clone(),
++        };
++        resolved.insert(package.id.clone(), provisional.clone());
++        for dependency in &package.dependencies {
++            let dependency_source = ModPackageSource::Package {
++                index: request
++                    .index
++                    .clone()
++                    .ok_or_else(|| failure("dependency_index_required"))?,
++                id: dependency.id.clone(),
++                version: dependency.version.clone(),
++            };
++            let dependency_package = self.resolve_requested(
++                &dependency_source,
++                Some((&dependency.id, &dependency.version)),
++                request,
++                resolved,
++                visiting,
++            )?;
++            resolved.insert(dependency.id.clone(), dependency_package);
++        }
++        visiting.pop();
++        Ok(provisional)
++    }
++
++    fn materialize_source(
++        &self,
++        source: &ModPackageSource,
++        offline: bool,
++    ) -> Result<(PathBuf, ModPackageSource, Option<String>)> {
++        match source {
++            ModPackageSource::Local { path } => {
++                let path = path.canonicalize()?;
++                if path.starts_with(&self.root) {
++                    return Err(failure("local_package_must_be_outside_store"));
++                }
++                Ok((path.clone(), ModPackageSource::Local { path }, None))
++            }
++            ModPackageSource::Repository {
++                repository,
++                revision,
++                subdirectory,
++            } => {
++                if revision.len() != 40
++                    || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
++                    || repository.is_empty()
++                    || repository.len() > 2048
++                    || !package_directory(subdirectory)
++                {
++                    return Err(failure("immutable_repository_revision_required"));
++                }
++                let local = PathBuf::from(repository);
++                let (repository_path, repository_source) = if local.exists() {
++                    let path = local.canonicalize()?;
++                    let source = path.display().to_string();
++                    (path, source)
++                } else {
++                    if offline
++                        && let Some(package) =
++                            self.read_package_lock()?.packages.values().find(|package| {
++                                package.source == *source && package.cache_path.exists()
++                            })
++                    {
++                        return Ok((
++                            package.cache_path.canonicalize()?,
++                            package.source.clone(),
++                            Some(package.integrity.clone()),
++                        ));
++                    }
++                    if !repository.starts_with("https://") {
++                        return Err(failure("remote_repository_requires_https"));
++                    }
++                    let repositories = self.root.join("repository-cache");
++                    std::fs::create_dir_all(&repositories)?;
++                    let cached =
++                        repositories.join(format!("{}.git", digest(repository.as_bytes())));
++                    if !cached.exists() {
++                        if offline {
++                            return Err(failure("repository_unavailable_offline_and_not_cached"));
++                        }
++                        let staging = repositories.join(format!(
++                            ".{}.{}.tmp",
++                            digest(repository.as_bytes()),
++                            std::process::id()
++                        ));
++                        let output = Command::new("git")
++                            .args(["clone", "--bare", "--filter=blob:none", "--", repository])
++                            .arg(&staging)
++                            .env_clear()
++                            .env("PATH", "/usr/bin:/bin")
++                            .output()?;
++                        if !output.status.success() {
++                            let _ = std::fs::remove_dir_all(&staging);
++                            return Err(failure(format!(
++                                "repository_clone_failed: {}",
++                                String::from_utf8_lossy(&output.stderr).trim()
++                            )));
++                        }
++                        std::fs::rename(&staging, &cached)?;
++                        std::fs::File::open(&repositories)?.sync_all()?;
++                    }
++                    if !offline {
++                        let output = Command::new("git")
++                            .arg("-C")
++                            .arg(&cached)
++                            .args(["fetch", "--force", "--no-tags", "origin", revision])
++                            .env_clear()
++                            .env("PATH", "/usr/bin:/bin")
++                            .output()?;
++                        if !output.status.success() {
++                            return Err(failure(format!(
++                                "repository_fetch_failed: {}",
++                                String::from_utf8_lossy(&output.stderr).trim()
++                            )));
++                        }
++                    }
++                    (cached.canonicalize()?, repository.clone())
++                };
++                let revision = revision.to_lowercase();
++                let actual = git(
++                    &repository_path,
++                    &["rev-parse", &format!("{revision}^{{commit}}")],
++                )?;
++                if actual.trim() != revision {
++                    return Err(failure("repository_revision_mismatch"));
++                }
++                let staging = self.root.join(format!(
++                    ".repository-{}.{}.tmp",
++                    &revision[..12],
++                    std::process::id()
++                ));
++                if staging.exists() {
++                    return Err(failure("stale_repository_staging_directory"));
++                }
++                std::fs::create_dir(&staging)?;
++                let result = (|| {
++                    let prefix = if subdirectory.is_empty() {
++                        String::new()
++                    } else {
++                        format!("{subdirectory}/")
++                    };
++                    let manifest = git_bytes(
++                        &repository_path,
++                        &["show", &format!("{revision}:{prefix}mod.json")],
++                    )?;
++                    std::fs::write(staging.join("mod.json"), &manifest)?;
++                    let package: ModPackage = serde_json::from_slice(&manifest)?;
++                    package.validate()?;
++                    for path in
++                        std::iter::once(&package.entrypoint).chain(package.lifecycle.values())
++                    {
++                        let bytes = git_bytes(
++                            &repository_path,
++                            &["show", &format!("{revision}:{prefix}{path}")],
++                        )?;
++                        let target = staging.join(path);
++                        if let Some(parent) = target.parent() {
++                            std::fs::create_dir_all(parent)?;
++                        }
++                        std::fs::write(target, bytes)?;
++                    }
++                    Ok::<_, io::Error>(())
++                })();
++                if let Err(error) = result {
++                    let _ = std::fs::remove_dir_all(&staging);
++                    return Err(error);
++                }
++                Ok((
++                    staging,
++                    ModPackageSource::Repository {
++                        repository: repository_source,
++                        revision,
++                        subdirectory: subdirectory.clone(),
++                    },
++                    None,
++                ))
++            }
++            ModPackageSource::Package { index, id, version } => {
++                let index_path = match index.canonicalize() {
++                    Ok(index) => index,
++                    Err(_error) if offline => {
++                        if let Some(package) =
++                            self.read_package_lock()?.packages.values().find(|package| {
++                                matches!(&package.source,
++                                    ModPackageSource::Package { index: locked_index, id: locked_id, version: locked_version }
++                                    if locked_index == index && locked_id == id
++                                        && service_version_satisfies(version, locked_version))
++                                    && package.cache_path.exists()
++                            })
++                        {
++                            return Ok((
++                                package.cache_path.canonicalize()?,
++                                package.source.clone(),
++                                Some(package.integrity.clone()),
++                            ));
++                        }
++                        return Err(failure("package_index_unavailable_offline"));
++                    }
++                    Err(error) => return Err(error),
++                };
++                let index_value: PackageIndex =
++                    serde_json::from_slice(&store::read(&index_path, 524_288)?)?;
++                if index_value.schema != 1 {
++                    return Err(failure("unsupported_package_index_schema"));
++                }
++                let releases = index_value
++                    .packages
++                    .get(id)
++                    .ok_or_else(|| failure("package_unavailable"))?;
++                let release = releases
++                    .iter()
++                    .filter_map(|release| {
++                        service_version_satisfies(version, &release.version)
++                            .then_some((SemanticVersion::parse(&release.version)?, release))
++                    })
++                    .max_by_key(|(version, _)| *version)
++                    .map(|(_, release)| release)
++                    .ok_or_else(|| failure("package_version_unavailable"))?;
++                let (path, resolved, actual_expected) =
++                    self.materialize_source(&release.source, offline)?;
++                if actual_expected
++                    .as_deref()
++                    .is_some_and(|value| value != release.integrity)
++                {
++                    return Err(failure("index_integrity_conflict"));
++                }
++                let _ = resolved;
++                Ok((
++                    path,
++                    ModPackageSource::Package {
++                        index: index_path,
++                        id: id.clone(),
++                        version: release.version.clone(),
++                    },
++                    Some(release.integrity.clone()),
++                ))
++            }
++        }
++    }
++
++    fn cache_package(
++        &self,
++        source: &Path,
++        package: &ModPackage,
++        integrity: &str,
++    ) -> Result<PathBuf> {
++        let base = self.root.join("package-cache").join(&package.id);
++        std::fs::create_dir_all(&base)?;
++        let destination = base.join(integrity);
++        if destination.exists() {
++            let destination = destination.canonicalize()?;
++            if store::package(&destination)?.2 != integrity {
++                return Err(failure("cached_package_integrity_failure"));
++            }
++            return Ok(destination);
++        }
++        let staging = base.join(format!(".{integrity}.{}.tmp", std::process::id()));
++        std::fs::create_dir(&staging)?;
++        let result = (|| {
++            copy_file(source, &staging, "mod.json", 8192)?;
++            copy_file(source, &staging, &package.entrypoint, 65_536)?;
++            for script in package.lifecycle.values() {
++                copy_file(source, &staging, script, 65_536)?;
++            }
++            if store::package(&staging.canonicalize()?)?.2 != integrity {
++                return Err(failure("package_integrity_changed_during_copy"));
++            }
++            std::fs::rename(&staging, &destination)?;
++            std::fs::File::open(&base)?.sync_all()?;
++            destination.canonicalize()
++        })();
++        if result.is_err() {
++            let _ = std::fs::remove_dir_all(&staging);
++        }
++        result
++    }
++
++    fn run_lifecycle(&self, package: &ModLockedPackage, event: &str) -> Result<()> {
++        if !package.lifecycle.iter().any(|declared| declared == event) {
++            return Ok(());
++        }
++        if !package
++            .trust
++            .lifecycle
++            .iter()
++            .any(|trusted| trusted == event)
++        {
++            return Err(failure("lifecycle_script_not_trusted"));
++        }
++        let inspected = store::package(&package.path);
++        if event == "uninstall" {
++            match &inspected {
++                Ok((_, _, integrity)) if integrity == &package.integrity => {}
++                _ => return Ok(()),
++            }
++        }
++        let (manifest, _, integrity) = inspected?;
++        if integrity != package.integrity {
++            return Err(failure("package_integrity_failure"));
++        }
++        let script = manifest
++            .lifecycle
++            .get(event)
++            .ok_or_else(|| failure("lifecycle_script_missing"))?;
++        let source =
++            String::from_utf8(store::read(&package.path.join(script), 65_536)?).map_err(failure)?;
++        let node = self.configuration()?.node;
++        let request = json!({"source":source,"filename":script,"adapter":null,"event":"inspect",
++            "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
++                "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
++            "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
++        process::evaluate(&node, &request, std::time::Duration::from_secs(1), &|| true)?;
++        Ok(())
++    }
++}
++
++fn copy_file(source: &Path, destination: &Path, relative: &str, limit: u64) -> Result<()> {
++    let bytes = store::read(&source.join(relative), limit)?;
++    let target = destination.join(relative);
++    if let Some(parent) = target.parent() {
++        std::fs::create_dir_all(parent)?;
++    }
++    std::fs::write(target, bytes)
++}
++
++fn git(repository: &Path, arguments: &[&str]) -> Result<String> {
++    String::from_utf8(git_bytes(repository, arguments)?).map_err(failure)
++}
++
++fn git_bytes(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
++    let output = Command::new("git")
++        .arg("-C")
++        .arg(repository)
++        .args(arguments)
++        .env_clear()
++        .env("PATH", "/usr/bin:/bin")
++        .output()?;
++    if !output.status.success() {
++        return Err(failure(format!(
++            "repository_read_failed: {}",
++            String::from_utf8_lossy(&output.stderr).trim()
++        )));
++    }
++    Ok(output.stdout)
++}
++
++fn validate_provenance(source: &ModPackageSource, provenance: &ModProvenance) -> Result<()> {
++    if let ModPackageSource::Repository { repository, .. } = source
++        && provenance.source != *repository
++    {
++        return Err(failure("repository_provenance_mismatch"));
++    }
++    Ok(())
++}
++
++fn package_directory(value: &str) -> bool {
++    value.is_empty()
++        || (!value.starts_with('/')
++            && value.len() <= 256
++            && value.split('/').all(|part| {
++                !part.is_empty()
++                    && part != "."
++                    && part != ".."
++                    && part.bytes().all(|byte| {
++                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
++                    })
++            }))
++}
++
++fn validate_package_lock(lock: &ModPackageLock) -> Result<()> {
++    if lock.packages.len() > PACKAGE_LIMIT
++        || lock.history.len() > PACKAGE_HISTORY_ID_LIMIT
++        || lock
++            .history
++            .values()
++            .any(|history| history.len() > PACKAGE_HISTORY_LIMIT)
++        || lock.packages.iter().any(|(id, package)| {
++            id != &package.id
++                || package.integrity.len() != 64
++                || !package
++                    .integrity
++                    .bytes()
++                    .all(|byte| byte.is_ascii_hexdigit())
++        })
++    {
++        return Err(failure("invalid_package_lock"));
++    }
++    Ok(())
++}
++
++fn push_history(lock: &mut ModPackageLock, id: &str, package: ModLockedPackage) -> Result<()> {
++    if !lock.history.contains_key(id) && lock.history.len() >= PACKAGE_HISTORY_ID_LIMIT {
++        return Err(failure("package_history_limit"));
++    }
++    let history = lock.history.entry(id.to_owned()).or_default();
++    history.push(package);
++    if history.len() > PACKAGE_HISTORY_LIMIT {
++        history.remove(0);
++    }
++    Ok(())
++}
++
++fn validate_locked_graph(packages: &BTreeMap<String, ModLockedPackage>) -> Result<()> {
++    for package in packages.values() {
++        for dependency in &package.dependencies {
++            let resolved = packages
++                .get(&dependency.id)
++                .ok_or_else(|| failure(format!("dependency_unavailable: {}", dependency.id)))?;
++            if !service_version_satisfies(&dependency.version, &resolved.version) {
++                return Err(failure("dependency_version_incompatible"));
++            }
++        }
++    }
++    let mut remaining: BTreeSet<_> = packages.keys().cloned().collect();
++    while let Some(id) = remaining
++        .iter()
++        .find(|id| {
++            packages[*id]
++                .dependencies
++                .iter()
++                .all(|dependency| !remaining.contains(&dependency.id))
++        })
++        .cloned()
++    {
++        remaining.remove(&id);
++    }
++    if remaining.is_empty() {
++        Ok(())
++    } else {
++        Err(failure(format!(
++            "dependency_cycle: {}",
++            remaining.into_iter().collect::<Vec<_>>().join(" -> ")
++        )))
++    }
++}
++
++fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> Value {
++    let mut changes = Vec::new();
++    for package in packages {
++        let previous = existing.packages.get(&package.id);
++        changes.push(json!({
++            "id":package.id,
++            "version":{"from":previous.map(|value|&value.version),"to":package.version},
++            "integrity":{"from":previous.map(|value|&value.integrity),"to":package.integrity},
++            "source":{"from":previous.map(|value|&value.source),"to":package.source},
++            "license":{"from":previous.map(|value|&value.license),"to":package.license},
++            "provenance":{"from":previous.map(|value|&value.provenance),"to":package.provenance},
++            "entrypoint":{"from":previous.map(|value|&value.entrypoint),"to":package.entrypoint},
++            "api":{"from":previous.map(|value|&value.api),"to":package.api},
++            "state_version":{"from":previous.map(|value|value.state_version),"to":package.state_version,
++                "migration_required":previous.is_some_and(|value|value.state_version != package.state_version) && !package.enabled},
++            "dependencies":{"from":previous.map(|value|&value.dependencies),"to":package.dependencies},
++            "capabilities":{"from":previous.map(|value|&value.capabilities),"to":package.capabilities},
++            "settings_schema_sha256":{"from":previous.map(|value|&value.settings_schema_sha256),"to":package.settings_schema_sha256},
++            "settings":{"from":previous.map(|value|&value.settings),"to":package.settings},
++            "lifecycle":{"from":previous.map(|value|&value.lifecycle),"to":package.lifecycle},
++            "activation":{"from":previous.is_some_and(|value|value.enabled),"to":package.enabled}
++        }));
++    }
++    Value::Object(Map::from_iter([
++        ("packages".to_owned(), Value::Array(changes)),
++        (
++            "authority".to_owned(),
++            json!(
++                "dependency resolution installs no capability, lifecycle, permission, credential, provider, or spending grant"
++            ),
++        ),
++        ("local_sources_preserved".to_owned(), Value::Bool(true)),
++        (
++            "activation_requires_confirmation".to_owned(),
++            Value::Bool(true),
++        ),
++    ]))
++}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000..3b551ae
+index 0000000..48e1177
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,217 @@
 +use super::*;
 +
 +impl ModStore {
 +    pub fn settings(&self, path: &Path, settings: BTreeMap<String, Value>) -> Result<()> {
 +        let _lock = self.lock()?;
++        self.recover_package_transaction()?;
 +        let mut config = self.configuration()?;
 +        let selection = config
 +            .mods
 +            .iter_mut()
 +            .find(|m| m.path == path)
 +            .ok_or_else(|| failure("package_not_trusted"))?;
++        let (package, _, hash) = store::package(path)?;
++        if hash != selection.sha256 {
++            return Err(failure("source_changed: inspect and trust the new digest"));
++        }
++        validate_settings(&package, &settings)?;
 +        selection.settings = settings;
 +        config.revision = config
 +            .revision
@@ -27497,6 +28929,7 @@ index 0000000..3b551ae
 +
 +    pub fn migrate(&self, path: &Path) -> Result<Value> {
 +        let _lock = self.lock()?;
++        self.recover_package_transaction()?;
 +        let config = self.configuration()?;
 +        let selection = config
 +            .mods
@@ -27579,6 +29012,7 @@ index 0000000..3b551ae
 +
 +    pub fn rollback(&self, path: &Path, backup: &Path) -> Result<Value> {
 +        let _lock = self.lock()?;
++        self.recover_package_transaction()?;
 +        let config = self.configuration()?;
 +        let selection = config
 +            .mods
@@ -28580,10 +30014,10 @@ index 0000000..0def3b0
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000..c456683
+index 0000000..6b02aee
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,279 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -28622,12 +30056,22 @@ index 0000000..c456683
 +        return Err(failure("canonical_package_path_required"));
 +    }
 +    let manifest = read(&path.join("mod.json"), 8192)?;
-+    let source = read(&path.join("index.ts"), 65_536)?;
 +    let package: ModPackage = serde_json::from_slice(&manifest)?;
 +    package.validate()?;
++    let source = read(&path.join(&package.entrypoint), 65_536)?;
 +    let mut bytes = manifest;
 +    bytes.push(0);
++    bytes.extend_from_slice(package.entrypoint.as_bytes());
++    bytes.push(0);
 +    bytes.extend_from_slice(&source);
++    for (event, script) in &package.lifecycle {
++        bytes.push(0);
++        bytes.extend_from_slice(event.as_bytes());
++        bytes.push(0);
++        bytes.extend_from_slice(script.as_bytes());
++        bytes.push(0);
++        bytes.extend_from_slice(&read(&path.join(script), 65_536)?);
++    }
 +    Ok((
 +        package,
 +        String::from_utf8(source).map_err(failure)?,
@@ -28727,6 +30171,7 @@ index 0000000..c456683
 +        scope: &str,
 +    ) -> Result<()> {
 +        let _lock = self.lock()?;
++        self.recover_package_transaction()?;
 +        if !super::MOD_SCOPES.contains(&scope) {
 +            return Err(failure("unsupported_scope: user or project"));
 +        }
@@ -28744,6 +30189,7 @@ index 0000000..c456683
 +            .find(|m| m.path == path)
 +            .map(|m| m.settings.clone())
 +            .unwrap_or_default();
++        super::validate_settings(&package, &settings)?;
 +        config.mods.retain(|m| m.path != path);
 +        config.revision = config
 +            .revision
@@ -28762,6 +30208,19 @@ index 0000000..c456683
 +
 +    pub fn enable(&self, path: &Path, enabled: bool) -> Result<()> {
 +        let _lock = self.lock()?;
++        self.recover_package_transaction()?;
++        if self
++            .read_package_lock()?
++            .packages
++            .values()
++            .any(|package| package.path == path)
++        {
++            return Err(failure(if enabled {
++                "managed_package_activation_requires_package_plan"
++            } else {
++                "managed_package_disable_requires_package_disable"
++            }));
++        }
 +        let mut config = self.configuration()?;
 +        let selection = config
 +            .mods
@@ -28784,6 +30243,7 @@ index 0000000..c456683
 +
 +    pub fn reload(&self) -> Result<()> {
 +        let _lock = self.lock()?;
++        self.recover_package_transaction()?;
 +        let mut config = self.configuration()?;
 +        config.revision = config
 +            .revision
@@ -28827,6 +30287,7 @@ index 0000000..c456683
 +        value: &Value,
 +    ) -> Result<()> {
 +        let _lock = self.lock()?;
++        self.recover_package_transaction()?;
 +        if &self.state(id, scope, version)? != previous {
 +            return Err(failure("state_conflict: reload before retry"));
 +        }
@@ -34635,6 +36096,529 @@ index 0000000..c7f700f
 +            .iter()
 +            .all(|error| error.contains("replacement_conflict"))
 +    );
++}
+diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
+new file mode 100644
+index 0000000..722b8ec
+--- /dev/null
++++ b/codex-rs/omd/tests/packages.rs
+@@ -0,0 +1,517 @@
++use codex_omd::MOD_API_VERSION;
++use codex_omd::ModInstallRequest;
++use codex_omd::ModPackageGrant;
++use codex_omd::ModPackageSource;
++use codex_omd::ModPackageTrust;
++use codex_omd::ModStore;
++use serde_json::json;
++use std::collections::BTreeMap;
++use std::path::Path;
++use std::path::PathBuf;
++use std::process::Command;
++use tempfile::TempDir;
++
++fn mod_package(
++    root: &Path,
++    id: &str,
++    version: &str,
++    capabilities: &[&str],
++    dependencies: serde_json::Value,
++) -> PathBuf {
++    let path = root.join(id);
++    std::fs::create_dir_all(&path).unwrap();
++    std::fs::write(
++        path.join("mod.json"),
++        serde_json::to_vec_pretty(&json!({
++            "schema":1,
++            "id":id,
++            "version":version,
++            "api":MOD_API_VERSION,
++            "entrypoint":"main.ts",
++            "state_version":1,
++            "license":"Apache-2.0",
++            "provenance":{"maintainer":"Fixture Author","source":"fixture"},
++            "capabilities":capabilities,
++            "dependencies":dependencies,
++            "settings_schema":{"type":"object","properties":{"mode":{"type":"string","enum":["safe","fast"],"default":"safe"}},"additionalProperties":false}
++        }))
++        .unwrap(),
++    )
++    .unwrap();
++    std::fs::write(path.join("main.ts"), "export default () => {}\n").unwrap();
++    path.canonicalize().unwrap()
++}
++
++fn store(temp: &TempDir) -> ModStore {
++    ModStore::create(temp.path().join("store"), std::env::current_exe().unwrap()).unwrap()
++}
++
++fn store_with_node(temp: &TempDir) -> ModStore {
++    ModStore::create(
++        temp.path().join("store"),
++        PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap()),
++    )
++    .unwrap()
++}
++
++fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
++    ModInstallRequest {
++        source: ModPackageSource::Local {
++            path: path.to_path_buf(),
++        },
++        index: None,
++        scope: "user".into(),
++        activate: true,
++        offline: false,
++        trust: ModPackageTrust {
++            packages: BTreeMap::from([(
++                path.file_name().unwrap().to_str().unwrap().to_owned(),
++                ModPackageGrant {
++                    capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
++                    dependencies: false,
++                    lifecycle: Vec::new(),
++                },
++            )]),
++        },
++        settings: BTreeMap::from([(
++            path.file_name().unwrap().to_str().unwrap().to_owned(),
++            BTreeMap::from([("mode".into(), json!("safe"))]),
++        )]),
++    }
++}
++
++#[test]
++fn local_updates_preview_preserve_edits_settings_and_rollback() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &["commands"], json!([]));
++    let store = store(&temp);
++    let first = request(&package, &["commands"]);
++    let mut invalid = first.clone();
++    invalid
++        .settings
++        .get_mut("fixture")
++        .unwrap()
++        .insert("mode".into(), json!("unsafe"));
++    assert!(
++        store
++            .package_plan(invalid)
++            .unwrap_err()
++            .to_string()
++            .contains("invalid_setting: mode")
++    );
++    let plan = store.package_plan(first.clone()).unwrap();
++    assert_eq!(plan.action, "install");
++    assert_eq!(plan.changes["packages"][0]["activation"]["to"], true);
++    let lock = store.package_apply(first, &plan.confirmation).unwrap();
++    assert_eq!(lock.packages["fixture"].version, "1.0.0");
++    assert!(store.configuration().unwrap().mods[0].enabled);
++    std::fs::write(
++        root.join("store/state-fixture.json"),
++        serde_json::to_vec_pretty(&json!({"schema":1,"version":1,"value":null})).unwrap(),
++    )
++    .unwrap();
++
++    let mut manifest: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(package.join("mod.json")).unwrap()).unwrap();
++    manifest["version"] = json!("1.1.0");
++    manifest["state_version"] = json!(2);
++    manifest["capabilities"] = json!(["commands", "state"]);
++    std::fs::write(
++        package.join("mod.json"),
++        serde_json::to_vec_pretty(&manifest).unwrap(),
++    )
++    .unwrap();
++    std::fs::write(
++        package.join("main.ts"),
++        "export default api => api.command('value', () => api.state.get())\n",
++    )
++    .unwrap();
++    let mut update = request(&package, &["commands", "state"]);
++    update.settings.clear();
++    let plan = store.package_plan(update.clone()).unwrap();
++    assert_eq!(plan.action, "update");
++    assert_eq!(
++        plan.changes["packages"][0]["capabilities"]["from"],
++        json!(["commands"])
++    );
++    assert_eq!(plan.changes["packages"][0]["activation"]["to"], false);
++    assert_eq!(
++        plan.changes["packages"][0]["state_version"]["migration_required"],
++        true
++    );
++    let lock = store.package_apply(update, &plan.confirmation).unwrap();
++    assert_eq!(lock.packages["fixture"].settings["mode"], "safe");
++    assert_eq!(lock.history["fixture"].len(), 1);
++    assert_eq!(
++        std::fs::read_to_string(package.join("main.ts")).unwrap(),
++        "export default api => api.command('value', () => api.state.get())\n"
++    );
++
++    let rollback = store.package_rollback_plan("fixture").unwrap();
++    assert_eq!(rollback.changes["version"]["to"], "1.0.0");
++    let lock = store
++        .package_rollback("fixture", &rollback.confirmation)
++        .unwrap();
++    assert_eq!(lock.packages["fixture"].version, "1.0.0");
++    assert!(!lock.packages["fixture"].enabled);
++    assert_ne!(lock.packages["fixture"].path, package);
++    assert_eq!(lock.packages["fixture"].settings["mode"], "safe");
++
++    store.package_disable("fixture").unwrap();
++    let uninstall = store.package_uninstall_plan("fixture").unwrap();
++    let lock = store
++        .package_uninstall("fixture", &uninstall.confirmation)
++        .unwrap();
++    assert!(!lock.packages.contains_key("fixture"));
++    assert!(package.exists());
++}
++
++#[test]
++fn dependency_resolution_requires_separate_exact_trust_and_rejects_cycles() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let dependency = mod_package(&root, "dependency", "1.2.0", &["context"], json!([]));
++    let root_package = mod_package(
++        &root,
++        "root_mod",
++        "1.0.0",
++        &["commands"],
++        json!([{"id":"dependency","version":"^1.0.0"}]),
++    );
++    let dependency_integrity = ModStore::inspect_package(&dependency).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    let index = root.join("index.json");
++    std::fs::write(
++        &index,
++        serde_json::to_vec_pretty(&json!({"schema":1,"packages":{"dependency":[{
++            "version":"1.2.0","source":{"kind":"local","path":dependency},"integrity":dependency_integrity
++        }]}}))
++        .unwrap(),
++    )
++    .unwrap();
++    let store = store(&temp);
++    let mut install = request(&root_package, &["commands"]);
++    install
++        .trust
++        .packages
++        .get_mut("root_mod")
++        .unwrap()
++        .dependencies = true;
++    install.trust.packages.insert(
++        "dependency".into(),
++        ModPackageGrant {
++            capabilities: vec!["context".into()],
++            dependencies: false,
++            lifecycle: Vec::new(),
++        },
++    );
++    assert!(
++        store
++            .package_plan(install.clone())
++            .unwrap_err()
++            .to_string()
++            .contains("dependency_index_required")
++    );
++    install.index = Some(index.clone());
++    install.trust.packages.remove("dependency");
++    assert!(
++        store
++            .package_plan(install.clone())
++            .unwrap_err()
++            .to_string()
++            .contains("package_trust_required: dependency")
++    );
++    install.trust.packages.insert(
++        "dependency".into(),
++        ModPackageGrant {
++            capabilities: vec!["context".into()],
++            dependencies: false,
++            lifecycle: Vec::new(),
++        },
++    );
++    let plan = store.package_plan(install.clone()).unwrap();
++    assert_eq!(
++        plan.packages
++            .iter()
++            .map(|package| package.id.as_str())
++            .collect::<Vec<_>>(),
++        ["dependency", "root_mod"]
++    );
++    assert_eq!(
++        plan.changes["authority"],
++        "dependency resolution installs no capability, lifecycle, permission, credential, provider, or spending grant"
++    );
++
++    std::fs::write(
++        &index,
++        serde_json::to_vec_pretty(&json!({"schema":1,"packages":{"dependency":[{
++            "version":"1.2.0","source":{"kind":"local","path":dependency},"integrity":"00"
++        }]}}))
++        .unwrap(),
++    )
++    .unwrap();
++    assert!(
++        store
++            .package_plan(install.clone())
++            .unwrap_err()
++            .to_string()
++            .contains("package_integrity_failure")
++    );
++
++    let mut dependency_manifest: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(dependency.join("mod.json")).unwrap()).unwrap();
++    dependency_manifest["dependencies"] = json!([{"id":"root_mod","version":"1.0.0"}]);
++    std::fs::write(
++        dependency.join("mod.json"),
++        serde_json::to_vec_pretty(&dependency_manifest).unwrap(),
++    )
++    .unwrap();
++    let dependency_integrity = ModStore::inspect_package(&dependency).unwrap()["sha256"]
++        .as_str()
++        .unwrap()
++        .to_owned();
++    std::fs::write(
++        &index,
++        serde_json::to_vec_pretty(&json!({"schema":1,"packages":{
++            "dependency":[{"version":"1.2.0","source":{"kind":"local","path":dependency},"integrity":dependency_integrity}],
++            "root_mod":[{"version":"1.0.0","source":{"kind":"local","path":root_package},"integrity":ModStore::inspect_package(&root_package).unwrap()["sha256"]}]
++        }}))
++        .unwrap(),
++    )
++    .unwrap();
++    install
++        .trust
++        .packages
++        .get_mut("dependency")
++        .unwrap()
++        .dependencies = true;
++    assert!(
++        store
++            .package_plan(install)
++            .unwrap_err()
++            .to_string()
++            .contains("dependency_cycle")
++    );
++}
++
++#[test]
++fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let repository = root.join("repository");
++    std::fs::create_dir(&repository).unwrap();
++    mod_package(&repository, "repo_mod", "2.0.0", &[], json!([]));
++    let manifest_path = repository.join("repo_mod/mod.json");
++    let mut manifest: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["provenance"] = json!({"maintainer":"Fixture Author","source":repository.canonicalize().unwrap().display().to_string()});
++    std::fs::write(
++        &manifest_path,
++        serde_json::to_vec_pretty(&manifest).unwrap(),
++    )
++    .unwrap();
++    git(&repository, &["init"]);
++    git(
++        &repository,
++        &["config", "user.email", "fixture@example.com"],
++    );
++    git(&repository, &["config", "user.name", "Fixture"]);
++    git(&repository, &["add", "."]);
++    git(&repository, &["commit", "-m", "fixture"]);
++    let revision = git_output(&repository, &["rev-parse", "HEAD"]);
++
++    let store = store(&temp);
++    let source = ModPackageSource::Repository {
++        repository: repository.canonicalize().unwrap().display().to_string(),
++        revision: revision.clone(),
++        subdirectory: "repo_mod".into(),
++    };
++    let install = ModInstallRequest {
++        source: source.clone(),
++        index: None,
++        scope: "user".into(),
++        activate: false,
++        offline: false,
++        trust: ModPackageTrust {
++            packages: BTreeMap::from([("repo_mod".into(), ModPackageGrant::default())]),
++        },
++        settings: BTreeMap::new(),
++    };
++    let plan = store.package_plan(install.clone()).unwrap();
++    let lock = store.package_apply(install, &plan.confirmation).unwrap();
++    assert_eq!(lock.packages["repo_mod"].source, source);
++    assert_eq!(lock.packages["repo_mod"].version, "2.0.0");
++    let unavailable = root.join("repository-unavailable");
++    std::fs::rename(&repository, &unavailable).unwrap();
++    let offline = ModInstallRequest {
++        source: ModPackageSource::Repository {
++            repository: repository.display().to_string(),
++            revision,
++            subdirectory: "repo_mod".into(),
++        },
++        index: None,
++        scope: "user".into(),
++        activate: false,
++        offline: true,
++        trust: ModPackageTrust {
++            packages: BTreeMap::from([("repo_mod".into(), ModPackageGrant::default())]),
++        },
++        settings: BTreeMap::new(),
++    };
++    let plan = store.package_plan(offline).unwrap();
++    assert_eq!(
++        plan.packages[0].integrity,
++        lock.packages["repo_mod"].integrity
++    );
++
++    let invalid = ModInstallRequest {
++        source: ModPackageSource::Repository {
++            repository: unavailable.display().to_string(),
++            revision: "main".into(),
++            subdirectory: "repo_mod".into(),
++        },
++        offline: false,
++        ..request(&mod_package(&root, "unused", "1.0.0", &[], json!([])), &[])
++    };
++    assert!(
++        store
++            .package_plan(invalid)
++            .unwrap_err()
++            .to_string()
++            .contains("immutable_repository_revision_required")
++    );
++}
++
++#[test]
++fn lifecycle_scripts_are_exactly_trusted_and_host_sandboxed() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "scripted", "1.0.0", &[], json!([]));
++    let manifest_path = package.join("mod.json");
++    let mut manifest: serde_json::Value =
++        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
++    manifest["lifecycle"] = json!({"install":"install.ts","update":"update.ts"});
++    std::fs::write(
++        &manifest_path,
++        serde_json::to_vec_pretty(&manifest).unwrap(),
++    )
++    .unwrap();
++    std::fs::write(
++        package.join("install.ts"),
++        "export default api => { if (api.settings.event !== 'install') throw new Error('wrong event') }\n",
++    )
++    .unwrap();
++    std::fs::write(
++        package.join("update.ts"),
++        "export default api => { if (api.settings.event !== 'update') throw new Error('wrong event') }\n",
++    )
++    .unwrap();
++    let store = store_with_node(&temp);
++    let mut install = request(&package, &[]);
++    assert!(
++        store
++            .package_plan(install.clone())
++            .unwrap_err()
++            .to_string()
++            .contains("explicit_exact_lifecycle_trust_required")
++    );
++    install
++        .trust
++        .packages
++        .get_mut("scripted")
++        .unwrap()
++        .lifecycle = vec!["install".into(), "update".into()];
++    let plan = store.package_plan(install.clone()).unwrap();
++    store.package_apply(install, &plan.confirmation).unwrap();
++
++    std::fs::write(
++        package.join("update.ts"),
++        "export default () => process.exit(0)\n",
++    )
++    .unwrap();
++    let mut update = request(&package, &[]);
++    update.trust.packages.get_mut("scripted").unwrap().lifecycle =
++        vec!["install".into(), "update".into()];
++    let plan = store.package_plan(update.clone()).unwrap();
++    let error = store
++        .package_apply(update, &plan.confirmation)
++        .unwrap_err()
++        .to_string();
++    assert!(error.contains("process is not defined"), "{error}");
++    assert_eq!(store.package_lock().unwrap().revision, 1);
++}
++
++#[test]
++fn stale_plans_and_interrupted_transactions_preserve_the_previous_lock() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let package = mod_package(&root, "fixture", "1.0.0", &[], json!([]));
++    let store = store(&temp);
++    let install = request(&package, &[]);
++    let stale = store.package_plan(install.clone()).unwrap();
++    std::fs::write(
++        package.join("main.ts"),
++        "export default () => { const changed = true; return changed }\n",
++    )
++    .unwrap();
++    assert!(
++        store
++            .package_apply(install.clone(), &stale.confirmation)
++            .unwrap_err()
++            .to_string()
++            .contains("package_plan_changed")
++    );
++    assert!(store.package_lock().unwrap().packages.is_empty());
++    let plan = store.package_plan(install.clone()).unwrap();
++    let lock = store.package_apply(install, &plan.confirmation).unwrap();
++    let config = store.configuration().unwrap();
++    let store_path = root.join("store");
++    std::fs::write(
++        store_path.join("package-transaction.json"),
++        serde_json::to_vec_pretty(&json!({"old_lock":lock,"old_config":config})).unwrap(),
++    )
++    .unwrap();
++    std::fs::write(
++        store_path.join("packages.lock.json"),
++        serde_json::to_vec_pretty(&json!({"schema":1,"revision":999,"packages":{},"history":{}}))
++            .unwrap(),
++    )
++    .unwrap();
++    std::fs::write(
++        store_path.join("mods.json"),
++        serde_json::to_vec_pretty(
++            &json!({"schema":1,"revision":999,"node":std::env::current_exe().unwrap(),"mods":[]}),
++        )
++        .unwrap(),
++    )
++    .unwrap();
++    let recovered = store.package_lock().unwrap();
++    assert_eq!(recovered.revision, 1);
++    assert!(recovered.packages.contains_key("fixture"));
++    assert_eq!(store.configuration().unwrap().revision, 1);
++    assert!(!store_path.join("package-transaction.json").exists());
++}
++
++fn git(repository: &Path, arguments: &[&str]) {
++    let status = Command::new("git")
++        .arg("-C")
++        .arg(repository)
++        .args(arguments)
++        .status()
++        .unwrap();
++    assert!(status.success());
++}
++
++fn git_output(repository: &Path, arguments: &[&str]) -> String {
++    let output = Command::new("git")
++        .arg("-C")
++        .arg(repository)
++        .args(arguments)
++        .output()
++        .unwrap();
++    assert!(output.status.success());
++    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 +}
 diff --git a/codex-rs/omd/tests/reactive.rs b/codex-rs/omd/tests/reactive.rs
 new file mode 100644

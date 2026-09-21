@@ -1,4 +1,5 @@
 use codex_omd::ModHost;
+use codex_omd::ModInstallRequest;
 use codex_omd::ModStore;
 use serde_json::Value;
 use std::io;
@@ -7,10 +8,55 @@ use std::path::PathBuf;
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
+            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
         )
     };
     match args {
+        [command, root, request] if command == "package-plan" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .package_plan(serde_json::from_str::<ModInstallRequest>(request)?)
+                .and_then(|plan| serde_json::to_value(plan).map_err(io::Error::other))
+        }
+        [command, root, request, confirmation] if command == "package-apply" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .package_apply(
+                    serde_json::from_str::<ModInstallRequest>(request)?,
+                    confirmation,
+                )
+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+        }
+        [command, root] if command == "package-lock" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .package_lock()
+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+        }
+        [command, root, id] if command == "package-disable" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .package_disable(id)
+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+        }
+        [command, root, id]
+            if command == "package-rollback-plan" || command == "package-uninstall-plan" =>
+        {
+            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
+            let plan = if command == "package-rollback-plan" {
+                store.package_rollback_plan(id)?
+            } else {
+                store.package_uninstall_plan(id)?
+            };
+            serde_json::to_value(plan).map_err(io::Error::other)
+        }
+        [command, root, id, confirmation]
+            if command == "package-rollback" || command == "package-uninstall" =>
+        {
+            let store = ModStore::open(PathBuf::from(root).canonicalize()?)?;
+            let lock = if command == "package-rollback" {
+                store.package_rollback(id, confirmation)?
+            } else {
+                store.package_uninstall(id, confirmation)?
+            };
+            serde_json::to_value(lock).map_err(io::Error::other)
+        }
         [command, user, project] if command == "pi-discover" => {
             ModStore::discover_pi(&PathBuf::from(user), &PathBuf::from(project))
         }

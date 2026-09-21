@@ -20,6 +20,7 @@ pub use view::mod_key_name;
 mod outcome;
 pub use outcome::ModCommandOutcome;
 pub use outcome::ModInputDecision;
+mod package_manager;
 mod process;
 pub use bridge::ModHostCall;
 mod store;
@@ -37,6 +38,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
 
+pub use package_manager::ModInstallRequest;
+pub use package_manager::ModPackageGrant;
+pub use package_manager::ModPackageLock;
+pub use package_manager::ModPackagePlan;
+pub use package_manager::ModPackageSource;
+pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 
 pub const CODEX_HOST_RELEASE: &str = "0.154.0";
@@ -50,6 +57,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "author_offline_runner_v1",
     "author_tooling_v1",
     "installed_contract_types_v1",
+    "package_manager_v1",
     "service_contracts_v1",
     "source_use_v1",
     "state_migration_v1",
@@ -484,7 +492,13 @@ pub struct ModPackage {
     pub id: String,
     pub version: String,
     pub api: String,
+    #[serde(default = "default_entrypoint")]
+    pub entrypoint: String,
     pub state_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ModProvenance>,
     #[serde(default)]
     pub compatibility: ModHostCompatibility,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -492,12 +506,38 @@ pub struct ModPackage {
     pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<ModDependency>,
     #[serde(default)]
     pub services: ModServiceManifest,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub lifecycle: BTreeMap<String, String>,
     #[serde(default = "default_hook_budget_ms")]
     pub hook_budget_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModProvenance {
+    pub maintainer: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModDependency {
+    pub id: String,
+    pub version: String,
+}
+
+fn default_entrypoint() -> String {
+    "index.ts".to_owned()
 }
 
 fn default_hook_budget_ms() -> u64 {
@@ -576,6 +616,7 @@ impl ModPackage {
             || self.state_version == 0
             || !version(&self.version)
             || !(25..=2000).contains(&self.hook_budget_ms)
+            || !package_file(&self.entrypoint)
         {
             return Err(failure(
                 "incompatible_package: valid identity/version, supported API and positive state_version required",
@@ -608,6 +649,52 @@ impl ModPackage {
             return Err(failure(
                 "invalid_requires: up to four distinct other mod IDs",
             ));
+        }
+        let dependencies: BTreeSet<_> = self.dependencies.iter().map(|item| &item.id).collect();
+        if self.dependencies.len() > 16
+            || dependencies.len() != self.dependencies.len()
+            || self.dependencies.iter().any(|dependency| {
+                !identifier(&dependency.id)
+                    || dependency.id == self.id
+                    || !version_requirement(&dependency.version)
+            })
+        {
+            return Err(failure("invalid_dependencies"));
+        }
+        if self.requires.iter().any(|id| dependencies.contains(id)) {
+            return Err(failure("dependency_declared_twice"));
+        }
+        if let Some(license) = &self.license
+            && (license.is_empty()
+                || license.len() > 128
+                || !license.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric()
+                        || matches!(byte, b'-' | b'.' | b'+' | b'(' | b')' | b' ')
+                }))
+        {
+            return Err(failure("invalid_license"));
+        }
+        if let Some(provenance) = &self.provenance
+            && (provenance.maintainer.is_empty()
+                || provenance.maintainer.len() > 128
+                || provenance.source.is_empty()
+                || provenance.source.len() > 1024
+                || provenance
+                    .revision
+                    .as_deref()
+                    .is_some_and(|value| value.is_empty() || value.len() > 128))
+        {
+            return Err(failure("invalid_provenance"));
+        }
+        if let Some(schema) = &self.settings_schema {
+            validate_settings_schema(schema)?;
+        }
+        if self.lifecycle.len() > 3
+            || self.lifecycle.iter().any(|(event, path)| {
+                !["install", "update", "uninstall"].contains(&event.as_str()) || !package_file(path)
+            })
+        {
+            return Err(failure("invalid_lifecycle_scripts"));
         }
         let environments: BTreeSet<_> = self.environment.iter().collect();
         if environments.len() != self.environment.len()
@@ -671,6 +758,158 @@ impl ModPackage {
         }
         Ok(())
     }
+}
+
+fn package_file(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.ends_with(".ts")
+        && !value.starts_with('/')
+        && value.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
+}
+
+fn version_requirement(value: &str) -> bool {
+    SemanticVersion::parse(value.strip_prefix('^').unwrap_or(value)).is_some()
+}
+
+fn validate_settings_schema(schema: &Value) -> Result<()> {
+    let object = schema
+        .as_object()
+        .ok_or_else(|| failure("settings_schema_must_be_object"))?;
+    if object.keys().any(|key| {
+        !["type", "properties", "required", "additionalProperties"].contains(&key.as_str())
+    }) || object.get("type") != Some(&json!("object"))
+        || object
+            .get("additionalProperties")
+            .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(failure("unsupported_settings_schema"));
+    }
+    let properties = object
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or_else(|| failure("settings_schema_properties_required"))?;
+    if properties.len() > 64 {
+        return Err(failure("settings_schema_limit"));
+    }
+    for (name, definition) in properties {
+        if !identifier(name) {
+            return Err(failure("invalid_setting_name"));
+        }
+        let definition = definition
+            .as_object()
+            .ok_or_else(|| failure("invalid_setting_schema"))?;
+        if definition
+            .keys()
+            .any(|key| !["type", "enum", "default"].contains(&key.as_str()))
+        {
+            return Err(failure("unsupported_setting_schema"));
+        }
+        let kind = definition
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| failure("setting_type_required"))?;
+        if !["boolean", "number", "string", "array", "object", "null"].contains(&kind) {
+            return Err(failure("unsupported_setting_type"));
+        }
+        if let Some(values) = definition.get("enum") {
+            let values = values
+                .as_array()
+                .filter(|values| !values.is_empty() && values.len() <= 32)
+                .ok_or_else(|| failure("invalid_setting_enum"))?;
+            if values.iter().any(|value| !setting_type(value, kind)) {
+                return Err(failure("setting_enum_type_mismatch"));
+            }
+        }
+        if let Some(default) = definition.get("default")
+            && !setting_value(default, definition)
+        {
+            return Err(failure("setting_default_invalid"));
+        }
+    }
+    if let Some(required) = object.get("required") {
+        let required = required
+            .as_array()
+            .ok_or_else(|| failure("invalid_required_settings"))?;
+        let mut unique = BTreeSet::new();
+        if required.len() > properties.len()
+            || required.iter().any(|name| {
+                name.as_str()
+                    .is_none_or(|name| !properties.contains_key(name) || !unique.insert(name))
+            })
+        {
+            return Err(failure("invalid_required_settings"));
+        }
+    }
+    Ok(())
+}
+
+fn setting_type(value: &Value, kind: &str) -> bool {
+    match kind {
+        "boolean" => value.is_boolean(),
+        "number" => value.is_number(),
+        "string" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        "null" => value.is_null(),
+        _ => false,
+    }
+}
+
+fn setting_value(value: &Value, definition: &serde_json::Map<String, Value>) -> bool {
+    definition
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| setting_type(value, kind))
+        && definition
+            .get("enum")
+            .and_then(Value::as_array)
+            .is_none_or(|values| values.contains(value))
+}
+
+fn validate_settings(package: &ModPackage, settings: &BTreeMap<String, Value>) -> Result<()> {
+    let Some(schema) = &package.settings_schema else {
+        return Ok(());
+    };
+    let object = schema
+        .as_object()
+        .ok_or_else(|| failure("invalid_settings_schema"))?;
+    let properties = object["properties"]
+        .as_object()
+        .ok_or_else(|| failure("invalid_settings_schema"))?;
+    if object.get("additionalProperties") == Some(&json!(false))
+        && settings.keys().any(|name| !properties.contains_key(name))
+    {
+        return Err(failure("unknown_setting"));
+    }
+    for required in object
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if required
+            .as_str()
+            .is_none_or(|name| !settings.contains_key(name))
+        {
+            return Err(failure("required_setting_missing"));
+        }
+    }
+    for (name, value) in settings {
+        if let Some(definition) = properties.get(name).and_then(Value::as_object)
+            && !setting_value(value, definition)
+        {
+            return Err(failure(format!("invalid_setting: {name}")));
+        }
+    }
+    Ok(())
 }
 
 fn identifier_list(values: &[String], limit: usize) -> bool {
@@ -950,6 +1189,7 @@ impl ModHost {
                 {
                     return Err(failure(format!("capability_denied: {}", package.id)));
                 }
+                validate_settings(&package, &selection.settings)?;
                 Ok((package, source))
             })();
             let (package, source) = match loaded {
@@ -1131,6 +1371,13 @@ impl ModHost {
         dependencies.extend(
             loaded
                 .package
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.id.clone()),
+        );
+        dependencies.extend(
+            loaded
+                .package
                 .services
                 .imports
                 .iter()
@@ -1152,7 +1399,25 @@ impl ModHost {
             let unavailable: Vec<(String, String)> = next
                 .iter()
                 .filter(|(_, m)| m.error.is_none())
-                .filter_map(|(id, _)| {
+                .filter_map(|(id, loaded)| {
+                    if let Some(dependency) = loaded.package.dependencies.iter().find(|dependency| {
+                        next.get(&dependency.id).is_some_and(|candidate| {
+                            candidate.error.is_none()
+                                && !service_version_satisfies(
+                                    &dependency.version,
+                                    &candidate.package.version,
+                                )
+                        })
+                    }) {
+                        let actual = &next[&dependency.id].package.version;
+                        return Some((
+                            id.clone(),
+                            format!(
+                                "dependency_version_incompatible: {id} requires {} {} but {} is active",
+                                dependency.id, dependency.version, actual
+                            ),
+                        ));
+                    }
                     Self::dependencies(id, next)
                         .iter()
                         .find(|required| next.get(*required).is_none_or(|m| m.error.is_some()))
@@ -1941,6 +2206,9 @@ impl ModHost {
             "service_calls": self.service_calls,
             "mods": self.loaded.iter().map(|(id, m)| json!({"id": id, "version": m.package.version,
                 "api":m.package.api,"api_stability":api_support(&m.package.api).map(|support|support.0),
+                "entrypoint":m.package.entrypoint,"license":m.package.license,
+                "provenance":m.package.provenance,"dependencies":m.package.dependencies,
+                "settings_schema":m.package.settings_schema,"lifecycle":m.package.lifecycle.keys().collect::<Vec<_>>(),
                 "package_schema":m.package.schema,"state_version":m.package.state_version,
                 "host_compatibility":m.package.compatibility,
                 "negotiated_features":{"required":m.package.compatibility.required_features,
