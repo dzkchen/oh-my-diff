@@ -881,8 +881,9 @@
     },
     {
       "id": "limits",
-      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a 6 s execution budget and 64 KiB state.",
+      "rule": "Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including host-call replays, and 64 KiB state.",
       "evidence": [
+        "rust:host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget",
         "rust:mod_context_is_bounded_and_callback_failure_is_isolated",
         "rust:mod_pending_callback_has_a_host_deadline",
         "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views"

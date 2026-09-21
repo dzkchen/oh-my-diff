@@ -57,7 +57,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             model = body["model"]
             native_owner = self.headers.get("x-omd-owner")
             owner = native_owner
-            if scenario in ("runner", "omd-off") and owner is None:
+            if scenario == "omd-off" and owner is None:
                 owner = {"gpt-5.6-sol": "lead", "muse-spark-1.3-contributor": "contributor", "gpt-6-astra": "reviewer"}[model]
             requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": native_owner, "body": body})
             if owner and owner.startswith("mod-") and "MOD_CANCEL" in json.dumps(body):

@@ -7,7 +7,7 @@ public release.
 ## Prerequisites
 
 - This Oh My Diff checkout, including `runtime/lean-v1.lock.json`.
-- The supported upstream `codex-cli 0.154.0` executable on `PATH`.
+- The supported upstream `codex-cli 0.155.1` executable on `PATH`.
 - Rust `1.95.0` available through rustup.
 - Standalone pnpm `11.14.0` for source browser provisioning.
 - A new install prefix and a new launcher directory outside `CODEX_HOME` and

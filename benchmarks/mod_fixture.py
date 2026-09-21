@@ -404,7 +404,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
             "api": API_VERSION,
             "state_version": 1,
             "capabilities": capabilities,
-            "hook_budget_ms": 2000,
+            "hook_budget_ms": 1000,
         }
     ).encode()
     (package / "mod.json").write_bytes(package_manifest)

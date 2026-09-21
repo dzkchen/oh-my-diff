@@ -62,7 +62,7 @@ operation that is not documented here fails `scripts/mod_conformance.py`.
 
 ## What this adds over the native plugins and hooks
 
-Pinned Codex 0.154.0 ships plugins (`plugin.json`: skills, prompts, MCP servers,
+Pinned Codex 0.155.1 ships plugins (`plugin.json`: skills, prompts, MCP servers,
 hook files) and hooks for `pre_tool_use`, `permission_request`, `post_tool_use`,
 `pre_compact`, `post_compact`, `session_start`, `session_end`,
 `user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.
@@ -124,7 +124,7 @@ deterministic and composable; the added control per decision is:
 
 - **streaming** — Mod tool progress streams into the live panel during the call and leaves one labelled activity line when it completes; replayed host calls never duplicate an update.
 
-- **limits** — Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a 6 s execution budget and 64 KiB state.
+- **limits** — Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including host-call replays, and 64 KiB state.
 
 - **first_party_parity** — First-party mods use the published API only. `omd_coordination` and `omd_workspace` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run in the conformance fixture beside outside packages under the same rules.
 
@@ -182,5 +182,5 @@ Each reference is resolved by `scripts/mod_conformance.py`.
 | reload | `rust:mod_reload_is_transactional_and_stale_calls_are_rejected` · `rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation` · `terminal:reload_applies_the_edit` · `terminal:session_preserved_across_reload` |
 | cancellation | `rust:mod_cancellation_discards_state_and_explicit_reload_recovers` · `rust:mod_pending_callback_has_a_host_deadline` · `fixture:cancel/success` · `terminal:cancelled_turn_recorded` |
 | streaming | `rust:tool_progress_is_forwarded_once_across_host_call_replay` · `fixture:conformance/success` · `terminal:activity_line` |
-| limits | `rust:mod_context_is_bounded_and_callback_failure_is_isolated` · `rust:mod_pending_callback_has_a_host_deadline` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` |
+| limits | `rust:host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget` · `rust:mod_context_is_bounded_and_callback_failure_is_isolated` · `rust:mod_pending_callback_has_a_host_deadline` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` |
 | first_party_parity | `python:test_first_party_mods_use_only_the_published_api` · `fixture:conformance/success` |

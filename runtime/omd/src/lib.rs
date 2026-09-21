@@ -215,6 +215,7 @@ pub use workspace::tracked_paths;
 pub use mods::CODEX_HOST_RELEASE;
 pub use mods::INSTALLED_CONTRACT_TYPES_VERSION;
 pub use mods::MOD_API_VERSION;
+pub use mods::MOD_CALLBACK_TOTAL_BUDGET_MS;
 pub use mods::MOD_CAPABILITIES;
 pub use mods::MOD_EVENTS;
 pub use mods::MOD_HOST_FEATURES;

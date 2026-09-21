@@ -1,6 +1,6 @@
 # Oh My Diff mod preview
 
-A private preview of two first-party TypeScript mods on the pinned Codex 0.154.0
+A private preview of two first-party TypeScript mods on the pinned Codex 0.155.1
 OMD host, Apple Silicon macOS and Node 24.18.0. You can read, edit and reload
 both of them without rebuilding Codex.
 

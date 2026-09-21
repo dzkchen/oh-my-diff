@@ -1,7 +1,7 @@
 # Controlled Contributor experiment
 
 This experimental patch links the completed Oh My Diff controls into pinned
-Codex `rust-v0.154.0`. The custom binary has an explicit upstream-style direct
+Codex `rust-v0.155.1`. The custom binary has an explicit upstream-style direct
 mode that returns before registering any Oh My Diff task hook:
 
 ```sh

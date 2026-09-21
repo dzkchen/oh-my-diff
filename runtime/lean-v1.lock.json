@@ -4,21 +4,21 @@
   "frozen_at": "2026-09-15",
   "upstream": {
     "repository": "https://github.com/openai/codex.git",
-    "tag": "rust-v0.154.0",
-    "commit": "6b9826e3aa83b1a5947db50f4332cb9c65f1b340",
+    "tag": "rust-v0.155.1",
+    "commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
     "rust_toolchain": "1.95.0",
     "target": "aarch64-apple-darwin",
-    "normalized_cargo_lock_sha256": "34726731e842976085e3c122f62ddd5c8d6555bdcb32f5e9361c8e27fb0795bf"
+    "normalized_cargo_lock_sha256": "df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7"
   },
   "runtime_patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "d8089b76306ac526befaa51afee39391a2c232d31f171c9d5896763865af115c"
+    "sha256": "a5729ac7560411749405ad1194d39367a132a2a81e9c42808f68b1907f529f40"
   },
   "private_installation": {
     "manager": "scripts/private_lean_v1.py",
     "build": "cargo +1.95.0 build --locked --release -p codex-cli --bin codex -p codex-omd --bin omd-mod",
     "default_activation": "omd:upstream_direct",
-    "supported_upstream": "codex-cli 0.154.0",
+    "supported_upstream": "codex-cli 0.155.1",
     "shared_state": "inherit CODEX_HOME and CODEX_SQLITE_HOME unchanged",
     "linux_benchmark_runtime": false
   },

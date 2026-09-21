@@ -25,6 +25,10 @@ GROUPS = {
 }
 
 
+def codex_release():
+    return re.search(r'CODEX_HOST_RELEASE: &str = "([^"]+)"', HOST.read_text()).group(1)
+
+
 def host_sets():
     source = HOST.read_text()
 
@@ -166,7 +170,7 @@ def render(contract):
     out += [
         "## What this adds over the native plugins and hooks",
         "",
-        "Pinned Codex 0.154.0 ships plugins (`plugin.json`: skills, prompts, MCP servers,",
+        f"Pinned Codex {codex_release()} ships plugins (`plugin.json`: skills, prompts, MCP servers,",
         "hook files) and hooks for `pre_tool_use`, `permission_request`, `post_tool_use`,",
         "`pre_compact`, `post_compact`, `session_start`, `session_end`,",
         "`user_prompt_submit`, `subagent_start`, `subagent_stop`, `stop` and `interrupt`.",

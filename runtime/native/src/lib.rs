@@ -1042,7 +1042,7 @@ fn contract_runtime(
     }
     let snapshot: ContractSnapshot =
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-    let mut active = ActiveContract::restore(snapshot, &binding).map_err(|e| e.to_string())?;
+    let mut active = ActiveContract::resume(snapshot, &binding).map_err(|e| e.to_string())?;
     if *active.contract() == requested {
         return Ok(active);
     }

@@ -46,9 +46,10 @@ pub use package_manager::ModPackageSource;
 pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 
-pub const CODEX_HOST_RELEASE: &str = "0.154.0";
+pub const CODEX_HOST_RELEASE: &str = "0.155.1";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.1.0-experimental.6";
+pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
 pub const INSTALLED_CONTRACT_TYPES_VERSION: u32 = 1;

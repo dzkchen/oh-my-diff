@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.1.0-experimental.6` on OMD `0.1.0` and Codex `0.154.0`. The package's
+`0.1.0-experimental.6` on OMD `0.1.0` and Codex `0.155.1`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. A store also generates
 `active-host.d.ts` and `installed-contracts.d.ts`; those files identify the
 running host and the exact service contracts available to consumers.
@@ -116,6 +116,12 @@ causes from inside its own in-flight callback — a spawned agent, or a native
 contribution — is sent on the route already authorized for it, without that
 runtime's request, stream or thread-configuration hooks. Requests a mod did not
 cause from inside a callback still run every registered hook.
+
+`hook_budget_ms` bounds each JavaScript evaluation, not their sum. A callback
+that makes host calls is replayed once per call, so the host re-runs the module
+and that replay cost is the host's, not the mod's. The callback as a whole,
+including every replay, is bounded by a separate 5 s host total; exceeding
+either bound fails the callback with `callback_execution_budget`.
 
 Dependencies run before consumers and remaining mods use lexical ID order.
 Project scope shadows user scope without inheriting its state or grants.

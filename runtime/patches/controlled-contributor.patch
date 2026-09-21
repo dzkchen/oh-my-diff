@@ -1,16 +1,16 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..320615eb0f325a80f9a44dbba2fc10a36ec12475 100644
+index c0daede522bd36a2a8de149b83d93c7baafe888b..414078e844ae28851454af09ba39dd35994f0623 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -2212,6 +2212,7 @@ dependencies = [
-  "codex-model-provider",
+@@ -2213,6 +2213,7 @@ dependencies = [
   "codex-model-provider-info",
   "codex-models-manager",
+  "codex-network-proxy",
 + "codex-omd-extension",
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4098,6 +4099,44 @@ dependencies = [
+@@ -4147,6 +4148,44 @@ dependencies = [
   "wiremock",
  ]
  
@@ -29,7 +29,7 @@ index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..320615eb0f325a80f9a44dbba2fc10a3
 +
 +[[package]]
 +name = "codex-omd-extension"
-+version = "0.154.0"
++version = "0.155.1"
 +dependencies = [
 + "codex-api",
 + "codex-client",
@@ -54,8 +54,8 @@ index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..320615eb0f325a80f9a44dbba2fc10a3
 +
  [[package]]
  name = "codex-otel"
- version = "0.154.0"
-@@ -4675,6 +4714,7 @@ dependencies = [
+ version = "0.155.1"
+@@ -4726,6 +4765,7 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -64,7 +64,7 @@ index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..320615eb0f325a80f9a44dbba2fc10a3
   "codex-plugin",
   "codex-protocol",
 diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
-index 3cf0d009a8ecede0fb207cc9ec40ebef30f59b09..6ae89c0f56145c5bbf0c08310c8b32dfe0c2d9d1 100644
+index 64304afb510ecea87637d28f90ce95581dee6fe7..157bf665c95f7a630cd07defaf423ea9e01692d4 100644
 --- a/codex-rs/Cargo.toml
 +++ b/codex-rs/Cargo.toml
 @@ -1,5 +1,7 @@
@@ -75,7 +75,7 @@ index 3cf0d009a8ecede0fb207cc9ec40ebef30f59b09..6ae89c0f56145c5bbf0c08310c8b32df
      "aws-auth",
      "analytics",
      "agent-graph-store",
-@@ -158,6 +160,7 @@ edition = "2024"
+@@ -160,6 +162,7 @@ edition = "2024"
  license = "Apache-2.0"
  
  [workspace.dependencies]
@@ -84,7 +84,7 @@ index 3cf0d009a8ecede0fb207cc9ec40ebef30f59b09..6ae89c0f56145c5bbf0c08310c8b32df
  codex-realtime-webrtc = { path = "realtime-webrtc" }
  app_test_support = { path = "app-server/tests/common" }
 diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
-index c64b15b998c5722651a7a4dafe0b0ca299a6a03b..04ff16ca6b3c4ad4a08f32007f74808078d05b43 100644
+index 0643950835a4842af9e7a317fd4598dd31514125..f12900445a8b410c6fabaf79d514294d14742140 100644
 --- a/codex-rs/app-server/Cargo.toml
 +++ b/codex-rs/app-server/Cargo.toml
 @@ -25,6 +25,7 @@ doctest = false
@@ -96,21 +96,24 @@ index c64b15b998c5722651a7a4dafe0b0ca299a6a03b..04ff16ca6b3c4ad4a08f32007f748080
  base64 = { workspace = true }
  axum = { workspace = true, default-features = false, features = [
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 929eab5392eabd6c06a3c723060232db7203f597..d3da68fd0ae9d28418ababa21d9889b2569b226b 100644
+index 46af9c9a9c97129833e0749e46bb1410db436961..bc73cc5b219b07e2a840d87a900ecc8a44082d8e 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
-@@ -76,6 +76,9 @@ where
+@@ -80,6 +80,12 @@ where
      if let Some(queue_service) = queue_service {
          codex_queue_extension::install(&mut builder, queue_service);
      }
 +    if let Err(error) = codex_omd_extension::install(&mut builder, thread_manager.clone()) {
-+        panic!("controlled runtime activation failed: {error}");
++        // Fail closed without unwinding: a panic here lands on a worker task and strands the
++        // runtime instead of reporting the refusal.
++        eprintln!("controlled runtime activation failed: {error}");
++        std::process::exit(70);
 +    }
      codex_history_notes_extension::install(&mut builder, auth_manager.clone());
      if let Some(state_db) = state_db {
          codex_goal_extension::install_with_backend(
 diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
-index 50aa97352b0795d71e2989683c4231c7d1e2e1f8..d49bf827cb6b48e039b5fbabd73451b1d4c738e5 100644
+index ee42ceb1e589061335026f39d3937adb646c2ade..38f2cc5b6f1cb10ce5f50cbfb33af7b05c6b1456 100644
 --- a/codex-rs/cli/src/main.rs
 +++ b/codex-rs/cli/src/main.rs
 @@ -68,6 +68,8 @@ mod exec_server_telemetry;
@@ -122,7 +125,7 @@ index 50aa97352b0795d71e2989683c4231c7d1e2e1f8..d49bf827cb6b48e039b5fbabd73451b1
  mod plugin_cmd;
  mod queue_cmd;
  mod remote_control_cmd;
-@@ -1116,6 +1118,10 @@ fn stage_str(stage: Stage) -> &'static str {
+@@ -1123,6 +1125,10 @@ fn stage_str(stage: Stage) -> &'static str {
  }
  
  fn main() -> anyhow::Result<()> {
@@ -293,7 +296,7 @@ index 7849225b5cbb6c37456d14e85b3fe069d878ada3..edb29b7ce5e56a130e7c71fb02a302ab
              },
          )
 diff --git a/codex-rs/codex-api/src/lib.rs b/codex-rs/codex-api/src/lib.rs
-index 7287cb29d2e610263d71c3b33bf4a475d75b02f0..64d6e8debc55e91cd892e4f85e0f2063515f0c3a 100644
+index 92507807f63c200ad80b1861dc4ab63b3f1be148..ae55dd9e51ca70a5726e7d171559df78de668cc2 100644
 --- a/codex-rs/codex-api/src/lib.rs
 +++ b/codex-rs/codex-api/src/lib.rs
 @@ -7,6 +7,7 @@ pub(crate) mod files;
@@ -555,37 +558,40 @@ index e4f5f04d62b3834cef16cf222cb55f288ca50841..0c5590baf3289aa30f11df82416d4cdb
                  let is_completed = matches!(event, ResponseEvent::Completed { .. });
                  if tx_event.send(Ok(event)).await.is_err() {
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
-index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d8914bba1 100644
+index 95b78ebace7b9e2ae6e44163234b979d8531aad5..189c1ed6d288c5f991249751282b1118b0e1049b 100644
 --- a/codex-rs/core/src/exec.rs
 +++ b/codex-rs/core/src/exec.rs
-@@ -117,6 +117,9 @@ pub enum ExecCapturePolicy {
-     /// Trusted internal helpers can buffer the full child output in memory
-     /// without the shell-oriented output cap or exec-expiration behavior.
-     FullBuffer,
+@@ -121,6 +121,9 @@ pub enum ExecCapturePolicy {
+     FullBufferWithExpiration,
+     /// Full-buffer helpers that honor expiration and suppress unredacted sandbox diagnostics.
+     SensitiveFullBuffer,
 +    Controlled {
 +        max_bytes: usize,
 +    },
  }
  
  fn select_process_exec_tool_sandbox_type(
-@@ -267,6 +270,7 @@ impl ExecCapturePolicy {
+@@ -271,6 +274,7 @@ impl ExecCapturePolicy {
          match self {
              Self::ShellTool => Some(EXEC_OUTPUT_MAX_BYTES),
-             Self::FullBuffer => None,
+             Self::FullBuffer | Self::FullBufferWithExpiration | Self::SensitiveFullBuffer => None,
 +            Self::Controlled { max_bytes } => Some(max_bytes),
          }
      }
  
-@@ -276,7 +280,7 @@ impl ExecCapturePolicy {
+@@ -280,7 +284,10 @@ impl ExecCapturePolicy {
  
      fn uses_expiration(self) -> bool {
          match self {
--            Self::ShellTool => true,
-+            Self::ShellTool | Self::Controlled { .. } => true,
+-            Self::ShellTool | Self::FullBufferWithExpiration | Self::SensitiveFullBuffer => true,
++            Self::ShellTool
++            | Self::FullBufferWithExpiration
++            | Self::SensitiveFullBuffer
++            | Self::Controlled { .. } => true,
              Self::FullBuffer => false,
          }
      }
-@@ -339,6 +343,9 @@ pub fn build_exec_request(
+@@ -343,6 +350,9 @@ pub fn build_exec_request(
          justification: _,
          sandbox_permissions: _,
      } = params;
@@ -595,7 +601,7 @@ index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d
  
      let enforce_managed_network = network.is_some();
      let sandbox_type = select_process_exec_tool_sandbox_type(
-@@ -364,7 +371,11 @@ pub fn build_exec_request(
+@@ -368,7 +378,11 @@ pub fn build_exec_request(
      let cwd = PathUri::from_abs_path(&cwd);
      let sandbox_policy_cwd_uri = PathUri::from_abs_path(sandbox_cwd);
  
@@ -608,7 +614,7 @@ index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d
      let command = SandboxCommand {
          program: program.clone().into(),
          args: args.to_vec(),
-@@ -960,6 +971,21 @@ async fn consume_output(
+@@ -967,6 +981,21 @@ async fn consume_output(
          ))
      })?;
  
@@ -630,7 +636,7 @@ index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d
      let retained_bytes_cap = capture_policy.retained_bytes_cap();
      let stdout_handle = tokio::spawn(read_output(
          BufReader::new(stdout_reader),
-@@ -1039,6 +1065,8 @@ async fn consume_output(
+@@ -1049,6 +1078,8 @@ async fn consume_output(
          }
      };
  
@@ -640,10 +646,10 @@ index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d
      use tokio::task::JoinHandle;
  
 diff --git a/codex-rs/core/src/hook_runtime.rs b/codex-rs/core/src/hook_runtime.rs
-index e17f1508e7ffdb313af4c444d36dc4248e4d680b..b7f3e7c1312f2e87ca77cbb173b54f02848ee155 100644
+index bdd5663def6bb487113727a8efb8a36e7b73a0e5..a5d1bb7c99d42c2178f6074f66416cb3fe2b20a9 100644
 --- a/codex-rs/core/src/hook_runtime.rs
 +++ b/codex-rs/core/src/hook_runtime.rs
-@@ -525,11 +525,34 @@ pub(crate) async fn run_turn_interrupt_hooks(
+@@ -526,11 +526,34 @@ pub(crate) async fn run_turn_interrupt_hooks(
      emit_hook_completed_events(sess, turn_context, outcome.hook_events).await;
  }
  
@@ -678,7 +684,7 @@ index e17f1508e7ffdb313af4c444d36dc4248e4d680b..b7f3e7c1312f2e87ca77cbb173b54f02
      let request = codex_hooks::PreCompactRequest {
          session_id: sess.session_id().into(),
          turn_id: turn_context.sub_id.clone(),
-@@ -567,6 +590,7 @@ pub(crate) async fn run_post_compact_hooks(
+@@ -568,6 +591,7 @@ pub(crate) async fn run_post_compact_hooks(
      turn_context: &Arc<TurnContext>,
      trigger: CompactionTrigger,
  ) -> PostCompactHookOutcome {
@@ -686,7 +692,7 @@ index e17f1508e7ffdb313af4c444d36dc4248e4d680b..b7f3e7c1312f2e87ca77cbb173b54f02
      let request = codex_hooks::PostCompactRequest {
          session_id: sess.session_id().into(),
          turn_id: turn_context.sub_id.clone(),
-@@ -828,8 +852,8 @@ impl HookRuntimeOutcome {
+@@ -831,8 +855,8 @@ impl HookRuntimeOutcome {
  }
  
  pub(crate) async fn record_additional_contexts(
@@ -698,10 +704,10 @@ index e17f1508e7ffdb313af4c444d36dc4248e4d680b..b7f3e7c1312f2e87ca77cbb173b54f02
  ) {
      let developer_messages = additional_context_messages(additional_contexts);
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index b064e2456691b940c5bf4adcf8dfc4646dc62fe5..d51e15343ea11c72ec120048962f926ebf5f0a01 100644
+index d08dcd62a9fc77c526f8b3ef8aef43f5cc87babf..c4cbd09351ab6f1066a4938425e65aafbc4a1970 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
-@@ -200,6 +200,7 @@ pub(super) async fn handle(
+@@ -205,6 +205,7 @@ pub(super) async fn handle(
      mode: TurnInputMode,
      submission_id: String,
  ) -> CodexResult<TurnInputSubmission> {
@@ -709,7 +715,7 @@ index b064e2456691b940c5bf4adcf8dfc4646dc62fe5..d51e15343ea11c72ec120048962f926e
      match mode {
          TurnInputMode::StartOrSteer => start_or_steer(session, request, submission_id).await,
          TurnInputMode::StartIfIdle => {
-@@ -219,6 +220,78 @@ pub(super) async fn handle(
+@@ -224,6 +225,78 @@ pub(super) async fn handle(
      }
  }
  
@@ -789,27 +795,27 @@ index b064e2456691b940c5bf4adcf8dfc4646dc62fe5..d51e15343ea11c72ec120048962f926e
      session: &Arc<Session>,
      thread_settings: ThreadSettingsOverrides,
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877a2b36b53 100644
+index 7fc5f3ac729f201bbde7d8768310ce3c6995c1a4..6e70684a85d27e6b13b7056ef28afcb8efc34521 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
-@@ -241,6 +241,8 @@ pub struct StartThreadOptions {
-     pub environments: Option<Vec<TurnEnvironmentSelection>>,
+@@ -245,6 +245,8 @@ pub struct StartThreadOptions {
+     pub user_instructions: Option<LoadedUserInstructions>,
      pub thread_extension_init: ExtensionDataInit,
      pub client_mcp_extensions: ClientMcpExtensions,
 +    /// Optional isolated extension registry for a controlled child session.
 +    pub isolated_extensions: Option<Arc<ExtensionRegistry<Config>>>,
      /// Thread ID reserved before startup so the caller can associate host-owned state with it.
      pub reserved_thread_id: Option<ThreadId>,
- }
-@@ -260,6 +262,7 @@ impl StartThreadOptions {
-             environments: None,
+     /// Initial thread-owned plugin selection; omission restores persisted settings.
+@@ -268,6 +270,7 @@ impl StartThreadOptions {
+             user_instructions: None,
              thread_extension_init: ExtensionDataInit::default(),
              client_mcp_extensions: ClientMcpExtensions::default(),
 +            isolated_extensions: None,
              reserved_thread_id: None,
+             disabled_plugin_ids: None,
          }
-     }
-@@ -275,6 +278,8 @@ struct ThreadSpawnRequest {
+@@ -284,6 +287,8 @@ struct ThreadSpawnRequest {
      inherited_environments: Option<TurnEnvironmentSnapshot>,
      inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
      user_shell_override: Option<crate::shell::Shell>,
@@ -818,7 +824,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
  }
  
  impl ThreadSpawnRequest {
-@@ -293,6 +298,8 @@ impl ThreadSpawnRequest {
+@@ -302,6 +307,8 @@ impl ThreadSpawnRequest {
              inherited_environments: None,
              inherited_exec_policy: None,
              user_shell_override: None,
@@ -827,7 +833,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
          }
      }
  }
-@@ -1008,6 +1015,23 @@ impl ThreadManager {
+@@ -1023,6 +1030,23 @@ impl ThreadManager {
          Box::pin(self.state.spawn_thread(request)).await
      }
  
@@ -851,7 +857,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
      /// Allocates a thread ID before startup so a caller can associate host-owned state with it.
      pub fn reserve_thread_id(&self) -> ThreadId {
          self.state.thread_id_generator.as_ref()()
-@@ -1018,7 +1042,6 @@ impl ThreadManager {
+@@ -1033,7 +1057,6 @@ impl ThreadManager {
          mut options: StartThreadOptions,
          forked_from_thread_id: Option<ThreadId>,
      ) -> CodexResult<NewThread> {
@@ -859,7 +865,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
          let (resumed_session_source, resumed_thread_source) = options
              .initial_history
              .get_resumed_session_sources()
-@@ -1030,6 +1053,7 @@ impl ThreadManager {
+@@ -1045,6 +1068,7 @@ impl ThreadManager {
                  .unwrap_or(resumed_session_source),
          );
          options.thread_source = options.thread_source.take().or(resumed_thread_source);
@@ -867,7 +873,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
          let mut request =
              ThreadSpawnRequest::new(options, Arc::clone(&self.state.auth_manager), agent_control);
          request.forked_from_thread_id = forked_from_thread_id;
-@@ -1910,9 +1934,11 @@ impl ThreadManagerState {
+@@ -1918,9 +1942,11 @@ impl ThreadManagerState {
              inherited_environments,
              inherited_exec_policy,
              user_shell_override,
@@ -880,15 +886,15 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
              allow_provider_model_fallback,
              initial_history,
              history_mode,
-@@ -1924,6 +1950,7 @@ impl ThreadManagerState {
-             environments,
-             thread_extension_init,
+@@ -1934,6 +1960,7 @@ impl ThreadManagerState {
+             user_instructions: supplied_user_instructions,
+             mut thread_extension_init,
              client_mcp_extensions,
 +            isolated_extensions,
              reserved_thread_id,
+             disabled_plugin_ids,
          } = options;
-         let session_source = session_source.unwrap_or_else(|| self.session_source.clone());
-@@ -1961,29 +1988,37 @@ impl ThreadManagerState {
+@@ -1996,29 +2023,37 @@ impl ThreadManagerState {
                  threads.remove(&resumed.conversation_id);
              }
          }
@@ -898,9 +904,9 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
 -            extensions,
 -            mcp_manager,
 -            multi_agent_version,
--        ) = if crate::guardian::is_basic_session_source(&session_source) {
-+        let basic_session = crate::guardian::is_basic_session_source(&session_source);
-+        let user_instructions = if basic_session || !inherit_user_instructions {
+-        ) = if isolation == codex_extension_api::SessionIsolation::Isolated {
++        let isolated_session = isolation == codex_extension_api::SessionIsolation::Isolated;
++        let user_instructions = if isolated_session || !inherit_user_instructions {
 +            LoadedUserInstructions::default()
 +        } else {
 +            self.user_instructions_for_spawn(
@@ -910,7 +916,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
 +            )
 +            .await
 +        };
-+        let (extensions, mcp_manager, multi_agent_version) = if basic_session {
++        let (extensions, mcp_manager, multi_agent_version) = if isolated_session {
 +            (
 +                empty_extension_registry(),
 +                Arc::new(McpManager::new(Arc::clone(&self.plugins_manager))),
@@ -942,10 +948,10 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
                  Arc::clone(&self.extensions),
                  Arc::clone(&self.mcp_manager),
                  self.initial_multi_agent_version_for_spawn(
-@@ -1995,6 +2030,18 @@ impl ThreadManagerState {
-                 .await,
+@@ -2031,6 +2066,18 @@ impl ThreadManagerState {
              )
          };
+         let user_instructions = supplied_user_instructions.unwrap_or(user_instructions);
 +        if !matches!(session_source, SessionSource::SubAgent(_)) {
 +            for contributor in extensions.config_contributors() {
 +                contributor
@@ -953,7 +959,7 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
 +                    .map_err(CodexErr::Fatal)?;
 +            }
 +        }
-+        let inherited_exec_policy = if basic_session {
++        let inherited_exec_policy = if isolated_session {
 +            None
 +        } else {
 +            inherited_exec_policy
@@ -962,10 +968,10 @@ index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877
              .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
              .await;
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index bea620e154f8ade5d8ddf875e02ec5749031fbfd..8ce5e81cdcb8f8f6aec7824956b0ceebfef74a97 100644
+index 0d3a0ecf1af745035190ba2e3a6c96a2e71fbd63..7b44d91232d6cfcc62964fdab94979df916e0c40 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
-@@ -49,6 +49,46 @@ pub(crate) async fn notify_tool_start(
+@@ -51,6 +51,48 @@ pub(crate) async fn notify_tool_start(
      }
  }
  
@@ -983,6 +989,7 @@ index bea620e154f8ade5d8ddf875e02ec5749031fbfd..8ce5e81cdcb8f8f6aec7824956b0ceeb
 +    let thread_store = &invocation.session.services.thread_extension_data;
 +    let conversation_history = invocation.session.conversation_history_snapshot().await;
 +    let root_turn_id = invocation.turn.turn_metadata_state.root_turn_id();
++    let originating_item_id = invocation.originating_item_id().await;
 +
 +    for contributor in contributors {
 +        let replacement = contributor
@@ -993,6 +1000,7 @@ index bea620e154f8ade5d8ddf875e02ec5749031fbfd..8ce5e81cdcb8f8f6aec7824956b0ceeb
 +                turn_id: invocation.turn.sub_id.as_str(),
 +                root_turn_id: root_turn_id.as_deref(),
 +                call_id: invocation.call_id.as_str(),
++                originating_item_id: originating_item_id.as_ref(),
 +                tool_name: &invocation.tool_name,
 +                mcp_tool: None,
 +                payload: &invocation.payload,
@@ -1012,7 +1020,7 @@ index bea620e154f8ade5d8ddf875e02ec5749031fbfd..8ce5e81cdcb8f8f6aec7824956b0ceeb
  pub(crate) async fn process_mcp_tool_result(
      session: &Session,
      turn: &TurnContext,
-@@ -125,6 +165,30 @@ async fn notify_tool_finish_parts(
+@@ -127,6 +169,30 @@ async fn notify_tool_finish_parts(
              })
              .await;
      }
@@ -1044,10 +1052,10 @@ index bea620e154f8ade5d8ddf875e02ec5749031fbfd..8ce5e81cdcb8f8f6aec7824956b0ceeb
  
  pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
-index ad5086f500b7c16e245ee9a3011966921151dae5..dec4eb20237f4a844f94c63f743136c8ac1ed1bd 100644
+index ec5be4612536a335d7f6bb859c3d7ee3029497ac..34a2879e0cb8327e798c8d3ee55433cb6504abb8 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
 +++ b/codex-rs/core/src/tools/orchestrator.rs
-@@ -141,7 +141,17 @@ impl ToolOrchestrator {
+@@ -142,7 +142,17 @@ impl ToolOrchestrator {
          let mut already_approved = false;
  
          let environment = tool.turn_environment(req);
@@ -1066,7 +1074,7 @@ index ad5086f500b7c16e245ee9a3011966921151dae5..dec4eb20237f4a844f94c63f743136c8
          #[cfg(target_os = "macos")]
          let sandbox_manager = sandbox_manager.with_allowed_symlinked_codex_home(
              environment
-@@ -149,7 +159,6 @@ impl ToolOrchestrator {
+@@ -150,7 +160,6 @@ impl ToolOrchestrator {
                  .local_runtime_paths()
                  .and_then(|paths| paths.allowed_symlinked_codex_home.clone()),
          );
@@ -1075,7 +1083,7 @@ index ad5086f500b7c16e245ee9a3011966921151dae5..dec4eb20237f4a844f94c63f743136c8
          if owner_network_policy
              && tool
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index e73711f8e601e7f1e8a4c1490c0ee7894e14b61e..f9f129ff88c2c40171a8ca6cab26a04bbe3ef074 100644
+index 7cc8c128c3c5744960ed37e9c0d6d9cbadf24fee..c20823998f62bd2ab27f479601d8e9d877a274ea 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
 @@ -497,7 +497,6 @@ impl ToolRegistry {
@@ -1084,7 +1092,7 @@ index e73711f8e601e7f1e8a4c1490c0ee7894e14b61e..f9f129ff88c2c40171a8ca6cab26a04b
      ) -> Result<AnyToolResult, FunctionCallError> {
 -        let tool_name = invocation.tool_name.clone();
          let call_id_owned = invocation.call_id.clone();
-         let otel = invocation.turn.session_telemetry.clone();
+         let otel = invocation.step_context.session_telemetry.clone();
          // TODO(anp): Reconcile these tags with TurnEnvironment::sandbox_context
 @@ -512,6 +511,16 @@ impl ToolRegistry {
              }
@@ -1104,10 +1112,10 @@ index e73711f8e601e7f1e8a4c1490c0ee7894e14b61e..f9f129ff88c2c40171a8ca6cab26a04b
          let tool = match self.tool(&tool_name) {
              Some(tool) => tool,
 diff --git a/codex-rs/core/src/tools/registry_tests.rs b/codex-rs/core/src/tools/registry_tests.rs
-index 9808432f86205eb807980427ea3544b9c4b8c602..e0aed667a172b390366b489e6fba821f02127f51 100644
+index b09d12ba15ed281196b9d627e753bd79c5c4255a..d5edf7ec561439c6839a4ad1982075948046c970 100644
 --- a/codex-rs/core/src/tools/registry_tests.rs
 +++ b/codex-rs/core/src/tools/registry_tests.rs
-@@ -802,3 +802,84 @@ fn test_invocation(
+@@ -840,3 +840,84 @@ fn test_invocation(
          },
      }
  }
@@ -1242,7 +1250,7 @@ index c7c54fe8339c67c4287e10c2deb1bda45d6d5434..d8ae5e3eebbf943dfd3bff5a8b2bd86f
      exec_span.record("thread.id", primary_thread_id_for_span.as_str());
  
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 8c75997b6339597ddeb4eda8102e10d15c33022b..05b6a213149031eb6fb2241a62cda9e7b05b7f2e 100644
+index 89480df2f11ad4488521fae5b07ec7b1b8967987..c9034349c9507885ccfd6a8b39ab6229cf310862 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -53,10 +53,13 @@ pub use tool_lifecycle::ToolLifecycleFuture;
@@ -1259,7 +1267,7 @@ index 8c75997b6339597ddeb4eda8102e10d15c33022b..05b6a213149031eb6fb2241a62cda9e7
  pub use world_state::PreviousWorldStateSection;
  pub use world_state::RenderedWorldStateFragment;
  pub use world_state::WorldStateContributionInput;
-@@ -217,6 +220,37 @@ pub trait TurnLifecycleContributor: Send + Sync {
+@@ -227,6 +230,37 @@ pub trait TurnLifecycleContributor: Send + Sync {
              let _input = input;
          })
      }
@@ -1297,7 +1305,7 @@ index 8c75997b6339597ddeb4eda8102e10d15c33022b..05b6a213149031eb6fb2241a62cda9e7
  }
  
  /// Extension contribution that can add turn-local model input.
-@@ -243,6 +277,11 @@ pub trait TurnInputContributor: Send + Sync {
+@@ -253,6 +287,11 @@ pub trait TurnInputContributor: Send + Sync {
  /// Implementations should treat the supplied values as immutable before/after
  /// snapshots of the effective thread configuration.
  pub trait ConfigContributor<C>: Send + Sync {
@@ -1309,7 +1317,7 @@ index 8c75997b6339597ddeb4eda8102e10d15c33022b..05b6a213149031eb6fb2241a62cda9e7
      /// Called after the host commits a changed thread configuration.
      fn on_config_changed(
          &self,
-@@ -325,6 +364,20 @@ pub trait ToolContributor: Send + Sync {
+@@ -335,6 +374,20 @@ pub trait ToolContributor: Send + Sync {
  /// rewriting the invocation. Use `ToolContributor` for owning a tool implementation
  /// and hooks for policy that changes tool payloads.
  pub trait ToolLifecycleContributor: Send + Sync {
@@ -1330,7 +1338,7 @@ index 8c75997b6339597ddeb4eda8102e10d15c33022b..05b6a213149031eb6fb2241a62cda9e7
      /// Called after pre-tool hooks finalize an invocation and before execution.
      ///
      /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
-@@ -347,6 +400,20 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -357,6 +410,20 @@ pub trait ToolLifecycleContributor: Send + Sync {
      }
  }
  
@@ -1382,10 +1390,10 @@ index e2c9e4bf7bcfac17d1a1a9684629f71ba8539fcf..04384a2a700006ea048a5e861cc620fc
 +    pub turn_store: &'a ExtensionData,
 +}
 diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
-index 84f2ac0b8e024f68e4b1f477cbdcdf850aa423cf..339bb49b3725087d2a0bfcf3426bd6e93890c5b4 100644
+index 3daadfe87a58cd00facca7a64ec461b9147447bd..1239d5d18386d2367b1ee31dfc467f1edeadf835 100644
 --- a/codex-rs/ext/extension-api/src/lib.rs
 +++ b/codex-rs/ext/extension-api/src/lib.rs
-@@ -45,6 +45,7 @@ pub use contributors::ApprovalDecisionInput;
+@@ -50,6 +50,7 @@ pub use contributors::ApprovalDecisionInput;
  pub use contributors::ApprovalReviewContributor;
  pub use contributors::ApprovalReviewError;
  pub use contributors::ApprovalReviewInput;
@@ -1393,7 +1401,7 @@ index 84f2ac0b8e024f68e4b1f477cbdcdf850aa423cf..339bb49b3725087d2a0bfcf3426bd6e9
  pub use contributors::ConfigContributor;
  pub use contributors::ContextContributor;
  pub use contributors::ExtensionFuture;
-@@ -79,6 +80,7 @@ pub use contributors::ToolContributor;
+@@ -84,6 +85,7 @@ pub use contributors::ToolContributor;
  pub use contributors::ToolFinishInput;
  pub use contributors::ToolLifecycleContributor;
  pub use contributors::ToolLifecycleFuture;
@@ -1401,7 +1409,7 @@ index 84f2ac0b8e024f68e4b1f477cbdcdf850aa423cf..339bb49b3725087d2a0bfcf3426bd6e9
  pub use contributors::ToolStartInput;
  pub use contributors::TurnAbortInput;
  pub use contributors::TurnContextContributionInput;
-@@ -90,6 +92,8 @@ pub use contributors::TurnItemContributor;
+@@ -95,6 +97,8 @@ pub use contributors::TurnItemContributor;
  pub use contributors::TurnLifecycleContributor;
  pub use contributors::TurnStartInput;
  pub use contributors::TurnStopInput;
@@ -1411,7 +1419,7 @@ index 84f2ac0b8e024f68e4b1f477cbdcdf850aa423cf..339bb49b3725087d2a0bfcf3426bd6e9
  pub use contributors::WorldStateSectionContribution;
  pub use registry::ExtensionRegistry;
 diff --git a/codex-rs/ext/extension-api/src/registry.rs b/codex-rs/ext/extension-api/src/registry.rs
-index e4aeba9b5e6b60b318598e745f0dc6294ba505b7..d5a32165f2cbfd7cd031bf75774183b2163ba908 100644
+index dddd8b8ab00458a02cb3944a7a7e59c874e2982f..eb8888380f1b00eecf2bd87a96ac759751164ba2 100644
 --- a/codex-rs/ext/extension-api/src/registry.rs
 +++ b/codex-rs/ext/extension-api/src/registry.rs
 @@ -11,6 +11,7 @@ use crate::ThreadLifecycleContributor;
@@ -1422,7 +1430,7 @@ index e4aeba9b5e6b60b318598e745f0dc6294ba505b7..d5a32165f2cbfd7cd031bf75774183b2
  use crate::TurnInputContributor;
  use crate::TurnItemContributor;
  use crate::TurnLifecycleContributor;
-@@ -36,6 +37,7 @@ impl<C: Sync> Default for ExtensionRegistryBuilder<C> {
+@@ -38,6 +39,7 @@ impl<C: Sync> Default for ExtensionRegistryBuilder<C> {
                  turn_input_contributors: Vec::new(),
                  tool_contributors: Vec::new(),
                  tool_lifecycle_contributors: Vec::new(),
@@ -1430,7 +1438,7 @@ index e4aeba9b5e6b60b318598e745f0dc6294ba505b7..d5a32165f2cbfd7cd031bf75774183b2
                  turn_item_contributors: Vec::new(),
              },
          }
-@@ -125,6 +127,11 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
+@@ -132,6 +134,11 @@ impl<C: Sync> ExtensionRegistryBuilder<C> {
          self.registry.tool_lifecycle_contributors.push(contributor);
      }
  
@@ -1442,7 +1450,7 @@ index e4aeba9b5e6b60b318598e745f0dc6294ba505b7..d5a32165f2cbfd7cd031bf75774183b2
      /// Registers one ordered turn-item contributor.
      pub fn turn_item_contributor(&mut self, contributor: Arc<dyn TurnItemContributor>) {
          self.registry.turn_item_contributors.push(contributor);
-@@ -149,6 +156,7 @@ pub struct ExtensionRegistry<C: Sync> {
+@@ -157,6 +164,7 @@ pub struct ExtensionRegistry<C: Sync> {
      turn_input_contributors: Vec<Arc<dyn TurnInputContributor>>,
      tool_contributors: Vec<Arc<dyn ToolContributor>>,
      tool_lifecycle_contributors: Vec<Arc<dyn ToolLifecycleContributor>>,
@@ -1450,7 +1458,7 @@ index e4aeba9b5e6b60b318598e745f0dc6294ba505b7..d5a32165f2cbfd7cd031bf75774183b2
      turn_item_contributors: Vec<Arc<dyn TurnItemContributor>>,
      approval_review_contributors: Vec<Arc<dyn ApprovalReviewContributor>>,
  }
-@@ -233,6 +241,11 @@ impl<C: Sync> ExtensionRegistry<C> {
+@@ -250,6 +258,11 @@ impl<C: Sync> ExtensionRegistry<C> {
          &self.tool_lifecycle_contributors
      }
  
@@ -1476,13 +1484,13 @@ index 0000000000000000000000000000000000000000..6c44c5e1a9ca4ca9112bbb7d872c06b4
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa486dbe8f6af2b23926f55c6e83f0a3324894f5
+index 0000000000000000000000000000000000000000..2fcc3dfad149363599427286264cdbf1acd29f00
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
 @@ -0,0 +1,28 @@
 +[package]
 +name = "codex-omd-extension"
-+version = "0.154.0"
++version = "0.155.1"
 +edition = "2024"
 +license = "Apache-2.0"
 +
@@ -4912,7 +4920,7 @@ index 0000000000000000000000000000000000000000..58c0303de24f46d76cfe6375511ec39b
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c2e93aefbdca44d11cb16ccc205ac53534708fb3
+index 0000000000000000000000000000000000000000..6cb2b0fdf1e58e30217d713ac042a5d84bde8731
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
 @@ -0,0 +1,3541 @@
@@ -5960,7 +5968,7 @@ index 0000000000000000000000000000000000000000..c2e93aefbdca44d11cb16ccc205ac535
 +    }
 +    let snapshot: ContractSnapshot =
 +        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-+    let mut active = ActiveContract::restore(snapshot, &binding).map_err(|e| e.to_string())?;
++    let mut active = ActiveContract::resume(snapshot, &binding).map_err(|e| e.to_string())?;
 +    if *active.contract() == requested {
 +        return Ok(active);
 +    }
@@ -15822,10 +15830,10 @@ index 0000000000000000000000000000000000000000..d71ecfade0794b2b42d8aea25e0a0060
 +}
 diff --git a/codex-rs/omd/src/contract.rs b/codex-rs/omd/src/contract.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3652af2c9e97411c4f8ef3f5e98b206bd7899af1
+index 0000000000000000000000000000000000000000..71572f1042c0d4d8f419bce3c6c0fdfbabe31064
 --- /dev/null
 +++ b/codex-rs/omd/src/contract.rs
-@@ -0,0 +1,1162 @@
+@@ -0,0 +1,1177 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use sha2::Digest;
@@ -16667,6 +16675,21 @@ index 0000000000000000000000000000000000000000..3652af2c9e97411c4f8ef3f5e98b206b
 +        Ok(Self {
 +            snapshot: seal(provenance, Vec::new())?,
 +        })
++    }
++
++    /// Abrupt client loss can leave the workspace legitimately changed, so a resumed task is
++    /// identified by its acceptance contract and repository and keeps its original candidate.
++    pub fn resume(snapshot: ContractSnapshot, binding: &TaskBinding) -> io::Result<Self> {
++        binding.validate()?;
++        let persisted = snapshot.provenance.binding.clone();
++        if persisted.acceptance_contract_sha256 != binding.acceptance_contract_sha256
++            || persisted.repository_identity != binding.repository_identity
++        {
++            return Err(invalid(
++                "persisted workflow contract belongs to a different task or workspace",
++            ));
++        }
++        Self::restore(snapshot, &persisted)
 +    }
 +
 +    pub fn restore(snapshot: ContractSnapshot, binding: &TaskBinding) -> io::Result<Self> {
@@ -17672,10 +17695,10 @@ index 0000000000000000000000000000000000000000..d85d9667eddfab115f9d85b3847aaf38
 +}
 diff --git a/codex-rs/omd/src/contract_tests.rs b/codex-rs/omd/src/contract_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..eccb5b92a4594bfa48d32d0987fcf89fd425a333
+index 0000000000000000000000000000000000000000..fea75d4eb68695b6b988195f2613e1080a808607
 --- /dev/null
 +++ b/codex-rs/omd/src/contract_tests.rs
-@@ -0,0 +1,498 @@
+@@ -0,0 +1,510 @@
 +use super::*;
 +
 +fn source(scope: SelectionSource, seed: &str) -> ConfigurationSource {
@@ -17933,6 +17956,18 @@ index 0000000000000000000000000000000000000000..eccb5b92a4594bfa48d32d0987fcf89f
 +            .to_string()
 +            .contains("different task or workspace")
 +    );
++
++    let resumed = ActiveContract::resume(snapshot.clone(), &other).unwrap();
++    assert_eq!(
++        resumed.provenance().binding.initial_candidate_sha256,
++        binding().initial_candidate_sha256
++    );
++    let mut elsewhere = binding();
++    elsewhere.repository_identity = "owner/other".into();
++    assert!(ActiveContract::resume(snapshot.clone(), &elsewhere).is_err());
++    let mut reworded = binding();
++    reworded.acceptance_contract_sha256 = digest(b"another acceptance contract");
++    assert!(ActiveContract::resume(snapshot.clone(), &reworded).is_err());
 +
 +    let mut relabelled = snapshot.clone();
 +    relabelled.provenance.assurance = AssuranceLabel::IndependentlyVerified;
@@ -22233,10 +22268,10 @@ index 0000000000000000000000000000000000000000..1b27bbcae6bee86c2d0988b11d742768
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b30a80bde588329d31a478f962813277d53c1d16
+index 0000000000000000000000000000000000000000..638b1afe347a14d706a6986521e58b03cc7f18f5
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,257 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
@@ -22454,6 +22489,7 @@ index 0000000000000000000000000000000000000000..b30a80bde588329d31a478f962813277
 +pub use mods::CODEX_HOST_RELEASE;
 +pub use mods::INSTALLED_CONTRACT_TYPES_VERSION;
 +pub use mods::MOD_API_VERSION;
++pub use mods::MOD_CALLBACK_TOTAL_BUDGET_MS;
 +pub use mods::MOD_CAPABILITIES;
 +pub use mods::MOD_EVENTS;
 +pub use mods::MOD_HOST_FEATURES;
@@ -24742,7 +24778,7 @@ index 0000000000000000000000000000000000000000..4202822bfa43d6211f13b4e6af55b716
 +}
 diff --git a/codex-rs/omd/src/mode.rs b/codex-rs/omd/src/mode.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..270274fcaa9a31f19c9f036c462cbff3e46587c1
+index 0000000000000000000000000000000000000000..319c7e3548adac00f39eeb7020b311f364a9bb9d
 --- /dev/null
 +++ b/codex-rs/omd/src/mode.rs
 @@ -0,0 +1,141 @@
@@ -24750,7 +24786,7 @@ index 0000000000000000000000000000000000000000..270274fcaa9a31f19c9f036c462cbff3
 +
 +pub const MODE_ENV: &str = "OMD_MODE";
 +pub const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
-+pub const PINNED_UPSTREAM: &str = "rust-v0.154.0 / 6b9826e3aa83b1a5947db50f4332cb9c65f1b340";
++pub const PINNED_UPSTREAM: &str = "rust-v0.155.1 / be2951ea34f0d295ed0becf97079f92fa5f6950e";
 +
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 +pub enum RuntimeMode {
@@ -24889,10 +24925,10 @@ index 0000000000000000000000000000000000000000..270274fcaa9a31f19c9f036c462cbff3
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2a6e234c5ea1e21104f2418a3bb70a46dd2f54fc
+index 0000000000000000000000000000000000000000..85f05913af497577836cb6c8c47798233e6105f0
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,2237 @@
+@@ -0,0 +1,2238 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -24941,9 +24977,10 @@ index 0000000000000000000000000000000000000000..2a6e234c5ea1e21104f2418a3bb70a46
 +pub use package_manager::ModPackageTrust;
 +pub use store::ModStore;
 +
-+pub const CODEX_HOST_RELEASE: &str = "0.154.0";
++pub const CODEX_HOST_RELEASE: &str = "0.155.1";
 +pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 +pub const MOD_API_VERSION: &str = "0.1.0-experimental.6";
++pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 +pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 +pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
 +pub const INSTALLED_CONTRACT_TYPES_VERSION: u32 = 1;
@@ -27529,10 +27566,10 @@ index 0000000000000000000000000000000000000000..204d72c142351cbb768118f7a92e50f5
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..52adfcbcb4ba1734798973cbbe3741f283c7ed99
+index 0000000000000000000000000000000000000000..5a19cefd53a58ecbfd5ad0016beb49d20354059b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,126 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -27601,7 +27638,9 @@ index 0000000000000000000000000000000000000000..52adfcbcb4ba1734798973cbbe3741f2
 +            return Err(failure("registration_changed_during_callback"));
 +        }
 +        execution += started.elapsed();
-+        if execution > budget {
++        // `hook_budget_ms` bounds each evaluation, which `process::evaluate` already enforces.
++        // Replaying host calls re-runs the module, so the whole callback carries its own total.
++        if execution > Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS) {
 +            return Err(failure("callback_execution_budget"));
 +        }
 +        if !reply.calls.starts_with(&expected) {
@@ -34795,10 +34834,10 @@ index 0000000000000000000000000000000000000000..aef9c99b6cd1b1cac9eb08e141796e42
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c7f700fb50528a300fcbb8ab48ab01fe4319a09c
+index 0000000000000000000000000000000000000000..afc593bfb77485ea91633e7e24c8a0cd437ea8e4
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2050 @@
+@@ -0,0 +1,2084 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
 +use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
@@ -36055,6 +36094,40 @@ index 0000000000000000000000000000000000000000..c7f700fb50528a300fcbb8ab48ab01fe
 +            .unwrap_err()
 +            .to_string()
 +            .contains("progress_outside_tool")
++    );
++}
++
++#[test]
++fn host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget() {
++    let source = "export default api => api.tool({name:'work',description:'Work',parameters:{type:'object',properties:{}}}, () => { let seen = 0; for (let index = 0; index < 16; index += 1) { api.host.call('task.status', null); seen += 1; } return seen; })";
++    let (temp, _, path) = fixture(source, &["tools", "task"]);
++    let manifest = path.join("mod.json");
++    let mut package: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
++    package["hook_budget_ms"] = json!(250);
++    std::fs::write(&manifest, serde_json::to_vec_pretty(&package).unwrap()).unwrap();
++    trust(
++        &ModStore::open(temp.path().canonicalize().unwrap().join("store")).unwrap(),
++        &path,
++        &["tools", "task"],
++    );
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    let started = std::time::Instant::now();
++    let value = runtime
++        .invoke_with(
++            "fixture",
++            generation,
++            "tool",
++            "work",
++            json!({}),
++            || true,
++            |_| Ok(json!({"status": "active"})),
++        )
++        .unwrap();
++    assert_eq!(value, json!(16));
++    assert!(
++        started.elapsed()
++            < std::time::Duration::from_millis(codex_omd::MOD_CALLBACK_TOTAL_BUDGET_MS)
 +    );
 +}
 +
@@ -37789,7 +37862,7 @@ index 0000000000000000000000000000000000000000..03463c997925ae2a797718c426f581b4
 +    );
 +}
 diff --git a/codex-rs/tui/Cargo.toml b/codex-rs/tui/Cargo.toml
-index 040f44f502e691cac5451d5aa6ee8a8c4ba5025b..216c43a17db3107f1db0560cb034c1af63a11f62 100644
+index f72429a99286ba2a12465ed2e79cacb9fb17198f..63f5121b870a991a31bb8ff7e48f6a6f602ac898 100644
 --- a/codex-rs/tui/Cargo.toml
 +++ b/codex-rs/tui/Cargo.toml
 @@ -50,6 +50,7 @@ codex-message-history = { workspace = true }
@@ -37801,7 +37874,7 @@ index 040f44f502e691cac5451d5aa6ee8a8c4ba5025b..216c43a17db3107f1db0560cb034c1af
  codex-plugin = { workspace = true }
  codex-protocol = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index e7140a6533a6a8a3e719ba67019f7e810ab8b083..380b4e8281d54bc723dd9c138e859853f8066a42 100644
+index 4e4f534ca698dd5c9707c90a6a4961bc2d7d8b13..b0c8b196161eb0afd4ef4df7bbfe1e8033b37021 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -174,7 +174,11 @@ use crossterm::event::KeyCode;
@@ -37816,7 +37889,7 @@ index e7140a6533a6a8a3e719ba67019f7e810ab8b083..380b4e8281d54bc723dd9c138e859853
  use ratatui::layout::Rect;
  use ratatui::layout::Size;
  use ratatui::style::Stylize;
-@@ -850,13 +854,14 @@ impl App {
+@@ -867,13 +871,14 @@ impl App {
          let screen_size = tui.screen_size_for_event(&event)?;
          if !matches!(
              &event,
@@ -37832,7 +37905,7 @@ index e7140a6533a6a8a3e719ba67019f7e810ab8b083..380b4e8281d54bc723dd9c138e859853
              let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
              if self.should_recover_vim_insert_escape(key_event) {
                  // Restore both strokes before chords or global shortcuts can consume them.
-@@ -874,6 +879,31 @@ impl App {
+@@ -891,6 +896,31 @@ impl App {
              event
          };
  
@@ -37864,7 +37937,7 @@ index e7140a6533a6a8a3e719ba67019f7e810ab8b083..380b4e8281d54bc723dd9c138e859853
          if self.reconnect.offline
              && let TuiEvent::Key(key) = &event
          {
-@@ -983,11 +1013,44 @@ impl App {
+@@ -1000,11 +1030,44 @@ impl App {
                      }
                  }
                  TuiEvent::FocusLost => {}
@@ -37909,7 +37982,7 @@ index e7140a6533a6a8a3e719ba67019f7e810ab8b083..380b4e8281d54bc723dd9c138e859853
      pub(super) fn show_shutdown_feedback(&mut self, tui: &mut tui::Tui) -> Result<()> {
          self.disable_ambient_pet_before_shutdown(tui)?;
          self.chat_widget.show_shutdown_in_progress();
-@@ -998,7 +1061,24 @@ impl App {
+@@ -1015,7 +1078,24 @@ impl App {
          Ok(())
      }
  
@@ -37934,7 +38007,7 @@ index e7140a6533a6a8a3e719ba67019f7e810ab8b083..380b4e8281d54bc723dd9c138e859853
          self.sync_thread_title_progress();
          let dashboard_visible = self
              .chat_widget
-@@ -1018,20 +1098,30 @@ impl App {
+@@ -1035,20 +1115,30 @@ impl App {
              self.schedule_immediate_resize_reflow(tui);
              self.maybe_run_resize_reflow(tui, screen_size)?;
          }
@@ -37969,11 +38042,27 @@ index e7140a6533a6a8a3e719ba67019f7e810ab8b083..380b4e8281d54bc723dd9c138e859853
                      frame.set_cursor_position((x, y));
                  }
              })?;
+diff --git a/codex-rs/tui/src/app/agents_overview_actions.rs b/codex-rs/tui/src/app/agents_overview_actions.rs
+index 8ecc6a51dbabe31a05f2e6445b735017240277f5..4f128e886dbcb9b37f8e5a8a22f6b9467307dcee 100644
+--- a/codex-rs/tui/src/app/agents_overview_actions.rs
++++ b/codex-rs/tui/src/app/agents_overview_actions.rs
+@@ -89,7 +89,10 @@ async fn run_lifecycle_modal<T>(
+             Some(event) = events.next() => {
+                 tui.screen_size_for_event(&event)?;
+                 match event {
+-                    tui::TuiEvent::Key(_) | tui::TuiEvent::Paste(_) | tui::TuiEvent::FocusLost => {}
++                    tui::TuiEvent::Key(_)
++                    | tui::TuiEvent::Paste(_)
++                    | tui::TuiEvent::Mouse(_)
++                    | tui::TuiEvent::FocusLost => {}
+                     tui::TuiEvent::Draw | tui::TuiEvent::Resize(_) | tui::TuiEvent::Resume | tui::TuiEvent::FocusGained => {
+                         tui.draw(u16::MAX, |frame| {
+                             progress.render(frame.area(), frame.buffer_mut());
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index cc16390c17de1c2dcc3f87456dd667bee44eb787..e2846f3d569e9f76c80eb19fad54760f08bfb3e9 100644
+index bcd076f26f70f84d4289bbd53a80dffc3fbbb859..2d76a8abdb512c6ba42cf09badc0ca2ba240728f 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -250,6 +250,18 @@ impl App {
+@@ -290,6 +290,18 @@ impl App {
              AppEvent::CopySelection { text, label, format } => {
                  self.chat_widget.copy_selection(text, label, format);
              }
@@ -37993,7 +38082,7 @@ index cc16390c17de1c2dcc3f87456dd667bee44eb787..e2846f3d569e9f76c80eb19fad54760f
                  self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
                  self.reset_app_ui_state_after_clear();
 diff --git a/codex-rs/tui/src/app/input.rs b/codex-rs/tui/src/app/input.rs
-index fbf1d980321b7d736bca43fef8f2fbd5224fae9c..69b2c59834be799e1bdf0d4883c7d62f29be0761 100644
+index a599bc618695ba6d4793dc5231e425fd47fe598e..61249c4bcd92e402ed5e6c345a59147bdc16dad0 100644
 --- a/codex-rs/tui/src/app/input.rs
 +++ b/codex-rs/tui/src/app/input.rs
 @@ -120,6 +120,51 @@ impl App {
@@ -38046,9 +38135,9 @@ index fbf1d980321b7d736bca43fef8f2fbd5224fae9c..69b2c59834be799e1bdf0d4883c7d62f
 +    }
 +
      fn active_keymap_contexts(&self) -> crate::keymap::KeymapContextSet {
-         if self.overlay.is_some() {
-             return crate::keymap::KeymapContextSet::new(crate::keymap::KeymapContext::Pager);
-@@ -233,6 +278,25 @@ impl App {
+         use crate::keymap::KeymapContext;
+         use crate::keymap::KeymapContextSet;
+@@ -245,6 +290,25 @@ impl App {
          app_server: &mut AppServerSession,
          key_event: KeyEvent,
      ) {
@@ -38075,10 +38164,10 @@ index fbf1d980321b7d736bca43fef8f2fbd5224fae9c..69b2c59834be799e1bdf0d4883c7d62f
              && self.overlay.is_none()
              && self.chat_widget.no_modal_or_popup_active()
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index 64c8bda18db957a6990441ffd57f96be606a7556..5a651989760166d55a3a9a52de52c566baed7cc4 100644
+index 1cb3cf299f3eef84d149ff212e14e2b5846ebfe6..835c86ff6353d64980f8317aca50897b4256214e 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
-@@ -218,6 +218,80 @@ async fn pasted_text_normalizes_mixed_line_endings_at_app_boundary() -> Result<(
+@@ -232,6 +232,80 @@ async fn pasted_text_normalizes_mixed_line_endings_at_app_boundary() -> Result<(
      Ok(())
  }
  
@@ -38181,10 +38270,10 @@ index c36e83bd768785d26d8dd74ccdba446a1347df70..20b1d931f1e8f9f16d947e108a7944a8
          }
          Ok(true)
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 1df5a1a7f4f00a61a1fa8a263ccca3752ffeee7a..dc5d714bc76429d5fd076db1b3ba4b52cf535265 100644
+index 7611d89cf587d519264305d5436536984ef4ebb0..774fec6d8680f5ccace0317e41a426729747f1ef 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -390,6 +390,16 @@ pub(crate) enum AppEvent {
+@@ -427,6 +427,16 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -38202,10 +38291,10 @@ index 1df5a1a7f4f00a61a1fa8a263ccca3752ffeee7a..dc5d714bc76429d5fd076db1b3ba4b52
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d5005475cbb 100644
+index b5639c05e2e9ba4a0325f740c936fc21c7ddfb5f..dfc9be7154e9951c2ff51f1d2ed0dc38a66c60f2 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-@@ -347,6 +347,7 @@ use codex_file_search::FileMatch;
+@@ -351,6 +351,7 @@ use codex_file_search::FileMatch;
  #[cfg(test)]
  use codex_plugin::AppConnectorId;
  use codex_plugin::PluginCapabilitySummary;
@@ -38213,7 +38302,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
  use std::cell::OnceCell;
  use std::collections::HashMap;
  use std::collections::HashSet;
-@@ -389,6 +390,7 @@ pub enum InputResult {
+@@ -393,6 +394,7 @@ pub enum InputResult {
      Command(SlashCommand),
      /// A bare model service-tier command parsed by the composer.
      ServiceTierCommand(ServiceTierCommand),
@@ -38221,7 +38310,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
      /// An inline slash command and its trimmed argument text.
      ///
      /// The `TextElement` ranges are rebased into the argument string, while any pending local
-@@ -532,6 +534,7 @@ pub(crate) struct ChatComposer {
+@@ -536,6 +538,7 @@ pub(crate) struct ChatComposer {
      luna_reserve_active: bool,
      attachments: AttachmentState,
      placeholder_text: String,
@@ -38229,7 +38318,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
      blocks_direct_input: bool,
      is_task_running: bool,
      queue_submissions: bool,
-@@ -700,6 +703,7 @@ impl ChatComposer {
+@@ -706,6 +709,7 @@ impl ChatComposer {
              luna_reserve_active: false,
              attachments: AttachmentState::default(),
              placeholder_text,
@@ -38237,7 +38326,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
              blocks_direct_input: false,
              is_task_running: false,
              queue_submissions: false,
-@@ -1088,6 +1092,63 @@ impl ChatComposer {
+@@ -1093,6 +1097,63 @@ impl ChatComposer {
          self.cursor_pos_with_textarea_right_reserve(area, /*textarea_right_reserve*/ 0)
      }
  
@@ -38301,7 +38390,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
      pub(crate) fn cursor_pos_with_textarea_right_reserve(
          &self,
          area: Rect,
-@@ -3189,6 +3250,7 @@ impl ChatComposer {
+@@ -3194,6 +3255,7 @@ impl ChatComposer {
                  | InputResult::Queued { .. }
                  | InputResult::Command(_)
                  | InputResult::ServiceTierCommand(_)
@@ -38309,7 +38398,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
                  | InputResult::CommandWithArgs(_, _, _)
          ) && self.config.reset_vim_on_submission
          {
-@@ -3370,6 +3432,7 @@ impl ChatComposer {
+@@ -3375,6 +3437,7 @@ impl ChatComposer {
          Some(match command {
              SlashCommandItem::Builtin(cmd) => InputResult::Command(cmd),
              SlashCommandItem::ServiceTier(command) => InputResult::ServiceTierCommand(command),
@@ -38317,7 +38406,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
          })
      }
  
-@@ -3394,6 +3457,11 @@ impl ChatComposer {
+@@ -3399,6 +3462,11 @@ impl ChatComposer {
          );
          let trimmed_rest = inline_command.rest.trim();
          args_elements = Self::trim_text_elements(inline_command.rest, trimmed_rest, args_elements);
@@ -38329,7 +38418,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
          let SlashCommandItem::Builtin(cmd) = command else {
              return None;
          };
-@@ -4682,6 +4750,7 @@ impl ChatComposer {
+@@ -4684,6 +4752,7 @@ impl ChatComposer {
      ) {
          let [composer_rect, remote_images_rect, textarea_rect, popup_rect] =
              self.layout_areas_with_textarea_right_reserve(area, textarea_right_reserve);
@@ -38337,7 +38426,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
          match &self.popups.active {
              ActivePopup::Command(popup) => {
                  popup.render_ref(popup_rect, buf);
-@@ -5221,6 +5290,27 @@ mod tests {
+@@ -5224,6 +5293,27 @@ mod tests {
          });
      }
  
@@ -38365,7 +38454,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
      #[test]
      fn footer_hint_row_is_separated_from_composer() {
          let (tx, _rx) = unbounded_channel::<AppEvent>();
-@@ -9528,6 +9618,7 @@ mod tests {
+@@ -9531,6 +9621,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected model command, got service tier {command:?}")
                  }
@@ -38373,7 +38462,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
                  None => panic!("no selected command for '/mo'"),
              },
              _ => panic!("slash popup not active after typing '/mo'"),
-@@ -9610,6 +9701,7 @@ mod tests {
+@@ -9613,6 +9704,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected resume command, got service tier {command:?}")
                  }
@@ -38381,7 +38470,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
                  None => panic!("no selected command for '/res'"),
              },
              _ => panic!("slash popup not active after typing '/res'"),
-@@ -9664,6 +9756,7 @@ mod tests {
+@@ -9667,6 +9759,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected pets command, got service tier {command:?}")
                  }
@@ -38389,7 +38478,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
                  None => panic!("no selected command for '/pet'"),
              },
              _ => panic!("slash popup not active after typing '/pet'"),
-@@ -9718,6 +9811,7 @@ mod tests {
+@@ -9721,6 +9814,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected btw command, got service tier {command:?}")
                  }
@@ -38397,7 +38486,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
                  None => panic!("no selected command for '/bt'"),
              },
              _ => panic!("slash popup not active after typing '/bt'"),
-@@ -9772,6 +9866,7 @@ mod tests {
+@@ -9775,6 +9869,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected side command, got service tier {command:?}")
                  }
@@ -38405,7 +38494,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
                  None => panic!("no selected command for '/si'"),
              },
              _ => panic!("slash popup not active after typing '/si'"),
-@@ -9870,6 +9965,7 @@ mod tests {
+@@ -9873,6 +9968,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -38413,7 +38502,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -10380,6 +10476,7 @@ mod tests {
+@@ -10383,6 +10479,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected diff command, got service tier {command:?}")
              }
@@ -38421,7 +38510,7 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch after Tab completion, got literal submit: {text}")
              }
-@@ -10580,6 +10677,7 @@ mod tests {
+@@ -10583,6 +10680,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected mention command, got service tier {command:?}")
              }
@@ -38430,10 +38519,10 @@ index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d50
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs b/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
-index 22fce854f4a870147da8539855cbc2394f88bb8f..7067916f7054467ab6a3d6903784772f17ba8fed 100644
+index 8e4ff2f87b9e55de4d0bf1d8d04f6af97bc8a4f6..d38d42cf7a4eff971115edf92ddbad32b85c61b2 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
-@@ -370,7 +370,7 @@ impl ChatComposer {
+@@ -372,7 +372,7 @@ impl ChatComposer {
                                      |(_, args, _)| parent_owned_command_is_allowed(*cmd, args),
                                  )
                              }
@@ -38442,7 +38531,7 @@ index 22fce854f4a870147da8539855cbc2394f88bb8f..7067916f7054467ab6a3d6903784772f
                          };
                          if !command_is_allowed {
                              return (InputResult::ParentOwnedInputBlocked, true);
-@@ -385,6 +385,10 @@ impl ChatComposer {
+@@ -387,6 +387,10 @@ impl ChatComposer {
                          return (result, true);
                      }
  
@@ -38453,7 +38542,7 @@ index 22fce854f4a870147da8539855cbc2394f88bb8f..7067916f7054467ab6a3d6903784772f
                      self.stage_selected_slash_command_history(&sel);
                      self.draft.textarea.set_text_clearing_elements("");
                      self.draft.is_bash_mode = false;
-@@ -394,6 +398,7 @@ impl ChatComposer {
+@@ -396,6 +400,7 @@ impl ChatComposer {
                              CommandItem::ServiceTier(command) => {
                                  InputResult::ServiceTierCommand(command)
                              }
@@ -38462,7 +38551,7 @@ index 22fce854f4a870147da8539855cbc2394f88bb8f..7067916f7054467ab6a3d6903784772f
                          true,
                      );
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
-index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa277406a8ceda1 100644
+index 65d3976f127c16ba84668c3fe82226e93337ec69..59a63c5dcb54d6d547c2495fb1daf4a8d127043f 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
 +++ b/codex-rs/tui/src/bottom_pane/command_popup.rs
 @@ -31,6 +31,7 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
@@ -38473,7 +38562,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
  }
  
  pub(crate) struct CommandPopup {
-@@ -83,6 +84,7 @@ impl CommandPopup {
+@@ -85,6 +86,7 @@ impl CommandPopup {
                      && cmd != SlashCommand::Apps)
                      .then_some(CommandItem::Builtin(cmd)),
                  SlashCommandItem::ServiceTier(command) => Some(CommandItem::ServiceTier(command)),
@@ -38481,7 +38570,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              })
              .collect();
          Self {
-@@ -252,6 +254,7 @@ impl CommandItem {
+@@ -254,6 +256,7 @@ impl CommandItem {
          match self {
              Self::Builtin(cmd) => cmd.command(),
              Self::ServiceTier(command) => &command.name,
@@ -38489,7 +38578,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
          }
      }
  
-@@ -259,6 +262,7 @@ impl CommandItem {
+@@ -261,6 +264,7 @@ impl CommandItem {
          match self {
              Self::Builtin(cmd) => cmd.description(),
              Self::ServiceTier(command) => &command.description,
@@ -38497,7 +38586,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
          }
      }
  }
-@@ -297,7 +301,7 @@ mod tests {
+@@ -299,7 +303,7 @@ mod tests {
          let matches = popup.filtered_items();
          let has_init = matches.iter().any(|item| match item {
              CommandItem::Builtin(cmd) => cmd.command() == "init",
@@ -38506,7 +38595,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
          });
          assert!(
              has_init,
-@@ -318,6 +322,7 @@ mod tests {
+@@ -320,6 +324,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -38514,7 +38603,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              None => panic!("expected a selected command for exact match"),
          }
      }
-@@ -332,6 +337,7 @@ mod tests {
+@@ -334,6 +339,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected model command, got service tier {command:?}")
              }
@@ -38522,7 +38611,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              None => panic!("expected at least one match for '/mo'"),
          }
      }
-@@ -380,6 +386,7 @@ mod tests {
+@@ -382,6 +388,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -38530,7 +38619,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              })
              .collect();
          assert_eq!(
-@@ -443,6 +450,7 @@ mod tests {
+@@ -470,6 +477,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -38538,7 +38627,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              })
              .collect();
          assert!(
-@@ -518,6 +526,7 @@ mod tests {
+@@ -545,6 +553,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -38546,7 +38635,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              })
              .collect();
          assert!(
-@@ -550,6 +559,7 @@ mod tests {
+@@ -578,6 +587,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected plan command, got service tier {command:?}")
              }
@@ -38554,7 +38643,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              other => panic!("expected plan to be selected for exact match, got {other:?}"),
          }
      }
-@@ -579,6 +589,7 @@ mod tests {
+@@ -608,6 +618,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -38562,7 +38651,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              })
              .collect();
          assert!(
-@@ -611,6 +622,7 @@ mod tests {
+@@ -641,6 +652,7 @@ mod tests {
              Some(CommandItem::ServiceTier(command)) => {
                  panic!("expected personality command, got service tier {command:?}")
              }
@@ -38570,7 +38659,7 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              other => panic!("expected personality to be selected for exact match, got {other:?}"),
          }
      }
-@@ -624,6 +636,7 @@ mod tests {
+@@ -654,6 +666,7 @@ mod tests {
              .map(|item| match item {
                  CommandItem::Builtin(cmd) => cmd.command().to_string(),
                  CommandItem::ServiceTier(command) => command.name,
@@ -38579,10 +38668,10 @@ index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa27740
              .collect();
  
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index f249fad8b2eb8c02a6d4cd04008e39d173cb3c15..afc30b4a14e56c73e3471cbd46631d2f1f592aec 100644
+index 8c75f87b39647c92a45b71a5f44c08e86645c576..c66df70a47e0aaf8bd79bbc40583e43dfb08dde4 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
-@@ -1031,6 +1031,40 @@ impl BottomPane {
+@@ -1040,6 +1040,40 @@ impl BottomPane {
          self.composer.current_text()
      }
  
@@ -38624,7 +38713,7 @@ index f249fad8b2eb8c02a6d4cd04008e39d173cb3c15..afc30b4a14e56c73e3471cbd46631d2f
      pub(crate) fn composer_cursor(&self) -> usize {
          self.composer.cursor()
 diff --git a/codex-rs/tui/src/bottom_pane/slash_commands.rs b/codex-rs/tui/src/bottom_pane/slash_commands.rs
-index 61393648e789d7c7b238caca917494856b1a0462..fa6a68f2446e55071376b267566edb2a597cc2ba 100644
+index 8c478b3e317cf9e93a5d1355b400b451b09d7a41..16d6a3ab44008cb2489314b9f09e51fd8d643724 100644
 --- a/codex-rs/tui/src/bottom_pane/slash_commands.rs
 +++ b/codex-rs/tui/src/bottom_pane/slash_commands.rs
 @@ -21,6 +21,7 @@ pub(crate) struct ServiceTierCommand {
@@ -38667,7 +38756,7 @@ index 61393648e789d7c7b238caca917494856b1a0462..fa6a68f2446e55071376b267566edb2a
          }
      }
  }
-@@ -100,6 +103,20 @@ pub(crate) fn commands_for_input(
+@@ -102,6 +105,20 @@ pub(crate) fn commands_for_input(
              );
          }
      }
@@ -38688,7 +38777,7 @@ index 61393648e789d7c7b238caca917494856b1a0462..fa6a68f2446e55071376b267566edb2a
      commands
          .into_iter()
          .filter(|cmd| !flags.side_conversation_active || cmd.available_in_side_conversation())
-@@ -146,6 +163,7 @@ pub(crate) fn find_slash_command(
+@@ -148,6 +165,7 @@ pub(crate) fn find_slash_command(
                  .map(SlashCommandItem::ServiceTier)
          })
          .flatten()
@@ -38803,10 +38892,10 @@ index e8900ad606f14612d6611ac3e6339c0cc3cf500c..f73a0181db5047984e58e86592e236f4
      fn insert_str_at_clamps_to_char_boundary() {
          let mut t = TextArea::new();
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 16d4a6e5932e63f4e8185a59c00dfe1d5dd91b35..8e0035586454c7c4944f216df6e7d16307b24c75 100644
+index 4e345366999e7731847cb341747a69c50c1b59da..6393d6e7879a2bf9f0f48d6adb7ce2d2c378d130 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
-@@ -378,9 +378,12 @@ use self::plugins::PluginListFetchState;
+@@ -379,9 +379,12 @@ use self::plugins::PluginListFetchState;
  use self::plugins::PluginsCacheState;
  mod plan_implementation;
  use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
@@ -38819,7 +38908,7 @@ index 16d4a6e5932e63f4e8185a59c00dfe1d5dd91b35..8e0035586454c7c4944f216df6e7d163
  use self::notifications::Notification;
  mod permission_discovery;
  mod permission_popups;
-@@ -1681,6 +1684,22 @@ impl ChatWidget {
+@@ -1728,6 +1731,22 @@ impl ChatWidget {
          self.bottom_pane.composer_is_empty() && !self.bottom_pane.is_in_paste_burst()
      }
  
@@ -38843,7 +38932,7 @@ index 16d4a6e5932e63f4e8185a59c00dfe1d5dd91b35..8e0035586454c7c4944f216df6e7d163
          self.bottom_pane.composer_is_vim_enabled()
      }
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index f45ae82fef827e04dfa35cd771ad3f501ff0afbc..430e134cb5ba783ac1e2a7c7408f0efbb785f016 100644
+index e0be308b805ad558f282a5225740ff2cc5efc776..f6bf9e0496968bf7e195817f1e83cb06128cdfb9 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -37,7 +37,11 @@ impl ChatWidget {
@@ -38860,10 +38949,10 @@ index f45ae82fef827e04dfa35cd771ad3f501ff0afbc..430e134cb5ba783ac1e2a7c7408f0efb
  
          let model_override = model.as_deref();
 diff --git a/codex-rs/tui/src/chatwidget/input_flow.rs b/codex-rs/tui/src/chatwidget/input_flow.rs
-index 97d3e59401f77044d82f43a13bbcfcb58e2e7bd9..04ca4d86b9d4322895002c566531a6c578ea253f 100644
+index d6ad607744012199465652c455c4321ddf9846e6..04095caf2abcd620c74123beed5df09f1d80d749 100644
 --- a/codex-rs/tui/src/chatwidget/input_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/input_flow.rs
-@@ -68,6 +68,9 @@ impl ChatWidget {
+@@ -71,6 +71,9 @@ impl ChatWidget {
              InputResult::ServiceTierCommand(command) => {
                  self.handle_service_tier_command_dispatch(command);
              }
@@ -39334,10 +39423,10 @@ index 0000000000000000000000000000000000000000..22223e082d6acaf7648009a06f1f3224
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
-index 61a5403d2722c693a62ee698d27e1f1d6038334e..b90034e7dfca9177aa2ad1be1c2e67a72b351f67 100644
+index 8163ae2549c9a039a0d3124bf615bfc1dfd3768c..8aa3eab817c9f8c6c6d03741c6ceac7bd0404a66 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering.rs
-@@ -180,6 +180,17 @@ impl ChatWidget {
+@@ -191,6 +191,17 @@ impl ChatWidget {
                  })),
              );
          }
@@ -39356,10 +39445,10 @@ index 61a5403d2722c693a62ee698d27e1f1d6038334e..b90034e7dfca9177aa2ad1be1c2e67a7
              RenderableItem::Owned(Box::new(ExternalWriterNotice {
                  transcript_hint: self.bottom_pane.transcript_shortcut_hint(),
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index b8db07ee74123aba2691a17e19915b31bd8a03a4..7abe5de593f7f2d2efa48a3bf3e744c53f8d304a 100644
+index f67ece542ea7718000d258a06867c23c5167ca45..80d75eac2a49ecf2bd64d248663eac2d0ed71f6d 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-@@ -492,6 +492,8 @@ impl ChatWidget {
+@@ -489,6 +489,8 @@ impl ChatWidget {
                      );
                  }
              }
@@ -39368,7 +39457,7 @@ index b8db07ee74123aba2691a17e19915b31bd8a03a4..7abe5de593f7f2d2efa48a3bf3e744c5
              SlashCommand::Cd => {
                  self.dispatch_command_with_args(SlashCommand::Cd, "~".to_string(), Vec::new());
              }
-@@ -1080,8 +1082,16 @@ impl ChatWidget {
+@@ -1078,8 +1080,16 @@ impl ChatWidget {
                      self.handle_service_tier_command_dispatch(command);
                      QueueDrain::Continue
                  }
@@ -39385,7 +39474,7 @@ index b8db07ee74123aba2691a17e19915b31bd8a03a4..7abe5de593f7f2d2efa48a3bf3e744c5
  
          if !command.supports_inline_args() {
              self.submit_user_message(UserMessage {
-@@ -1166,6 +1176,8 @@ impl ChatWidget {
+@@ -1165,6 +1175,8 @@ impl ChatWidget {
          match cmd {
              SlashCommand::Ide
              | SlashCommand::Status
@@ -39395,7 +39484,7 @@ index b8db07ee74123aba2691a17e19915b31bd8a03a4..7abe5de593f7f2d2efa48a3bf3e744c5
              | SlashCommand::Usage
              | SlashCommand::DebugConfig
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 17f437c48899cb5394d6413fad41240de29c15e9..f78b999e0a89fbfacef01bbe9142c317942b7d8a 100644
+index 1059d7886d6511881de1c2f239b6221defe15405..759959d788aae9c726fde9196a44a620947f1835 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 @@ -200,13 +200,7 @@ impl ChatWidget {
@@ -39438,10 +39527,10 @@ index 17f437c48899cb5394d6413fad41240de29c15e9..f78b999e0a89fbfacef01bbe9142c317
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
 diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
-index 64e163f18b22dcdae60de1b6757ec0d97f4e7645..1b94f6b786983eed190459567752e4a4e851cfe2 100644
+index b667cca1b9de2f7391a5d84fda085623ff29935f..402e8be3820de9156fb8ce10d822513686d75e47 100644
 --- a/codex-rs/tui/src/custom_terminal.rs
 +++ b/codex-rs/tui/src/custom_terminal.rs
-@@ -268,6 +268,10 @@ where
+@@ -272,6 +272,10 @@ where
          &self.buffers[1 - self.current]
      }
  
@@ -39492,10 +39581,10 @@ index bc01ad78c39722c13fb4c1a08676238ea34bba23..c20e910642e4a5a77b18fff6d66731b1
                      let _ = tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/history_cell/mod.rs b/codex-rs/tui/src/history_cell/mod.rs
-index 5caf68623c545aaf1abfeb7a122224de5e8aa471..13b705796f1c77eb2699bdc71a4d6ade818fd31b 100644
+index bcbcd8dc1cecdce191b89ce3e5f92404b3a88937..78425b3e5dacf5f787ebca385dd21f652b34634b 100644
 --- a/codex-rs/tui/src/history_cell/mod.rs
 +++ b/codex-rs/tui/src/history_cell/mod.rs
-@@ -197,7 +197,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -198,7 +198,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
  
      fn display_lines_for_mode(&self, width: u16, mode: HistoryRenderMode) -> Vec<Line<'static>> {
          match mode {
@@ -39506,7 +39595,7 @@ index 5caf68623c545aaf1abfeb7a122224de5e8aa471..13b705796f1c77eb2699bdc71a4d6ade
              HistoryRenderMode::Raw => self.raw_lines(),
          }
      }
-@@ -208,7 +210,16 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -209,7 +211,16 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          mode: HistoryRenderMode,
      ) -> Vec<HyperlinkLine> {
          match mode {
@@ -39524,7 +39613,7 @@ index 5caf68623c545aaf1abfeb7a122224de5e8aa471..13b705796f1c77eb2699bdc71a4d6ade
              HistoryRenderMode::Raw => plain_hyperlink_lines(self.raw_lines()),
          }
      }
-@@ -291,7 +302,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -292,7 +303,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
  
  impl Renderable for Box<dyn HistoryCell> {
      fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -39535,10 +39624,10 @@ index 5caf68623c545aaf1abfeb7a122224de5e8aa471..13b705796f1c77eb2699bdc71a4d6ade
          let y = if area.height == 0 {
              0
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 3d9650d3d4c5391dc15fe5bc5b79386aab2ae4d7..d4ec95bcc4e5cce9ed21c72ea5600ecb90cb30e0 100644
+index 43591eceed38c66a17859e4605472bbe60da0f24..4e6478bc68109ed13cac99534727520e204be8db 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
-@@ -169,6 +169,8 @@ mod markdown_render;
+@@ -170,6 +170,8 @@ mod markdown_render;
  mod markdown_stream;
  mod markdown_text_merge;
  mod mention_codec;
@@ -39547,7 +39636,7 @@ index 3d9650d3d4c5391dc15fe5bc5b79386aab2ae4d7..d4ec95bcc4e5cce9ed21c72ea5600ecb
  mod model_catalog;
  mod model_migration;
  mod motion;
-@@ -177,6 +179,7 @@ mod named_session_lookup;
+@@ -178,6 +180,7 @@ mod named_session_lookup;
  mod notifications;
  #[cfg(any(not(debug_assertions), test))]
  mod npm_registry;
@@ -39562,11 +39651,11 @@ index 3d9650d3d4c5391dc15fe5bc5b79386aab2ae4d7..d4ec95bcc4e5cce9ed21c72ea5600ecb
 +    if use_alt_screen {
 +        tui.enter_persistent_alt_screen()?;
 +    }
-     let app_result = App::run(
-         &mut tui,
-         app_server,
-@@ -1838,6 +1844,10 @@ async fn run_ratatui_app(
-     )
+     // Keep the large event-loop future out of the enclosing startup futures so session
+     // transitions have enough stack headroom to rebuild configuration and the chat widget.
+     let app_result = Box::pin(App::run(
+@@ -1840,6 +1846,10 @@ async fn run_ratatui_app(
+     ))
      .await;
  
 +    if use_alt_screen {
@@ -41338,7 +41427,7 @@ index 756e231b501fa21d6ad824b9b2c101e5a1f7aeb4..f8c7b444ac2e2a45d030c5726de73237
                  }
              }
 diff --git a/codex-rs/tui/src/pager_overlay.rs b/codex-rs/tui/src/pager_overlay.rs
-index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d490fe7ab53 100644
+index fb9cbf287f7c96fe2e9f2f5eed11355dc88ae458..e7f7b473bdd82ebb8483167ee44533c8e72c3ea5 100644
 --- a/codex-rs/tui/src/pager_overlay.rs
 +++ b/codex-rs/tui/src/pager_overlay.rs
 @@ -40,6 +40,8 @@ use crate::tui;
@@ -41350,7 +41439,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
  use ratatui::buffer::Buffer;
  use ratatui::buffer::Cell;
  use ratatui::layout::Rect;
-@@ -474,12 +476,20 @@ pub(crate) struct TranscriptOverlay {
+@@ -478,12 +480,20 @@ pub(crate) struct TranscriptOverlay {
      /// Committed transcript cells (does not include the live tail).
      cells: Vec<Arc<dyn HistoryCell>>,
      highlight_cell: Option<usize>,
@@ -41371,7 +41460,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
  /// Cache key for the active-cell "live tail" appended to the transcript overlay.
  ///
  /// Changing any field implies a different rendered tail.
-@@ -506,6 +516,7 @@ impl TranscriptOverlay {
+@@ -510,6 +520,7 @@ impl TranscriptOverlay {
                  Self::render_cells(
                      &transcript_cells,
                      /*highlight_cell*/ None,
@@ -41379,7 +41468,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
                      TranscriptHistoryState::Idle,
                  ),
                  "T R A N S C R I P T".to_string(),
-@@ -514,6 +525,7 @@ impl TranscriptOverlay {
+@@ -518,6 +529,7 @@ impl TranscriptOverlay {
              ),
              cells: transcript_cells,
              highlight_cell: None,
@@ -41387,7 +41476,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
              live_tail_key: None,
              history_state: TranscriptHistoryState::Idle,
              is_done: false,
-@@ -549,12 +561,20 @@ impl TranscriptOverlay {
+@@ -553,12 +565,20 @@ impl TranscriptOverlay {
      fn render_cells(
          cells: &[Arc<dyn HistoryCell>],
          highlight_cell: Option<usize>,
@@ -41409,7 +41498,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
              .collect()
      }
  
-@@ -562,7 +582,7 @@ impl TranscriptOverlay {
+@@ -566,7 +586,7 @@ impl TranscriptOverlay {
      fn render_cell(
          cell: &Arc<dyn HistoryCell>,
          index: usize,
@@ -41418,7 +41507,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
          history_state: TranscriptHistoryState,
      ) -> Box<dyn Renderable> {
          if cell.as_any().is::<SessionInfoCell>()
-@@ -572,7 +592,7 @@ impl TranscriptOverlay {
+@@ -576,7 +596,7 @@ impl TranscriptOverlay {
          }
          let cell_renderable = CellRenderable {
              cell: cell.clone(),
@@ -41427,7 +41516,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
          };
          let mut cell_renderable: Box<dyn Renderable> = if cell.has_stable_transcript_height() {
              Box::new(CachedRenderable::new(cell_renderable))
-@@ -604,12 +624,7 @@ impl TranscriptOverlay {
+@@ -608,12 +628,7 @@ impl TranscriptOverlay {
          let follow_bottom = self.view.is_scrolled_to_bottom();
          let had_prior_cells = !self.cells.is_empty();
          let tail_renderable = self.take_live_tail_renderable();
@@ -41441,7 +41530,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
          self.cells.push(cell);
          self.view.renderables.push(cell_renderable);
          if let Some(tail) = tail_renderable {
-@@ -667,6 +682,7 @@ impl TranscriptOverlay {
+@@ -671,6 +686,7 @@ impl TranscriptOverlay {
          self.cells.splice(insert_at..insert_at, cells);
          for index in [
              &mut self.highlight_cell,
@@ -41449,7 +41538,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
              &mut self.view.pending_scroll_chunk,
          ] {
              if let Some(index) = index.as_mut()
-@@ -703,6 +719,13 @@ impl TranscriptOverlay {
+@@ -707,6 +723,13 @@ impl TranscriptOverlay {
          {
              self.highlight_cell = None;
          }
@@ -41463,7 +41552,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
          self.rebuild_renderables(live_tail);
          if follow_bottom {
              self.view.scroll_offset = usize::MAX;
-@@ -738,6 +761,15 @@ impl TranscriptOverlay {
+@@ -742,6 +765,15 @@ impl TranscriptOverlay {
                      *highlight_cell = highlight_cell.saturating_sub(removed.saturating_sub(1));
                  }
              }
@@ -41479,7 +41568,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
              self.cells
                  .splice(clamped_start..clamped_end, std::iter::once(consolidated));
              if self
-@@ -746,6 +778,13 @@ impl TranscriptOverlay {
+@@ -750,6 +782,13 @@ impl TranscriptOverlay {
              {
                  self.highlight_cell = None;
              }
@@ -41493,7 +41582,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
              self.rebuild_renderables(live_tail);
          }
          if follow_bottom {
-@@ -812,7 +851,7 @@ impl TranscriptOverlay {
+@@ -816,7 +855,7 @@ impl TranscriptOverlay {
                      self.view.renderables[index] = Self::render_cell(
                          history_cell,
                          index,
@@ -41502,7 +41591,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
                          self.history_state,
                      );
                  }
-@@ -823,6 +862,88 @@ impl TranscriptOverlay {
+@@ -827,6 +866,88 @@ impl TranscriptOverlay {
          }
      }
  
@@ -41591,7 +41680,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
      /// Returns whether the underlying pager view is currently pinned to the bottom.
      ///
      /// The `App` draw loop uses this to decide whether to schedule animation frames for the live
-@@ -833,8 +954,12 @@ impl TranscriptOverlay {
+@@ -837,8 +958,12 @@ impl TranscriptOverlay {
  
      // Detach the live tail before changing cells: their old count identifies the tail renderable.
      fn rebuild_renderables(&mut self, tail_renderable: Option<Box<dyn Renderable>>) {
@@ -41606,7 +41695,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
          if let Some(tail) = tail_renderable {
              self.view.renderables.push(tail);
          }
-@@ -872,6 +997,16 @@ impl TranscriptOverlay {
+@@ -876,6 +1001,16 @@ impl TranscriptOverlay {
          let line2 = Rect::new(area.x, area.y.saturating_add(1), area.width, 1);
          render_navigation_hints(line1, buf, &self.view.keymap);
  
@@ -41623,7 +41712,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
          let mut pairs: Vec<(Vec<ShortcutHint>, &str)> = vec![(
              first_or_empty(&self.view.keymap, "close", &self.view.keymap.close),
              "close",
-@@ -892,6 +1027,13 @@ impl TranscriptOverlay {
+@@ -896,6 +1031,13 @@ impl TranscriptOverlay {
          } else {
              pairs.push((vec![key_hint::plain(KeyCode::Esc).into()], "to edit prev"));
          }
@@ -41637,7 +41726,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
          render_key_hints(line2, buf, &pairs);
      }
  
-@@ -935,7 +1077,54 @@ impl TranscriptOverlay {
+@@ -939,7 +1081,54 @@ impl TranscriptOverlay {
  impl TranscriptOverlay {
      pub(crate) fn handle_event(&mut self, tui: &mut tui::Tui, event: TuiEvent) -> Result<()> {
          match event {
@@ -41692,7 +41781,7 @@ index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d49
                  e if self.view.keymap.close.is_pressed(e)
                      || self.view.keymap.close_transcript.is_pressed(e) =>
                  {
-@@ -1116,6 +1305,36 @@ mod tests {
+@@ -1121,6 +1310,36 @@ mod tests {
          StaticOverlay::with_title(lines, title.to_string(), default_pager_keymap())
      }
  
@@ -41759,10 +41848,10 @@ index ef4dd6df726755663c90dde0e5b3fd62820d3197..a27f1dc03e1ac51d92b19d13fac6b058
              }
              Some(event) = background_events.next() => {
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
-index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..36910c9d4dc40aa716dd09f94f7eacaea624fae5 100644
+index 99fea9eee7c999af40bad6323ac47b11242cca6a..fc8f2a744f718eae8163a35952a22ecc47c65bb4 100644
 --- a/codex-rs/tui/src/slash_command.rs
 +++ b/codex-rs/tui/src/slash_command.rs
-@@ -51,6 +51,8 @@ pub enum SlashCommand {
+@@ -50,6 +50,8 @@ pub enum SlashCommand {
      Diff,
      Mention,
      Status,
@@ -41771,7 +41860,7 @@ index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..36910c9d4dc40aa716dd09f94f7eacae
      Cd,
      #[strum(to_string = "pwd", serialize = "cwd")]
      Pwd,
-@@ -112,6 +114,8 @@ impl SlashCommand {
+@@ -111,6 +113,8 @@ impl SlashCommand {
              SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
              SlashCommand::Hooks => "view and manage lifecycle hooks",
              SlashCommand::Status => "show current session configuration and token usage",
@@ -41780,7 +41869,7 @@ index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..36910c9d4dc40aa716dd09f94f7eacae
              SlashCommand::Cd => "change the current working directory",
              SlashCommand::Pwd => "show the current working directory",
              SlashCommand::Usage => "view account usage or use a usage limit reset",
-@@ -199,6 +203,8 @@ impl SlashCommand {
+@@ -196,6 +200,8 @@ impl SlashCommand {
                  | SlashCommand::Diff
                  | SlashCommand::Mention
                  | SlashCommand::Status
@@ -41789,7 +41878,7 @@ index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..36910c9d4dc40aa716dd09f94f7eacae
                  | SlashCommand::Pwd
                  | SlashCommand::Usage
                  | SlashCommand::Ide
-@@ -243,6 +249,8 @@ impl SlashCommand {
+@@ -239,6 +245,8 @@ impl SlashCommand {
              | SlashCommand::Skills
              | SlashCommand::Hooks
              | SlashCommand::Status
@@ -41798,10 +41887,10 @@ index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..36910c9d4dc40aa716dd09f94f7eacae
              | SlashCommand::Pwd
              | SlashCommand::Usage
              | SlashCommand::DebugConfig
-@@ -274,6 +282,8 @@ impl SlashCommand {
-             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
+@@ -271,6 +279,8 @@ impl SlashCommand {
              SlashCommand::Copy => !cfg!(target_os = "android"),
              SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),
+             SlashCommand::Voice => true,
 +            SlashCommand::Omd => true,
 +            SlashCommand::Graph => crate::omd::graph_active(),
              SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
@@ -42024,7 +42113,7 @@ index 99a73757d3617ffaa07f3d606f3fdfdb440e5a02..1899b7921d0cfc6e48749d026158081f
  }
  
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32d5fc6394 100644
+index 2e3b272d6650915fc9cca714f49baf7360611d73..bd1c7a8897987500f2e6663323bffd30e504b8b2 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -19,10 +19,13 @@ use crossterm::SynchronizedUpdate;
@@ -42041,7 +42130,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
  use crossterm::terminal::EnterAlternateScreen;
  use crossterm::terminal::LeaveAlternateScreen;
  #[cfg(not(unix))]
-@@ -315,7 +318,10 @@ fn restore_common(
+@@ -316,7 +319,10 @@ fn restore_common(
      if let Err(err) = execute!(stdout(), DisableBracketedPaste) {
          first_error.get_or_insert(err);
      }
@@ -42052,7 +42141,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
      if matches!(raw_mode_restore, RawModeRestore::Disable)
          && let Err(err) = disable_raw_mode()
      {
-@@ -562,6 +568,7 @@ fn set_panic_hook() {
+@@ -563,6 +569,7 @@ fn set_panic_hook() {
  pub enum TuiEvent {
      /// A terminal key event after focus, paste, and protocol bookkeeping has been handled.
      Key(KeyEvent),
@@ -42060,7 +42149,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
      /// A bracketed paste payload normalized by the app layer before it reaches the composer.
      Paste(String),
      /// A terminal size notification and its reported dimensions.
-@@ -604,6 +611,9 @@ pub struct Tui {
+@@ -605,6 +612,9 @@ pub struct Tui {
      scrollback: ScrollbackStrategy,
      // When false, enter_alt_screen() becomes a no-op.
      alt_screen_enabled: bool,
@@ -42070,7 +42159,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
      // Keeps unmanaged process stderr writes out of the inline viewport.
      _stderr_guard: terminal_stderr::TerminalStderrGuard,
  }
-@@ -658,6 +668,9 @@ impl Tui {
+@@ -666,6 +676,9 @@ impl Tui {
              notification_condition: NotificationCondition::default(),
              scrollback,
              alt_screen_enabled: true,
@@ -42080,7 +42169,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
              _stderr_guard: stderr_guard,
          }
      }
-@@ -665,6 +678,10 @@ impl Tui {
+@@ -673,6 +686,10 @@ impl Tui {
      /// Set whether alternate screen is enabled. When false, enter_alt_screen() becomes a no-op.
      pub fn set_alt_screen_enabled(&mut self, enabled: bool) {
          self.alt_screen_enabled = enabled;
@@ -42091,7 +42180,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
      }
  
      pub fn set_notification_settings(
-@@ -692,6 +709,52 @@ impl Tui {
+@@ -700,6 +717,52 @@ impl Tui {
          self.alt_screen_active.load(Ordering::Relaxed)
      }
  
@@ -42144,7 +42233,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
      // Drop crossterm EventStream to avoid stdin conflicts with other processes.
      pub fn pause_events(&mut self) {
          self.event_broker.pause_events();
-@@ -715,6 +778,14 @@ impl Tui {
+@@ -723,6 +786,14 @@ impl Tui {
      /// Reclaim terminal modes and stderr after a panic hook ran inside a recovery boundary.
      pub(crate) fn recover_after_caught_panic(&mut self) -> Result<()> {
          set_modes()?;
@@ -42159,7 +42248,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
          self._stderr_guard.recover_after_caught_panic()?;
          self.terminal.invalidate_viewport();
          self.frame_requester().schedule_frame();
-@@ -750,7 +821,7 @@ impl Tui {
+@@ -758,7 +829,7 @@ impl Tui {
          // Leave alt screen if active to avoid conflicts with external program `f`.
          let was_alt_screen = self.is_alt_screen_active();
          if was_alt_screen {
@@ -42168,7 +42257,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
          }
  
          if let Err(err) = restore_keep_raw() {
-@@ -772,7 +843,7 @@ impl Tui {
+@@ -780,7 +851,7 @@ impl Tui {
          flush_terminal_input_buffer();
  
          if was_alt_screen {
@@ -42177,10 +42266,12 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
          }
  
          self.resume_events();
-@@ -830,11 +901,30 @@ impl Tui {
+@@ -837,12 +908,31 @@ impl Tui {
+     /// Enter alternate screen and expand the viewport to full terminal size, saving the current
      /// inline viewport for restoration when leaving.
      pub fn enter_alt_screen(&mut self) -> Result<()> {
-         if !self.alt_screen_enabled {
+-        if !self.alt_screen_enabled || self.is_alt_screen_active() {
++        if !self.alt_screen_enabled {
 +            crate::omd::set_fullscreen_active(false);
 +            return Ok(());
 +        }
@@ -42208,7 +42299,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
          if let Ok(size) = self.terminal.size() {
              self.alt_saved_viewport = Some(self.terminal.viewport_area);
              self.terminal.resize(size)?;
-@@ -847,15 +937,38 @@ impl Tui {
+@@ -855,15 +945,38 @@ impl Tui {
              let _ = self.terminal.clear();
          }
          self.alt_screen_active.store(true, Ordering::Relaxed);
@@ -42247,7 +42338,7 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
          let _ = execute!(self.terminal.backend_mut(), DisableAlternateScroll);
          let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
          if let Some(saved) = self.alt_saved_viewport.take() {
-@@ -864,6 +977,7 @@ impl Tui {
+@@ -872,6 +985,7 @@ impl Tui {
          // The restored main screen does not contain the alternate screen's diff baseline.
          self.terminal.invalidate_viewport();
          self.alt_screen_active.store(false, Ordering::Relaxed);
@@ -42256,10 +42347,10 @@ index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32
      }
  
 diff --git a/codex-rs/tui/src/tui/event_stream.rs b/codex-rs/tui/src/tui/event_stream.rs
-index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aae7d7fbdc 100644
+index 5f2ce7f5c3f15c903753ae9171dcac02fc1a410b..5f40b90726245eb67fd250a69f45c413fe458f75 100644
 --- a/codex-rs/tui/src/tui/event_stream.rs
 +++ b/codex-rs/tui/src/tui/event_stream.rs
-@@ -186,12 +186,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+@@ -196,12 +196,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
  
      /// Poll the shared crossterm stream for the next mapped `TuiEvent`.
      ///
@@ -42276,7 +42367,7 @@ index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aa
          loop {
              let poll_result = {
                  let mut state = self
-@@ -247,7 +246,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+@@ -263,7 +262,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
          }
      }
  
@@ -42285,15 +42376,15 @@ index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aa
      fn map_crossterm_event(&mut self, event: Event) -> Option<TuiEvent> {
          match event {
              Event::Key(key_event) => {
-@@ -267,6 +266,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+@@ -283,6 +282,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
                  }
                  Some(TuiEvent::Key(key_event))
              }
 +            Event::Mouse(mouse_event) => Some(TuiEvent::Mouse(mouse_event)),
              Event::Resize(width, height) => {
-                 Some(TuiEvent::Resize(ratatui::layout::Size { width, height }))
-             }
-@@ -281,7 +281,6 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
+                 let size = ratatui::layout::Size { width, height };
+                 if let Some(monitor) = &self.broker.size_monitor {
+@@ -301,7 +301,6 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
                  self.terminal_focused.store(false, Ordering::Relaxed);
                  Some(TuiEvent::FocusLost)
              }
@@ -42301,7 +42392,7 @@ index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aa
          }
      }
  }
-@@ -417,7 +416,7 @@ mod tests {
+@@ -437,7 +436,7 @@ mod tests {
      }
  
      #[tokio::test(flavor = "current_thread")]
@@ -42310,7 +42401,7 @@ index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aa
          let (broker, handle, _draw_tx, draw_rx, terminal_focused) = setup();
          let mut stream = make_stream(broker, draw_rx, terminal_focused);
  
-@@ -432,6 +431,12 @@ mod tests {
+@@ -452,6 +451,12 @@ mod tests {
              KeyModifiers::NONE,
          ))));
  
@@ -42347,10 +42438,10 @@ index 2db1fc04f58fc9d701cf2c3a6719ad5658b0ae12..29cbf3609cb67cc457920844bd8aee7b
                  terminal.clear()?;
              }
 diff --git a/codex-rs/tui/src/tui/screen_size.rs b/codex-rs/tui/src/tui/screen_size.rs
-index c9f657886e67fd00d2def92a2ba3a9ae0888b982..3865caf67b964bdfa7d4fb812dd3dc827542683f 100644
+index 77d5f5c4062d80484b44cc921ebaa54dea6038dc..b95e996ad83cb47d81b815d5e2e99382b3f9f636 100644
 --- a/codex-rs/tui/src/tui/screen_size.rs
 +++ b/codex-rs/tui/src/tui/screen_size.rs
-@@ -47,11 +47,13 @@ impl Tui {
+@@ -47,7 +47,9 @@ impl Tui {
              TuiEvent::Draw | TuiEvent::FocusGained => {
                  self.screen_size.deferred_size.take().unwrap_or(cached)
              }
@@ -42359,6 +42450,10 @@ index c9f657886e67fd00d2def92a2ba3a9ae0888b982..3865caf67b964bdfa7d4fb812dd3dc82
 +                cached
 +            }
          };
+         if matches!(event, TuiEvent::Resize(_) | TuiEvent::Resume)
+             && let Some(monitor) = &self.event_broker.size_monitor
+@@ -56,7 +58,7 @@ impl Tui {
+         }
          self.screen_size.pending_draw_size = (!matches!(
              event,
 -            TuiEvent::Key(_) | TuiEvent::Paste(_) | TuiEvent::FocusLost

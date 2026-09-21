@@ -135,7 +135,7 @@ def bounded_request(body, route, records=()):
 class Gateway:
     def __init__(self, routes, budget, output, scope="task_api", fixture=False):
         validate_routes(routes, fixture)
-        self.routes, self.budget, self.output, self.scope = routes, budget, output, scope
+        self.routes, self.budget, self.output, self.scope, self.fixture = routes, budget, output, scope, fixture
         self.token = secrets.token_urlsafe(32)
         self.records, self.connections = [], set()
         self.admitted = 0
@@ -247,7 +247,10 @@ class Gateway:
             if route.get("native_subscription"):
                 headers["ChatGPT-Account-Id"] = os.environ[route["account_env"]]
                 headers["originator"] = "codex_cli_rs"
-            for key in ("thread-id", "session-id", "x-openai-subagent"):
+            forwarded = ("thread-id", "session-id", "x-openai-subagent")
+            if self.fixture:
+                forwarded += ("x-omd-request-id", "x-omd-owner")
+            for key in forwarded:
                 if client.headers.get(key):
                     headers[key] = client.headers[key]
             record["sent"] = True

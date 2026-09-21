@@ -1,6 +1,6 @@
 # TypeScript mods
 
-API `0.1.0-experimental.6` runs on the pinned Codex 0.154.0 OMD 0.1.0 host,
+API `0.1.0-experimental.6` runs on the pinned Codex 0.155.1 OMD 0.1.0 host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.
@@ -193,7 +193,8 @@ list of up to four other mod IDs. Optional `compatibility` metadata declares
 exact OMD `releases`, `required_features`, and `optional_features`; missing
 required features reject before activation while unavailable optional features
 remain visible in status. `hook_budget_ms` optionally narrows each JavaScript hook to
-25–2000 ms (1000 by default). `environment` may request only the host-provided
+25–2000 ms (1000 by default); it bounds every single evaluation, while the whole
+callback including host-call replays is bounded by a separate 5 s host total. `environment` may request only the host-provided
 `crypto` global; filesystem, process, network, DOM, Node, and package globals are
 not admitted. `services.exports` and `services.imports` declare versioned service
 contracts before activation. Exports use semantic versions and an explicit

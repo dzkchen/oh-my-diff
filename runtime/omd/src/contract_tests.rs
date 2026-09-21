@@ -256,6 +256,18 @@ fn persisted_state_is_task_bound_and_tamper_evident() {
             .contains("different task or workspace")
     );
 
+    let resumed = ActiveContract::resume(snapshot.clone(), &other).unwrap();
+    assert_eq!(
+        resumed.provenance().binding.initial_candidate_sha256,
+        binding().initial_candidate_sha256
+    );
+    let mut elsewhere = binding();
+    elsewhere.repository_identity = "owner/other".into();
+    assert!(ActiveContract::resume(snapshot.clone(), &elsewhere).is_err());
+    let mut reworded = binding();
+    reworded.acceptance_contract_sha256 = digest(b"another acceptance contract");
+    assert!(ActiveContract::resume(snapshot.clone(), &reworded).is_err());
+
     let mut relabelled = snapshot.clone();
     relabelled.provenance.assurance = AssuranceLabel::IndependentlyVerified;
     relabelled.provenance.contract = WorkflowContract::solo_evidence_v1();

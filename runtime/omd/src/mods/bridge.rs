@@ -66,7 +66,9 @@ pub(super) fn run(
             return Err(failure("registration_changed_during_callback"));
         }
         execution += started.elapsed();
-        if execution > budget {
+        // `hook_budget_ms` bounds each evaluation, which `process::evaluate` already enforces.
+        // Replaying host calls re-runs the module, so the whole callback carries its own total.
+        if execution > Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS) {
             return Err(failure("callback_execution_budget"));
         }
         if !reply.calls.starts_with(&expected) {

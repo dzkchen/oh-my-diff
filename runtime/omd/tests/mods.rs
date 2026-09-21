@@ -1258,6 +1258,40 @@ fn tool_progress_is_forwarded_once_across_host_call_replay() {
 }
 
 #[test]
+fn host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget() {
+    let source = "export default api => api.tool({name:'work',description:'Work',parameters:{type:'object',properties:{}}}, () => { let seen = 0; for (let index = 0; index < 16; index += 1) { api.host.call('task.status', null); seen += 1; } return seen; })";
+    let (temp, _, path) = fixture(source, &["tools", "task"]);
+    let manifest = path.join("mod.json");
+    let mut package: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    package["hook_budget_ms"] = json!(250);
+    std::fs::write(&manifest, serde_json::to_vec_pretty(&package).unwrap()).unwrap();
+    trust(
+        &ModStore::open(temp.path().canonicalize().unwrap().join("store")).unwrap(),
+        &path,
+        &["tools", "task"],
+    );
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    let started = std::time::Instant::now();
+    let value = runtime
+        .invoke_with(
+            "fixture",
+            generation,
+            "tool",
+            "work",
+            json!({}),
+            || true,
+            |_| Ok(json!({"status": "active"})),
+        )
+        .unwrap();
+    assert_eq!(value, json!(16));
+    assert!(
+        started.elapsed()
+            < std::time::Duration::from_millis(codex_omd::MOD_CALLBACK_TOTAL_BUDGET_MS)
+    );
+}
+
+#[test]
 fn pi_nested_skills_honor_ignore_rules_and_frontmatter() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

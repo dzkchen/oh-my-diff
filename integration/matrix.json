@@ -2,12 +2,12 @@
   "schema": 1,
   "as_of": "2026-09-21",
   "release": {
-    "codex": "0.154.0",
+    "codex": "0.155.1",
     "omd": "0.1.0",
     "mod_api": "0.1.0-experimental.6",
     "package_schema": 1,
-    "upstream_tag": "rust-v0.154.0",
-    "upstream_commit": "6b9826e3aa83b1a5947db50f4332cb9c65f1b340",
+    "upstream_tag": "rust-v0.155.1",
+    "upstream_commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
     "target": "aarch64-apple-darwin",
     "node": "24.18.0"
   },
@@ -17,7 +17,7 @@
       "area": "host",
       "name": "OMD host runtime",
       "owner": "OMD runtime (runtime/omd, runtime/native)",
-      "version": "0.1.0 on Codex 0.154.0",
+      "version": "0.1.0 on Codex 0.155.1",
       "features": [
         "author_diagnostics_v1",
         "author_offline_runner_v1",
@@ -126,7 +126,7 @@
       "area": "native",
       "name": "Codex plugins (plugin.json)",
       "owner": "upstream Codex",
-      "version": "0.154.0",
+      "version": "0.155.1",
       "status": "supported",
       "fixtures": [
         "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique",
@@ -140,7 +140,7 @@
       "area": "native",
       "name": "Codex hooks",
       "owner": "upstream Codex",
-      "version": "0.154.0",
+      "version": "0.155.1",
       "hooks": [
         "pre_tool_use",
         "permission_request",
@@ -402,7 +402,7 @@
       "area": "optional",
       "name": "Remote control",
       "owner": "upstream Codex",
-      "version": "0.154.0 native",
+      "version": "0.155.1 native",
       "status": "removed",
       "fixtures": [],
       "limitations": "The OMD-specific wrapper was reverted on 2026-09-16; no OMD account, pairing or compatibility claim is retained.",
@@ -755,7 +755,7 @@
     {
       "id": "pinned_codex_baseline",
       "retained_for": [
-        "0.154.0"
+        "0.155.1"
       ],
       "case": "The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces.",
       "evidence": [

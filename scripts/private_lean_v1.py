@@ -274,8 +274,9 @@ def install(args):
         raise ValueError(f"activation path already exists: {wrapper}")
     upstream_lock, lean_lock = lock_inputs()
     upstream = binary_identity(args.upstream)
-    if upstream["version"] != "codex-cli 0.154.0":
-        raise ValueError("supported upstream executable must report codex-cli 0.154.0")
+    supported = lean_lock["private_installation"]["supported_upstream"]
+    if upstream["version"] != supported:
+        raise ValueError(f"supported upstream executable must report {supported}")
     if within(resolved(upstream["path"]), prefix):
         raise ValueError("supported upstream executable must be outside the installation prefix")
     fallback = shutil.which("codex", path=path_without(bin_dir))

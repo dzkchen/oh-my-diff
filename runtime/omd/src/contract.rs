@@ -841,6 +841,21 @@ impl ActiveContract {
         })
     }
 
+    /// Abrupt client loss can leave the workspace legitimately changed, so a resumed task is
+    /// identified by its acceptance contract and repository and keeps its original candidate.
+    pub fn resume(snapshot: ContractSnapshot, binding: &TaskBinding) -> io::Result<Self> {
+        binding.validate()?;
+        let persisted = snapshot.provenance.binding.clone();
+        if persisted.acceptance_contract_sha256 != binding.acceptance_contract_sha256
+            || persisted.repository_identity != binding.repository_identity
+        {
+            return Err(invalid(
+                "persisted workflow contract belongs to a different task or workspace",
+            ));
+        }
+        Self::restore(snapshot, &persisted)
+    }
+
     pub fn restore(snapshot: ContractSnapshot, binding: &TaskBinding) -> io::Result<Self> {
         binding.validate()?;
         if snapshot.schema != 1

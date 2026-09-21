@@ -203,6 +203,17 @@ def assessment_runs(m, root, budget):
             print(json.dumps({"assessment": uid, "status": "failed" if error else "completed"}), flush=True)
 
 
+LEAD_ROUTE = ("openai", "subscription")
+OWNER_ROUTES = {"lead": LEAD_ROUTE, "reviewer": LEAD_ROUTE, "escalation": LEAD_ROUTE,
+                "completion": LEAD_ROUTE, "contributor": ("meta", "contributor")}
+
+
+def owner_route(owner):
+    if owner == "contributor-outage-fallback":
+        return LEAD_ROUTE
+    return OWNER_ROUTES.get(owner.split("-", 1)[0], (None, None))
+
+
 def controlled_attribution(folder):
     native_records = {}
     for path in sorted((folder / "native/controlled-evidence").glob("0*.json")):
@@ -214,10 +225,9 @@ def controlled_attribution(folder):
     native = list(native_records.values())
     by_id = {str(record.get("native_request_id")): record for record in wire}
     matches = len(native) == len(wire) == len(by_id)
-    role_routes = {"lead": ("openai", "subscription"), "contributor": ("meta", "contributor"), "reviewer": ("openai", "subscription")}
     for attempt in native:
         record = by_id.get(str(attempt["request"]), {})
-        provider, route = role_routes.get(attempt["owner"], (None, None))
+        provider, route = owner_route(attempt["owner"])
         matches &= (attempt["owner"] == record.get("native_owner") and attempt["provider"] == provider and record.get("route") == route
                     and attempt["model"] == record.get("requested_model") and attempt.get("raw_usage") == record.get("raw_usage")
                     and (attempt["status"] == "completed") == (record.get("status") == "completed"))

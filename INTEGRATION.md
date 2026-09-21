@@ -2,7 +2,7 @@
 
 <!-- Generated from integration/matrix.json by scripts/integration_matrix.py --write. -->
 
-Accumulated integration coverage for the rust-v0.154.0 pinned runtime as of
+Accumulated integration coverage for the rust-v0.155.1 pinned runtime as of
 2026-09-21. Every component below is maintained with this release: it names its
 owner, the exact version it is supported against, the fixtures that exercise it, what it
 does not cover, and how it is removed or migrated. The matrix is checked against the
@@ -17,12 +17,12 @@ section names what is deliberately out of scope.
 
 | Field | Value |
 | --- | --- |
-| codex | `0.154.0` |
+| codex | `0.155.1` |
 | omd | `0.1.0` |
 | mod api | `0.1.0-experimental.6` |
 | package schema | `1` |
-| upstream tag | `rust-v0.154.0` |
-| upstream commit | `6b9826e3aa83b1a5947db50f4332cb9c65f1b340` |
+| upstream tag | `rust-v0.155.1` |
+| upstream commit | `be2951ea34f0d295ed0becf97079f92fa5f6950e` |
 | target | `aarch64-apple-darwin` |
 | node | `24.18.0` |
 
@@ -30,7 +30,7 @@ section names what is deliberately out of scope.
 
 | Component | Owner | Version | Status | Fixtures | Limitations | Removal or migration |
 | --- | --- | --- | --- | --- | --- | --- |
-| **OMD host runtime** | OMD runtime (runtime/omd, runtime/native) | 0.1.0 on Codex 0.154.0 — features: author_diagnostics_v1, author_offline_runner_v1, author_tooling_v1, installed_contract_types_v1, package_manager_v1, service_contracts_v1, source_use_v1, state_migration_v1, transactional_reload_v1 | supported | `rust:omd/tests/mods.rs::host_versions_and_storage_schemas_are_reported_independently` · `rust:omd/tests/integration.rs::mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries` · `script:scripts/mod_compatibility.py` | Apple Silicon macOS on the pinned commit; the host reports its own release, package schema and state schema independently and does not qualify the full upstream workspace. | Select or reinstall the retained upstream executable; `OMD_MODE=upstream_direct` disables OMD task behaviour inside the custom binary. |
+| **OMD host runtime** | OMD runtime (runtime/omd, runtime/native) | 0.1.0 on Codex 0.155.1 — features: author_diagnostics_v1, author_offline_runner_v1, author_tooling_v1, installed_contract_types_v1, package_manager_v1, service_contracts_v1, source_use_v1, state_migration_v1, transactional_reload_v1 | supported | `rust:omd/tests/mods.rs::host_versions_and_storage_schemas_are_reported_independently` · `rust:omd/tests/integration.rs::mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries` · `script:scripts/mod_compatibility.py` | Apple Silicon macOS on the pinned commit; the host reports its own release, package schema and state schema independently and does not qualify the full upstream workspace. | Select or reinstall the retained upstream executable; `OMD_MODE=upstream_direct` disables OMD task behaviour inside the custom binary. |
 | **Public TypeScript mod API** | OMD mod host (runtime/omd/src/mods.rs) | 0.1.0-experimental.6 — supported versions: 0.1.0-experimental.4, 0.1.0-experimental.5, 0.1.0-experimental.6 | supported | `script:scripts/mod_conformance.py` · `rust:omd/tests/mods.rs::exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `node:typed module context callback` | Experimental and pre-1.0. Only the published rows are supported; `.4` is deprecated and no intervening or future version is promised. | Breaking stable changes need an API major with one stable OMD release of deprecation notice; each row has a finite support window in mods/COMPATIBILITY.md. |
 | **Mod package install, update and rollback** | OMD package manager (runtime/omd/src/mods/package_manager.rs) | package schema 1 | supported | `rust:omd/tests/packages.rs::local_updates_preview_preserve_edits_settings_and_rollback` · `rust:omd/tests/packages.rs::stale_plans_and_interrupted_transactions_preserve_the_previous_lock` · `rust:omd/tests/packages.rs::repository_revision_is_immutable_and_cached_for_offline_reuse` | Local sources, immutable repository revisions and versioned packages only; there is no external registry publication or install path. | `omd-mod` disable and uninstall restore the previous lock, preserve edited sources and explicit settings, and leave no activated state. |
 
@@ -45,8 +45,8 @@ section names what is deliberately out of scope.
 
 | Component | Owner | Version | Status | Fixtures | Limitations | Removal or migration |
 | --- | --- | --- | --- | --- | --- | --- |
-| **Codex plugins (plugin.json)** | upstream Codex | 0.154.0 | supported | `patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique` · `rust:omd/tests/mods.rs::pi_and_native_discovery_preserve_project_precedence_without_trust` | Plugin discovery, MCP servers and hook execution stay upstream-owned and unmodified; OMD adds no plugin transport and does not sandbox plugin hooks. | Remove the plugin from the Codex plugin directory; no OMD state refers to it. |
-| **Codex hooks** | upstream Codex | 0.154.0 — hooks: pre_tool_use, permission_request, post_tool_use, pre_compact, post_compact, session_start, session_end, user_prompt_submit, subagent_start, subagent_stop, stop, interrupt | supported | `script:scripts/integration_matrix.py` · `script:scripts/mod_conformance.py` | Hook dispatch is upstream-owned: competing pre_tool_use rewrites are still resolved by whichever hook finishes last, and no repository fixture drives an external hook command. | Remove the hook file from the Codex configuration; mod interception is registered separately and is unaffected. |
+| **Codex plugins (plugin.json)** | upstream Codex | 0.155.1 | supported | `patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique` · `rust:omd/tests/mods.rs::pi_and_native_discovery_preserve_project_precedence_without_trust` | Plugin discovery, MCP servers and hook execution stay upstream-owned and unmodified; OMD adds no plugin transport and does not sandbox plugin hooks. | Remove the plugin from the Codex plugin directory; no OMD state refers to it. |
+| **Codex hooks** | upstream Codex | 0.155.1 — hooks: pre_tool_use, permission_request, post_tool_use, pre_compact, post_compact, session_start, session_end, user_prompt_submit, subagent_start, subagent_stop, stop, interrupt | supported | `script:scripts/integration_matrix.py` · `script:scripts/mod_conformance.py` | Hook dispatch is upstream-owned: competing pre_tool_use rewrites are still resolved by whichever hook finishes last, and no repository fixture drives an external hook command. | Remove the hook file from the Codex configuration; mod interception is registered separately and is unaffected. |
 | **Pi resource adapter** | OMD mod host (runtime/omd/src/mods/pi.rs) | pi-0.74-resources-v2 | opt in | `rust:omd/tests/mods.rs::pi_nested_skills_honor_ignore_rules_and_frontmatter` · `rust:omd/tests/mods.rs::pi_prompt_expansion_matches_pi_0_74_oracle` · `rust:omd/tests/integration.rs::mods_and_upstream_pi_resources_coexist_without_capturing_each_other` | Skills and prompts only, bounded by entry, depth and aggregate limits; symlinked or protected resources are refused and reported, never silently omitted. | Do not grant the `pi_resources` capability; discovery then fails closed for that package. |
 
 ## Bundled browser tooling
@@ -81,7 +81,7 @@ section names what is deliberately out of scope.
 | --- | --- | --- | --- | --- | --- | --- |
 | **Application bridge capability** | OMD host (runtime/native) | policy schema 1, external SHA-256 bound policy | default off | `python:test_authorization_version_redaction_bounds_state_and_teardown` · `python:test_bridge_launcher_uses_the_managed_node_runtime` | Development-only and off by default; activation fails if the external policy is missing or changed, state is pull-only and evidence is memory-only. | Remove `application_bridge` from the manifest capabilities and the `bridge` reference; the MCP server is then never registered. |
 | **Approved provider routes and local sidecars** | OMD host operations (runtime/native/src/mods) | host-approved service IDs only — operations: providers.register, providers.unregister, sidecars.start, sidecars.status, sidecars.stop | opt in | `fixture:provider/success` · `rust:omd/tests/mods.rs::native_host_bridge_preserves_once_only_effects_and_rust_capability_checks` · `node:typed middleware and services register without ambient authority` | Only pre-approved executables and service IDs; secrets stay opaque references, the route and process group die with the task, and unapproved IDs are refused. | Revoke the `providers`/`sidecars` capability grants; the host unregisters routes and terminates the process group. |
-| **Remote control** | upstream Codex | 0.154.0 native | removed |  | The OMD-specific wrapper was reverted on 2026-09-16; no OMD account, pairing or compatibility claim is retained. | Already removed from the runtime patch and private build; use the native Codex remote-control workflow supported by the installed version. |
+| **Remote control** | upstream Codex | 0.155.1 native | removed |  | The OMD-specific wrapper was reverted on 2026-09-16; no OMD account, pairing or compatibility claim is retained. | Already removed from the runtime patch and private build; use the native Codex remote-control workflow supported by the installed version. |
 
 ## Shared resource and event boundaries
 
@@ -124,7 +124,7 @@ section names what is deliberately out of scope.
 | **older_experimental_api** | 0.1.0-experimental.5 | A package built against the older experimental API keeps activating on the current host with negotiated required and optional features. | `rust:omd/tests/mods.rs::synthetic_old_api_mod_activates_on_a_compatible_new_host` · `rust:omd/tests/integration.rs::mixed_api_mods_share_one_host_and_upgrade_independently` |
 | **current_api_composition** | 0.1.0-experimental.6 | Composition, precedence and conflict handling on the current row: declared order, cycles, contested replacements and scope shadowing. | `rust:omd/tests/mods.rs::composition_order_is_declared_dependencies_first_then_mod_id` · `rust:omd/tests/mods.rs::a_dependency_cycle_is_rejected_before_activation_and_isolated` · `script:scripts/mod_conformance.py` |
 | **state_migration_and_rollback** | 0.1.0 | Package-owned state survives a host upgrade only through an explicit migration, with a content-addressed backup and an interrupted-migration rollback. | `rust:omd/tests/mods.rs::migration_is_explicit_bounded_and_preserves_previous_state` · `rust:omd/tests/mods.rs::interrupted_migration_and_explicit_rollback_preserve_source_settings_and_state` · `rust:omd/tests/integration.rs::mixed_api_mods_share_one_host_and_upgrade_independently` |
-| **pinned_codex_baseline** | 0.154.0 | The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces. | `script:scripts/apply_runtime_patch.py` · `script:scripts/verify_codex_compat.py` · `script:scripts/normalize_upstream_lock.py` |
+| **pinned_codex_baseline** | 0.155.1 | The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces. | `script:scripts/apply_runtime_patch.py` · `script:scripts/verify_codex_compat.py` · `script:scripts/normalize_upstream_lock.py` |
 | **pinned_node_runtime** | 24.18.0 | Mods keep loading under the pinned Node erasable-TypeScript loader with no ambient process, fetch or code generation. | `node:no ambient process, fetch, or code generation` · `node:typed module context callback` · `script:scripts/mod_author_acceptance.py` |
 
 ## Tested versus untested

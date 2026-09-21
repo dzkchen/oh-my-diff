@@ -12,9 +12,11 @@ from scripts import browser_bundle
 from scripts import preview_lock
 from scripts import private_lean_v1 as installer
 
+SUPPORTED_UPSTREAM = json.loads((installer.ROOT / "runtime/lean-v1.lock.json").read_text())["private_installation"]["supported_upstream"]
+
 
 class ManagedFixture:
-    def executable(self, path, version="codex-cli 0.154.0"):
+    def executable(self, path, version=SUPPORTED_UPSTREAM):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"#!/bin/sh\nprintf '%s\\n' '{version}'\n")
         path.chmod(0o755)
@@ -37,9 +39,9 @@ class ManagedFixture:
             "artifacts": {
                 "upstream": {"path": str(upstream_original),
                              "sha256": installer.digest(prefix / "artifacts/upstream/codex"),
-                             "version": "codex-cli 0.154.0"},
+                             "version": SUPPORTED_UPSTREAM},
                 "omd": {"sha256": installer.digest(prefix / "artifacts/omd/codex"),
-                        "version": "codex-cli 0.154.0"},
+                        "version": SUPPORTED_UPSTREAM},
             },
             "activation": None,
         }
@@ -216,7 +218,8 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             upstream_lock = {"commit": "fixture-commit", "tag": "fixture-tag",
                              "rust_toolchain": "1.95.0",
                              "normalized_cargo_lock_sha256": "lock-hash"}
-            lean_lock = {"runtime_patch": {"sha256": "patch-hash"}}
+            lean_lock = {"runtime_patch": {"sha256": "patch-hash"},
+                         "private_installation": {"supported_upstream": SUPPORTED_UPSTREAM}}
 
             def clone(_repository, checkout, _commit):
                 (checkout / "codex-rs").mkdir(parents=True)
@@ -227,7 +230,7 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
                 if arguments[0] == "file":
                     return "Mach-O 64-bit executable arm64"
                 if arguments[-1] == "--version":
-                    return "codex-cli 0.154.0"
+                    return SUPPORTED_UPSTREAM
                 return ""
 
             def command_run(arguments, cwd=None, env=None, capture=True):
