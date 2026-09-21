@@ -10,7 +10,8 @@ both of them without rebuilding Codex.
 | `omd_coordination` | Coordination policy: which configured route leads, what operating brief the model receives, and which evidence a delegated worker is given |
 
 This is a preview slice, not the release bundle. It is API
-`0.1.0-experimental.5`, which is experimental and not frozen.
+`0.1.0-experimental.6`, which is experimental and not frozen. Its finite
+cross-release policy is published in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Install
 
@@ -143,9 +144,10 @@ touches the installed build, your Codex state or your manifests.
 
 - It is not the release bundle: the curated catalog, author tooling, package
   installation from registries or repositories, and the cross-release
-  compatibility matrix are separate work.
-- The API is experimental and may change; there is no multi-release support
-  window yet.
+  compatibility matrix are separate release-integration work.
+- The API is experimental and may change. Only the rows and finite windows in
+  [COMPATIBILITY.md](COMPATIBILITY.md) are supported; arbitrary-version session
+  or state interchange is not promised.
 - Both packages are a working slice of their first-party migrations, not the
   finished migrations. Native routing, worker-context policy and the terminal
   driver remain authoritative and keep running when a mod is missing or broken.

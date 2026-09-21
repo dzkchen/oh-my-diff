@@ -85,7 +85,9 @@ impl ModStore {
         let from = previous["version"]
             .as_u64()
             .ok_or_else(|| failure("invalid_state_version"))?;
-        if previous["schema"] != 1 || from == u64::from(package.state_version) {
+        if previous["schema"] != MOD_STATE_STORAGE_SCHEMA_VERSION
+            || from == u64::from(package.state_version)
+        {
             return Err(failure("migration_requires_different_state_version"));
         }
         let to = package.state_version;
@@ -123,13 +125,84 @@ impl ModStore {
         if reply.registrations != inspected.registrations {
             return Err(failure("migration_changed_registration"));
         }
+        let state_name = ModStore::state_name(&loaded.package.id, &selection.scope);
         let backup = format!(
-            "state-{}-backup-{}.json",
-            loaded.package.id,
+            "{}-backup-{}",
+            state_name,
             digest(&serde_json::to_vec(&previous)?)
         );
         self.write(&backup, &previous)?;
-        self.write(&name, &json!({"schema":1,"version":to,"value":reply.state}))?;
-        Ok(json!({"id":loaded.package.id,"from":from,"to":to,"backup":self.root.join(backup)}))
+        self.write(
+            &name,
+            &json!({"schema":MOD_STATE_STORAGE_SCHEMA_VERSION,"version":to,"value":reply.state}),
+        )?;
+        Ok(
+            json!({"id":loaded.package.id,"from":from,"to":to,"backup":self.root.join(backup),
+            "source_sha256":hash,"settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
+        )
+    }
+
+    pub fn rollback(&self, path: &Path, backup: &Path) -> Result<Value> {
+        let _lock = self.lock()?;
+        let config = self.configuration()?;
+        let selection = config
+            .mods
+            .iter()
+            .find(|selection| selection.path == path)
+            .ok_or_else(|| failure("package_not_trusted"))?;
+        let (package, _, hash) = store::package(path)?;
+        if selection.enabled
+            || hash != selection.sha256
+            || selection.capabilities != package.capabilities
+            || !package
+                .capabilities
+                .iter()
+                .any(|capability| capability == "state")
+        {
+            return Err(failure(
+                "rollback_requires_disabled_trusted_state_capability",
+            ));
+        }
+        let backup = backup.canonicalize()?;
+        if backup.parent() != Some(self.root.as_path()) {
+            return Err(failure("rollback_backup_must_be_in_store"));
+        }
+        let state_name = ModStore::state_name(&package.id, &selection.scope);
+        let prefix = format!("{state_name}-backup-");
+        let backup_name = backup
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| failure("rollback_backup_does_not_match_package_scope"))?;
+        let Some(expected_digest) = backup_name.strip_prefix(&prefix) else {
+            return Err(failure("rollback_backup_does_not_match_package_scope"));
+        };
+        let restored: Value = serde_json::from_slice(&store::read(&backup, 65_536)?)?;
+        if digest(&serde_json::to_vec(&restored)?) != expected_digest {
+            return Err(failure("rollback_backup_digest_mismatch"));
+        }
+        let restored_version = restored["version"]
+            .as_u64()
+            .ok_or_else(|| failure("invalid_state_version"))?;
+        if restored["schema"] != MOD_STATE_STORAGE_SCHEMA_VERSION {
+            return Err(failure("incompatible_state_storage_schema"));
+        }
+        let current_path = self.root.join(&state_name);
+        let current: Value = serde_json::from_slice(&store::read(&current_path, 65_536)?)?;
+        if current["schema"] != MOD_STATE_STORAGE_SCHEMA_VERSION
+            || current["version"].as_u64().is_none()
+        {
+            return Err(failure("incompatible_current_state"));
+        }
+        let recovery = format!(
+            "{state_name}-rollback-{}",
+            digest(&serde_json::to_vec(&current)?)
+        );
+        self.write(&recovery, &current)?;
+        self.write(&state_name, &restored)?;
+        Ok(
+            json!({"id":package.id,"from":current["version"],"to":restored_version,
+            "restored":backup,"recovery":self.root.join(recovery),"source_sha256":hash,
+            "settings_sha256":digest(&serde_json::to_vec(&selection.settings)?)}),
+        )
     }
 }

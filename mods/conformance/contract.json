@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "api": "0.1.0-experimental.5",
+  "api": "0.1.0-experimental.6",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {

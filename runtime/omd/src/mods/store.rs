@@ -223,7 +223,8 @@ impl ModStore {
             Err(e) => return Err(e),
         };
         let state: Value = serde_json::from_slice(&bytes)?;
-        if state["schema"] != 1 || state["version"] != version {
+        if state["schema"] != super::MOD_STATE_STORAGE_SCHEMA_VERSION || state["version"] != version
+        {
             return Err(failure(
                 "state_migration_required: previous state preserved",
             ));
@@ -245,7 +246,7 @@ impl ModStore {
         }
         self.write(
             &Self::state_name(id, scope),
-            &json!({"schema": 1, "version": version, "value": value}),
+            &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
         )
     }
 }

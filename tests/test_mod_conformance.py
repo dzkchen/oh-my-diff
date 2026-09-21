@@ -3,12 +3,16 @@ from pathlib import Path
 import re
 import unittest
 
-from scripts import mod_conformance
+from scripts import mod_compatibility, mod_conformance
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ContractTests(unittest.TestCase):
+    def test_published_compatibility_matrix_matches_the_host(self):
+        matrix = json.loads(mod_compatibility.MATRIX.read_text())
+        self.assertEqual(mod_compatibility.check(matrix), [])
+
     def test_contract_covers_the_host_api_and_resolves_its_evidence(self):
         contract = json.loads(mod_conformance.CONTRACT.read_text())
         version, sets = mod_conformance.host_sets()

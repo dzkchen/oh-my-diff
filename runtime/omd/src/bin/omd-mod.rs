@@ -7,7 +7,7 @@ use std::path::PathBuf;
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | status/reload STORE | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | command STORE MOD NAME JSON",
+            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | status/reload STORE | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
         )
     };
     match args {
@@ -29,6 +29,10 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root, path] if command == "migrate" => {
             ModStore::open(PathBuf::from(root).canonicalize()?)?
                 .migrate(&PathBuf::from(path).canonicalize()?)
+        }
+        [command, root, path, backup] if command == "rollback" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .rollback(&PathBuf::from(path).canonicalize()?, &PathBuf::from(backup))
         }
         [command, root, node] if command == "init" => {
             ModStore::create(PathBuf::from(root), PathBuf::from(node))?;

@@ -37,7 +37,24 @@ use std::path::PathBuf;
 
 pub use store::ModStore;
 
-pub const MOD_API_VERSION: &str = "0.1.0-experimental.5";
+pub const CODEX_HOST_RELEASE: &str = "0.154.0";
+pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
+pub const MOD_API_VERSION: &str = "0.1.0-experimental.6";
+pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
+pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
+pub const INSTALLED_CONTRACT_TYPES_VERSION: u32 = 1;
+pub const MOD_HOST_FEATURES: &[&str] = &[
+    "installed_contract_types_v1",
+    "service_contracts_v1",
+    "source_use_v1",
+    "state_migration_v1",
+    "transactional_reload_v1",
+];
+pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
+    ("0.1.0-experimental.4", "deprecated", "2027-03-20"),
+    ("0.1.0-experimental.5", "experimental", "2027-03-20"),
+    (MOD_API_VERSION, "experimental", "2027-03-20"),
+];
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",
@@ -159,6 +176,71 @@ fn version(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_'))
 }
 
+fn api_support(value: &str) -> Option<(&'static str, &'static str)> {
+    SUPPORTED_MOD_APIS
+        .iter()
+        .find(|(candidate, ..)| *candidate == value)
+        .map(|(_, stability, support_until)| (*stability, *support_until))
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SemanticVersion(u64, u64, u64);
+
+impl SemanticVersion {
+    fn parse(value: &str) -> Option<Self> {
+        let mut parts = value.split('.');
+        let parsed = Self(
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+        );
+        parts.next().is_none().then_some(parsed)
+    }
+}
+
+fn service_version_satisfies(requirement: &str, provided: &str) -> bool {
+    let Some(provided) = SemanticVersion::parse(provided) else {
+        return false;
+    };
+    let (caret, requirement) = requirement
+        .strip_prefix('^')
+        .map_or((false, requirement), |value| (true, value));
+    let Some(required) = SemanticVersion::parse(requirement) else {
+        return false;
+    };
+    if !caret {
+        return provided == required;
+    }
+    provided >= required
+        && if required.0 > 0 {
+            provided.0 == required.0
+        } else if required.1 > 0 {
+            provided.0 == 0 && provided.1 == required.1
+        } else {
+            provided == required
+        }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModHostCompatibility {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub releases: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_features: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional_features: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModStability {
+    Stable,
+    Deprecated,
+    #[default]
+    Experimental,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModServiceManifest {
@@ -173,6 +255,12 @@ pub struct ModServiceManifest {
 pub struct ModServiceContract {
     pub name: String,
     pub version: String,
+    #[serde(default)]
+    pub stability: ModStability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated_since: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<String>,
     pub methods: BTreeMap<String, ModServiceMethod>,
 }
 
@@ -366,6 +454,8 @@ pub struct ModPackage {
     pub version: String,
     pub api: String,
     pub state_version: u32,
+    #[serde(default)]
+    pub compatibility: ModHostCompatibility,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<String>,
     pub capabilities: Vec<String>,
@@ -385,14 +475,70 @@ fn default_hook_budget_ms() -> u64 {
 
 impl ModPackage {
     fn validate(&self) -> Result<()> {
-        if self.api != MOD_API_VERSION {
+        if api_support(&self.api).is_none() {
+            let supported = SUPPORTED_MOD_APIS
+                .iter()
+                .map(|(version, stability, until)| {
+                    format!("{version} ({stability}, through {until})")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             return Err(failure(format!(
-                "incompatible_api: this host runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Update the package's mod.json api field and re-trust it.",
-                self.id, self.api
+                "incompatible_api: OMD host {OMD_HOST_RELEASE} runs mod API {MOD_API_VERSION}; package \"{}\" declares {}. Supported package APIs: {supported}. Install a compatible package release or use a host listed in mods/COMPATIBILITY.md.",
+                self.id, self.api,
             )));
         }
-        if self.schema != 1
-            || !identifier(&self.id)
+        if self.schema != MOD_PACKAGE_SCHEMA_VERSION {
+            return Err(failure(format!(
+                "incompatible_package_schema: OMD host {OMD_HOST_RELEASE} supports package schema {MOD_PACKAGE_SCHEMA_VERSION}; package \"{}\" declares {}. Install a compatible package release; source, settings and state were not changed.",
+                self.id, self.schema
+            )));
+        }
+        if !self.compatibility.releases.is_empty()
+            && !self
+                .compatibility
+                .releases
+                .iter()
+                .any(|release| release == OMD_HOST_RELEASE)
+        {
+            return Err(failure(format!(
+                "incompatible_host_release: package \"{}\" supports OMD host releases [{}], but this host is {OMD_HOST_RELEASE}. Install a compatible package or host release; source, settings and state were not changed.",
+                self.id,
+                self.compatibility.releases.join(", ")
+            )));
+        }
+        let missing_features = self
+            .compatibility
+            .required_features
+            .iter()
+            .filter(|feature| !MOD_HOST_FEATURES.contains(&feature.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_features.is_empty() {
+            return Err(failure(format!(
+                "missing_host_features: package \"{}\" requires [{}], but OMD host {OMD_HOST_RELEASE} provides [{}]. Install a compatible host or package; source, settings and state were not changed.",
+                self.id,
+                missing_features.join(", "),
+                MOD_HOST_FEATURES.join(", ")
+            )));
+        }
+        if !identifier_list(&self.compatibility.required_features, 16)
+            || !identifier_list(&self.compatibility.optional_features, 16)
+            || self
+                .compatibility
+                .required_features
+                .iter()
+                .any(|feature| self.compatibility.optional_features.contains(feature))
+            || self.compatibility.releases.len() > 8
+            || self
+                .compatibility
+                .releases
+                .iter()
+                .any(|release| !version(release))
+        {
+            return Err(failure("invalid_host_compatibility_declaration"));
+        }
+        if !identifier(&self.id)
             || self.id.len() > 24
             || self.version.is_empty()
             || self.version.len() > 64
@@ -401,7 +547,7 @@ impl ModPackage {
             || !(25..=2000).contains(&self.hook_budget_ms)
         {
             return Err(failure(
-                "incompatible_package: schema=1, exact experimental API and positive state_version required",
+                "incompatible_package: valid identity/version, supported API and positive state_version required",
             ));
         }
         if self
@@ -447,7 +593,7 @@ impl ModPackage {
         let mut exports = BTreeSet::new();
         for contract in &self.services.exports {
             if !service_name(&contract.name)
-                || !version(&contract.version)
+                || SemanticVersion::parse(&contract.version).is_none()
                 || !exports.insert(&contract.name)
                 || contract.methods.is_empty()
                 || contract.methods.len() > 32
@@ -462,6 +608,18 @@ impl ModPackage {
                         ]
                         .contains(&method.output.as_str())
                 })
+                || matches!(contract.stability, ModStability::Stable)
+                    && SemanticVersion::parse(&contract.version)
+                        .is_some_and(|version| version.0 == 0)
+                || matches!(contract.stability, ModStability::Deprecated)
+                    && contract
+                        .deprecated_since
+                        .as_deref()
+                        .is_none_or(str::is_empty)
+                || contract
+                    .replacement
+                    .as_deref()
+                    .is_some_and(|replacement| !service_name(replacement))
             {
                 return Err(failure("invalid_service_export"));
             }
@@ -469,7 +627,7 @@ impl ModPackage {
         let mut imports = BTreeSet::new();
         for import in &self.services.imports {
             if !service_name(&import.name)
-                || !version(&import.version)
+                || SemanticVersion::parse(import.version.trim_start_matches('^')).is_none()
                 || !imports.insert(&import.name)
             {
                 return Err(failure("invalid_service_import"));
@@ -482,6 +640,13 @@ impl ModPackage {
         }
         Ok(())
     }
+}
+
+fn identifier_list(values: &[String], limit: usize) -> bool {
+    let unique: BTreeSet<_> = values.iter().collect();
+    values.len() <= limit
+        && unique.len() == values.len()
+        && values.iter().all(|value| identifier(value))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -854,13 +1019,17 @@ impl ModHost {
                 .filter_map(|(id, loaded)| {
                     loaded.package.services.imports.iter().find_map(|import| {
                         match providers.get(&import.name) {
-                            Some((_, version)) if version == &import.version => None,
+                            Some((_, version))
+                                if service_version_satisfies(&import.version, version) =>
+                            {
+                                None
+                            }
                             None if import.optional => None,
                             Some((_, version)) => Some((
                                 id.clone(),
                                 format!(
-                                    "service_version_incompatible: {} requires {} but provider exports {}",
-                                    import.name, import.version, version
+                                    "service_version_incompatible: consumer {id} requires {} {} but the active provider exports {}. Install a compatible provider/consumer pair; the consumer was not activated and the provider remains eligible.",
+                                    import.name, import.version, version,
                                 ),
                             )),
                             None => Some((
@@ -1360,8 +1529,11 @@ impl ModHost {
                 "service_provider_missing"
             }));
         };
-        if contract.version != import.version {
-            return Err(failure("service_version_incompatible"));
+        if !service_version_satisfies(&import.version, &contract.version) {
+            return Err(failure(format!(
+                "service_version_incompatible: consumer {caller} requires {} {} but provider {provider} exports {}",
+                call.name, import.version, contract.version
+            )));
         }
         let method = contract
             .methods
@@ -1628,8 +1800,8 @@ impl ModHost {
     }
 
     fn write_installed_service_types(&self) -> Result<()> {
-        let mut output = String::from(
-            "export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };\nexport interface InstalledModServices {\n",
+        let mut output = format!(
+            "export type InstalledContractTypesVersion = {INSTALLED_CONTRACT_TYPES_VERSION};\nexport type InstalledHostRelease = '{OMD_HOST_RELEASE}';\nexport type InstalledModApi = '{MOD_API_VERSION}';\nexport type Json = null | boolean | number | string | Json[] | {{ [key: string]: Json }};\nexport interface InstalledModServices {{\n",
         );
         for (_, loaded) in self.active() {
             for contract in &loaded.registrations.services {
@@ -1665,11 +1837,22 @@ impl ModHost {
     }
 
     pub fn status(&self) -> Value {
-        json!({"api": MOD_API_VERSION, "generation": self.generation, "reload_error": self.reload_error,
+        json!({"api": MOD_API_VERSION, "host": {"codex":CODEX_HOST_RELEASE,"omd":OMD_HOST_RELEASE,
+            "package_schema":MOD_PACKAGE_SCHEMA_VERSION,"state_storage_schema":MOD_STATE_STORAGE_SCHEMA_VERSION,
+            "installed_contract_types":INSTALLED_CONTRACT_TYPES_VERSION,"features":MOD_HOST_FEATURES,
+            "supported_apis":SUPPORTED_MOD_APIS.iter().map(|(version,stability,support_until)|
+                json!({"version":version,"stability":stability,"support_until":support_until})).collect::<Vec<_>>()},
+            "generation": self.generation, "reload_error": self.reload_error,
             "order": self.order, "rejected": self.rejected, "field_policies": Self::field_policies(),
             "installed_contract_types": self.store.root.join("installed-contracts.d.ts"),
             "service_calls": self.service_calls,
             "mods": self.loaded.iter().map(|(id, m)| json!({"id": id, "version": m.package.version,
+                "api":m.package.api,"api_stability":api_support(&m.package.api).map(|support|support.0),
+                "package_schema":m.package.schema,"state_version":m.package.state_version,
+                "host_compatibility":m.package.compatibility,
+                "negotiated_features":{"required":m.package.compatibility.required_features,
+                    "optional_available":m.package.compatibility.optional_features.iter().filter(|feature|MOD_HOST_FEATURES.contains(&feature.as_str())).collect::<Vec<_>>(),
+                    "optional_unavailable":m.package.compatibility.optional_features.iter().filter(|feature|!MOD_HOST_FEATURES.contains(&feature.as_str())).collect::<Vec<_>>()},
                 "sha256": m.selection.sha256, "capabilities": m.package.capabilities,
                 "scope": m.selection.scope, "requires": m.package.requires, "services": m.package.services,
                 "source_use":m.source_use,"unused_grants":m.unused_grants,

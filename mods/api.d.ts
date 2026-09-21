@@ -2,8 +2,9 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
+export type Stability = 'stable' | 'deprecated' | 'experimental';
 export interface ServiceMethod { input: JsonKind; output: JsonKind }
-export interface ServiceContract { name: `${string}.${string}`; version: string; methods: Record<string, ServiceMethod> }
+export interface ServiceContract { name: `${string}.${string}`; version: `${number}.${number}.${number}`; stability?: Stability; deprecated_since?: string; replacement?: `${string}.${string}`; methods: Record<string, ServiceMethod> }
 export interface RequestPreset { name: string; model: string; provider: string; reasoning: string }
 export interface ModelRequestEvent {
   request_id: string;
@@ -142,7 +143,7 @@ export interface Events {
   host_operation: { input: { phase: 'before' | 'after'; caller: string; operation: keyof HostOperations; arguments?: Json; result?: Json; error?: string }; output: void };
 }
 export interface ModAPI {
-  readonly version: '0.1.0-experimental.5';
+  readonly version: '0.1.0-experimental.6';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: { call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'] };

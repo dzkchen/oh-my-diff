@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "routing",
   "version": "1.0.0",
-  "api": "0.1.0-experimental.5",
+  "api": "0.1.0-experimental.6",
   "state_version": 1,
   "capabilities": [
     "routing"

@@ -1,6 +1,6 @@
 # TypeScript mods
 
-API `0.1.0-experimental.5` runs on the pinned Codex 0.154.0 OMD host,
+API `0.1.0-experimental.6` runs on the pinned Codex 0.154.0 OMD 0.1.0 host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.
@@ -106,14 +106,19 @@ pnpm --dir mods check
 pnpm --dir mods test
 ```
 
-A manifest has schema 1, an ID of at most 24 lowercase ASCII letters/digits/
-underscores, a package version label, the exact API version, a positive
-`state_version`, declared capabilities, and an optional `requires` list of up to
-four other mod IDs. `hook_budget_ms` optionally narrows each JavaScript hook to
+A manifest has package schema 1, an ID of at most 24 lowercase ASCII letters/digits/
+underscores, a package version label, a supported API version, a positive
+independent `state_version`, declared capabilities, and an optional `requires`
+list of up to four other mod IDs. Optional `compatibility` metadata declares
+exact OMD `releases`, `required_features`, and `optional_features`; missing
+required features reject before activation while unavailable optional features
+remain visible in status. `hook_budget_ms` optionally narrows each JavaScript hook to
 25–2000 ms (1000 by default). `environment` may request only the host-provided
 `crypto` global; filesystem, process, network, DOM, Node, and package globals are
-not admitted. `services.exports` and `services.imports` declare exact service
-contracts before activation. Activation registers callbacks and
+not admitted. `services.exports` and `services.imports` declare versioned service
+contracts before activation. Exports use semantic versions and an explicit
+`stable`, `deprecated`, or `experimental` label; imports use an exact version or
+a compatible caret range. Activation registers callbacks and
 must not write state or call host operations. Settings are read-only JSON.
 Modules have fresh globals on every invocation. Persist data through
 `api.state.get/set`; never store secrets there.
@@ -150,7 +155,7 @@ undocumented capability, event, replacement point or host operation fails. Unkno
 APIs, capabilities, imports, events, adapters, and host operations fail explicitly.
 First-party and external packages use identical capabilities.
 
-API `0.1.0-experimental.5` adds the typed kernel without making a stable API
+API `0.1.0-experimental.6` adds compatibility metadata without making a stable API
 commitment. `api.fieldPolicies` gives the authoritative per-field classification
 for every admitted request/response, prompt, session, agent, tool, and host-operation
 event: `observe_only`, `alterable`, or `replaceable`. `api.middleware` registers
@@ -168,10 +173,14 @@ accounting, cancellation, transcript/evidence records, workflow checks, tool res
 completed actions, and assurance receipts stay native. A failing stream transformer
 is disabled and the unchanged event continues with a source-located fallback record.
 
+The finite support matrix, stability/deprecation rules, feature negotiation,
+upgrade/rollback procedure, and explicit interchange limits are published in
+[COMPATIBILITY.md](COMPATIBILITY.md).
+
 Inter-mod services are host-routed rather than shared-memory calls. A provider uses
 `api.provide`; a consumer calls `api.services.call` for a name in its manifest's
 imports. Names contain at least two lowercase namespace segments, versions match
-exactly, methods declare JSON input/output kinds, and calls carry caller/provider
+the declared exact or caret-compatible requirement, methods declare JSON input/output kinds, and calls carry caller/provider
 provenance. Missing required providers, incompatible versions, dependency cycles,
 and colliding providers are rejected before activation; an absent optional import
 remains callable only as an explicit `optional_service_unavailable` error. The host
@@ -419,8 +428,17 @@ omd-mod enable /absolute/external/mod-store /absolute/package
 Migration checks the exact approved source and capabilities, runs without native
 task effects, retains a content-addressed backup, and atomically replaces the
 state. Failed migration leaves prior state intact. Source/settings are retained.
-Rollback requires an explicitly trusted package and reverse migration; arbitrary
-state/session version interchange is not claimed.
+Rollback is explicit while the trusted package is disabled:
+
+```sh
+omd-mod rollback /absolute/external/mod-store /absolute/package /absolute/external/mod-store/state-PACKAGE.json-backup-SHA256
+```
+
+The host verifies that the backup belongs to the package and scope, retains the
+current state as a forward-recovery copy, and atomically restores the backup. It
+does not rewrite package source or settings; restore a package release that
+understands the restored state before enabling it. Arbitrary state/session
+version interchange is not claimed.
 
 Reload stages the entire enabled set. Broken new code retains eligible previous
 code, while explicit removals and capability revocations still take effect.

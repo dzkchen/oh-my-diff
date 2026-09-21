@@ -2,7 +2,7 @@
 
 <!-- Generated from conformance/contract.json by scripts/mod_conformance.py --write. -->
 
-Mod API `0.1.0-experimental.5`. Every decision a mod can reach through the published
+Mod API `0.1.0-experimental.6`. Every decision a mod can reach through the published
 API is listed below with the support it has, when it takes effect, who owns the
 outcome, and its limits. Capabilities not granted to a package fail before native
 dispatch. Arbitrary host internals are not exposed, and the table is checked

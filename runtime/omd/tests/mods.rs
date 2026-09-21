@@ -1,6 +1,10 @@
 use codex_omd::MOD_API_VERSION;
+use codex_omd::MOD_HOST_FEATURES;
+use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
+use codex_omd::MOD_STATE_STORAGE_SCHEMA_VERSION;
 use codex_omd::ModHost;
 use codex_omd::ModStore;
+use codex_omd::OMD_HOST_RELEASE;
 use serde_json::Value;
 use serde_json::json;
 use std::path::PathBuf;
@@ -438,6 +442,268 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
 }
 
 #[test]
+fn synthetic_old_api_mod_activates_on_a_compatible_new_host() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let path = package(
+        &root,
+        "old_mod",
+        "export default api => api.command('ping',()=>api.version)",
+        &["commands"],
+    );
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["api"] = json!("0.1.0-experimental.5");
+    manifest["compatibility"] = json!({
+        "required_features":["transactional_reload_v1"],
+        "optional_features":["service_contracts_v1","future_optional_v1"]
+    });
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    let mut runtime = host(&temp);
+    assert_eq!(
+        runtime
+            .invoke(
+                "old_mod",
+                runtime.generation(),
+                "command",
+                "ping",
+                Value::Null
+            )
+            .unwrap(),
+        json!(MOD_API_VERSION)
+    );
+    let status = &runtime.status()["mods"][0];
+    assert_eq!(status["api"], "0.1.0-experimental.5");
+    assert_eq!(status["api_stability"], "experimental");
+    assert_eq!(
+        status["negotiated_features"]["required"],
+        json!(["transactional_reload_v1"])
+    );
+    assert_eq!(
+        status["negotiated_features"]["optional_available"],
+        json!(["service_contracts_v1"])
+    );
+    assert_eq!(
+        status["negotiated_features"]["optional_unavailable"],
+        json!(["future_optional_v1"])
+    );
+}
+
+#[test]
+fn synthetic_deprecated_api_mod_activates_only_because_it_has_an_explicit_support_row() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let path = package(
+        &root,
+        "deprecated_mod",
+        "export default api => api.command('ping',()=>api.version)",
+        &["commands"],
+    );
+    let manifest_path = path.join("mod.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["api"] = json!("0.1.0-experimental.4");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    let mut runtime = host(&temp);
+    assert_eq!(runtime.status()["mods"][0]["api_stability"], "deprecated");
+    assert_eq!(
+        runtime
+            .invoke(
+                "deprecated_mod",
+                runtime.generation(),
+                "command",
+                "ping",
+                Value::Null
+            )
+            .unwrap(),
+        json!(MOD_API_VERSION)
+    );
+}
+
+#[test]
+fn incompatible_host_schema_api_and_features_are_rejected_before_activation() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let path = package(&root, "incompatible", "export default () => {}", &[]);
+    let manifest_path = path.join("mod.json");
+    let base: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    for (field, value, expected) in [
+        ("api", json!("9.0.0"), "Supported package APIs"),
+        ("schema", json!(99), "supports package schema"),
+        (
+            "compatibility",
+            json!({"releases":["9.0.0"]}),
+            "this host is",
+        ),
+        (
+            "compatibility",
+            json!({"required_features":["future_required_v1"]}),
+            "provides",
+        ),
+    ] {
+        let mut manifest = base.clone();
+        manifest[field] = value;
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let error = ModStore::inspect_package(&path).unwrap_err().to_string();
+        assert!(error.contains(expected), "{field}: {error}");
+        assert!(
+            error.contains("package") || error.contains("host"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn host_versions_and_storage_schemas_are_reported_independently() {
+    let (temp, _, _) = fixture("export default () => {}", &[]);
+    let status = host(&temp).status();
+    assert_eq!(status["host"]["omd"], OMD_HOST_RELEASE);
+    assert_eq!(status["host"]["package_schema"], MOD_PACKAGE_SCHEMA_VERSION);
+    assert_eq!(
+        status["host"]["state_storage_schema"],
+        MOD_STATE_STORAGE_SCHEMA_VERSION
+    );
+    assert_eq!(status["host"]["features"], json!(MOD_HOST_FEATURES));
+    assert_ne!(status["host"]["omd"], status["api"]);
+}
+
+#[test]
+fn interrupted_migration_and_explicit_rollback_preserve_source_settings_and_state() {
+    let (temp, store, path) = fixture(COUNTER, &["commands", "state"]);
+    store
+        .settings(&path, [("label".into(), json!("kept"))].into())
+        .unwrap();
+    let original_manifest = std::fs::read(path.join("mod.json")).unwrap();
+    let original_source = std::fs::read(path.join("index.ts")).unwrap();
+    let mut runtime = host(&temp);
+    runtime
+        .invoke(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "count",
+            Value::Null,
+        )
+        .unwrap();
+    let state_path = temp.path().join("store/state-fixture.json");
+    let state_v1 = std::fs::read(&state_path).unwrap();
+
+    let mut manifest: Value = serde_json::from_slice(&original_manifest).unwrap();
+    manifest["state_version"] = json!(2);
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let failing_source = b"export default api => api.on('migrate', () => { throw new Error('INTERRUPTED_MIGRATION') })";
+    std::fs::write(path.join("index.ts"), failing_source).unwrap();
+    let sha = ModStore::inspect_package(&path).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(
+            path.clone(),
+            &sha,
+            vec!["commands".into(), "state".into()],
+            "user",
+        )
+        .unwrap();
+    let error = store.migrate(&path).unwrap_err().to_string();
+    assert!(error.contains("INTERRUPTED_MIGRATION"), "{error}");
+    assert_eq!(std::fs::read(&state_path).unwrap(), state_v1);
+    assert_eq!(
+        std::fs::read(path.join("index.ts")).unwrap(),
+        failing_source
+    );
+    assert_eq!(
+        store.configuration().unwrap().mods[0].settings["label"],
+        "kept"
+    );
+
+    std::fs::write(path.join("index.ts"), "export default api => api.on('migrate', ({from,to}) => api.state.set({count:api.state.get(),from,to}))").unwrap();
+    let sha = ModStore::inspect_package(&path).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(
+            path.clone(),
+            &sha,
+            vec!["commands".into(), "state".into()],
+            "user",
+        )
+        .unwrap();
+    let migrated = store.migrate(&path).unwrap();
+    let state_v2 = std::fs::read(&state_path).unwrap();
+    assert_ne!(state_v2, state_v1);
+    let backup_path = std::path::Path::new(migrated["backup"].as_str().unwrap());
+    let backup_bytes = std::fs::read(backup_path).unwrap();
+    std::fs::write(backup_path, b"{\"schema\":1,\"version\":1,\"value\":99}").unwrap();
+    assert!(
+        store
+            .rollback(&path, backup_path)
+            .unwrap_err()
+            .to_string()
+            .contains("digest_mismatch")
+    );
+    assert_eq!(std::fs::read(&state_path).unwrap(), state_v2);
+    std::fs::write(backup_path, backup_bytes).unwrap();
+    let rollback = store.rollback(&path, backup_path).unwrap();
+    assert_eq!(std::fs::read(&state_path).unwrap(), state_v1);
+    assert_eq!(
+        std::fs::read(rollback["recovery"].as_str().unwrap()).unwrap(),
+        state_v2
+    );
+    assert_eq!(
+        store.configuration().unwrap().mods[0].settings["label"],
+        "kept"
+    );
+
+    std::fs::write(path.join("mod.json"), &original_manifest).unwrap();
+    std::fs::write(path.join("index.ts"), &original_source).unwrap();
+    let sha = ModStore::inspect_package(&path).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(
+            path.clone(),
+            &sha,
+            vec!["commands".into(), "state".into()],
+            "user",
+        )
+        .unwrap();
+    store.enable(&path, true).unwrap();
+    let mut rolled_back = host(&temp);
+    assert_eq!(
+        rolled_back
+            .invoke(
+                "fixture",
+                rolled_back.generation(),
+                "command",
+                "count",
+                Value::Null
+            )
+            .unwrap(),
+        json!(2)
+    );
+    assert_eq!(
+        std::fs::read(path.join("index.ts")).unwrap(),
+        original_source
+    );
+    assert_eq!(
+        store.configuration().unwrap().mods[0].settings["label"],
+        "kept"
+    );
+}
+
+#[test]
 fn host_error_receipts_are_catchable_without_repeating_operations() {
     let source = "export default api => api.command('run', () => { let value; try { value = api.host.call('task.status'); } catch(e) { if (e instanceof Error) return {failed:true}; throw e; } return value; })";
     let (temp, _, _) = fixture(source, &["commands", "task"]);
@@ -629,12 +895,12 @@ fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store"), node()).unwrap();
-    let contract = json!({"name":"example.echo","version":"1.0.0",
+    let contract = json!({"name":"example.echo","version":"1.1.0",
         "methods":{"echo":{"input":"string","output":"string"}}});
     let provider = service_package(
         &root,
         "provider",
-        "export default api => api.provide({name:'example.echo',version:'1.0.0',methods:{echo:{input:'string',output:'string'}}},{echo:value=>'provider:'+value})",
+        "export default api => api.provide({name:'example.echo',version:'1.1.0',methods:{echo:{input:'string',output:'string'}}},{echo:value=>'provider:'+value})",
         json!({"exports":[contract]}),
         &["services"],
     );
@@ -642,7 +908,7 @@ fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
         &root,
         "consumer",
         "export default api => api.command('call',()=>api.services.call('example.echo','echo','hello'))",
-        json!({"imports":[{"name":"example.echo","version":"1.0.0"}]}),
+        json!({"imports":[{"name":"example.echo","version":"^1.0.0"}]}),
         &["commands", "services"],
     );
     trust(&store, &provider, &["services"]);
@@ -662,7 +928,9 @@ fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
         json!("provider:hello")
     );
     let types = std::fs::read_to_string(root.join("store/installed-contracts.d.ts")).unwrap();
-    assert!(types.contains("'example.echo@1.0.0'"));
+    assert!(types.contains("InstalledContractTypesVersion = 1"));
+    assert!(types.contains("InstalledHostRelease = '0.1.0'"));
+    assert!(types.contains("'example.echo@1.1.0'"));
     assert!(types.contains("echo(input: string): string"));
     assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
 }

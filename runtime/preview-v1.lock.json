@@ -2,7 +2,7 @@
   "guide": {
     "path": "mods/PREVIEW.md"
   },
-  "mod_api": "0.1.0-experimental.5",
+  "mod_api": "0.1.0-experimental.6",
   "node": "24.18.0",
   "packages": {
     "omd_coordination": {
@@ -20,9 +20,9 @@
       ],
       "files": {
         "index.ts": "01f876dbf13fbd1428da61dcbba1c1525f04d5835588d1f63f91f1bc377181b6",
-        "mod.json": "30941acc339bb01b003ab72320101bae606460bbc9be71938ca5857213dbf1e6"
+        "mod.json": "97686e543409655de45614b452a19afb446f224b4f87699ca40735c0a218f9d3"
       },
-      "package_sha256": "fa2bfa75ff2332790c85bfb589971a80ab02f64f5882f301bf751632ab221592",
+      "package_sha256": "83d16c3645e9e3f6d8009ec7870153c89d890a9f62f1932c67281befc91ca894",
       "source": "mods/first-party/omd_coordination",
       "version": "0.1.0-preview.1"
     },
@@ -35,9 +35,9 @@
       ],
       "files": {
         "index.ts": "1ba5ab05e7fdcb1bbe31418b9be4fe458ef232315e1df88848e1a285a2442425",
-        "mod.json": "b9f73320dfc8336f4f01847ad7217e99525c84d0a1f4820066d735dbd3647f37"
+        "mod.json": "1c6ecf493cda9a61e492ccccc74b2dfed57a2177d31589b7a2c127c67b18f3b5"
       },
-      "package_sha256": "a26bb7953fb2845db5d0c84bde119f0662f939b0cadc403e8b84e8e0577586e4",
+      "package_sha256": "f7fbec99a02fd5fd71a69c74e1ccdf3e2dd6cc73143d1072b33b7a840cbbc46e",
       "source": "mods/first-party/omd_workspace",
       "version": "0.1.0-preview.1"
     }
@@ -46,6 +46,6 @@
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "a4e3c33ff732984c7106b242bc9191a3cbd2012f88e367fe0af5389249e7c72c"
+    "sha256": "34f0a11d36ed666a24ac41e65eba13f87f0414296b82ec58d18f4e7d87291cd3"
   }
 }
