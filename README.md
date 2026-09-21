@@ -22,6 +22,8 @@ customization limit. Development starts with signature workflows and a small
 private preview for user and author feedback. The public release will still
 include the curated first-party bundle, polished setup, and mod controls.
 
+[Maintained integration coverage for this release](INTEGRATION.md)
+
 [Comparison measurement tools and offline validation](benchmarks/README.md)
 
 [Private Apple Silicon foundation installation and operation](PRIVATE_BUILD.md)

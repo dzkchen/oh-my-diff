@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 7ba1057..320615e 100644
+index 7ba1057fa1e8bd08074755789d17ca7b49dd27a7..320615eb0f325a80f9a44dbba2fc10a36ec12475 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2212,6 +2212,7 @@ dependencies = [
@@ -64,7 +64,7 @@ index 7ba1057..320615e 100644
   "codex-plugin",
   "codex-protocol",
 diff --git a/codex-rs/Cargo.toml b/codex-rs/Cargo.toml
-index 3cf0d00..6ae89c0 100644
+index 3cf0d009a8ecede0fb207cc9ec40ebef30f59b09..6ae89c0f56145c5bbf0c08310c8b32dfe0c2d9d1 100644
 --- a/codex-rs/Cargo.toml
 +++ b/codex-rs/Cargo.toml
 @@ -1,5 +1,7 @@
@@ -84,7 +84,7 @@ index 3cf0d00..6ae89c0 100644
  codex-realtime-webrtc = { path = "realtime-webrtc" }
  app_test_support = { path = "app-server/tests/common" }
 diff --git a/codex-rs/app-server/Cargo.toml b/codex-rs/app-server/Cargo.toml
-index c64b15b..04ff16c 100644
+index c64b15b998c5722651a7a4dafe0b0ca299a6a03b..04ff16ca6b3c4ad4a08f32007f74808078d05b43 100644
 --- a/codex-rs/app-server/Cargo.toml
 +++ b/codex-rs/app-server/Cargo.toml
 @@ -25,6 +25,7 @@ doctest = false
@@ -96,7 +96,7 @@ index c64b15b..04ff16c 100644
  base64 = { workspace = true }
  axum = { workspace = true, default-features = false, features = [
 diff --git a/codex-rs/app-server/src/extensions.rs b/codex-rs/app-server/src/extensions.rs
-index 929eab5..d3da68f 100644
+index 929eab5392eabd6c06a3c723060232db7203f597..d3da68fd0ae9d28418ababa21d9889b2569b226b 100644
 --- a/codex-rs/app-server/src/extensions.rs
 +++ b/codex-rs/app-server/src/extensions.rs
 @@ -76,6 +76,9 @@ where
@@ -110,7 +110,7 @@ index 929eab5..d3da68f 100644
      if let Some(state_db) = state_db {
          codex_goal_extension::install_with_backend(
 diff --git a/codex-rs/cli/src/main.rs b/codex-rs/cli/src/main.rs
-index 50aa973..d49bf82 100644
+index 50aa97352b0795d71e2989683c4231c7d1e2e1f8..d49bf827cb6b48e039b5fbabd73451b1d4c738e5 100644
 --- a/codex-rs/cli/src/main.rs
 +++ b/codex-rs/cli/src/main.rs
 @@ -68,6 +68,8 @@ mod exec_server_telemetry;
@@ -135,7 +135,7 @@ index 50aa973..d49bf82 100644
      arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
 diff --git a/codex-rs/cli/src/mod_supervisor.rs b/codex-rs/cli/src/mod_supervisor.rs
 new file mode 100644
-index 0000000..df0503f
+index 0000000000000000000000000000000000000000..df0503f917c6b25071e46783ac64208692013957
 --- /dev/null
 +++ b/codex-rs/cli/src/mod_supervisor.rs
 @@ -0,0 +1,47 @@
@@ -187,7 +187,7 @@ index 0000000..df0503f
 +    })())
 +}
 diff --git a/codex-rs/codex-api/src/endpoint/responses.rs b/codex-rs/codex-api/src/endpoint/responses.rs
-index 78a0823..1d37da7 100644
+index 78a08232f967f291de46002ddda541b40128bbf3..1d37da70cb71ee4352898343aa3881c37e521fc2 100644
 --- a/codex-rs/codex-api/src/endpoint/responses.rs
 +++ b/codex-rs/codex-api/src/endpoint/responses.rs
 @@ -8,7 +8,7 @@ use crate::requests::Compression;
@@ -209,7 +209,7 @@ index 78a0823..1d37da7 100644
              self.session.provider().stream_idle_timeout,
              self.sse_telemetry.clone(),
 diff --git a/codex-rs/codex-api/src/endpoint/responses_websocket.rs b/codex-rs/codex-api/src/endpoint/responses_websocket.rs
-index 95d41e0..627a7a4 100644
+index 95d41e0d9154de47cdbc75f93e8aafa7fcf00966..627a7a4847d33267347711ee008818af052f5f62 100644
 --- a/codex-rs/codex-api/src/endpoint/responses_websocket.rs
 +++ b/codex-rs/codex-api/src/endpoint/responses_websocket.rs
 @@ -893,6 +893,7 @@ async fn send_websocket_request(
@@ -221,7 +221,7 @@ index 95d41e0..627a7a4 100644
      let result = tokio::time::timeout(
          idle_timeout,
 diff --git a/codex-rs/codex-api/src/endpoint/session.rs b/codex-rs/codex-api/src/endpoint/session.rs
-index 7849225..edb29b7 100644
+index 7849225b5cbb6c37456d14e85b3fe069d878ada3..edb29b7ce5e56a130e7c71fb02a302ab0b91cff1 100644
 --- a/codex-rs/codex-api/src/endpoint/session.rs
 +++ b/codex-rs/codex-api/src/endpoint/session.rs
 @@ -1,6 +1,7 @@
@@ -293,7 +293,7 @@ index 7849225..edb29b7 100644
              },
          )
 diff --git a/codex-rs/codex-api/src/lib.rs b/codex-rs/codex-api/src/lib.rs
-index 7287cb2..64d6e8d 100644
+index 7287cb29d2e610263d71c3b33bf4a475d75b02f0..64d6e8debc55e91cd892e4f85e0f2063515f0c3a 100644
 --- a/codex-rs/codex-api/src/lib.rs
 +++ b/codex-rs/codex-api/src/lib.rs
 @@ -7,6 +7,7 @@ pub(crate) mod files;
@@ -306,7 +306,7 @@ index 7287cb2..64d6e8d 100644
  pub(crate) mod search;
 diff --git a/codex-rs/codex-api/src/request_observer.rs b/codex-rs/codex-api/src/request_observer.rs
 new file mode 100644
-index 0000000..cbf81da
+index 0000000000000000000000000000000000000000..cbf81dabc84f0de603e0478148dec073c0d353b2
 --- /dev/null
 +++ b/codex-rs/codex-api/src/request_observer.rs
 @@ -0,0 +1,75 @@
@@ -386,7 +386,7 @@ index 0000000..cbf81da
 +    Ok(())
 +}
 diff --git a/codex-rs/codex-api/src/sse/mod.rs b/codex-rs/codex-api/src/sse/mod.rs
-index 441078b..975ed83 100644
+index 441078bdcbd7bfaddcd4a7d0520453a4c9473e01..975ed83555d836fa4f0800cf7e8d11756c67242b 100644
 --- a/codex-rs/codex-api/src/sse/mod.rs
 +++ b/codex-rs/codex-api/src/sse/mod.rs
 @@ -2,4 +2,3 @@ pub(crate) mod responses;
@@ -395,7 +395,7 @@ index 441078b..975ed83 100644
  pub(crate) use responses::process_responses_event;
 -pub use responses::spawn_response_stream;
 diff --git a/codex-rs/codex-api/src/sse/responses.rs b/codex-rs/codex-api/src/sse/responses.rs
-index e4f5f04..0c5590b 100644
+index e4f5f04d62b3834cef16cf222cb55f288ca50841..0c5590baf3289aa30f11df82416d4cdbb44c3f29 100644
 --- a/codex-rs/codex-api/src/sse/responses.rs
 +++ b/codex-rs/codex-api/src/sse/responses.rs
 @@ -7,7 +7,6 @@ use crate::rate_limits::parse_all_rate_limits;
@@ -555,7 +555,7 @@ index e4f5f04..0c5590b 100644
                  let is_completed = matches!(event, ResponseEvent::Completed { .. });
                  if tx_event.send(Ok(event)).await.is_err() {
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
-index 46c2442..9e6642b 100644
+index 46c24421be1d46a3cf2e029852b09d0e11e4e4a0..9e6642be9de949490deae3d641b18a3d8914bba1 100644
 --- a/codex-rs/core/src/exec.rs
 +++ b/codex-rs/core/src/exec.rs
 @@ -117,6 +117,9 @@ pub enum ExecCapturePolicy {
@@ -640,7 +640,7 @@ index 46c2442..9e6642b 100644
      use tokio::task::JoinHandle;
  
 diff --git a/codex-rs/core/src/hook_runtime.rs b/codex-rs/core/src/hook_runtime.rs
-index e17f150..b7f3e7c 100644
+index e17f1508e7ffdb313af4c444d36dc4248e4d680b..b7f3e7c1312f2e87ca77cbb173b54f02848ee155 100644
 --- a/codex-rs/core/src/hook_runtime.rs
 +++ b/codex-rs/core/src/hook_runtime.rs
 @@ -525,11 +525,34 @@ pub(crate) async fn run_turn_interrupt_hooks(
@@ -698,7 +698,7 @@ index e17f150..b7f3e7c 100644
  ) {
      let developer_messages = additional_context_messages(additional_contexts);
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index b064e24..d51e153 100644
+index b064e2456691b940c5bf4adcf8dfc4646dc62fe5..d51e15343ea11c72ec120048962f926ebf5f0a01 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -200,6 +200,7 @@ pub(super) async fn handle(
@@ -789,7 +789,7 @@ index b064e24..d51e153 100644
      session: &Arc<Session>,
      thread_settings: ThreadSettingsOverrides,
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index eb85a04..e2678ef 100644
+index eb85a048b7e6c86d23bc67ab2088da9d9ebb6e38..e2678eff4dc9d735dcab1fcca9dba877a2b36b53 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -241,6 +241,8 @@ pub struct StartThreadOptions {
@@ -962,7 +962,7 @@ index eb85a04..e2678ef 100644
              .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
              .await;
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index bea620e..8ce5e81 100644
+index bea620e154f8ade5d8ddf875e02ec5749031fbfd..8ce5e81cdcb8f8f6aec7824956b0ceebfef74a97 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -49,6 +49,46 @@ pub(crate) async fn notify_tool_start(
@@ -1044,7 +1044,7 @@ index bea620e..8ce5e81 100644
  
  pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
-index ad5086f..dec4eb2 100644
+index ad5086f500b7c16e245ee9a3011966921151dae5..dec4eb20237f4a844f94c63f743136c8ac1ed1bd 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
 +++ b/codex-rs/core/src/tools/orchestrator.rs
 @@ -141,7 +141,17 @@ impl ToolOrchestrator {
@@ -1075,7 +1075,7 @@ index ad5086f..dec4eb2 100644
          if owner_network_policy
              && tool
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index e73711f..f9f129f 100644
+index e73711f8e601e7f1e8a4c1490c0ee7894e14b61e..f9f129ff88c2c40171a8ca6cab26a04bbe3ef074 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
 @@ -497,7 +497,6 @@ impl ToolRegistry {
@@ -1104,7 +1104,7 @@ index e73711f..f9f129f 100644
          let tool = match self.tool(&tool_name) {
              Some(tool) => tool,
 diff --git a/codex-rs/core/src/tools/registry_tests.rs b/codex-rs/core/src/tools/registry_tests.rs
-index 9808432..e0aed66 100644
+index 9808432f86205eb807980427ea3544b9c4b8c602..e0aed667a172b390366b489e6fba821f02127f51 100644
 --- a/codex-rs/core/src/tools/registry_tests.rs
 +++ b/codex-rs/core/src/tools/registry_tests.rs
 @@ -802,3 +802,84 @@ fn test_invocation(
@@ -1193,7 +1193,7 @@ index 9808432..e0aed66 100644
 +    }
 +}
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
-index a16c182..0da3731 100644
+index a16c182c739a0e9ebe128b3c7298be11b9e5bfba..0da373166558daf0d4403d45ddeb481209bd8f17 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
 +++ b/codex-rs/exec-server/src/process_sandbox.rs
 @@ -84,8 +84,10 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
@@ -1222,7 +1222,7 @@ index a16c182..0da3731 100644
      let sandbox_manager = sandbox_manager
          .with_allowed_symlinked_codex_home(runtime_paths.allowed_symlinked_codex_home.clone());
 diff --git a/codex-rs/exec/src/lib.rs b/codex-rs/exec/src/lib.rs
-index c7c54fe..d8ae5e3 100644
+index c7c54fe8339c67c4287e10c2deb1bda45d6d5434..d8ae5e3eebbf943dfd3bff5a8b2bd86f6a61c11a 100644
 --- a/codex-rs/exec/src/lib.rs
 +++ b/codex-rs/exec/src/lib.rs
 @@ -866,7 +866,6 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
@@ -1242,7 +1242,7 @@ index c7c54fe..d8ae5e3 100644
      exec_span.record("thread.id", primary_thread_id_for_span.as_str());
  
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index 8c75997..05b6a21 100644
+index 8c75997b6339597ddeb4eda8102e10d15c33022b..05b6a213149031eb6fb2241a62cda9e7b05b7f2e 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -53,10 +53,13 @@ pub use tool_lifecycle::ToolLifecycleFuture;
@@ -1352,7 +1352,7 @@ index 8c75997..05b6a21 100644
  /// Returning `None` leaves the request to the next contributor.
  pub trait ApprovalReviewContributor: Send + Sync {
 diff --git a/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs b/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
-index e2c9e4b..04384a2 100644
+index e2c9e4bf7bcfac17d1a1a9684629f71ba8539fcf..04384a2a700006ea048a5e861cc620fc5b4500bd 100644
 --- a/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
 +++ b/codex-rs/ext/extension-api/src/contributors/turn_lifecycle.rs
 @@ -56,3 +56,25 @@ pub struct TurnErrorInput<'a> {
@@ -1382,7 +1382,7 @@ index e2c9e4b..04384a2 100644
 +    pub turn_store: &'a ExtensionData,
 +}
 diff --git a/codex-rs/ext/extension-api/src/lib.rs b/codex-rs/ext/extension-api/src/lib.rs
-index 84f2ac0..339bb49 100644
+index 84f2ac0b8e024f68e4b1f477cbdcdf850aa423cf..339bb49b3725087d2a0bfcf3426bd6e93890c5b4 100644
 --- a/codex-rs/ext/extension-api/src/lib.rs
 +++ b/codex-rs/ext/extension-api/src/lib.rs
 @@ -45,6 +45,7 @@ pub use contributors::ApprovalDecisionInput;
@@ -1411,7 +1411,7 @@ index 84f2ac0..339bb49 100644
  pub use contributors::WorldStateSectionContribution;
  pub use registry::ExtensionRegistry;
 diff --git a/codex-rs/ext/extension-api/src/registry.rs b/codex-rs/ext/extension-api/src/registry.rs
-index e4aeba9..d5a3216 100644
+index e4aeba9b5e6b60b318598e745f0dc6294ba505b7..d5a32165f2cbfd7cd031bf75774183b2163ba908 100644
 --- a/codex-rs/ext/extension-api/src/registry.rs
 +++ b/codex-rs/ext/extension-api/src/registry.rs
 @@ -11,6 +11,7 @@ use crate::ThreadLifecycleContributor;
@@ -1464,7 +1464,7 @@ index e4aeba9..d5a3216 100644
          &self.turn_item_contributors
 diff --git a/codex-rs/ext/omd/BUILD.bazel b/codex-rs/ext/omd/BUILD.bazel
 new file mode 100644
-index 0000000..6c44c5e
+index 0000000000000000000000000000000000000000..6c44c5e1a9ca4ca9112bbb7d872c06b4b66200b5
 --- /dev/null
 +++ b/codex-rs/ext/omd/BUILD.bazel
 @@ -0,0 +1,6 @@
@@ -1476,7 +1476,7 @@ index 0000000..6c44c5e
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 0000000..fa486db
+index 0000000000000000000000000000000000000000..fa486dbe8f6af2b23926f55c6e83f0a3324894f5
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
 @@ -0,0 +1,28 @@
@@ -1510,7 +1510,7 @@ index 0000000..fa486db
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 0000000..30ad6ab
+index 0000000000000000000000000000000000000000..30ad6abf09321a007d3cce8a263d056590df2205
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
 @@ -0,0 +1,547 @@
@@ -2063,7 +2063,7 @@ index 0000000..30ad6ab
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 0000000..a12fd99
+index 0000000000000000000000000000000000000000..a12fd99f6b64deceaa21be36a65434b258725f35
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
 @@ -0,0 +1,320 @@
@@ -2389,7 +2389,7 @@ index 0000000..a12fd99
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..ba9578c
+index 0000000000000000000000000000000000000000..ba9578cf0a863b61e6e50f76f83aead5accfcf29
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
 @@ -0,0 +1,2351 @@
@@ -4746,7 +4746,7 @@ index 0000000..ba9578c
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/execution_tests.rs b/codex-rs/ext/omd/src/execution_tests.rs
 new file mode 100644
-index 0000000..58c0303
+index 0000000000000000000000000000000000000000..58c0303de24f46d76cfe6375511ec39b4002d2b0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution_tests.rs
 @@ -0,0 +1,146 @@
@@ -4898,7 +4898,7 @@ index 0000000..58c0303
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..c2e93ae
+index 0000000000000000000000000000000000000000..c2e93aefbdca44d11cb16ccc205ac53534708fb3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
 @@ -0,0 +1,3541 @@
@@ -8445,7 +8445,7 @@ index 0000000..c2e93ae
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000..69d516c
+index 0000000000000000000000000000000000000000..69d516c73f1b6f36099f5bcea2b996c59c5646e0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,563 @@
@@ -9014,7 +9014,7 @@ index 0000000..69d516c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000..b6cd44e
+index 0000000000000000000000000000000000000000..b6cd44e3828d542288a4fa5720b431070f2e5a7b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,498 @@
@@ -9518,7 +9518,7 @@ index 0000000..b6cd44e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000..8aaa5db
+index 0000000000000000000000000000000000000000..8aaa5db0a05726f2958357c652733f970ddad47c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,118 @@
@@ -9642,7 +9642,7 @@ index 0000000..8aaa5db
 +}
 diff --git a/codex-rs/ext/omd/src/mods/policy.rs b/codex-rs/ext/omd/src/mods/policy.rs
 new file mode 100644
-index 0000000..3170fc6
+index 0000000000000000000000000000000000000000..3170fc6ce07aeca83635d9e61cf3b46acd45f8d7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/policy.rs
 @@ -0,0 +1,180 @@
@@ -9828,7 +9828,7 @@ index 0000000..3170fc6
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000..e9da378
+index 0000000000000000000000000000000000000000..e9da378cf8473d927664b348548bd9c9daaf5028
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
 @@ -0,0 +1,379 @@
@@ -10213,7 +10213,7 @@ index 0000000..e9da378
 +}
 diff --git a/codex-rs/ext/omd/src/mods/tools.rs b/codex-rs/ext/omd/src/mods/tools.rs
 new file mode 100644
-index 0000000..11c46d7
+index 0000000000000000000000000000000000000000..11c46d718577653424efcde4e07742b234f46a59
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/tools.rs
 @@ -0,0 +1,187 @@
@@ -10406,7 +10406,7 @@ index 0000000..11c46d7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 0000000..901c13f
+index 0000000000000000000000000000000000000000..901c13f0aa209fea7de2ce8618b43380476f4b13
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
 @@ -0,0 +1,101 @@
@@ -10513,7 +10513,7 @@ index 0000000..901c13f
 +}
 diff --git a/codex-rs/ext/omd/src/request_observer.rs b/codex-rs/ext/omd/src/request_observer.rs
 new file mode 100644
-index 0000000..cbf81da
+index 0000000000000000000000000000000000000000..cbf81dabc84f0de603e0478148dec073c0d353b2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/request_observer.rs
 @@ -0,0 +1,75 @@
@@ -10594,7 +10594,7 @@ index 0000000..cbf81da
 +}
 diff --git a/codex-rs/ext/omd/src/review_tests.rs b/codex-rs/ext/omd/src/review_tests.rs
 new file mode 100644
-index 0000000..4e216a6
+index 0000000000000000000000000000000000000000..4e216a668aa3877bf0a0b923fe4df96f1025006d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/review_tests.rs
 @@ -0,0 +1,195 @@
@@ -10794,7 +10794,7 @@ index 0000000..4e216a6
 +    }
 +}
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
-index cd4cbd5..b37f321 100644
+index cd4cbd5431a785b0a1f2a9963b1536d2edf135ec..b37f321d96c66589e03f258f7d7746dd8df22462 100644
 --- a/codex-rs/login/src/auth/default_client.rs
 +++ b/codex-rs/login/src/auth/default_client.rs
 @@ -294,9 +294,14 @@ pub async fn create_client_for_route_async(
@@ -10816,7 +10816,7 @@ index cd4cbd5..b37f321 100644
  // These legacy constructors intentionally preserve the infallible behavior of `create_client`.
 diff --git a/codex-rs/omd/BUILD.bazel b/codex-rs/omd/BUILD.bazel
 new file mode 100644
-index 0000000..718e22c
+index 0000000000000000000000000000000000000000..718e22cefc873de1bc9335e714dff71777380b85
 --- /dev/null
 +++ b/codex-rs/omd/BUILD.bazel
 @@ -0,0 +1,7 @@
@@ -10829,7 +10829,7 @@ index 0000000..718e22c
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 0000000..b2b930d
+index 0000000000000000000000000000000000000000..b2b930df826dba25ef890fe1b74c84814e766534
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
 @@ -0,0 +1,17 @@
@@ -10852,7 +10852,7 @@ index 0000000..b2b930d
 +tempfile = "=3.27.0"
 diff --git a/codex-rs/omd/README.md b/codex-rs/omd/README.md
 new file mode 100644
-index 0000000..b5801b5
+index 0000000000000000000000000000000000000000..b5801b52763f4cb3d66c0a6f7e258b0c8d876ddb
 --- /dev/null
 +++ b/codex-rs/omd/README.md
 @@ -0,0 +1,277 @@
@@ -11135,7 +11135,7 @@ index 0000000..b5801b5
 +```
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 0000000..2a678e9
+index 0000000000000000000000000000000000000000..2a678e971dfa741cd87e1ed4a6eecfc5efbd35a2
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
 @@ -0,0 +1,2070 @@
@@ -13211,7 +13211,7 @@ index 0000000..2a678e9
 +}
 diff --git a/codex-rs/omd/src/bin/omd-contract.rs b/codex-rs/omd/src/bin/omd-contract.rs
 new file mode 100644
-index 0000000..234f37c
+index 0000000000000000000000000000000000000000..234f37c257f2b5e3436415ac3c67f579d2fcaff9
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-contract.rs
 @@ -0,0 +1,234 @@
@@ -13451,7 +13451,7 @@ index 0000000..234f37c
 +}
 diff --git a/codex-rs/omd/src/bin/omd-graph.rs b/codex-rs/omd/src/bin/omd-graph.rs
 new file mode 100644
-index 0000000..83534dd
+index 0000000000000000000000000000000000000000..83534dd77d69cc82e592ca5e6a365421f4cadcf4
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-graph.rs
 @@ -0,0 +1,81 @@
@@ -13538,7 +13538,7 @@ index 0000000..83534dd
 +}
 diff --git a/codex-rs/omd/src/bin/omd-guidelines.rs b/codex-rs/omd/src/bin/omd-guidelines.rs
 new file mode 100644
-index 0000000..3f3418a
+index 0000000000000000000000000000000000000000..3f3418a4c19fb709122190713e83f6ce5b3524df
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-guidelines.rs
 @@ -0,0 +1,58 @@
@@ -13602,7 +13602,7 @@ index 0000000..3f3418a
 +}
 diff --git a/codex-rs/omd/src/bin/omd-health.rs b/codex-rs/omd/src/bin/omd-health.rs
 new file mode 100644
-index 0000000..01d013a
+index 0000000000000000000000000000000000000000..01d013ae785846c619f3af71b07f1a4ec500fccb
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-health.rs
 @@ -0,0 +1,58 @@
@@ -13666,7 +13666,7 @@ index 0000000..01d013a
 +}
 diff --git a/codex-rs/omd/src/bin/omd-knowledge.rs b/codex-rs/omd/src/bin/omd-knowledge.rs
 new file mode 100644
-index 0000000..23ccec1
+index 0000000000000000000000000000000000000000..23ccec1e283eb91879661cd3536d07d2e45f2cef
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-knowledge.rs
 @@ -0,0 +1,90 @@
@@ -13762,7 +13762,7 @@ index 0000000..23ccec1
 +}
 diff --git a/codex-rs/omd/src/bin/omd-lsp.rs b/codex-rs/omd/src/bin/omd-lsp.rs
 new file mode 100644
-index 0000000..1e2ad90
+index 0000000000000000000000000000000000000000..1e2ad900ed9e753c6319a7b66a796dcff38d5cbf
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-lsp.rs
 @@ -0,0 +1,48 @@
@@ -13816,7 +13816,7 @@ index 0000000..1e2ad90
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000..a0af0b8
+index 0000000000000000000000000000000000000000..a0af0b8cac27ae62859186cf533e85450bb6fe46
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
 @@ -0,0 +1,185 @@
@@ -14007,7 +14007,7 @@ index 0000000..a0af0b8
 +}
 diff --git a/codex-rs/omd/src/checkpoint.rs b/codex-rs/omd/src/checkpoint.rs
 new file mode 100644
-index 0000000..be18550
+index 0000000000000000000000000000000000000000..be185507bb8911c12554e132a6fa3e1700c31c19
 --- /dev/null
 +++ b/codex-rs/omd/src/checkpoint.rs
 @@ -0,0 +1,258 @@
@@ -14271,7 +14271,7 @@ index 0000000..be18550
 +}
 diff --git a/codex-rs/omd/src/checks.rs b/codex-rs/omd/src/checks.rs
 new file mode 100644
-index 0000000..55ff4fc
+index 0000000000000000000000000000000000000000..55ff4fcdf979f1addbc993145d0b5561635d33ce
 --- /dev/null
 +++ b/codex-rs/omd/src/checks.rs
 @@ -0,0 +1,323 @@
@@ -14600,7 +14600,7 @@ index 0000000..55ff4fc
 +}
 diff --git a/codex-rs/omd/src/communication.rs b/codex-rs/omd/src/communication.rs
 new file mode 100644
-index 0000000..de74f10
+index 0000000000000000000000000000000000000000..de74f1086d7a228166bd72a04dfd92337291bf7b
 --- /dev/null
 +++ b/codex-rs/omd/src/communication.rs
 @@ -0,0 +1,67 @@
@@ -14673,7 +14673,7 @@ index 0000000..de74f10
 +}
 diff --git a/codex-rs/omd/src/completion.rs b/codex-rs/omd/src/completion.rs
 new file mode 100644
-index 0000000..970adeb
+index 0000000000000000000000000000000000000000..970adebcde353aaa22cbbdb03e16485cbd550221
 --- /dev/null
 +++ b/codex-rs/omd/src/completion.rs
 @@ -0,0 +1,755 @@
@@ -15434,7 +15434,7 @@ index 0000000..970adeb
 +mod tests;
 diff --git a/codex-rs/omd/src/completion_tests.rs b/codex-rs/omd/src/completion_tests.rs
 new file mode 100644
-index 0000000..d71ecfa
+index 0000000000000000000000000000000000000000..d71ecfade0794b2b42d8aea25e0a0060e17c36bb
 --- /dev/null
 +++ b/codex-rs/omd/src/completion_tests.rs
 @@ -0,0 +1,359 @@
@@ -15799,7 +15799,7 @@ index 0000000..d71ecfa
 +}
 diff --git a/codex-rs/omd/src/contract.rs b/codex-rs/omd/src/contract.rs
 new file mode 100644
-index 0000000..3652af2
+index 0000000000000000000000000000000000000000..3652af2c9e97411c4f8ef3f5e98b206bd7899af1
 --- /dev/null
 +++ b/codex-rs/omd/src/contract.rs
 @@ -0,0 +1,1162 @@
@@ -16967,7 +16967,7 @@ index 0000000..3652af2
 +mod tests;
 diff --git a/codex-rs/omd/src/contract_store.rs b/codex-rs/omd/src/contract_store.rs
 new file mode 100644
-index 0000000..fce49b9
+index 0000000000000000000000000000000000000000..fce49b97890f15a310f1b79f4c2018c0c371f484
 --- /dev/null
 +++ b/codex-rs/omd/src/contract_store.rs
 @@ -0,0 +1,350 @@
@@ -17323,7 +17323,7 @@ index 0000000..fce49b9
 +mod tests;
 diff --git a/codex-rs/omd/src/contract_store_tests.rs b/codex-rs/omd/src/contract_store_tests.rs
 new file mode 100644
-index 0000000..d85d966
+index 0000000000000000000000000000000000000000..d85d9667eddfab115f9d85b3847aaf38d6abac64
 --- /dev/null
 +++ b/codex-rs/omd/src/contract_store_tests.rs
 @@ -0,0 +1,320 @@
@@ -17649,7 +17649,7 @@ index 0000000..d85d966
 +}
 diff --git a/codex-rs/omd/src/contract_tests.rs b/codex-rs/omd/src/contract_tests.rs
 new file mode 100644
-index 0000000..eccb5b9
+index 0000000000000000000000000000000000000000..eccb5b92a4594bfa48d32d0987fcf89fd425a333
 --- /dev/null
 +++ b/codex-rs/omd/src/contract_tests.rs
 @@ -0,0 +1,498 @@
@@ -18153,7 +18153,7 @@ index 0000000..eccb5b9
 +}
 diff --git a/codex-rs/omd/src/graph.rs b/codex-rs/omd/src/graph.rs
 new file mode 100644
-index 0000000..c834ddd
+index 0000000000000000000000000000000000000000..c834dddaccd9d17922b69f1646480e80c9a214fd
 --- /dev/null
 +++ b/codex-rs/omd/src/graph.rs
 @@ -0,0 +1,1213 @@
@@ -19372,7 +19372,7 @@ index 0000000..c834ddd
 +</script></body></html>"#;
 diff --git a/codex-rs/omd/src/guideline.rs b/codex-rs/omd/src/guideline.rs
 new file mode 100644
-index 0000000..6d04bd1
+index 0000000000000000000000000000000000000000..6d04bd123f2ed2af2c0ac0cbc66dd9ecea546433
 --- /dev/null
 +++ b/codex-rs/omd/src/guideline.rs
 @@ -0,0 +1,658 @@
@@ -20036,7 +20036,7 @@ index 0000000..6d04bd1
 +}
 diff --git a/codex-rs/omd/src/health.rs b/codex-rs/omd/src/health.rs
 new file mode 100644
-index 0000000..d7a4e3e
+index 0000000000000000000000000000000000000000..d7a4e3ed03ef02f3088fdd117c21124396190a03
 --- /dev/null
 +++ b/codex-rs/omd/src/health.rs
 @@ -0,0 +1,1139 @@
@@ -21181,7 +21181,7 @@ index 0000000..d7a4e3e
 +}
 diff --git a/codex-rs/omd/src/knowledge.rs b/codex-rs/omd/src/knowledge.rs
 new file mode 100644
-index 0000000..1b27bbc
+index 0000000000000000000000000000000000000000..1b27bbcae6bee86c2d0988b11d7427685c4e8841
 --- /dev/null
 +++ b/codex-rs/omd/src/knowledge.rs
 @@ -0,0 +1,1023 @@
@@ -22210,7 +22210,7 @@ index 0000000..1b27bbc
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..b30a80b
+index 0000000000000000000000000000000000000000..b30a80bde588329d31a478f962813277d53c1d16
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,256 @@
@@ -22472,7 +22472,7 @@ index 0000000..b30a80b
 +pub use mods::substitute_args;
 diff --git a/codex-rs/omd/src/lsp.rs b/codex-rs/omd/src/lsp.rs
 new file mode 100644
-index 0000000..4202822
+index 0000000000000000000000000000000000000000..4202822bfa43d6211f13b4e6af55b7168d86a712
 --- /dev/null
 +++ b/codex-rs/omd/src/lsp.rs
 @@ -0,0 +1,2241 @@
@@ -24719,7 +24719,7 @@ index 0000000..4202822
 +}
 diff --git a/codex-rs/omd/src/mode.rs b/codex-rs/omd/src/mode.rs
 new file mode 100644
-index 0000000..270274f
+index 0000000000000000000000000000000000000000..270274fcaa9a31f19c9f036c462cbff3e46587c1
 --- /dev/null
 +++ b/codex-rs/omd/src/mode.rs
 @@ -0,0 +1,141 @@
@@ -24866,7 +24866,7 @@ index 0000000..270274f
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000..870d6a3
+index 0000000000000000000000000000000000000000..870d6a34ee82d89c70a3e5bc39a6dc2e5110ee19
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,2235 @@
@@ -27107,7 +27107,7 @@ index 0000000..870d6a3
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000..204d72c
+index 0000000000000000000000000000000000000000..204d72c142351cbb768118f7a92e50f54cc23fb4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
 @@ -0,0 +1,391 @@
@@ -27504,7 +27504,7 @@ index 0000000..204d72c
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000..52adfcb
+index 0000000000000000000000000000000000000000..52adfcbcb4ba1734798973cbbe3741f283c7ed99
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
 @@ -0,0 +1,124 @@
@@ -27634,7 +27634,7 @@ index 0000000..52adfcb
 +}
 diff --git a/codex-rs/omd/src/mods/outcome.rs b/codex-rs/omd/src/mods/outcome.rs
 new file mode 100644
-index 0000000..1a7b669
+index 0000000000000000000000000000000000000000..1a7b669c2dae3aa2ab5589b9317c6c109ea7a858
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/outcome.rs
 @@ -0,0 +1,108 @@
@@ -27748,7 +27748,7 @@ index 0000000..1a7b669
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000..a6f761a
+index 0000000000000000000000000000000000000000..a6f761ae445eb097f49f6a0ab698a9b0111b547a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
 @@ -0,0 +1,1100 @@
@@ -28854,7 +28854,7 @@ index 0000000..a6f761a
 +}
 diff --git a/codex-rs/omd/src/mods/packages.rs b/codex-rs/omd/src/mods/packages.rs
 new file mode 100644
-index 0000000..48e1177
+index 0000000000000000000000000000000000000000..48e11775d93df2609b094c797287b4580fca322b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/packages.rs
 @@ -0,0 +1,217 @@
@@ -29077,7 +29077,7 @@ index 0000000..48e1177
 +}
 diff --git a/codex-rs/omd/src/mods/pi.rs b/codex-rs/omd/src/mods/pi.rs
 new file mode 100644
-index 0000000..88c4a82
+index 0000000000000000000000000000000000000000..88c4a8224df31478e3d99aba3e2bb103af7c8882
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/pi.rs
 @@ -0,0 +1,517 @@
@@ -29600,7 +29600,7 @@ index 0000000..88c4a82
 +}
 diff --git a/codex-rs/omd/src/mods/process.rs b/codex-rs/omd/src/mods/process.rs
 new file mode 100644
-index 0000000..cd42be0
+index 0000000000000000000000000000000000000000..cd42be0dd6e27c8250edfccfe01b438d83a2e64b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process.rs
 @@ -0,0 +1,118 @@
@@ -29724,7 +29724,7 @@ index 0000000..cd42be0
 +mod tests;
 diff --git a/codex-rs/omd/src/mods/process_tests.rs b/codex-rs/omd/src/mods/process_tests.rs
 new file mode 100644
-index 0000000..4f51961
+index 0000000000000000000000000000000000000000..4f51961c1fd8701d3b2812f05d3ed021713442fb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/process_tests.rs
 @@ -0,0 +1,43 @@
@@ -29773,7 +29773,7 @@ index 0000000..4f51961
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 0000000..0def3b0
+index 0000000000000000000000000000000000000000..0def3b0c09f2aac98f97248226da89f81841514c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
 @@ -0,0 +1,235 @@
@@ -30014,7 +30014,7 @@ index 0000000..0def3b0
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000..6b02aee
+index 0000000000000000000000000000000000000000..6b02aee3114ef4605a163fd5837ef8a1c52950fd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
 @@ -0,0 +1,279 @@
@@ -30299,7 +30299,7 @@ index 0000000..6b02aee
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000..971d96b
+index 0000000000000000000000000000000000000000..971d96bca05b352aaee8ab967ecbea47910036c1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
 @@ -0,0 +1,307 @@
@@ -30612,7 +30612,7 @@ index 0000000..971d96b
 +}
 diff --git a/codex-rs/omd/src/reactive.rs b/codex-rs/omd/src/reactive.rs
 new file mode 100644
-index 0000000..f28113b
+index 0000000000000000000000000000000000000000..f28113be53133c6b1b3112fcbd7b6e14fe034f8a
 --- /dev/null
 +++ b/codex-rs/omd/src/reactive.rs
 @@ -0,0 +1,264 @@
@@ -30882,7 +30882,7 @@ index 0000000..f28113b
 +}
 diff --git a/codex-rs/omd/src/review.rs b/codex-rs/omd/src/review.rs
 new file mode 100644
-index 0000000..499aef9
+index 0000000000000000000000000000000000000000..499aef9b91d118c9df23b76df3309d9ff4fdd6b2
 --- /dev/null
 +++ b/codex-rs/omd/src/review.rs
 @@ -0,0 +1,566 @@
@@ -31454,7 +31454,7 @@ index 0000000..499aef9
 +mod tests;
 diff --git a/codex-rs/omd/src/review_tests.rs b/codex-rs/omd/src/review_tests.rs
 new file mode 100644
-index 0000000..ac10203
+index 0000000000000000000000000000000000000000..ac102034f95442da725b3a843fa4abfb7dfc62b4
 --- /dev/null
 +++ b/codex-rs/omd/src/review_tests.rs
 @@ -0,0 +1,228 @@
@@ -31688,7 +31688,7 @@ index 0000000..ac10203
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000..74978b9
+index 0000000000000000000000000000000000000000..74978b9b0cd65020174ff06d5501179226be9484
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
 @@ -0,0 +1,422 @@
@@ -32116,7 +32116,7 @@ index 0000000..74978b9
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644
-index 0000000..bec9da4
+index 0000000000000000000000000000000000000000..bec9da46d05e8a6f05d117a06bca899895ad3db4
 --- /dev/null
 +++ b/codex-rs/omd/tests/admission.rs
 @@ -0,0 +1,828 @@
@@ -32950,7 +32950,7 @@ index 0000000..bec9da4
 +}
 diff --git a/codex-rs/omd/tests/communication.rs b/codex-rs/omd/tests/communication.rs
 new file mode 100644
-index 0000000..f64cb6e
+index 0000000000000000000000000000000000000000..f64cb6ee619a7b50ac560f11a4e9bd118cd08ea3
 --- /dev/null
 +++ b/codex-rs/omd/tests/communication.rs
 @@ -0,0 +1,49 @@
@@ -33005,7 +33005,7 @@ index 0000000..f64cb6e
 +}
 diff --git a/codex-rs/omd/tests/graph.rs b/codex-rs/omd/tests/graph.rs
 new file mode 100644
-index 0000000..8bc935d
+index 0000000000000000000000000000000000000000..8bc935dfa1c4f2f169c9bcdd32d1728ec7dec8ad
 --- /dev/null
 +++ b/codex-rs/omd/tests/graph.rs
 @@ -0,0 +1,198 @@
@@ -33209,7 +33209,7 @@ index 0000000..8bc935d
 +}
 diff --git a/codex-rs/omd/tests/guideline.rs b/codex-rs/omd/tests/guideline.rs
 new file mode 100644
-index 0000000..163f95b
+index 0000000000000000000000000000000000000000..163f95b6a6f50bd8c738dc99dd5210d91e7cd6a3
 --- /dev/null
 +++ b/codex-rs/omd/tests/guideline.rs
 @@ -0,0 +1,286 @@
@@ -33501,7 +33501,7 @@ index 0000000..163f95b
 +}
 diff --git a/codex-rs/omd/tests/health.rs b/codex-rs/omd/tests/health.rs
 new file mode 100644
-index 0000000..bf00d8a
+index 0000000000000000000000000000000000000000..bf00d8ae89518d2f99598aa4346fe101db1939a5
 --- /dev/null
 +++ b/codex-rs/omd/tests/health.rs
 @@ -0,0 +1,251 @@
@@ -33756,9 +33756,736 @@ index 0000000..bf00d8a
 +    assert_eq!(check_output.status.code(), Some(2));
 +    assert!(read_report(&report_path).has_introduced_findings());
 +}
+diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..385f8f040394b62b54564aebec9b474e678c7687
+--- /dev/null
++++ b/codex-rs/omd/tests/integration.rs
+@@ -0,0 +1,721 @@
++use codex_omd::MOD_API_VERSION;
++use codex_omd::ModHost;
++use codex_omd::ModStore;
++use codex_omd::OMD_HOST_RELEASE;
++use serde_json::Value;
++use serde_json::json;
++use std::path::Path;
++use std::path::PathBuf;
++use tempfile::TempDir;
++
++fn node() -> PathBuf {
++    PathBuf::from(
++        std::env::var_os("OMD_TEST_NODE")
++            .expect("set OMD_TEST_NODE to Node 24.18.0; sandbox tests must actually execute"),
++    )
++}
++
++fn contended<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> T {
++    for _ in 0..200 {
++        match operation() {
++            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
++                std::thread::sleep(std::time::Duration::from_millis(20))
++            }
++            result => return result.unwrap(),
++        }
++    }
++    panic!("store lock stayed contended")
++}
++
++fn written(root: &Path, id: &str, source: &str, capabilities: &[&str], extra: Value) -> PathBuf {
++    let path = root.join(id);
++    if !path.exists() {
++        std::fs::create_dir(&path).unwrap();
++    }
++    let mut manifest = json!({"schema":1,"id":id,"version":"1.0.0",
++        "api":MOD_API_VERSION,"state_version":1,"capabilities":capabilities});
++    for (key, value) in extra.as_object().into_iter().flatten() {
++        manifest[key] = value.clone();
++    }
++    std::fs::write(
++        path.join("mod.json"),
++        serde_json::to_vec(&manifest).unwrap(),
++    )
++    .unwrap();
++    std::fs::write(path.join("index.ts"), source).unwrap();
++    path
++}
++
++fn trust(store: &ModStore, path: &Path, capabilities: &[&str]) {
++    let inspected = ModStore::inspect_package(path).unwrap();
++    let granted: Vec<String> = capabilities.iter().map(|value| value.to_string()).collect();
++    let sha256 = inspected["sha256"].as_str().unwrap().to_owned();
++    contended(|| store.trust(path.to_path_buf(), &sha256, granted.clone(), "user"));
++    contended(|| store.enable(path, true));
++}
++
++fn host(temp: &TempDir) -> ModHost {
++    ModHost::open(temp.path().canonicalize().unwrap().join("store")).unwrap()
++}
++
++fn workspace(temp: &TempDir) -> (PathBuf, ModStore) {
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    (root, store)
++}
++
++fn error_of(runtime: &ModHost, id: &str) -> String {
++    runtime.status()["mods"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .find(|entry| entry["id"] == id)
++        .and_then(|entry| entry["error"].as_str())
++        .unwrap_or_default()
++        .to_string()
++}
++
++fn active(runtime: &ModHost) -> Vec<String> {
++    runtime.status()["order"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|id| id.as_str().unwrap().to_owned())
++        .collect()
++}
++
++fn tool(name: &str) -> String {
++    format!(
++        "export default api => api.tool({{name:'{name}',description:'{name}',parameters:{{type:'object',properties:{{}}}}}}, () => null)"
++    )
++}
++
++fn echo_contract(version: &str) -> Value {
++    json!({"name":"shared.echo","version":version,
++        "methods":{"echo":{"input":"string","output":"string"}}})
++}
++
++#[test]
++fn colliding_tool_slots_and_contested_terminal_owners_disable_only_the_claimants() {
++    let temp = TempDir::new().unwrap();
++    let (root, store) = workspace(&temp);
++    let alpha = written(&root, "alpha", &tool("beta_run"), &["tools"], json!({}));
++    let alpha_beta = written(&root, "alpha_beta", &tool("run"), &["tools"], json!({}));
++    let view = |title: &str| {
++        format!(
++            "export default api => api.replace('terminal', () => ({{title:'{title}',keybindings:{{'F6':'draft'}}}}))"
++        )
++    };
++    let first_ui = written(&root, "first_ui", &view("first"), &["terminal"], json!({}));
++    let second_ui = written(
++        &root,
++        "second_ui",
++        &view("second"),
++        &["terminal"],
++        json!({}),
++    );
++    let helper = written(
++        &root,
++        "helper",
++        "export default api => { api.tool({name:'run',description:'run',parameters:{type:'object',properties:{}}}, () => null); api.command('ping', () => 'pong'); }",
++        &["tools", "commands"],
++        json!({}),
++    );
++    for (path, capabilities) in [
++        (&alpha, &["tools"][..]),
++        (&alpha_beta, &["tools"][..]),
++        (&first_ui, &["terminal"][..]),
++        (&second_ui, &["terminal"][..]),
++        (&helper, &["tools", "commands"][..]),
++    ] {
++        trust(&store, path, capabilities);
++    }
++
++    let mut runtime = host(&temp);
++    for id in ["alpha", "alpha_beta"] {
++        assert!(
++            error_of(&runtime, id).contains("tool_name_conflict: mod_alpha_beta_run"),
++            "{id}: {}",
++            error_of(&runtime, id)
++        );
++    }
++    for id in ["first_ui", "second_ui"] {
++        assert!(
++            error_of(&runtime, id).contains("replacement_conflict: terminal"),
++            "{id}: {}",
++            error_of(&runtime, id)
++        );
++    }
++    assert_eq!(active(&runtime), ["helper"]);
++    assert_eq!(runtime.replacement_owner("terminal"), None);
++    assert!(
++        runtime
++            .event("terminal", json!({"event":"draw","checkpoint":null}))
++            .is_empty()
++    );
++    let slots: Vec<String> = runtime
++        .tools()
++        .into_iter()
++        .map(|(id, _, tool)| format!("mod_{id}_{}", tool.name))
++        .collect();
++    assert_eq!(slots, ["mod_helper_run"]);
++    assert_eq!(
++        runtime
++            .invoke(
++                "helper",
++                runtime.generation(),
++                "command",
++                "ping",
++                Value::Null
++            )
++            .unwrap(),
++        json!("pong")
++    );
++}
++
++#[test]
++fn the_single_terminal_owner_binds_keys_that_may_target_another_mods_command() {
++    let temp = TempDir::new().unwrap();
++    let (root, store) = workspace(&temp);
++    let ui = written(
++        &root,
++        "ui",
++        "export default api => api.replace('terminal', ({event}) => event === 'reserved' ? ({keybindings:{'Ctrl+c':'ignore'}}) : ({title:'Workspace',keybindings:{'F6':{command:'helper:ping'},'F7':{command:'ping'},'Alt+x':{insert:'note'}}}))",
++        &["terminal"],
++        json!({}),
++    );
++    let helper = written(
++        &root,
++        "helper",
++        "export default api => api.command('ping', () => 'pong')",
++        &["commands"],
++        json!({}),
++    );
++    let observer = written(
++        &root,
++        "observer",
++        "export default api => api.on('turn_start', () => null)",
++        &["lifecycle"],
++        json!({}),
++    );
++    trust(&store, &ui, &["terminal"]);
++    trust(&store, &helper, &["commands"]);
++    trust(&store, &observer, &["lifecycle"]);
++
++    let mut runtime = host(&temp);
++    assert_eq!(runtime.replacement_owner("terminal").as_deref(), Some("ui"));
++    let drawn = runtime.event("terminal", json!({"event":"draw","checkpoint":null}));
++    assert_eq!(drawn.len(), 1);
++    let view = codex_omd::ModView::parse(drawn[0].1.as_ref().unwrap().clone()).unwrap();
++    assert_eq!(
++        view.keybindings["F6"],
++        codex_omd::ModKeyAction::Command {
++            command: "helper:ping".into(),
++            args: String::new()
++        }
++    );
++    assert_eq!(
++        view.keybindings["F7"],
++        codex_omd::ModKeyAction::Command {
++            command: "ping".into(),
++            args: String::new()
++        }
++    );
++    let commands: Vec<(String, String)> = runtime
++        .commands()
++        .into_iter()
++        .map(|(id, command)| (id, command.name))
++        .collect();
++    assert_eq!(commands, [("helper".to_string(), "ping".to_string())]);
++    assert_eq!(
++        runtime
++            .invoke(
++                "helper",
++                runtime.generation(),
++                "command",
++                "ping",
++                Value::Null
++            )
++            .unwrap(),
++        json!("pong")
++    );
++    let reserved = runtime.event("terminal", json!({"event":"reserved","checkpoint":null}));
++    assert!(
++        reserved[0]
++            .1
++            .as_ref()
++            .unwrap_err()
++            .to_string()
++            .contains("invalid_terminal_view")
++    );
++}
++
++#[test]
++fn disabling_a_shared_service_provider_stops_only_its_required_consumer() {
++    let temp = TempDir::new().unwrap();
++    let (root, store) = workspace(&temp);
++    let provider = written(
++        &root,
++        "provider",
++        "export default api => api.provide({name:'shared.echo',version:'1.0.0',methods:{echo:{input:'string',output:'string'}}},{echo:value=>'provider:'+value})",
++        &["services"],
++        json!({"services":{"exports":[echo_contract("1.0.0")]}}),
++    );
++    let required = written(
++        &root,
++        "required",
++        "export default api => api.command('call', () => api.services.call('shared.echo','echo','hello'))",
++        &["commands", "services"],
++        json!({"services":{"imports":[{"name":"shared.echo","version":"^1.0.0"}]}}),
++    );
++    let optional = written(
++        &root,
++        "optional",
++        "export default api => api.command('probe', () => { try { return api.services.call('shared.echo','echo','hello') } catch (error) { if (error instanceof Error) return String(error); throw error } })",
++        &["commands", "services"],
++        json!({"services":{"imports":[{"name":"shared.echo","version":"^1.0.0","optional":true}]}}),
++    );
++    let observer = written(
++        &root,
++        "observer",
++        "export default api => api.on('context', () => ({text:'observer'}))",
++        &["context"],
++        json!({}),
++    );
++    trust(&store, &provider, &["services"]);
++    trust(&store, &required, &["commands", "services"]);
++    trust(&store, &optional, &["commands", "services"]);
++    trust(&store, &observer, &["context"]);
++
++    let mut runtime = host(&temp);
++    let call = |runtime: &mut ModHost, id: &str, command: &str| {
++        let generation = runtime.generation();
++        runtime
++            .invoke(id, generation, "command", command, Value::Null)
++            .unwrap()
++    };
++    assert_eq!(
++        call(&mut runtime, "required", "call"),
++        json!("provider:hello")
++    );
++    assert_eq!(
++        call(&mut runtime, "optional", "probe"),
++        json!("provider:hello")
++    );
++    let types = root.join("store/installed-contracts.d.ts");
++    assert!(
++        std::fs::read_to_string(&types)
++            .unwrap()
++            .contains("'shared.echo@1.0.0'")
++    );
++
++    contended(|| store.enable(&provider, false));
++    assert!(
++        runtime
++            .reload()
++            .unwrap_err()
++            .to_string()
++            .contains("service_provider_missing: required requires shared.echo")
++    );
++
++    let mut reopened = host(&temp);
++    assert!(
++        error_of(&reopened, "required")
++            .contains("service_provider_missing: required requires shared.echo"),
++        "{}",
++        error_of(&reopened, "required")
++    );
++    assert_eq!(active(&reopened), ["observer", "optional"]);
++    assert!(
++        call(&mut reopened, "optional", "probe")
++            .as_str()
++            .unwrap()
++            .contains("optional_service_unavailable")
++    );
++    assert_eq!(
++        reopened.event("context", Value::Null)[0]
++            .1
++            .as_ref()
++            .unwrap(),
++        &json!({"text":"observer"})
++    );
++    assert!(
++        !std::fs::read_to_string(&types)
++            .unwrap()
++            .contains("'shared.echo@1.0.0'")
++    );
++
++    contended(|| store.enable(&provider, true));
++    let mut restored = host(&temp);
++    assert_eq!(
++        active(&restored),
++        ["observer", "provider", "optional", "required"]
++    );
++    assert_eq!(
++        call(&mut restored, "required", "call"),
++        json!("provider:hello")
++    );
++    assert!(
++        std::fs::read_to_string(&types)
++            .unwrap()
++            .contains("'shared.echo@1.0.0'")
++    );
++}
++
++#[test]
++fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_next_one() {
++    let temp = TempDir::new().unwrap();
++    let (root, store) = workspace(&temp);
++    let middleware = |transform: &str| {
++        format!(
++            "export default api => api.middleware('response_stream', event => ({{text: {transform}}}))"
++        )
++    };
++    let stream = written(
++        &root,
++        "stream",
++        &middleware("String(event.text).toUpperCase()"),
++        &["middleware"],
++        json!({}),
++    );
++    let worker = written(
++        &root,
++        "worker",
++        "export default api => api.tool({name:'work',description:'work',parameters:{type:'object',properties:{}}}, () => { api.progress('started'); const status = api.host.call('task.status', null); api.progress('finished'); return status; })",
++        &["tools", "task"],
++        json!({}),
++    );
++    let ui = written(
++        &root,
++        "ui",
++        "export default api => api.replace('terminal', () => ({title:'Workspace'}))",
++        &["terminal"],
++        json!({}),
++    );
++    trust(&store, &stream, &["middleware"]);
++    trust(&store, &worker, &["tools", "task"]);
++    trust(&store, &ui, &["terminal"]);
++
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    let delta = json!({"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,
++        "opaque_reasoning":false,"protected":false,"text":"hello"});
++    assert_eq!(
++        runtime.response_stream(delta.clone(), || true).unwrap()["effective"],
++        json!("HELLO")
++    );
++
++    let mut updates = Vec::new();
++    let value = runtime
++        .invoke_streaming(
++            "worker",
++            generation,
++            "tool",
++            "work",
++            json!({}),
++            || true,
++            |_| {
++                std::fs::write(
++                    stream.join("index.ts"),
++                    middleware("String(event.text)+'!'"),
++                )?;
++                trust(&store, &stream, &["middleware"]);
++                Ok(json!({"task":"running"}))
++            },
++            |update| updates.push(update),
++        )
++        .unwrap();
++    assert_eq!(value, json!({"task":"running"}));
++    assert_eq!(updates, ["started".to_string(), "finished".to_string()]);
++    assert_eq!(
++        runtime.response_stream(delta.clone(), || true).unwrap()["effective"],
++        json!("HELLO")
++    );
++
++    assert!(runtime.reload().unwrap());
++    assert_ne!(runtime.generation(), generation);
++    assert_eq!(
++        runtime.response_stream(delta, || true).unwrap()["effective"],
++        json!("hello!")
++    );
++    assert!(
++        runtime
++            .invoke("worker", generation, "tool", "work", json!({}))
++            .unwrap_err()
++            .to_string()
++            .contains("stale_mod_generation")
++    );
++    assert_eq!(runtime.replacement_owner("terminal").as_deref(), Some("ui"));
++    assert_eq!(active(&runtime), ["stream", "ui", "worker"]);
++}
++
++#[test]
++fn mixed_api_mods_share_one_host_and_upgrade_independently() {
++    let temp = TempDir::new().unwrap();
++    let (root, store) = workspace(&temp);
++    let ping = "export default api => api.command('ping', () => api.version)";
++    let legacy = written(
++        &root,
++        "legacy",
++        ping,
++        &["commands"],
++        json!({"api":"0.1.0-experimental.4"}),
++    );
++    let middle = written(
++        &root,
++        "middle",
++        ping,
++        &["commands"],
++        json!({"api":"0.1.0-experimental.5",
++            "compatibility":{"required_features":["transactional_reload_v1"],
++                "optional_features":["future_optional_v1"]}}),
++    );
++    let current = written(
++        &root,
++        "current",
++        "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })",
++        &["commands", "state"],
++        json!({"compatibility":{"releases":[OMD_HOST_RELEASE]}}),
++    );
++    trust(&store, &legacy, &["commands"]);
++    trust(&store, &middle, &["commands"]);
++    trust(&store, &current, &["commands", "state"]);
++
++    let mut runtime = host(&temp);
++    assert_eq!(active(&runtime), ["current", "legacy", "middle"]);
++    let stability = |runtime: &ModHost, id: &str| {
++        runtime.status()["mods"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|entry| entry["id"] == id)
++            .map(|entry| {
++                (
++                    entry["api"].as_str().unwrap().to_owned(),
++                    entry["api_stability"].as_str().unwrap().to_owned(),
++                )
++            })
++            .unwrap()
++    };
++    assert_eq!(
++        stability(&runtime, "legacy"),
++        ("0.1.0-experimental.4".to_string(), "deprecated".to_string())
++    );
++    assert_eq!(
++        stability(&runtime, "middle"),
++        (
++            "0.1.0-experimental.5".to_string(),
++            "experimental".to_string()
++        )
++    );
++    assert_eq!(
++        stability(&runtime, "current"),
++        (MOD_API_VERSION.to_string(), "experimental".to_string())
++    );
++    let generation = runtime.generation();
++    for id in ["legacy", "middle"] {
++        assert_eq!(
++            runtime
++                .invoke(id, generation, "command", "ping", Value::Null)
++                .unwrap(),
++            json!(MOD_API_VERSION)
++        );
++    }
++    assert_eq!(
++        runtime
++            .invoke("current", generation, "command", "count", Value::Null)
++            .unwrap(),
++        json!(1)
++    );
++
++    let elsewhere = written(
++        &root,
++        "elsewhere",
++        ping,
++        &["commands"],
++        json!({"compatibility":{"releases":["0.0.9"]}}),
++    );
++    let refused = ModStore::inspect_package(&elsewhere)
++        .unwrap_err()
++        .to_string();
++    assert!(
++        refused.contains("this host is") && refused.contains(OMD_HOST_RELEASE),
++        "{refused}"
++    );
++
++    written(
++        &root,
++        "current",
++        "export default api => { api.on('migrate', ({from,to}) => api.state.set({count:api.state.get(),from,to})); api.command('count', () => api.state.get()); }",
++        &["commands", "state"],
++        json!({"state_version":2}),
++    );
++    trust(&store, &current, &["commands", "state"]);
++    assert!(
++        runtime
++            .reload()
++            .unwrap_err()
++            .to_string()
++            .contains("state_migration_required")
++    );
++
++    let mut upgraded = host(&temp);
++    assert!(
++        error_of(&upgraded, "current").contains("state_migration_required"),
++        "{}",
++        error_of(&upgraded, "current")
++    );
++    assert_eq!(active(&upgraded), ["legacy", "middle"]);
++    assert_eq!(
++        upgraded
++            .invoke(
++                "legacy",
++                upgraded.generation(),
++                "command",
++                "ping",
++                Value::Null
++            )
++            .unwrap(),
++        json!(MOD_API_VERSION)
++    );
++
++    contended(|| store.enable(&current, false));
++    contended(|| store.migrate(&current));
++    contended(|| store.enable(&current, true));
++    let mut migrated = host(&temp);
++    assert_eq!(active(&migrated), ["current", "legacy", "middle"]);
++    assert_eq!(
++        migrated
++            .invoke(
++                "current",
++                migrated.generation(),
++                "command",
++                "count",
++                Value::Null
++            )
++            .unwrap(),
++        json!({"count":1,"from":1,"to":2})
++    );
++}
++
++#[test]
++fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
++    let temp = TempDir::new().unwrap();
++    let (root, store) = workspace(&temp);
++    let alpha = written(
++        &root,
++        "alpha",
++        "export default api => { api.on('context', () => ({text:'alpha'})); api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); }",
++        &["context", "commands", "state"],
++        json!({}),
++    );
++    let beta = written(
++        &root,
++        "beta",
++        "export default api => { api.on('context', () => { throw new Error('beta failed') }); api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+10); return api.state.get(); }); }",
++        &["context", "commands", "state"],
++        json!({}),
++    );
++    let gamma = written(
++        &root,
++        "gamma",
++        "export default api => api.on('context', () => ({text:'x'.repeat(1025)}))",
++        &["context"],
++        json!({}),
++    );
++    trust(&store, &alpha, &["context", "commands", "state"]);
++    trust(&store, &beta, &["context", "commands", "state"]);
++    trust(&store, &gamma, &["context"]);
++
++    let mut runtime = host(&temp);
++    assert_eq!(active(&runtime), ["alpha", "beta", "gamma"]);
++    let results = runtime.event("context", Value::Null);
++    let observed: Vec<(String, String)> = results
++        .iter()
++        .map(|(id, result)| {
++            (
++                id.clone(),
++                match result {
++                    Ok(value) => value["text"].as_str().unwrap_or_default().to_owned(),
++                    Err(error) => error.to_string(),
++                },
++            )
++        })
++        .collect();
++    assert_eq!(observed[0], ("alpha".to_string(), "alpha".to_string()));
++    assert!(observed[1].1.contains("beta failed"), "{:?}", observed[1]);
++    assert!(observed[2].1.contains("context_limit"), "{:?}", observed[2]);
++    let remaining = runtime.event("context", Value::Null);
++    assert_eq!(remaining.len(), 1);
++    assert_eq!(remaining[0].0, "alpha");
++    assert_eq!(remaining[0].1.as_ref().unwrap(), &json!({"text":"alpha"}));
++
++    let generation = runtime.generation();
++    assert_eq!(
++        runtime
++            .invoke("alpha", generation, "command", "count", Value::Null)
++            .unwrap(),
++        json!(1)
++    );
++    assert!(
++        runtime
++            .invoke("beta", generation, "command", "count", Value::Null)
++            .is_err()
++    );
++    let state = |id: &str| root.join(format!("store/state-{id}.json"));
++    let stored: Value = serde_json::from_slice(&std::fs::read(state("alpha")).unwrap()).unwrap();
++    assert_eq!(stored, json!({"schema":1,"version":1,"value":1}));
++    assert!(!state("beta").exists());
++    assert!(!state("gamma").exists());
++}
++
++#[test]
++fn mods_and_upstream_pi_resources_coexist_without_capturing_each_other() {
++    let temp = TempDir::new().unwrap();
++    let (root, store) = workspace(&temp);
++    let user = root.join("user");
++    let project = root.join("project");
++    std::fs::create_dir_all(user.join("prompts")).unwrap();
++    std::fs::create_dir_all(project.join(".pi/skills/review")).unwrap();
++    std::fs::write(user.join("prompts/ping.md"), "upstream prompt").unwrap();
++    std::fs::write(
++        project.join(".pi/skills/review/SKILL.md"),
++        "---\ndescription: Upstream skill\n---\nBody\n",
++    )
++    .unwrap();
++    let reader = written(
++        &root,
++        "reader",
++        "export default api => { api.command('ping', () => 'mod'); api.command('resources', () => api.host.call('pi.discover', null).resources.map(resource => resource.kind + '/' + resource.name)); }",
++        &["commands", "pi_resources"],
++        json!({}),
++    );
++    trust(&store, &reader, &["commands", "pi_resources"]);
++
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    let discovered = runtime
++        .invoke_with(
++            "reader",
++            generation,
++            "command",
++            "resources",
++            Value::Null,
++            || true,
++            |_| ModStore::discover_pi(&user, &project),
++        )
++        .unwrap();
++    assert_eq!(discovered, json!(["prompts/ping", "skills/review"]));
++    assert_eq!(
++        runtime
++            .invoke("reader", generation, "command", "ping", Value::Null)
++            .unwrap(),
++        json!("mod")
++    );
++    let commands: Vec<String> = runtime
++        .commands()
++        .into_iter()
++        .map(|(id, command)| format!("{id}:{}", command.name))
++        .collect();
++    assert_eq!(commands, ["reader:ping", "reader:resources"]);
++}
 diff --git a/codex-rs/omd/tests/knowledge.rs b/codex-rs/omd/tests/knowledge.rs
 new file mode 100644
-index 0000000..aef9c99
+index 0000000000000000000000000000000000000000..aef9c99b6cd1b1cac9eb08e141796e42f6b808ad
 --- /dev/null
 +++ b/codex-rs/omd/tests/knowledge.rs
 @@ -0,0 +1,279 @@
@@ -34043,7 +34770,7 @@ index 0000000..aef9c99
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000..c7f700f
+index 0000000000000000000000000000000000000000..c7f700fb50528a300fcbb8ab48ab01fe4319a09c
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
 @@ -0,0 +1,2050 @@
@@ -36099,7 +36826,7 @@ index 0000000..c7f700f
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000..722b8ec
+index 0000000000000000000000000000000000000000..722b8ececa8632526f950af3ece126853367957a
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
 @@ -0,0 +1,517 @@
@@ -36622,7 +37349,7 @@ index 0000000..722b8ec
 +}
 diff --git a/codex-rs/omd/tests/reactive.rs b/codex-rs/omd/tests/reactive.rs
 new file mode 100644
-index 0000000..6e4431e
+index 0000000000000000000000000000000000000000..6e4431eaa998f8a9ef10b657b148230dc6fccba6
 --- /dev/null
 +++ b/codex-rs/omd/tests/reactive.rs
 @@ -0,0 +1,155 @@
@@ -36783,7 +37510,7 @@ index 0000000..6e4431e
 +}
 diff --git a/codex-rs/omd/tests/workspace.rs b/codex-rs/omd/tests/workspace.rs
 new file mode 100644
-index 0000000..03463c9
+index 0000000000000000000000000000000000000000..03463c997925ae2a797718c426f581b486aee6a5
 --- /dev/null
 +++ b/codex-rs/omd/tests/workspace.rs
 @@ -0,0 +1,249 @@
@@ -37037,7 +37764,7 @@ index 0000000..03463c9
 +    );
 +}
 diff --git a/codex-rs/tui/Cargo.toml b/codex-rs/tui/Cargo.toml
-index 040f44f..216c43a 100644
+index 040f44f502e691cac5451d5aa6ee8a8c4ba5025b..216c43a17db3107f1db0560cb034c1af63a11f62 100644
 --- a/codex-rs/tui/Cargo.toml
 +++ b/codex-rs/tui/Cargo.toml
 @@ -50,6 +50,7 @@ codex-message-history = { workspace = true }
@@ -37049,7 +37776,7 @@ index 040f44f..216c43a 100644
  codex-plugin = { workspace = true }
  codex-protocol = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index e7140a6..380b4e8 100644
+index e7140a6533a6a8a3e719ba67019f7e810ab8b083..380b4e8281d54bc723dd9c138e859853f8066a42 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -174,7 +174,11 @@ use crossterm::event::KeyCode;
@@ -37218,7 +37945,7 @@ index e7140a6..380b4e8 100644
                  }
              })?;
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index cc16390..e2846f3 100644
+index cc16390c17de1c2dcc3f87456dd667bee44eb787..e2846f3d569e9f76c80eb19fad54760f08bfb3e9 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
 @@ -250,6 +250,18 @@ impl App {
@@ -37241,7 +37968,7 @@ index cc16390..e2846f3 100644
                  self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
                  self.reset_app_ui_state_after_clear();
 diff --git a/codex-rs/tui/src/app/input.rs b/codex-rs/tui/src/app/input.rs
-index fbf1d98..69b2c59 100644
+index fbf1d980321b7d736bca43fef8f2fbd5224fae9c..69b2c59834be799e1bdf0d4883c7d62f29be0761 100644
 --- a/codex-rs/tui/src/app/input.rs
 +++ b/codex-rs/tui/src/app/input.rs
 @@ -120,6 +120,51 @@ impl App {
@@ -37323,7 +38050,7 @@ index fbf1d98..69b2c59 100644
              && self.overlay.is_none()
              && self.chat_widget.no_modal_or_popup_active()
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
-index 64c8bda..5a65198 100644
+index 64c8bda18db957a6990441ffd57f96be606a7556..5a651989760166d55a3a9a52de52c566baed7cc4 100644
 --- a/codex-rs/tui/src/app/tests.rs
 +++ b/codex-rs/tui/src/app/tests.rs
 @@ -218,6 +218,80 @@ async fn pasted_text_normalizes_mixed_line_endings_at_app_boundary() -> Result<(
@@ -37408,7 +38135,7 @@ index 64c8bda..5a65198 100644
  async fn duplicate_named_resume_renders_error_without_replacing_current_session() -> Result<()> {
      let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
 diff --git a/codex-rs/tui/src/app_backtrack/legacy_input.rs b/codex-rs/tui/src/app_backtrack/legacy_input.rs
-index c36e83b..20b1d93 100644
+index c36e83bd768785d26d8dd74ccdba446a1347df70..20b1d931f1e8f9f16d947e108a7944a8ecd492b3 100644
 --- a/codex-rs/tui/src/app_backtrack/legacy_input.rs
 +++ b/codex-rs/tui/src/app_backtrack/legacy_input.rs
 @@ -35,12 +35,15 @@ impl App {
@@ -37429,7 +38156,7 @@ index c36e83b..20b1d93 100644
          }
          Ok(true)
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 1df5a1a..dc5d714 100644
+index 1df5a1a7f4f00a61a1fa8a263ccca3752ffeee7a..dc5d714bc76429d5fd076db1b3ba4b52cf535265 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -390,6 +390,16 @@ pub(crate) enum AppEvent {
@@ -37450,7 +38177,7 @@ index 1df5a1a..dc5d714 100644
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 967c712..2835094 100644
+index 967c712fe9a5f0d95999be28ae847647db8a27c0..2835094c86ab1bdd01839f083f782d5005475cbb 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -347,6 +347,7 @@ use codex_file_search::FileMatch;
@@ -37678,7 +38405,7 @@ index 967c712..2835094 100644
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs b/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
-index 22fce85..7067916 100644
+index 22fce854f4a870147da8539855cbc2394f88bb8f..7067916f7054467ab6a3d6903784772f17ba8fed 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer/slash_input.rs
 @@ -370,7 +370,7 @@ impl ChatComposer {
@@ -37710,7 +38437,7 @@ index 22fce85..7067916 100644
                          true,
                      );
 diff --git a/codex-rs/tui/src/bottom_pane/command_popup.rs b/codex-rs/tui/src/bottom_pane/command_popup.rs
-index 81cc801..de48fdd 100644
+index 81cc8013d8506ffa0dc77cf83d914dca01ae3091..de48fdd2a13adff580082d877fa277406a8ceda1 100644
 --- a/codex-rs/tui/src/bottom_pane/command_popup.rs
 +++ b/codex-rs/tui/src/bottom_pane/command_popup.rs
 @@ -31,6 +31,7 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
@@ -37827,7 +38554,7 @@ index 81cc801..de48fdd 100644
              .collect();
  
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index f249fad..afc30b4 100644
+index f249fad8b2eb8c02a6d4cd04008e39d173cb3c15..afc30b4a14e56c73e3471cbd46631d2f1f592aec 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
 @@ -1031,6 +1031,40 @@ impl BottomPane {
@@ -37872,7 +38599,7 @@ index f249fad..afc30b4 100644
      pub(crate) fn composer_cursor(&self) -> usize {
          self.composer.cursor()
 diff --git a/codex-rs/tui/src/bottom_pane/slash_commands.rs b/codex-rs/tui/src/bottom_pane/slash_commands.rs
-index 6139364..fa6a68f 100644
+index 61393648e789d7c7b238caca917494856b1a0462..fa6a68f2446e55071376b267566edb2a597cc2ba 100644
 --- a/codex-rs/tui/src/bottom_pane/slash_commands.rs
 +++ b/codex-rs/tui/src/bottom_pane/slash_commands.rs
 @@ -21,6 +21,7 @@ pub(crate) struct ServiceTierCommand {
@@ -37945,7 +38672,7 @@ index 6139364..fa6a68f 100644
  
  pub(crate) fn has_slash_command_prefix(
 diff --git a/codex-rs/tui/src/bottom_pane/textarea.rs b/codex-rs/tui/src/bottom_pane/textarea.rs
-index e8900ad..f73a018 100644
+index e8900ad606f14612d6611ac3e6339c0cc3cf500c..f73a0181db5047984e58e86592e236f43b1bc7cc 100644
 --- a/codex-rs/tui/src/bottom_pane/textarea.rs
 +++ b/codex-rs/tui/src/bottom_pane/textarea.rs
 @@ -527,6 +527,37 @@ impl TextArea {
@@ -38051,7 +38778,7 @@ index e8900ad..f73a018 100644
      fn insert_str_at_clamps_to_char_boundary() {
          let mut t = TextArea::new();
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 16d4a6e..8e00355 100644
+index 16d4a6e5932e63f4e8185a59c00dfe1d5dd91b35..8e0035586454c7c4944f216df6e7d16307b24c75 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -378,9 +378,12 @@ use self::plugins::PluginListFetchState;
@@ -38091,7 +38818,7 @@ index 16d4a6e..8e00355 100644
          self.bottom_pane.composer_is_vim_enabled()
      }
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index f45ae82..430e134 100644
+index f45ae82fef827e04dfa35cd771ad3f501ff0afbc..430e134cb5ba783ac1e2a7c7408f0efbb785f016 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -37,7 +37,11 @@ impl ChatWidget {
@@ -38108,7 +38835,7 @@ index f45ae82..430e134 100644
  
          let model_override = model.as_deref();
 diff --git a/codex-rs/tui/src/chatwidget/input_flow.rs b/codex-rs/tui/src/chatwidget/input_flow.rs
-index 97d3e59..04ca4d8 100644
+index 97d3e59401f77044d82f43a13bbcfcb58e2e7bd9..04ca4d86b9d4322895002c566531a6c578ea253f 100644
 --- a/codex-rs/tui/src/chatwidget/input_flow.rs
 +++ b/codex-rs/tui/src/chatwidget/input_flow.rs
 @@ -68,6 +68,9 @@ impl ChatWidget {
@@ -38123,7 +38850,7 @@ index 97d3e59..04ca4d8 100644
              }
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 0000000..7f28aaa
+index 0000000000000000000000000000000000000000..7f28aaac03dda14b13370e85c13f5b9802403980
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
 @@ -0,0 +1,65 @@
@@ -38194,7 +38921,7 @@ index 0000000..7f28aaa
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_graph.rs b/codex-rs/tui/src/chatwidget/omd_graph.rs
 new file mode 100644
-index 0000000..4282243
+index 0000000000000000000000000000000000000000..4282243df9ca4a3e18dcc4ea32ebaa1b6442e428
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_graph.rs
 @@ -0,0 +1,205 @@
@@ -38405,7 +39132,7 @@ index 0000000..4282243
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_inspector.rs b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 new file mode 100644
-index 0000000..22223e0
+index 0000000000000000000000000000000000000000..22223e082d6acaf7648009a06f1f32247baad5d7
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 @@ -0,0 +1,172 @@
@@ -38582,7 +39309,7 @@ index 0000000..22223e0
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
-index 61a5403..b90034e 100644
+index 61a5403d2722c693a62ee698d27e1f1d6038334e..b90034e7dfca9177aa2ad1be1c2e67a72b351f67 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering.rs
 @@ -180,6 +180,17 @@ impl ChatWidget {
@@ -38604,7 +39331,7 @@ index 61a5403..b90034e 100644
              RenderableItem::Owned(Box::new(ExternalWriterNotice {
                  transcript_hint: self.bottom_pane.transcript_shortcut_hint(),
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index b8db07e..7abe5de 100644
+index b8db07ee74123aba2691a17e19915b31bd8a03a4..7abe5de593f7f2d2efa48a3bf3e744c53f8d304a 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 @@ -492,6 +492,8 @@ impl ChatWidget {
@@ -38643,7 +39370,7 @@ index b8db07e..7abe5de 100644
              | SlashCommand::Usage
              | SlashCommand::DebugConfig
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index 17f437c..f78b999 100644
+index 17f437c48899cb5394d6413fad41240de29c15e9..f78b999e0a89fbfacef01bbe9142c317942b7d8a 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
 @@ -200,13 +200,7 @@ impl ChatWidget {
@@ -38686,7 +39413,7 @@ index 17f437c..f78b999 100644
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
 diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
-index 64e163f..1b94f6b 100644
+index 64e163f18b22dcdae60de1b6757ec0d97f4e7645..1b94f6b786983eed190459567752e4a4e851cfe2 100644
 --- a/codex-rs/tui/src/custom_terminal.rs
 +++ b/codex-rs/tui/src/custom_terminal.rs
 @@ -268,6 +268,10 @@ where
@@ -38701,7 +39428,7 @@ index 64e163f..1b94f6b 100644
      fn previous_buffer_mut(&mut self) -> &mut Buffer {
          &mut self.buffers[1 - self.current]
 diff --git a/codex-rs/tui/src/cwd_prompt.rs b/codex-rs/tui/src/cwd_prompt.rs
-index b0d6205..dd77c7e 100644
+index b0d6205602884906fc9ed851220c70f16d283d3b..dd77c7ee2acc480659e4353262c29a92fb5eb4c3 100644
 --- a/codex-rs/tui/src/cwd_prompt.rs
 +++ b/codex-rs/tui/src/cwd_prompt.rs
 @@ -134,7 +134,7 @@ pub(crate) async fn run_cwd_selection_prompt(
@@ -38714,7 +39441,7 @@ index b0d6205..dd77c7e 100644
                      tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/external_agent_config_migration/mod.rs b/codex-rs/tui/src/external_agent_config_migration/mod.rs
-index a80fe03..bd6683a 100644
+index a80fe03af1e0106bcebdef5dba939949cd5c376f..bd6683a491aa09c0f3b8460b5b4720a4a1dc7d6f 100644
 --- a/codex-rs/tui/src/external_agent_config_migration/mod.rs
 +++ b/codex-rs/tui/src/external_agent_config_migration/mod.rs
 @@ -108,7 +108,7 @@ pub(crate) async fn run_external_agent_config_migration_prompt(
@@ -38727,7 +39454,7 @@ index a80fe03..bd6683a 100644
                      let _ = tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/external_agent_config_migration/source.rs b/codex-rs/tui/src/external_agent_config_migration/source.rs
-index bc01ad7..c20e910 100644
+index bc01ad78c39722c13fb4c1a08676238ea34bba23..c20e910642e4a5a77b18fff6d66731b150ee1ea1 100644
 --- a/codex-rs/tui/src/external_agent_config_migration/source.rs
 +++ b/codex-rs/tui/src/external_agent_config_migration/source.rs
 @@ -65,7 +65,7 @@ pub(crate) async fn run_external_agent_config_source_prompt(
@@ -38740,7 +39467,7 @@ index bc01ad7..c20e910 100644
                      let _ = tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/history_cell/mod.rs b/codex-rs/tui/src/history_cell/mod.rs
-index 5caf686..13b7057 100644
+index 5caf68623c545aaf1abfeb7a122224de5e8aa471..13b705796f1c77eb2699bdc71a4d6ade818fd31b 100644
 --- a/codex-rs/tui/src/history_cell/mod.rs
 +++ b/codex-rs/tui/src/history_cell/mod.rs
 @@ -197,7 +197,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
@@ -38783,7 +39510,7 @@ index 5caf686..13b7057 100644
          let y = if area.height == 0 {
              0
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
-index 3d9650d..d4ec95b 100644
+index 3d9650d3d4c5391dc15fe5bc5b79386aab2ae4d7..d4ec95bcc4e5cce9ed21c72ea5600ecb90cb30e0 100644
 --- a/codex-rs/tui/src/lib.rs
 +++ b/codex-rs/tui/src/lib.rs
 @@ -169,6 +169,8 @@ mod markdown_render;
@@ -38826,7 +39553,7 @@ index 3d9650d..d4ec95b 100644
      session_log::log_session_end();
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000..d2a09c9
+index 0000000000000000000000000000000000000000..d2a09c92f3974f54e8bb10ef3716e504bba50115
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
 @@ -0,0 +1,246 @@
@@ -39078,7 +39805,7 @@ index 0000000..d2a09c9
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 0000000..7172901
+index 0000000000000000000000000000000000000000..717290186c05697eab91eb2a5c0b7af68780abe5
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,75 @@
@@ -39159,7 +39886,7 @@ index 0000000..7172901
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000..9b8d7aa
+index 0000000000000000000000000000000000000000..9b8d7aa9dc65addd201ec8a32bf5c8bf87b61678
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
 @@ -0,0 +1,406 @@
@@ -39571,7 +40298,7 @@ index 0000000..9b8d7aa
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000..9a0294c
+index 0000000000000000000000000000000000000000..9a0294ce613b1fdcc907a877f35cfefa8b69a70d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
 @@ -0,0 +1,130 @@
@@ -39706,7 +40433,7 @@ index 0000000..9a0294c
 +    );
 +}
 diff --git a/codex-rs/tui/src/model_migration.rs b/codex-rs/tui/src/model_migration.rs
-index 094fb73..56dec6b 100644
+index 094fb731b0f44d50c1d6e2a447ec6e80fb5ddbc5..56dec6bc918300d269739fb18b679dfd2a87061b 100644
 --- a/codex-rs/tui/src/model_migration.rs
 +++ b/codex-rs/tui/src/model_migration.rs
 @@ -154,7 +154,7 @@ pub(crate) async fn run_model_migration_prompt(
@@ -39720,7 +40447,7 @@ index 094fb73..56dec6b 100644
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000..6cd0243
+index 0000000000000000000000000000000000000000..6cd0243123d952dc5b84329c13f82ec1714b7c4c
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
 @@ -0,0 +1,848 @@
@@ -40573,7 +41300,7 @@ index 0000000..6cd0243
 +    }
 +}
 diff --git a/codex-rs/tui/src/onboarding/onboarding_screen.rs b/codex-rs/tui/src/onboarding/onboarding_screen.rs
-index 756e231..f8c7b44 100644
+index 756e231b501fa21d6ad824b9b2c101e5a1f7aeb4..f8c7b444ac2e2a45d030c5726de732373a084a0d 100644
 --- a/codex-rs/tui/src/onboarding/onboarding_screen.rs
 +++ b/codex-rs/tui/src/onboarding/onboarding_screen.rs
 @@ -580,7 +580,7 @@ pub(crate) async fn run_onboarding_app(
@@ -40586,7 +41313,7 @@ index 756e231..f8c7b44 100644
                  }
              }
 diff --git a/codex-rs/tui/src/pager_overlay.rs b/codex-rs/tui/src/pager_overlay.rs
-index 9b6c763..d807bce 100644
+index 9b6c763e3e182c0763022ef80550d2d87cc268ca..d807bceaf3dbddb44db280830dbf8d490fe7ab53 100644
 --- a/codex-rs/tui/src/pager_overlay.rs
 +++ b/codex-rs/tui/src/pager_overlay.rs
 @@ -40,6 +40,8 @@ use crate::tui;
@@ -40978,7 +41705,7 @@ index 9b6c763..d807bce 100644
          renderables: Vec<Box<dyn Renderable>>,
          title: &str,
 diff --git a/codex-rs/tui/src/render/highlight.rs b/codex-rs/tui/src/render/highlight.rs
-index e37867c..6b6c912 100644
+index e37867c8543615ea5e26cd3a39ab7dda41703566..6b6c9124ef4ca6f2d9cb04f48cd21e7ece49c0cd 100644
 --- a/codex-rs/tui/src/render/highlight.rs
 +++ b/codex-rs/tui/src/render/highlight.rs
 @@ -367,6 +367,11 @@ pub(crate) fn resolve_theme_by_name(name: &str, codex_home: Option<&Path>) -> Op
@@ -40994,7 +41721,7 @@ index e37867c..6b6c912 100644
  /// `.tmTheme` file under `{CODEX_HOME}/themes/`.
  pub(crate) struct ThemeEntry {
 diff --git a/codex-rs/tui/src/resume_picker.rs b/codex-rs/tui/src/resume_picker.rs
-index ef4dd6d..a27f1dc 100644
+index ef4dd6df726755663c90dde0e5b3fd62820d3197..a27f1dc03e1ac51d92b19d13fac6b058c80884fe 100644
 --- a/codex-rs/tui/src/resume_picker.rs
 +++ b/codex-rs/tui/src/resume_picker.rs
 @@ -621,7 +621,7 @@ async fn run_session_picker_with_loader(
@@ -41007,7 +41734,7 @@ index ef4dd6d..a27f1dc 100644
              }
              Some(event) = background_events.next() => {
 diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
-index ca83861..36910c9 100644
+index ca83861bdb7ca643ba83b171921ef7d85c2fc2d5..36910c9d4dc40aa716dd09f94f7eacaea624fae5 100644
 --- a/codex-rs/tui/src/slash_command.rs
 +++ b/codex-rs/tui/src/slash_command.rs
 @@ -51,6 +51,8 @@ pub enum SlashCommand {
@@ -41057,7 +41784,7 @@ index ca83861..36910c9 100644
          }
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
 new file mode 100644
-index 0000000..e768df3
+index 0000000000000000000000000000000000000000..e768df325ff7d91acc5927550ac26282ac11be1a
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
 @@ -0,0 +1,22 @@
@@ -41085,7 +41812,7 @@ index 0000000..e768df3
 +                       │
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap
 new file mode 100644
-index 0000000..9c820b8
+index 0000000000000000000000000000000000000000..9c820b89dc6739d94d959ab5842107ff77811a20
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap
 @@ -0,0 +1,13 @@
@@ -41103,7 +41830,7 @@ index 0000000..9c820b8
 +                                                            │                             
 + X                                                          │
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
-index 24ce94e..b6546c7 100644
+index 24ce94e912c387fcad0a6375a4080ec2a02352c8..b6546c75b3dfa4064995e01908ac658f7d623095 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_apply_patch_scroll_vt100.snap
 @@ -12,4 +12,4 @@ expression: snapshot
@@ -41113,7 +41840,7 @@ index 24ce94e..b6546c7 100644
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
-index 9ed198f..e23377b 100644
+index 9ed198f5546f78916ef9d845ebf018bf453a6700..e23377b7fd8d580c076b7ec1a089193bfd63ed7d 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_completed_stream.snap
 @@ -10,4 +10,4 @@ last
@@ -41123,7 +41850,7 @@ index 9ed198f..e23377b 100644
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
-index 84cb5db..64c6708 100644
+index 84cb5dbcec4bdccf25ce3ef52e5d541a3b19cc7e..64c6708a2f7c37bdbbeb512fe7c6f2c6a9e493c0 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_follows_resized_tail.snap
 @@ -14,5 +14,5 @@ expression: term.backend()
@@ -41134,7 +41861,7 @@ index 84cb5db..64c6708 100644
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
-index b8106e6..7837b6e 100644
+index b8106e6caef92d7de8e63cb0b4241f11675e3d2a..7837b6ed3cb60159f3b159a551b78a5a01c28329 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_paginated_history_states.snap
 @@ -11,7 +11,7 @@ recent transcript
@@ -41171,7 +41898,7 @@ index b8106e6..7837b6e 100644
 - q close   esc to edit prev
 + q close   esc to edit prev   / search
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
-index b823027..c80df9c 100644
+index b823027c570dbea84685b917d57a9758b757d757..c80df9c44ff561da34046d2303bff99d1412f2bd 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_renders_live_tail.snap
 @@ -10,5 +10,5 @@ expression: term.backend()
@@ -41182,7 +41909,7 @@ index b823027..c80df9c 100644
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
-index 024964c..22d7a69 100644
+index 024964cea06ed1bf48ceb8e082914e66778c3285..22d7a69975834151b7d7d3340be8b6c818f945d4 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
 +++ b/codex-rs/tui/src/snapshots/codex_tui__pager_overlay__tests__transcript_overlay_snapshot_basic.snap
 @@ -10,5 +10,5 @@ expression: term.backend()
@@ -41193,7 +41920,7 @@ index 024964c..22d7a69 100644
 +" q close   esc to edit prev   / search  "
  "                                        "
 diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
-index 4c3dbe0..2de94ee 100644
+index 4c3dbe00cd981d3c71eb87ed622f6f5bfe78c2be..2de94ee4e4f526798367d53f89dedcacc72323be 100644
 --- a/codex-rs/tui/src/startup_draft.rs
 +++ b/codex-rs/tui/src/startup_draft.rs
 @@ -312,7 +312,7 @@ impl StartupDraftPump {
@@ -41219,7 +41946,7 @@ index 4c3dbe0..2de94ee 100644
          }
          if self.initial_screen == StartupDraftInitialScreen::Composer {
 diff --git a/codex-rs/tui/src/startup_hooks_review.rs b/codex-rs/tui/src/startup_hooks_review.rs
-index 002e58b..9090b62 100644
+index 002e58b14417a33e8984e61c9e69f4b34f18edcb..9090b6280e9b18729e1dce83ff21791c3048a0db 100644
 --- a/codex-rs/tui/src/startup_hooks_review.rs
 +++ b/codex-rs/tui/src/startup_hooks_review.rs
 @@ -182,7 +182,7 @@ async fn run_startup_hooks_review_app(
@@ -41232,7 +41959,7 @@ index 002e58b..9090b62 100644
                  draw_view(tui, &view)?;
              }
 diff --git a/codex-rs/tui/src/style.rs b/codex-rs/tui/src/style.rs
-index 99a7375..1899b79 100644
+index 99a73757d3617ffaa07f3d606f3fdfdb440e5a02..1899b7921d0cfc6e48749d026158081f0bf3239f 100644
 --- a/codex-rs/tui/src/style.rs
 +++ b/codex-rs/tui/src/style.rs
 @@ -21,6 +21,14 @@ pub(crate) enum StatusTone {
@@ -41272,7 +41999,7 @@ index 99a7375..1899b79 100644
  }
  
 diff --git a/codex-rs/tui/src/tui.rs b/codex-rs/tui/src/tui.rs
-index 96b3fbc..968fd3a 100644
+index 96b3fbcbb96809a193583d39d0af2fe9dc52b29e..968fd3a05e8814f387a7826cdea38b32d5fc6394 100644
 --- a/codex-rs/tui/src/tui.rs
 +++ b/codex-rs/tui/src/tui.rs
 @@ -19,10 +19,13 @@ use crossterm::SynchronizedUpdate;
@@ -41504,7 +42231,7 @@ index 96b3fbc..968fd3a 100644
      }
  
 diff --git a/codex-rs/tui/src/tui/event_stream.rs b/codex-rs/tui/src/tui/event_stream.rs
-index de4ceae..e8fd753 100644
+index de4ceae632f5b95ba20bfa5bf6d2598e40ce7a61..e8fd753a44b946f524faa3325f3427aae7d7fbdc 100644
 --- a/codex-rs/tui/src/tui/event_stream.rs
 +++ b/codex-rs/tui/src/tui/event_stream.rs
 @@ -186,12 +186,11 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
@@ -41572,7 +42299,7 @@ index de4ceae..e8fd753 100644
          match next {
              TuiEvent::Key(key) => {
 diff --git a/codex-rs/tui/src/tui/job_control.rs b/codex-rs/tui/src/tui/job_control.rs
-index 2db1fc0..29cbf36 100644
+index 2db1fc04f58fc9d701cf2c3a6719ad5658b0ae12..29cbf3609cb67cc457920844bd8aee7bb13eb497 100644
 --- a/codex-rs/tui/src/tui/job_control.rs
 +++ b/codex-rs/tui/src/tui/job_control.rs
 @@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
@@ -41595,7 +42322,7 @@ index 2db1fc0..29cbf36 100644
                  terminal.clear()?;
              }
 diff --git a/codex-rs/tui/src/tui/screen_size.rs b/codex-rs/tui/src/tui/screen_size.rs
-index c9f6578..3865caf 100644
+index c9f657886e67fd00d2def92a2ba3a9ae0888b982..3865caf67b964bdfa7d4fb812dd3dc827542683f 100644
 --- a/codex-rs/tui/src/tui/screen_size.rs
 +++ b/codex-rs/tui/src/tui/screen_size.rs
 @@ -47,11 +47,13 @@ impl Tui {
@@ -41615,7 +42342,7 @@ index c9f6578..3865caf 100644
          .then_some(size);
          Ok(size)
 diff --git a/codex-rs/tui/src/unarchive_prompt.rs b/codex-rs/tui/src/unarchive_prompt.rs
-index 3f51822..b6aceca 100644
+index 3f5182276287ba064bca920c049ac38fdce6f9a6..b6aceca3c4edb3a10a03527c656ed65682507397 100644
 --- a/codex-rs/tui/src/unarchive_prompt.rs
 +++ b/codex-rs/tui/src/unarchive_prompt.rs
 @@ -54,6 +54,7 @@ pub(crate) async fn run_unarchive_prompt(
@@ -41627,7 +42354,7 @@ index 3f51822..b6aceca 100644
              | TuiEvent::Resize(_)
              | TuiEvent::Resume
 diff --git a/codex-rs/tui/src/update_prompt.rs b/codex-rs/tui/src/update_prompt.rs
-index 688d113..d23699a 100644
+index 688d1134877961f20d7fa16354b568394f74c2fe..d23699a0b3e025c385b2903e80a146ba963c16c9 100644
 --- a/codex-rs/tui/src/update_prompt.rs
 +++ b/codex-rs/tui/src/update_prompt.rs
 @@ -59,7 +59,7 @@ pub(crate) async fn run_update_prompt_if_needed(
