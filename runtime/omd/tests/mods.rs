@@ -36,6 +36,27 @@ fn packaged(
     path
 }
 
+fn service_package(
+    root: &std::path::Path,
+    id: &str,
+    source: &str,
+    services: Value,
+    capabilities: &[&str],
+) -> PathBuf {
+    let path = root.join(id);
+    std::fs::create_dir(&path).unwrap();
+    let manifest = json!({"schema":1,"id":id,"version":"1.0.0",
+        "api":MOD_API_VERSION,"state_version":1,"capabilities":capabilities,
+        "services":services});
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(path.join("index.ts"), source).unwrap();
+    path
+}
+
 fn node() -> PathBuf {
     PathBuf::from(
         std::env::var_os("OMD_TEST_NODE")
@@ -354,22 +375,7 @@ fn native_host_bridge_preserves_once_only_effects_and_rust_capability_checks() {
     .unwrap();
     assert_eq!(state["value"], json!(1));
     let (denied, _, _) = fixture(source, &["commands", "state"]);
-    let mut runtime = host(&denied);
-    assert!(
-        runtime
-            .invoke_with(
-                "fixture",
-                runtime.generation(),
-                "command",
-                "run",
-                Value::Null,
-                || true,
-                |_| panic!("denied call reached host")
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("capability_denied")
-    );
+    assert!(activation_error(&denied, "fixture").contains("undeclared_operation_use"));
 }
 
 #[test]
@@ -616,6 +622,238 @@ fn command_outcomes_and_input_decisions_are_validated() {
     ] {
         assert!(ModInputDecision::parse(&invalid).is_err(), "{invalid}");
     }
+}
+
+#[test]
+fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let contract = json!({"name":"example.echo","version":"1.0.0",
+        "methods":{"echo":{"input":"string","output":"string"}}});
+    let provider = service_package(
+        &root,
+        "provider",
+        "export default api => api.provide({name:'example.echo',version:'1.0.0',methods:{echo:{input:'string',output:'string'}}},{echo:value=>'provider:'+value})",
+        json!({"exports":[contract]}),
+        &["services"],
+    );
+    let consumer = service_package(
+        &root,
+        "consumer",
+        "export default api => api.command('call',()=>api.services.call('example.echo','echo','hello'))",
+        json!({"imports":[{"name":"example.echo","version":"1.0.0"}]}),
+        &["commands", "services"],
+    );
+    trust(&store, &provider, &["services"]);
+    trust(&store, &consumer, &["commands", "services"]);
+    let mut runtime = host(&temp);
+    assert_eq!(runtime.status()["order"], json!(["provider", "consumer"]));
+    assert_eq!(
+        runtime
+            .invoke(
+                "consumer",
+                runtime.generation(),
+                "command",
+                "call",
+                Value::Null,
+            )
+            .unwrap(),
+        json!("provider:hello")
+    );
+    let types = std::fs::read_to_string(root.join("store/installed-contracts.d.ts")).unwrap();
+    assert!(types.contains("'example.echo@1.0.0'"));
+    assert!(types.contains("echo(input: string): string"));
+    assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
+}
+
+#[test]
+fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independently() {
+    let contract = |name: &str, version: &str| json!({"name":name,"version":version,"methods":{"call":{"input":"null","output":"null"}}});
+    let source = |name: &str, version: &str| {
+        format!(
+            "export default api => api.provide({{name:'{name}',version:'{version}',methods:{{call:{{input:'null',output:'null'}}}}}},{{call:()=>null}})"
+        )
+    };
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let first = service_package(
+        &root,
+        "first",
+        &source("shared.service", "1.0.0"),
+        json!({"exports":[contract("shared.service","1.0.0")]}),
+        &["services"],
+    );
+    let second = service_package(
+        &root,
+        "second",
+        &source("shared.service", "1.0.0"),
+        json!({"exports":[contract("shared.service","1.0.0")]}),
+        &["services"],
+    );
+    let missing = service_package(
+        &root,
+        "missing",
+        "export default api => {}",
+        json!({"imports":[{"name":"absent.service","version":"1.0.0"}]}),
+        &["services"],
+    );
+    let optional = service_package(
+        &root,
+        "optional",
+        "export default api => api.command('probe',()=>{try{return api.services.call('optional.service','call',null)}catch(error){if(error instanceof Error)return String(error);throw error}})",
+        json!({"imports":[{"name":"optional.service","version":"1.0.0","optional":true}]}),
+        &["commands", "services"],
+    );
+    let versioned = service_package(
+        &root,
+        "versioned",
+        &source("versioned.service", "1.0.0"),
+        json!({"exports":[contract("versioned.service","1.0.0")]}),
+        &["services"],
+    );
+    let incompatible = service_package(
+        &root,
+        "incompatible",
+        "export default api => {}",
+        json!({"imports":[{"name":"versioned.service","version":"2.0.0"}]}),
+        &["services"],
+    );
+    trust(&store, &first, &["services"]);
+    trust(&store, &second, &["services"]);
+    trust(&store, &missing, &["services"]);
+    trust(&store, &optional, &["commands", "services"]);
+    trust(&store, &versioned, &["services"]);
+    trust(&store, &incompatible, &["services"]);
+    let runtime = host(&temp);
+    let status = runtime.status();
+    let errors = status["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| (entry["id"].as_str().unwrap(), entry["error"].as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert!(
+        errors["first"]
+            .unwrap()
+            .contains("service_provider_collision")
+    );
+    assert!(
+        errors["second"]
+            .unwrap()
+            .contains("service_provider_collision")
+    );
+    assert!(
+        errors["missing"]
+            .unwrap()
+            .contains("service_provider_missing")
+    );
+    assert_eq!(errors["optional"], None);
+    assert!(
+        errors["incompatible"]
+            .unwrap()
+            .contains("service_version_incompatible")
+    );
+    let mut runtime = runtime;
+    assert!(
+        runtime
+            .invoke(
+                "optional",
+                runtime.generation(),
+                "command",
+                "probe",
+                Value::Null,
+            )
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("optional_service_unavailable")
+    );
+
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let a = service_package(
+        &root,
+        "a",
+        &source("cycle.a", "1.0.0"),
+        json!({"exports":[contract("cycle.a","1.0.0")],"imports":[{"name":"cycle.b","version":"1.0.0"}]}),
+        &["services"],
+    );
+    let b = service_package(
+        &root,
+        "b",
+        &source("cycle.b", "1.0.0"),
+        json!({"exports":[contract("cycle.b","1.0.0")],"imports":[{"name":"cycle.a","version":"1.0.0"}]}),
+        &["services"],
+    );
+    trust(&store, &a, &["services"]);
+    trust(&store, &b, &["services"]);
+    let status = host(&temp).status();
+    assert!(status["mods"].as_array().unwrap().iter().all(|entry| {
+        entry["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("dependency_cycle"))
+    }));
+}
+
+#[test]
+fn request_and_stream_middleware_preserve_authority_and_provenance() {
+    let source = "export default api => { api.middleware('model_request',()=>({preset:'astra'})); api.middleware('response_stream',event=>event.protected?null:{text:String(event.text).toUpperCase()}); api.middleware('tool_result',()=>({forged:true})); }";
+    let (temp, _, _) = fixture(source, &["middleware"]);
+    let mut runtime = host(&temp);
+    let routed = runtime
+        .model_request(
+            json!({"request_id":"r1","scope":{"kind":"main"},
+                "authorized_presets":[{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},{"name":"astra","model":"a","provider":"openai","reasoning":"high"}],
+                "original":{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},
+                "effective":{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},"provenance":[]}),
+            || true,
+        )
+        .unwrap();
+    assert_eq!(routed["effective"]["name"], "astra", "{}", runtime.status());
+    assert_eq!(routed["provenance"][0]["tier"], "user");
+    let stream = runtime
+        .response_stream(
+            json!({"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,
+                "opaque_reasoning":false,"protected":false,"text":"hello"}),
+            || true,
+        )
+        .unwrap();
+    assert_eq!(stream["original"], "hello");
+    assert_eq!(stream["effective"], "HELLO");
+    let tool = runtime.event(
+        "tool_result",
+        json!({"call_id":"c","tool":"x","outcome":"ok"}),
+    );
+    assert!(
+        tool[0]
+            .1
+            .as_ref()
+            .unwrap_err()
+            .to_string()
+            .contains("observe_only")
+    );
+}
+
+#[test]
+fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
+    let (temp, _, _) = fixture(
+        "export default api => api.command('status',()=>api.host.call('task.status',null))",
+        &["commands"],
+    );
+    assert!(activation_error(&temp, "fixture").contains("undeclared_operation_use"));
+    let (temp, _, _) = fixture(
+        "export default api => api.command('idle',()=>null)",
+        &["commands", "task"],
+    );
+    let status = host(&temp).status();
+    assert_eq!(status["mods"][0]["unused_grants"], json!(["task"]));
+    let policies = &status["field_policies"];
+    assert_eq!(policies["response_stream"]["raw_usage"], "observe_only");
+    assert_eq!(policies["model_request"]["effective"], "alterable");
+    assert_eq!(policies["tool_before"]["arguments"], "replaceable");
 }
 
 #[test]

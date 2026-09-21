@@ -7,14 +7,14 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 pub trait ResponseAttempt: Send + Sync {
-    fn observe(&mut self, event: &Value, valid: bool) -> Result<(), TransportError>;
+    fn observe(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError>;
     fn failed(&mut self, reason: &str);
 }
 
 pub trait ResponseObserver: Send + Sync {
     fn prepare(
         &self,
-        request: &Request,
+        request: &mut Request,
         body: &mut Option<EncodedJsonBody>,
     ) -> Result<(), TransportError>;
     fn before_send(
@@ -65,7 +65,7 @@ pub(crate) fn reject_unobserved_transport() -> Result<(), crate::error::ApiError
 }
 
 pub(crate) fn prepare(
-    request: &Request,
+    request: &mut Request,
     body: &mut Option<EncodedJsonBody>,
 ) -> Result<(), TransportError> {
     if let Some(observer) = OBSERVER.get() {

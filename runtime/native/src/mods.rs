@@ -23,6 +23,16 @@ fn lead_thread(thread: &ExtensionData) -> bool {
         .is_some_and(|lead| lead.owner == "lead")
 }
 
+fn agent_id(thread: &ExtensionData) -> Option<String> {
+    thread
+        .get::<Lead>()
+        .and_then(|lead| (lead.owner != "lead").then(|| lead.owner.clone()))
+}
+
+fn thread_id(thread: &ExtensionData) -> Option<String> {
+    thread.get::<Lead>().map(|lead| lead.thread.to_string())
+}
+
 struct TurnRecord {
     turn_id: String,
     error: Option<String>,
@@ -65,6 +75,7 @@ pub(super) fn install(
     let input_runtime =
         ModHost::open_validated(root.clone(), validator).map_err(|e| e.to_string())?;
     let runtime = Arc::new(Mutex::new(runtime));
+    owner.accounts.install_mod_runtime(runtime.clone());
     let views = Arc::new(view::Views::new());
     let extension = Arc::new(Mods {
         agents: Arc::new(agents::Agents::new(
@@ -280,6 +291,8 @@ impl TurnLifecycleContributor for Mods {
             }
             let runtime = self.input_runtime.clone();
             let payload = json!({"text":input.text,"attachments":input.attachments});
+            let prompt = json!({"thread_id":thread_id(input.thread_store),"turn_id":Value::Null,
+                "original":input.text,"effective":input.text,"provenance":[]});
             let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let unavailable = || UserInputDecision::Deny {
@@ -290,6 +303,9 @@ impl TurnLifecycleContributor for Mods {
                     return unavailable();
                 };
                 runtime.turn_boundary();
+                let _ = runtime.event_guarded("prompt", prompt, || {
+                    !cancelled.load(std::sync::atomic::Ordering::Acquire)
+                });
                 let mut rewrite: Option<(String, String)> = None;
                 for (id, result) in runtime.event_guarded("input", payload, || {
                     !cancelled.load(std::sync::atomic::Ordering::Acquire)
@@ -393,6 +409,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             if lead_thread(input.thread_store) {
+                self.event(
+                    "session",
+                    json!({"phase":"start","thread_id":thread_id(input.thread_store)}),
+                )
+                .await;
                 self.event("start", Value::Null).await;
             }
         })
@@ -400,6 +421,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
     fn on_thread_resume<'a>(&'a self, input: ThreadResumeInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             if lead_thread(input.thread_store) {
+                self.event(
+                    "session",
+                    json!({"phase":"resume","thread_id":thread_id(input.thread_store)}),
+                )
+                .await;
                 self.event("resume", Value::Null).await;
             }
         })
@@ -407,6 +433,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
     fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             if lead_thread(input.thread_store) {
+                self.event("session", json!({"phase":"idle","thread_id":thread_id(input.thread_store),"cause":format!("{:?}", input.cause)})).await;
                 self.event("idle", json!({"cause": format!("{:?}", input.cause)}))
                     .await;
             }
@@ -417,6 +444,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
             if lead_thread(input.thread_store) {
                 self.agents.cleanup().await;
                 self.services.cleanup().await;
+                self.event(
+                    "session",
+                    json!({"phase":"stop","thread_id":thread_id(input.thread_store)}),
+                )
+                .await;
                 self.event("stop", Value::Null).await;
             }
         })
@@ -429,13 +461,14 @@ impl ToolLifecycleContributor for Mods {
         input: ToolStartInput<'a>,
     ) -> ExtensionFuture<'a, Result<Option<(ToolName, codex_tools::ToolPayload)>, String>> {
         Box::pin(async move {
-            if !lead_thread(input.thread_store) {
+            if input.thread_store.get::<Lead>().is_none() {
                 return Ok(None);
             }
             let codex_tools::ToolPayload::Function { arguments } = input.payload else {
                 return Ok(None);
             };
             let original_tool = input.tool_name.clone();
+            let scope_agent_id = agent_id(input.thread_store);
             let arguments: Value = serde_json::from_str(arguments).map_err(|e| e.to_string())?;
             let payload = json!({"tool":input.tool_name.to_string(),"arguments":arguments,"call_id":input.call_id});
             let runtime = self.runtime.clone();
@@ -443,6 +476,12 @@ impl ToolLifecycleContributor for Mods {
             let _cancellation = Cancellation(cancelled.clone());
             let result = tokio::task::spawn_blocking(move || {
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+                let _ = runtime.event_guarded(
+                    "tool_call",
+                    json!({"tool":original_tool.to_string(),"arguments":payload["arguments"],
+                        "call_id":payload["call_id"],"agent_id":scope_agent_id}),
+                    || !cancelled.load(std::sync::atomic::Ordering::Acquire),
+                );
                 let mut replacement = None;
                 for (id, result) in runtime.event_guarded("tool_before", payload, || {
                     !cancelled.load(std::sync::atomic::Ordering::Acquire)
@@ -502,9 +541,14 @@ impl ToolLifecycleContributor for Mods {
 
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
-            if lead_thread(input.thread_store) {
-                self.event("tool_result", json!({"call_id": input.call_id,
-                    "tool": input.tool_name.to_string(), "outcome": format!("{:?}", input.outcome)})).await;
+            if input.thread_store.get::<Lead>().is_some() {
+                self.event(
+                    "tool_result",
+                    json!({"call_id": input.call_id,
+                    "agent_id":agent_id(input.thread_store),"tool": input.tool_name.to_string(),
+                    "outcome": format!("{:?}", input.outcome)}),
+                )
+                .await;
             }
         })
     }

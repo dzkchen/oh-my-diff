@@ -19,6 +19,15 @@ struct Notifier {
 }
 
 impl Notifier {
+    fn agent(&self, payload: Value) {
+        let notifier = self.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Ok(mut runtime) = notifier.runtime.lock() {
+                let _ = runtime.event("agent", payload);
+            }
+        });
+    }
+
     fn agent_end(&self, mod_id: String, generation: u64, payload: Value) {
         let notifier = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -384,6 +393,9 @@ impl Agents {
         let owner = host.clone();
         let worker = id.clone();
         let notifier = self.notifier.clone();
+        let start_role = request.role.clone();
+        let parent_agent = lead.owner.clone();
+        let end_parent_agent = parent_agent.clone();
         let role = request.role;
         let owning_mod = mod_id.to_owned();
         let handle = id.clone();
@@ -457,6 +469,10 @@ impl Agents {
             if let Ok(mut output) = output.lock() {
                 *output = Some(completed);
             }
+            notifier.agent(
+                json!({"phase":"end","agent_id":handle,"parent_agent_id":end_parent_agent,
+                "role":role,"status":payload["status"]}),
+            );
             notifier.agent_end(owning_mod, generation, payload);
         });
         records.insert(
@@ -473,6 +489,10 @@ impl Agents {
             },
         );
         admission.transferred = true;
+        self.notifier.agent(
+            json!({"phase":"start","agent_id":id,"parent_agent_id":parent_agent,
+            "role":start_role,"status":"running"}),
+        );
         Ok(json!({"handle":id,"route":request.route,"permissions":"read_only"}))
     }
 }

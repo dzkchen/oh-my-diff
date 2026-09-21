@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "service_consumer",
+  "version": "1.0.0",
+  "api": "0.1.0-experimental.5",
+  "state_version": 1,
+  "capabilities": ["commands", "services"],
+  "services": {
+    "imports": [{"name": "example.formatter", "version": "1.0.0"}]
+  }
+}

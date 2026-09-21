@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "api": "0.1.0-experimental.4",
+  "api": "0.1.0-experimental.5",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {
@@ -730,6 +730,67 @@
       "evidence": [
         "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
         "fixture:full/success"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "kernel.request_stream_middleware",
+      "group": "coordination",
+      "decision": "Typed middleware at request, stream, prompt, session, agent, tool and approved-operation boundaries",
+      "observe": "field policy metadata marks request identity, scope, raw stream digest, opaque reasoning, raw usage, lifecycle identity, tool outcomes and host-operation receipts observe-only",
+      "alter": "each admitted request may select one complete authorized preset; bounded output-text deltas may be transformed in deterministic order with original/effective hashes and fallback provenance",
+      "replace": null,
+      "timing": "before each main-thread or subagent request, on each Responses stream item, and at the named native lifecycle boundary",
+      "ownership": "host: preset admission, raw response parsing, reasoning, usage, permission and tool outcomes, accounting, cancellation, transcript/evidence records and workflow enforcement",
+      "limits": "no arbitrary model/provider/reasoning tuple, endpoint, usage rewrite, reasoning rewrite, tool-result fabrication, completion action or assurance receipt; each hook has a declared wall-time budget and cancellation check",
+      "native": "upstream hooks expose selected lifecycle and tool boundaries but not this request/stream preset and provenance contract",
+      "covers": {
+        "capabilities": [
+          "middleware"
+        ],
+        "events": [
+          "model_request",
+          "response_stream",
+          "prompt",
+          "session",
+          "agent",
+          "tool_call",
+          "host_operation"
+        ],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "rust:request_and_stream_middleware_preserve_authority_and_provenance",
+        "node:typed middleware and services register without ambient authority"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "kernel.inter_mod_services",
+      "group": "coordination",
+      "decision": "Host-routed namespaced and versioned service contracts between mods",
+      "observe": "installed contract types and status name provider, consumer, exact version, method, scope and generation",
+      "alter": "a consumer supplies only the declared bounded JSON input and receives a schema-kind-checked result",
+      "replace": null,
+      "timing": "providers, consumers, versions, collisions and dependency order resolve before activation; calls run through the host during a callback",
+      "ownership": "host: provider lookup, capability separation, input/output bounds, generation ownership, call provenance and unload cleanup",
+      "limits": "no shared globals, state, secrets, filesystem, network, process authority or inherited grants; optional absence is catchable while required absence, incompatibility, cycles and collisions fail before activation",
+      "native": "no equivalent typed inter-plugin service contract in configured Codex hooks",
+      "covers": {
+        "capabilities": [
+          "services"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "mods.service"
+        ]
+      },
+      "evidence": [
+        "rust:typed_services_are_host_routed_versioned_and_generate_installed_types",
+        "rust:missing_incompatible_optional_cyclic_and_colliding_services_fail_independently",
+        "node:typed middleware and services register without ambient authority"
       ],
       "replace_note": null
     }

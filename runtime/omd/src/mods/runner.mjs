@@ -12,7 +12,10 @@ for await (const chunk of process.stdin) {
   if (input.length > 524288) throw new Error('input_limit');
 }
 const request = JSON.parse(input);
-const context = createContext(Object.create(null), {
+request.hook_budget_ms ??= 1000;
+const globals = Object.create(null);
+if (request.environment?.includes('crypto')) globals.crypto = globalThis.crypto;
+const context = createContext(globals, {
   codeGeneration: { strings: false, wasm: false },
 });
 const bootstrap = `
@@ -21,6 +24,8 @@ const handlers = new Map();
 const tools = new Map();
 const commands = new Map();
 const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [] };
+registrations.services = [];
+const serviceHandlers = new Map();
 const updates = [];
 let submitted = null;
 let state = structuredCloneFallback(request.state);
@@ -59,14 +64,23 @@ function unique(map, name, handler) {
   map.set(name, handler);
 }
 const api = Object.freeze({
-  version: '0.1.0-experimental.4',
+  version: '0.1.0-experimental.5',
+  fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
   host: Object.freeze({ call: hostCall }),
+  services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
   on(event, handler) {
     const capability = { context: 'context', tool_before: 'interception', routing: 'routing', terminal: 'terminal', compaction: 'compaction', migrate: 'state', input: 'input', start: 'lifecycle', idle: 'lifecycle',
-      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow' }[event];
+      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow',
+      model_request: 'middleware', response_stream: 'middleware', prompt: 'middleware', session: 'middleware', agent: 'middleware', tool_call: 'middleware', host_operation: 'middleware' }[event];
     if (!capability) throw new Error('unsupported_event: ' + event);
     requireCapability(capability);
+    unique(handlers, event, handler);
+    registrations.events.push(event);
+  },
+  middleware(event, handler) {
+    if (!['model_request','response_stream','prompt','session','agent','tool_call','tool_result','host_operation'].includes(event)) throw new Error('unsupported_middleware_event: ' + event);
+    requireCapability('middleware');
     unique(handlers, event, handler);
     registrations.events.push(event);
   },
@@ -80,6 +94,14 @@ const api = Object.freeze({
     if (!activating) throw new Error('contract_registration_outside_activation');
     if (registrations.contracts.some(entry => entry.id === definition?.id)) throw new Error('conflict: ' + definition?.id);
     registrations.contracts.push(structuredCloneFallback(definition));
+  },
+  provide(contract, handlers) {
+    requireCapability('services');
+    if (!activating) throw new Error('service_registration_outside_activation');
+    if (!contract || typeof contract.name !== 'string' || typeof contract.version !== 'string' || !contract.methods || !handlers) throw new Error('invalid_service_registration');
+    if (registrations.services.some(entry => entry.name === contract.name)) throw new Error('conflict: ' + contract.name);
+    for (const name of Object.keys(contract.methods)) unique(serviceHandlers, contract.name + '.' + name, handlers[name]);
+    registrations.services.push(structuredCloneFallback(contract));
   },
   tool(spec, handler) {
     requireCapability('tools');
@@ -141,14 +163,14 @@ const pi = new Proxy(Object.freeze({
     submitted = piText(content);
   },
 }), { get(target,key) { if (key in target) return target[key]; return unsupportedPi(String(key)); } });
-globalThis.__omd = { api, pi, handlers, tools, commands, registrations, updates,
+globalThis.__omd = { api, pi, handlers, tools, commands, serviceHandlers, registrations, updates,
   state: () => state, request, calls,
   pending: () => pending, ready: () => { activating = false; }, suspension };
 `;
 try {
   const setup = new SourceTextModule(bootstrap, { context });
   await setup.link(() => { throw new Error('unsupported_import'); });
-  await setup.evaluate({ timeout: 1000 });
+  await setup.evaluate({ timeout: request.hook_budget_ms });
   const source = stripTypeScriptTypes(request.source, { mode: 'strip', sourceUrl: request.filename });
   const mod = new SourceTextModule(source, { context, identifier: request.filename });
   await mod.link(async specifier => {
@@ -172,10 +194,10 @@ try {
     }
     throw new Error(`unsupported_import: ${specifier}; use type-only SDK imports and a self-contained module`);
   });
-  await mod.evaluate({ timeout: 1000 });
+  await mod.evaluate({ timeout: request.hook_budget_ms });
   context.__activate = mod.namespace.default;
   const dispatch = new SourceTextModule(`
-    const { api, handlers, tools, commands, registrations, request } = globalThis.__omd;
+    const { api, handlers, tools, commands, serviceHandlers, registrations, request } = globalThis.__omd;
     if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
     await globalThis.__activate(request.adapter === "pi-0.74-tools-commands-v1" ? globalThis.__omd.pi : api);
     globalThis.__omd.ready();
@@ -183,8 +205,9 @@ try {
     try {
     if (request.event !== 'inspect') {
       const handler = request.event === 'tool' ? tools.get(request.name)
-        : request.event === 'command' ? commands.get(request.name) : handlers.get(request.event);
-      if (!handler && ['tool', 'command'].includes(request.event)) throw new Error('unknown_handler');
+        : request.event === 'command' ? commands.get(request.name)
+        : request.event === 'service' ? serviceHandlers.get(request.name) : handlers.get(request.event);
+      if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
       if (handler) value = await handler(request.payload) ?? null;
     }
     if (globalThis.__omd.pending()) throw new Error('swallowed_host_suspension');
@@ -196,7 +219,7 @@ try {
       calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
   `, { context });
   await dispatch.link(() => { throw new Error('unsupported_import'); });
-  await dispatch.evaluate({ timeout: 1000 });
+  await dispatch.evaluate({ timeout: request.hook_budget_ms });
   if (context.__result.length > 65536) throw new Error('output_limit');
   process.stdout.write(context.__result);
 } catch (error) {

@@ -95,6 +95,9 @@ impl ModStore {
             selection: selection.clone(),
             state: previous["value"].clone(),
             registrations: Registrations::default(),
+            source_use: ModSourceUse::default(),
+            unused_grants: Vec::new(),
+            unused_environment: Vec::new(),
             error: None,
         };
         let inspected = ModHost::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;

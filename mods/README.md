@@ -1,6 +1,6 @@
 # TypeScript mods
 
-API `0.1.0-experimental.4` runs on the pinned Codex 0.154.0 OMD host,
+API `0.1.0-experimental.5` runs on the pinned Codex 0.154.0 OMD host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.
@@ -83,6 +83,9 @@ Use [api.d.ts](api.d.ts) and the examples:
 | [terminal](examples/terminal/index.ts) | Left sidebar, header/footer, status segment, native theme, key actions, templates |
 | [guard](examples/guard/index.ts) | Input rewrite/denial and turn lifecycle events |
 | [context](examples/context/index.ts) | Bounded context contribution |
+| [kernel](examples/kernel/index.ts) | Request/stream middleware with field-policy inspection |
+| [service-provider](examples/service-provider/index.ts) | Versioned typed service export |
+| [service-consumer](examples/service-consumer/index.ts) | Host-routed service import without shared memory |
 
 Two first-party packages are shipped as an installable private preview of the
 selected signature workflows. They use the same public API and capabilities as
@@ -106,7 +109,11 @@ pnpm --dir mods test
 A manifest has schema 1, an ID of at most 24 lowercase ASCII letters/digits/
 underscores, a package version label, the exact API version, a positive
 `state_version`, declared capabilities, and an optional `requires` list of up to
-four other mod IDs. Activation registers callbacks and
+four other mod IDs. `hook_budget_ms` optionally narrows each JavaScript hook to
+25–2000 ms (1000 by default). `environment` may request only the host-provided
+`crypto` global; filesystem, process, network, DOM, Node, and package globals are
+not admitted. `services.exports` and `services.imports` declare exact service
+contracts before activation. Activation registers callbacks and
 must not write state or call host operations. Settings are read-only JSON.
 Modules have fresh globals on every invocation. Persist data through
 `api.state.get/set`; never store secrets there.
@@ -143,8 +150,43 @@ undocumented capability, event, replacement point or host operation fails. Unkno
 APIs, capabilities, imports, events, adapters, and host operations fail explicitly.
 First-party and external packages use identical capabilities.
 
-`api.on` composes; `api.replace` is exclusive. Mods run in one deterministic
-order: declared dependencies first, then mod ID ascending. `omd-mod status`
+API `0.1.0-experimental.5` adds the typed kernel without making a stable API
+commitment. `api.fieldPolicies` gives the authoritative per-field classification
+for every admitted request/response, prompt, session, agent, tool, and host-operation
+event: `observe_only`, `alterable`, or `replaceable`. `api.middleware` registers
+composable observers for those events. Only `model_request` may select a different
+host-authorized preset, and only unprotected `response_stream.text` may be
+transformed. All other middleware results are ignored unless a separately declared
+exclusive replacement point owns that decision.
+
+Each model request records its main-thread or subagent scope, original and effective
+preset, and ordered mod ID/version/hash/trust-tier provenance. A mod sees only the
+host's authorized provider/model/reasoning tuples; it cannot synthesize one. Stream
+middleware sees a digest, raw usage, and whether opaque reasoning or another
+protected event is present. Usage, signed or opaque reasoning, permissions,
+accounting, cancellation, transcript/evidence records, workflow checks, tool results,
+completed actions, and assurance receipts stay native. A failing stream transformer
+is disabled and the unchanged event continues with a source-located fallback record.
+
+Inter-mod services are host-routed rather than shared-memory calls. A provider uses
+`api.provide`; a consumer calls `api.services.call` for a name in its manifest's
+imports. Names contain at least two lowercase namespace segments, versions match
+exactly, methods declare JSON input/output kinds, and calls carry caller/provider
+provenance. Missing required providers, incompatible versions, dependency cycles,
+and colliding providers are rejected before activation; an absent optional import
+remains callable only as an explicit `optional_service_unavailable` error. The host
+generates `installed-contracts.d.ts` from the activated providers.
+
+Before activation, the host derives each package's source-use manifest for registered
+events and replacements, literal host operations and service calls, and environment
+access. Undeclared use is rejected. `omd-mod status` publishes that manifest alongside
+unused capability/environment grants so approval can be tightened. This check is in
+addition to runtime capability checks and the existing hash trust decision; it does
+not copy the source-validation trust model used by Claude Code Mods.
+
+`api.on` and `api.middleware` compose; `api.replace` is exclusive and fail-closed.
+Mods run in one deterministic order: declared dependencies and service providers
+first, then mod ID ascending. `omd-mod status`
 publishes that `order`, each selection's `scope`, and any `rejected` selection
 with its reason.
 
@@ -153,7 +195,7 @@ outcome disables only the mods involved:
 
 | Situation | Result |
 | --- | --- |
-| Two mods claim one replacement point, workflow contract ID or namespaced tool name | every claimant is disabled and named; the rest keep running |
+| Two mods claim one replacement point, workflow contract ID, service contract or namespaced tool name | every claimant is disabled and named; the rest keep running |
 | `requires` names a mod that is absent, disabled or itself failed | the dependent chain is disabled |
 | `requires` forms a cycle | every mod in the cycle is disabled |
 | One ID is enabled twice in the same scope | both selections are rejected |
@@ -211,12 +253,18 @@ text items (attachments are kept), all native checks then run on it, and a
 visible warning names the mod and shows what the model received. A failing input
 handler rejects the prompt and disables that mod until reload.
 
-Lifecycle events are lead-only observers: `start`, `resume`, `idle`, `stop`,
+Legacy lifecycle events are lead-only observers: `start`, `resume`, `idle`, `stop`,
 `tool_result`, `turn_start` (`turn_id`), `turn_end` (`outcome` completed,
 aborted, or error), `compaction_start`/`compaction_end` (`trigger` manual or
 auto), and `agent_end` for the owning mod's agent handles (`role`, `status`).
 `agent_end` is delivered after the agent finishes and after any running callback
 of that mod releases the runtime; it cannot run host operations.
+
+The fine-grained `session`, `prompt`, `agent`, `tool_call`, `tool_result`, and
+`host_operation` middleware events cover both admitted lead and subagent paths where
+the native host owns them. Their fields remain observe-only in middleware. Exclusive
+`input` and `tool_before` replacements retain their existing native permission,
+transcript, and workflow boundaries.
 
 ## Workflow contracts
 
@@ -386,10 +434,11 @@ instead. `mod-status.json` is a current native status snapshot, including
 source hashes, registrations, and bounded source-located failures.
 
 Each evaluation uses a fresh deny-by-default Seatbelt process, an empty inherited
-environment, no ambient Node APIs, a 64 MiB V8 old-space limit, a 1-second
-synchronous limit and 3-second process deadline. The heap setting is not a total
-RSS limit. A callback has at most 32 host operations and 6 seconds of cumulative
-JavaScript evaluation; native effects retain their own task deadlines. Input is
+environment, no ambient Node APIs, a 64 MiB V8 old-space limit, the manifest's
+per-hook synchronous budget, and a budget-plus-250-ms process deadline. The heap
+setting is not a total RSS limit. A callback has at most 32 host operations and 6
+seconds of cumulative JavaScript evaluation; native effects retain their own task
+deadlines. Input is
 512 KiB, source/output 64 KiB, receipts 128 KiB, and each context fragment 1 KiB.
 At most 16 mods, 16 tools/commands per mod, and eight managed services are admitted.
 
@@ -440,6 +489,14 @@ Pi's own argument-expansion code; they do not claim execution of the complete Pi
 distribution or its ecosystem.
 
 ## Validation
+
+The kernel is informed by the current
+[Claude Code Mods README](https://github.com/anthropics/claude-code/blob/main/mods/README.md)
+and its [generated early-access declarations](https://github.com/anthropics/claude-code/blob/main/mods/types/claude-code.d.ts),
+currently generated by Claude Code 2.1.277. Those are competitive references only,
+not OMD acceptance evidence. This release deliberately excludes desktop, VS Code,
+mobile, audio, arbitrary Node/DOM access, and unrestricted filesystem/network/process
+authority.
 
 From the reproduced upstream checkout:
 

@@ -30,7 +30,12 @@ fn command(node: &Path) -> Result<Command> {
     Ok(command)
 }
 
-pub(super) fn evaluate(node: &Path, request: &Value, active: &dyn Fn() -> bool) -> Result<Value> {
+pub(super) fn evaluate(
+    node: &Path,
+    request: &Value,
+    budget: Duration,
+    active: &dyn Fn() -> bool,
+) -> Result<Value> {
     let bytes = serde_json::to_vec(request)?;
     if bytes.len() > 524_288 {
         return Err(failure("input_limit"));
@@ -68,7 +73,7 @@ pub(super) fn evaluate(node: &Path, request: &Value, active: &dyn Fn() -> bool) 
         stdout.take(65_537).read_to_end(&mut output)?;
         Ok::<_, std::io::Error>(output)
     });
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + budget + Duration::from_millis(250);
     let status = loop {
         if !active() {
             break Err(failure("callback_cancelled"));

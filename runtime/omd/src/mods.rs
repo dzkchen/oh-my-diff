@@ -37,7 +37,7 @@ use std::path::PathBuf;
 
 pub use store::ModStore;
 
-pub const MOD_API_VERSION: &str = "0.1.0-experimental.4";
+pub const MOD_API_VERSION: &str = "0.1.0-experimental.5";
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",
@@ -58,6 +58,8 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "pi_resources",
     "input",
     "workflow",
+    "middleware",
+    "services",
 ];
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -78,6 +80,13 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("compaction_end", "lifecycle"),
     ("agent_end", "lifecycle"),
     ("workflow", "workflow"),
+    ("model_request", "middleware"),
+    ("response_stream", "middleware"),
+    ("prompt", "middleware"),
+    ("session", "middleware"),
+    ("agent", "middleware"),
+    ("tool_call", "middleware"),
+    ("host_operation", "middleware"),
 ];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "tool_before",
@@ -88,6 +97,7 @@ pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "input",
 ];
 pub const MOD_SCOPES: &[&str] = &["user", "project"];
+pub const MOD_ENVIRONMENT: &[&str] = &["crypto"];
 type Result<T> = io::Result<T>;
 
 fn failure(message: impl ToString) -> io::Error {
@@ -136,6 +146,218 @@ fn identifier(value: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
 }
 
+fn service_name(value: &str) -> bool {
+    let mut parts = value.split('.');
+    parts.clone().count() >= 2 && parts.all(identifier)
+}
+
+fn version(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_'))
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModServiceManifest {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exports: Vec<ModServiceContract>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<ModServiceImport>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModServiceContract {
+    pub name: String,
+    pub version: String,
+    pub methods: BTreeMap<String, ModServiceMethod>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModServiceMethod {
+    pub input: String,
+    pub output: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModServiceImport {
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub optional: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModSourceUse {
+    pub capabilities: Vec<String>,
+    pub events: Vec<String>,
+    pub replacements: Vec<String>,
+    pub operations: Vec<String>,
+    pub services: Vec<String>,
+    pub environment: Vec<String>,
+}
+
+fn quoted_calls(source: &str, marker: &str) -> Result<Vec<String>> {
+    let mut rest = source;
+    let mut values = Vec::new();
+    while let Some(index) = rest.find(marker) {
+        rest = &rest[index + marker.len()..];
+        let value = rest.trim_start();
+        let quote = value
+            .as_bytes()
+            .first()
+            .copied()
+            .filter(|byte| matches!(byte, b'\'' | b'"'))
+            .ok_or_else(|| failure(format!("source_use_requires_literal: {marker}")))?;
+        let value = &value[1..];
+        let end = value
+            .bytes()
+            .position(|byte| byte == quote)
+            .ok_or_else(|| failure(format!("unterminated_source_use: {marker}")))?;
+        values.push(value[..end].to_owned());
+        rest = &value[end + 1..];
+    }
+    values.sort();
+    values.dedup();
+    Ok(values)
+}
+
+fn source_use(
+    source: &str,
+    package: &ModPackage,
+    registrations: &Registrations,
+) -> Result<(ModSourceUse, Vec<String>, Vec<String>)> {
+    let operations = quoted_calls(source, "host.call(")?;
+    let services = quoted_calls(source, "services.call(")?;
+    let mut environment = Vec::new();
+    for (name, needles) in [
+        ("crypto", &["crypto.", "crypto["][..]),
+        ("network", &["fetch(", "WebSocket("][..]),
+        ("process", &["process.", "Deno.", "Bun."][..]),
+        (
+            "filesystem",
+            &["node:fs", "require('fs", "require(\"fs"][..],
+        ),
+        ("dom", &["document.", "window."][..]),
+    ] {
+        if needles.iter().any(|needle| source.contains(needle)) {
+            environment.push(name.to_owned());
+        }
+    }
+    for name in &environment {
+        if !package.environment.contains(name) {
+            return Err(failure(format!("undeclared_environment_use: {name}")));
+        }
+    }
+    for operation in &operations {
+        let capability = ModHostCall {
+            operation: operation.clone(),
+            arguments: Value::Null,
+        }
+        .capability()?;
+        if !package
+            .capabilities
+            .iter()
+            .any(|declared| declared == capability)
+        {
+            return Err(failure(format!("undeclared_operation_use: {operation}")));
+        }
+    }
+    for service in &services {
+        if !package
+            .services
+            .imports
+            .iter()
+            .any(|import| import.name == *service)
+        {
+            return Err(failure(format!("undeclared_service_use: {service}")));
+        }
+    }
+    let mut capabilities = BTreeSet::new();
+    for event in &registrations.events {
+        if event == "tool_result" && package.capabilities.iter().any(|cap| cap == "middleware") {
+            capabilities.insert("middleware".to_owned());
+        } else if let Some((_, capability)) = MOD_EVENTS.iter().find(|(name, _)| name == event) {
+            capabilities.insert((*capability).to_owned());
+        }
+    }
+    if !registrations.tools.is_empty() {
+        capabilities.insert("tools".to_owned());
+    }
+    if !registrations.commands.is_empty() {
+        capabilities.insert("commands".to_owned());
+    }
+    if !registrations.contracts.is_empty() {
+        capabilities.insert("workflow".to_owned());
+    }
+    if !registrations.services.is_empty() || !services.is_empty() {
+        capabilities.insert("services".to_owned());
+    }
+    if source.contains(".state.get(") || source.contains(".state.set(") {
+        capabilities.insert("state".to_owned());
+    }
+    for operation in &operations {
+        capabilities.insert(
+            ModHostCall {
+                operation: operation.clone(),
+                arguments: Value::Null,
+            }
+            .capability()?
+            .to_owned(),
+        );
+    }
+    let unused_grants = package
+        .capabilities
+        .iter()
+        .filter(|capability| !capabilities.contains(*capability))
+        .cloned()
+        .collect();
+    let unused_environment = package
+        .environment
+        .iter()
+        .filter(|name| !environment.contains(name))
+        .cloned()
+        .collect();
+    Ok((
+        ModSourceUse {
+            capabilities: capabilities.into_iter().collect(),
+            events: registrations.events.clone(),
+            replacements: registrations.replacements.clone(),
+            operations,
+            services,
+            environment,
+        },
+        unused_grants,
+        unused_environment,
+    ))
+}
+
+fn validate_service_value(value: &Value, expected: &str) -> Result<()> {
+    let valid = match expected {
+        "json" => true,
+        "null" => value.is_null(),
+        "boolean" => value.is_boolean(),
+        "number" => value.is_number(),
+        "string" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(failure(format!(
+            "service_value_type_mismatch: expected {expected}"
+        )))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModPackage {
@@ -149,6 +371,16 @@ pub struct ModPackage {
     pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    #[serde(default)]
+    pub services: ModServiceManifest,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<String>,
+    #[serde(default = "default_hook_budget_ms")]
+    pub hook_budget_ms: u64,
+}
+
+fn default_hook_budget_ms() -> u64 {
+    1000
 }
 
 impl ModPackage {
@@ -165,6 +397,8 @@ impl ModPackage {
             || self.version.is_empty()
             || self.version.len() > 64
             || self.state_version == 0
+            || !version(&self.version)
+            || !(25..=2000).contains(&self.hook_budget_ms)
         {
             return Err(failure(
                 "incompatible_package: schema=1, exact experimental API and positive state_version required",
@@ -197,6 +431,54 @@ impl ModPackage {
             return Err(failure(
                 "invalid_requires: up to four distinct other mod IDs",
             ));
+        }
+        let environments: BTreeSet<_> = self.environment.iter().collect();
+        if environments.len() != self.environment.len()
+            || self
+                .environment
+                .iter()
+                .any(|name| !MOD_ENVIRONMENT.contains(&name.as_str()))
+        {
+            return Err(failure("unsupported_or_duplicate_environment_access"));
+        }
+        if self.services.exports.len() > 8 || self.services.imports.len() > 16 {
+            return Err(failure("service_contract_limit"));
+        }
+        let mut exports = BTreeSet::new();
+        for contract in &self.services.exports {
+            if !service_name(&contract.name)
+                || !version(&contract.version)
+                || !exports.insert(&contract.name)
+                || contract.methods.is_empty()
+                || contract.methods.len() > 32
+                || contract.methods.iter().any(|(name, method)| {
+                    !identifier(name)
+                        || ![
+                            "null", "boolean", "number", "string", "array", "object", "json",
+                        ]
+                        .contains(&method.input.as_str())
+                        || ![
+                            "null", "boolean", "number", "string", "array", "object", "json",
+                        ]
+                        .contains(&method.output.as_str())
+                })
+            {
+                return Err(failure("invalid_service_export"));
+            }
+        }
+        let mut imports = BTreeSet::new();
+        for import in &self.services.imports {
+            if !service_name(&import.name)
+                || !version(&import.version)
+                || !imports.insert(&import.name)
+            {
+                return Err(failure("invalid_service_import"));
+            }
+        }
+        if (!self.services.exports.is_empty() || !self.services.imports.is_empty())
+            && !self.capabilities.iter().any(|cap| cap == "services")
+        {
+            return Err(failure("service_capability_required"));
         }
         Ok(())
     }
@@ -265,6 +547,8 @@ struct Registrations {
     replacements: Vec<String>,
     #[serde(default)]
     contracts: Vec<crate::WorkflowContract>,
+    #[serde(default)]
+    services: Vec<ModServiceContract>,
 }
 
 #[derive(Deserialize)]
@@ -281,12 +565,16 @@ struct Reply {
     updates: Vec<String>,
 }
 
+#[derive(Clone)]
 struct Loaded {
     package: ModPackage,
     selection: ModSelection,
     source: String,
     state: Value,
     registrations: Registrations,
+    source_use: ModSourceUse,
+    unused_grants: Vec<String>,
+    unused_environment: Vec<String>,
     error: Option<String>,
 }
 
@@ -299,6 +587,7 @@ pub struct ModHost {
     order: Vec<String>,
     rejected: Vec<ModRejection>,
     reload_error: Option<String>,
+    service_calls: Vec<Value>,
     tool_validator: fn(&Value) -> Result<()>,
 }
 
@@ -318,6 +607,7 @@ impl ModHost {
             order: Vec::new(),
             rejected: Vec::new(),
             reload_error: None,
+            service_calls: Vec::new(),
             tool_validator,
         };
         host.reload()?;
@@ -360,6 +650,9 @@ impl ModHost {
                 selection,
                 state: Value::Null,
                 registrations: Registrations::default(),
+                source_use: ModSourceUse::default(),
+                unused_grants: Vec::new(),
+                unused_environment: Vec::new(),
                 error: None,
             };
             let prepared = (|| {
@@ -376,15 +669,28 @@ impl ModHost {
                 for tool in &reply.registrations.tools {
                     (self.tool_validator)(&tool.parameters)?;
                 }
-                Ok(reply.registrations)
+                let (source_use, unused_grants, unused_environment) =
+                    source_use(&loaded.source, &loaded.package, &reply.registrations)?;
+                Ok((
+                    reply.registrations,
+                    source_use,
+                    unused_grants,
+                    unused_environment,
+                ))
             })();
             match prepared {
-                Ok(registrations) => loaded.registrations = registrations,
+                Ok((registrations, source_use, unused_grants, unused_environment)) => {
+                    loaded.registrations = registrations;
+                    loaded.source_use = source_use;
+                    loaded.unused_grants = unused_grants;
+                    loaded.unused_environment = unused_environment;
+                }
                 Err(error) => fail(initial, &mut loaded, error)?,
             }
             next.insert(id, loaded);
         }
         Self::resolve_conflicts(&mut next, initial)?;
+        Self::resolve_services(&mut next, initial)?;
         let order = Self::resolve_dependencies(&mut next, initial)?;
         self.node = config.node;
         self.loaded = next;
@@ -393,6 +699,7 @@ impl ModHost {
         self.configuration_sha256 = hash;
         self.generation += 1;
         self.reload_error = None;
+        self.write_installed_service_types()?;
         Ok(true)
     }
 
@@ -507,6 +814,109 @@ impl ModHost {
         Ok(())
     }
 
+    fn resolve_services(next: &mut BTreeMap<String, Loaded>, initial: bool) -> Result<()> {
+        let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (id, loaded) in next.iter().filter(|(_, loaded)| loaded.error.is_none()) {
+            for contract in &loaded.registrations.services {
+                claims
+                    .entry(contract.name.clone())
+                    .or_default()
+                    .push(id.clone());
+            }
+        }
+        for (name, providers) in claims.iter().filter(|(_, providers)| providers.len() > 1) {
+            let reason = format!(
+                "service_provider_collision: {name} provided by {}",
+                providers.join(", ")
+            );
+            for provider in providers {
+                if let Some(loaded) = next.get_mut(provider) {
+                    fail(initial, loaded, failure(reason.clone()))?;
+                }
+            }
+        }
+        loop {
+            let providers: BTreeMap<String, (String, String)> = next
+                .iter()
+                .filter(|(_, loaded)| loaded.error.is_none())
+                .flat_map(|(id, loaded)| {
+                    loaded.registrations.services.iter().map(|contract| {
+                        (
+                            contract.name.clone(),
+                            (id.clone(), contract.version.clone()),
+                        )
+                    })
+                })
+                .collect();
+            let unavailable: Vec<_> = next
+                .iter()
+                .filter(|(_, loaded)| loaded.error.is_none())
+                .filter_map(|(id, loaded)| {
+                    loaded.package.services.imports.iter().find_map(|import| {
+                        match providers.get(&import.name) {
+                            Some((_, version)) if version == &import.version => None,
+                            None if import.optional => None,
+                            Some((_, version)) => Some((
+                                id.clone(),
+                                format!(
+                                    "service_version_incompatible: {} requires {} but provider exports {}",
+                                    import.name, import.version, version
+                                ),
+                            )),
+                            None => Some((
+                                id.clone(),
+                                format!(
+                                    "service_provider_missing: {} requires {}",
+                                    id, import.name
+                                ),
+                            )),
+                        }
+                    })
+                })
+                .collect();
+            if unavailable.is_empty() {
+                break;
+            }
+            for (id, reason) in unavailable {
+                if let Some(loaded) = next.get_mut(&id) {
+                    fail(initial, loaded, failure(reason))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn dependencies(id: &str, next: &BTreeMap<String, Loaded>) -> Vec<String> {
+        let Some(loaded) = next.get(id) else {
+            return Vec::new();
+        };
+        let providers: BTreeMap<&str, &str> = next
+            .iter()
+            .filter(|(_, candidate)| candidate.error.is_none())
+            .flat_map(|(provider, candidate)| {
+                candidate
+                    .registrations
+                    .services
+                    .iter()
+                    .map(move |contract| (contract.name.as_str(), provider.as_str()))
+            })
+            .collect();
+        let mut dependencies = loaded.package.requires.clone();
+        dependencies.extend(
+            loaded
+                .package
+                .services
+                .imports
+                .iter()
+                .filter_map(|import| providers.get(import.name.as_str()).copied())
+                .filter(|provider| *provider != id)
+                .map(str::to_owned),
+        );
+        dependencies.sort();
+        dependencies.dedup();
+        dependencies
+    }
+
     /// Resolves declared dependencies and returns the activation order.
     fn resolve_dependencies(
         next: &mut BTreeMap<String, Loaded>,
@@ -516,9 +926,8 @@ impl ModHost {
             let unavailable: Vec<(String, String)> = next
                 .iter()
                 .filter(|(_, m)| m.error.is_none())
-                .filter_map(|(id, m)| {
-                    m.package
-                        .requires
+                .filter_map(|(id, _)| {
+                    Self::dependencies(id, next)
                         .iter()
                         .find(|required| next.get(*required).is_none_or(|m| m.error.is_some()))
                         .map(|required| {
@@ -547,9 +956,7 @@ impl ModHost {
         while let Some(id) = remaining
             .iter()
             .find(|id| {
-                next[*id]
-                    .package
-                    .requires
+                Self::dependencies(id, next)
                     .iter()
                     .all(|required| !remaining.contains(required))
             })
@@ -580,9 +987,16 @@ impl ModHost {
             || (!registrations.tools.is_empty() && !has("tools"))
             || (!registrations.commands.is_empty() && !has("commands"))
             || (!registrations.contracts.is_empty() && !has("workflow"))
+            || (!registrations.services.is_empty() && !has("services"))
             || registrations.contracts.len() > 4
+            || registrations.services.len() > 8
         {
             return Err(failure("registration_limit_or_capability_denied"));
+        }
+        if registrations.services != package.services.exports {
+            return Err(failure(
+                "registered_service_contracts_do_not_match_manifest",
+            ));
         }
         let mut contract_ids = BTreeSet::new();
         for contract in &registrations.contracts {
@@ -630,7 +1044,9 @@ impl ModHost {
                 .find(|(name, _)| name == event)
                 .map(|(_, capability)| *capability)
                 .ok_or_else(|| failure("unsupported_event"))?;
-            if !has(capability) || !names.insert(event) {
+            if !(has(capability) || event == "tool_result" && has("middleware"))
+                || !names.insert(event)
+            {
                 return Err(failure("event_capability_denied_or_conflict"));
             }
         }
@@ -726,17 +1142,32 @@ impl ModHost {
         if generation != self.generation {
             return Err(failure("stale_mod_generation: retry on the next turn"));
         }
-        let loaded = self
+        let mut loaded = self
             .loaded
-            .get_mut(id)
+            .get(id)
+            .cloned()
             .ok_or_else(|| failure("mod_disabled"))?;
         if loaded.error.is_some() {
             return Err(failure("mod_failed: explicitly reload to recover"));
         }
+        loaded.state = self.store.state(
+            &loaded.package.id,
+            &loaded.selection.scope,
+            loaded.package.state_version,
+        )?;
+        let previous_state = loaded.state.clone();
+        let node = self.node.clone();
         let result = (|| {
             match event {
                 "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
                 "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
+                "service"
+                    if loaded.registrations.services.iter().any(|contract| {
+                        contract
+                            .methods
+                            .keys()
+                            .any(|method| format!("{}.{}", contract.name, method) == name)
+                    }) => {}
                 e if loaded
                     .registrations
                     .events
@@ -744,19 +1175,32 @@ impl ModHost {
                     .any(|registered| registered == e) => {}
                 _ => return Err(failure("unsupported_or_unregistered_operation")),
             }
-            loaded.state = self.store.state(
-                &loaded.package.id,
-                &loaded.selection.scope,
-                loaded.package.state_version,
-            )?;
             let reply = bridge::run(
-                &self.node,
-                loaded,
+                &node,
+                &loaded,
                 event,
                 name,
                 payload,
                 &active,
-                &mut host,
+                &mut |call| {
+                    let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":call.arguments});
+                    let _ = self.event_except("host_operation", before, id, &active);
+                    let result = if call.operation == "mods.service" {
+                        self.call_service(id, generation, call.arguments.clone(), &active)
+                    } else {
+                        host(call.clone())
+                    };
+                    let after = match &result {
+                        Ok(value) => {
+                            json!({"phase":"after","caller":id,"operation":call.operation,"result":value})
+                        }
+                        Err(error) => {
+                            json!({"phase":"after","caller":id,"operation":call.operation,"error":error.to_string()})
+                        }
+                    };
+                    let _ = self.event_except("host_operation", after, id, &active);
+                    result
+                },
                 &mut progress,
             )?;
             if !active() {
@@ -803,6 +1247,13 @@ impl ModHost {
                     return Err(failure("exclusive_replacement_registration_required"));
                 }
             }
+            if matches!(
+                event,
+                "prompt" | "session" | "agent" | "tool_call" | "tool_result" | "host_operation"
+            ) && !reply.value.is_null()
+            {
+                return Err(failure("observe_only_event_returned_a_value"));
+            }
             if reply.state != loaded.state {
                 if !loaded.package.capabilities.iter().any(|c| c == "state") {
                     return Err(failure("state_capability_denied"));
@@ -814,20 +1265,267 @@ impl ModHost {
                     &loaded.state,
                     &reply.state,
                 )?;
-                loaded.state = reply.state;
             }
-            Ok(reply.value)
+            Ok((reply.value, reply.state))
         })();
-        if let Err(error) = &result
-            && !error.to_string().starts_with("state_conflict")
-        {
-            loaded.error = Some(error.to_string());
+        let current = self
+            .loaded
+            .get_mut(id)
+            .ok_or_else(|| failure("mod_disabled"))?;
+        match result {
+            Ok((value, state)) => {
+                if state != previous_state {
+                    current.state = state;
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                if !error.to_string().starts_with("state_conflict") {
+                    current.error = Some(error.to_string());
+                }
+                Err(error)
+            }
         }
-        result
+    }
+
+    fn event_except(
+        &mut self,
+        event: &str,
+        payload: Value,
+        excluded: &str,
+        active: &dyn Fn() -> bool,
+    ) -> Vec<(String, Result<Value>)> {
+        let ids: Vec<_> = self
+            .active()
+            .filter(|(id, loaded)| {
+                id.as_str() != excluded
+                    && loaded
+                        .registrations
+                        .events
+                        .iter()
+                        .any(|registered| registered == event)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.into_iter()
+            .map(|id| {
+                let result =
+                    self.invoke_guarded(&id, self.generation, event, "", payload.clone(), active);
+                (id, result)
+            })
+            .collect()
+    }
+
+    fn call_service(
+        &mut self,
+        caller: &str,
+        generation: u64,
+        arguments: Value,
+        active: &dyn Fn() -> bool,
+    ) -> Result<Value> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ServiceCall {
+            name: String,
+            method: String,
+            input: Value,
+        }
+        let call: ServiceCall = serde_json::from_value(arguments)?;
+        if serde_json::to_vec(&call.input)?.len() > 32_768 {
+            return Err(failure("service_input_limit"));
+        }
+        let consumer = self
+            .loaded
+            .get(caller)
+            .ok_or_else(|| failure("mod_disabled"))?;
+        let import = consumer
+            .package
+            .services
+            .imports
+            .iter()
+            .find(|import| import.name == call.name)
+            .ok_or_else(|| failure("undeclared_service_use"))?;
+        let provider = self.active().find_map(|(id, loaded)| {
+            loaded
+                .registrations
+                .services
+                .iter()
+                .find(|contract| contract.name == call.name)
+                .map(|contract| (id.clone(), contract.clone()))
+        });
+        let Some((provider, contract)) = provider else {
+            return Err(failure(if import.optional {
+                "optional_service_unavailable"
+            } else {
+                "service_provider_missing"
+            }));
+        };
+        if contract.version != import.version {
+            return Err(failure("service_version_incompatible"));
+        }
+        let method = contract
+            .methods
+            .get(&call.method)
+            .ok_or_else(|| failure("unknown_service_method"))?;
+        validate_service_value(&call.input, &method.input)?;
+        let qualified = format!("{}.{}", call.name, call.method);
+        let result = self.invoke_guarded(
+            &provider, generation, "service", &qualified, call.input, active,
+        )?;
+        validate_service_value(&result, &method.output)?;
+        if serde_json::to_vec(&result)?.len() > 32_768 {
+            return Err(failure("service_output_limit"));
+        }
+        self.service_calls.push(
+            json!({"caller":caller,"provider":provider,"service":call.name,
+            "version":contract.version,"method":call.method,"generation":generation}),
+        );
+        if self.service_calls.len() > 64 {
+            self.service_calls.remove(0);
+        }
+        Ok(result)
     }
 
     pub fn event(&mut self, event: &str, payload: Value) -> Vec<(String, Result<Value>)> {
         self.event_guarded(event, payload, || true)
+    }
+
+    pub fn model_request(
+        &mut self,
+        mut payload: Value,
+        active: impl Fn() -> bool,
+    ) -> Result<Value> {
+        let presets = payload["authorized_presets"]
+            .as_array()
+            .ok_or_else(|| failure("authorized_presets_required"))?
+            .clone();
+        let mut effective = payload["effective"]
+            .as_object()
+            .cloned()
+            .ok_or_else(|| failure("effective_route_required"))?;
+        let ids = self.event_ids("model_request");
+        let mut provenance = Vec::new();
+        for (order, id) in ids.into_iter().enumerate() {
+            payload["effective"] = Value::Object(effective.clone());
+            let value = self.invoke_guarded(
+                &id,
+                self.generation,
+                "model_request",
+                "",
+                payload.clone(),
+                &active,
+            )?;
+            if value.is_null() {
+                continue;
+            }
+            let object = value
+                .as_object()
+                .filter(|object| object.len() == 1)
+                .ok_or_else(|| failure("invalid_model_request_result"))?;
+            let selected = object
+                .get("preset")
+                .and_then(Value::as_str)
+                .ok_or_else(|| failure("invalid_model_request_result"))?;
+            let preset = presets
+                .iter()
+                .find(|preset| preset["name"].as_str() == Some(selected))
+                .and_then(Value::as_object)
+                .ok_or_else(|| failure(format!("unauthorized_request_preset: {selected}")))?;
+            let previous = effective.get("name").cloned().unwrap_or(Value::Null);
+            effective = preset.clone();
+            if let Some(loaded) = self.loaded.get(&id) {
+                provenance.push(
+                    json!({"order":order,"origin":id,"version":loaded.package.version,
+                    "sha256":loaded.selection.sha256,"tier":loaded.selection.scope,
+                    "from":previous,"to":selected}),
+                );
+            }
+        }
+        payload["effective"] = Value::Object(effective);
+        payload["provenance"] = Value::Array(provenance);
+        Ok(payload)
+    }
+
+    pub fn response_stream(
+        &mut self,
+        mut payload: Value,
+        active: impl Fn() -> bool,
+    ) -> Result<Value> {
+        let protected = payload["protected"].as_bool().unwrap_or(true);
+        let original = payload.get("text").cloned().unwrap_or(Value::Null);
+        let mut effective = original.clone();
+        let mut provenance = Vec::new();
+        let mut fallback = Vec::new();
+        for (order, id) in self.event_ids("response_stream").into_iter().enumerate() {
+            payload["text"] = effective.clone();
+            let value = match self.invoke_guarded(
+                &id,
+                self.generation,
+                "response_stream",
+                "",
+                payload.clone(),
+                &active,
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    fallback.push(json!({"origin":id,"error":error.to_string()}));
+                    continue;
+                }
+            };
+            if value.is_null() {
+                continue;
+            }
+            if protected {
+                let error = "protected_stream_field_is_observe_only".to_owned();
+                if let Some(loaded) = self.loaded.get_mut(&id) {
+                    loaded.error = Some(error.clone());
+                }
+                fallback.push(json!({"origin":id,"error":error}));
+                continue;
+            }
+            let Some(text) = value
+                .as_object()
+                .filter(|object| object.len() == 1)
+                .and_then(|object| object.get("text"))
+                .and_then(Value::as_str)
+                .filter(|text| text.len() <= 8192)
+            else {
+                let error = "invalid_stream_transformation".to_owned();
+                if let Some(loaded) = self.loaded.get_mut(&id) {
+                    loaded.error = Some(error.clone());
+                }
+                fallback.push(json!({"origin":id,"error":error}));
+                continue;
+            };
+            let previous = effective.clone();
+            effective = Value::String(text.to_owned());
+            if let Some(loaded) = self.loaded.get(&id) {
+                provenance.push(
+                    json!({"order":order,"origin":id,"version":loaded.package.version,
+                    "sha256":loaded.selection.sha256,"tier":loaded.selection.scope,
+                    "from_sha256":digest(serde_json::to_string(&previous)?.as_bytes()),
+                    "to_sha256":digest(serde_json::to_string(&effective)?.as_bytes())}),
+                );
+            }
+        }
+        payload["original"] = original;
+        payload["effective"] = effective;
+        payload["provenance"] = Value::Array(provenance);
+        payload["fallback"] = Value::Array(fallback);
+        Ok(payload)
+    }
+
+    fn event_ids(&self, event: &str) -> Vec<String> {
+        self.active()
+            .filter(|(_, loaded)| {
+                loaded
+                    .registrations
+                    .events
+                    .iter()
+                    .any(|registered| registered == event)
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
     }
 
     pub fn event_guarded(
@@ -836,11 +1534,7 @@ impl ModHost {
         payload: Value,
         active: impl Fn() -> bool,
     ) -> Vec<(String, Result<Value>)> {
-        let ids: Vec<_> = self
-            .active()
-            .filter(|(_, m)| m.registrations.events.iter().any(|e| e == event))
-            .map(|(id, _)| id.clone())
-            .collect();
+        let ids = self.event_ids(event);
         ids.into_iter()
             .map(|id| {
                 let result =
@@ -933,12 +1627,65 @@ impl ModHost {
         self.generation
     }
 
+    fn write_installed_service_types(&self) -> Result<()> {
+        let mut output = String::from(
+            "export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };\nexport interface InstalledModServices {\n",
+        );
+        for (_, loaded) in self.active() {
+            for contract in &loaded.registrations.services {
+                output.push_str(&format!("  '{}@{}': {{\n", contract.name, contract.version));
+                for (name, method) in &contract.methods {
+                    output.push_str(&format!(
+                        "    {}(input: {}): {};\n",
+                        name,
+                        service_ts_type(&method.input),
+                        service_ts_type(&method.output)
+                    ));
+                }
+                output.push_str("  };\n");
+            }
+        }
+        output.push_str("}\n");
+        self.store
+            .write_bytes("installed-contracts.d.ts", output.as_bytes())
+    }
+
+    pub fn field_policies() -> Value {
+        json!({
+            "model_request": {"request_id":"observe_only","scope":"observe_only","authorized_presets":"observe_only","original":"observe_only","effective":"alterable","provenance":"observe_only"},
+            "response_stream": {"kind":"observe_only","raw_sha256":"observe_only","raw_usage":"observe_only","opaque_reasoning":"observe_only","protected":"observe_only","text":"alterable","original":"observe_only","effective":"observe_only","provenance":"observe_only","fallback":"observe_only"},
+            "prompt": {"thread_id":"observe_only","turn_id":"observe_only","original":"observe_only","effective":"replaceable","provenance":"observe_only"},
+            "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
+            "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
+            "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
+            "tool_before": {"call_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable"},
+            "tool_result": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","outcome":"observe_only"},
+            "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
+        })
+    }
+
     pub fn status(&self) -> Value {
         json!({"api": MOD_API_VERSION, "generation": self.generation, "reload_error": self.reload_error,
-            "order": self.order, "rejected": self.rejected,
+            "order": self.order, "rejected": self.rejected, "field_policies": Self::field_policies(),
+            "installed_contract_types": self.store.root.join("installed-contracts.d.ts"),
+            "service_calls": self.service_calls,
             "mods": self.loaded.iter().map(|(id, m)| json!({"id": id, "version": m.package.version,
                 "sha256": m.selection.sha256, "capabilities": m.package.capabilities,
-                "scope": m.selection.scope, "requires": m.package.requires,
+                "scope": m.selection.scope, "requires": m.package.requires, "services": m.package.services,
+                "source_use":m.source_use,"unused_grants":m.unused_grants,
+                "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
                 "registrations": m.registrations, "error": m.error})).collect::<Vec<_>>()})
+    }
+}
+
+fn service_ts_type(kind: &str) -> &'static str {
+    match kind {
+        "null" => "null",
+        "boolean" => "boolean",
+        "number" => "number",
+        "string" => "string",
+        "array" => "Json[]",
+        "object" => "Record<string, Json>",
+        _ => "Json",
     }
 }

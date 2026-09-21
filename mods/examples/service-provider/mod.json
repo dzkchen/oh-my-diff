@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "service_provider",
+  "version": "1.0.0",
+  "api": "0.1.0-experimental.5",
+  "state_version": 1,
+  "capabilities": ["services"],
+  "services": {
+    "exports": [{
+      "name": "example.formatter",
+      "version": "1.0.0",
+      "methods": {"format": {"input": "string", "output": "string"}}
+    }]
+  }
+}

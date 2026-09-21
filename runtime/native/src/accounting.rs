@@ -7,9 +7,12 @@ use codex_omd::Admission;
 use codex_omd::Task;
 use serde::Deserialize;
 use serde_json::Value;
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 pub const REVOCATION_FILE: &str = "contributor-revoked.json";
 
@@ -39,10 +42,56 @@ pub struct Account {
     pub repository_identity: String,
     pub revocation: std::path::PathBuf,
     pub cost_capture: std::path::PathBuf,
+    pub preset: String,
+    pub authorized_presets: Vec<RequestPreset>,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct RequestPreset {
+    pub name: String,
+    pub model: String,
+    pub provider: String,
+    pub reasoning: String,
+    pub url: String,
+    #[serde(skip_serializing)]
+    pub accounting_provider: String,
 }
 
 #[derive(Default)]
-pub struct Accounts(pub Mutex<BTreeMap<String, Account>>);
+pub struct Accounts(
+    pub Mutex<BTreeMap<String, Account>>,
+    Mutex<Option<Arc<Mutex<codex_omd::ModHost>>>>,
+    AtomicU64,
+);
+
+impl Accounts {
+    pub fn install_mod_runtime(&self, runtime: Arc<Mutex<codex_omd::ModHost>>) {
+        if let Ok(mut installed) = self.1.lock() {
+            *installed = Some(runtime);
+        }
+    }
+
+    fn mods(&self) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
+        self.1.lock().ok().and_then(|installed| installed.clone())
+    }
+
+    fn record_middleware(account: &Account, value: &Value) -> Result<(), TransportError> {
+        use std::io::Write;
+        let path = account
+            .cost_capture
+            .parent()
+            .ok_or_else(|| denied("evidence directory missing"))?
+            .join("mod-middleware.jsonl");
+        let mut bytes = serde_json::to_vec(value).map_err(denied)?;
+        bytes.push(b'\n');
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(denied)?;
+        file.write_all(&bytes).map_err(denied)
+    }
+}
 
 pub fn authorized(
     path: &std::path::Path,
@@ -88,7 +137,7 @@ pub fn denied(message: impl ToString) -> TransportError {
 impl ResponseObserver for Accounts {
     fn prepare(
         &self,
-        request: &Request,
+        request: &mut Request,
         body: &mut Option<EncodedJsonBody>,
     ) -> Result<(), TransportError> {
         let thread = request
@@ -96,9 +145,12 @@ impl ResponseObserver for Accounts {
             .get("thread-id")
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| denied("missing native thread identity"))?;
-        let accounts = self.0.lock().map_err(|_| denied("account lock poisoned"))?;
-        let account = accounts
+        let account = self
+            .0
+            .lock()
+            .map_err(|_| denied("account lock poisoned"))?
             .get(thread)
+            .cloned()
             .ok_or_else(|| denied("unenrolled native thread"))?;
         let mut value: Value = serde_json::from_slice(
             body.as_ref()
@@ -113,6 +165,45 @@ impl ResponseObserver for Accounts {
             value["max_output_tokens"] = account.rates.max_output_tokens.into();
             value["service_tier"] = "default".into();
             *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
+        }
+        if let Some(mods) = self.mods() {
+            let request_id = format!("mod-request-{}", self.2.fetch_add(1, Ordering::Relaxed) + 1);
+            let original = account
+                .authorized_presets
+                .iter()
+                .find(|preset| preset.name == account.preset)
+                .ok_or_else(|| denied("current route is not an authorized preset"))?;
+            let presets = account
+                .authorized_presets
+                .iter()
+                .map(|preset| json!({"name":preset.name,"model":preset.model,"provider":preset.provider,"reasoning":preset.reasoning}))
+                .collect::<Vec<_>>();
+            let route = json!({"name":original.name,"model":original.model,"provider":original.provider,"reasoning":original.reasoning});
+            let payload = json!({"request_id":request_id,"scope":{"thread_id":thread,
+                "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
+                "kind":if account.owner == "lead" {"main"} else {"subagent"}},
+                "authorized_presets":presets,"original":route,"effective":route,"provenance":[]});
+            let effective = mods
+                .lock()
+                .map_err(|_| denied("mod runtime poisoned"))?
+                .model_request(payload, || account.task.check_active().is_ok())
+                .map_err(denied)?;
+            let selected = effective["effective"]["name"]
+                .as_str()
+                .and_then(|name| {
+                    account
+                        .authorized_presets
+                        .iter()
+                        .find(|preset| preset.name == name)
+                })
+                .ok_or_else(|| denied("mod selected an unauthorized request preset"))?;
+            value["model"] = selected.model.clone().into();
+            value["reasoning"]["effort"] = selected.reasoning.clone().into();
+            *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
+            request
+                .headers
+                .insert("x-omd-preset", selected.name.parse().map_err(denied)?);
+            Self::record_middleware(&account, &json!({"kind":"model_request","value":effective}))?;
         }
         Ok(())
     }
@@ -152,9 +243,6 @@ impl ResponseObserver for Accounts {
                 return Err(denied("Contributor authorization revoked or changed"));
             }
         }
-        if request.url != account.url {
-            return Err(denied("provider route differs from authorized route"));
-        }
         let bytes = body
             .ok_or_else(|| denied("missing JSON request"))?
             .as_bytes();
@@ -162,11 +250,32 @@ impl ResponseObserver for Accounts {
             return Err(denied("request exceeds context byte ceiling"));
         }
         let value: Value = serde_json::from_slice(bytes).map_err(denied)?;
-        if value.get("model").and_then(Value::as_str) != Some(&account.model)
-            || value.get("stream") != Some(&Value::Bool(true))
-        {
+        let selected_name = request
+            .headers
+            .remove("x-omd-preset")
+            .and_then(|value| value.to_str().ok().map(str::to_owned))
+            .unwrap_or_else(|| account.preset.clone());
+        let selected = account
+            .authorized_presets
+            .iter()
+            .find(|preset| {
+                preset.name == selected_name
+                    && value.get("model").and_then(Value::as_str) == Some(preset.model.as_str())
+                    && value.pointer("/reasoning/effort").and_then(Value::as_str)
+                        == Some(preset.reasoning.as_str())
+            })
+            .cloned();
+        let Some(selected) = selected else {
+            return Err(denied("unapproved model or nonstreaming request"));
+        };
+        if value.get("stream") != Some(&Value::Bool(true)) {
             return Err(denied("unapproved model or nonstreaming request"));
         }
+        request.url = selected.url.clone();
+        let mut account = account;
+        account.model = selected.model.clone();
+        account.provider = selected.accounting_provider.clone();
+        account.url = selected.url.clone();
         if account.rates.included_subscription
             && (account.provider != "openai" || account.rates.reservation_microusd != 0)
         {
@@ -268,6 +377,7 @@ impl ResponseObserver for Accounts {
         Ok(Some(Box::new(Attempt {
             account,
             admission,
+            mods: self.mods(),
             settled: false,
             failed: false,
         })))
@@ -277,6 +387,7 @@ impl ResponseObserver for Accounts {
 struct Attempt {
     account: Account,
     admission: Admission,
+    mods: Option<Arc<Mutex<codex_omd::ModHost>>>,
     settled: bool,
     failed: bool,
 }
@@ -304,22 +415,23 @@ impl Attempt {
         Ok(())
     }
 
-    fn event(&mut self, event: &Value, valid: bool) -> Result<(), TransportError> {
+    fn event(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError> {
+        let raw = event.clone();
         if !valid
             && !matches!(
-                event["type"].as_str(),
+                raw["type"].as_str(),
                 Some("response.failed" | "response.incomplete" | "error")
             )
         {
             self.failed("malformed provider event");
         }
-        match event.get("type").and_then(Value::as_str) {
+        match raw.get("type").and_then(Value::as_str) {
             Some("response.completed" | "response.failed" | "response.incomplete") => {
-                let success = event["type"] == "response.completed";
+                let success = raw["type"] == "response.completed";
                 if !success {
                     self.failed("provider returned failed or incomplete response");
                 }
-                if let Some(usage) = event
+                if let Some(usage) = raw
                     .get("response")
                     .and_then(|v| v.get("usage"))
                     .filter(|v| v.is_object())
@@ -376,12 +488,40 @@ impl Attempt {
             Some("error") => self.failed("provider stream error"),
             _ => {}
         }
+        if let Some(mods) = &self.mods {
+            let kind = raw["type"].as_str().unwrap_or("invalid");
+            let text_key = if kind == "response.output_text.delta" {
+                Some("delta")
+            } else if kind == "response.output_text.done" {
+                Some("text")
+            } else {
+                None
+            };
+            let text = text_key.and_then(|key| raw.get(key).and_then(Value::as_str));
+            let payload = json!({"kind":kind,"raw_sha256":crate::execution::hash(&serde_json::to_vec(&raw).map_err(denied)?),
+                "raw_usage":raw.pointer("/response/usage").cloned().unwrap_or(Value::Null),
+                "opaque_reasoning":kind.contains("reasoning"),"protected":text_key.is_none(),"text":text});
+            let transformed = mods
+                .lock()
+                .map_err(|_| denied("mod runtime poisoned"))?
+                .response_stream(payload, || self.account.task.check_active().is_ok())
+                .map_err(denied)?;
+            if let Some(key) = text_key
+                && let Some(text) = transformed["effective"].as_str()
+            {
+                event[key] = text.into();
+            }
+            Accounts::record_middleware(
+                &self.account,
+                &json!({"kind":"response_stream","value":transformed}),
+            )?;
+        }
         Ok(())
     }
 }
 
 impl ResponseAttempt for Attempt {
-    fn observe(&mut self, event: &Value, valid: bool) -> Result<(), TransportError> {
+    fn observe(&mut self, event: &mut Value, valid: bool) -> Result<(), TransportError> {
         self.event(event, valid)
     }
 

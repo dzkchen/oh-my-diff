@@ -1700,6 +1700,56 @@ impl Host {
     }
 
     fn enroll(&self, thread: ThreadId, owner: &str, route: &Route) -> Result<(), String> {
+        let reasoning = |route: &Route| {
+            serde_json::to_value(&route.reasoning_effort)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .ok_or_else(|| "reasoning preset is not serializable".to_string())
+        };
+        let matched_lead = [LeadName::Sol, LeadName::Astra].into_iter().find(|lead| {
+            let candidate = self.route(*lead);
+            candidate.provider == route.provider
+                && candidate.model == route.model
+                && candidate.reasoning_effort == route.reasoning_effort
+                && candidate.responses_url == route.responses_url
+        });
+        let preset = matched_lead
+            .map(|lead| lead.as_str().to_owned())
+            .unwrap_or_else(|| "worker".to_owned());
+        let authorized_presets = match matched_lead {
+            Some(_) => [LeadName::Sol, LeadName::Astra]
+                .into_iter()
+                .map(|lead| {
+                    let route = self.route(lead);
+                    Ok(accounting::RequestPreset {
+                        name: lead.as_str().to_owned(),
+                        model: route.model.clone(),
+                        provider: route.provider.clone(),
+                        reasoning: reasoning(route)?,
+                        url: route.responses_url.clone(),
+                        accounting_provider: "openai".into(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+            None => vec![accounting::RequestPreset {
+                name: preset.clone(),
+                model: route.model.clone(),
+                provider: if route.model == "muse-spark-1.3-contributor" {
+                    "meta"
+                } else {
+                    "openai"
+                }
+                .into(),
+                reasoning: reasoning(route)?,
+                url: route.responses_url.clone(),
+                accounting_provider: if route.model == "muse-spark-1.3-contributor" {
+                    "meta"
+                } else {
+                    "openai"
+                }
+                .into(),
+            }],
+        };
         let account = Account {
             task: self.task.clone(),
             owner: owner.into(),
@@ -1718,6 +1768,8 @@ impl Host {
             repository_identity: self.manifest.repository_identity.clone(),
             revocation: self.manifest.evidence.join(accounting::REVOCATION_FILE),
             cost_capture: self.manifest.evidence.join("task-cost.json"),
+            preset,
+            authorized_presets,
         };
         let mut accounts = self
             .accounts

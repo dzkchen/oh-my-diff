@@ -96,6 +96,10 @@ impl ModStore {
 
     pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(value)?;
+        self.write_bytes(name, &bytes)
+    }
+
+    pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
         if bytes.len() > 65_536 {
             return Err(failure("state_or_configuration_limit"));
         }
@@ -109,7 +113,7 @@ impl ModStore {
             .mode(0o600)
             .open(&temporary)?;
         let result = (|| {
-            file.write_all(&bytes)?;
+            file.write_all(bytes)?;
             file.sync_all()?;
             std::fs::rename(&temporary, &path)?;
             File::open(&self.root)?.sync_all()

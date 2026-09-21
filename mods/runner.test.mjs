@@ -94,3 +94,25 @@ test('Pi labels, command descriptions, onUpdate and sendUserMessage map onto the
   assert.match(run(source, { adapter, capabilities, event: 'command', name: 'steer', payload: '' }).error, /sendUserMessage.options/);
   assert.match(run('export default pi => pi.sendUserMessage("x")', { adapter }).error, /sendUserMessage outside command/);
 });
+
+test('typed middleware and services register without ambient authority', () => {
+  const contract = { name: 'fixture.echo', version: '1.0.0', methods: { echo: { input: 'string', output: 'string' } } };
+  const source = `export default api => {
+    api.middleware('model_request', event => ({preset:event.authorized_presets[0].name}));
+    api.middleware('response_stream', event => event.protected ? null : ({text:String(event.text).toUpperCase()}));
+    api.middleware('tool_result', () => undefined);
+    api.provide(${JSON.stringify(contract)}, {echo: input => input});
+    api.command('call', () => api.services.call('fixture.echo','echo','hello'));
+  }`;
+  const inspect = run(source, { capabilities: ['middleware', 'services', 'commands'] });
+  assert.deepEqual(inspect.registrations.services, [contract]);
+  assert.deepEqual(inspect.registrations.events, ['model_request', 'response_stream', 'tool_result']);
+  const request = run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'model_request', payload: {authorized_presets:[{name:'sol'}]} });
+  assert.deepEqual(request.value, {preset:'sol'});
+  const stream = run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'response_stream', payload: {protected:false,text:'hi'} });
+  assert.deepEqual(stream.value, {text:'HI'});
+  assert.equal(run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'tool_result', payload: {} }).value, null);
+  const service = run(source, { capabilities: ['middleware', 'services', 'commands'], event: 'service', name: 'fixture.echo.echo', payload: 'hello' });
+  assert.equal(service.value, 'hello');
+  assert.match(run(source, { capabilities: ['middleware', 'commands'], event: 'inspect' }).error, /capability_denied: services/);
+});

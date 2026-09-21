@@ -1,5 +1,30 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow';
+export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services';
+export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
+export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
+export interface ServiceMethod { input: JsonKind; output: JsonKind }
+export interface ServiceContract { name: `${string}.${string}`; version: string; methods: Record<string, ServiceMethod> }
+export interface RequestPreset { name: string; model: string; provider: string; reasoning: string }
+export interface ModelRequestEvent {
+  request_id: string;
+  scope: { thread_id: string; agent_id: string | null; kind: 'main' | 'subagent' };
+  authorized_presets: RequestPreset[];
+  original: RequestPreset;
+  effective: RequestPreset;
+  provenance: Json[];
+}
+export interface ResponseStreamEvent {
+  kind: string;
+  raw_sha256: string;
+  raw_usage: Json;
+  opaque_reasoning: boolean;
+  protected: boolean;
+  text: string | null;
+  original?: string | null;
+  effective?: string | null;
+  provenance?: Json[];
+  fallback?: Json[];
+}
 export interface ToolSpec {
   name: string;
   label?: string;
@@ -108,14 +133,25 @@ export interface Events {
   compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
   agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string }; output: void };
   workflow: { input: Json; output: void };
+  model_request: { input: ModelRequestEvent; output: { preset: string } | null };
+  response_stream: { input: ResponseStreamEvent; output: { text: string } | null };
+  prompt: { input: { thread_id: string; turn_id: string; original: string; effective: string; provenance: Json[] }; output: void };
+  session: { input: { phase: 'start' | 'resume' | 'idle' | 'stop'; thread_id: string; cause?: string }; output: void };
+  agent: { input: { phase: 'start' | 'end'; agent_id: string; parent_agent_id: string | null; role: string; status: string }; output: void };
+  tool_call: { input: { call_id: string; agent_id: string | null; tool: string; arguments: Json }; output: void };
+  host_operation: { input: { phase: 'before' | 'after'; caller: string; operation: keyof HostOperations; arguments?: Json; result?: Json; error?: string }; output: void };
 }
 export interface ModAPI {
-  readonly version: '0.1.0-experimental.4';
+  readonly version: '0.1.0-experimental.5';
+  readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: { call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'] };
+  readonly services: { call<T extends Json = Json>(name: string, method: string, input?: Json): T };
   on<K extends keyof Events>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  middleware<K extends 'model_request' | 'response_stream' | 'prompt' | 'session' | 'agent' | 'tool_call' | 'tool_result' | 'host_operation'>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   replace<K extends 'context' | 'routing' | 'compaction' | 'tool_before' | 'terminal' | 'input'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   contract(definition: WorkflowContract): void;
+  provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;
   tool(spec: ToolSpec, handler: (arguments_: Json) => Json | Promise<Json>): void;
   command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string }): void;
   progress(text: string): void;

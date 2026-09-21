@@ -1,7 +1,11 @@
 use super::*;
 use codex_omd::Limits;
+use codex_omd::MOD_API_VERSION;
+use codex_omd::ModHost;
+use codex_omd::ModStore;
 use codex_omd::WorkerLimits;
 use serde_json::json;
+use std::path::Path;
 
 fn setup() -> (
     tempfile::TempDir,
@@ -51,6 +55,15 @@ fn setup() -> (
             repository_identity: "fixture".into(),
             revocation: root.path().join("evidence").join(REVOCATION_FILE),
             cost_capture: root.path().join("evidence").join("task-cost.json"),
+            preset: "worker".into(),
+            authorized_presets: vec![RequestPreset {
+                name: "worker".into(),
+                model: "muse-spark-1.3-contributor".into(),
+                provider: "meta".into(),
+                reasoning: "high".into(),
+                url: "http://localhost/responses".into(),
+                accounting_provider: "meta".into(),
+            }],
         },
     );
     task.start_worker(
@@ -69,10 +82,99 @@ fn setup() -> (
         .headers
         .insert("thread-id", "child".parse().unwrap());
     let body = EncodedJsonBody::encode(
-        &json!({"model": "muse-spark-1.3-contributor", "stream": true, "max_output_tokens": 128}),
+        &json!({"model": "muse-spark-1.3-contributor", "reasoning":{"effort":"high"}, "stream": true, "max_output_tokens": 128}),
     )
     .unwrap();
     (root, accounts, task, request, body)
+}
+
+fn install_middleware(accounts: &Accounts, root: &Path, source: &str) {
+    let node = std::path::PathBuf::from(std::env::var_os("OMD_TEST_NODE").unwrap());
+    let store = ModStore::create(root.join("mod-store"), node).unwrap();
+    let package = root.join("request_router");
+    std::fs::create_dir(&package).unwrap();
+    std::fs::write(
+        package.join("mod.json"),
+        serde_json::to_vec(&json!({"schema":1,"id":"request_router","version":"1.0.0",
+            "api":MOD_API_VERSION,"state_version":1,"capabilities":["middleware"]}))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(package.join("index.ts"), source).unwrap();
+    let package = package.canonicalize().unwrap();
+    let inspected = ModStore::inspect_package(&package).unwrap();
+    store
+        .trust(
+            package.clone(),
+            inspected["sha256"].as_str().unwrap(),
+            vec!["middleware".into()],
+            "user",
+        )
+        .unwrap();
+    store.enable(&package, true).unwrap();
+    accounts.install_mod_runtime(Arc::new(Mutex::new(
+        ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap(),
+    )));
+}
+
+#[test]
+fn middleware_routes_main_and_subagent_requests_and_only_transforms_text() {
+    let (root, accounts, task, mut request, body) = setup();
+    let source = "export default api => { api.middleware('model_request', event => ({preset:event.scope.kind==='subagent'?'astra':'worker'})); api.middleware('response_stream', event => event.protected?null:{text:String(event.text).toUpperCase()}); }";
+    install_middleware(&accounts, root.path(), source);
+    let astra = RequestPreset {
+        name: "astra".into(),
+        model: "muse-spark-1.3-contributor".into(),
+        provider: "meta".into(),
+        reasoning: "xhigh".into(),
+        url: "http://localhost/astra".into(),
+        accounting_provider: "meta".into(),
+    };
+    let mut main = accounts.0.lock().unwrap().get("child").unwrap().clone();
+    main.owner = "lead".into();
+    main.authorized_presets.push(astra.clone());
+    accounts
+        .0
+        .lock()
+        .unwrap()
+        .get_mut("child")
+        .unwrap()
+        .authorized_presets
+        .push(astra);
+
+    let mut prepared = Some(body.clone());
+    accounts.prepare(&mut request, &mut prepared).unwrap();
+    let routed: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
+    assert_eq!(routed["model"], "muse-spark-1.3-contributor");
+    assert_eq!(routed["reasoning"]["effort"], "xhigh");
+
+    let mut main_request = request.clone();
+    main_request
+        .headers
+        .insert("thread-id", "main".parse().unwrap());
+    accounts.0.lock().unwrap().insert("main".into(), main);
+    let mut main_body = Some(body.clone());
+    accounts.prepare(&mut main_request, &mut main_body).unwrap();
+    let unchanged: Value = serde_json::from_slice(main_body.as_ref().unwrap().as_bytes()).unwrap();
+    assert_eq!(unchanged["model"], "muse-spark-1.3-contributor");
+
+    let mut attempt = accounts
+        .before_send(&mut request, prepared.as_ref())
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.url, "http://localhost/astra");
+    let mut delta = json!({"type":"response.output_text.delta","delta":"hello"});
+    attempt.observe(&mut delta, true).unwrap();
+    assert_eq!(delta["delta"], "HELLO");
+    let usage =
+        json!({"input_tokens":100,"input_tokens_details":{"cached_tokens":50},"output_tokens":10});
+    let mut completed = json!({"type":"response.completed","response":{"usage":usage}});
+    attempt.observe(&mut completed, true).unwrap();
+    assert_eq!(completed["response"]["usage"], usage);
+    drop(attempt);
+    assert_eq!(task.attempts().unwrap()[0].raw_usage, Some(usage));
+    let log = std::fs::read_to_string(root.path().join("evidence/mod-middleware.jsonl")).unwrap();
+    assert!(log.contains("subagent") && log.contains("main") && log.contains("raw_usage"));
 }
 
 #[test]
@@ -83,12 +185,8 @@ fn raw_usage_keeps_unknown_fields_and_prices_cached_input_once() {
         .unwrap()
         .unwrap();
     let usage = json!({"input_tokens": 100, "input_tokens_details": {"cached_tokens": 50}, "output_tokens": 10, "future_field": "preserved"});
-    attempt
-        .observe(
-            &json!({"type": "response.completed", "response": {"usage": usage}}),
-            true,
-        )
-        .unwrap();
+    let mut event = json!({"type": "response.completed", "response": {"usage": usage}});
+    attempt.observe(&mut event, true).unwrap();
     drop(attempt);
     let record = task.attempts().unwrap().remove(0);
     assert_eq!(record.raw_usage, Some(usage));
@@ -112,12 +210,8 @@ fn dropping_or_unpriced_usage_keeps_the_full_reservation() {
         .unwrap()
         .unwrap();
     let usage = json!({"input_tokens": 10, "future_cache_schema": 5});
-    second
-        .observe(
-            &json!({"type": "response.incomplete", "response": {"usage": usage}}),
-            false,
-        )
-        .unwrap();
+    let mut event = json!({"type": "response.incomplete", "response": {"usage": usage}});
+    second.observe(&mut event, false).unwrap();
     drop(second);
     assert_eq!(task.remaining().unwrap().2, 0);
     let records = task.attempts().unwrap();
@@ -130,8 +224,12 @@ fn dropping_or_unpriced_usage_keeps_the_full_reservation() {
 fn authorization_is_rechecked_and_route_model_identity_cannot_drift() {
     let (root, accounts, task, mut request, body) = setup();
     request.url.push_str("/elsewhere");
-    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
-    request.url = "http://localhost/responses".into();
+    let admitted = accounts
+        .before_send(&mut request, Some(&body))
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.url, "http://localhost/responses");
+    drop(admitted);
     let wrong = EncodedJsonBody::encode(
         &json!({"model": "muse-spark-1.3", "stream": true, "max_output_tokens": 128}),
     )
@@ -143,7 +241,7 @@ fn authorization_is_rechecked_and_route_model_identity_cannot_drift() {
     )
     .unwrap();
     assert!(accounts.before_send(&mut request, Some(&body)).is_err());
-    assert!(task.attempts().unwrap().is_empty());
+    assert_eq!(task.attempts().unwrap().len(), 1);
 }
 
 #[test]
@@ -167,7 +265,7 @@ fn durable_revocation_marker_blocks_future_contributor_dispatch() {
 fn paid_preparation_caps_output_and_rejects_unbounded_or_underreserved_requests() {
     let (_root, accounts, task, mut request, body) = setup();
     let mut prepared = Some(body.clone());
-    accounts.prepare(&request, &mut prepared).unwrap();
+    accounts.prepare(&mut request, &mut prepared).unwrap();
     let value: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
     assert_eq!(value["max_output_tokens"], 128);
     assert_eq!(value["service_tier"], "default");
@@ -212,14 +310,8 @@ fn provider_ceiling_violation_keeps_usage_and_stops_admission() {
         .unwrap();
     assert_eq!(request.headers["x-omd-request-id"], "1");
     let usage = json!({"input_tokens": 100, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 129});
-    assert!(
-        attempt
-            .observe(
-                &json!({"type": "response.completed", "response": {"usage": usage}}),
-                true
-            )
-            .is_err()
-    );
+    let mut event = json!({"type": "response.completed", "response": {"usage": usage}});
+    assert!(attempt.observe(&mut event, true).is_err());
     drop(attempt);
     assert!(task.check_active().is_err());
     let record = task.attempts().unwrap().remove(0);

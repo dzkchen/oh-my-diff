@@ -2,7 +2,7 @@
 
 <!-- Generated from conformance/contract.json by scripts/mod_conformance.py --write. -->
 
-Mod API `0.1.0-experimental.4`. Every decision a mod can reach through the published
+Mod API `0.1.0-experimental.5`. Every decision a mod can reach through the published
 API is listed below with the support it has, when it takes effect, who owns the
 outcome, and its limits. Capabilities not granted to a package fail before native
 dispatch. Arbitrary host internals are not exposed, and the table is checked
@@ -24,6 +24,8 @@ operation that is not documented here fails `scripts/mod_conformance.py`.
 | **Workflow contract: registration, restriction and observation** | `workflow.status` reports the active contract and its provenance; the `workflow` event | `workflow.restrict` removes authority for the task | exclusive contract registration per contract ID, not a replacement point | registration at activation; restriction inside a task; selection stays native | host: contract selection, enforcement, the assurance floor and durable evidence | restrictions only remove authority; a registration cannot shadow, weaken or select a host contract; two mods claiming one contract ID both fail closed |
 | **Provider adapter route registration** | registration status | register or unregister an explicitly host-approved local service route | no | within the owning mod, generation and task | host: the approved executable, its hashes, rates, credentials and the Responses transport | only pre-approved service IDs; no arbitrary endpoints, credentials or wire protocols; the route dies with the task |
 | **Task status and effective settings observation** | `task.status` returns the effective settings, allowance and task state | not alterable | no | inside a native tool callback | host: all reported state | read-only; secrets, credentials and store digests are never included |
+| **Typed middleware at request, stream, prompt, session, agent, tool and approved-operation boundaries** | field policy metadata marks request identity, scope, raw stream digest, opaque reasoning, raw usage, lifecycle identity, tool outcomes and host-operation receipts observe-only | each admitted request may select one complete authorized preset; bounded output-text deltas may be transformed in deterministic order with original/effective hashes and fallback provenance | no | before each main-thread or subagent request, on each Responses stream item, and at the named native lifecycle boundary | host: preset admission, raw response parsing, reasoning, usage, permission and tool outcomes, accounting, cancellation, transcript/evidence records and workflow enforcement | no arbitrary model/provider/reasoning tuple, endpoint, usage rewrite, reasoning rewrite, tool-result fabrication, completion action or assurance receipt; each hook has a declared wall-time budget and cancellation check |
+| **Host-routed namespaced and versioned service contracts between mods** | installed contract types and status name provider, consumer, exact version, method, scope and generation | a consumer supplies only the declared bounded JSON input and receives a schema-kind-checked result | no | providers, consumers, versions, collisions and dependency order resolve before activation; calls run through the host during a callback | host: provider lookup, capability separation, input/output bounds, generation ownership, call provenance and unload cleanup | no shared globals, state, secrets, filesystem, network, process authority or inherited grants; optional absence is catchable while required absence, incompatibility, cycles and collisions fail before activation |
 
 ## Context and recovery decisions
 
@@ -99,6 +101,8 @@ deterministic and composable; the added control per decision is:
 | Accent, user-message background, success/attention/failure tones and syntax theme | no equivalent | exclusive `terminal` replacement; named theme slots |
 | F2-F12, Ctrl+letter and Alt+letter actions | no equivalent | exclusive `terminal` replacement; insert a draft, submit a message or run a command |
 | Assistant message and tool cell presentation templates | no equivalent | exclusive `terminal` replacement; a template that retains `{text}` exactly once |
+| Typed middleware at request, stream, prompt, session, agent, tool and approved-operation boundaries | upstream hooks expose selected lifecycle and tool boundaries but not this request/stream preset and provenance contract | each admitted request may select one complete authorized preset; bounded output-text deltas may be transformed in deterministic order with original/effective hashes and fallback provenance |
+| Host-routed namespaced and versioned service contracts between mods | no equivalent typed inter-plugin service contract in configured Codex hooks | a consumer supplies only the declared bounded JSON input and receives a schema-kind-checked result |
 
 ## Composition rules
 
@@ -167,6 +171,8 @@ Each reference is resolved by `scripts/mod_conformance.py`.
 | terminal.theme | `patch:theme_slots_map_indexed_and_rgb_colors` · `terminal:accent_color` · `terminal:user_message_background` |
 | terminal.keybindings | `patch:native_escape_and_cancel_keys_cannot_be_intercepted` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `terminal:key_submit` · `terminal:key_conflict_visible` |
 | terminal.rendering | `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `fixture:full/success` |
+| kernel.request_stream_middleware | `rust:request_and_stream_middleware_preserve_authority_and_provenance` · `node:typed middleware and services register without ambient authority` |
+| kernel.inter_mod_services | `rust:typed_services_are_host_routed_versioned_and_generate_installed_types` · `rust:missing_incompatible_optional_cyclic_and_colliding_services_fail_independently` · `node:typed middleware and services register without ambient authority` |
 | order | `rust:composition_order_is_declared_dependencies_first_then_mod_id` · `fixture:conformance/success` |
 | exclusive_versus_middleware | `rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny` · `fixture:conformance/success` |
 | conflict_before_activation | `rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` · `rust:two_mods_may_not_own_the_same_workflow_contract` · `fixture:conformance-conflict/success` |

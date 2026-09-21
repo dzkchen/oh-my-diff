@@ -22,6 +22,7 @@ impl ModHostCall {
             "pi.discover" | "pi.expand" => Ok("pi_resources"),
             "sidecars.start" | "sidecars.stop" | "sidecars.status" => Ok("sidecars"),
             "workflow.status" | "workflow.restrict" => Ok("workflow"),
+            "mods.service" => Ok("services"),
             _ => Err(failure(format!(
                 "unsupported_host_operation: {}",
                 self.operation
@@ -51,14 +52,19 @@ pub(super) fn run(
         }
         let request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
             "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": loaded.selection.settings,
-            "state": loaded.state, "event": event, "name": name, "payload": payload, "receipts": receipts});
+            "state": loaded.state, "event": event, "name": name, "payload": payload, "receipts": receipts,
+            "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
+        let mut request = request;
+        request["field_policies"] = ModHost::field_policies();
         let started = Instant::now();
-        let reply: Reply = serde_json::from_value(process::evaluate(node, &request, active)?)?;
+        let budget = Duration::from_millis(loaded.package.hook_budget_ms);
+        let reply: Reply =
+            serde_json::from_value(process::evaluate(node, &request, budget, active)?)?;
         if event != "inspect" && reply.registrations != loaded.registrations {
             return Err(failure("registration_changed_during_callback"));
         }
         execution += started.elapsed();
-        if execution > Duration::from_secs(6) {
+        if execution > budget {
             return Err(failure("callback_execution_budget"));
         }
         if !reply.calls.starts_with(&expected) {
