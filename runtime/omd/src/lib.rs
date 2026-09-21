@@ -218,6 +218,7 @@ pub use mods::MOD_API_VERSION;
 pub use mods::MOD_CAPABILITIES;
 pub use mods::MOD_EVENTS;
 pub use mods::MOD_HOST_FEATURES;
+pub use mods::MOD_HOST_OPERATIONS;
 pub use mods::MOD_KEY_LIMIT;
 pub use mods::MOD_PACKAGE_SCHEMA_VERSION;
 pub use mods::MOD_REPLACEMENT_POINTS;

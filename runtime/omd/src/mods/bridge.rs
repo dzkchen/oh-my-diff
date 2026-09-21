@@ -41,6 +41,7 @@ pub(super) fn run(
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(ModHostCall) -> Result<Value>,
     progress: &mut dyn FnMut(String),
+    virtual_time_ms: Option<u64>,
 ) -> Result<Reply> {
     let mut receipts = Vec::new();
     let mut expected = Vec::new();
@@ -56,6 +57,7 @@ pub(super) fn run(
             "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
         let mut request = request;
         request["field_policies"] = ModHost::field_policies();
+        request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
         let started = Instant::now();
         let budget = Duration::from_millis(loaded.package.hook_budget_ms);
         let reply: Reply =

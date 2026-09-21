@@ -1,4 +1,4 @@
-import type { ModAPI } from '../../api.d.ts';
+import type { ModAPI } from '@oh-my-diff/mod-api';
 export default function activate(api: ModAPI) {
   api.replace('terminal', ({ event }) => ({
     title: 'My workspace', foreground: 81, sidebar_width: 32, sidebar_side: 'left',

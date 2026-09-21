@@ -1589,7 +1589,7 @@ fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() 
         .unwrap();
     let error = broken["error"].as_str().unwrap();
     assert!(error.contains("ACTIVATION_SENTINEL"), "{error}");
-    assert!(error.contains("index.ts:1:"), "{error}");
+    assert!(error.contains("index.ts:2:"), "{error}");
     let results = runtime.event("context", Value::Null);
     assert_eq!(results.len(), 1);
     assert_eq!(*results[0].1.as_ref().unwrap(), json!({"text":"hello"}));
@@ -1876,4 +1876,175 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
         [json!({"text":"alpha"}), json!({"text":"beta"})]
     );
     assert_eq!(runtime.replacement_owner("context"), None);
+}
+
+#[test]
+fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_owned() {
+    let source = "export default api => {\n  api.command('fail', () => {\n    throw new Error('INTENTIONAL_AUTHOR_FAILURE sk-authorsecret123456789');\n  });\n}";
+    let (temp, _, path) = fixture(source, &["commands"]);
+    let mut runtime = host(&temp);
+    assert_eq!(
+        runtime.status()["mods"][0]["error"],
+        Value::Null,
+        "{}",
+        runtime.status()
+    );
+    let error = runtime
+        .invoke(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "fail",
+            Value::Null,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("INTENTIONAL_AUTHOR_FAILURE"), "{error}");
+    assert!(error.contains("index.ts:3"), "{error}");
+    let status = runtime.status();
+    assert_eq!(status["mods"][0]["telemetry"]["invocations"], 1);
+    assert_eq!(
+        status["mods"][0]["telemetry"]["logs"][0]["outcome"],
+        "error"
+    );
+    let store = temp.path().join("store");
+    let host_types = std::fs::read_to_string(store.join("active-host.d.ts")).unwrap();
+    assert!(host_types.contains(&format!("ActiveModApi = '{MOD_API_VERSION}'")));
+    assert!(host_types.contains("'agents.spawn'"));
+    assert!(store.join("installed-contracts.d.ts").is_file());
+    let bundle = runtime.diagnostic_bundle();
+    let encoded = serde_json::to_string(&bundle).unwrap();
+    assert!(!encoded.contains(path.to_str().unwrap()), "{encoded}");
+    assert!(!encoded.contains(store.to_str().unwrap()), "{encoded}");
+    assert!(!encoded.contains("sk-authorsecret123456789"), "{encoded}");
+    assert!(encoded.contains("$MOD/fixture"));
+    assert!(
+        ModHost::capability_explanation("capability_denied: task")["fix"]
+            .as_str()
+            .unwrap()
+            .contains("exact grant")
+    );
+}
+
+#[test]
+fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal_interaction() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let harness = package(
+        &root,
+        "harness",
+        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('checkpoint.update',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.replace('terminal',()=>({title:'Offline UI',keybindings:{F2:{command:'harness:ping'}}})); }",
+        &[
+            "tools",
+            "commands",
+            "task",
+            "agents",
+            "state",
+            "lifecycle",
+            "middleware",
+            "terminal",
+        ],
+    );
+    trust(
+        &store,
+        &harness,
+        &[
+            "tools",
+            "commands",
+            "task",
+            "agents",
+            "state",
+            "lifecycle",
+            "middleware",
+            "terminal",
+        ],
+    );
+    let provider = service_package(
+        &root,
+        "provider",
+        "export default api => api.provide({name:'example.echo',version:'1.0.0',methods:{echo:{input:'string',output:'string'}}},{echo:value=>value.toUpperCase()})",
+        json!({"exports":[{"name":"example.echo","version":"1.0.0","methods":{"echo":{"input":"string","output":"string"}}}]}),
+        &["services"],
+    );
+    trust(&store, &provider, &["services"]);
+    let consumer = service_package(
+        &root,
+        "consumer",
+        "export default api => api.command('call',()=>api.services.call('example.echo','echo','hello'))",
+        json!({"imports":[{"name":"example.echo","version":"1.0.0"}]}),
+        &["commands", "services"],
+    );
+    trust(&store, &consumer, &["commands", "services"]);
+    let stream = package(
+        &root,
+        "stream",
+        "export default api => api.middleware('response_stream',event=>event.protected?null:{text:String(event.text).toUpperCase()})",
+        &["middleware"],
+    );
+    trust(&store, &stream, &["middleware"]);
+    let mut runtime = host(&temp);
+    let scenario = json!({
+        "schema":1,
+        "virtual_time_ms":1000,
+        "host_operations":{
+            "task.status":[{"result":{"status":"running"}}],
+            "agents.spawn":[{"result":{"handle":"agent-1","route":"sol","permissions":"read_only"}}],
+            "agents.wait":[{"result":{"status":"completed","text":"done","consumed":true}}],
+            "checkpoint.update":[{"result":{"saved":true}}]
+        },
+        "steps":[
+            {"type":"invoke","mod":"harness","event":"command","name":"clock","expect":1000},
+            {"type":"advance_time","ms":25,"expect":{"now_ms":1025}},
+            {"type":"invoke","mod":"harness","event":"command","name":"clock","expect":1025},
+            {"type":"invoke","mod":"harness","event":"tool","name":"exercise","expect":{"task":{"status":"running"},"agent":{"handle":"agent-1","route":"sol","permissions":"read_only"},"result":{"status":"completed","text":"done","consumed":true},"checkpoint":{"saved":true}}},
+            {"type":"tool_outcome","payload":{"call_id":"call-1","agent_id":null,"tool":"exercise","outcome":{"status":"ok"}},"expect":[{"mod":"harness","value":null}]},
+            {"type":"agent","payload":{"phase":"end","agent_id":"agent-1","parent_agent_id":null,"role":"worker","status":"completed"},"expect":[{"mod":"harness","value":null}]},
+            {"type":"response_stream","payload":{"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,"opaque_reasoning":false,"protected":false,"text":"hello"}},
+            {"type":"invoke","mod":"consumer","event":"command","name":"call","expect":"HELLO"},
+            {"type":"terminal_mount","mod":"harness","payload":{"event":"draw","checkpoint":null},"expect":{"title":"Offline UI","keybindings":{"F2":{"command":"harness:ping"}}}},
+            {"type":"terminal_interact","mod":"harness","key":"F2","payload":{"event":"draw","checkpoint":null},"expect":{"action":{"command":"harness:ping","args":""},"result":1}},
+            {"type":"reload"},
+            {"type":"invoke","mod":"harness","event":"command","name":"clock","cancelled":true,"expect_error":"callback_cancelled"}
+        ]
+    });
+    let result = runtime.offline_test(scenario).unwrap();
+    assert_eq!(result["offline"], true);
+    assert_eq!(result["paid_requests"], 0);
+    assert_eq!(result["virtual_time_ms"], 1025);
+    assert_eq!(result["host_calls"].as_array().unwrap().len(), 4);
+    assert_eq!(result["steps"][6]["value"]["effective"], "HELLO");
+    assert_eq!(result["steps"][10]["value"]["generation"], 2);
+}
+
+#[test]
+fn offline_status_retains_conflicts_without_running_paid_work() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for id in ["first", "second"] {
+        let path = package(
+            &root,
+            id,
+            &format!("export default api => api.replace('terminal',()=>({{title:'{id}'}}))"),
+            &["terminal"],
+        );
+        trust(&store, &path, &["terminal"]);
+    }
+    let mut runtime = host(&temp);
+    let result = runtime
+        .offline_test(json!({"schema":1,"steps":[{"type":"status"}]}))
+        .unwrap();
+    assert_eq!(result["paid_requests"], 0);
+    let errors = result["steps"][0]["value"]["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value["error"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(
+        errors
+            .iter()
+            .all(|error| error.contains("replacement_conflict"))
+    );
 }

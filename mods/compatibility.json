@@ -10,6 +10,9 @@
     "state_storage_schema": 1,
     "installed_contract_types": 1,
     "features": [
+      "author_diagnostics_v1",
+      "author_offline_runner_v1",
+      "author_tooling_v1",
       "installed_contract_types_v1",
       "service_contracts_v1",
       "source_use_v1",

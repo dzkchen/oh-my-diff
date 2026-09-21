@@ -1,3 +1,4 @@
+mod author;
 mod bridge;
 mod packages;
 mod pi;
@@ -34,6 +35,7 @@ use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Instant;
 
 pub use store::ModStore;
 
@@ -44,11 +46,40 @@ pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
 pub const INSTALLED_CONTRACT_TYPES_VERSION: u32 = 1;
 pub const MOD_HOST_FEATURES: &[&str] = &[
+    "author_diagnostics_v1",
+    "author_offline_runner_v1",
+    "author_tooling_v1",
     "installed_contract_types_v1",
     "service_contracts_v1",
     "source_use_v1",
     "state_migration_v1",
     "transactional_reload_v1",
+];
+pub const MOD_HOST_OPERATIONS: &[&str] = &[
+    "task.status",
+    "routes.list",
+    "checkpoint.read",
+    "checkpoint.update",
+    "agents.spawn",
+    "agents.message",
+    "agents.cancel",
+    "agents.result",
+    "agents.wait",
+    "agents.list",
+    "review.run",
+    "review.complete",
+    "delegation.contribute",
+    "recovery.escalate",
+    "tools.exec",
+    "pi.discover",
+    "pi.expand",
+    "providers.unregister",
+    "providers.register",
+    "sidecars.start",
+    "sidecars.status",
+    "sidecars.stop",
+    "workflow.status",
+    "workflow.restrict",
 ];
 pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
     ("0.1.0-experimental.4", "deprecated", "2027-03-20"),
@@ -741,6 +772,29 @@ struct Loaded {
     unused_grants: Vec<String>,
     unused_environment: Vec<String>,
     error: Option<String>,
+    telemetry: ModTelemetry,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct ModTelemetry {
+    invocations: u64,
+    total_micros: u128,
+    last_micros: u128,
+    logs: Vec<Value>,
+}
+
+impl ModTelemetry {
+    fn record(&mut self, generation: u64, event: &str, name: &str, elapsed: u128, outcome: &str) {
+        self.invocations = self.invocations.saturating_add(1);
+        self.total_micros = self.total_micros.saturating_add(elapsed);
+        self.last_micros = elapsed;
+        self.logs
+            .push(json!({"generation":generation,"event":event,"name":name,
+            "outcome":outcome,"elapsed_micros":elapsed}));
+        if self.logs.len() > 64 {
+            self.logs.remove(0);
+        }
+    }
 }
 
 pub struct ModHost {
@@ -754,6 +808,7 @@ pub struct ModHost {
     reload_error: Option<String>,
     service_calls: Vec<Value>,
     tool_validator: fn(&Value) -> Result<()>,
+    virtual_time_ms: Option<u64>,
 }
 
 impl ModHost {
@@ -774,6 +829,7 @@ impl ModHost {
             reload_error: None,
             service_calls: Vec::new(),
             tool_validator,
+            virtual_time_ms: None,
         };
         host.reload()?;
         Ok(host)
@@ -819,6 +875,7 @@ impl ModHost {
                 unused_grants: Vec::new(),
                 unused_environment: Vec::new(),
                 error: None,
+                telemetry: ModTelemetry::default(),
             };
             let prepared = (|| {
                 loaded.state = self.store.state(
@@ -1249,6 +1306,7 @@ impl ModHost {
                 ))
             },
             &mut |_| {},
+            None,
         )
     }
 
@@ -1326,6 +1384,8 @@ impl ModHost {
         )?;
         let previous_state = loaded.state.clone();
         let node = self.node.clone();
+        let virtual_time_ms = self.virtual_time_ms;
+        let started = Instant::now();
         let result = (|| {
             match event {
                 "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
@@ -1371,6 +1431,7 @@ impl ModHost {
                     result
                 },
                 &mut progress,
+                virtual_time_ms,
             )?;
             if !active() {
                 return Err(failure("callback_cancelled"));
@@ -1441,14 +1502,21 @@ impl ModHost {
             .loaded
             .get_mut(id)
             .ok_or_else(|| failure("mod_disabled"))?;
+        let elapsed = started.elapsed().as_micros();
         match result {
             Ok((value, state)) => {
+                current
+                    .telemetry
+                    .record(self.generation, event, name, elapsed, "ok");
                 if state != previous_state {
                     current.state = state;
                 }
                 Ok(value)
             }
             Err(error) => {
+                current
+                    .telemetry
+                    .record(self.generation, event, name, elapsed, "error");
                 if !error.to_string().starts_with("state_conflict") {
                     current.error = Some(error.to_string());
                 }
@@ -1819,7 +1887,31 @@ impl ModHost {
         }
         output.push_str("}\n");
         self.store
-            .write_bytes("installed-contracts.d.ts", output.as_bytes())
+            .write_bytes("installed-contracts.d.ts", output.as_bytes())?;
+        self.write_active_host_types()
+    }
+
+    fn write_active_host_types(&self) -> Result<()> {
+        let literal = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| format!("'{value}'"))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        };
+        let events = MOD_EVENTS
+            .iter()
+            .map(|(event, _)| *event)
+            .collect::<Vec<_>>();
+        let output = format!(
+            "export type ActiveHostRelease = '{OMD_HOST_RELEASE}';\nexport type ActiveCodexRelease = '{CODEX_HOST_RELEASE}';\nexport type ActiveModApi = '{MOD_API_VERSION}';\nexport type ActivePackageSchema = {MOD_PACKAGE_SCHEMA_VERSION};\nexport type ActiveStateStorageSchema = {MOD_STATE_STORAGE_SCHEMA_VERSION};\nexport type ActiveCapability = {};\nexport type ActiveEvent = {};\nexport type ActiveReplacementPoint = {};\nexport type ActiveHostOperation = {};\n",
+            literal(MOD_CAPABILITIES),
+            literal(&events),
+            literal(MOD_REPLACEMENT_POINTS),
+            literal(MOD_HOST_OPERATIONS),
+        );
+        self.store
+            .write_bytes("active-host.d.ts", output.as_bytes())
     }
 
     pub fn field_policies() -> Value {
@@ -1845,6 +1937,7 @@ impl ModHost {
             "generation": self.generation, "reload_error": self.reload_error,
             "order": self.order, "rejected": self.rejected, "field_policies": Self::field_policies(),
             "installed_contract_types": self.store.root.join("installed-contracts.d.ts"),
+            "active_host_types": self.store.root.join("active-host.d.ts"),
             "service_calls": self.service_calls,
             "mods": self.loaded.iter().map(|(id, m)| json!({"id": id, "version": m.package.version,
                 "api":m.package.api,"api_stability":api_support(&m.package.api).map(|support|support.0),
@@ -1857,7 +1950,7 @@ impl ModHost {
                 "scope": m.selection.scope, "requires": m.package.requires, "services": m.package.services,
                 "source_use":m.source_use,"unused_grants":m.unused_grants,
                 "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
-                "registrations": m.registrations, "error": m.error})).collect::<Vec<_>>()})
+                "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error})).collect::<Vec<_>>()})
     }
 }
 

@@ -1,4 +1,4 @@
-import type { ModAPI } from '../../api.d.ts';
+import type { ModAPI } from '@oh-my-diff/mod-api';
 export default function activate(api: ModAPI) {
   api.tool({ name: 'compare', label: 'Compare investigations', description: 'Compare two read-only native investigations', parameters: { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] } }, args => {
     if (!args || Array.isArray(args) || typeof args !== 'object' || typeof args.prompt !== 'string') throw new Error('prompt required');

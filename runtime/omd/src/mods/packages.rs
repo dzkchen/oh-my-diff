@@ -101,6 +101,7 @@ impl ModStore {
             unused_grants: Vec::new(),
             unused_environment: Vec::new(),
             error: None,
+            telemetry: ModTelemetry::default(),
         };
         let inspected = ModHost::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;
         ModHost::validate_registrations(&loaded.package, &inspected.registrations)?;

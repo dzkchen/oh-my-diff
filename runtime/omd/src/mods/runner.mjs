@@ -20,6 +20,13 @@ const context = createContext(globals, {
 });
 const bootstrap = `
 const request = JSON.parse(${JSON.stringify(JSON.stringify(request))});
+if (Number.isSafeInteger(request.virtual_time_ms)) {
+  const fixed = request.virtual_time_ms;
+  globalThis.Date = class extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixed])); }
+    static now() { return fixed; }
+  };
+}
 const handlers = new Map();
 const tools = new Map();
 const commands = new Map();
@@ -171,7 +178,7 @@ try {
   const setup = new SourceTextModule(bootstrap, { context });
   await setup.link(() => { throw new Error('unsupported_import'); });
   await setup.evaluate({ timeout: request.hook_budget_ms });
-  const source = stripTypeScriptTypes(request.source, { mode: 'strip', sourceUrl: request.filename });
+  const source = stripTypeScriptTypes(request.source, { mode: 'transform', sourceMap: true, sourceUrl: request.filename });
   const mod = new SourceTextModule(source, { context, identifier: request.filename });
   await mod.link(async specifier => {
     if (request.adapter === 'pi-0.74-tools-commands-v1' && specifier === 'typebox') {

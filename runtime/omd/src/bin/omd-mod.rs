@@ -7,7 +7,7 @@ use std::path::PathBuf;
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | status/reload STORE | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
+            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
         )
     };
     match args {
@@ -78,6 +78,39 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root] if command == "status" => {
             Ok(ModHost::open(PathBuf::from(root).canonicalize()?)?.status())
         }
+        [command, root] if command == "report" => {
+            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
+            Ok(
+                serde_json::json!({"api":status["api"],"mods":status["mods"].as_array()
+                .into_iter().flatten().map(|item| serde_json::json!({
+                    "id":item["id"],"declared":{"capabilities":item["capabilities"],
+                        "services":item["services"]},"used":item["source_use"],
+                    "unused_grants":item["unused_grants"],
+                    "unused_environment":item["unused_environment"],"error":item["error"]
+                })).collect::<Vec<_>>() }),
+            )
+        }
+        [command, root] if command == "events" => {
+            Ok(ModHost::open(PathBuf::from(root).canonicalize()?)?.author_inspection())
+        }
+        [command, root] if command == "declarations" => {
+            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
+            Ok(
+                serde_json::json!({"api":status["api"],"active_host":status["active_host_types"],
+                "installed_contracts":status["installed_contract_types"]}),
+            )
+        }
+        [command, root, scenario] if command == "test" => {
+            let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
+            ModHost::open(PathBuf::from(root).canonicalize()?)?.offline_test(scenario)
+        }
+        [command, root, output] if command == "diagnostics" => {
+            let bundle = ModHost::open(PathBuf::from(root).canonicalize()?)?.diagnostic_bundle();
+            let output = PathBuf::from(output);
+            std::fs::write(&output, serde_json::to_vec_pretty(&bundle)?)?;
+            Ok(serde_json::json!({"bundle":output,"redacted":true}))
+        }
+        [command, denial] if command == "explain" => Ok(ModHost::capability_explanation(denial)),
         [command, root, id, name, payload] if command == "command" => {
             let mut host = ModHost::open(PathBuf::from(root).canonicalize()?)?;
             host.invoke(

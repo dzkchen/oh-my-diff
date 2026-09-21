@@ -43,6 +43,7 @@ pub(super) fn evaluate(
     let mut child = command(node)?
         .args([
             "--max-old-space-size=64",
+            "--enable-source-maps",
             "--no-warnings",
             "--experimental-vm-modules",
             "--input-type=module",

@@ -5,6 +5,28 @@ Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScri
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.
 
+Install the exact `@oh-my-diff/mod-api@0.1.0-experimental.6` author package with
+pnpm. It exports the typed SDK and `omd-mod-author` CLI. See
+[REFERENCE.md](REFERENCE.md) for version-matched API and command documentation.
+The quickest local flow is:
+
+```sh
+pnpm exec omd-mod-author create ./my_mod my_mod
+cd my_mod
+pnpm install --frozen-lockfile
+pnpm check
+pnpm test
+pnpm run run
+pnpm debug
+pnpm run package
+```
+
+`pnpm test` is owned by the OMD engine and refuses unmocked host operations, so
+author checks do not make paid requests. `pnpm watch -- /absolute/mod-store`
+re-inspects an edited local source, retains the exact declared capability set,
+and queues a safe-boundary reload. The author package also ships all executable
+examples with `omd-mod-author examples DIR`.
+
 ## Install, edit, and recover
 
 Build the patched runtime using the repository's normalized-upstream procedure:

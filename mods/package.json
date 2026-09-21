@@ -1,12 +1,33 @@
 {
   "name": "@oh-my-diff/mod-api",
   "version": "0.1.0-experimental.6",
-  "private": true,
+  "license": "Apache-2.0",
   "type": "module",
+  "packageManager": "pnpm@11.14.0",
+  "engines": {
+    "node": "24.18.0",
+    "pnpm": ">=11.14.0"
+  },
   "types": "api.d.ts",
+  "exports": {
+    ".": {
+      "types": "./api.d.ts"
+    }
+  },
+  "bin": {
+    "omd-mod-author": "author/cli.mjs"
+  },
+  "files": [
+    "api.d.ts",
+    "author",
+    "examples",
+    "REFERENCE.md",
+    "README.md"
+  ],
   "scripts": {
     "test": "node --test runner.test.mjs",
-    "check": "tsc -p tsconfig.json"
+    "check": "tsc -p tsconfig.json",
+    "package": "pnpm pack --pack-destination dist"
   },
   "devDependencies": {
     "typescript": "5.9.3"
