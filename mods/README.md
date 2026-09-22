@@ -172,14 +172,15 @@ reader and tool packages stay in Rust integration tests. They are not packed as
 SDK examples or offered by `omd-mod-author`; their user-facing forms belong in a
 skill/hook or plugin rather than a mod.
 
-Two first-party packages are shipped as an installable private preview of the
+Three first-party packages are shipped as an installable private preview of the
 selected signature workflows. They use the same public API and capabilities as
 any outside package:
 
 | Package | Extension type | Workflow and mod requirement |
 | --- | --- | --- |
 | [omd_workspace](first-party/omd_workspace/index.ts) | mod | Replaces the live terminal workspace: task/worker/allowance panels, theme, keys, rendering |
-| [omd_coordination](first-party/omd_coordination/index.ts) | mod | Replaces live coordination and context policy: lead route, operating brief, delegated worker evidence |
+| [omd_coordination](first-party/omd_coordination/index.ts) | mod | Replaces live coordination and context policy: lead route, operating brief, delegated worker evidence; exports bounded delegation preparation |
+| [omd_recovery](first-party/omd_recovery/index.ts) | mod | Replaces live escalation and delegation dispatch policy: failure class, tool eligibility, advisory route, and Contributor-outage action |
 
 [PREVIEW.md](PREVIEW.md) is the first-use and customization guide;
 `scripts/private_lean_v1.py preview install` provisions them from pinned

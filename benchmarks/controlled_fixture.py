@@ -26,10 +26,10 @@ def contract_plan(binary, choice):
 
 
 def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None, mod_profile="counter"):
-    policy_mod = mod_profile.startswith(("preview", "coordination", "conformance", "exercise"))
+    policy_mod = mod_profile.startswith(("preview", "coordination", "recovery", "conformance", "exercise"))
     context_marker = ("atlas_policy 2.0.0 (paired) assembled turn" if mod_profile.startswith("exercise")
                       else "Coordination policy (omd_coordination" if policy_mod else "MOD_CONTEXT_SENTINEL")
-    if mod_node is not None and scenario not in ("direct", "omd-off", "success", "client-loss-resume", "completion", "escalation"):
+    if mod_node is not None and scenario not in ("direct", "omd-off", "success", "client-loss-resume", "completion", "escalation", "outage-fallback", "outage-drift"):
         raise ValueError("mod fixture requires direct, omd-off, success, or client-loss-resume scenario")
     destination.mkdir(parents=True, exist_ok=False)
     repo, home = destination / "repo", destination / "home"
@@ -68,7 +68,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             if scenario == "client-loss-resume" and owner and ((mod_node is None and owner.startswith("contributor-")) or (mod_node is not None and policy_mod and owner.startswith("contributor-")) or (mod_node is not None and owner.startswith("mod-") and "MOD_ADAPTER" in json.dumps(body))) and not Provider.abrupt_delay_started:
                 Provider.abrupt_delay_started = True
                 time.sleep(30)
-            if scenario == "outage-fallback" and owner and owner.startswith("contributor-") and "fallback" not in owner:
+            if scenario in ("outage-fallback", "outage-drift") and owner and owner.startswith("contributor-") and "fallback" not in owner:
                 self.send_response(503)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -224,7 +224,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 if scenario == "index-conflict":
                     (repo / "new-tracked.txt").write_text("concurrent tracked file\n")
                     subprocess.run(["/usr/bin/git", "add", "new-tracked.txt"], cwd=repo, env=git_env, check=True)
-                if scenario == "conflict":
+                if scenario in ("conflict", "outage-drift"):
                     (repo / "solution.py").write_text("intervening user edit\n")
                 review = {"candidate_sha256": match.group(1) if match else "missing", "findings": [], "resolved_finding_ids": []}
                 if scenario == "review-reject":
@@ -529,7 +529,7 @@ enabled = false
         if reviewer_requests:
             same_lead = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[effective_lead]
             opposite_lead = {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[effective_lead]
-            expected_reviewer = same_lead if scenario in ("outage-fallback", *SOLO_SCENARIOS) else opposite_lead
+            expected_reviewer = same_lead if scenario in ("outage-fallback", "outage-drift", *SOLO_SCENARIOS) else opposite_lead
             if scenario in SOLO_SCENARIOS:
                 assert reviewer_requests[0]["model"] == expected_reviewer, "solo final review did not resolve to the lead's own route"
                 assert "your own final self-review" in json.dumps(reviewer_requests[0]), "solo review prompt did not name itself a self-review"
@@ -547,10 +547,12 @@ enabled = false
             assert not any(ids), "OMD-off requests unexpectedly carried native admission IDs"
         else:
             assert all(ids) and len(ids) == len(set(ids)), "wire attempts lack unique native admission IDs"
-        if scenario == "escalation":
+        if scenario == "escalation" and mod_profile == "recovery-denied":
+            assert not escalation_result and not escalation_requests
+        elif scenario == "escalation":
             assert escalation_result.get("status") == "consulted", escalation_result or process.stderr[-2000:]
             assert escalation_result["failure"]["class"] == failure_class
-            assert escalation_requests and escalation_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[lead]
+            assert escalation_requests and escalation_requests[0]["model"] == {"sol": "gpt-6-astra", "astra": "gpt-5.6-sol"}[effective_lead]
             source = json.loads(next((destination / "evidence").glob("failure-source-*.json")).read_text())
             assert source["call_ids"] == ["failed-edit"] and any(i.get("type") == "function_call_output" for i in source["items"]), source
         elif scenario in SOLO_SCENARIOS:
@@ -631,7 +633,7 @@ enabled = false
                 checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
                 assert checkpoint["allowance"]["requests_consumed"] == len(requests)
         else:
-            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume", "checkpoint", "completion", "completion-unverified") else "blocked" if scenario == "structured-clarification" else "failed"
+            expected = "integrated" if scenario in ("success", "permissions", "runner", "outage-fallback", "client-loss-resume", "checkpoint", "completion", "completion-unverified") and mod_profile != "recovery-pause" else "blocked" if scenario == "structured-clarification" else "failed"
             assert result.get("status") == expected, result or process.stderr[-2000:]
             if result.get("status") == "integrated":
                 assert (result.get("worker_report") is not None) == structured_worker_reports
@@ -658,10 +660,13 @@ enabled = false
                 checkpoint = json.loads((destination / "evidence/checkpoint.json").read_text())
                 assert checkpoint["task_status"] == ("completed" if scenario == "completion" else "stopped")
             if scenario == "outage-fallback":
-                assert result["implementation"]["fallback_used"] is True
-                assert len(result["implementation"]["contributor_failures"]) == 2
+                if mod_profile != "recovery-pause":
+                    assert result["implementation"]["fallback_used"] is True
+                    assert len(result["implementation"]["contributor_failures"]) == 2
                 events = [json.loads(path.read_text())["record"]["event"] for path in sorted((destination / "evidence").glob("0*.json"))]
                 assert "loop_reassessed" in events
+            if scenario == "outage-drift":
+                assert result["status"] == "failed" and "integration refused" in result["error"], result
             if scenario == "client-loss-resume":
                 assert any(attempt["status"] in ("unknown", "in_flight") for attempt in result["attempts"])
                 events = [json.loads(path.read_text())["record"] for path in sorted((destination / "evidence").glob("0*.json"))]
@@ -692,9 +697,13 @@ enabled = false
         assert "SYNTHETIC_SECRET_MUST_NOT_REACH_WORKER" not in json.dumps(requests)
         if scenario in ("review-reject", "index-conflict", "request-cap", "revoked", "deadline", "structured-clarification"):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
+        if mod_profile == "recovery-pause":
+            assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
         if scenario in ("direct", "omd-off", "escalation", "reactive", *SOLO_SCENARIOS):
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
         if scenario == "conflict":
+            assert (repo / "solution.py").read_text() == "intervening user edit\n"
+        if scenario == "outage-drift":
             assert (repo / "solution.py").read_text() == "intervening user edit\n"
         if reactive_rules and scenario != "reactive":
             activations = [json.loads(path.read_text()) for path in (destination / "evidence").glob("reactive-*.json")]
@@ -751,7 +760,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "omd-off", "escalation", "reactive", "outage-fallback", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified", *CONTRACT_SCENARIOS), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "omd-off", "escalation", "reactive", "outage-fallback", "outage-drift", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified", *CONTRACT_SCENARIOS), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")
@@ -760,7 +769,7 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
-    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "conformance", "conformance-conflict", "exercise"), default="counter")
+    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise"), default="counter")
     args = parser.parse_args()
     print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 

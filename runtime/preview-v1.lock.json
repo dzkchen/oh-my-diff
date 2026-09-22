@@ -10,22 +10,41 @@
         "agents",
         "commands",
         "context",
-        "interception",
         "lifecycle",
         "recovery",
         "routing",
+        "services",
         "state",
         "task",
         "tools"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "90a1f9b970fd98e1eb6554d32c049b8a00b86c90972b7db8783001742ee7ea4e",
-        "mod.json": "12c5e171ec2080c4c26633ba228682f65db0931fbfb4e71f7267eb7f818cd75d"
+        "index.ts": "0a8e0d8047f0034d1042598064cc098555ed73266796625804e9322802c389c7",
+        "mod.json": "a1c955a72b53e92ef43e07db4fac216c385d14b68da2fb4ce7076da7cf214a84"
       },
-      "package_sha256": "4998e072b0344a65ff6e56e992397b434b4c77356b9df01647bd8279bf6f4cba",
+      "package_sha256": "d1bd72db8af81c82f4b9f36d5d718ec08bafaa32292c2558a66a9ca6a380d04e",
       "source": "mods/first-party/omd_coordination",
-      "version": "0.1.0-preview.2"
+      "version": "0.1.0-preview.3"
+    },
+    "omd_recovery": {
+      "capabilities": [
+        "commands",
+        "interception",
+        "lifecycle",
+        "recovery",
+        "services",
+        "state",
+        "tools"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "88328002997439db386b3c7cd70564dfa8ad88997dfc3ee14d3f7660ff975777",
+        "mod.json": "a1246859ce39ff46d14e1d4fefd1342cb76acc6e77c4f939fb47e75dcab00dcf"
+      },
+      "package_sha256": "02bf465868e377e67c92512a4e5e713bb360ff31eb4950d57a4347fb311da3ae",
+      "source": "mods/first-party/omd_recovery",
+      "version": "0.1.0-preview.1"
     },
     "omd_workspace": {
       "capabilities": [
@@ -48,6 +67,6 @@
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "4ae47fa13f04f15c97aa2c8b17b3bff5f7d6f27248e74a90c42d0c4325de9baa"
+    "sha256": "4b03cf9bc608cf8ea2982c1f981b499b3c08d9ef09fc2466ae1b0912715575b6"
   }
 }

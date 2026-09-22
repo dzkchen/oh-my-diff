@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../api.d.ts';
+import type { ContributionRequest, Json, ModAPI, ServiceContract } from '../../api.d.ts';
 
 type ContextPolicy = 'focused_brief' | 'shared_task_packet' | 'parent_history';
 type LeadPolicy = 'sol' | 'astra' | 'task_entry';
@@ -12,7 +12,13 @@ const CONTEXT_ALIASES: Record<string, ContextPolicy> = {
   parent_history: 'parent_history',
 };
 const LEAD_POLICIES: LeadPolicy[] = ['sol', 'astra', 'task_entry'];
-const VERSION = '0.1.0-preview.2';
+const VERSION = '0.1.0-preview.3';
+
+const COORDINATION_SERVICE: ServiceContract = {
+  name: 'omd.coordination',
+  version: '1.0.0',
+  methods: { prepare_delegation: { input: 'object', output: 'object' } },
+};
 
 export default function activate(api: ModAPI) {
   const strings = (value: Json | undefined): string[] =>
@@ -41,6 +47,26 @@ export default function activate(api: ModAPI) {
     if (!(error instanceof Error)) throw error;
     return { denied: error.message, policy: provenance() };
   };
+
+  const prepareDelegation = (argument: Json): Json => {
+    const request = argument && typeof argument === 'object' && !Array.isArray(argument) ? argument : {};
+    const policy = contextPolicy();
+    const declared = evidence();
+    const requested = strings(request.selected_evidence);
+    const selected =
+      policy === 'focused_brief'
+        ? declared.length
+          ? requested.filter(path => declared.includes(path))
+          : requested
+        : [];
+    const brief = `${typeof request.brief === 'string' ? request.brief : ''} [${provenance()}]`.trim();
+    remember({ operation: 'delegate', policy, selected });
+    if (policy === 'shared_task_packet') return {};
+    if (policy === 'parent_history') return { brief };
+    return { brief, selected_evidence: selected };
+  };
+
+  api.provide(COORDINATION_SERVICE, { prepare_delegation: prepareDelegation });
 
   api.replace('routing', ({ routes, model, provider, reasoning }) => {
     const policy = leadPolicy();
@@ -83,23 +109,11 @@ export default function activate(api: ModAPI) {
       },
     },
     argument => {
-      const request = argument && typeof argument === 'object' && !Array.isArray(argument) ? argument : {};
       const policy = contextPolicy();
-      const declared = evidence();
-      const requested = strings(request.selected_evidence);
-      const selected =
-        policy === 'focused_brief'
-          ? declared.length
-            ? requested.filter(path => declared.includes(path))
-            : requested
-          : [];
-      const brief = `${typeof request.brief === 'string' ? request.brief : ''} [${provenance()}]`.trim();
+      const prepared = prepareDelegation(argument);
       api.progress(`worker context: ${policy}`);
-      remember({ operation: 'delegate', policy, selected });
       try {
-        if (policy === 'shared_task_packet') return api.host.call('delegation.contribute', {});
-        if (policy === 'parent_history') return api.host.call('delegation.contribute', { brief });
-        return api.host.call('delegation.contribute', { brief, selected_evidence: selected });
+        return api.host.call('delegation.contribute', prepared as ContributionRequest);
       } catch (error) {
         return failed(error);
       }
@@ -138,10 +152,6 @@ export default function activate(api: ModAPI) {
         return failed(error);
       }
     },
-  );
-
-  api.replace('tool_before', ({ tool, arguments: passed }) =>
-    tool === 'omd_contribute' ? { tool: 'mod_omd_coordination_delegate', arguments: passed } : null,
   );
 
   api.command(

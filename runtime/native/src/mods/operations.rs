@@ -2,6 +2,23 @@ use super::*;
 use codex_omd::ModHostCall;
 use std::path::Path;
 
+fn recovery_selection(host: &Host, id: &str, value: Value) -> Result<PolicySelection, String> {
+    let value = value
+        .as_str()
+        .filter(|value| matches!(*value, "opposite_lead" | "pause"))
+        .ok_or("invalid_recovery_policy")?;
+    let owner = host
+        .mod_owners
+        .get(id)
+        .cloned()
+        .ok_or("unknown_policy_owner")?;
+    Ok(PolicySelection {
+        policy: "mod".into(),
+        value: value.into(),
+        provenance: json!({"owner": owner}),
+    })
+}
+
 pub(super) async fn dispatch(
     agents: &agents::Agents,
     services: &services::Services,
@@ -79,7 +96,8 @@ pub(super) async fn dispatch(
         }
         "review.run" | "review.complete" | "delegation.contribute" | "recovery.escalate" => {
             let lead = Arc::new(lead.clone());
-            let final_cadence = request.arguments["cadence"] == "final";
+            let mut arguments = request.arguments;
+            let final_cadence = arguments["cadence"] == "final";
             host.authorize_contract(match request.operation.as_str() {
                 "review.run" if final_cadence => codex_omd::ContractOperation::FinalReview,
                 "review.run" => codex_omd::ContractOperation::MilestoneReview,
@@ -87,16 +105,29 @@ pub(super) async fn dispatch(
                 "delegation.contribute" => codex_omd::ContractOperation::Delegate,
                 _ => codex_omd::ContractOperation::Escalate,
             })?;
+            let recovery = match request.operation.as_str() {
+                "delegation.contribute" => arguments
+                    .as_object_mut()
+                    .and_then(|object| object.remove("outage_action"))
+                    .map(|value| recovery_selection(host, id, value))
+                    .transpose()?,
+                "recovery.escalate" => arguments
+                    .as_object_mut()
+                    .and_then(|object| object.remove("advisory_route"))
+                    .map(|value| recovery_selection(host, id, value))
+                    .transpose()?,
+                _ => None,
+            };
             let tool: Box<dyn for<'a> ToolExecutor<ToolCall<'a>>> = match request.operation.as_str() {
                 "review.run" if host.manifest.capabilities.unified_review => Box::new(ReviewTool(lead)),
                 "review.complete" if host.manifest.capabilities.completion_gate => Box::new(CompletionTool(lead)),
-                "delegation.contribute" if host.manifest.capabilities.delegation => Box::new(ContributionTool(lead)),
-                "recovery.escalate" if host.manifest.capabilities.escalation => Box::new(EscalationTool(lead)),
+                "delegation.contribute" if host.manifest.capabilities.delegation => Box::new(ContributionTool { lead, recovery }),
+                "recovery.escalate" if host.manifest.capabilities.escalation => Box::new(EscalationTool { lead, recovery }),
                 _ => return Err("native_capability_disabled".into()),
             };
             let mut nested = call.clone();
             nested.tool_name = tool.tool_name();
-            nested.payload = codex_tools::ToolPayload::Function { arguments: serde_json::to_string(&request.arguments).map_err(|e| e.to_string())? };
+            nested.payload = codex_tools::ToolPayload::Function { arguments: serde_json::to_string(&arguments).map_err(|e| e.to_string())? };
             let payload = nested.payload.clone();
             let output = tool.handle(nested).await.map_err(|e| e.to_string())?;
             Ok(output.code_mode_result(&payload))

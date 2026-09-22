@@ -91,8 +91,10 @@ export interface CheckpointUpdate {
 }
 export interface ReviewRequest { cadence: 'stable_milestone' | 'risk_triggered' | 'every_turn' | 'final'; candidate_sha256: string; stable: boolean; risk?: string }
 export interface CompletionRequest { candidate_sha256: string; contract_sha256: string }
-export interface ContributionRequest { brief?: string; selected_evidence?: string[] }
-export interface EscalationRequest { failure_class: 'environment' | 'edit' | 'diagnosis' | 'model'; summary: string; call_ids: string[] }
+export type FailureClass = 'environment' | 'edit' | 'diagnosis' | 'model';
+export type RecoveryAction = 'opposite_lead' | 'pause';
+export interface ContributionRequest { brief?: string; selected_evidence?: string[]; outage_action?: RecoveryAction }
+export interface EscalationRequest { failure_class: FailureClass; summary: string; call_ids: string[]; advisory_route?: Extract<RecoveryAction, 'opposite_lead'> }
 export interface HostOperations {
   'task.status': { arguments: null; result: Json };
   'routes.list': { arguments: null; result: Route[] };

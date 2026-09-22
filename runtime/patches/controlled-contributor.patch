@@ -2411,10 +2411,10 @@ index 0000000..a12fd99
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..637de9e
+index 0000000..26a5e0d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,2356 @@
+@@ -0,0 +1,2380 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -3893,6 +3893,7 @@ index 0000000..637de9e
 +    lead: &Lead,
 +    call: &ToolCall<'_>,
 +    request: ContributionRequest,
++    recovery: Option<&PolicySelection>,
 +) -> Result<Value, String> {
 +    let host = &lead.host;
 +    host.authorize_contract(codex_omd::ContractOperation::Delegate)?;
@@ -4108,11 +4109,24 @@ index 0000000..637de9e
 +        }
 +    }
 +    let fallback_used = selected_root.is_none();
++    let recovery_selection = recovery.cloned().unwrap_or_else(|| PolicySelection {
++        policy: "native_fallback".into(),
++        value: if manifest.recovery.fallback_to_opposite_lead {
++            "opposite_lead"
++        } else {
++            "pause"
++        }
++        .into(),
++        provenance: json!({"owner": codex_omd::PolicyOwner::bundled()}),
++    });
 +    if fallback_used {
 +        host.authorize()?;
-+        if !manifest.recovery.fallback_to_opposite_lead || !reassessed {
++        if recovery_selection.value != "opposite_lead"
++            || !manifest.recovery.fallback_to_opposite_lead
++            || !reassessed
++        {
 +            return Err(format!(
-+                "Contributor outage fallback is not permitted: {}",
++                "Contributor outage fallback is not permitted by the selected recovery policy: {}",
 +                contributor_failures.join("; ")
 +            ));
 +        }
@@ -4482,7 +4496,7 @@ index 0000000..637de9e
 +    }
 +    codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
 +    Ok(
-+        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "worker_report": worker_report, "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
++        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "worker_report": worker_report, "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures, "recovery_policy": recovery_selection}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
 +    )
 +}
 +
@@ -4551,6 +4565,7 @@ index 0000000..637de9e
 +    lead: &Lead,
 +    call: &ToolCall<'_>,
 +    request: EscalationRequest,
++    recovery: Option<&PolicySelection>,
 +) -> Result<Value, String> {
 +    let host = &lead.host;
 +    host.authorize_contract(codex_omd::ContractOperation::Escalate)?;
@@ -4676,6 +4691,14 @@ index 0000000..637de9e
 +        manifest.snapshot_bytes,
 +    )
 +    .map_err(error)?;
++    let recovery_selection = recovery.cloned().unwrap_or_else(|| PolicySelection {
++        policy: "native_fallback".into(),
++        value: "opposite_lead".into(),
++        provenance: json!({"owner": codex_omd::PolicyOwner::bundled()}),
++    });
++    if recovery_selection.value != "opposite_lead" {
++        return Err("selected advisory route is not host-authorized".into());
++    }
 +    let route_name = lead.route.opposite();
 +    let route = host.route(route_name);
 +    let role = format!("escalation-{}", failure.id);
@@ -4716,6 +4739,7 @@ index 0000000..637de9e
 +            "model": route.model,
 +            "reasoning_effort": route.reasoning_effort,
 +        },
++        "recovery_policy": recovery_selection,
 +        "remaining_before": {
 +            "seconds": remaining_before.0.as_secs(),
 +            "requests": remaining_before.1,
@@ -4925,10 +4949,10 @@ index 0000000..58c0303
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..d8e8ce5
+index 0000000..ac4c8bc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,3648 @@
+@@ -0,0 +1,3662 @@
 +mod accounting;
 +mod execution;
 +mod mods;
@@ -5448,9 +5472,15 @@ index 0000000..d8e8ce5
 +    host: Arc<Host>,
 +}
 +
-+struct ContributionTool(Arc<Lead>);
++struct ContributionTool {
++    lead: Arc<Lead>,
++    recovery: Option<PolicySelection>,
++}
 +
-+struct EscalationTool(Arc<Lead>);
++struct EscalationTool {
++    lead: Arc<Lead>,
++    recovery: Option<PolicySelection>,
++}
 +
 +struct CheckpointTool(Arc<Lead>);
 +
@@ -7626,7 +7656,10 @@ index 0000000..d8e8ce5
 +            tools.push(Arc::new(CheckpointTool(lead.clone())));
 +        }
 +        if self.manifest.capabilities.escalation {
-+            tools.push(Arc::new(EscalationTool(lead.clone())));
++            tools.push(Arc::new(EscalationTool {
++                lead: lead.clone(),
++                recovery: None,
++            }));
 +        }
 +        if self.manifest.capabilities.unified_review {
 +            tools.push(Arc::new(ReviewTool(lead.clone())));
@@ -7645,7 +7678,10 @@ index 0000000..d8e8ce5
 +                &self.manifest.evidence.join(accounting::REVOCATION_FILE),
 +            )
 +        {
-+            tools.push(Arc::new(ContributionTool(lead)));
++            tools.push(Arc::new(ContributionTool {
++                lead,
++                recovery: None,
++            }));
 +        }
 +        tools
 +    }
@@ -8269,7 +8305,7 @@ index 0000000..d8e8ce5
 +    }
 +    fn spec(&self) -> ToolSpec {
 +        let mut properties = BTreeMap::new();
-+        let (context_policy, _) = self.0.host.active_worker_context();
++        let (context_policy, _) = self.lead.host.active_worker_context();
 +        let required = match &context_policy {
 +            WorkerContextPolicy::FocusedBrief { .. } => {
 +                properties.insert(
@@ -8318,7 +8354,7 @@ index 0000000..d8e8ce5
 +                serde_json::from_str(call.function_arguments()?)
 +                    .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
 +            if self
-+                .0
++                .lead
 +                .host
 +                .operation
 +                .swap(true, std::sync::atomic::Ordering::AcqRel)
@@ -8327,9 +8363,9 @@ index 0000000..d8e8ce5
 +                    "another controlled operation is active".into(),
 +                ));
 +            }
-+            let _operation = OperationGuard(&self.0.host.operation);
++            let _operation = OperationGuard(&self.lead.host.operation);
 +            if self
-+                .0
++                .lead
 +                .host
 +                .contribution_started
 +                .swap(true, std::sync::atomic::Ordering::AcqRel)
@@ -8338,13 +8374,14 @@ index 0000000..d8e8ce5
 +                    "one controlled contribution is permitted per task".into(),
 +                ));
 +            }
-+            let result = execution::contribute(&self.0, &call, request).await;
++            let result =
++                execution::contribute(&self.lead, &call, request, self.recovery.as_ref()).await;
 +            let value = match result {
 +                Ok(value) => value,
 +                Err(error) => json!({"status": "failed", "error": error}),
 +            };
 +            let reference = self
-+                .0
++                .lead
 +                .host
 +                .evidence(
 +                    &format!(
@@ -8389,7 +8426,7 @@ index 0000000..d8e8ce5
 +            name: "omd_escalate".into(),
 +            description: format!(
 +                "Preserve cited failure evidence and request one bounded opposite-lead consultation when permitted. The host classifies environment, edit, diagnosis, and model failures separately, keeps existing permissions, and charges the shared remaining allowance. Allowed classes: {}.",
-+                self.0
++                self.lead
 +                    .host
 +                    .manifest
 +                    .escalation
@@ -8427,7 +8464,7 @@ index 0000000..d8e8ce5
 +                serde_json::from_str(call.function_arguments()?)
 +                    .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
 +            if self
-+                .0
++                .lead
 +                .host
 +                .operation
 +                .swap(true, std::sync::atomic::Ordering::AcqRel)
@@ -8436,14 +8473,15 @@ index 0000000..d8e8ce5
 +                    "another controlled operation is active".into(),
 +                ));
 +            }
-+            let _operation = OperationGuard(&self.0.host.operation);
-+            let result = execution::escalate(&self.0, &call, request).await;
++            let _operation = OperationGuard(&self.lead.host.operation);
++            let result =
++                execution::escalate(&self.lead, &call, request, self.recovery.as_ref()).await;
 +            let value = match result {
 +                Ok(value) => value,
 +                Err(error) => json!({"status": "failed", "error": error}),
 +            };
 +            let reference = self
-+                .0
++                .lead
 +                .host
 +                .evidence(
 +                    &format!(
@@ -9656,13 +9694,30 @@ index 0000000..b6cd44e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000..8aaa5db
+index 0000000..3fda1ce
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,149 @@
 +use super::*;
 +use codex_omd::ModHostCall;
 +use std::path::Path;
++
++fn recovery_selection(host: &Host, id: &str, value: Value) -> Result<PolicySelection, String> {
++    let value = value
++        .as_str()
++        .filter(|value| matches!(*value, "opposite_lead" | "pause"))
++        .ok_or("invalid_recovery_policy")?;
++    let owner = host
++        .mod_owners
++        .get(id)
++        .cloned()
++        .ok_or("unknown_policy_owner")?;
++    Ok(PolicySelection {
++        policy: "mod".into(),
++        value: value.into(),
++        provenance: json!({"owner": owner}),
++    })
++}
 +
 +pub(super) async fn dispatch(
 +    agents: &agents::Agents,
@@ -9741,7 +9796,8 @@ index 0000000..8aaa5db
 +        }
 +        "review.run" | "review.complete" | "delegation.contribute" | "recovery.escalate" => {
 +            let lead = Arc::new(lead.clone());
-+            let final_cadence = request.arguments["cadence"] == "final";
++            let mut arguments = request.arguments;
++            let final_cadence = arguments["cadence"] == "final";
 +            host.authorize_contract(match request.operation.as_str() {
 +                "review.run" if final_cadence => codex_omd::ContractOperation::FinalReview,
 +                "review.run" => codex_omd::ContractOperation::MilestoneReview,
@@ -9749,16 +9805,29 @@ index 0000000..8aaa5db
 +                "delegation.contribute" => codex_omd::ContractOperation::Delegate,
 +                _ => codex_omd::ContractOperation::Escalate,
 +            })?;
++            let recovery = match request.operation.as_str() {
++                "delegation.contribute" => arguments
++                    .as_object_mut()
++                    .and_then(|object| object.remove("outage_action"))
++                    .map(|value| recovery_selection(host, id, value))
++                    .transpose()?,
++                "recovery.escalate" => arguments
++                    .as_object_mut()
++                    .and_then(|object| object.remove("advisory_route"))
++                    .map(|value| recovery_selection(host, id, value))
++                    .transpose()?,
++                _ => None,
++            };
 +            let tool: Box<dyn for<'a> ToolExecutor<ToolCall<'a>>> = match request.operation.as_str() {
 +                "review.run" if host.manifest.capabilities.unified_review => Box::new(ReviewTool(lead)),
 +                "review.complete" if host.manifest.capabilities.completion_gate => Box::new(CompletionTool(lead)),
-+                "delegation.contribute" if host.manifest.capabilities.delegation => Box::new(ContributionTool(lead)),
-+                "recovery.escalate" if host.manifest.capabilities.escalation => Box::new(EscalationTool(lead)),
++                "delegation.contribute" if host.manifest.capabilities.delegation => Box::new(ContributionTool { lead, recovery }),
++                "recovery.escalate" if host.manifest.capabilities.escalation => Box::new(EscalationTool { lead, recovery }),
 +                _ => return Err("native_capability_disabled".into()),
 +            };
 +            let mut nested = call.clone();
 +            nested.tool_name = tool.tool_name();
-+            nested.payload = codex_tools::ToolPayload::Function { arguments: serde_json::to_string(&request.arguments).map_err(|e| e.to_string())? };
++            nested.payload = codex_tools::ToolPayload::Function { arguments: serde_json::to_string(&arguments).map_err(|e| e.to_string())? };
 +            let payload = nested.payload.clone();
 +            let output = tool.handle(nested).await.map_err(|e| e.to_string())?;
 +            Ok(output.code_mode_result(&payload))

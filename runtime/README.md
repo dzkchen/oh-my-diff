@@ -137,6 +137,17 @@ effective decisions with owner, package digest, configuration digest and generat
 plus content hashes, effective-permission hash, instruction sources, authorization
 binding and all selected routes.
 
+The first-party TypeScript recovery mod classifies preserved failures, decides
+whether advisory recovery is eligible, selects the bounded opposite-lead advisory
+route, and chooses whether a host-detected Contributor outage pauses or requests
+the configured opposite lead. The host extracts these decisions before parsing
+the native requests and records their host-owned package and source provenance.
+Rust continues to capture exact calls and outputs, validate failure classes and
+configured routes, enforce permissions and shared limits, own attempts, snapshots,
+worker lifecycle and return control, run original-route review, integrate only an
+unchanged candidate, clean up interrupted work and require explicit resume. A
+disabled, missing, invalid or broken recovery mod retains the native manifest policy.
+
 `limits.max_depth` and `limits.max_reassessments` apply across the native tree.
 Each supported Sol/Astra descendant is enrolled with its parent and depth before
 its first request, and every controlled child uses the same task ledger plus the

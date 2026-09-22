@@ -1,0 +1,161 @@
+{
+  "schema": 1,
+  "virtual_time_ms": 1000,
+  "packages": [
+    "../omd_coordination"
+  ],
+  "settings": {
+    "omd_coordination": {
+      "lead_policy": "task_entry",
+      "worker_context": "focused_brief",
+      "evidence": ["solution.py"]
+    },
+    "omd_recovery": {
+      "failure_policy": "edit",
+      "eligible_tools": ["direct", "delegation", "advisory"],
+      "outage_action": "opposite_lead"
+    }
+  },
+  "host_operations": {
+    "recovery.escalate": [
+      {
+        "result": {
+          "status": "consulted"
+        }
+      },
+      {
+        "result": {
+          "status": "consulted"
+        }
+      }
+    ],
+    "delegation.contribute": [
+      {
+        "result": {
+          "status": "integrated"
+        }
+      },
+      {
+        "result": {
+          "status": "integrated"
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "event",
+      "event": "tool_before",
+      "payload": {
+        "tool": "omd_escalate",
+        "arguments": {
+          "failure_class": "model",
+          "summary": "edit failed",
+          "call_ids": ["failed-edit"]
+        },
+        "call_id": "escalate"
+      },
+      "expect": [
+        {
+          "mod": "omd_recovery",
+          "value": {
+            "tool": "mod_omd_recovery_recover",
+            "arguments": {
+              "failure_class": "model",
+              "summary": "edit failed",
+              "call_ids": ["failed-edit"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_recovery",
+      "event": "tool",
+      "name": "recover",
+      "payload": {
+        "failure_class": "model",
+        "summary": "edit failed",
+        "call_ids": ["failed-edit"]
+      },
+      "expect": {
+        "status": "consulted"
+      }
+    },
+    {
+      "type": "event",
+      "event": "tool_before",
+      "payload": {
+        "tool": "omd_contribute",
+        "arguments": {
+          "brief": "fix add",
+          "selected_evidence": ["solution.py", "notes.txt"]
+        },
+        "call_id": "delegate"
+      },
+      "expect": [
+        {
+          "mod": "omd_recovery",
+          "value": {
+            "tool": "mod_omd_recovery_delegate",
+            "arguments": {
+              "brief": "fix add",
+              "selected_evidence": ["solution.py", "notes.txt"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_recovery",
+      "event": "tool",
+      "name": "delegate",
+      "payload": {
+        "brief": "fix add",
+        "selected_evidence": ["solution.py", "notes.txt"]
+      },
+      "expect": {
+        "status": "integrated"
+      }
+    },
+    {
+      "type": "reload"
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_recovery",
+      "event": "tool",
+      "name": "recover",
+      "payload": {
+        "failure_class": "environment",
+        "summary": "retry after reload",
+        "call_ids": ["failed-reload"]
+      },
+      "expect": {
+        "status": "consulted"
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_recovery",
+      "event": "tool",
+      "name": "delegate",
+      "payload": {
+        "brief": "fix after reload",
+        "selected_evidence": ["solution.py"]
+      },
+      "expect": {
+        "status": "integrated"
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_recovery",
+      "event": "command",
+      "name": "policy",
+      "payload": null
+    }
+  ]
+}

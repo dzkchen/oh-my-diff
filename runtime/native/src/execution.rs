@@ -1476,6 +1476,7 @@ pub async fn contribute(
     lead: &Lead,
     call: &ToolCall<'_>,
     request: ContributionRequest,
+    recovery: Option<&PolicySelection>,
 ) -> Result<Value, String> {
     let host = &lead.host;
     host.authorize_contract(codex_omd::ContractOperation::Delegate)?;
@@ -1691,11 +1692,24 @@ pub async fn contribute(
         }
     }
     let fallback_used = selected_root.is_none();
+    let recovery_selection = recovery.cloned().unwrap_or_else(|| PolicySelection {
+        policy: "native_fallback".into(),
+        value: if manifest.recovery.fallback_to_opposite_lead {
+            "opposite_lead"
+        } else {
+            "pause"
+        }
+        .into(),
+        provenance: json!({"owner": codex_omd::PolicyOwner::bundled()}),
+    });
     if fallback_used {
         host.authorize()?;
-        if !manifest.recovery.fallback_to_opposite_lead || !reassessed {
+        if recovery_selection.value != "opposite_lead"
+            || !manifest.recovery.fallback_to_opposite_lead
+            || !reassessed
+        {
             return Err(format!(
-                "Contributor outage fallback is not permitted: {}",
+                "Contributor outage fallback is not permitted by the selected recovery policy: {}",
                 contributor_failures.join("; ")
             ));
         }
@@ -2065,7 +2079,7 @@ pub async fn contribute(
     }
     codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
     Ok(
-        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "worker_report": worker_report, "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
+        json!({"schema": 1, "status": "integrated", "model": selected_route.model, "summary": summary.chars().take(2048).collect::<String>(), "worker_report": worker_report, "implementation": {"role": selected_role, "provider": selected_route.provider, "fallback_used": fallback_used, "contributor_failures": contributor_failures, "recovery_policy": recovery_selection}, "base": base_ref, "context": context_ref, "candidate": candidate_ref, "candidate_sha256": candidate_hash, "changed_paths": changed, "checks": check_ref, "review": review_ref, "integration": integration_ref, "attempts": host.task.attempts().map_err(error)?}),
     )
 }
 
@@ -2134,6 +2148,7 @@ pub async fn escalate(
     lead: &Lead,
     call: &ToolCall<'_>,
     request: EscalationRequest,
+    recovery: Option<&PolicySelection>,
 ) -> Result<Value, String> {
     let host = &lead.host;
     host.authorize_contract(codex_omd::ContractOperation::Escalate)?;
@@ -2259,6 +2274,14 @@ pub async fn escalate(
         manifest.snapshot_bytes,
     )
     .map_err(error)?;
+    let recovery_selection = recovery.cloned().unwrap_or_else(|| PolicySelection {
+        policy: "native_fallback".into(),
+        value: "opposite_lead".into(),
+        provenance: json!({"owner": codex_omd::PolicyOwner::bundled()}),
+    });
+    if recovery_selection.value != "opposite_lead" {
+        return Err("selected advisory route is not host-authorized".into());
+    }
     let route_name = lead.route.opposite();
     let route = host.route(route_name);
     let role = format!("escalation-{}", failure.id);
@@ -2299,6 +2322,7 @@ pub async fn escalate(
             "model": route.model,
             "reasoning_effort": route.reasoning_effort,
         },
+        "recovery_policy": recovery_selection,
         "remaining_before": {
             "seconds": remaining_before.0.as_secs(),
             "requests": remaining_before.1,

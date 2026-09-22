@@ -79,15 +79,15 @@
       "name": "omd_coordination",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_coordination)",
-      "version": "0.1.0-preview.2",
+      "version": "0.1.0-preview.3",
       "capabilities": [
         "agents",
         "commands",
         "context",
-        "interception",
         "lifecycle",
         "recovery",
         "routing",
+        "services",
         "state",
         "task",
         "tools"
@@ -99,8 +99,35 @@
         "fixture:coordination-task-entry/success",
         "fixture:coordination-broken/success"
       ],
-      "limitations": "Owns lead-policy and delegated-worker-context selection through the published API; Rust still owns configured-route admission, context assembly and bounds, instructions, permissions, review, completion and accounting.",
+      "limitations": "Owns lead-policy and delegated-worker-context selection and exports bounded delegation preparation through the published service API; Rust still owns configured-route admission, context assembly and bounds, instructions, permissions, review, completion and accounting.",
       "removal": "Disable it in the mod store; the manifest's native lead and worker-context policies resume without a state migration."
+    },
+    {
+      "id": "omd_recovery",
+      "area": "first_party_mod",
+      "name": "omd_recovery",
+      "extension_type": "mod",
+      "owner": "OMD first-party bundle (mods/first-party/omd_recovery)",
+      "version": "0.1.0-preview.1",
+      "capabilities": [
+        "commands",
+        "interception",
+        "lifecycle",
+        "recovery",
+        "services",
+        "state",
+        "tools"
+      ],
+      "status": "supported",
+      "fixtures": [
+        "python:test_first_party_mods_use_only_the_published_api",
+        "fixture:recovery/escalation",
+        "fixture:recovery/outage-fallback",
+        "fixture:recovery/client-loss-resume",
+        "fixture:recovery-broken/escalation"
+      ],
+      "limitations": "Owns failure classification, eligible-tool, advisory-route and Contributor-outage fallback choices; Rust retains evidence, validation, limits, permissions, lifecycle, review, integration, interruption and resume.",
+      "removal": "Disable it in the mod store; native escalation and manifest-bounded outage fallback resume without a state migration."
     },
     {
       "id": "omd_workspace",
@@ -497,6 +524,7 @@
       "id": "first_party_pair_with_contenders",
       "components": [
         "omd_coordination",
+        "omd_recovery",
         "omd_workspace",
         "mod_api"
       ],
@@ -504,10 +532,11 @@
         "duplicate_keybindings",
         "shared_context_budget"
       ],
-      "result": "The bundled pair runs with a contending terminal mod, a broken mod and a user/project duplicate: the contenders fail closed with source-located errors, the first-party context assembler reports the replaced contributions, and the pair keeps working.",
+      "result": "The bundled mods run with a contending terminal mod, a broken mod and a user/project duplicate: the contenders fail closed with source-located errors, coordination supplies bounded delegation preparation to recovery, and the remaining first-party behavior keeps working.",
       "evidence": [
         "fixture:conformance-conflict/success",
         "fixture:conformance/success",
+        "fixture:recovery/outage-fallback",
         "python:test_first_party_mods_use_only_the_published_api"
       ]
     },

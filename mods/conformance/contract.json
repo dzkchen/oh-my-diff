@@ -161,11 +161,11 @@
       "group": "coordination",
       "decision": "Escalation choice after a preserved failure",
       "observe": "preserved failure evidence through the checkpoint",
-      "alter": "failure class, summary and the cited call IDs",
+      "alter": "failure classification, eligible-tool decision and advisory route while forwarding the summary and cited call IDs",
       "replace": "tool_before",
       "timing": "inside a native tool callback during the task",
-      "ownership": "host: bounded attempts, advice routes, worker lifecycle and the retained evidence",
-      "limits": "advice only; the mod cannot move worker lifecycle into TypeScript or exceed native attempt bounds",
+      "ownership": "host: exact failure evidence, class validation, permissions, bounded attempts, advice dispatch, return control and the retained evidence",
+      "limits": "advice only; the mod cannot forge evidence, move worker lifecycle into TypeScript, widen permissions or exceed native attempt bounds",
       "native": "no native hook participates in recovery",
       "covers": {
         "capabilities": [
@@ -178,9 +178,39 @@
         ]
       },
       "evidence": [
-        "fixture:policy/escalation"
+        "fixture:recovery/escalation",
+        "fixture:recovery-denied/escalation",
+        "fixture:recovery-broken/escalation"
       ],
       "replace_note": "redirects `omd_escalate`"
+    },
+    {
+      "id": "coordination.outage_recovery",
+      "group": "coordination",
+      "decision": "Contributor-outage reassessment and opposite-lead fallback choice",
+      "observe": "the delegation request and configured outage policy",
+      "alter": "choose bounded opposite-lead fallback or pause after the host detects equivalent failures",
+      "replace": "tool_before",
+      "timing": "before reviewed delegation; the host reassesses only after its equivalent-failure threshold",
+      "ownership": "host: attempts, equivalent-failure detection, snapshots, allowance, original-route review, conflict-safe integration, interruption, cleanup and resume",
+      "limits": "the mod cannot declare an outage, choose an unconfigured route, bypass review, reset allowance or integrate a stale candidate",
+      "native": "no native hook can replace the fallback choice while preserving the reviewed contribution lifecycle",
+      "covers": {
+        "capabilities": [
+          "recovery"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "delegation.contribute"
+        ]
+      },
+      "evidence": [
+        "fixture:recovery/outage-fallback",
+        "fixture:recovery-pause/outage-fallback",
+        "fixture:recovery/outage-drift"
+      ],
+      "replace_note": "redirects `omd_contribute` to the recovery-aware delegation tool"
     },
     {
       "id": "coordination.workflow_contract",

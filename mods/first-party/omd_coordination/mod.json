@@ -1,21 +1,35 @@
 {
   "schema": 1,
   "id": "omd_coordination",
-  "version": "0.1.0-preview.2",
+  "version": "0.1.0-preview.3",
   "api": "0.1.0-experimental.6",
   "state_version": 1,
   "capabilities": [
     "agents",
     "commands",
     "context",
-    "interception",
     "lifecycle",
     "recovery",
     "routing",
+    "services",
     "state",
     "task",
     "tools"
   ],
+  "services": {
+    "exports": [
+      {
+        "name": "omd.coordination",
+        "version": "1.0.0",
+        "methods": {
+          "prepare_delegation": {
+            "input": "object",
+            "output": "object"
+          }
+        }
+      }
+    ]
+  },
   "settings_schema": {
     "type": "object",
     "properties": {

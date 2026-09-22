@@ -517,9 +517,15 @@ struct Lead {
     host: Arc<Host>,
 }
 
-struct ContributionTool(Arc<Lead>);
+struct ContributionTool {
+    lead: Arc<Lead>,
+    recovery: Option<PolicySelection>,
+}
 
-struct EscalationTool(Arc<Lead>);
+struct EscalationTool {
+    lead: Arc<Lead>,
+    recovery: Option<PolicySelection>,
+}
 
 struct CheckpointTool(Arc<Lead>);
 
@@ -2695,7 +2701,10 @@ impl ToolContributor for Extension {
             tools.push(Arc::new(CheckpointTool(lead.clone())));
         }
         if self.manifest.capabilities.escalation {
-            tools.push(Arc::new(EscalationTool(lead.clone())));
+            tools.push(Arc::new(EscalationTool {
+                lead: lead.clone(),
+                recovery: None,
+            }));
         }
         if self.manifest.capabilities.unified_review {
             tools.push(Arc::new(ReviewTool(lead.clone())));
@@ -2714,7 +2723,10 @@ impl ToolContributor for Extension {
                 &self.manifest.evidence.join(accounting::REVOCATION_FILE),
             )
         {
-            tools.push(Arc::new(ContributionTool(lead)));
+            tools.push(Arc::new(ContributionTool {
+                lead,
+                recovery: None,
+            }));
         }
         tools
     }
@@ -3338,7 +3350,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
     }
     fn spec(&self) -> ToolSpec {
         let mut properties = BTreeMap::new();
-        let (context_policy, _) = self.0.host.active_worker_context();
+        let (context_policy, _) = self.lead.host.active_worker_context();
         let required = match &context_policy {
             WorkerContextPolicy::FocusedBrief { .. } => {
                 properties.insert(
@@ -3387,7 +3399,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
                 serde_json::from_str(call.function_arguments()?)
                     .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
             if self
-                .0
+                .lead
                 .host
                 .operation
                 .swap(true, std::sync::atomic::Ordering::AcqRel)
@@ -3396,9 +3408,9 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
                     "another controlled operation is active".into(),
                 ));
             }
-            let _operation = OperationGuard(&self.0.host.operation);
+            let _operation = OperationGuard(&self.lead.host.operation);
             if self
-                .0
+                .lead
                 .host
                 .contribution_started
                 .swap(true, std::sync::atomic::Ordering::AcqRel)
@@ -3407,13 +3419,14 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
                     "one controlled contribution is permitted per task".into(),
                 ));
             }
-            let result = execution::contribute(&self.0, &call, request).await;
+            let result =
+                execution::contribute(&self.lead, &call, request, self.recovery.as_ref()).await;
             let value = match result {
                 Ok(value) => value,
                 Err(error) => json!({"status": "failed", "error": error}),
             };
             let reference = self
-                .0
+                .lead
                 .host
                 .evidence(
                     &format!(
@@ -3458,7 +3471,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for EscalationTool {
             name: "omd_escalate".into(),
             description: format!(
                 "Preserve cited failure evidence and request one bounded opposite-lead consultation when permitted. The host classifies environment, edit, diagnosis, and model failures separately, keeps existing permissions, and charges the shared remaining allowance. Allowed classes: {}.",
-                self.0
+                self.lead
                     .host
                     .manifest
                     .escalation
@@ -3496,7 +3509,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for EscalationTool {
                 serde_json::from_str(call.function_arguments()?)
                     .map_err(|e| FunctionCallError::RespondToModel(e.to_string()))?;
             if self
-                .0
+                .lead
                 .host
                 .operation
                 .swap(true, std::sync::atomic::Ordering::AcqRel)
@@ -3505,14 +3518,15 @@ impl<'call> ToolExecutor<ToolCall<'call>> for EscalationTool {
                     "another controlled operation is active".into(),
                 ));
             }
-            let _operation = OperationGuard(&self.0.host.operation);
-            let result = execution::escalate(&self.0, &call, request).await;
+            let _operation = OperationGuard(&self.lead.host.operation);
+            let result =
+                execution::escalate(&self.lead, &call, request, self.recovery.as_ref()).await;
             let value = match result {
                 Ok(value) => value,
                 Err(error) => json!({"status": "failed", "error": error}),
             };
             let reference = self
-                .0
+                .lead
                 .host
                 .evidence(
                     &format!(

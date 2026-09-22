@@ -14,6 +14,7 @@ def package_digest(manifest, source, entrypoint=b"index.ts"):
 
 PREVIEW_SETTINGS = {
     "omd_coordination": {"lead_policy": "astra", "worker_context": "focused_brief", "evidence": ["solution.py"]},
+    "omd_recovery": {"failure_policy": "lead_asserted", "eligible_tools": ["direct", "delegation", "advisory"], "outage_action": "opposite_lead"},
     "omd_workspace": {"density": "compact", "side": "right", "review_prompt": "PREVIEW_REVIEW_PROMPT"},
 }
 
@@ -37,6 +38,9 @@ def install_preview(destination, manifest, node, profile):
         if profile == "coordination-broken" and identifier == "omd_coordination":
             body = body.replace(b"export default function activate(api: ModAPI) {",
                                 b"export default function activate(api: ModAPI) {\n  throw new Error('COORDINATION_BROKEN_SENTINEL');", 1)
+        if profile == "recovery-broken" and identifier == "omd_recovery":
+            body = body.replace(b"export default function activate(api: ModAPI) {",
+                                b"export default function activate(api: ModAPI) {\n  throw new Error('RECOVERY_BROKEN_SENTINEL');", 1)
         settings = dict(PREVIEW_SETTINGS[identifier])
         if identifier == "omd_coordination":
             settings["worker_context"] = {
@@ -45,6 +49,11 @@ def install_preview(destination, manifest, node, profile):
             }.get(profile, "focused_brief")
             if profile == "coordination-task-entry":
                 settings["lead_policy"] = "task_entry"
+        if identifier == "omd_recovery":
+            if profile == "recovery-denied":
+                settings["eligible_tools"] = ["direct", "delegation"]
+            if profile == "recovery-pause":
+                settings["outage_action"] = "pause"
         package_manifest = json.dumps(declared).encode()
         (package / "mod.json").write_bytes(package_manifest)
         (package / "index.ts").write_bytes(body)
@@ -187,7 +196,7 @@ def install(destination, manifest, node, profile):
         return install_exercise(destination, manifest, node, profile)
     if profile.startswith("conformance"):
         return install_conformance(destination, manifest, node, profile)
-    if profile.startswith("preview") or profile.startswith("coordination"):
+    if profile.startswith("preview") or profile.startswith("coordination") or profile.startswith("recovery"):
         return install_preview(destination, manifest, node, profile)
     package = destination / "fixture-mod"
     package.mkdir()
@@ -590,6 +599,51 @@ def verify_exercise(destination, requests, profile, scenario):
     assert view["view"]["keybindings"]["Alt+p"] == {"command": "atlas_policy:atlas", "args": ""}, view["view"]
 
 
+def verify_recovery(destination, requests, profile, scenario):
+    status = json.loads((destination / "evidence/mod-status.json").read_text())
+    errors = {mod["id"]: mod["error"] for mod in status["mods"]}
+    results = [json.loads(path.read_text()) for path in (destination / "evidence").glob("*worker-result-*.json")]
+    escalations = [json.loads(path.read_text()) for path in (destination / "evidence").glob("escalation-result-*.json")]
+    if profile == "recovery-broken":
+        assert "RECOVERY_BROKEN_SENTINEL" in (errors.get("omd_recovery") or ""), errors
+        assert "index.ts:" in errors["omd_recovery"], errors
+        record = (escalations or results)[0]
+        policy = record.get("recovery_policy") or record.get("implementation", {}).get("recovery_policy")
+        assert policy["policy"] == "native_fallback", policy
+        return
+    assert errors.get("omd_recovery") is None, errors
+    state = json.loads((destination / "mod-store/state-omd_recovery.json").read_text())["value"]
+    if scenario == "direct":
+        assert not any(entry.get("operation") in ("delegation", "escalation") for entry in state), state
+        return
+    if profile == "recovery-denied":
+        outputs = [json.loads(item["output"]) for request in requests for item in request["body"].get("input", [])
+                   if item.get("type") == "function_call_output" and item.get("call_id") == "escalate"]
+        assert outputs and outputs[-1]["status"] == "denied", outputs
+        assert not escalations, escalations
+        return
+    if scenario == "escalation":
+        assert any(entry.get("operation") == "escalation" for entry in state), state
+        policy = escalations[0]["recovery_policy"]
+        assert policy["value"] == "opposite_lead" and policy["provenance"]["owner"]["id"] == "omd_recovery", policy
+        return
+    delegation = next(entry for entry in state if entry.get("operation") == "delegation")
+    assert delegation["coordination"] is True, delegation
+    if profile == "recovery-pause":
+        assert delegation["outage_action"] == "pause", delegation
+        assert results[0]["status"] == "failed" and "selected recovery policy" in results[0]["error"], results[0]
+        assert not any(request["native_owner"] == "contributor-outage-fallback" for request in requests)
+        return
+    assert delegation["outage_action"] == "opposite_lead", delegation
+    if scenario == "outage-drift":
+        assert results[0]["status"] == "failed" and "integration refused" in results[0]["error"], results[0]
+        assert any(request["native_owner"] == "contributor-outage-fallback" for request in requests)
+        return
+    if scenario == "outage-fallback":
+        policy = results[0]["implementation"]["recovery_policy"]
+        assert policy["value"] == "opposite_lead" and policy["provenance"]["owner"]["id"] == "omd_recovery", policy
+
+
 def verify(destination, requests, profile, scenario="success"):
     if profile.startswith("exercise"):
         return verify_exercise(destination, requests, profile, scenario)
@@ -597,6 +651,8 @@ def verify(destination, requests, profile, scenario="success"):
         return verify_conformance(destination, requests, profile, scenario)
     if profile.startswith("coordination"):
         return verify_preview(destination, requests, profile, scenario)
+    if profile.startswith("recovery"):
+        return verify_recovery(destination, requests, profile, scenario)
     if profile.startswith("preview"):
         return verify_preview(destination, requests, profile, scenario)
     if profile == "lifecycle":
