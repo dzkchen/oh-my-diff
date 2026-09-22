@@ -219,6 +219,28 @@
       "removal": "Remove omd-guidance-hooks from Codex, then remove the oh-my-diff marketplace; native controlled-manifest guarantees and plain Codex behavior remain available."
     },
     {
+      "id": "omd_repository_tools",
+      "area": "native",
+      "name": "OMD repository graph and health plugin",
+      "extension_type": [
+        "plugin",
+        "skill",
+        "mcp"
+      ],
+      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
+      "version": "0.1.0",
+      "status": "opt_in",
+      "fixtures": [
+        "python:test_graph_snapshot_and_selection_are_repository_contained",
+        "python:test_health_exit_two_is_a_completed_finding_report",
+        "rust:omd/tests/graph.rs::regeneration_is_deterministic_and_detects_changed_missing_and_added_sources",
+        "rust:omd/tests/health.rs::one_shot_operator_writes_versioned_artifacts_and_blocks_introduced_findings",
+        "python:test_pinned_bundle_matches_plugin_sources"
+      ],
+      "limitations": "Explicitly installed and prompt-approved; repository artifacts are local and path-contained. Graph relationships remain bounded lexical evidence, the health guard never edits source, and the native `/graph` view remains the optional terminal navigator without a new mod.",
+      "removal": "Remove omd-repository-tools from Codex. The native graph, health binaries and `/graph` fallback remain available until the private OMD installation itself is removed."
+    },
+    {
       "id": "pi_resources",
       "area": "native",
       "name": "Pi resource adapter",
@@ -650,6 +672,26 @@
         "python:test_plain_worker_mode_does_not_validate_report",
         "python:test_incomplete_structured_report_blocks_completion",
         "rust:native/src/lib.rs::exact_lead_and_worker_markers_are_accepted"
+      ]
+    },
+    {
+      "id": "repository_plugin_with_native_evidence",
+      "components": [
+        "omd_repository_tools",
+        "upstream_plugins",
+        "omd_host"
+      ],
+      "boundaries": [
+        "upstream_plugin_coexistence",
+        "optional_integration_isolation"
+      ],
+      "result": "The optional plugin runs a prompt-approved local MCP process, confines every artifact to the selected repository, delegates graph and health semantics to the retained version-bound Rust operators, and leaves native `/graph` plus ordinary host editing authoritative when the plugin is absent or removed.",
+      "evidence": [
+        "python:test_manifest_prompts_for_every_local_tool",
+        "python:test_symlinked_artifact_and_stale_graph_are_refused",
+        "python:test_health_exit_two_is_a_completed_finding_report",
+        "rust:omd/tests/graph.rs::one_versioned_graph_supports_both_views_and_evidence_selection",
+        "rust:omd/tests/health.rs::baseline_and_constraints_are_version_bound_and_tamper_evident"
       ]
     },
     {

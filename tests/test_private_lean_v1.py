@@ -237,6 +237,8 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
                 target = Path(env["CARGO_TARGET_DIR"])
                 self.executable(target / "release/codex")
                 self.executable(target / "release/omd-mod", "omd-mod fixture")
+                self.executable(target / "release/omd-graph", "omd-graph fixture")
+                self.executable(target / "release/omd-health", "omd-health fixture")
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
             environment = {"PATH": str(upstream.parent), "CODEX_HOME": str(root / "state"),
@@ -258,12 +260,33 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             self.assertTrue((prefix / "artifacts/omd/omd-mod").is_file())
             self.assertEqual(manifest["mod_manager"]["installed_path"],
                              str(prefix / "artifacts/omd/omd-mod"))
+            self.assertEqual(set(manifest["repository_tools"]["binaries"]),
+                             {"omd-graph", "omd-health"})
+            for name in installer.REPOSITORY_TOOL_NAMES:
+                self.assertTrue((prefix / f"artifacts/omd/{name}").is_file())
+                self.assertTrue((bin_dir / name).is_file())
             self.assertEqual(manifest["bundled_plugin"]["marketplace"], "oh-my-diff")
             self.assertEqual(manifest["bundled_plugin"]["shared_state"],
                              "not installed or configured")
             self.assertTrue((prefix / "plugins/oh-my-diff/.agents/plugins/marketplace.json").is_file())
             self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-guidance-hooks/hooks/hooks.json").is_file())
+            self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-repository-tools/.mcp.json").is_file())
             self.assertFalse((prefix / "target").exists())
+            self.assertEqual(installer.status(prefix, bin_dir)["repository_tools"],
+                             manifest["repository_tools"])
+            health_launcher = bin_dir / "omd-health"
+            original_launcher = health_launcher.read_text()
+            health_launcher.write_text("unmanaged\n")
+            with self.assertRaisesRegex(ValueError, "managed omd-health launcher"):
+                installer.status(prefix, bin_dir)
+            health_launcher.write_text(original_launcher)
+            health_launcher.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": str(upstream.parent)}):
+                removed = installer.uninstall(prefix, bin_dir)
+            self.assertTrue(removed["uninstalled"])
+            self.assertFalse(prefix.exists())
+            self.assertFalse(any((bin_dir / name).exists()
+                                 for name in ("codex", *installer.REPOSITORY_TOOL_NAMES)))
 
 
 class PreviewLockTests(unittest.TestCase):
@@ -286,12 +309,18 @@ class PluginLockTests(unittest.TestCase):
     def test_pinned_bundle_matches_plugin_sources(self):
         lock = installer.plugin_sources()
         self.assertEqual(lock["marketplace"], "oh-my-diff")
-        self.assertEqual(set(lock["plugins"]), {"omd-guidance-hooks"})
+        self.assertEqual(set(lock["plugins"]),
+                         {"omd-guidance-hooks", "omd-repository-tools"})
         self.assertEqual(
             lock["plugins"]["omd-guidance-hooks"]["extension_types"],
             ["plugin", "skill", "hook"],
         )
         self.assertFalse(lock["plugins"]["omd-guidance-hooks"]["mod_required"])
+        self.assertEqual(
+            lock["plugins"]["omd-repository-tools"]["extension_types"],
+            ["plugin", "skill", "mcp"],
+        )
+        self.assertFalse(lock["plugins"]["omd-repository-tools"]["mod_required"])
 
     def test_installed_bundle_verification_rejects_edits(self):
         with tempfile.TemporaryDirectory() as temporary:

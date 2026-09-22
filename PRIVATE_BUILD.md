@@ -119,15 +119,17 @@ retained upstream or upstream-direct mode, and an absent or changed policy fails
 activation. The bridge is loopback-only and development-only; instrumentation
 is added explicitly to the selected application and removed during teardown.
 
-## Guidance and lifecycle plugin
+## Bundled plugins
 
 The install retains a hash-pinned local Codex marketplace at
 `$OMD_PREFIX/plugins/oh-my-diff`. It does not install the plugin or edit shared
-Codex state. After reviewing the bundle, an operator can install it explicitly:
+Codex state. After reviewing the bundle, an operator can install either plugin
+explicitly:
 
 ```sh
 codex plugin marketplace add "$OMD_PREFIX/plugins/oh-my-diff"
 codex plugin add omd-guidance-hooks@oh-my-diff
+codex plugin add omd-repository-tools@oh-my-diff
 ```
 
 The plugin supplies versioned simplicity guidance, independent lead-update and
@@ -139,6 +141,15 @@ instruction priority, report admission, permissions, accounting, child
 isolation, context rebuilds, and lifecycle outcomes for which Codex emits no
 `PostToolUse` event. See [`plugins/README.md`](plugins/README.md) for exact skill
 selection and removal commands.
+
+The repository-tools plugin supplies prompt-approved local graph and health MCP
+tools plus the focused health skill. The private build installs hash-recorded
+`omd-graph` and `omd-health` binaries and managed `PATH` launchers for the plugin;
+`status` verifies both binaries and launchers, and uninstall removes the
+launchers without touching shared Codex data. Artifact paths are confined to the
+selected repository, and the health tools write evidence but never edit source.
+The native `/graph` view remains available for optional live navigation, so no
+additional terminal mod is installed.
 
 ## Mod preview
 

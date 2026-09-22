@@ -132,6 +132,9 @@ def check(matrix):
     bundled_plugin = source["plugin"]["plugins"]["omd-guidance-hooks"]
     claim("omd_guidance_hooks", "version", bundled_plugin["version"])
     claim("omd_guidance_hooks", "extension_type", bundled_plugin["extension_types"])
+    repository_plugin = source["plugin"]["plugins"]["omd-repository-tools"]
+    claim("omd_repository_tools", "version", repository_plugin["version"])
+    claim("omd_repository_tools", "extension_type", repository_plugin["extension_types"])
     claim("pi_resources", "version", source["pi_adapter"])
     browser = source["browser"]
     claim("browser_bundle", "versions", {

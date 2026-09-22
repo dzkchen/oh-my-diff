@@ -29,6 +29,7 @@ PREVIEW_PRODUCT = "oh-my-diff-private-preview-v1"
 PLUGIN_SCHEMA = 1
 PLUGIN_PRODUCT = "oh-my-diff-bundled-plugin-v1"
 PACKAGE_FILES = ("mod.json", "index.ts")
+REPOSITORY_TOOL_NAMES = ("omd-graph", "omd-health")
 
 
 def digest(path):
@@ -281,6 +282,39 @@ def wrapper_text(binary, selection, mode=None, controlled_manifest=None, browser
     return "\n".join(lines) + "\n"
 
 
+def tool_wrapper_text(binary):
+    return f"#!/bin/sh\nexec {shlex.quote(str(binary))} \"$@\"\n"
+
+
+def install_repository_tool_launchers(prefix, bin_dir):
+    manifest = load_manifest(prefix)
+    tools = manifest.get("repository_tools")
+    if not isinstance(tools, dict) or set(tools.get("binaries", {})) != set(REPOSITORY_TOOL_NAMES):
+        raise ValueError("installed repository-tool artifacts are incomplete")
+    paths = [bin_dir / name for name in REPOSITORY_TOOL_NAMES]
+    if any(path.exists() or path.is_symlink() for path in paths):
+        raise ValueError("repository-tool launcher path already exists")
+    launchers = {}
+    try:
+        for name in REPOSITORY_TOOL_NAMES:
+            binary = prefix / f"artifacts/omd/{name}"
+            recorded = tools["binaries"][name]
+            if not binary.is_file() or digest(binary) != recorded["sha256"]:
+                raise ValueError(f"installed {name} artifact is absent or modified")
+            launcher = bin_dir / name
+            atomic_text(launcher, tool_wrapper_text(binary), 0o755)
+            launchers[name] = {"path": str(launcher), "sha256": digest(launcher)}
+    except BaseException:
+        for name in launchers:
+            path = bin_dir / name
+            if path.is_file() and not path.is_symlink() and digest(path) == launchers[name]["sha256"]:
+                path.unlink()
+        raise
+    tools["launchers"] = launchers
+    write_manifest(prefix, manifest)
+    return tools
+
+
 def activate(prefix, bin_dir, selection, mode=None, controlled_manifest=None):
     prefix, bin_dir = validate_locations(prefix, bin_dir)
     manifest = load_manifest(prefix)
@@ -345,9 +379,10 @@ def install(args):
     prefix, bin_dir = validate_locations(args.prefix, args.bin_dir)
     if prefix.exists():
         raise ValueError(f"installation prefix already exists: {prefix}")
-    wrapper = bin_dir / "codex"
-    if wrapper.exists() or wrapper.is_symlink():
-        raise ValueError(f"activation path already exists: {wrapper}")
+    launcher_paths = [bin_dir / name for name in ("codex", *REPOSITORY_TOOL_NAMES)]
+    occupied = [str(path) for path in launcher_paths if path.exists() or path.is_symlink()]
+    if occupied:
+        raise ValueError(f"managed launcher path already exists: {', '.join(occupied)}")
     upstream_lock, lean_lock = lock_inputs()
     upstream = binary_identity(args.upstream)
     supported = lean_lock["private_installation"]["supported_upstream"]
@@ -384,10 +419,13 @@ def install(args):
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(cargo_target)
         build = ["cargo", f"+{upstream_lock['rust_toolchain']}", "build", "--locked",
-                 "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd", "--bin", "omd-mod"]
+                 "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd",
+                 "--bin", "omd-mod", "--bin", "omd-graph", "--bin", "omd-health"]
         run(build, cwd=checkout / "codex-rs", env=environment, capture=False)
         candidate_source = cargo_target / "release/codex"
         manager_source = cargo_target / "release/omd-mod"
+        graph_source = cargo_target / "release/omd-graph"
+        health_source = cargo_target / "release/omd-health"
         candidate = binary_identity(candidate_source)
         if candidate["version"] != upstream["version"]:
             raise ValueError("candidate and supported upstream versions differ")
@@ -395,7 +433,8 @@ def install(args):
         if "arm64" not in machine:
             raise ValueError("candidate is not an arm64 executable")
         for name, source in (("upstream/codex", Path(upstream["path"])), ("omd/codex", candidate_source),
-                             ("omd/omd-mod", manager_source)):
+                             ("omd/omd-mod", manager_source), ("omd/omd-graph", graph_source),
+                             ("omd/omd-health", health_source)):
             destination = staging / f"artifacts/{name}"
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
@@ -436,6 +475,18 @@ def install(args):
             "mod_manager": {"sha256": digest(staging / "artifacts/omd/omd-mod"),
                             "installed_path": str(staging / "artifacts/omd/omd-mod"),
                             "mod_api": preview_lock()["mod_api"]},
+            "repository_tools": {
+                "version": 1,
+                "approval": "Codex default_tools_approval_mode=prompt",
+                "binaries": {
+                    name: {
+                        "sha256": digest(staging / f"artifacts/omd/{name}"),
+                        "installed_path": str(staging / f"artifacts/omd/{name}"),
+                    }
+                    for name in REPOSITORY_TOOL_NAMES
+                },
+                "launchers": {},
+            },
             "browser": {
                 "installed_path": str(prefix / "browser"),
                 "launcher": str(prefix / "browser" / browser["launcher"]),
@@ -459,6 +510,8 @@ def install(args):
         }
         for artifact in (*manifest["artifacts"].values(), manifest["mod_manager"]):
             artifact["installed_path"] = artifact["installed_path"].replace(str(staging), str(prefix), 1)
+        for artifact in manifest["repository_tools"]["binaries"].values():
+            artifact["installed_path"] = artifact["installed_path"].replace(str(staging), str(prefix), 1)
         manifest["bundled_plugin"]["installed_path"] = manifest["bundled_plugin"][
             "installed_path"
         ].replace(str(staging), str(prefix), 1)
@@ -474,6 +527,7 @@ def install(args):
             raise ValueError("installed browser bundle manifest is unrecognized")
         browser_manifest["destination"] = str(prefix / "browser")
         browser_bundle.write_json(prefix / "browser/bundle.json", browser_manifest)
+        install_repository_tool_launchers(prefix, bin_dir)
         activate(prefix, bin_dir, "omd", "upstream_direct")
         return load_manifest(prefix)
     except BaseException:
@@ -489,6 +543,13 @@ def install(args):
             recorded_wrapper = activation.get("wrapper_sha256") if activation else expected_wrapper
             if not wrapper.is_symlink() and wrapper.is_file() and digest(wrapper) == recorded_wrapper:
                 wrapper.unlink()
+            for name in REPOSITORY_TOOL_NAMES:
+                launcher = bin_dir / name
+                expected = hashlib.sha256(tool_wrapper_text(
+                    prefix / f"artifacts/omd/{name}"
+                ).encode()).hexdigest()
+                if not launcher.is_symlink() and launcher.is_file() and digest(launcher) == expected:
+                    launcher.unlink()
             shutil.rmtree(prefix)
         raise
 
@@ -510,6 +571,22 @@ def status(prefix, bin_dir):
     recorded_manager = manifest.get("mod_manager")
     if recorded_manager and digest(prefix / "artifacts/omd/omd-mod") != recorded_manager["sha256"]:
         raise ValueError("installed omd-mod manager is modified")
+    recorded_tools = manifest.get("repository_tools")
+    if recorded_tools:
+        if set(recorded_tools.get("binaries", {})) != set(REPOSITORY_TOOL_NAMES) \
+                or set(recorded_tools.get("launchers", {})) != set(REPOSITORY_TOOL_NAMES):
+            raise ValueError("installed repository-tool inventory is incomplete")
+        for name in REPOSITORY_TOOL_NAMES:
+            binary = prefix / f"artifacts/omd/{name}"
+            artifact = recorded_tools["binaries"][name]
+            if (resolved(artifact["installed_path"]) != binary or not binary.is_file()
+                    or digest(binary) != artifact["sha256"]):
+                raise ValueError(f"installed {name} artifact is absent or modified")
+            launcher = bin_dir / name
+            recorded = recorded_tools["launchers"][name]
+            if (resolved(recorded["path"]) != launcher or launcher.is_symlink()
+                    or not launcher.is_file() or digest(launcher) != recorded["sha256"]):
+                raise ValueError(f"managed {name} launcher is absent or modified")
     if manifest.get("browser"):
         browser = browser_bundle.verify(prefix / "browser")
         if browser["tree"] != manifest["browser"]["tree"]:
@@ -704,6 +781,8 @@ def uninstall(prefix, bin_dir):
     located = shutil.which("codex", path=path_without(bin_dir))
     if not located or resolved(located) != resolved(upstream["path"]):
         raise ValueError("supported upstream executable would not be restored on PATH")
+    for name in manifest.get("repository_tools", {}).get("launchers", {}):
+        (bin_dir / name).unlink()
     wrapper = bin_dir / "codex"
     wrapper.unlink()
     shutil.rmtree(prefix)
