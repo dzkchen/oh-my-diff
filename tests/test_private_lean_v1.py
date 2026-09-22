@@ -125,7 +125,7 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             installer.activate(prefix, bin_dir, "upstream")
             self.assertNotIn("omd_browser", (bin_dir / "codex").read_text())
 
-    def test_bridge_is_registered_only_for_a_hash_bound_enabled_policy(self):
+    def test_bridge_mcp_is_owned_by_the_plugin_instead_of_wrapper_injection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             prefix, bin_dir, _ = self.managed(root)
@@ -146,11 +146,12 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             }))
             installer.activate(prefix, bin_dir, "omd", "enabled", controlled)
             wrapper = (bin_dir / "codex").read_text()
-            self.assertIn("mcp_servers.omd_bridge.command", wrapper)
-            self.assertIn("OMD_BRIDGE_POLICY_SHA256", wrapper)
+            self.assertNotIn("mcp_servers.omd_bridge", wrapper)
+            self.assertNotIn("OMD_BRIDGE_POLICY_SHA256", wrapper)
+            self.assertIn("OMD_CONTROLLED_MANIFEST", wrapper)
             policy.write_text("changed\n")
-            with self.assertRaisesRegex(ValueError, "absent or changed"):
-                installer.activate(prefix, bin_dir, "omd", "enabled", controlled)
+            installer.activate(prefix, bin_dir, "omd", "enabled", controlled)
+            self.assertNotIn("mcp_servers.omd_bridge", (bin_dir / "codex").read_text())
             controlled.write_text(json.dumps({"capabilities": {"application_bridge": False}}))
             installer.activate(prefix, bin_dir, "omd", "enabled", controlled)
             self.assertNotIn("omd_bridge", (bin_dir / "codex").read_text())
@@ -277,6 +278,8 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-guidance-hooks/hooks/hooks.json").is_file())
             self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-repository-tools/.mcp.json").is_file())
             self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-lsp-adapters/.mcp.json").is_file())
+            self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-review-policy/hooks/hooks.json").is_file())
+            self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-application-bridges/.mcp.json").is_file())
             self.assertFalse((prefix / "target").exists())
             self.assertEqual(installer.status(prefix, bin_dir)["repository_tools"],
                              manifest["repository_tools"])
@@ -316,7 +319,8 @@ class PluginLockTests(unittest.TestCase):
         lock = installer.plugin_sources()
         self.assertEqual(lock["marketplace"], "oh-my-diff")
         self.assertEqual(set(lock["plugins"]),
-                         {"omd-guidance-hooks", "omd-repository-tools", "omd-lsp-adapters"})
+                         {"omd-guidance-hooks", "omd-repository-tools", "omd-lsp-adapters",
+                          "omd-review-policy", "omd-application-bridges"})
         self.assertEqual(
             lock["plugins"]["omd-guidance-hooks"]["extension_types"],
             ["plugin", "skill", "hook"],
@@ -332,6 +336,16 @@ class PluginLockTests(unittest.TestCase):
             ["plugin", "mcp"],
         )
         self.assertFalse(lock["plugins"]["omd-lsp-adapters"]["mod_required"])
+        self.assertEqual(
+            lock["plugins"]["omd-review-policy"]["extension_types"],
+            ["plugin", "skill", "hook"],
+        )
+        self.assertFalse(lock["plugins"]["omd-review-policy"]["mod_required"])
+        self.assertEqual(
+            lock["plugins"]["omd-application-bridges"]["extension_types"],
+            ["plugin", "mcp", "hook"],
+        )
+        self.assertFalse(lock["plugins"]["omd-application-bridges"]["mod_required"])
 
     def test_installed_bundle_verification_rejects_edits(self):
         with tempfile.TemporaryDirectory() as temporary:

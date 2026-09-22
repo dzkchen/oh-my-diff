@@ -6,6 +6,13 @@ errors and warning/error logs and serves only state names declared by both the
 operator policy and the application. It does not inspect a DOM, heap, process,
 browser profile, or arbitrary expression on its own.
 
+The bundled `omd-application-bridges` Codex plugin is the user-facing surface.
+It exposes separate `browser_bridge`, `node_bridge`, `rust_bridge`,
+`python_bridge`, and `java_bridge` MCP tools plus a bridge-control tool. The
+private Codex launcher no longer injects a bridge MCP server directly. Install
+and trust the plugin only for a session whose controlled manifest enables the
+bridge capability and binds the policy below.
+
 ## Authorization and version binding
 
 Start from [`policy.example.json`](policy.example.json). Put the completed policy
@@ -26,8 +33,8 @@ Add `"application_bridge": true` to the enabled controlled manifest's
 }
 ```
 
-Activation fails if the policy is missing or changed. The managed launcher adds
-the bridge MCP only for that enabled capability. The host binds an ephemeral
+Plugin startup fails if the policy is missing or changed. Its launcher resolves
+only the managed bridge binary recorded inside the same private prefix. The host binds an ephemeral
 IPv4 loopback port, creates the connection file with mode `0600`, and issues a
 random session token. Every client must match its policy adapter, application
 ID, application-version SHA-256, reproduction ID, and allowed browser origin.
@@ -53,7 +60,8 @@ server-side or local development configuration that is not shipped to users.
 
 For every adapter, call `expose(name, handler)` before `connect`, then enable
 only the error/log hooks the application owner wants. The handler is invoked
-only after an `omd_bridge` `request_state` call for a policy-allowlisted name.
+only after the matching adapter tool receives a `request_state` call for a
+policy-allowlisted name.
 Close the client during application shutdown.
 
 ## Data and lifecycle
@@ -66,9 +74,12 @@ Bearer/Basic/query-style secret strings are redacted recursively before
 retention. Application-supplied task, version, and reproduction fields never
 override the policy-bound envelope.
 
-`omd_bridge` supports `status`, filtered `events`, `request_state`, and
-`teardown`. Teardown rotates the token, rejects pending state requests, clears
-all in-memory evidence, closes the loopback listener, and removes the connection
+Each adapter tool supports `status`, filtered `events`, and `request_state`, and
+refuses an application assigned to another adapter.
+`application_bridge_control` supports status and explicit teardown. The host
+retains one generic `omd_bridge` tool only for compatibility outside the plugin
+surface. Teardown rotates the token, rejects pending state requests, clears all
+in-memory evidence, closes the loopback listener, and removes the connection
 file. Normal MCP process exit performs the same teardown. Collected evidence is
 otherwise memory-only for the bridge process lifetime; Codex conversation/tool
 retention remains governed by the configured Codex environment.

@@ -261,6 +261,48 @@
       "removal": "Remove omd-lsp-adapters from Codex. The repository preference and native omd_lsp fallback remain unchanged."
     },
     {
+      "id": "omd_review_policy",
+      "area": "native",
+      "name": "OMD review policy plugin",
+      "extension_type": [
+        "plugin",
+        "skill",
+        "hook"
+      ],
+      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
+      "version": "0.1.0",
+      "status": "opt_in",
+      "fixtures": [
+        "python:test_review_skills_cover_all_cadences_and_retain_native_authority",
+        "python:test_every_turn_stop_blocks_until_native_review_succeeds",
+        "python:test_other_tools_and_unselected_policy_do_not_satisfy_or_enforce_cadence",
+        "python:test_pinned_bundle_matches_plugin_sources"
+      ],
+      "limitations": "Explicitly installed and hash-trusted. Skills select prompts and cadence, while the every-turn hook records only successful native review calls; findings, limits, final checks, reviewer separation, drift invalidation, integration and completion remain native.",
+      "removal": "Remove omd-review-policy from Codex. The native omd_review tool, required final review and completion gate remain unchanged."
+    },
+    {
+      "id": "omd_application_bridges",
+      "area": "native",
+      "name": "OMD application bridges plugin",
+      "extension_type": [
+        "plugin",
+        "mcp",
+        "hook"
+      ],
+      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
+      "version": "0.1.0",
+      "status": "opt_in",
+      "fixtures": [
+        "python:test_manifest_registers_prompt_gated_managed_mcp",
+        "python:test_launcher_requires_exact_enabled_external_policy",
+        "python:test_plugin_surface_scopes_each_adapter_and_keeps_control_separate",
+        "python:test_pinned_bundle_matches_plugin_sources"
+      ],
+      "limitations": "Explicitly installed, hash-trusted and default-off. The plugin exposes adapter-scoped tools and usage context only; the managed host retains endpoints, authentication, policy binding, limits, redaction, state admission and teardown.",
+      "removal": "Remove omd-application-bridges from Codex and disable application_bridge. The managed browser bundle and dormant adapter sources remain until the private OMD installation is removed."
+    },
+    {
       "id": "pi_resources",
       "area": "native",
       "name": "Pi resource adapter",
@@ -390,7 +432,7 @@
       "id": "bridge_browser",
       "area": "bridge",
       "name": "Browser bridge adapter",
-      "owner": "OMD application bridge (bridge/client.mjs)",
+      "owner": "OMD application bridge plugin over bridge/client.mjs",
       "source": "bridge/client.mjs",
       "version": "policy schema 1, fetch client",
       "status": "default_off",
@@ -405,7 +447,7 @@
       "id": "bridge_node",
       "area": "bridge",
       "name": "Node bridge adapter",
-      "owner": "OMD application bridge (bridge/node-client.mjs)",
+      "owner": "OMD application bridge plugin over bridge/node-client.mjs",
       "source": "bridge/node-client.mjs",
       "version": "policy schema 1, Node file and process hooks",
       "status": "default_off",
@@ -420,7 +462,7 @@
       "id": "bridge_python",
       "area": "bridge",
       "name": "Python bridge adapter",
-      "owner": "OMD application bridge (bridge/python/omd_bridge.py)",
+      "owner": "OMD application bridge plugin over bridge/python/omd_bridge.py",
       "source": "bridge/python/omd_bridge.py",
       "version": "policy schema 1, standard library only",
       "status": "default_off",
@@ -435,7 +477,7 @@
       "id": "bridge_rust",
       "area": "bridge",
       "name": "Rust bridge adapter",
-      "owner": "OMD application bridge (bridge/rust)",
+      "owner": "OMD application bridge plugin over bridge/rust",
       "source": "bridge/rust/Cargo.toml",
       "version": "policy schema 1, blocking loopback client",
       "status": "default_off",
@@ -450,7 +492,7 @@
       "id": "bridge_java",
       "area": "bridge",
       "name": "Java bridge adapter",
-      "owner": "OMD application bridge (bridge/java)",
+      "owner": "OMD application bridge plugin over bridge/java",
       "source": "bridge/java/src/main/java/dev/ohmydiff/bridge/BridgeClient.java",
       "version": "policy schema 1, JDK 11 or newer",
       "status": "default_off",
@@ -473,8 +515,8 @@
         "python:test_authorization_version_redaction_bounds_state_and_teardown",
         "python:test_bridge_launcher_uses_the_managed_node_runtime"
       ],
-      "limitations": "Development-only and off by default; activation fails if the external policy is missing or changed, state is pull-only and evidence is memory-only.",
-      "removal": "Remove `application_bridge` from the manifest capabilities and the `bridge` reference; the MCP server is then never registered."
+      "limitations": "Development-only and off by default; native manifest admission and plugin startup fail if the external policy is missing or changed, state is pull-only and evidence is memory-only.",
+      "removal": "Remove omd-application-bridges and disable `application_bridge`; the wrapper never injects a replacement MCP server."
     },
     {
       "id": "provider_sidecars",
@@ -700,6 +742,23 @@
       ]
     },
     {
+      "id": "review_policy_with_native_ledger",
+      "components": [
+        "omd_review_policy",
+        "upstream_hooks",
+        "omd_host"
+      ],
+      "boundaries": [
+        "upstream_plugin_coexistence"
+      ],
+      "result": "Two explicit skills select intermediate and final native review prompts, and the every-turn PostToolUse/Stop lifecycle pair requires one successful native review only when selected; removing or distrusting the plugin cannot weaken the mandatory native final-review and completion gates.",
+      "evidence": [
+        "python:test_review_skills_cover_all_cadences_and_retain_native_authority",
+        "python:test_every_turn_stop_blocks_until_native_review_succeeds",
+        "python:test_other_tools_and_unselected_policy_do_not_satisfy_or_enforce_cadence"
+      ]
+    },
+    {
       "id": "repository_plugin_with_native_evidence",
       "components": [
         "omd_repository_tools",
@@ -756,6 +815,7 @@
       "id": "five_bridge_adapters_on_one_session",
       "components": [
         "application_bridge",
+        "omd_application_bridges",
         "bridge_browser",
         "bridge_node",
         "bridge_python",
@@ -765,8 +825,10 @@
       "boundaries": [
         "optional_integration_isolation"
       ],
-      "result": "All five adapters exchange events and exposed state with one authorized session; unauthorized applications, oversized payloads and stale versions are refused, and teardown rotates the token, clears evidence and removes the connection file.",
+      "result": "The plugin exposes five prompt-approved adapter-scoped tools over one managed session. All adapters exchange events and exposed state; cross-adapter requests, unauthorized applications, oversized payloads and stale versions are refused, and teardown rotates the token, clears evidence and removes the connection file.",
       "evidence": [
+        "python:test_plugin_surface_scopes_each_adapter_and_keeps_control_separate",
+        "python:test_launcher_requires_exact_enabled_external_policy",
         "python:test_all_five_adapters_exchange_events_and_exposed_state",
         "python:test_authorization_version_redaction_bounds_state_and_teardown",
         "python:test_client_sources_compile_and_javascript_executes"

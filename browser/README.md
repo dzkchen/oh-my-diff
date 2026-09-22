@@ -7,8 +7,10 @@ archive URL and hash; `pnpm-lock.yaml` freezes the complete JavaScript graph.
 
 The same managed Node runtime carries the optional application bridge host and
 browser/Node plus Rust/Python/Java adapter sources from
-[`../bridge`](../bridge). The bridge is registered only by an enabled,
-hash-bound bridge policy; see [`../bridge/README.md`](../bridge/README.md).
+[`../bridge`](../bridge). The bundled `omd-application-bridges` plugin starts
+the managed host only for an enabled, hash-bound bridge policy; the Codex
+launcher no longer injects that MCP server directly. See
+[`../bridge/README.md`](../bridge/README.md).
 
 The private installer provisions this bundle automatically. Source installs use
 the checked-in package and lock, while prebuilt installs accept a hash-verified

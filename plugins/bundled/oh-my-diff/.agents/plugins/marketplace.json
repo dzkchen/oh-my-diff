@@ -36,6 +36,30 @@
         "authentication": "ON_INSTALL"
       },
       "category": "Developer Tools"
+    },
+    {
+      "name": "omd-review-policy",
+      "source": {
+        "source": "local",
+        "path": "./plugins/omd-review-policy"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "omd-application-bridges",
+      "source": {
+        "source": "local",
+        "path": "./plugins/omd-application-bridges"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
     }
   ]
 }

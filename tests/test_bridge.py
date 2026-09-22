@@ -25,12 +25,14 @@ def load_python_client():
 
 
 class Host:
-    def __init__(self, root, policy):
+    def __init__(self, root, policy, plugin_surface=False):
         self.root = root
         self.policy_path = root / "policy.json"
         self.policy_path.write_text(json.dumps(policy))
         digest = hashlib.sha256(self.policy_path.read_bytes()).hexdigest()
         environment = {**os.environ, "OMD_BRIDGE_POLICY": str(self.policy_path.resolve()), "OMD_BRIDGE_POLICY_SHA256": digest}
+        if plugin_surface:
+            environment["OMD_BRIDGE_PLUGIN_SURFACE"] = "1"
         self.process = subprocess.Popen(
             ["node", str(ROOT / "bridge/host.mjs")],
             stdin=subprocess.PIPE,
@@ -62,8 +64,8 @@ class Host:
             if response.get("id") == request_id:
                 return response["result"]
 
-    def tool(self, arguments):
-        result = self.mcp("tools/call", {"name": "omd_bridge", "arguments": arguments})
+    def tool(self, arguments, name="omd_bridge"):
+        result = self.mcp("tools/call", {"name": name, "arguments": arguments})
         if result.get("isError"):
             raise RuntimeError(result["content"][0]["text"])
         return json.loads(result["content"][0]["text"])
@@ -187,6 +189,37 @@ class BridgeTests(unittest.TestCase):
             subprocess.run(["node", "--check", str(ROOT / "bridge/host.mjs")], check=True)
             subprocess.run(["node", "--check", str(ROOT / "bridge/client.mjs")], check=True)
             subprocess.run(["node", "--check", str(ROOT / "bridge/node-client.mjs")], check=True)
+
+    def test_plugin_surface_scopes_each_adapter_and_keeps_control_separate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            host = Host(root, self.policy(root), plugin_surface=True)
+            try:
+                listed = host.mcp("tools/list")
+                self.assertEqual(
+                    {tool["name"] for tool in listed["tools"]},
+                    {
+                        "browser_bridge",
+                        "node_bridge",
+                        "rust_bridge",
+                        "python_bridge",
+                        "java_bridge",
+                        "application_bridge_control",
+                    },
+                )
+                for adapter in ("browser", "node", "rust", "python", "java"):
+                    status = host.tool({"action": "status"}, f"{adapter}_bridge")
+                    self.assertEqual(status["adapter"], adapter)
+                    self.assertEqual(status["applications"], [])
+                with self.assertRaisesRegex(RuntimeError, "not authorized for the python bridge"):
+                    host.tool(
+                        {"action": "request_state", "application": "java", "state": "health"},
+                        "python_bridge",
+                    )
+                closed = host.tool({"action": "teardown"}, "application_bridge_control")
+                self.assertTrue(closed["authorization_revoked"])
+            finally:
+                host.close()
 
     def test_all_five_adapters_exchange_events_and_exposed_state(self):
         with tempfile.TemporaryDirectory() as temporary:

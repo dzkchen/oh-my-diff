@@ -113,11 +113,14 @@ system Chrome installations are never selected at session start. See
 [`browser/README.md`](browser/README.md) for packaging, verification, update,
 artifact, and sandbox details.
 
-When an enabled manifest selects `application_bridge`, OMD also registers the
-prompt-gated `omd_bridge` MCP from the managed prefix. It is never registered in
-retained upstream or upstream-direct mode, and an absent or changed policy fails
-activation. The bridge is loopback-only and development-only; instrumentation
-is added explicitly to the selected application and removed during teardown.
+The launcher no longer injects an application-bridge MCP server. Install the
+bundled `omd-application-bridges` plugin when an enabled manifest selects
+`application_bridge`. Its prompt-gated launcher reads the same canonical
+controlled manifest, verifies the external policy hash, and starts only the
+managed bridge binary from the private prefix. It fails closed in retained
+upstream, upstream-direct, disabled, stale-policy, or changed-bundle states. The
+bridge remains loopback-only and development-only; instrumentation is added
+explicitly to the selected application and removed during managed teardown.
 
 ## Bundled plugins
 
@@ -131,6 +134,8 @@ codex plugin marketplace add "$OMD_PREFIX/plugins/oh-my-diff"
 codex plugin add omd-guidance-hooks@oh-my-diff
 codex plugin add omd-repository-tools@oh-my-diff
 codex plugin add omd-lsp-adapters@oh-my-diff
+codex plugin add omd-review-policy@oh-my-diff
+codex plugin add omd-application-bridges@oh-my-diff
 ```
 
 The plugin supplies versioned simplicity guidance, independent lead-update and

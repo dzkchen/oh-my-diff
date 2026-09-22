@@ -231,24 +231,25 @@ class Bridge {
     });
   }
 
-  status() {
+  status(adapter = null) {
     return {
       schema: 1,
       active: !this.closed,
+      adapter,
       task_id: this.policy.task_id,
       repository_identity: this.policy.repository_identity,
       policy: {path: this.policyPath, sha256: this.policySha256},
       started_at: this.startedAt,
       bind: this.server ? `127.0.0.1:${this.server.address().port}` : null,
-      applications: [...this.instances.entries()].map(([instance_id, instance]) => ({instance_id, id: instance.app.id, adapter: instance.app.adapter, version_sha256: instance.app.version_sha256, reproduction_id: instance.app.reproduction_id, exposed_state: [...instance.exposed], connected_at: instance.connectedAt})),
+      applications: [...this.instances.entries()].filter(([, instance]) => !adapter || instance.app.adapter === adapter).map(([instance_id, instance]) => ({instance_id, id: instance.app.id, adapter: instance.app.adapter, version_sha256: instance.app.version_sha256, reproduction_id: instance.app.reproduction_id, exposed_state: [...instance.exposed], connected_at: instance.connectedAt})),
       retained: {events: this.events.length, bytes: this.totalBytes, dropped: this.dropped},
       retention: "memory-only until bridge teardown",
     };
   }
 
-  eventsView(args) {
+  eventsView(args, adapter = null) {
     const limit = Math.min(Math.max(Number(args.limit || 50), 1), 200);
-    return {schema: 1, events: this.events.filter(event => (!args.application || event.application === args.application) && (!args.reproduction_id || event.reproduction_id === args.reproduction_id) && event.sequence > Number(args.after_sequence || 0)).slice(-limit), dropped: this.dropped, retained_bytes: this.totalBytes};
+    return {schema: 1, adapter, events: this.events.filter(event => (!adapter || event.adapter === adapter) && (!args.application || event.application === args.application) && (!args.reproduction_id || event.reproduction_id === args.reproduction_id) && event.sequence > Number(args.after_sequence || 0)).slice(-limit), dropped: this.dropped, retained_bytes: this.totalBytes};
   }
 
   teardown() {
@@ -329,7 +330,7 @@ function startHttp(bridge) {
   return server;
 }
 
-const TOOLS = [{
+const LEGACY_TOOLS = [{
   name: "omd_bridge",
   description: "Inspect version-bound application errors and bounded logs, request only explicitly exposed state, or tear down the authorized development bridge.",
   inputSchema: {
@@ -342,11 +343,43 @@ const TOOLS = [{
   },
 }];
 
-async function toolCall(bridge, args) {
-  if (args.action === "status") return bridge.status();
-  if (args.action === "events") return bridge.eventsView(args);
-  if (args.action === "request_state") return {schema: 1, application: args.application, ...(await bridge.requestState(args.application, args.state, args.timeout_ms))};
-  if (args.action === "teardown") return bridge.teardown();
+const ADAPTER_TOOLS = Object.fromEntries([...ADAPTERS].map(adapter => [`${adapter}_bridge`, adapter]));
+const ADAPTER_TOOL_SCHEMA = {
+  type: "object",
+  properties: {
+    action: {type: "string", enum: ["status", "events", "request_state"]},
+    application: {type: "string"}, reproduction_id: {type: "string"}, after_sequence: {type: "integer", minimum: 0}, limit: {type: "integer", minimum: 1, maximum: 200}, state: {type: "string"}, timeout_ms: {type: "integer", minimum: 1, maximum: 60000},
+  },
+  required: ["action"], additionalProperties: false,
+};
+const PLUGIN_TOOLS = [
+  ...Object.entries(ADAPTER_TOOLS).map(([name, adapter]) => ({
+    name,
+    description: `Inspect bounded ${adapter} application errors and logs or request explicitly exposed ${adapter} state.`,
+    inputSchema: ADAPTER_TOOL_SCHEMA,
+  })),
+  {
+    name: "application_bridge_control",
+    description: "Inspect or explicitly tear down the authorized managed application bridge session.",
+    inputSchema: {
+      type: "object",
+      properties: {action: {type: "string", enum: ["status", "teardown"]}},
+      required: ["action"], additionalProperties: false,
+    },
+  },
+];
+
+async function toolCall(bridge, name, args) {
+  const adapter = ADAPTER_TOOLS[name] || null;
+  if (adapter && args.application) {
+    const application = bridge.app(args.application);
+    if (!application || application.adapter !== adapter) fail(`application is not authorized for the ${adapter} bridge`);
+  }
+  if (adapter && args.action === "request_state" && (!args.application || !args.state)) fail("request_state requires application and state");
+  if (args.action === "status") return bridge.status(adapter);
+  if (args.action === "events") return bridge.eventsView(args, adapter);
+  if (args.action === "request_state") return {schema: 1, adapter, application: args.application, ...(await bridge.requestState(args.application, args.state, args.timeout_ms))};
+  if ((name === "omd_bridge" || name === "application_bridge_control") && args.action === "teardown") return bridge.teardown();
   fail("unsupported bridge action");
 }
 
@@ -361,6 +394,8 @@ function mcpError(id, error) {
 const loaded = loadPolicy();
 const bridge = new Bridge(loaded);
 startHttp(bridge);
+const tools = process.env.OMD_BRIDGE_PLUGIN_SURFACE === "1" ? PLUGIN_TOOLS : LEGACY_TOOLS;
+const toolNames = new Set(tools.map(tool => tool.name));
 const lines = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
 lines.on("line", async line => {
   let request;
@@ -368,10 +403,10 @@ lines.on("line", async line => {
     request = JSON.parse(line);
     if (request.method === "initialize") return mcpResult(request.id, {protocolVersion: "2025-03-26", capabilities: {tools: {}}, serverInfo: {name: "oh-my-diff-bridge", version: "1.0.0"}});
     if (request.method === "notifications/initialized") return;
-    if (request.method === "tools/list") return mcpResult(request.id, {tools: TOOLS});
+    if (request.method === "tools/list") return mcpResult(request.id, {tools});
     if (request.method === "tools/call") {
-      if (request.params?.name !== "omd_bridge") fail("unknown tool");
-      const value = await toolCall(bridge, request.params.arguments || {});
+      if (!toolNames.has(request.params?.name)) fail("unknown tool");
+      const value = await toolCall(bridge, request.params.name, request.params.arguments || {});
       return mcpResult(request.id, {content: [{type: "text", text: JSON.stringify(value)}], isError: false});
     }
     fail("unsupported MCP method");

@@ -1,6 +1,6 @@
 # Bundled Codex plugins
 
-OMD ships three Codex plugins in the local `oh-my-diff` marketplace:
+OMD ships five Codex plugins in the local `oh-my-diff` marketplace:
 
 - `omd-guidance-hooks` contains three explicit skills and two controlled
   lifecycle hooks. It has no MCP server, app connector, network dependency, or
@@ -13,6 +13,12 @@ OMD ships three Codex plugins in the local `oh-my-diff` marketplace:
   Java MCP tools over the retained native `omd-lsp` operator. It owns the
   language-specific commands and explicit fallback presentation, but no
   language-server, source-write, permission-grant, or edit authority.
+- `omd-review-policy` contains explicit intermediate- and final-review skills
+  plus an every-turn lifecycle reminder. It never writes the findings ledger or
+  chooses reviewer authority.
+- `omd-application-bridges` exposes adapter-scoped browser, Node, Rust, Python,
+  and Java MCP tools over the managed bridge host, with selected session
+  context and managed process teardown.
 
 The private installer copies the hash-pinned marketplace to
 `$OMD_PREFIX/plugins/oh-my-diff` without editing shared Codex state. Installation
@@ -23,6 +29,8 @@ codex plugin marketplace add "$OMD_PREFIX/plugins/oh-my-diff"
 codex plugin add omd-guidance-hooks@oh-my-diff
 codex plugin add omd-repository-tools@oh-my-diff
 codex plugin add omd-lsp-adapters@oh-my-diff
+codex plugin add omd-review-policy@oh-my-diff
+codex plugin add omd-application-bridges@oh-my-diff
 ```
 
 Review and trust the plugin hook hashes when Codex prompts. Do not bypass hook
@@ -44,6 +52,16 @@ The `PostToolUse` hook records exact successful host events for native
 consumption. Codex does not emit `PostToolUse` for failed, blocked, or aborted
 calls, so the existing native lifecycle contributor remains the bounded fallback
 for those measured event gaps and for an absent or untrusted hook.
+
+Use `$omd-review-policy:omd-review-cadence` to choose a stable milestone,
+explicit risk, or selected every-turn review. Use
+`$omd-review-policy:omd-final-review` only for the exact final candidate. The
+skills call the existing native `omd_review` tool; the native ledger retains
+finding identity, limits, repairs, checks, required reviewer separation, drift
+invalidation, integration refusal, and completion evidence. When the controlled
+manifest explicitly selects `every_turn_advice`, a `PostToolUse` marker and
+`Stop` hook remind the lead to complete one successful native review during the
+turn. Missing or untrusted hooks cannot relax the mandatory native final review.
 
 The repository plugin requires the managed `omd-graph` and `omd-health`
 executables on `PATH`. Its tool server accepts only a canonical absolute
@@ -84,11 +102,25 @@ results with ordinary search/edit/check guidance; they are never presented as
 passed semantic evidence. Removing the plugin leaves the native `omd_lsp`
 session tool and repository preference unchanged.
 
+The application-bridges plugin requires an enabled OMD controlled manifest with
+the default-off `application_bridge` capability and an exact external bridge
+policy. It resolves only the bridge launcher recorded inside the same private
+prefix, then exposes `browser_bridge`, `node_bridge`, `rust_bridge`,
+`python_bridge`, `java_bridge`, and `application_bridge_control`. Adapter tools
+cannot request state from another adapter. Every call prompts, state remains
+exact-name and pull-only, and the plugin never receives the ephemeral loopback
+token. The managed host retains endpoints, authentication, version association,
+limits, redaction, memory, network/process authority, and EOF/signal teardown.
+The plugin `SessionStart` hook only supplies bounded usage context; the
+`SessionEnd` hook does not handle secrets or replace managed cleanup.
+
 Remove the installed copy and marketplace before deleting the private prefix:
 
 ```sh
 codex plugin remove omd-guidance-hooks@oh-my-diff
 codex plugin remove omd-repository-tools@oh-my-diff
 codex plugin remove omd-lsp-adapters@oh-my-diff
+codex plugin remove omd-review-policy@oh-my-diff
+codex plugin remove omd-application-bridges@oh-my-diff
 codex plugin marketplace remove oh-my-diff
 ```

@@ -231,43 +231,6 @@ def browser_config_args(browser):
     ]
 
 
-def bridge_selection(controlled_manifest, browser):
-    if not controlled_manifest or not browser:
-        return None
-    manifest = json.loads(Path(controlled_manifest).read_text())
-    if not manifest.get("capabilities", {}).get("application_bridge", False):
-        return None
-    reference = manifest.get("bridge")
-    if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
-        raise ValueError("application_bridge requires an exact bridge policy reference")
-    policy = Path(reference["path"]).expanduser()
-    expected = reference["sha256"]
-    if (not policy.is_absolute() or policy != policy.resolve()
-            or not isinstance(expected, str) or len(expected) != 64
-            or any(character not in "0123456789abcdef" for character in expected)):
-        raise ValueError("bridge policy reference is not canonical")
-    if not policy.is_file() or digest(policy) != expected:
-        raise ValueError("bridge policy is absent or changed")
-    launcher = browser.get("bridge", {}).get("launcher")
-    if not launcher:
-        raise ValueError("installed bundle does not contain the bridge launcher")
-    return {"launcher": launcher, "policy": str(policy), "sha256": expected}
-
-
-def bridge_config_args(bridge):
-    return [
-        "--config", f"mcp_servers.omd_bridge.command={json.dumps(bridge['launcher'])}",
-        "--config", "mcp_servers.omd_bridge.args=[]",
-        "--config", f"mcp_servers.omd_bridge.env.OMD_BRIDGE_POLICY={json.dumps(bridge['policy'])}",
-        "--config", f"mcp_servers.omd_bridge.env.OMD_BRIDGE_POLICY_SHA256={json.dumps(bridge['sha256'])}",
-        "--config", "mcp_servers.omd_bridge.enabled=true",
-        "--config", "mcp_servers.omd_bridge.required=false",
-        "--config", "mcp_servers.omd_bridge.startup_timeout_sec=10",
-        "--config", "mcp_servers.omd_bridge.tool_timeout_sec=60",
-        "--config", 'mcp_servers.omd_bridge.default_tools_approval_mode="prompt"',
-    ]
-
-
 def wrapper_text(binary, selection, mode=None, controlled_manifest=None, browser=None):
     lines = ["#!/bin/sh"]
     if selection == "omd":
@@ -281,9 +244,6 @@ def wrapper_text(binary, selection, mode=None, controlled_manifest=None, browser
     command = [str(binary)]
     if selection == "omd" and browser:
         command.extend(browser_config_args(browser))
-        bridge = bridge_selection(controlled_manifest, browser)
-        if bridge:
-            command.extend(bridge_config_args(bridge))
     lines.append(f"exec {shlex.join(command)} \"$@\"")
     return "\n".join(lines) + "\n"
 

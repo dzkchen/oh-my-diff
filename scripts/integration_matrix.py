@@ -139,6 +139,12 @@ def check(matrix):
     lsp_plugin = source["plugin"]["plugins"]["omd-lsp-adapters"]
     claim("omd_lsp_adapters", "version", lsp_plugin["version"])
     claim("omd_lsp_adapters", "extension_type", lsp_plugin["extension_types"])
+    review_plugin = source["plugin"]["plugins"]["omd-review-policy"]
+    claim("omd_review_policy", "version", review_plugin["version"])
+    claim("omd_review_policy", "extension_type", review_plugin["extension_types"])
+    bridge_plugin = source["plugin"]["plugins"]["omd-application-bridges"]
+    claim("omd_application_bridges", "version", bridge_plugin["version"])
+    claim("omd_application_bridges", "extension_type", bridge_plugin["extension_types"])
     claim("pi_resources", "version", source["pi_adapter"])
     browser = source["browser"]
     claim("browser_bundle", "versions", {
