@@ -258,6 +258,11 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             self.assertTrue((prefix / "artifacts/omd/omd-mod").is_file())
             self.assertEqual(manifest["mod_manager"]["installed_path"],
                              str(prefix / "artifacts/omd/omd-mod"))
+            self.assertEqual(manifest["bundled_plugin"]["marketplace"], "oh-my-diff")
+            self.assertEqual(manifest["bundled_plugin"]["shared_state"],
+                             "not installed or configured")
+            self.assertTrue((prefix / "plugins/oh-my-diff/.agents/plugins/marketplace.json").is_file())
+            self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-guidance-hooks/hooks/hooks.json").is_file())
             self.assertFalse((prefix / "target").exists())
 
 
@@ -275,6 +280,28 @@ class PreviewLockTests(unittest.TestCase):
             self.assertEqual(manifest["api"], api, identifier)
             self.assertEqual(manifest["capabilities"], package["capabilities"], identifier)
             self.assertEqual(package["extension_type"], "mod", identifier)
+
+
+class PluginLockTests(unittest.TestCase):
+    def test_pinned_bundle_matches_plugin_sources(self):
+        lock = installer.plugin_sources()
+        self.assertEqual(lock["marketplace"], "oh-my-diff")
+        self.assertEqual(set(lock["plugins"]), {"omd-guidance-hooks"})
+        self.assertEqual(
+            lock["plugins"]["omd-guidance-hooks"]["extension_types"],
+            ["plugin", "skill", "hook"],
+        )
+        self.assertFalse(lock["plugins"]["omd-guidance-hooks"]["mod_required"])
+
+    def test_installed_bundle_verification_rejects_edits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary).resolve() / "plugins/oh-my-diff"
+            record = installer.copy_plugin_bundle(destination)
+            installer.verify_plugin_bundle(record)
+            target = destination / "plugins/omd-guidance-hooks/hooks/hooks.json"
+            target.write_text("{}\n")
+            with self.assertRaisesRegex(ValueError, "installed plugin bundle changed"):
+                installer.verify_plugin_bundle(record)
 
 
 class ShippedPatchTests(unittest.TestCase):

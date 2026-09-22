@@ -26,6 +26,8 @@ SCHEMA = 1
 PRODUCT = "oh-my-diff-private-lean-v1"
 PREVIEW_SCHEMA = 1
 PREVIEW_PRODUCT = "oh-my-diff-private-preview-v1"
+PLUGIN_SCHEMA = 1
+PLUGIN_PRODUCT = "oh-my-diff-bundled-plugin-v1"
 PACKAGE_FILES = ("mod.json", "index.ts")
 
 
@@ -93,6 +95,80 @@ def lock_inputs():
     if lean["upstream"]["commit"] != upstream["commit"]:
         raise ValueError("lean-v1 and upstream locks disagree")
     return upstream, lean
+
+
+def plugin_lock():
+    lock = json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text())
+    if lock.get("schema") != PLUGIN_SCHEMA or lock.get("product") != PLUGIN_PRODUCT:
+        raise ValueError("unrecognized bundled plugin lock")
+    return lock
+
+
+def plugin_sources(lock=None):
+    lock = lock or plugin_lock()
+    source = ROOT / lock["source"]
+    guide = ROOT / lock["guide"]["path"]
+    if digest(guide) != lock["guide"]["sha256"]:
+        raise ValueError("pinned bundled plugin guide changed")
+    recorded = set(lock["files"])
+    actual = {
+        path.relative_to(source).as_posix()
+        for path in source.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+    }
+    if actual != recorded:
+        raise ValueError("bundled plugin file inventory changed")
+    for name, expected in lock["files"].items():
+        if digest(source / name) != expected:
+            raise ValueError(f"pinned bundled plugin source changed: {name}")
+    marketplace = json.loads((source / ".agents/plugins/marketplace.json").read_text())
+    if marketplace.get("name") != lock["marketplace"]:
+        raise ValueError("bundled plugin marketplace identity changed")
+    for identifier, plugin in lock["plugins"].items():
+        manifest = json.loads(
+            (source / f"plugins/{identifier}/.codex-plugin/plugin.json").read_text()
+        )
+        if manifest.get("name") != identifier or manifest.get("version") != plugin["version"]:
+            raise ValueError(f"bundled plugin identity changed: {identifier}")
+        if "mod" in plugin["extension_types"] or plugin.get("mod_required"):
+            raise ValueError(f"bundled plugin is incorrectly classified as a mod: {identifier}")
+    return lock
+
+
+def copy_plugin_bundle(destination):
+    lock = plugin_sources()
+    source = ROOT / lock["source"]
+    for name in lock["files"]:
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / name, target)
+    guide = destination.parent / "README.md"
+    shutil.copy2(ROOT / lock["guide"]["path"], guide)
+    return {
+        "schema": lock["schema"],
+        "product": lock["product"],
+        "marketplace": lock["marketplace"],
+        "installed_path": str(destination),
+        "guide": str(guide),
+        "guide_sha256": lock["guide"]["sha256"],
+        "files": lock["files"],
+        "plugins": lock["plugins"],
+        "shared_state": "not installed or configured",
+    }
+
+
+def verify_plugin_bundle(record):
+    destination = resolved(record["installed_path"])
+    if record.get("schema") != PLUGIN_SCHEMA or record.get("product") != PLUGIN_PRODUCT:
+        raise ValueError("installed plugin bundle record is unrecognized")
+    for name, expected in record["files"].items():
+        path = destination / name
+        if not path.is_file() or digest(path) != expected:
+            raise ValueError(f"installed plugin bundle changed: {name}")
+    guide = resolved(record["guide"])
+    if not guide.is_file() or digest(guide) != record["guide_sha256"]:
+        raise ValueError("installed plugin bundle guide changed")
+    return record
 
 
 def binary_identity(path):
@@ -330,6 +406,7 @@ def install(args):
         else:
             browser = browser_bundle.build_bundle(staging / "browser",
                                                   getattr(args, "browser_node_archive", None))
+        bundled_plugin = copy_plugin_bundle(staging / "plugins/oh-my-diff")
         if not args.target_dir:
             shutil.rmtree(cargo_target)
         home, sqlite = state_roots()
@@ -375,12 +452,19 @@ def install(args):
                 "sandbox": browser["sandbox"],
                 "cleanup": browser["cleanup"],
             },
+            "bundled_plugin": bundled_plugin,
             "activation": None,
             "linux_benchmark": {"retained": True, "runtime_install_target": False,
                                 "guide": "benchmarks/README.md"},
         }
         for artifact in (*manifest["artifacts"].values(), manifest["mod_manager"]):
             artifact["installed_path"] = artifact["installed_path"].replace(str(staging), str(prefix), 1)
+        manifest["bundled_plugin"]["installed_path"] = manifest["bundled_plugin"][
+            "installed_path"
+        ].replace(str(staging), str(prefix), 1)
+        manifest["bundled_plugin"]["guide"] = manifest["bundled_plugin"]["guide"].replace(
+            str(staging), str(prefix), 1
+        )
         write_manifest(staging, manifest)
         staging.rename(prefix)
         moved = True
@@ -430,6 +514,8 @@ def status(prefix, bin_dir):
         browser = browser_bundle.verify(prefix / "browser")
         if browser["tree"] != manifest["browser"]["tree"]:
             raise ValueError("installed browser bundle differs from the installation manifest")
+    if manifest.get("bundled_plugin"):
+        verify_plugin_bundle(manifest["bundled_plugin"])
     return manifest
 
 

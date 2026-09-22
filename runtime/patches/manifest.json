@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "9ed3a885f7112cfa3a843e53f285d681c057ac8ee11e6c8ccbda25aea2628685"
+    "sha256": "f48aad988b2c0c4d6607c1cab390273ec51f8cfafc06a7ea3715890c50342592"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -141,7 +141,7 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "0321581fea0fd0da9fd54006b5d4067bfa27e3cb4989a84dd9a0208c66ee34a1"
+      "after": "118e69a27800569b18e2752953768b008ae4fd05c55f0e24ff27deeb9ed0acd3"
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,

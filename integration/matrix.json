@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "as_of": "2026-09-21",
+  "as_of": "2026-09-22",
   "release": {
     "codex": "0.155.1",
     "omd": "0.1.0",
-    "mod_api": "0.1.0-experimental.6",
+    "mod_api": "0.1.0-experimental.7",
     "package_schema": 1,
     "upstream_tag": "rust-v0.155.1",
     "upstream_commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
@@ -27,6 +27,8 @@
         "service_contracts_v1",
         "source_use_v1",
         "state_migration_v1",
+        "terminal_components_v1",
+        "terminal_render_sites_v1",
         "transactional_reload_v1"
       ],
       "status": "supported",
@@ -43,11 +45,12 @@
       "area": "host",
       "name": "Public TypeScript mod API",
       "owner": "OMD mod host (runtime/omd/src/mods.rs)",
-      "version": "0.1.0-experimental.6",
+      "version": "0.1.0-experimental.7",
       "supported_versions": [
         "0.1.0-experimental.4",
         "0.1.0-experimental.5",
-        "0.1.0-experimental.6"
+        "0.1.0-experimental.6",
+        "0.1.0-experimental.7"
       ],
       "status": "supported",
       "fixtures": [
@@ -135,7 +138,7 @@
       "name": "omd_workspace",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_workspace)",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "capabilities": [
         "commands",
         "lifecycle",
@@ -190,8 +193,30 @@
         "script:scripts/integration_matrix.py",
         "script:scripts/mod_conformance.py"
       ],
-      "limitations": "Hook dispatch is upstream-owned: competing pre_tool_use rewrites are still resolved by whichever hook finishes last, and no repository fixture drives an external hook command.",
+      "limitations": "Hook dispatch is upstream-owned: competing pre_tool_use rewrites are still resolved by whichever hook finishes last. OMD's command-hook fixtures are synthetic and make no provider or full-session performance claim.",
       "removal": "Remove the hook file from the Codex configuration; mod interception is registered separately and is unaffected."
+    },
+    {
+      "id": "omd_guidance_hooks",
+      "area": "native",
+      "name": "OMD guidance and hooks plugin",
+      "extension_type": [
+        "plugin",
+        "skill",
+        "hook"
+      ],
+      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
+      "version": "0.1.0",
+      "status": "opt_in",
+      "fixtures": [
+        "python:test_lead_success_writes_exact_hook_marker",
+        "python:test_incomplete_structured_report_blocks_completion",
+        "python:test_plain_worker_mode_does_not_validate_report",
+        "rust:native/src/lib.rs::exact_lead_and_worker_markers_are_accepted",
+        "python:test_pinned_bundle_matches_plugin_sources"
+      ],
+      "limitations": "Explicitly installed and hash-trusted; skill selection is not a release default. PostToolUse covers successful host results only, so native lifecycle fallback retains failed, blocked, aborted and untrusted-hook outcomes without claiming rollback or retry.",
+      "removal": "Remove omd-guidance-hooks from Codex, then remove the oh-my-diff marketplace; native controlled-manifest guarantees and plain Codex behavior remain available."
     },
     {
       "id": "pi_resources",
@@ -457,8 +482,8 @@
     },
     {
       "id": "upstream_plugin_coexistence",
-      "title": "Mods beside upstream plugins, prompts and skills",
-      "shared_resource": "Pi resource discovery, project precedence and the slash-command namespace"
+      "title": "OMD extensions beside upstream plugins, hooks and skills",
+      "shared_resource": "plugin skill discovery, lifecycle hooks, Pi resources, project precedence and the slash-command namespace"
     },
     {
       "id": "streaming_reload",
@@ -584,7 +609,7 @@
       "boundaries": [
         "host_upgrade"
       ],
-      "result": "Packages on all three supported API rows activate together with per-package stability and feature negotiation; a package pinned to another host release is refused before activation, and a bumped state version keeps only that package inactive until its explicit migration runs.",
+      "result": "Packages on all four supported API rows activate together with per-package stability and feature negotiation; a package pinned to another host release is refused before activation, and a bumped state version keeps only that package inactive until its explicit migration runs.",
       "evidence": [
         "rust:omd/tests/integration.rs::mixed_api_mods_share_one_host_and_upgrade_independently",
         "rust:omd/tests/mods.rs::incompatible_host_schema_api_and_features_are_rejected_before_activation",
@@ -607,6 +632,24 @@
         "rust:omd/tests/integration.rs::mods_and_upstream_pi_resources_coexist_without_capturing_each_other",
         "rust:omd/tests/mods.rs::pi_and_native_discovery_preserve_project_precedence_without_trust",
         "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique"
+      ]
+    },
+    {
+      "id": "guidance_hooks_with_native_guards",
+      "components": [
+        "omd_guidance_hooks",
+        "upstream_hooks",
+        "omd_host"
+      ],
+      "boundaries": [
+        "upstream_plugin_coexistence"
+      ],
+      "result": "The optional plugin exposes three separately selected skills, validates structured subagent output only when selected, and projects exact successful PostToolUse events into the native reactive guard; plain workers and unmatched tools remain unchanged while missing hook events retain native fallback.",
+      "evidence": [
+        "python:test_lead_success_writes_exact_hook_marker",
+        "python:test_plain_worker_mode_does_not_validate_report",
+        "python:test_incomplete_structured_report_blocks_completion",
+        "rust:native/src/lib.rs::exact_lead_and_worker_markers_are_accepted"
       ]
     },
     {

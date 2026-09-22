@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "product": "oh-my-diff-bundled-plugin-v1",
+  "marketplace": "oh-my-diff",
+  "source": "plugins/bundled/oh-my-diff",
+  "guide": {
+    "path": "plugins/README.md",
+    "sha256": "c3ff2ccf7b60d74bccbfec8f513701d622052f922a3bd335e869a740311c740a"
+  },
+  "plugins": {
+    "omd-guidance-hooks": {
+      "version": "0.1.0",
+      "extension_types": [
+        "plugin",
+        "skill",
+        "hook"
+      ],
+      "mod_required": false
+    }
+  },
+  "files": {
+    ".agents/plugins/marketplace.json": "b9c843f8d6703e6aad0aa5043274f772a2bc4ae8e5e40e914f2dab798bd66268",
+    "plugins/omd-guidance-hooks/.codex-plugin/plugin.json": "f025f02f2597d1ebbba616d8fb520cd1a1f72bc88a0b767f3f63e22f5a4223d5",
+    "plugins/omd-guidance-hooks/hooks/hooks.json": "012112646dc59cf0af1562c1f779ab0e39752c2d6d50bb85f21e44f5298675bc",
+    "plugins/omd-guidance-hooks/hooks/omd_lifecycle.py": "075b27e37409c3f6f15834a68b1d1392a2c7611ba658a2b93d02f6838c0890b3",
+    "plugins/omd-guidance-hooks/skills/omd-concise-updates/SKILL.md": "f4e3a03b924775ae4831bedfa7c8c117cdd803c1334a00a10c8a429632d34cc9",
+    "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/SKILL.md": "1f20193b6e19ab5efe932b29bc6867052053b16c14051fcb4a4cce1fc8000d1a",
+    "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/references/full-short-v1.md": "548f64606aedcd29d24e0b962df2ebd2696c51c47b1fcadef6a068bd76e14459",
+    "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/references/tiny-selected-v1.md": "6d82565c7a81fd1c2ddf8d5fff10573cad9ee9bd4d8601bcba9ba64c1204581b",
+    "plugins/omd-guidance-hooks/skills/omd-structured-reports/SKILL.md": "6de37a55033d4389109ff564f5bd03d337f511a94803d5bbc409d6373deb29aa"
+  }
+}

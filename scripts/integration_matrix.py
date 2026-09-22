@@ -46,6 +46,7 @@ def sources():
         "browser": json.loads((ROOT / "browser/browser.lock.json").read_text()),
         "preview": json.loads((ROOT / "runtime/preview-v1.lock.json").read_text()),
         "lean": json.loads((ROOT / "runtime/lean-v1.lock.json").read_text()),
+        "plugin": json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text()),
         "api": api,
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
         "capabilities": set(re.findall(r'"([a-z_]+)"', constant("MOD_CAPABILITIES"))),
@@ -128,6 +129,9 @@ def check(matrix):
     claim("omd_host", "version", f"{source['compatibility']['host']['omd']} on Codex {source['compatibility']['host']['codex']}")
     claim("omd_host", "features", source["features"])
     claim("upstream_hooks", "hooks", source["hooks"])
+    bundled_plugin = source["plugin"]["plugins"]["omd-guidance-hooks"]
+    claim("omd_guidance_hooks", "version", bundled_plugin["version"])
+    claim("omd_guidance_hooks", "extension_type", bundled_plugin["extension_types"])
     claim("pi_resources", "version", source["pi_adapter"])
     browser = source["browser"]
     claim("browser_bundle", "versions", {

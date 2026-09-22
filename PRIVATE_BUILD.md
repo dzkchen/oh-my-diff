@@ -119,6 +119,27 @@ retained upstream or upstream-direct mode, and an absent or changed policy fails
 activation. The bridge is loopback-only and development-only; instrumentation
 is added explicitly to the selected application and removed during teardown.
 
+## Guidance and lifecycle plugin
+
+The install retains a hash-pinned local Codex marketplace at
+`$OMD_PREFIX/plugins/oh-my-diff`. It does not install the plugin or edit shared
+Codex state. After reviewing the bundle, an operator can install it explicitly:
+
+```sh
+codex plugin marketplace add "$OMD_PREFIX/plugins/oh-my-diff"
+codex plugin add omd-guidance-hooks@oh-my-diff
+```
+
+The plugin supplies versioned simplicity guidance, independent lead-update and
+worker-report skills, deterministic structured-report validation, and a
+manifest-gated successful `PostToolUse` projection for reactive rules. Review
+and trust the hook hashes when Codex prompts; do not bypass hook trust. The
+existing native runtime remains authoritative for promotion, rollback,
+instruction priority, report admission, permissions, accounting, child
+isolation, context rebuilds, and lifecycle outcomes for which Codex emits no
+`PostToolUse` event. See [`plugins/README.md`](plugins/README.md) for exact skill
+selection and removal commands.
+
 ## Mod preview
 
 The install also retains the `omd-mod` manager and can provision the two
@@ -149,9 +170,9 @@ store afterwards; uninstall refuses to delete locally edited sources without
   quotas, prices, model availability, and route behavior must be checked in the
   current environment. Synthetic fixtures do not verify them.
 - The private build carries the two first-party preview mods described above; the
-  curated mod catalog, author tooling, registry/repository package installation,
-  the cross-release compatibility matrix, Kiro, a code-mode host, and the later
-  breadth features are not bundled.
+  guidance/hooks plugin source described above; and no curated mod catalog,
+  author tooling, external registry/repository package installation, cross-release
+  compatibility matrix, Kiro, code-mode host, or later breadth features.
 - Browser automation is headless Chromium on Apple Silicon macOS. Browser and
   MCP network or remote side effects are outside the shell filesystem sandbox;
   every browser tool defaults to an explicit Codex approval prompt.

@@ -65,8 +65,10 @@ use codex_omd::LspRange;
 use codex_omd::LspSession;
 use codex_omd::ProcessSnapshot;
 use codex_omd::ProcessStatus;
+use codex_omd::ReactiveActivation;
 use codex_omd::ReactiveRuleSet;
 use codex_omd::ReactiveRules;
+use codex_omd::ReactiveScope;
 use codex_omd::ReactiveToolOutcome;
 use codex_omd::ReactiveTrigger;
 use codex_omd::ReviewPolicy;
@@ -498,6 +500,53 @@ struct Host {
 struct PendingCall {
     signature_sha256: String,
     legitimate_wait: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReactiveHookMarker {
+    schema: u32,
+    event: String,
+    session_id: String,
+    turn_id: String,
+    tool_use_id: String,
+    agent_id: Option<String>,
+    scope: ReactiveScope,
+    tool: String,
+    outcome: ReactiveToolOutcome,
+    source: String,
+    source_sha256: String,
+    rule_set_version: String,
+    rule_id: String,
+}
+
+fn reactive_hook_marker_matches(
+    bytes: &[u8],
+    turn_id: &str,
+    call_id: &str,
+    scope: ReactiveScope,
+    activation: &ReactiveActivation,
+) -> bool {
+    if bytes.len() > 16_384 {
+        return false;
+    }
+    let Ok(marker) = serde_json::from_slice::<ReactiveHookMarker>(bytes) else {
+        return false;
+    };
+    let ReactiveTrigger::ToolFinished { tool, outcome } = &activation.trigger;
+    marker.schema == 1
+        && marker.event == "post_tool_use"
+        && !marker.session_id.is_empty()
+        && marker.turn_id == turn_id
+        && marker.tool_use_id == call_id
+        && marker.scope == scope
+        && marker.agent_id.is_some() == (scope == ReactiveScope::Worker)
+        && marker.tool == *tool
+        && marker.outcome == *outcome
+        && marker.source == activation.source
+        && marker.source_sha256 == activation.source_sha256
+        && marker.rule_set_version == activation.rule_set_version
+        && marker.rule_id == activation.rule_id
 }
 
 struct OperationGuard<'a>(&'a std::sync::atomic::AtomicBool);
@@ -1916,6 +1965,24 @@ impl Host {
         Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
     }
 
+    fn reactive_hook_observed(
+        &self,
+        turn_id: &str,
+        call_id: &str,
+        scope: ReactiveScope,
+        activation: &ReactiveActivation,
+    ) -> bool {
+        let identity = format!("{turn_id}\0{call_id}");
+        let path = self
+            .manifest
+            .evidence
+            .join(".omd-hook-events")
+            .join(format!("{}.json", execution::hash(identity.as_bytes())));
+        std::fs::read(path).is_ok_and(|bytes| {
+            reactive_hook_marker_matches(&bytes, turn_id, call_id, scope, activation)
+        })
+    }
+
     fn persist_runtime_file<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
         use std::io::Write;
 
@@ -2354,6 +2421,19 @@ impl ToolReactionContributor for Extension {
                 Ok(Some(activation)) => activation,
                 _ => return None,
             };
+            let scope = if owner == "lead" {
+                ReactiveScope::Lead
+            } else {
+                ReactiveScope::Worker
+            };
+            let hook_observed =
+                matches!(input.outcome, ToolCallOutcome::Completed { success: true })
+                    && self.reactive_hook_observed(
+                        input.turn_id,
+                        input.call_id,
+                        scope,
+                        &activation,
+                    );
             let prompt = activation.prompt();
             let allowance = self
                 .task
@@ -2369,6 +2449,12 @@ impl ToolReactionContributor for Extension {
                 "owner": owner,
                 "call_id": input.call_id,
                 "turn_id": input.turn_id,
+                "trigger_surface": if hook_observed {
+                    "codex_post_tool_use_hook"
+                } else {
+                    "native_tool_lifecycle_fallback"
+                },
+                "post_tool_use_hook_observed": hook_observed,
                 "allowance_before_follow_up": allowance,
                 "stream_interrupted": false,
             });
@@ -3627,6 +3713,104 @@ mod guideline_tests {
         }));
         assert!(tiny.contains("tiny shared simplicity core"));
         assert!(tiny.contains("selected one-line rules"));
+    }
+}
+
+#[cfg(test)]
+mod reactive_hook_tests {
+    use super::*;
+
+    fn activation(scope: ReactiveScope) -> ReactiveActivation {
+        let rules: ReactiveRuleSet = serde_json::from_value(json!({
+            "schema": 1,
+            "version": "hook-fixture-v1",
+            "rules": [{
+                "id": "inspect-result",
+                "scope": scope,
+                "trigger": {
+                    "event": "tool_finished",
+                    "tool": "apply_patch",
+                    "outcome": "completed_host_success"
+                },
+                "instruction": "Inspect the exact result.",
+                "max_activations": 1,
+                "max_context_reactivations": 0
+            }]
+        }))
+        .unwrap();
+        ReactiveRules::new(rules, "/host/reactive.json".into(), "a".repeat(64))
+            .unwrap()
+            .activate(
+                "thread-1",
+                if scope == ReactiveScope::Lead {
+                    "lead"
+                } else {
+                    "contributor-1"
+                },
+                &ReactiveTrigger::ToolFinished {
+                    tool: "apply_patch".into(),
+                    outcome: ReactiveToolOutcome::CompletedHostSuccess,
+                },
+            )
+            .unwrap()
+            .unwrap()
+    }
+
+    fn marker(scope: ReactiveScope, activation: &ReactiveActivation) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "schema": 1,
+            "event": "post_tool_use",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+            "tool_use_id": "call-1",
+            "agent_id": if scope == ReactiveScope::Worker {
+                Some("agent-1")
+            } else {
+                None
+            },
+            "scope": scope,
+            "tool": "apply_patch",
+            "outcome": "completed_host_success",
+            "source": activation.source,
+            "source_sha256": activation.source_sha256,
+            "rule_set_version": activation.rule_set_version,
+            "rule_id": activation.rule_id,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn exact_lead_and_worker_markers_are_accepted() {
+        for scope in [ReactiveScope::Lead, ReactiveScope::Worker] {
+            let activation = activation(scope);
+            assert!(reactive_hook_marker_matches(
+                &marker(scope, &activation),
+                "turn-1",
+                "call-1",
+                scope,
+                &activation,
+            ));
+        }
+    }
+
+    #[test]
+    fn stale_or_cross_scope_markers_are_rejected() {
+        let activation = activation(ReactiveScope::Lead);
+        let bytes = marker(ReactiveScope::Lead, &activation);
+        assert!(!reactive_hook_marker_matches(
+            &bytes,
+            "turn-2",
+            "call-1",
+            ReactiveScope::Lead,
+            &activation,
+        ));
+        assert!(!reactive_hook_marker_matches(
+            &bytes,
+            "turn-1",
+            "call-1",
+            ReactiveScope::Worker,
+            &activation,
+        ));
     }
 }
 
