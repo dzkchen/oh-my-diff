@@ -320,7 +320,8 @@ class PluginLockTests(unittest.TestCase):
         self.assertEqual(lock["marketplace"], "oh-my-diff")
         self.assertEqual(set(lock["plugins"]),
                          {"omd-guidance-hooks", "omd-repository-tools", "omd-lsp-adapters",
-                          "omd-review-policy", "omd-application-bridges"})
+                          "omd-review-policy", "omd-application-bridges",
+                          "omd-artifact-reading"})
         self.assertEqual(
             lock["plugins"]["omd-guidance-hooks"]["extension_types"],
             ["plugin", "skill", "hook"],
@@ -346,6 +347,11 @@ class PluginLockTests(unittest.TestCase):
             ["plugin", "mcp", "hook"],
         )
         self.assertFalse(lock["plugins"]["omd-application-bridges"]["mod_required"])
+        self.assertEqual(
+            lock["plugins"]["omd-artifact-reading"]["extension_types"],
+            ["plugin", "skill"],
+        )
+        self.assertFalse(lock["plugins"]["omd-artifact-reading"]["mod_required"])
 
     def test_installed_bundle_verification_rejects_edits(self):
         with tempfile.TemporaryDirectory() as temporary:

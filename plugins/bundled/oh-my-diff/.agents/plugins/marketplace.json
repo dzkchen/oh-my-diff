@@ -60,6 +60,18 @@
         "authentication": "ON_INSTALL"
       },
       "category": "Developer Tools"
+    },
+    {
+      "name": "omd-artifact-reading",
+      "source": {
+        "source": "local",
+        "path": "./plugins/omd-artifact-reading"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
     }
   ]
 }

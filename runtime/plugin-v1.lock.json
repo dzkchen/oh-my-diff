@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "4ff66124ef27ce2b14a3f02d096ef81104a91db8fbcfca1044fc9a9267ebbb94"
+    "sha256": "7613c35123b38d4688cd19887aa554e30f40e8164b4f021d77871dd18d5996e0"
   },
   "plugins": {
     "omd-guidance-hooks": {
@@ -51,10 +51,18 @@
         "hook"
       ],
       "mod_required": false
+    },
+    "omd-artifact-reading": {
+      "version": "0.1.0",
+      "extension_types": ["plugin", "skill"],
+      "mod_required": false
     }
   },
   "files": {
-    ".agents/plugins/marketplace.json": "08217ec7fa4276d21625a1cee968a6275e91c4a733d2aa330cfbf16a1c32385a",
+    ".agents/plugins/marketplace.json": "397b5f829ae19b1a11a708289811821957051a3a96b2b179d09c9c1b41ce3cb4",
+    "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "76f7cfc787897bedc0ab8fca9eec9bc520960aeaf7a46704fb5af68c044e7ee9",
+    "plugins/omd-artifact-reading/scripts/read_artifact.py": "8552f663a7b3130636ea554b66ec26a9a2b0a4b3c8b4ac6786f2e842cb7cf20f",
+    "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md": "792de39fda97a20e31ac2da9a68764979b7288aa52d01e43695edbc4c396ac00",
     "plugins/omd-application-bridges/.codex-plugin/plugin.json": "7c7d5cdd482b18f76d1f900ef8f4f627ca10a91781f488f48b2477024f42e34a",
     "plugins/omd-application-bridges/.mcp.json": "9a8a8be0af65a0dc073affb35dbe2c03e42247e628e523ad80b2039b9109191c",
     "plugins/omd-application-bridges/hooks/hooks.json": "705c7166e08a13e189d4caf332408a3ce0b760b04ffc42d183062da2d143b993",

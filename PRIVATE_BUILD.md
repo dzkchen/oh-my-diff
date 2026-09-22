@@ -136,6 +136,7 @@ codex plugin add omd-repository-tools@oh-my-diff
 codex plugin add omd-lsp-adapters@oh-my-diff
 codex plugin add omd-review-policy@oh-my-diff
 codex plugin add omd-application-bridges@oh-my-diff
+codex plugin add omd-artifact-reading@oh-my-diff
 ```
 
 The plugin supplies versioned simplicity guidance, independent lead-update and

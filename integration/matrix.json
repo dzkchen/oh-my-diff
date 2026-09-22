@@ -303,6 +303,22 @@
       "removal": "Remove omd-application-bridges from Codex and disable application_bridge. The managed browser bundle and dormant adapter sources remain until the private OMD installation is removed."
     },
     {
+      "id": "omd_artifact_reading",
+      "area": "native",
+      "name": "OMD artifact reading plugin",
+      "extension_type": ["plugin", "skill"],
+      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
+      "version": "0.1.0",
+      "status": "opt_in",
+      "fixtures": [
+        "python:test_notebook_cell_and_figure_are_versioned_without_execution",
+        "python:test_pdf_page_text_and_figure_keep_page_and_digest",
+        "python:test_pinned_bundle_matches_plugin_sources"
+      ],
+      "limitations": "URL and GitHub reads use approved host web or shell tools; local PDF text and page images require installed Ghostscript. The helper bounds local files and outputs, never executes notebook cells, and cannot grant external content instruction authority.",
+      "removal": "Remove omd-artifact-reading from Codex. Existing host web, shell and image tools remain available."
+    },
+    {
       "id": "pi_resources",
       "area": "native",
       "name": "Pi resource adapter",

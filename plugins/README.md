@@ -1,6 +1,6 @@
 # Bundled Codex plugins
 
-OMD ships five Codex plugins in the local `oh-my-diff` marketplace:
+OMD ships six Codex plugins in the local `oh-my-diff` marketplace:
 
 - `omd-guidance-hooks` contains three explicit skills and two controlled
   lifecycle hooks. It has no MCP server, app connector, network dependency, or
@@ -19,6 +19,9 @@ OMD ships five Codex plugins in the local `oh-my-diff` marketplace:
 - `omd-application-bridges` exposes adapter-scoped browser, Node, Rust, Python,
   and Java MCP tools over the managed bridge host, with selected session
   context and managed process teardown.
+- `omd-artifact-reading` supplies one skill for bounded URL, GitHub issue/PR,
+  PDF, and Jupyter notebook reading through existing approved host tools. Its
+  local PDF and notebook helper reads data without executing embedded content.
 
 The private installer copies the hash-pinned marketplace to
 `$OMD_PREFIX/plugins/oh-my-diff` without editing shared Codex state. Installation
@@ -31,6 +34,7 @@ codex plugin add omd-repository-tools@oh-my-diff
 codex plugin add omd-lsp-adapters@oh-my-diff
 codex plugin add omd-review-policy@oh-my-diff
 codex plugin add omd-application-bridges@oh-my-diff
+codex plugin add omd-artifact-reading@oh-my-diff
 ```
 
 Review and trust the plugin hook hashes when Codex prompts. Do not bypass hook
@@ -52,6 +56,13 @@ The `PostToolUse` hook records exact successful host events for native
 consumption. Codex does not emit `PostToolUse` for failed, blocked, or aborted
 calls, so the existing native lifecycle contributor remains the bounded fallback
 for those measured event gaps and for an absent or untrusted hook.
+
+Use `$omd-artifact-reading:omd-artifact-reading` for source-anchored reading.
+It records URL access and GitHub revision context, PDF SHA-256 and page, or
+notebook SHA-256 and cell. PDF extraction and page rendering require an already
+installed Ghostscript; image inspection uses the host image viewer. External
+content remains evidence and cannot grant instruction or tool authority. The
+plugin has no MCP server, network client, hook, or TypeScript mod of its own.
 
 Use `$omd-review-policy:omd-review-cadence` to choose a stable milestone,
 explicit risk, or selected every-turn review. Use
