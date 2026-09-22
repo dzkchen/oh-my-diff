@@ -31,6 +31,7 @@ export interface ToolSpec {
   label?: string;
   description: string;
   parameters: { type: 'object'; properties: Record<string, Json>; required?: string[]; additionalProperties?: boolean };
+  task_scoped?: boolean;
 }
 export interface Context { thread_id: string; turn_id: string; checkpoint: Json }
 export interface ContextResult { text: string }
@@ -176,6 +177,7 @@ export interface Events {
   compaction: { input: { token_limit: number | null; context_window: number | null }; output: CompactionDecision };
   input: { input: { text: string; attachments: number }; output: InputDecision };
   tool_before: { input: { tool: string; arguments: Json; call_id: string }; output: { deny: string } | { arguments: Json; tool?: string } | null };
+  tool_exposure: { input: { thread_id: string | null; checkpoint: Json; available: string[] }; output: { enable: string[] } };
   terminal: { input: { event: string; checkpoint: Json }; output: TerminalView | TerminalPatch | null };
   start: { input: Json; output: void };
   resume: { input: Json; output: void };
@@ -197,7 +199,7 @@ export interface Events {
   host_operation: { input: { phase: 'before' | 'after'; caller: string; operation: keyof HostOperations; arguments?: Json; result?: Json; error?: string }; output: void };
 }
 export interface ModAPI {
-  readonly version: '0.1.0-experimental.7';
+  readonly version: '0.1.0-experimental.8';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: { call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'] };

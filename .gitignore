@@ -12,6 +12,8 @@ __pycache__/
 /.docs/
 /.pnpm-store/
 /mods/node_modules/
+/mods/exercise/*/node_modules/
+/mods/exercise/*/.omd/
 /browser/node_modules/
 /browser/browsers/
 /browser/runtime/

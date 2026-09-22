@@ -1,11 +1,11 @@
 # TypeScript mods
 
-API `0.1.0-experimental.7` runs on the pinned Codex 0.155.1 OMD 0.1.0 host,
+API `0.1.0-experimental.8` runs on the pinned Codex 0.155.1 OMD 0.1.0 host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.
 
-Install the exact `@oh-my-diff/mod-api@0.1.0-experimental.7` author package with
+Install the exact `@oh-my-diff/mod-api@0.1.0-experimental.8` author package with
 pnpm. It exports the typed SDK and `omd-mod-author` CLI. See
 [REFERENCE.md](REFERENCE.md) for version-matched API and command documentation.
 The quickest local flow is:

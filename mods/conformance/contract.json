@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "api": "0.1.0-experimental.7",
+  "api": "0.1.0-experimental.8",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {
@@ -512,7 +512,7 @@
       "observe": "the model's arguments",
       "alter": "the tool's own result",
       "replace": null,
-      "timing": "registered at activation; callable for the whole generation",
+      "timing": "registered at activation; ordinary tools are callable for the whole generation",
       "ownership": "host: the executor, permissions, deadlines, accounting and the tool lifecycle",
       "limits": "16 tools per mod, namespaced `mod_<id>_<name>`, 8 KiB schema validated by the native tool registry",
       "native": "native plugins add tools only through MCP servers, as a separate process with its own transport",
@@ -529,6 +529,21 @@
         "rust:tool_progress_is_forwarded_once_across_host_call_replay",
         "fixture:counter/success"
       ],
+      "replace_note": null
+    },
+    {
+      "id": "tool.task_exposure",
+      "group": "tool",
+      "decision": "Task-scoped exposure of optional mod tools",
+      "observe": "only the current host checkpoint, thread ID and the mod's own optional tool names",
+      "alter": "select a subset of the mod's own task-scoped tools for one sampling step",
+      "replace": null,
+      "timing": "after host task state is available and before each step's tool registry is built",
+      "ownership": "host: the native tool registry, all other tools, permissions, accounting and callback failure containment",
+      "limits": "new API .8 only; a missing, invalid or failed decision exposes no optional tools; an unselected tool is not registered for that step, and a mod cannot name another package's or native tools",
+      "native": "Codex has per-step native tool contributors and configured MCP/plugin filtering; no public TypeScript mod choice over its own per-step optional tools existed",
+      "covers": {"capabilities": ["tools"], "events": ["tool_exposure"], "replacements": [], "operations": []},
+      "evidence": ["rust:task_scoped_tools_follow_owned_step_selection_and_fail_closed"],
       "replace_note": null
     },
     {

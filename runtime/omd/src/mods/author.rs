@@ -247,6 +247,19 @@ impl ModHost {
                 Ok(json!({"generation":self.generation,"reload_error":self.reload_error}))
             }
             "model_request" => self.model_request(payload, || active),
+            "tool_exposure" => {
+                let thread_id = step
+                    .get("thread_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let tools = self.tools_for_step(thread_id, payload, || active);
+                Ok(json!(
+                    tools
+                        .into_iter()
+                        .map(|(id, _, tool)| format!("mod_{id}_{}", tool.name))
+                        .collect::<Vec<_>>()
+                ))
+            }
             "response_stream" => self.response_stream(payload, || active),
             "event" | "tool_outcome" | "agent" => {
                 let event = match kind {

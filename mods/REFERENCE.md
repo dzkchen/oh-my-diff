@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.1.0-experimental.7` on OMD `0.1.0` and Codex `0.155.1`. The package's
+`0.1.0-experimental.8` on OMD `0.1.0` and Codex `0.155.1`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. A store also generates
 `active-host.d.ts` and `installed-contracts.d.ts`; those files identify the
 running host and the exact service contracts available to consumers.
@@ -96,6 +96,19 @@ and selectors with an optional `value`; copy actions return without touching the
 system clipboard. A step can carry `expect`, `expect_error`, or `cancelled`.
 Additional trusted packages are listed in `packages`, enabling provider/consumer
 and conflict fixtures without shared globals or ambient authority.
+
+API `.8` adds `task_scoped: true` on `api.tool` and the `tool_exposure` event.
+Before each sampling step, the event receives the host checkpoint, thread ID,
+and only the current mod's optional tool names. It returns `{enable: [...]}`
+for a subset of those names. A missing or failed decision exposes none of that
+mod's optional tools; an invalid or foreign name disables the mod with a visible
+error. Ordinary registered tools and every native tool keep their existing
+exposure. The checkpoint is capped at 16 KiB; a larger record appears as `null`
+and selects no checkpoint-dependent tools. A tool still executes through native
+permission, cancellation, accounting, and workflow gates. Context contributors
+can attach a bounded subordinate fragment for the same task without replacing
+base instructions. In an offline scenario, `{"type":"tool_exposure", "payload":
+{...checkpoint...}}` records the exact names registered for that step.
 
 ## Diagnostics and source maps
 

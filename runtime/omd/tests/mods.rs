@@ -1240,6 +1240,112 @@ fn request_and_stream_middleware_preserve_authority_and_provenance() {
 }
 
 #[test]
+fn task_scoped_tools_follow_owned_step_selection_and_fail_closed() {
+    let source = r#"export default api => {
+      const parameters = {type:'object',properties:{}};
+      api.tool({name:'always',description:'Always available',parameters},()=>true);
+      api.tool({name:'inspect',description:'Inspect this task',parameters,task_scoped:true},()=>true);
+      api.on('tool_exposure',event=>({enable:event.checkpoint?.kind==='inspect'?['inspect']:[]}));
+    }"#;
+    let (temp, _, _) = fixture(source, &["tools"]);
+    let mut runtime = host(&temp);
+    let hidden = runtime.tools_for_step(Some("thread".into()), json!({"kind":"edit"}), || true);
+    assert_eq!(
+        hidden
+            .iter()
+            .map(|(_, _, tool)| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        ["always"],
+        "{}",
+        runtime.status()
+    );
+    let shown = runtime.tools_for_step(Some("thread".into()), json!({"kind":"inspect"}), || true);
+    assert_eq!(
+        shown
+            .iter()
+            .map(|(_, _, tool)| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        ["always", "inspect"]
+    );
+    assert!(runtime.status()["mods"][0]["error"].is_null());
+
+    let invalid = source.replace("['inspect']:[]", "['always']:[]");
+    let (temp, _, _) = fixture(&invalid, &["tools"]);
+    let mut runtime = host(&temp);
+    assert!(
+        runtime
+            .tools_for_step(None, json!({"kind":"inspect"}), || true)
+            .is_empty()
+    );
+    assert!(
+        runtime.status()["mods"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("invalid_tool_exposure")
+    );
+}
+
+#[test]
+fn task_scoped_tool_decisions_cannot_select_another_mod_and_old_api_stays_compatible() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let parameters = "{type:'object',properties:{}}";
+    let first = package(
+        &root,
+        "first",
+        &format!(
+            "export default api => {{ api.tool({{name:'one',description:'One',parameters:{parameters},task_scoped:true}},()=>1); api.on('tool_exposure',()=>({{enable:['one']}})); }}"
+        ),
+        &["tools"],
+    );
+    let second = package(
+        &root,
+        "second",
+        &format!(
+            "export default api => {{ api.tool({{name:'two',description:'Two',parameters:{parameters},task_scoped:true}},()=>2); api.on('tool_exposure',()=>({{enable:['one']}})); }}"
+        ),
+        &["tools"],
+    );
+    let old = package(
+        &root,
+        "old",
+        &format!(
+            "export default api => api.tool({{name:'legacy',description:'Legacy',parameters:{parameters}}},()=>3)"
+        ),
+        &["tools"],
+    );
+    let old_manifest = old.join("mod.json");
+    let body = std::fs::read_to_string(&old_manifest)
+        .unwrap()
+        .replace(MOD_API_VERSION, "0.1.0-experimental.7");
+    std::fs::write(old_manifest, body).unwrap();
+    for path in [&first, &second, &old] {
+        trust(&store, path, &["tools"]);
+    }
+    let mut runtime = host(&temp);
+    let tools = runtime.tools_for_step(None, Value::Null, || true);
+    assert_eq!(
+        tools
+            .iter()
+            .map(|(id, _, tool)| format!("{id}:{}", tool.name))
+            .collect::<Vec<_>>(),
+        ["first:one", "old:legacy"]
+    );
+    assert!(
+        runtime.status()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["id"] == "second"
+                && entry["error"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("invalid_tool_exposure"))
+    );
+}
+
+#[test]
 fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     let (temp, _, _) = fixture(
         "export default api => api.command('status',()=>api.host.call('task.status',null))",

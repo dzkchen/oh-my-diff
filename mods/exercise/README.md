@@ -22,3 +22,21 @@ command it ran to the maintainer's retained audit evidence directory.
 
 These packages are exercise artifacts, not part of the shipped SDK or the
 release bundle.
+
+## Task and session author exercise
+
+`task_scope` and `session_anchor` target mod API `0.1.0-experimental.8`.
+The first selects optional Python and TypeScript checks from host checkpoint
+work; the second provides bounded compaction and checkpoint context across
+reload. They compose through `task_scope/mod.test.json` without provider calls:
+
+```sh
+OMD_MOD_BIN=runtime/omd/target/debug/omd-mod OMD_MOD_NODE="$(mise which node)" node mods/author/cli.mjs test mods/exercise/task_scope
+python3 scripts/mod_author_surface_measure.py
+python3 scripts/mod_author_surface_upgrade.py
+```
+
+The [dated audit](../../.docs/audits/first-class-author-surface-20260922.md)
+records the pinned source comparison, exact host checks and measured cost.
+These packages remain inactive internal exercises and do not count as
+supported first-party mods.

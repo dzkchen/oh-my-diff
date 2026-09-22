@@ -2,7 +2,7 @@
 
 <!-- Generated from conformance/contract.json by scripts/mod_conformance.py --write. -->
 
-Mod API `0.1.0-experimental.7`. Every decision a mod can reach through the published
+Mod API `0.1.0-experimental.8`. Every decision a mod can reach through the published
 API is listed below with the support it has, when it takes effect, who owns the
 outcome, and its limits. Capabilities not granted to a package fail before native
 dispatch. Arbitrary host internals are not exposed, and the table is checked
@@ -45,7 +45,8 @@ operation that is not documented here fails `scripts/mod_conformance.py`.
 
 | Decision | Observe | Alter | Replace | Timing | Ownership | Limits |
 | --- | --- | --- | --- | --- | --- | --- |
-| **Deferred mod tools offered to the model** | the model's arguments | the tool's own result | no | registered at activation; callable for the whole generation | host: the executor, permissions, deadlines, accounting and the tool lifecycle | 16 tools per mod, namespaced `mod_<id>_<name>`, 8 KiB schema validated by the native tool registry |
+| **Deferred mod tools offered to the model** | the model's arguments | the tool's own result | no | registered at activation; ordinary tools are callable for the whole generation | host: the executor, permissions, deadlines, accounting and the tool lifecycle | 16 tools per mod, namespaced `mod_<id>_<name>`, 8 KiB schema validated by the native tool registry |
+| **Task-scoped exposure of optional mod tools** | only the current host checkpoint, thread ID and the mod's own optional tool names | select a subset of the mod's own task-scoped tools for one sampling step | no | after host task state is available and before each step's tool registry is built | host: the native tool registry, all other tools, permissions, accounting and callback failure containment | new API .8 only; a missing, invalid or failed decision exposes no optional tools; an unselected tool is not registered for that step, and a mod cannot name another package's or native tools |
 | **Tool call interception: observe, deny, rewrite arguments or retarget** | tool name, arguments and call ID | deny with a reason from any observer | `tool_before (exclusive argument rewrite or retarget)` | before native hooks and permission checks | host: permissions, the executor and completion evidence | a replacement cannot forge native completion evidence or escape the sandbox; only one rewrite may exist |
 | **Slash commands and their results** | the argument text | display, insert or submit text | no | outside native tasks, from the CLI, the `/` popup or a keybinding | host: the submission path, queueing and command precedence | 16 per mod; namespaced `/<id>:<name>` always exists, a bare alias only when unique; submitted text uses the native path with no shell escape; host operations that need a task fail with `host_operation_unavailable` |
 | **Bounded native command execution** | exit code and bounded output | the argument vector | no | inside a native tool callback | host: the sandbox, permission profile, deadlines and accounting | the same sandbox and permission profile as any native exec; the mod store and host secrets stay denied |
@@ -95,6 +96,7 @@ deterministic and composable; the added control per decision is:
 | Session and turn lifecycle observation | hooks cover session_start/end, stop, interrupt and subagent start/stop with comparable observation | not alterable |
 | Pi skill and prompt discovery and expansion | native plugins ship skills and prompts but expose no discovery API to code | `pi.expand` renders a named prompt with arguments |
 | Deferred mod tools offered to the model | native plugins add tools only through MCP servers, as a separate process with its own transport | the tool's own result |
+| Task-scoped exposure of optional mod tools | Codex has per-step native tool contributors and configured MCP/plugin filtering; no public TypeScript mod choice over its own per-step optional tools existed | select a subset of the mod's own task-scoped tools for one sampling step |
 | Tool call interception: observe, deny, rewrite arguments or retarget | `pre_tool_use` blocks or rewrites input; the last-finishing hook silently wins a contested rewrite and no hook can retarget the call | exclusive `tool_before (exclusive argument rewrite or retarget)` replacement; deny with a reason from any observer |
 | Slash commands and their results | plugins contribute prompt-style slash commands, not code-backed commands with structured results | display, insert or submit text |
 | Bounded native command execution | hooks run their own commands outside the agent sandbox contract | the argument vector |
@@ -169,6 +171,7 @@ Each reference is resolved by `scripts/mod_conformance.py`.
 | context.lifecycle | `rust:command_descriptions_tool_labels_and_lifecycle_events_register` · `fixture:lifecycle/success` · `fixture:conformance/success` |
 | context.pi_resources | `rust:pi_nested_skills_honor_ignore_rules_and_frontmatter` · `rust:pi_prompt_expansion_matches_pi_0_74_oracle` · `fixture:opaque/direct` |
 | tool.registration | `rust:native_schema_validation_applies_to_reload_before_activation` · `rust:tool_progress_is_forwarded_once_across_host_call_replay` · `fixture:counter/success` |
+| tool.task_exposure | `rust:task_scoped_tools_follow_owned_step_selection_and_fail_closed` |
 | tool.interception | `rust:exclusive_replacement_conflicts_fail_before_activation` · `fixture:opaque/direct` · `fixture:conformance/success` |
 | tool.commands | `rust:command_outcomes_and_input_decisions_are_validated` · `patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique` · `terminal:namespaced_command` |
 | tool.execution | `fixture:full/success` · `fixture:opaque/direct` |

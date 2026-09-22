@@ -61,7 +61,7 @@ pub use store::ModStore;
 
 pub const CODEX_HOST_RELEASE: &str = "0.155.1";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-pub const MOD_API_VERSION: &str = "0.1.0-experimental.7";
+pub const MOD_API_VERSION: &str = "0.1.0-experimental.8";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -78,6 +78,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_components_v1",
     "terminal_render_sites_v1",
     "transactional_reload_v1",
+    "task_tool_exposure_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "task.status",
@@ -109,6 +110,7 @@ pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
     ("0.1.0-experimental.4", "deprecated", "2027-03-20"),
     ("0.1.0-experimental.5", "experimental", "2027-03-20"),
     ("0.1.0-experimental.6", "experimental", "2027-03-20"),
+    ("0.1.0-experimental.7", "experimental", "2027-03-20"),
     (MOD_API_VERSION, "experimental", "2027-03-20"),
 ];
 pub const MOD_CAPABILITIES: &[&str] = &[
@@ -138,6 +140,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
     ("migrate", "state"),
     ("tool_before", "interception"),
+    ("tool_exposure", "tools"),
     ("input", "input"),
     ("routing", "routing"),
     ("worker_context", "context"),
@@ -981,6 +984,8 @@ pub struct ModTool {
     pub label: Option<String>,
     pub description: String,
     pub parameters: Value,
+    #[serde(default)]
+    pub task_scoped: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -1503,6 +1508,15 @@ impl ModHost {
 
     fn validate_registrations(package: &ModPackage, registrations: &Registrations) -> Result<()> {
         let has = |cap: &str| package.capabilities.iter().any(|c| c == cap);
+        if package.api != MOD_API_VERSION
+            && (registrations.tools.iter().any(|tool| tool.task_scoped)
+                || registrations
+                    .events
+                    .iter()
+                    .any(|event| event == "tool_exposure"))
+        {
+            return Err(failure("task_tool_exposure_requires_current_api"));
+        }
         if registrations.tools.len() > 16
             || registrations.commands.len() > 16
             || registrations.events.len() > MOD_EVENTS.len()
@@ -2193,6 +2207,97 @@ impl ModHost {
             .collect()
     }
 
+    pub fn has_task_scoped_tools(&self) -> bool {
+        self.active().any(|(_, loaded)| {
+            loaded
+                .registrations
+                .tools
+                .iter()
+                .any(|tool| tool.task_scoped)
+        })
+    }
+
+    pub fn tools_for_step(
+        &mut self,
+        thread_id: Option<String>,
+        checkpoint: Value,
+        active: impl Fn() -> bool,
+    ) -> Vec<(String, u64, ModTool)> {
+        let ids: Vec<String> = self
+            .active()
+            .filter(|(_, loaded)| {
+                loaded
+                    .registrations
+                    .tools
+                    .iter()
+                    .any(|tool| tool.task_scoped)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut enabled = BTreeSet::new();
+        for id in ids {
+            let Some(loaded) = self.loaded.get(&id) else {
+                continue;
+            };
+            let available: BTreeSet<String> = loaded
+                .registrations
+                .tools
+                .iter()
+                .filter(|tool| tool.task_scoped)
+                .map(|tool| tool.name.clone())
+                .collect();
+            if !loaded
+                .registrations
+                .events
+                .iter()
+                .any(|event| event == "tool_exposure")
+            {
+                continue;
+            }
+            let payload =
+                json!({"thread_id":thread_id,"checkpoint":checkpoint,"available":available});
+            let result =
+                self.invoke_guarded(&id, self.generation, "tool_exposure", "", payload, &active);
+            let selection = result.ok().and_then(|value| {
+                let object = value.as_object().filter(|object| object.len() == 1)?;
+                let names = object.get("enable")?.as_array()?;
+                if names.len() > available.len() {
+                    return None;
+                }
+                let selected: Option<BTreeSet<String>> = names
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .filter(|name| available.contains(*name))
+                            .map(str::to_owned)
+                    })
+                    .collect();
+                selected.filter(|selected| selected.len() == names.len())
+            });
+            if let Some(selection) = selection {
+                enabled.extend(selection.into_iter().map(|name| (id.clone(), name)));
+            } else if self
+                .loaded
+                .get(&id)
+                .is_some_and(|loaded| loaded.error.is_none())
+            {
+                if let Some(loaded) = self.loaded.get_mut(&id) {
+                    loaded.error = Some(
+                        "invalid_tool_exposure: only owned task-scoped tools may be selected"
+                            .into(),
+                    );
+                }
+            }
+        }
+        self.tools()
+            .into_iter()
+            .filter(|(id, _, tool)| {
+                !tool.task_scoped || enabled.contains(&(id.clone(), tool.name.clone()))
+            })
+            .collect()
+    }
+
     pub fn commands(&self) -> Vec<(String, ModCommand)> {
         self.active()
             .flat_map(|(id, m)| {
@@ -2309,6 +2414,7 @@ impl ModHost {
             "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
             "tool_before": {"call_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable"},
+            "tool_exposure": {"thread_id":"observe_only","checkpoint":"observe_only","available":"observe_only","enable":"alterable"},
             "tool_result": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","outcome":"observe_only"},
             "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
         })

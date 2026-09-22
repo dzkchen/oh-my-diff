@@ -28,8 +28,59 @@ impl ToolContributor for Mods {
         let Ok(runtime) = self.runtime.lock() else {
             return Vec::new();
         };
-        runtime
-            .tools()
+        self.tool_executors(lead, runtime.tools())
+    }
+
+    fn tools_for_step(
+        &self,
+        _: &ExtensionData,
+        thread: &ExtensionData,
+        _: &ExtensionData,
+    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
+        if !lead_thread(thread) {
+            return Vec::new();
+        }
+        let Some(lead) = thread.get::<Lead>() else {
+            return Vec::new();
+        };
+        let Ok(mut runtime) = self.runtime.lock() else {
+            return Vec::new();
+        };
+        if !runtime.has_task_scoped_tools() {
+            return self.tool_executors(lead, runtime.tools());
+        }
+        if self.owner.task.check_active().is_err() {
+            return self.tool_executors(
+                lead,
+                runtime
+                    .tools()
+                    .into_iter()
+                    .filter(|(_, _, tool)| !tool.task_scoped)
+                    .collect(),
+            );
+        }
+        let checkpoint = self.owner.task.checkpoint().ok().flatten();
+        let checkpoint = serde_json::to_value(checkpoint).unwrap_or(Value::Null);
+        let checkpoint = if serde_json::to_vec(&checkpoint).is_ok_and(|bytes| bytes.len() <= 16_384)
+        {
+            checkpoint
+        } else {
+            Value::Null
+        };
+        let tools = runtime.tools_for_step(thread_id(thread), checkpoint, || {
+            self.owner.task.check_active().is_ok()
+        });
+        self.tool_executors(lead, tools)
+    }
+}
+
+impl Mods {
+    fn tool_executors(
+        &self,
+        lead: Arc<Lead>,
+        tools: Vec<(String, u64, ModTool)>,
+    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
+        tools
             .into_iter()
             .filter_map(|(id, generation, definition)| {
                 let parameters =

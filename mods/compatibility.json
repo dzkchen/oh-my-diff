@@ -5,7 +5,7 @@
     "codex": "0.155.1",
     "omd": "0.1.0",
     "stability": "experimental",
-    "current_api": "0.1.0-experimental.7",
+    "current_api": "0.1.0-experimental.8",
     "package_schemas": [1],
     "state_storage_schema": 1,
     "installed_contract_types": 1,
@@ -20,7 +20,8 @@
       "state_migration_v1",
       "terminal_components_v1",
       "terminal_render_sites_v1",
-      "transactional_reload_v1"
+      "transactional_reload_v1",
+      "task_tool_exposure_v1"
     ]
   },
   "apis": [
@@ -44,6 +45,12 @@
     },
     {
       "version": "0.1.0-experimental.7",
+      "stability": "experimental",
+      "support_until": "2027-03-20",
+      "service_imports": "exact or compatible caret range"
+    },
+    {
+      "version": "0.1.0-experimental.8",
       "stability": "experimental",
       "support_until": "2027-03-20",
       "service_imports": "exact or compatible caret range"
