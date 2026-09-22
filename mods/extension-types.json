@@ -21,7 +21,7 @@
     {
       "path": "mods/first-party/omd_workspace",
       "id": "omd_workspace",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation."

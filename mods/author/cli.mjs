@@ -123,6 +123,7 @@ function scenarioFor(name) {
       steps: [
         { type: 'terminal_mount', mod: 'terminal', payload: { event: 'draw', checkpoint: null } },
         { type: 'terminal_interact', mod: 'terminal', key: 'Alt+r', payload: { event: 'draw', checkpoint: null }, expect: { action: { submit: 'Review the current changes and list remaining risks.' } } },
+        { type: 'terminal_interact', mod: 'terminal', component: 'copy_shortcuts', payload: { event: 'draw', checkpoint: null }, expect: { action: { copy: 'F6 draft · Alt+r review · F8 settings', label: 'terminal example shortcuts' } } },
       ],
     },
     workflow: {

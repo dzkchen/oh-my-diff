@@ -2,7 +2,7 @@
 
 <!-- Generated from conformance/contract.json by scripts/mod_conformance.py --write. -->
 
-Mod API `0.1.0-experimental.6`. Every decision a mod can reach through the published
+Mod API `0.1.0-experimental.7`. Every decision a mod can reach through the published
 API is listed below with the support it has, when it takes effect, who owns the
 outcome, and its limits. Capabilities not granted to a package fail before native
 dispatch. Arbitrary host internals are not exposed, and the table is checked
@@ -56,11 +56,11 @@ operation that is not documented here fails `scripts/mod_conformance.py`.
 
 | Decision | Observe | Alter | Replace | Timing | Ownership | Limits |
 | --- | --- | --- | --- | --- | --- | --- |
-| **Terminal view: title, sidebar side and width, status segments** | the triggering event and the checkpoint | not alterable piecemeal; the view is returned whole | `terminal (exclusive)` | every mod event, redrawn inline and fullscreen | host: layout, fallbacks, the native composer and recovery controls | panels need fullscreen with size fallbacks; a failed or contested view falls back to the native recovery panel; a mod error panel is inserted above a healthy mod view |
-| **Sidebar, header, footer, progress and diagnostics panels** | not applicable | panel titles and lines each redraw | `terminal` | fullscreen, with inline fallbacks | host: available space, truncation and the native inspector | bounded panel and line counts; control characters and raw escapes are rejected at parse time |
-| **Accent, user-message background, success/attention/failure tones and syntax theme** | not applicable | named theme slots | `terminal` | inline and fullscreen | host: the terminal colour depth and the configured theme | 256-colour index or `#rrggbb` mapped to the terminal depth; the configured theme is restored when the mod is removed |
-| **F2-F12, Ctrl+letter and Alt+letter actions** | not applicable | insert a draft, submit a message or run a command | `terminal` | inline and fullscreen while the mod view is active | host: the native keymap, modal input and cancellation keys | active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M and modal input are never interceptable |
-| **Assistant message and tool cell presentation templates** | not applicable | a template that retains `{text}` exactly once | `terminal` | rich assistant and exec cells as they render | host: the raw transcript, stored messages and durable evidence | presentation only; the transcript, stored messages and evidence remain native |
+| **Terminal base view and composable render-site patches** | the triggering event and checkpoint; current-API observers compose patches after the exclusive base owner | the owner returns the bounded base view; observers may wrap or replace declared sites and add non-conflicting presentation fields | `terminal (exclusive)` | every mod event, redrawn inline and fullscreen | host: driver, layout, modes, validation, native composer, recovery, input primitives and restoration | dependency order is deterministic; conflicting or invalid patches fail alone and transactionally; older API observers remain observe-only; recovery remains native |
+| **Declarative components at sidebar, header, above-composer and dialog sites** | not applicable | bounded box, text, button, input, select, Markdown, code, pane and dialog trees; wrappers expose exactly one slot | `terminal` | fullscreen, with inline fallbacks | host: focus, scroll, redraw, pointer and keyboard dispatch, resize, accessibility labels, clipboard and the native inspector | 64 components per site, depth 6, unique bounded IDs and labels; narrow fallbacks apply; controls, raw escapes and arbitrary widgets are rejected |
+| **Palettes, semantic diff/status tones, borders, density, icons and syntax theme** | not applicable | bounded named theme slots and presentation variants | `terminal` | inline and fullscreen | host: the terminal colour depth and the configured theme | 256-colour index or `#rrggbb` mapped to terminal depth; no-color drops custom colors, ASCII uses plain borders, there is no mod animation, and removal restores native presentation |
+| **F2-F12, Ctrl/Alt actions and component interaction** | not applicable | insert, submit, run a command, focus a component, activate a control, or request native clipboard copy | `terminal` | inline and fullscreen while the mod view is active | host: native keymap, modal input, focus, pointer dispatch, clipboard authorization and cancellation keys | active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M and cancellation remain native |
+| **Assistant, tool and completed-activity presentation** | not applicable | a template that retains `{text}` exactly once, plus compact presentation for successful completed agent tool output | `terminal` | rich assistant and exec cells as they render | host: the raw transcript, stored messages and durable evidence | presentation only; active work, failures, user shell commands, prompts, transcript, stored messages and evidence remain native and visible |
 
 ## What this adds over the native plugins and hooks
 
@@ -100,11 +100,11 @@ deterministic and composable; the added control per decision is:
 | Bounded native command execution | hooks run their own commands outside the agent sandbox contract | the argument vector |
 | Approved local service lifecycle | native plugins declare MCP servers but have no in-task service lifecycle | start and stop an approved service ID |
 | Streamed progress and the transcript activity line | hooks can show a status message; there is no streaming progress channel | up to 32 bounded progress updates per tool call |
-| Terminal view: title, sidebar side and width, status segments | native plugins cannot change the terminal at all | exclusive `terminal (exclusive)` replacement; not alterable piecemeal; the view is returned whole |
-| Sidebar, header, footer, progress and diagnostics panels | no equivalent | exclusive `terminal` replacement; panel titles and lines each redraw |
-| Accent, user-message background, success/attention/failure tones and syntax theme | no equivalent | exclusive `terminal` replacement; named theme slots |
-| F2-F12, Ctrl+letter and Alt+letter actions | no equivalent | exclusive `terminal` replacement; insert a draft, submit a message or run a command |
-| Assistant message and tool cell presentation templates | no equivalent | exclusive `terminal` replacement; a template that retains `{text}` exactly once |
+| Terminal base view and composable render-site patches | native plugins cannot change the terminal at all | exclusive `terminal (exclusive)` replacement; the owner returns the bounded base view; observers may wrap or replace declared sites and add non-conflicting presentation fields |
+| Declarative components at sidebar, header, above-composer and dialog sites | no equivalent | exclusive `terminal` replacement; bounded box, text, button, input, select, Markdown, code, pane and dialog trees; wrappers expose exactly one slot |
+| Palettes, semantic diff/status tones, borders, density, icons and syntax theme | no equivalent | exclusive `terminal` replacement; bounded named theme slots and presentation variants |
+| F2-F12, Ctrl/Alt actions and component interaction | no equivalent | exclusive `terminal` replacement; insert, submit, run a command, focus a component, activate a control, or request native clipboard copy |
+| Assistant, tool and completed-activity presentation | no equivalent | exclusive `terminal` replacement; a template that retains `{text}` exactly once, plus compact presentation for successful completed agent tool output |
 | Typed middleware at request, stream, prompt, session, agent, tool and approved-operation boundaries | upstream hooks expose selected lifecycle and tool boundaries but not this request/stream preset and provenance contract | each admitted request may select one complete authorized preset; bounded output-text deltas may be transformed in deterministic order with original/effective hashes and fallback provenance |
 | Host-routed namespaced and versioned service contracts between mods | no equivalent typed inter-plugin service contract in configured Codex hooks | a consumer supplies only the declared bounded JSON input and receives a schema-kind-checked result |
 
@@ -112,7 +112,9 @@ deterministic and composable; the added control per decision is:
 
 - **order** — Activation and dispatch order is deterministic: declared dependencies first, then mod ID ascending. The same order is used for every event, tool listing, command listing and contract listing, and is published in `omd-mod status` as `order`.
 
-- **exclusive_versus_middleware** — `api.on` is middleware: observers compose, may veto (`deny`) and, for `context`, contribute additive fragments. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing`, `compaction` or `terminal` decision without the replacement registration fails visibly instead of quietly applying, and a `context` replacer drops observer fragments with a notice naming both sides.
+- **exclusive_versus_middleware** — `api.on` is middleware: observers compose, may veto (`deny`), contribute additive context, and on the current API contribute bounded terminal patches. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing` or `compaction` decision without replacement fails visibly; older terminal observers also remain observe-only. A context replacer drops observer fragments with a notice naming both sides.
+
+- **terminal_patch_composition** — Terminal patches apply after the exclusive base in dependency order. Wrappers contain one slot; one patch may replace a site or own completed-tool presentation; duplicate site, key, status-budget or completed-tool claims fail the later mod transactionally without leaking any of its earlier fields.
 
 - **conflict_before_activation** — Contested exclusive claims — a replacement point, a workflow contract ID or a namespaced tool name — are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.
 
@@ -130,13 +132,13 @@ deterministic and composable; the added control per decision is:
 
 - **limits** — Registration, payload, context, progress, host-call and execution budgets are enforced by the host, not by the mod: 16 mods, 16 tools and 16 commands per mod, 1 KiB context fragments under a 6 KiB aggregate, 32 host calls and 32 progress updates per callback, a per-evaluation `hook_budget_ms` with a separate 5 s total for the whole callback including host-call replays, and 64 KiB state.
 
-- **first_party_parity** — First-party mods use the published API only. `omd_coordination` and `omd_workspace` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run in the conformance fixture beside outside packages under the same rules.
+- **first_party_parity** — First-party mods use the published API only. `omd_coordination`, `omd_workspace`, and `omd_recovery` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.
 
 ## Not supported and not replaceable
 
 - Native workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace integrity, durable evidence and final acceptance.
 - Raw history rewriting, arbitrary compaction engines, custom prompts for provider-side remote compaction.
-- Raw terminal escape sequences, unrestricted UI components, overriding native key bindings, clipboard authorization bypass.
+- Raw terminal escape sequences, arbitrary widgets or DOM/canvas access, overriding native key bindings, transcript mutation, and clipboard authorization bypass.
 - Arbitrary provider compatibility, runtime imports other than the documented Pi `typebox` shim, and any second scheduler or uncontrolled execution path.
 - Mod-to-mod calls: `requires` declares presence and order only; mods never call each other or share state.
 
@@ -172,15 +174,16 @@ Each reference is resolved by `scripts/mod_conformance.py`.
 | tool.execution | `fixture:full/success` · `fixture:opaque/direct` |
 | tool.sidecars | `fixture:full/success` · `fixture:failure/success` |
 | tool.progress | `rust:tool_progress_is_forwarded_once_across_host_call_replay` · `fixture:conformance/success` · `terminal:activity_line` |
-| terminal.view | `patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer` · `rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` · `fixture:conformance/success` · `fixture:conformance-conflict/success` |
-| terminal.panels | `patch:left_sidebar_header_progress_and_diagnostics_share_the_layout` · `terminal:task_panel` · `terminal:customized_panels` |
+| terminal.view | `patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer` · `rust:terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only` · `rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` · `fixture:conformance/success` · `fixture:conformance-conflict/success` |
+| terminal.panels | `patch:left_sidebar_header_progress_and_diagnostics_share_the_layout` · `patch:components_preserve_focus_scroll_and_values_across_redraw_and_resize` · `terminal:task_panel` · `terminal:customized_panels` |
 | terminal.theme | `patch:theme_slots_map_indexed_and_rgb_colors` · `terminal:accent_color` · `terminal:user_message_background` |
 | terminal.keybindings | `patch:native_escape_and_cancel_keys_cannot_be_intercepted` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `terminal:key_submit` · `terminal:key_conflict_visible` |
-| terminal.rendering | `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `fixture:full/success` |
+| terminal.rendering | `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `patch:focus_flow_compacts_only_successful_agent_output` · `fixture:full/success` |
 | kernel.request_stream_middleware | `rust:request_and_stream_middleware_preserve_authority_and_provenance` · `node:typed middleware and services register without ambient authority` |
 | kernel.inter_mod_services | `rust:typed_services_are_host_routed_versioned_and_generate_installed_types` · `rust:missing_incompatible_optional_cyclic_and_colliding_services_fail_independently` · `node:typed middleware and services register without ambient authority` |
 | order | `rust:composition_order_is_declared_dependencies_first_then_mod_id` · `fixture:conformance/success` |
 | exclusive_versus_middleware | `rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny` · `fixture:conformance/success` |
+| terminal_patch_composition | `rust:terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only` · `rust:a_failed_terminal_patch_is_transactional` |
 | conflict_before_activation | `rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` · `rust:two_mods_may_not_own_the_same_workflow_contract` · `fixture:conformance-conflict/success` |
 | dependencies_and_cycles | `rust:a_dependency_cycle_is_rejected_before_activation_and_isolated` · `rust:an_unavailable_dependency_disables_only_the_dependent_chain` |
 | user_project_precedence | `rust:project_scope_takes_precedence_over_user_scope_without_sharing_state` · `rust:two_selections_of_one_id_in_the_same_scope_both_fail_closed` · `rust:pi_and_native_discovery_preserve_project_precedence_without_trust` · `fixture:conformance-conflict/success` |

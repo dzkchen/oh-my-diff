@@ -1,7 +1,7 @@
 use super::*;
 use codex_omd::ModActivity;
 use codex_omd::ModPanel;
-use codex_omd::ModView;
+use codex_omd::ModTerminalView;
 use codex_omd::ModViewSnapshot;
 
 #[derive(Default)]
@@ -48,10 +48,21 @@ impl Views {
         let _ = owner.persist_runtime_file("mod-view.json", &state.snapshot);
     }
 
-    pub(super) fn base(&self, owner: &Host, view: ModView, supplier: Option<String>) {
+    pub(super) fn base(&self, owner: &Host, terminal: ModTerminalView, input: Value) {
         self.update(owner, |state| {
-            state.snapshot.view = view;
-            state.snapshot.owner = supplier;
+            state.snapshot.revision = state.snapshot.revision.saturating_add(1);
+            state.snapshot.view = terminal.view;
+            state.snapshot.owner = terminal.owner;
+            state.snapshot.contributors = terminal.contributors;
+            state.snapshot.input = input;
+            state
+                .diagnostics
+                .retain(|key, _| !key.starts_with("terminal:"));
+            for (index, diagnostic) in terminal.diagnostics.into_iter().enumerate() {
+                state
+                    .diagnostics
+                    .insert(format!("terminal:{index}"), visible(&diagnostic, 512));
+            }
         });
     }
 

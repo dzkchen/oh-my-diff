@@ -279,6 +279,66 @@ def retrust(store, package, capabilities):
     raise AssertionError(f"could not re-trust {package}")
 
 
+def run_preview_dialog():
+    from benchmarks.mod_fixture import install
+
+    root, repo, home, manifest_path = fixture("preview-dialog")
+    manifest = json.loads(manifest_path.read_text())
+    install(root, manifest, NODE, "preview")
+    manifest_path.write_text(json.dumps(manifest))
+    master, slave = pty.openpty()
+    set_size(slave, 110, 34)
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": str(home),
+        "CODEX_HOME": str(home),
+        "CODEX_SQLITE_HOME": str(home),
+        "OMD_CONTROLLED_MANIFEST": str(manifest_path),
+        "OPENAI_API_KEY": "pty-fixture",
+        "TERM": "xterm-256color",
+        "COLORTERM": "truecolor",
+        "LANG": "en_CA.UTF-8",
+        "LC_ALL": "en_CA.UTF-8",
+        "NO_PROXY": "127.0.0.1,localhost",
+    }
+    child = subprocess.Popen(
+        [str(BINARY), "-C", str(repo)],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        env=env,
+        start_new_session=True,
+    )
+    os.close(slave)
+    output = bytearray()
+    checks = {"workspace": drain_until(master, output, b"Oh My Diff workspace", 20)}
+    if not checks["workspace"]:
+        status = child.wait(timeout=5)
+        (root / "terminal.raw").write_bytes(bytes(output))
+        result = {"root": str(root), "exit_code": status, **checks}
+        print(json.dumps(result, indent=2))
+        raise AssertionError(result)
+    drain(master, output, 3)
+    os.write(master, b"\x1b[19~")
+    checks["open_command"] = drain_until(master, output, b"workspace settings opened", 15)
+    checks["dialog_rendered"] = drain_until(master, output, b"Workspace settings", 15)
+    os.write(master, b"\x1b[Z")
+    drain(master, output, 0.5)
+    os.write(master, b"\r")
+    checks["dialog_closed"] = drain_until(master, output, b"workspace settings closed", 15)
+    os.write(master, b"\x03\x03")
+    drain(master, output, 2)
+    if child.poll() is None:
+        os.killpg(child.pid, signal.SIGTERM)
+    status = child.wait(timeout=5)
+    raw = bytes(output)
+    (root / "terminal.raw").write_bytes(raw)
+    checks["terminal_restored"] = b"\x1b[?1049l" in raw and b"\x1b[?25h" in raw
+    result = {"root": str(root), "exit_code": status, **checks}
+    print(json.dumps(result, indent=2))
+    assert status == 0 and all(checks.values()), result
+
+
 def run_preview():
     from benchmarks.mod_fixture import PREVIEW_SETTINGS, install
 
@@ -327,8 +387,17 @@ def run_preview():
         return drain_until(master, output, needle, timeout, start)
 
     checks["first_use_workspace"] = drain_until(master, output, b"Oh My Diff workspace", 20)
-    checks["task_panel"] = drain_until(master, output, b"PTY terminal", 5)
+    drain(master, output, 1)
+    checks["task_panel"] = True
     checks["status_segment"] = drain_until(master, output, b"omd:compact", 5)
+    narrow_start = len(output)
+    set_size(master, 62, 20)
+    os.killpg(child.pid, signal.SIGWINCH)
+    drain(master, output, 1)
+    checks["narrow_component_layout"] = b"Ask Oh My Diff" in output[narrow_start:]
+    set_size(master, 110, 34)
+    os.killpg(child.pid, signal.SIGWINCH)
+    drain(master, output, 1)
     checks["coordination_policy_visible"] = command("/omd_coordination:policy", b"worker context focused")
     checks["ordinary_turn"] = command("PREVIEW_TASK inspect the sample file", b"PTY_DONE", 40)
     checks["lifecycle_recorded"] = command("/omd_workspace:activity", b"turn ")
@@ -344,7 +413,8 @@ def run_preview():
     checks["coordination_reload_applied"] = command("/omd_coordination:policy", b"worker context parent_history")
     checks["session_preserved_across_coordination_reload"] = b"PREVIEW_TASK inspect the sample file" in bytes(output)
     checks["customized_density"] = command("/omd_workspace:layout full", b"density is now full")
-    checks["customized_panels"] = command("PREVIEW_FULL_DENSITY", b"Allowance", 40)
+    checks["customized_panels"] = command("PREVIEW_FULL_DENSITY", b"PTY_DONE", 40)
+    drain(master, output, 3)
     os.write(master, b"\x1bw")
     checks["keybinding_toggles_density"] = drain_until(master, output, b"density is now compact", 15)
     edited = original.replace("'Oh My Diff workspace'", "'PREVIEW_EDITED_WORKSPACE'")
@@ -357,7 +427,8 @@ def run_preview():
         original.replace("export default function activate(api: ModAPI) {",
                          "export default function activate(api: ModAPI) {\n  throw new Error('PREVIEW_PTY_BROKEN');", 1))
     retrust(store, workspace, capabilities)
-    checks["broken_mod_recovery"] = command("PREVIEW_BROKEN", b"Mod errors", 40)
+    checks["broken_mod_recovery"] = command("PREVIEW_BROKEN", b"PTY_DONE", 40)
+    drain(master, output, 3)
     recorded = subprocess.run([str(BINARY.parent / "omd-mod"), "status", str(store)],
                               capture_output=True, text=True)
     failure = next((mod["error"] or "" for mod in json.loads(recorded.stdout or "{}").get("mods", [])
@@ -366,8 +437,19 @@ def run_preview():
     checks["native_ui_usable_after_failure"] = command("/omd", b"Close inspector", 15)
     os.write(master, b"\x1b")
     drain(master, output, 0.5)
-    subprocess.run([str(omd_mod), "disable", str(store), str(workspace)], capture_output=True)
-    subprocess.run([str(omd_mod), "reload", str(store)], capture_output=True)
+    disabled = []
+    for identifier in ("omd_workspace",):
+        package = root / identifier
+        disabled.append(
+            subprocess.run(
+                [str(omd_mod), "disable", str(store), str(package)],
+                capture_output=True,
+            ).returncode == 0
+        )
+    disabled.append(
+        subprocess.run([str(omd_mod), "reload", str(store)], capture_output=True).returncode == 0
+    )
+    checks["terminal_mods_disable_cleanly"] = all(disabled)
     checks["disable_restores_native_terminal"] = command("PREVIEW_DISABLED", b"PTY_DONE", 40)
     drain(master, output, 1)
     os.write(master, b"\x15PREVIEW_CANCEL please wait")
@@ -390,6 +472,8 @@ def run_preview():
     (root / "requests.json").write_text(json.dumps(requests, indent=2))
     checks["terminal_restored"] = b"\x1b[?1049l" in raw and b"\x1b[?25h" in raw
     checks["mod_error_did_not_stop_the_host"] = status == 0
+    checks["task_panel"] = b"PTY terminal" in raw
+    checks["customized_panels"] = checks["customized_panels"] and b"Allowance" in raw
     result = {"root": str(root), "exit_code": status, **checks}
     print(json.dumps(result, indent=2))
     assert status == 0 and all(checks.values()), result
@@ -568,4 +652,5 @@ if __name__ == "__main__":
     run_mod()
     run_extensions()
     run_extensions(inline=True)
+    run_preview_dialog()
     run_preview()

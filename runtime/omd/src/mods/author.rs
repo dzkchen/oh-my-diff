@@ -303,12 +303,22 @@ impl ModHost {
                 if kind == "terminal_mount" {
                     return Ok(view);
                 }
-                let key = required_string(step, "key")?;
-                let action = parsed
-                    .keybindings
-                    .get(key)
-                    .ok_or_else(|| failure("offline_terminal_key_not_mounted"))?;
-                let action = serde_json::to_value(action)?;
+                let action = if let Some(component) = step.get("component").and_then(Value::as_str)
+                {
+                    terminal_component_action(
+                        &parsed,
+                        component,
+                        step.get("value").and_then(Value::as_str),
+                    )?
+                } else {
+                    let key = required_string(step, "key")?;
+                    serde_json::to_value(
+                        parsed
+                            .keybindings
+                            .get(key)
+                            .ok_or_else(|| failure("offline_terminal_key_not_mounted"))?,
+                    )?
+                };
                 if let Some(command) = action.get("command").and_then(Value::as_str) {
                     let (owner, name) = command.split_once(':').unwrap_or((id, command));
                     let args = action.get("args").cloned().unwrap_or_else(|| json!(""));
@@ -336,6 +346,69 @@ fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| failure(format!("offline_{key}_required")))
+}
+
+fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'a ModComponent> {
+    components.iter().find_map(|component| {
+        let (component_id, children) = match component {
+            ModComponent::Box { id, children, .. }
+            | ModComponent::Pane { id, children, .. }
+            | ModComponent::Dialog { id, children, .. } => (Some(id.as_str()), children.as_slice()),
+            ModComponent::Text { id, .. }
+            | ModComponent::Button { id, .. }
+            | ModComponent::Input { id, .. }
+            | ModComponent::Select { id, .. }
+            | ModComponent::Markdown { id, .. }
+            | ModComponent::Code { id, .. } => (Some(id.as_str()), &[][..]),
+            ModComponent::Slot => (None, &[][..]),
+        };
+        if component_id == Some(id) {
+            Some(component)
+        } else {
+            terminal_component(children, id)
+        }
+    })
+}
+
+fn terminal_component_action(view: &ModView, id: &str, value: Option<&str>) -> Result<Value> {
+    let component = view
+        .sites
+        .values()
+        .find_map(|site| terminal_component(&site.components, id))
+        .ok_or_else(|| failure("offline_terminal_component_not_mounted"))?;
+    let command = |action: &ModCommandAction, value: Option<&str>| {
+        let args = match value {
+            Some(value) if action.args.is_empty() => value.to_owned(),
+            Some(value) => format!("{} {value}", action.args),
+            None => action.args.clone(),
+        };
+        serde_json::to_value(ModKeyAction::Command {
+            command: action.command.clone(),
+            args,
+        })
+        .map_err(failure)
+    };
+    match component {
+        ModComponent::Button { action, .. } => serde_json::to_value(action).map_err(failure),
+        ModComponent::Input {
+            action,
+            value: current,
+            ..
+        } => command(action, value.or(Some(current))),
+        ModComponent::Select {
+            action,
+            value: current,
+            options,
+            ..
+        } => {
+            let selected = value.unwrap_or(current);
+            if !options.iter().any(|option| option.value == selected) {
+                return Err(failure("offline_terminal_select_value_not_mounted"));
+            }
+            command(action, Some(selected))
+        }
+        _ => Err(failure("offline_terminal_component_not_interactive")),
+    }
 }
 
 fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]) {

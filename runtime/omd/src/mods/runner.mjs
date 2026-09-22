@@ -71,7 +71,7 @@ function unique(map, name, handler) {
   map.set(name, handler);
 }
 const api = Object.freeze({
-  version: '0.1.0-experimental.6',
+  version: request.api,
   fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
   host: Object.freeze({ call: hostCall }),
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),

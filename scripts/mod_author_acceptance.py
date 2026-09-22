@@ -132,7 +132,7 @@ def main():
         packaged = sorted(str(path.relative_to(work)) for path in work.glob("**/dist/*/package-report.json"))
         summary = {
             "schema": 1,
-            "sdk": "@oh-my-diff/mod-api@0.1.0-experimental.6",
+            "sdk": "@oh-my-diff/mod-api@0.1.0-experimental.7",
             "sdk_tarball_sha256": hashlib.sha256(tarball.read_bytes()).hexdigest(),
             "node": node,
             "engine": "omd-mod built from the selected checkout",

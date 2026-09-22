@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "api": "0.1.0-experimental.6",
+  "api": "0.1.0-experimental.7",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {
@@ -670,13 +670,13 @@
     {
       "id": "terminal.view",
       "group": "terminal",
-      "decision": "Terminal view: title, sidebar side and width, status segments",
-      "observe": "the triggering event and the checkpoint",
-      "alter": "not alterable piecemeal; the view is returned whole",
+      "decision": "Terminal base view and composable render-site patches",
+      "observe": "the triggering event and checkpoint; current-API observers compose patches after the exclusive base owner",
+      "alter": "the owner returns the bounded base view; observers may wrap or replace declared sites and add non-conflicting presentation fields",
       "replace": "terminal (exclusive)",
       "timing": "every mod event, redrawn inline and fullscreen",
-      "ownership": "host: layout, fallbacks, the native composer and recovery controls",
-      "limits": "panels need fullscreen with size fallbacks; a failed or contested view falls back to the native recovery panel; a mod error panel is inserted above a healthy mod view",
+      "ownership": "host: driver, layout, modes, validation, native composer, recovery, input primitives and restoration",
+      "limits": "dependency order is deterministic; conflicting or invalid patches fail alone and transactionally; older API observers remain observe-only; recovery remains native",
       "native": "native plugins cannot change the terminal at all",
       "covers": {
         "capabilities": [
@@ -692,6 +692,7 @@
       },
       "evidence": [
         "patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer",
+        "rust:terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only",
         "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest",
         "fixture:conformance/success",
         "fixture:conformance-conflict/success"
@@ -701,13 +702,13 @@
     {
       "id": "terminal.panels",
       "group": "terminal",
-      "decision": "Sidebar, header, footer, progress and diagnostics panels",
+      "decision": "Declarative components at sidebar, header, above-composer and dialog sites",
       "observe": "not applicable",
-      "alter": "panel titles and lines each redraw",
+      "alter": "bounded box, text, button, input, select, Markdown, code, pane and dialog trees; wrappers expose exactly one slot",
       "replace": "terminal",
       "timing": "fullscreen, with inline fallbacks",
-      "ownership": "host: available space, truncation and the native inspector",
-      "limits": "bounded panel and line counts; control characters and raw escapes are rejected at parse time",
+      "ownership": "host: focus, scroll, redraw, pointer and keyboard dispatch, resize, accessibility labels, clipboard and the native inspector",
+      "limits": "64 components per site, depth 6, unique bounded IDs and labels; narrow fallbacks apply; controls, raw escapes and arbitrary widgets are rejected",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -717,6 +718,7 @@
       },
       "evidence": [
         "patch:left_sidebar_header_progress_and_diagnostics_share_the_layout",
+        "patch:components_preserve_focus_scroll_and_values_across_redraw_and_resize",
         "terminal:task_panel",
         "terminal:customized_panels"
       ],
@@ -725,13 +727,13 @@
     {
       "id": "terminal.theme",
       "group": "terminal",
-      "decision": "Accent, user-message background, success/attention/failure tones and syntax theme",
+      "decision": "Palettes, semantic diff/status tones, borders, density, icons and syntax theme",
       "observe": "not applicable",
-      "alter": "named theme slots",
+      "alter": "bounded named theme slots and presentation variants",
       "replace": "terminal",
       "timing": "inline and fullscreen",
       "ownership": "host: the terminal colour depth and the configured theme",
-      "limits": "256-colour index or `#rrggbb` mapped to the terminal depth; the configured theme is restored when the mod is removed",
+      "limits": "256-colour index or `#rrggbb` mapped to terminal depth; no-color drops custom colors, ASCII uses plain borders, there is no mod animation, and removal restores native presentation",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -749,13 +751,13 @@
     {
       "id": "terminal.keybindings",
       "group": "terminal",
-      "decision": "F2-F12, Ctrl+letter and Alt+letter actions",
+      "decision": "F2-F12, Ctrl/Alt actions and component interaction",
       "observe": "not applicable",
-      "alter": "insert a draft, submit a message or run a command",
+      "alter": "insert, submit, run a command, focus a component, activate a control, or request native clipboard copy",
       "replace": "terminal",
       "timing": "inline and fullscreen while the mod view is active",
-      "ownership": "host: the native keymap, modal input and cancellation keys",
-      "limits": "active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M and modal input are never interceptable",
+      "ownership": "host: native keymap, modal input, focus, pointer dispatch, clipboard authorization and cancellation keys",
+      "limits": "active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M and cancellation remain native",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -774,13 +776,13 @@
     {
       "id": "terminal.rendering",
       "group": "terminal",
-      "decision": "Assistant message and tool cell presentation templates",
+      "decision": "Assistant, tool and completed-activity presentation",
       "observe": "not applicable",
-      "alter": "a template that retains `{text}` exactly once",
+      "alter": "a template that retains `{text}` exactly once, plus compact presentation for successful completed agent tool output",
       "replace": "terminal",
       "timing": "rich assistant and exec cells as they render",
       "ownership": "host: the raw transcript, stored messages and durable evidence",
-      "limits": "presentation only; the transcript, stored messages and evidence remain native",
+      "limits": "presentation only; active work, failures, user shell commands, prompts, transcript, stored messages and evidence remain native and visible",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -790,6 +792,7 @@
       },
       "evidence": [
         "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
+        "patch:focus_flow_compacts_only_successful_agent_output",
         "fixture:full/success"
       ],
       "replace_note": null
@@ -867,11 +870,19 @@
     },
     {
       "id": "exclusive_versus_middleware",
-      "rule": "`api.on` is middleware: observers compose, may veto (`deny`) and, for `context`, contribute additive fragments. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing`, `compaction` or `terminal` decision without the replacement registration fails visibly instead of quietly applying, and a `context` replacer drops observer fragments with a notice naming both sides.",
+      "rule": "`api.on` is middleware: observers compose, may veto (`deny`), contribute additive context, and on the current API contribute bounded terminal patches. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing` or `compaction` decision without replacement fails visibly; older terminal observers also remain observe-only. A context replacer drops observer fragments with a notice naming both sides.",
       "evidence": [
         "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose",
         "rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny",
         "fixture:conformance/success"
+      ]
+    },
+    {
+      "id": "terminal_patch_composition",
+      "rule": "Terminal patches apply after the exclusive base in dependency order. Wrappers contain one slot; one patch may replace a site or own completed-tool presentation; duplicate site, key, status-budget or completed-tool claims fail the later mod transactionally without leaking any of its earlier fields.",
+      "evidence": [
+        "rust:terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only",
+        "rust:a_failed_terminal_patch_is_transactional"
       ]
     },
     {
@@ -952,7 +963,7 @@
     },
     {
       "id": "first_party_parity",
-      "rule": "First-party mods use the published API only. `omd_coordination` and `omd_workspace` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run in the conformance fixture beside outside packages under the same rules.",
+      "rule": "First-party mods use the published API only. `omd_coordination`, `omd_workspace`, and `omd_recovery` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.",
       "evidence": [
         "python:test_first_party_mods_use_only_the_published_api",
         "fixture:conformance/success"
@@ -962,7 +973,7 @@
   "unsupported": [
     "Native workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace integrity, durable evidence and final acceptance.",
     "Raw history rewriting, arbitrary compaction engines, custom prompts for provider-side remote compaction.",
-    "Raw terminal escape sequences, unrestricted UI components, overriding native key bindings, clipboard authorization bypass.",
+    "Raw terminal escape sequences, arbitrary widgets or DOM/canvas access, overriding native key bindings, transcript mutation, and clipboard authorization bypass.",
     "Arbitrary provider compatibility, runtime imports other than the documented Pi `typebox` shim, and any second scheduler or uncontrolled execution path.",
     "Mod-to-mod calls: `requires` declares presence and order only; mods never call each other or share state."
   ]

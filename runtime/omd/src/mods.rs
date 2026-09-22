@@ -8,12 +8,25 @@ pub use pi::substitute_args;
 mod view;
 pub use view::MOD_KEY_LIMIT;
 pub use view::ModActivity;
+pub use view::ModBorder;
 pub use view::ModColor;
+pub use view::ModCommandAction;
+pub use view::ModCompletedTools;
+pub use view::ModComponent;
+pub use view::ModComponentAction;
+pub use view::ModDensity;
+pub use view::ModIcons;
 pub use view::ModKeyAction;
 pub use view::ModPanel;
+pub use view::ModRenderSite;
+pub use view::ModSelectOption;
 pub use view::ModSidebarSide;
+pub use view::ModSiteMode;
 pub use view::ModTheme;
+pub use view::ModThemePatch;
+pub use view::ModTone;
 pub use view::ModView;
+pub use view::ModViewPatch;
 pub use view::ModViewSnapshot;
 pub use view::mod_command_reference;
 pub use view::mod_key_name;
@@ -48,7 +61,7 @@ pub use store::ModStore;
 
 pub const CODEX_HOST_RELEASE: &str = "0.155.1";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-pub const MOD_API_VERSION: &str = "0.1.0-experimental.6";
+pub const MOD_API_VERSION: &str = "0.1.0-experimental.7";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -62,6 +75,8 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "service_contracts_v1",
     "source_use_v1",
     "state_migration_v1",
+    "terminal_components_v1",
+    "terminal_render_sites_v1",
     "transactional_reload_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
@@ -93,6 +108,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
 pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
     ("0.1.0-experimental.4", "deprecated", "2027-03-20"),
     ("0.1.0-experimental.5", "experimental", "2027-03-20"),
+    ("0.1.0-experimental.6", "experimental", "2027-03-20"),
     (MOD_API_VERSION, "experimental", "2027-03-20"),
 ];
 pub const MOD_CAPABILITIES: &[&str] = &[
@@ -977,6 +993,18 @@ pub struct ModCommand {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub struct ModTerminalView {
+    pub view: ModView,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub contributors: Vec<String>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct Registrations {
     tools: Vec<ModTool>,
     commands: Vec<ModCommand>,
@@ -1716,10 +1744,8 @@ impl ModHost {
                     .iter()
                     .any(|registered| registered == point)
             };
-            if matches!(
-                event,
-                "routing" | "worker_context" | "compaction" | "terminal"
-            ) && !reply.value.is_null()
+            if matches!(event, "routing" | "worker_context" | "compaction")
+                && !reply.value.is_null()
                 && !replaces(event)
             {
                 return Err(failure("exclusive_replacement_registration_required"));
@@ -1777,7 +1803,13 @@ impl ModHost {
                 return Err(failure("exclusive_replacement_registration_required"));
             }
             if event == "terminal" && !reply.value.is_null() {
-                ModView::parse(reply.value.clone())?;
+                if replaces("terminal") {
+                    ModView::parse(reply.value.clone())?;
+                } else if loaded.package.api == MOD_API_VERSION {
+                    ModViewPatch::parse(reply.value.clone())?;
+                } else {
+                    return Err(failure("exclusive_replacement_registration_required"));
+                }
             }
             if event == "input" {
                 let decision = ModInputDecision::parse(&reply.value)?;
@@ -2090,6 +2122,48 @@ impl ModHost {
                 (id, result)
             })
             .collect()
+    }
+
+    pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
+        let owner = self.replacement_owner("terminal");
+        let results = self.event_guarded("terminal", payload, active);
+        let mut view = ModView::default();
+        let mut patches = Vec::new();
+        let mut diagnostics = Vec::new();
+        for (id, result) in results {
+            match result {
+                Ok(value) if value.is_null() => {}
+                Ok(value) if owner.as_deref() == Some(id.as_str()) => match ModView::parse(value) {
+                    Ok(candidate) => view = candidate,
+                    Err(error) => diagnostics.push(format!("{id}: {error}")),
+                },
+                Ok(value) => match ModViewPatch::parse(value) {
+                    Ok(patch) => patches.push((id, patch)),
+                    Err(error) => diagnostics.push(format!("{id}: {error}")),
+                },
+                Err(error) => diagnostics.push(format!("{id}: {error}")),
+            }
+        }
+        let mut replaced_sites = BTreeSet::new();
+        let mut completed_tools_owner = false;
+        let mut contributors = Vec::new();
+        for (id, patch) in patches {
+            match patch.apply(&mut view, &mut replaced_sites, &mut completed_tools_owner) {
+                Ok(()) => contributors.push(id),
+                Err(error) => {
+                    diagnostics.push(format!("{id}: {error}"));
+                    if let Some(loaded) = self.loaded.get_mut(&id) {
+                        loaded.error = Some(error.to_string());
+                    }
+                }
+            }
+        }
+        ModTerminalView {
+            view,
+            owner,
+            contributors,
+            diagnostics,
+        }
     }
 
     pub fn turn_boundary(&mut self) {

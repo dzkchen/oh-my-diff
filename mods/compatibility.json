@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "as_of": "2026-09-21",
+  "as_of": "2026-09-22",
   "host": {
     "codex": "0.155.1",
     "omd": "0.1.0",
     "stability": "experimental",
-    "current_api": "0.1.0-experimental.6",
+    "current_api": "0.1.0-experimental.7",
     "package_schemas": [1],
     "state_storage_schema": 1,
     "installed_contract_types": 1,
@@ -18,6 +18,8 @@
       "service_contracts_v1",
       "source_use_v1",
       "state_migration_v1",
+      "terminal_components_v1",
+      "terminal_render_sites_v1",
       "transactional_reload_v1"
     ]
   },
@@ -36,6 +38,12 @@
     },
     {
       "version": "0.1.0-experimental.6",
+      "stability": "experimental",
+      "support_until": "2027-03-20",
+      "service_imports": "exact or compatible caret range"
+    },
+    {
+      "version": "0.1.0-experimental.7",
       "stability": "experimental",
       "support_until": "2027-03-20",
       "service_imports": "exact or compatible caret range"

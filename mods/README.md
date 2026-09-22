@@ -1,11 +1,11 @@
 # TypeScript mods
 
-API `0.1.0-experimental.6` runs on the pinned Codex 0.155.1 OMD 0.1.0 host,
+API `0.1.0-experimental.7` runs on the pinned Codex 0.155.1 OMD 0.1.0 host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.
 
-Install the exact `@oh-my-diff/mod-api@0.1.0-experimental.6` author package with
+Install the exact `@oh-my-diff/mod-api@0.1.0-experimental.7` author package with
 pnpm. It exports the typed SDK and `omd-mod-author` CLI. See
 [REFERENCE.md](REFERENCE.md) for version-matched API and command documentation.
 The quickest local flow is:
@@ -178,7 +178,7 @@ any outside package:
 
 | Package | Extension type | Workflow and mod requirement |
 | --- | --- | --- |
-| [omd_workspace](first-party/omd_workspace/index.ts) | mod | Replaces the live terminal workspace: task/worker/allowance panels, theme, keys, rendering |
+| [omd_workspace](first-party/omd_workspace/index.ts) | mod | Replaces the live terminal workspace with declarative task, worker, allowance, activity, settings, key and rendering surfaces |
 | [omd_coordination](first-party/omd_coordination/index.ts) | mod | Replaces live coordination and context policy: lead route, operating brief, delegated worker evidence; exports bounded delegation preparation |
 | [omd_recovery](first-party/omd_recovery/index.ts) | mod | Replaces live escalation and delegation dispatch policy: failure class, tool eligibility, advisory route, and Contributor-outage action |
 
@@ -242,7 +242,8 @@ undocumented capability, event, replacement point or host operation fails. Unkno
 APIs, capabilities, imports, events, adapters, and host operations fail explicitly.
 First-party and external packages use identical capabilities.
 
-API `0.1.0-experimental.6` adds compatibility metadata without making a stable API
+API `0.1.0-experimental.7` adds terminal components and composable render sites
+without making a stable API
 commitment. `api.fieldPolicies` gives the authoritative per-field classification
 for every admitted request/response, prompt, session, agent, tool, and host-operation
 event: `observe_only`, `alterable`, or `replaceable`. `api.middleware` registers
@@ -414,27 +415,40 @@ its requirements, and every denial and restriction recorded so far.
 
 ## Terminal extension points
 
-The exclusive `terminal` owner returns a bounded view (see `TerminalView` in
-[api.d.ts](api.d.ts)). Native input, modal controls, cancellation, transcript
-storage and recovery remain native.
+The exclusive `terminal` owner returns a bounded base view (see `TerminalView`
+in [api.d.ts](api.d.ts)). On `.7`, terminal observers may return bounded
+`TerminalPatch` values in dependency order. Site replacement conflicts fail the
+later patch without leaking partial changes; wrappers contain exactly one slot.
+Native input, modal controls, cancellation, transcript storage and recovery remain
+native.
 
-- Layout: up to eight text panels in a left or right sidebar (hidden below 80
-  columns), an optional header panel above the transcript (hidden below 16 rows),
-  and an optional footer panel above the composer. These require the fullscreen
-  (alternate-screen) terminal.
+- Layout: the `sidebar`, `header`, `above_composer`, and `dialog` render sites
+  accept bounded trees of box, text, button, input, select, Markdown, code, pane,
+  dialog, and wrapper-slot components. Legacy text panels remain supported. The
+  sidebar hides below 80 columns, the header below 16 rows, and dialogs fall back
+  on narrow terminals. These require the fullscreen terminal except the
+  above-composer text fallback.
 - Status: up to four segments of 40 characters appended to the native status line.
-- Theme: `accent`, `user_message_background`, and `success`/`attention`/`failure`
-  status tones accept a 256-color index or `#rrggbb` (mapped to the terminal's
-  color depth), and `syntax` selects an installed Codex syntax theme by name. An
+- Theme: `accent`, `user_message_background`, `success`/`attention`/`failure`,
+  `diff_added`/`diff_removed`, and `muted` accept a 256-color index or `#rrggbb`
+  mapped to the terminal's color depth. `border`, `density`, and `icons` select
+  bounded presentation variants, while `syntax` selects an installed Codex syntax theme. An
   unknown syntax theme keeps the configured theme and shows a warning; removing it
   restores the configured theme.
 - Keybindings: `F2`–`F12`, `Ctrl+<letter>` (except c, d, h, i, j, m, z) and
   `Alt+<letter>`. A string or `{insert}` inserts a draft, `{submit}` sends a user
-  message, and `{command, args}` runs a mod command or Pi prompt by name. A key
+  message, `{command, args}` runs a mod command or Pi prompt, `{focus}` moves to
+  a declared component, and `{copy, label}` uses the native clipboard path. A key
   that is bound in the active native keymap or starts a native chord keeps its
   native action; the mod binding is ignored with a visible notice.
-- Rendering: message/tool presentation templates (fullscreen) keep `{text}` exactly
-  once.
+- Interaction: the native TUI owns focus, scrolling, redraw, pointer and keyboard
+  dispatch, resize fallbacks, accessibility labels, clipboard authorization, and
+  cancellation. Component IDs and labels are required and bounded. Raw terminal
+  escapes and transcript mutation are rejected.
+- Rendering: message/tool presentation templates keep `{text}` exactly once.
+  `completed_tools: compact` groups only successful completed agent tool output;
+  active work, failures, user shell commands, prompts, evidence, and the full
+  transcript stay visible through native surfaces.
 
 Theme, keybindings and status segments apply in inline and fullscreen modes when
 the OMD terminal capability is enabled. While a mod tool runs, a sidebar progress

@@ -778,6 +778,9 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
         json!({"theme":{"accent":"blue"}}),
         json!({"theme":{"syntax":""}}),
         json!({"theme":{"border":81}}),
+        json!({"sites":{"sidebar":{"components":[{"type":"text","id":"bad-id","label":"Bad","text":"bad"}]}}}),
+        json!({"sites":{"sidebar":{"components":[{"type":"slot"}]}}}),
+        json!({"sites":{"sidebar":{"components":[{"type":"text","id":"same","label":"One","text":"one"},{"type":"text","id":"same","label":"Two","text":"two"}]}}}),
     ] {
         assert!(codex_omd::ModView::parse(value.clone()).is_err(), "{value}");
     }
@@ -788,8 +791,22 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
         "header":{"title":"Header","lines":["one"]},
         "footer":{"title":"Footer","lines":["two","three"]},
         "status":["build ok","2 agents"],
-        "theme":{"accent":81,"user_message_background":"#202830","syntax":"github","success":"#00FF00","attention":214,"failure":196},
-        "keybindings":{"F6":"draft","F7":{"insert":"inserted"},"Ctrl+r":{"submit":"Run the tests"},"Alt+x":{"command":"counter:reset","args":"now"},"Alt+y":{"command":"reset"}}
+        "theme":{"accent":81,"user_message_background":"#202830","syntax":"github","success":"#00FF00","attention":214,"failure":196,"diff_added":46,"diff_removed":196,"muted":244,"border":"rounded","density":"compact","icons":"ascii"},
+        "sites":{
+            "sidebar":{"components":[{
+                "type":"box","id":"root_box","label":"Root box","title":"Components","children":[
+                    {"type":"text","id":"plain_text","label":"Plain text","text":"plain","tone":"accent"},
+                    {"type":"button","id":"run_button","label":"Run button","text":"Run","action":{"command":"counter:reset"}},
+                    {"type":"input","id":"review_input","label":"Review input","placeholder":"Review","action":{"command":"counter:review"}},
+                    {"type":"select","id":"side_select","label":"Side","value":"left","options":[{"value":"left","label":"Left"},{"value":"right","label":"Right"}],"action":{"command":"counter:side"}},
+                    {"type":"markdown","id":"help_markdown","label":"Help","text":"**help**"},
+                    {"type":"code","id":"code_sample","label":"Code","text":"let ok = true;","language":"typescript"},
+                    {"type":"pane","id":"detail_pane","label":"Details","title":"Details","children":[]}
+                ]
+            }]},
+            "dialog":{"components":[{"type":"dialog","id":"settings_dialog","label":"Settings","title":"Settings","children":[]}]}
+        },
+        "keybindings":{"F6":"draft","F7":{"insert":"inserted"},"F8":{"focus":"review_input"},"F9":{"copy":"copy me","label":"fixture text"},"Ctrl+r":{"submit":"Run the tests"},"Alt+x":{"command":"counter:reset","args":"now"},"Alt+y":{"command":"reset"}}
     }))
     .unwrap();
     assert_eq!(view.sidebar_side, codex_omd::ModSidebarSide::Left);
@@ -807,6 +824,18 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
     assert_eq!(
         serde_json::to_value(&view.theme).unwrap()["user_message_background"],
         json!("#202830")
+    );
+    assert!(
+        codex_omd::ModViewPatch::parse(
+            json!({"sites":{"sidebar":{"mode":"wrap","components":[]}}})
+        )
+        .is_err()
+    );
+    assert!(
+        codex_omd::ModViewPatch::parse(
+            json!({"sites":{"sidebar":{"mode":"wrap","components":[{"type":"slot"}]}}})
+        )
+        .is_ok()
     );
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("mod-view.json");
@@ -826,12 +855,117 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
             status: "completed".into(),
         }],
         diagnostics: vec!["keybinding dropped".into()],
+        ..Default::default()
     };
     std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
     assert_eq!(codex_omd::ModViewSnapshot::read(&path).unwrap(), snapshot);
     snapshot.activity[0].label = "bad\u{1b}".into();
     std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
     assert!(codex_omd::ModViewSnapshot::read(&path).is_err());
+}
+
+#[test]
+fn terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let workspace = packaged(
+        &root,
+        "workspace",
+        "workspace",
+        "export default api => api.replace('terminal',()=>({title:'Workspace',sites:{sidebar:{components:[{type:'text',id:'base_text',label:'Base text',text:'base'}]}},status:['workspace'],keybindings:{F8:{focus:'base_text'}}}))",
+        &["terminal"],
+        &[],
+    );
+    trust(&store, &workspace, &["terminal"]);
+    let focus = packaged(
+        &root,
+        "focus",
+        "focus",
+        "export default api => api.on('terminal',()=>({sites:{sidebar:{mode:'wrap',components:[{type:'box',id:'focus_box',label:'Focus box',children:[{type:'text',id:'focus_text',label:'Focus text',text:'focus'},{type:'slot'}]}]}},completed_tools:'compact',status:['focus'],keybindings:{F9:{command:'focus:toggle'}}}))",
+        &["terminal"],
+        &["workspace"],
+    );
+    trust(&store, &focus, &["terminal"]);
+    let theme = packaged(
+        &root,
+        "theme",
+        "theme",
+        "export default api => api.on('terminal',()=>({theme:{accent:'#7dd3fc',border:'rounded',density:'compact',icons:'ascii'},status:['theme'],keybindings:{F10:{copy:'palette',label:'palette'}}}))",
+        &["terminal"],
+        &["workspace"],
+    );
+    trust(&store, &theme, &["terminal"]);
+    let mut runtime = host(&temp);
+    let terminal = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
+    assert_eq!(
+        terminal.owner.as_deref(),
+        Some("workspace"),
+        "{}",
+        runtime.status()
+    );
+    assert_eq!(terminal.contributors, vec!["focus", "theme"]);
+    assert!(
+        terminal.diagnostics.is_empty(),
+        "{:?}",
+        terminal.diagnostics
+    );
+    assert_eq!(terminal.view.status, vec!["workspace", "focus", "theme"]);
+    assert_eq!(
+        terminal.view.completed_tools,
+        codex_omd::ModCompletedTools::Compact
+    );
+    assert_eq!(terminal.view.theme.border, codex_omd::ModBorder::Rounded);
+    let sidebar = serde_json::to_value(&terminal.view.sites["sidebar"]).unwrap();
+    assert_eq!(sidebar["components"][0]["id"], "focus_box");
+    assert_eq!(sidebar["components"][0]["children"][1]["id"], "base_text");
+
+    let legacy = package(
+        &root,
+        "legacy",
+        "export default api => api.on('terminal',()=>({theme:{accent:81}}))",
+        &["terminal"],
+    );
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(legacy.join("mod.json")).unwrap()).unwrap();
+    manifest["api"] = json!("0.1.0-experimental.6");
+    std::fs::write(
+        legacy.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    trust(&store, &legacy, &["terminal"]);
+    runtime.reload().unwrap();
+    let terminal = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
+    assert!(
+        terminal
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("legacy")
+                && diagnostic.contains("exclusive_replacement_registration_required"))
+    );
+}
+
+#[test]
+fn a_failed_terminal_patch_is_transactional() {
+    let mut view = codex_omd::ModView::parse(json!({"title":"Base","sites":{"sidebar":{"components":[{"type":"text","id":"base","label":"Base","text":"base"}]}}})).unwrap();
+    let first = codex_omd::ModViewPatch::parse(json!({"title":"First","sites":{"sidebar":{"components":[{"type":"text","id":"first","label":"First","text":"first"}]}}})).unwrap();
+    let second = codex_omd::ModViewPatch::parse(json!({"title":"Leaked","sites":{"sidebar":{"components":[{"type":"text","id":"second","label":"Second","text":"second"}]}}})).unwrap();
+    let mut sites = std::collections::BTreeSet::new();
+    let mut completed_tools = false;
+    first
+        .apply(&mut view, &mut sites, &mut completed_tools)
+        .unwrap();
+    assert!(
+        second
+            .apply(&mut view, &mut sites, &mut completed_tools)
+            .is_err()
+    );
+    assert_eq!(view.title.as_deref(), Some("First"));
+    assert_eq!(
+        serde_json::to_value(&view.sites["sidebar"]).unwrap()["components"][0]["id"],
+        "first"
+    );
 }
 
 #[test]
@@ -1952,11 +2086,7 @@ fn worker_context_is_exclusive_typed_and_failure_isolated() {
     );
     let mut runtime = host(&temp);
     let results = runtime.event("worker_context", payload.clone());
-    assert!(
-        !results.is_empty(),
-        "{}",
-        runtime.status()
-    );
+    assert!(!results.is_empty(), "{}", runtime.status());
     assert!(
         results[0]
             .1
@@ -2055,7 +2185,7 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
     let harness = package(
         &root,
         "harness",
-        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('checkpoint.update',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.replace('terminal',()=>({title:'Offline UI',keybindings:{F2:{command:'harness:ping'}}})); }",
+        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('checkpoint.update',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.replace('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
         &[
             "tools",
             "commands",
@@ -2123,8 +2253,9 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
             {"type":"agent","payload":{"phase":"end","agent_id":"agent-1","parent_agent_id":null,"role":"worker","status":"completed"},"expect":[{"mod":"harness","value":null}]},
             {"type":"response_stream","payload":{"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,"opaque_reasoning":false,"protected":false,"text":"hello"}},
             {"type":"invoke","mod":"consumer","event":"command","name":"call","expect":"HELLO"},
-            {"type":"terminal_mount","mod":"harness","payload":{"event":"draw","checkpoint":null},"expect":{"title":"Offline UI","keybindings":{"F2":{"command":"harness:ping"}}}},
+            {"type":"terminal_mount","mod":"harness","payload":{"event":"draw","checkpoint":null},"expect":{"title":"Offline UI","sites":{"dialog":{"components":[{"type":"button","id":"ping_button","label":"Ping button","text":"Ping","action":{"command":"harness:ping"}}]}},"keybindings":{"F2":{"command":"harness:ping"}}}},
             {"type":"terminal_interact","mod":"harness","key":"F2","payload":{"event":"draw","checkpoint":null},"expect":{"action":{"command":"harness:ping","args":""},"result":1}},
+            {"type":"terminal_interact","mod":"harness","component":"ping_button","payload":{"event":"draw","checkpoint":null},"expect":{"action":{"command":"harness:ping","args":""},"result":2}},
             {"type":"reload"},
             {"type":"invoke","mod":"harness","event":"command","name":"clock","cancelled":true,"expect_error":"callback_cancelled"}
         ]
@@ -2135,7 +2266,7 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
     assert_eq!(result["virtual_time_ms"], 1025);
     assert_eq!(result["host_calls"].as_array().unwrap().len(), 4);
     assert_eq!(result["steps"][6]["value"]["effective"], "HELLO");
-    assert_eq!(result["steps"][10]["value"]["generation"], 2);
+    assert_eq!(result["steps"][11]["value"]["generation"], 2);
 }
 
 #[test]

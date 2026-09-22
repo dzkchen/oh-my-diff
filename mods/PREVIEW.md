@@ -6,7 +6,7 @@ all of them without rebuilding Codex.
 
 | Package | Extension type | What it changes and why a mod is required |
 | --- | --- | --- |
-| `omd_workspace` | mod | Replaces the live terminal workspace: sidebar panels for the task, remaining acceptance criteria, workers and allowance; header, footer and status line; theme; `F6`/`Alt+r`/`Alt+w`/`Alt+s` keys; message and tool rendering |
+| `omd_workspace` | mod | Replaces the live terminal workspace with declarative task, acceptance, worker, allowance, activity, header, composer, settings-dialog, key and rendering surfaces |
 | `omd_coordination` | mod | Replaces live coordination and context policy: which configured route leads, what operating brief the model receives, and which evidence a delegated worker is given; exports that bounded preparation to recovery |
 | `omd_recovery` | mod | Replaces escalation and delegation dispatch policy: failure classification, eligible tools, advisory-route choice, and whether a host-detected Contributor outage pauses or requests the configured opposite lead |
 
@@ -14,7 +14,7 @@ The checked classification for every bundled package, author example, and
 retained conformance fixture is in [EXTENSION_TYPES.md](EXTENSION_TYPES.md).
 
 This is a preview slice, not the release bundle. It is API
-`0.1.0-experimental.6`, which is experimental and not frozen. Its finite
+`0.1.0-experimental.7`, which is experimental and not frozen. Its finite
 cross-release policy is published in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Install
@@ -61,7 +61,8 @@ work you now get:
 
 - a sidebar with the task objective, what the host still considers outstanding,
   live and archived workers, and the remaining request/time/spend allowance;
-- `F6` to draft a review prompt and `Alt+r` to send it;
+- `F6` to draft a review prompt, `Alt+r` to send it, and `F8` to open the
+  keyboard- and pointer-accessible settings dialog;
 - an operating brief in the model's context naming the active coordination
   policy, and `/omd_coordination:policy` to print it with the decisions it made;
 - recovery decisions through `/omd_recovery:policy`; exact failure evidence,
@@ -73,7 +74,7 @@ permissions, limits, review, cancellation and accounting are unchanged.
 
 ## First customization
 
-Both mods read settings, so the smallest change needs no code:
+The packages read settings, so the smallest change needs no code:
 
 ```sh
 OMD_MOD="$OMD_PREFIX/artifacts/omd/omd-mod"
@@ -84,11 +85,11 @@ OMD_MOD="$OMD_PREFIX/artifacts/omd/omd-mod"
 "$OMD_MOD" reload "$OMD_STORE"
 ```
 
-`density`, `side`, `review_prompt` and `syntax` configure the workspace;
+`density`, `side`, and `review_prompt` configure the workspace.
 `lead_policy` (`sol`, `astra`, `task_entry`), `worker_context`
 (`focused_brief`, `shared_task_packet`, `parent_history`) and `evidence` configure
 coordination. The shorter `focused`, `shared` and `inherit` values remain accepted
-aliases. Settings and reloads take effect at the next turn boundary; the running
+aliases. Settings and source reloads take effect at the next turn boundary; the running
 task, transcript and composer are preserved. Lead routing applies when a thread
 is created or resumed, while worker-context selection is refreshed at each turn
 boundary. Recovery accepts a lead-asserted failure class or a fixed
@@ -96,8 +97,7 @@ boundary. Recovery accepts a lead-asserted failure class or a fixed
 whether advisory recovery is permitted, and `outage_action` is
 `opposite_lead` or `pause`.
 
-`/omd_workspace:layout compact` and `Alt+w` switch density from inside the TUI
-without touching a file.
+`/omd_workspace:layout compact` and `Alt+w` switch workspace density.
 
 ## A substantial change
 
@@ -161,11 +161,15 @@ touches the installed build, your Codex state or your manifests.
 - The API is experimental and may change. Only the rows and finite windows in
   [COMPATIBILITY.md](COMPATIBILITY.md) are supported; arbitrary-version session
   or state interchange is not promised.
+- The terminal migration is complete for the published declarative component,
+  render-site, theme and completed-tool presentation policy. Rust retains
+  the terminal driver, modes, recovery, input primitives, component validation,
+  focus/scroll/redraw, pointer and keyboard dispatch, resize and ASCII fallbacks,
+  accessibility labels, clipboard authorization, cancellation and restoration.
 - The coordination migration is complete: the TypeScript mod owns fixed versus
   task-entry routing and the delegated-worker context choice. Rust admits only
   configured routes and bounded context policies, records provenance, and keeps
-  the native policy as the disabled, missing or broken-mod fallback. The terminal
-  package remains a preview migration and its native driver remains available.
+  the native policy as the disabled, missing or broken-mod fallback.
 - The recovery migration is complete for task-scoped failure classification,
   eligible-tool and advisory-route choice, plus Contributor-outage pause versus
   opposite-lead choice. Rust still captures exact evidence, validates failure

@@ -43,9 +43,40 @@ export interface Agent { handle: string; route: string; permissions: 'read_only'
 export type AgentResult = { status: 'running' } | { status: 'failed'; error: string } | { status: 'completed'; text: string; consumed: boolean };
 export type Letter = 'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'i'|'j'|'k'|'l'|'m'|'n'|'o'|'p'|'q'|'r'|'s'|'t'|'u'|'v'|'w'|'x'|'y'|'z';
 export type KeyName = 'F2'|'F3'|'F4'|'F5'|'F6'|'F7'|'F8'|'F9'|'F10'|'F11'|'F12' | `Ctrl+${Exclude<Letter, 'c'|'d'|'z'|'h'|'i'|'j'|'m'>}` | `Alt+${Letter}`;
-export type KeyAction = string | { insert: string } | { submit: string } | { command: string; args?: string };
+export type KeyAction = string | { insert: string } | { submit: string } | { command: string; args?: string } | { focus: string } | { copy: string; label: string };
 export type ThemeColor = number | `#${string}`;
 export interface Panel { title: string; lines: string[] }
+export type TerminalTone = 'normal' | 'accent' | 'success' | 'attention' | 'failure' | 'muted';
+export interface TerminalCommandAction { command: string; args?: string }
+export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string };
+export interface TerminalSelectOption { value: string; label: string }
+export type TerminalComponent =
+  | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[] }
+  | { type: 'text'; id: string; label: string; text: string; tone?: TerminalTone }
+  | { type: 'button'; id: string; label: string; text: string; action: TerminalComponentAction }
+  | { type: 'input'; id: string; label: string; value?: string; placeholder?: string; action: TerminalCommandAction }
+  | { type: 'select'; id: string; label: string; value: string; options: TerminalSelectOption[]; action: TerminalCommandAction }
+  | { type: 'markdown'; id: string; label: string; text: string }
+  | { type: 'code'; id: string; label: string; text: string; language?: string }
+  | { type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; children?: TerminalComponent[] }
+  | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[] }
+  | { type: 'slot' };
+export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'dialog';
+export interface TerminalRenderSite { mode?: 'replace' | 'wrap'; components?: TerminalComponent[] }
+export interface TerminalTheme {
+  accent?: ThemeColor;
+  user_message_background?: ThemeColor;
+  syntax?: string;
+  success?: ThemeColor;
+  attention?: ThemeColor;
+  failure?: ThemeColor;
+  diff_added?: ThemeColor;
+  diff_removed?: ThemeColor;
+  muted?: ThemeColor;
+  border?: 'plain' | 'rounded' | 'double';
+  density?: 'compact' | 'comfortable';
+  icons?: 'unicode' | 'ascii';
+}
 export interface TerminalView {
   title?: string;
   foreground?: number;
@@ -55,9 +86,25 @@ export interface TerminalView {
   panels?: Panel[];
   header?: Panel;
   footer?: Panel;
+  sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>;
   status?: string[];
   keybindings?: Partial<Record<KeyName, KeyAction>>;
-  theme?: { accent?: ThemeColor; user_message_background?: ThemeColor; syntax?: string; success?: ThemeColor; attention?: ThemeColor; failure?: ThemeColor };
+  theme?: TerminalTheme;
+  completed_tools?: 'normal' | 'compact';
+  message_template?: string;
+  tool_template?: string;
+}
+export interface TerminalPatch {
+  title?: string;
+  foreground?: number;
+  background?: number;
+  sidebar_width?: number;
+  sidebar_side?: 'left' | 'right';
+  sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>;
+  status?: string[];
+  keybindings?: Partial<Record<KeyName, KeyAction>>;
+  theme?: TerminalTheme;
+  completed_tools?: 'normal' | 'compact';
   message_template?: string;
   tool_template?: string;
 }
@@ -129,7 +176,7 @@ export interface Events {
   compaction: { input: { token_limit: number | null; context_window: number | null }; output: CompactionDecision };
   input: { input: { text: string; attachments: number }; output: InputDecision };
   tool_before: { input: { tool: string; arguments: Json; call_id: string }; output: { deny: string } | { arguments: Json; tool?: string } | null };
-  terminal: { input: { event: string; checkpoint: Json }; output: TerminalView | null };
+  terminal: { input: { event: string; checkpoint: Json }; output: TerminalView | TerminalPatch | null };
   start: { input: Json; output: void };
   resume: { input: Json; output: void };
   idle: { input: Json; output: void };
@@ -150,7 +197,7 @@ export interface Events {
   host_operation: { input: { phase: 'before' | 'after'; caller: string; operation: keyof HostOperations; arguments?: Json; result?: Json; error?: string }; output: void };
 }
 export interface ModAPI {
-  readonly version: '0.1.0-experimental.6';
+  readonly version: '0.1.0-experimental.7';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: { call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'] };

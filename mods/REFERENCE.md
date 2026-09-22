@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.1.0-experimental.6` on OMD `0.1.0` and Codex `0.155.1`. The package's
+`0.1.0-experimental.7` on OMD `0.1.0` and Codex `0.155.1`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. A store also generates
 `active-host.d.ts` and `installed-contracts.d.ts`; those files identify the
 running host and the exact service contracts available to consumers.
@@ -91,7 +91,9 @@ for a reload.
 Steps can advance virtual time, invoke tools or commands, dispatch ordinary
 events, model-request and response-stream middleware, tool outcomes and agent
 lifecycle, reload at a safe boundary, mount a terminal view, and interact with
-a mounted key. A step can carry `expect`, `expect_error`, or `cancelled`.
+a mounted key or component ID. Component interaction activates buttons, inputs,
+and selectors with an optional `value`; copy actions return without touching the
+system clipboard. A step can carry `expect`, `expect_error`, or `cancelled`.
 Additional trusted packages are listed in `packages`, enabling provider/consumer
 and conflict fixtures without shared globals or ambient authority.
 

@@ -1,6 +1,6 @@
 # Mod compatibility
 
-This is the supported compatibility contract as of September 21, 2026. The
+This is the supported compatibility contract as of September 22, 2026. The
 machine-readable source is [compatibility.json](compatibility.json), checked
 against the Rust host by `python3 scripts/mod_compatibility.py`.
 
@@ -11,9 +11,12 @@ against the Rust host by `python3 scripts/mod_compatibility.py`.
 | 0.155.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.4 | deprecated | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 | 0.155.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.5 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 | 0.155.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.6 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.155.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.7 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 
-The current authoring API is `.6`. `.4` remains executable but is deprecated;
-`.5` is an older experimental API. These are explicit rows, not a promise that
+The current authoring API is `.7`. `.4` remains executable but is deprecated;
+`.5` and `.6` are older experimental APIs. `.7` adds bounded terminal components,
+render sites, and composable terminal observer patches. Older APIs keep their
+published exclusive-terminal behavior. These are explicit rows, not a promise that
 every intervening or future version works. Before activation the host checks the
 package schema, API row, optional exact host-release list, required host features,
 declared authority, dependencies, and service imports. `omd-mod status` reports
@@ -23,7 +26,8 @@ unavailable optional features.
 Host features in this release are `author_tooling_v1`,
 `author_offline_runner_v1`, `author_diagnostics_v1`,
 `installed_contract_types_v1`, `service_contracts_v1`, `source_use_v1`,
-`package_manager_v1`, `state_migration_v1`, and `transactional_reload_v1`. A package may omit
+`package_manager_v1`, `state_migration_v1`, `terminal_components_v1`,
+`terminal_render_sites_v1`, and `transactional_reload_v1`. A package may omit
 compatibility metadata and rely on its supported API row, or declare `compatibility.releases`,
 `required_features`, and `optional_features`. A missing required feature or an
 excluded host release rejects the package before activation and tells the user
@@ -63,8 +67,8 @@ checks package scope and trust, saves the current state as a forward-recovery
 copy, and atomically restores the selected backup. The package source must then
 be rolled back or upgraded to a release that understands the restored state.
 
-The retained cross-release cases are synthetic version fixtures: old `.4` and
-`.5` mods on the `.6` host, deliberate host/API/schema/feature incompatibility,
+The retained cross-release cases are synthetic version fixtures: old `.4`, `.5`,
+and `.6` mods on the `.7` host, deliberate host/API/schema/feature incompatibility,
 compatible and incompatible provider/consumer versions, interrupted migration,
 and state rollback with source/settings/state preservation. No earlier public
 stable OMD mod release exists, so there is no real supported release transition

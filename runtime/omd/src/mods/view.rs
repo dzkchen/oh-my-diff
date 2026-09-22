@@ -1,6 +1,7 @@
 use super::*;
 
 pub const MOD_KEY_LIMIT: usize = 12;
+pub const MOD_COMPONENT_LIMIT: usize = 64;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -22,11 +23,44 @@ pub struct ModView {
     #[serde(default)]
     pub footer: Option<ModPanel>,
     #[serde(default)]
+    pub sites: BTreeMap<String, ModRenderSite>,
+    #[serde(default)]
     pub status: Vec<String>,
     #[serde(default)]
     pub keybindings: BTreeMap<String, ModKeyAction>,
     #[serde(default)]
     pub theme: ModTheme,
+    #[serde(default)]
+    pub completed_tools: ModCompletedTools,
+    #[serde(default)]
+    pub message_template: Option<String>,
+    #[serde(default)]
+    pub tool_template: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModViewPatch {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub foreground: Option<u8>,
+    #[serde(default)]
+    pub background: Option<u8>,
+    #[serde(default)]
+    pub sidebar_width: Option<u16>,
+    #[serde(default)]
+    pub sidebar_side: Option<ModSidebarSide>,
+    #[serde(default)]
+    pub sites: BTreeMap<String, ModRenderSite>,
+    #[serde(default)]
+    pub status: Vec<String>,
+    #[serde(default)]
+    pub keybindings: BTreeMap<String, ModKeyAction>,
+    #[serde(default)]
+    pub theme: ModThemePatch,
+    #[serde(default)]
+    pub completed_tools: Option<ModCompletedTools>,
     #[serde(default)]
     pub message_template: Option<String>,
     #[serde(default)]
@@ -48,6 +82,139 @@ pub struct ModPanel {
     pub lines: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModSiteMode {
+    #[default]
+    Replace,
+    Wrap,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModRenderSite {
+    #[serde(default)]
+    pub mode: ModSiteMode,
+    #[serde(default)]
+    pub components: Vec<ModComponent>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModComponent {
+    Box {
+        id: String,
+        label: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        children: Vec<ModComponent>,
+    },
+    Text {
+        id: String,
+        label: String,
+        text: String,
+        #[serde(default)]
+        tone: ModTone,
+    },
+    Button {
+        id: String,
+        label: String,
+        text: String,
+        action: ModComponentAction,
+    },
+    Input {
+        id: String,
+        label: String,
+        #[serde(default)]
+        value: String,
+        #[serde(default)]
+        placeholder: String,
+        action: ModCommandAction,
+    },
+    Select {
+        id: String,
+        label: String,
+        value: String,
+        options: Vec<ModSelectOption>,
+        action: ModCommandAction,
+    },
+    Markdown {
+        id: String,
+        label: String,
+        text: String,
+    },
+    Code {
+        id: String,
+        label: String,
+        text: String,
+        #[serde(default)]
+        language: Option<String>,
+    },
+    Pane {
+        id: String,
+        label: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        collapsed: bool,
+        #[serde(default)]
+        scroll: u16,
+        #[serde(default)]
+        children: Vec<ModComponent>,
+    },
+    Dialog {
+        id: String,
+        label: String,
+        title: String,
+        #[serde(default)]
+        children: Vec<ModComponent>,
+    },
+    Slot,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModSelectOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum ModComponentAction {
+    Command(ModCommandAction),
+    Copy { copy: String, label: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModCommandAction {
+    pub command: String,
+    #[serde(default)]
+    pub args: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModTone {
+    #[default]
+    Normal,
+    Accent,
+    Success,
+    Attention,
+    Failure,
+    Muted,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModCompletedTools {
+    #[default]
+    Normal,
+    Compact,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(untagged)]
 pub enum ModKeyAction {
@@ -55,6 +222,8 @@ pub enum ModKeyAction {
     Insert { insert: String },
     Submit { submit: String },
     Command { command: String, args: String },
+    Focus { focus: String },
+    Copy { copy: String, label: String },
 }
 
 impl<'de> Deserialize<'de> for ModKeyAction {
@@ -85,7 +254,7 @@ impl<'de> Deserialize<'de> for ModKeyAction {
                 submit: text(&object["submit"])?,
             });
         }
-        if keys == BTreeSet::from(["command"]) || keys == BTreeSet::from(["command", "args"]) {
+        if keys == BTreeSet::from(["command"]) || keys == BTreeSet::from(["args", "command"]) {
             return Ok(Self::Command {
                 command: text(&object["command"])?,
                 args: object
@@ -93,6 +262,17 @@ impl<'de> Deserialize<'de> for ModKeyAction {
                     .map(text)
                     .transpose()?
                     .unwrap_or_default(),
+            });
+        }
+        if keys == BTreeSet::from(["focus"]) {
+            return Ok(Self::Focus {
+                focus: text(&object["focus"])?,
+            });
+        }
+        if keys == BTreeSet::from(["copy", "label"]) {
+            return Ok(Self::Copy {
+                copy: text(&object["copy"])?,
+                label: text(&object["label"])?,
             });
         }
         Err(serde::de::Error::custom("invalid keybinding action"))
@@ -114,6 +294,72 @@ pub struct ModTheme {
     pub attention: Option<ModColor>,
     #[serde(default)]
     pub failure: Option<ModColor>,
+    #[serde(default)]
+    pub diff_added: Option<ModColor>,
+    #[serde(default)]
+    pub diff_removed: Option<ModColor>,
+    #[serde(default)]
+    pub muted: Option<ModColor>,
+    #[serde(default)]
+    pub border: ModBorder,
+    #[serde(default)]
+    pub density: ModDensity,
+    #[serde(default)]
+    pub icons: ModIcons,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModThemePatch {
+    #[serde(default)]
+    pub accent: Option<ModColor>,
+    #[serde(default)]
+    pub user_message_background: Option<ModColor>,
+    #[serde(default)]
+    pub syntax: Option<String>,
+    #[serde(default)]
+    pub success: Option<ModColor>,
+    #[serde(default)]
+    pub attention: Option<ModColor>,
+    #[serde(default)]
+    pub failure: Option<ModColor>,
+    #[serde(default)]
+    pub diff_added: Option<ModColor>,
+    #[serde(default)]
+    pub diff_removed: Option<ModColor>,
+    #[serde(default)]
+    pub muted: Option<ModColor>,
+    #[serde(default)]
+    pub border: Option<ModBorder>,
+    #[serde(default)]
+    pub density: Option<ModDensity>,
+    #[serde(default)]
+    pub icons: Option<ModIcons>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModBorder {
+    #[default]
+    Plain,
+    Rounded,
+    Double,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModDensity {
+    Compact,
+    #[default]
+    Comfortable,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModIcons {
+    #[default]
+    Unicode,
+    Ascii,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,9 +426,15 @@ pub struct ModViewSnapshot {
     #[serde(default)]
     pub epoch: u64,
     #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
     pub view: ModView,
     #[serde(default)]
     pub owner: Option<String>,
+    #[serde(default)]
+    pub contributors: Vec<String>,
+    #[serde(default)]
+    pub input: Value,
     #[serde(default)]
     pub progress: Option<ModPanel>,
     #[serde(default)]
@@ -200,6 +452,14 @@ fn multiline(text: &str, limit: usize) -> bool {
         && !text
             .chars()
             .any(|c| c.is_control() && c != '\n' && c != '\t')
+}
+
+fn component_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 48
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 pub fn mod_key_name(key: &str) -> bool {
@@ -232,46 +492,475 @@ impl ModPanel {
     }
 }
 
+impl ModCommandAction {
+    fn valid(&self) -> bool {
+        mod_command_reference(&self.command) && multiline(&self.args, 4096)
+    }
+}
+
+impl ModComponentAction {
+    fn valid(&self) -> bool {
+        match self {
+            Self::Command(action) => action.valid(),
+            Self::Copy { copy, label } => {
+                !copy.is_empty()
+                    && multiline(copy, 4096)
+                    && !label.is_empty()
+                    && visible(label, 128)
+            }
+        }
+    }
+}
+
+impl ModComponent {
+    fn validate(
+        &self,
+        depth: usize,
+        count: &mut usize,
+        ids: &mut BTreeSet<String>,
+        slots: &mut usize,
+    ) -> bool {
+        if depth > 6 {
+            return false;
+        }
+        *count += 1;
+        if *count > MOD_COMPONENT_LIMIT {
+            return false;
+        }
+        let identified = |id: &str, label: &str, ids: &mut BTreeSet<String>| {
+            component_id(id)
+                && !label.is_empty()
+                && visible(label, 128)
+                && ids.insert(id.to_owned())
+        };
+        let children = |children: &[Self],
+                        count: &mut usize,
+                        ids: &mut BTreeSet<String>,
+                        slots: &mut usize| {
+            children
+                .iter()
+                .all(|child| child.validate(depth + 1, count, ids, slots))
+        };
+        match self {
+            Self::Box {
+                id,
+                label,
+                title,
+                children: nested,
+            }
+            | Self::Pane {
+                id,
+                label,
+                title,
+                children: nested,
+                ..
+            } => {
+                identified(id, label, ids)
+                    && title.as_ref().is_none_or(|title| visible(title, 128))
+                    && children(nested, count, ids, slots)
+            }
+            Self::Dialog {
+                id,
+                label,
+                title,
+                children: nested,
+            } => {
+                identified(id, label, ids)
+                    && !title.is_empty()
+                    && visible(title, 128)
+                    && children(nested, count, ids, slots)
+            }
+            Self::Text {
+                id, label, text, ..
+            }
+            | Self::Markdown { id, label, text }
+            | Self::Code {
+                id, label, text, ..
+            } => identified(id, label, ids) && multiline(text, 4096),
+            Self::Button {
+                id,
+                label,
+                text,
+                action,
+            } => {
+                identified(id, label, ids)
+                    && !text.is_empty()
+                    && visible(text, 256)
+                    && action.valid()
+            }
+            Self::Input {
+                id,
+                label,
+                value,
+                placeholder,
+                action,
+            } => {
+                identified(id, label, ids)
+                    && multiline(value, 1024)
+                    && visible(placeholder, 256)
+                    && action.valid()
+            }
+            Self::Select {
+                id,
+                label,
+                value,
+                options,
+                action,
+            } => {
+                let values = options
+                    .iter()
+                    .map(|option| option.value.as_str())
+                    .collect::<BTreeSet<_>>();
+                identified(id, label, ids)
+                    && (1..=16).contains(&options.len())
+                    && values.len() == options.len()
+                    && options.iter().any(|option| option.value == *value)
+                    && options.iter().all(|option| {
+                        !option.value.is_empty()
+                            && visible(&option.value, 128)
+                            && !option.label.is_empty()
+                            && visible(&option.label, 128)
+                    })
+                    && action.valid()
+            }
+            Self::Slot => {
+                *slots += 1;
+                *slots <= 1
+            }
+        }
+    }
+}
+
+impl ModRenderSite {
+    fn valid(&self, patch: bool, ids: &mut BTreeSet<String>) -> bool {
+        let mut count = 0;
+        let mut slots = 0;
+        let valid = self
+            .components
+            .iter()
+            .all(|component| component.validate(1, &mut count, ids, &mut slots));
+        valid
+            && if patch && self.mode == ModSiteMode::Wrap {
+                slots == 1
+            } else {
+                slots == 0
+            }
+    }
+}
+
+fn valid_site(name: &str) -> bool {
+    ["sidebar", "header", "above_composer", "dialog"].contains(&name)
+}
+
+fn valid_action(action: &ModKeyAction) -> bool {
+    match action {
+        ModKeyAction::Draft(text)
+        | ModKeyAction::Insert { insert: text }
+        | ModKeyAction::Submit { submit: text } => !text.is_empty() && multiline(text, 4096),
+        ModKeyAction::Command { command, args } => {
+            mod_command_reference(command) && multiline(args, 4096)
+        }
+        ModKeyAction::Focus { focus } => component_id(focus),
+        ModKeyAction::Copy { copy, label } => {
+            !copy.is_empty() && multiline(copy, 4096) && !label.is_empty() && visible(label, 128)
+        }
+    }
+}
+
+fn valid_templates(message: &Option<String>, tool: &Option<String>) -> bool {
+    [message, tool]
+        .into_iter()
+        .flatten()
+        .all(|template| visible(template, 1024) && template.matches("{text}").count() == 1)
+}
+
+fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>) -> bool {
+    bindings.len() <= MOD_KEY_LIMIT
+        && bindings
+            .iter()
+            .all(|(key, action)| mod_key_name(key) && valid_action(action))
+}
+
+fn valid_status(status: &[String]) -> bool {
+    status.len() <= 4
+        && status
+            .iter()
+            .all(|segment| !segment.is_empty() && visible(segment, 40))
+}
+
+fn valid_sites(sites: &BTreeMap<String, ModRenderSite>, patch: bool) -> bool {
+    let mut ids = BTreeSet::new();
+    sites.len() <= 4
+        && sites
+            .iter()
+            .all(|(name, site)| valid_site(name) && site.valid(patch, &mut ids))
+}
+
+fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
+    match component {
+        ModComponent::Box { id, children, .. }
+        | ModComponent::Pane { id, children, .. }
+        | ModComponent::Dialog { id, children, .. } => {
+            ids.insert(id.clone());
+            for child in children {
+                component_ids(child, ids);
+            }
+        }
+        ModComponent::Text { id, .. }
+        | ModComponent::Button { id, .. }
+        | ModComponent::Input { id, .. }
+        | ModComponent::Select { id, .. }
+        | ModComponent::Markdown { id, .. }
+        | ModComponent::Code { id, .. } => {
+            ids.insert(id.clone());
+        }
+        ModComponent::Slot => {}
+    }
+}
+
+fn valid_focus_targets(
+    bindings: &BTreeMap<String, ModKeyAction>,
+    sites: &BTreeMap<String, ModRenderSite>,
+) -> bool {
+    let mut ids = BTreeSet::new();
+    for site in sites.values() {
+        for component in &site.components {
+            component_ids(component, &mut ids);
+        }
+    }
+    bindings.values().all(|action| match action {
+        ModKeyAction::Focus { focus } => ids.contains(focus),
+        _ => true,
+    })
+}
+
+fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<ModComponent> {
+    components
+        .into_iter()
+        .flat_map(|component| match component {
+            ModComponent::Slot => current.to_vec(),
+            ModComponent::Box {
+                id,
+                label,
+                title,
+                children,
+            } => vec![ModComponent::Box {
+                id,
+                label,
+                title,
+                children: replace_slot(children, current),
+            }],
+            ModComponent::Pane {
+                id,
+                label,
+                title,
+                collapsed,
+                scroll,
+                children,
+            } => vec![ModComponent::Pane {
+                id,
+                label,
+                title,
+                collapsed,
+                scroll,
+                children: replace_slot(children, current),
+            }],
+            ModComponent::Dialog {
+                id,
+                label,
+                title,
+                children,
+            } => vec![ModComponent::Dialog {
+                id,
+                label,
+                title,
+                children: replace_slot(children, current),
+            }],
+            component => vec![component],
+        })
+        .collect()
+}
+
+impl ModThemePatch {
+    fn apply(self, target: &mut ModTheme) {
+        macro_rules! assign {
+            ($field:ident) => {
+                if self.$field.is_some() {
+                    target.$field = self.$field;
+                }
+            };
+        }
+        assign!(accent);
+        assign!(user_message_background);
+        assign!(syntax);
+        assign!(success);
+        assign!(attention);
+        assign!(failure);
+        assign!(diff_added);
+        assign!(diff_removed);
+        assign!(muted);
+        if let Some(border) = self.border {
+            target.border = border;
+        }
+        if let Some(density) = self.density {
+            target.density = density;
+        }
+        if let Some(icons) = self.icons {
+            target.icons = icons;
+        }
+    }
+}
+
+impl ModViewPatch {
+    pub fn parse(value: Value) -> Result<Self> {
+        let patch: Self = serde_json::from_value(value)?;
+        if patch.sidebar_width.is_some_and(|width| width > 60)
+            || patch
+                .title
+                .as_ref()
+                .is_some_and(|title| !visible(title, 1024))
+            || !valid_sites(&patch.sites, true)
+            || !valid_status(&patch.status)
+            || !valid_bindings(&patch.keybindings)
+            || !valid_templates(&patch.message_template, &patch.tool_template)
+            || patch
+                .theme
+                .syntax
+                .as_ref()
+                .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
+            || serde_json::to_vec(&patch)?.len() > 16_384
+        {
+            return Err(failure("invalid_terminal_patch"));
+        }
+        Ok(patch)
+    }
+
+    pub fn apply(
+        self,
+        target: &mut ModView,
+        replaced_sites: &mut BTreeSet<String>,
+        completed_tools_owner: &mut bool,
+    ) -> Result<()> {
+        let mut candidate = target.clone();
+        let mut candidate_sites = replaced_sites.clone();
+        let mut candidate_completed_tools = *completed_tools_owner;
+        self.apply_to(
+            &mut candidate,
+            &mut candidate_sites,
+            &mut candidate_completed_tools,
+        )?;
+        *target = candidate;
+        *replaced_sites = candidate_sites;
+        *completed_tools_owner = candidate_completed_tools;
+        Ok(())
+    }
+
+    fn apply_to(
+        self,
+        target: &mut ModView,
+        replaced_sites: &mut BTreeSet<String>,
+        completed_tools_owner: &mut bool,
+    ) -> Result<()> {
+        if let Some(title) = self.title {
+            target.title = Some(title);
+        }
+        if let Some(foreground) = self.foreground {
+            target.foreground = Some(foreground);
+        }
+        if let Some(background) = self.background {
+            target.background = Some(background);
+        }
+        if let Some(width) = self.sidebar_width {
+            target.sidebar_width = width;
+        }
+        if let Some(side) = self.sidebar_side {
+            target.sidebar_side = side;
+        }
+        for (name, site) in self.sites {
+            match site.mode {
+                ModSiteMode::Replace => {
+                    if !replaced_sites.insert(name.clone()) {
+                        return Err(failure(format!("terminal_site_conflict: {name}")));
+                    }
+                    target.sites.insert(name, site);
+                }
+                ModSiteMode::Wrap => {
+                    let current = target
+                        .sites
+                        .get(&name)
+                        .map(|site| site.components.as_slice())
+                        .unwrap_or_default();
+                    target.sites.insert(
+                        name,
+                        ModRenderSite {
+                            mode: ModSiteMode::Replace,
+                            components: replace_slot(site.components, current),
+                        },
+                    );
+                }
+            }
+        }
+        for (key, action) in self.keybindings {
+            if target.keybindings.insert(key.clone(), action).is_some() {
+                return Err(failure(format!("terminal_key_conflict: {key}")));
+            }
+        }
+        target.status.extend(self.status);
+        if target.status.len() > 4 {
+            return Err(failure("terminal_status_limit"));
+        }
+        self.theme.apply(&mut target.theme);
+        if let Some(mode) = self.completed_tools {
+            if *completed_tools_owner {
+                return Err(failure("terminal_completed_tools_conflict"));
+            }
+            *completed_tools_owner = true;
+            target.completed_tools = mode;
+        }
+        if let Some(template) = self.message_template {
+            target.message_template = Some(match target.message_template.take() {
+                Some(current) => template.replace("{text}", &current),
+                None => template,
+            });
+        }
+        if let Some(template) = self.tool_template {
+            target.tool_template = Some(match target.tool_template.take() {
+                Some(current) => template.replace("{text}", &current),
+                None => template,
+            });
+        }
+        ModView::parse(serde_json::to_value(target.clone())?)?;
+        Ok(())
+    }
+}
+
 impl ModView {
     pub fn parse(value: Value) -> Result<Self> {
         let view: Self = serde_json::from_value(value)?;
-        let action = |action: &ModKeyAction| match action {
-            ModKeyAction::Draft(text)
-            | ModKeyAction::Insert { insert: text }
-            | ModKeyAction::Submit { submit: text } => !text.is_empty() && multiline(text, 4096),
-            ModKeyAction::Command { command, args } => {
-                mod_command_reference(command) && multiline(args, 4096)
-            }
-        };
         if view.sidebar_width > 60
             || view.panels.len() > 8
-            || view.keybindings.len() > MOD_KEY_LIMIT
-            || view.status.len() > 4
-            || view.title.as_ref().is_some_and(|s| !visible(s, 1024))
-            || [&view.message_template, &view.tool_template]
-                .into_iter()
-                .flatten()
-                .any(|s| !visible(s, 1024) || s.matches("{text}").count() != 1)
-            || view.panels.iter().any(|p| !p.valid(32))
+            || view
+                .title
+                .as_ref()
+                .is_some_and(|title| !visible(title, 1024))
+            || !valid_templates(&view.message_template, &view.tool_template)
+            || view.panels.iter().any(|panel| !panel.valid(32))
             || [&view.header, &view.footer]
                 .into_iter()
                 .flatten()
-                .any(|p| !p.valid(3))
-            || view.status.iter().any(|s| s.is_empty() || !visible(s, 40))
+                .any(|panel| !panel.valid(3))
+            || !valid_sites(&view.sites, false)
+            || !valid_status(&view.status)
+            || !valid_bindings(&view.keybindings)
+            || !valid_focus_targets(&view.keybindings, &view.sites)
             || view
                 .theme
                 .syntax
                 .as_ref()
-                .is_some_and(|s| s.is_empty() || !visible(s, 128))
-            || view
-                .keybindings
-                .iter()
-                .any(|(key, value)| !mod_key_name(key) || !action(value))
+                .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
+            || serde_json::to_vec(&view)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_view"));
-        }
-        if serde_json::to_vec(&view)?.len() > 16_384 {
-            return Err(failure("terminal_view_limit"));
         }
         Ok(view)
     }
@@ -283,11 +972,20 @@ impl ModView {
 
 impl ModViewSnapshot {
     pub fn read(path: &Path) -> Result<Self> {
-        let value: Value = serde_json::from_slice(&store::read(path, 65_536)?)?;
+        let value: Value = serde_json::from_slice(&store::read(path, 131_072)?)?;
         let mut snapshot: Self = serde_json::from_value(value)?;
         snapshot.view = ModView::parse(serde_json::to_value(&snapshot.view)?)?;
-        if snapshot.progress.as_ref().is_some_and(|p| !p.valid(8))
+        if snapshot
+            .progress
+            .as_ref()
+            .is_some_and(|panel| !panel.valid(8))
             || snapshot.activity.len() > 32
+            || snapshot.contributors.len() > 16
+            || snapshot
+                .contributors
+                .iter()
+                .any(|contributor| !identifier(contributor))
+            || serde_json::to_vec(&snapshot.input)?.len() > 65_536
             || snapshot.diagnostics.len() > 16
             || snapshot
                 .diagnostics

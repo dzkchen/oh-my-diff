@@ -179,16 +179,8 @@ impl Mods {
                     ContentItemKind("oh_my_diff.mod_context".into()),
                 ));
             }
-            let terminal_views = runtime.event_guarded("terminal", json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()}), || !cancelled.load(std::sync::atomic::Ordering::Acquire));
-            let mut view = codex_omd::ModView::default();
-            let mut supplier = None;
-            for (id, result) in terminal_views {
-                if result.as_ref().is_ok_and(Value::is_null) { continue; }
-                match result.and_then(codex_omd::ModView::parse) {
-                    Ok(candidate) if supplier.is_none() => { view = candidate; supplier = Some(id); }
-                    _ => { view = codex_omd::ModView { title: Some("Mod UI failed".into()), panels: vec![codex_omd::ModPanel { title: "Recovery".into(), lines: vec!["Disable or reload the failed mod".into()] }], ..Default::default() }; supplier = None; break; }
-                }
-            }
+            let terminal_input = json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()});
+            let mut terminal = runtime.terminal_view(terminal_input.clone(), || !cancelled.load(std::sync::atomic::Ordering::Acquire));
             let status = runtime.status();
             let mut errors = status["mods"].as_array().into_iter().flatten().filter_map(|item| item["error"].as_str().map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))).collect::<Vec<_>>();
             errors.extend(status["rejected"].as_array().into_iter().flatten()
@@ -196,12 +188,12 @@ impl Mods {
                     .map(|reason| format!("{}: {reason}", item["id"].as_str().or(item["path"].as_str()).unwrap_or("selection")))));
             if let Some(error) = status["reload_error"].as_str() { errors.push(format!("Reload: {error}")); }
             if !errors.is_empty() {
-                if supplier.is_none() {
-                    view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
+                if terminal.owner.is_none() {
+                    terminal.view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
                 }
-                view.panels.insert(0, codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
+                terminal.view.panels.insert(0, codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
             }
-            views.base(&owner, view, supplier);
+            views.base(&owner, terminal, terminal_input);
             if let Some(error) = status["reload_error"].as_str() {
                 fragments.push(PromptFragment::developer_capability(
                     format!("Mod reload failed; previous eligible mods retained: {error}"),

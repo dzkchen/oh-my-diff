@@ -318,7 +318,11 @@ class PreviewSliceTests(ManagedFixture, unittest.TestCase):
             lock = installer.preview_lock()
             self.assertEqual(
                 sorted(installed["packages"]),
-                ["omd_coordination", "omd_recovery", "omd_workspace"],
+                [
+                    "omd_coordination",
+                    "omd_recovery",
+                    "omd_workspace",
+                ],
             )
             self.assertEqual(installed["mod_api"], lock["mod_api"])
             for identifier, package in installed["packages"].items():
@@ -357,7 +361,11 @@ class PreviewSliceTests(ManagedFixture, unittest.TestCase):
             selected = {package["id"]: package["enabled"] for package in disabled["packages"]}
             self.assertEqual(
                 selected,
-                {"omd_coordination": True, "omd_recovery": True, "omd_workspace": False},
+                {
+                    "omd_coordination": True,
+                    "omd_recovery": True,
+                    "omd_workspace": False,
+                },
             )
             enabled = installer.preview_select(prefix, bin_dir, store, None, True)
             self.assertTrue(all(package["enabled"] for package in enabled["packages"]))

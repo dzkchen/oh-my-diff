@@ -52,6 +52,7 @@ pub(super) fn run(
             return Err(failure("callback_cancelled"));
         }
         let request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
+            "api": MOD_API_VERSION,
             "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": loaded.selection.settings,
             "state": loaded.state, "event": event, "name": name, "payload": payload, "receipts": receipts,
             "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});

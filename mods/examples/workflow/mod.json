@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "workflow",
   "version": "1.0.0",
-  "api": "0.1.0-experimental.6",
+  "api": "0.1.0-experimental.7",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": {

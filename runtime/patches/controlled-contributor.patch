@@ -8617,10 +8617,10 @@ index 0000000..ac4c8bc
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000..5bb4b92
+index 0000000..8fadc95
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,567 @@
+@@ -0,0 +1,559 @@
 +mod agents;
 +mod operations;
 +mod policy;
@@ -8802,16 +8802,8 @@ index 0000000..5bb4b92
 +                    ContentItemKind("oh_my_diff.mod_context".into()),
 +                ));
 +            }
-+            let terminal_views = runtime.event_guarded("terminal", json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()}), || !cancelled.load(std::sync::atomic::Ordering::Acquire));
-+            let mut view = codex_omd::ModView::default();
-+            let mut supplier = None;
-+            for (id, result) in terminal_views {
-+                if result.as_ref().is_ok_and(Value::is_null) { continue; }
-+                match result.and_then(codex_omd::ModView::parse) {
-+                    Ok(candidate) if supplier.is_none() => { view = candidate; supplier = Some(id); }
-+                    _ => { view = codex_omd::ModView { title: Some("Mod UI failed".into()), panels: vec![codex_omd::ModPanel { title: "Recovery".into(), lines: vec!["Disable or reload the failed mod".into()] }], ..Default::default() }; supplier = None; break; }
-+                }
-+            }
++            let terminal_input = json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()});
++            let mut terminal = runtime.terminal_view(terminal_input.clone(), || !cancelled.load(std::sync::atomic::Ordering::Acquire));
 +            let status = runtime.status();
 +            let mut errors = status["mods"].as_array().into_iter().flatten().filter_map(|item| item["error"].as_str().map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))).collect::<Vec<_>>();
 +            errors.extend(status["rejected"].as_array().into_iter().flatten()
@@ -8819,12 +8811,12 @@ index 0000000..5bb4b92
 +                    .map(|reason| format!("{}: {reason}", item["id"].as_str().or(item["path"].as_str()).unwrap_or("selection")))));
 +            if let Some(error) = status["reload_error"].as_str() { errors.push(format!("Reload: {error}")); }
 +            if !errors.is_empty() {
-+                if supplier.is_none() {
-+                    view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
++                if terminal.owner.is_none() {
++                    terminal.view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
 +                }
-+                view.panels.insert(0, codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
++                terminal.view.panels.insert(0, codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
 +            }
-+            views.base(&owner, view, supplier);
++            views.base(&owner, terminal, terminal_input);
 +            if let Some(error) = status["reload_error"].as_str() {
 +                fragments.push(PromptFragment::developer_capability(
 +                    format!("Mod reload failed; previous eligible mods retained: {error}"),
@@ -10771,14 +10763,14 @@ index 0000000..11c46d7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 0000000..901c13f
+index 0000000..a1e9d5d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,112 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
-+use codex_omd::ModView;
++use codex_omd::ModTerminalView;
 +use codex_omd::ModViewSnapshot;
 +
 +#[derive(Default)]
@@ -10825,10 +10817,21 @@ index 0000000..901c13f
 +        let _ = owner.persist_runtime_file("mod-view.json", &state.snapshot);
 +    }
 +
-+    pub(super) fn base(&self, owner: &Host, view: ModView, supplier: Option<String>) {
++    pub(super) fn base(&self, owner: &Host, terminal: ModTerminalView, input: Value) {
 +        self.update(owner, |state| {
-+            state.snapshot.view = view;
-+            state.snapshot.owner = supplier;
++            state.snapshot.revision = state.snapshot.revision.saturating_add(1);
++            state.snapshot.view = terminal.view;
++            state.snapshot.owner = terminal.owner;
++            state.snapshot.contributors = terminal.contributors;
++            state.snapshot.input = input;
++            state
++                .diagnostics
++                .retain(|key, _| !key.starts_with("terminal:"));
++            for (index, diagnostic) in terminal.diagnostics.into_iter().enumerate() {
++                state
++                    .diagnostics
++                    .insert(format!("terminal:{index}"), visible(&diagnostic, 512));
++            }
 +        });
 +    }
 +
@@ -22602,10 +22605,10 @@ index 0000000..1b27bbc
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..638b1af
+index 0000000..23a610a
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,271 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
@@ -22833,12 +22836,19 @@ index 0000000..638b1af
 +pub use mods::MOD_REPLACEMENT_POINTS;
 +pub use mods::MOD_STATE_STORAGE_SCHEMA_VERSION;
 +pub use mods::ModActivity;
++pub use mods::ModBorder;
 +pub use mods::ModColor;
 +pub use mods::ModCommand;
++pub use mods::ModCommandAction;
 +pub use mods::ModCommandOutcome;
++pub use mods::ModCompletedTools;
++pub use mods::ModComponent;
++pub use mods::ModComponentAction;
 +pub use mods::ModConfiguration;
++pub use mods::ModDensity;
 +pub use mods::ModHost;
 +pub use mods::ModHostCall;
++pub use mods::ModIcons;
 +pub use mods::ModInputDecision;
 +pub use mods::ModInstallRequest;
 +pub use mods::ModKeyAction;
@@ -22849,12 +22859,19 @@ index 0000000..638b1af
 +pub use mods::ModPackageSource;
 +pub use mods::ModPackageTrust;
 +pub use mods::ModPanel;
++pub use mods::ModRenderSite;
++pub use mods::ModSelectOption;
 +pub use mods::ModSelection;
 +pub use mods::ModSidebarSide;
++pub use mods::ModSiteMode;
 +pub use mods::ModStore;
++pub use mods::ModTerminalView;
 +pub use mods::ModTheme;
++pub use mods::ModThemePatch;
++pub use mods::ModTone;
 +pub use mods::ModTool;
 +pub use mods::ModView;
++pub use mods::ModViewPatch;
 +pub use mods::ModViewSnapshot;
 +pub use mods::OMD_HOST_RELEASE;
 +pub use mods::PiPrompt;
@@ -25259,10 +25276,10 @@ index 0000000..319c7e3
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000..c2abb8d
+index 0000000..c22b030
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,2282 @@
+@@ -0,0 +1,2356 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -25273,12 +25290,25 @@ index 0000000..c2abb8d
 +mod view;
 +pub use view::MOD_KEY_LIMIT;
 +pub use view::ModActivity;
++pub use view::ModBorder;
 +pub use view::ModColor;
++pub use view::ModCommandAction;
++pub use view::ModCompletedTools;
++pub use view::ModComponent;
++pub use view::ModComponentAction;
++pub use view::ModDensity;
++pub use view::ModIcons;
 +pub use view::ModKeyAction;
 +pub use view::ModPanel;
++pub use view::ModRenderSite;
++pub use view::ModSelectOption;
 +pub use view::ModSidebarSide;
++pub use view::ModSiteMode;
 +pub use view::ModTheme;
++pub use view::ModThemePatch;
++pub use view::ModTone;
 +pub use view::ModView;
++pub use view::ModViewPatch;
 +pub use view::ModViewSnapshot;
 +pub use view::mod_command_reference;
 +pub use view::mod_key_name;
@@ -25313,7 +25343,7 @@ index 0000000..c2abb8d
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.155.1";
 +pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-+pub const MOD_API_VERSION: &str = "0.1.0-experimental.6";
++pub const MOD_API_VERSION: &str = "0.1.0-experimental.7";
 +pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 +pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 +pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -25327,6 +25357,8 @@ index 0000000..c2abb8d
 +    "service_contracts_v1",
 +    "source_use_v1",
 +    "state_migration_v1",
++    "terminal_components_v1",
++    "terminal_render_sites_v1",
 +    "transactional_reload_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
@@ -25358,6 +25390,7 @@ index 0000000..c2abb8d
 +pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
 +    ("0.1.0-experimental.4", "deprecated", "2027-03-20"),
 +    ("0.1.0-experimental.5", "experimental", "2027-03-20"),
++    ("0.1.0-experimental.6", "experimental", "2027-03-20"),
 +    (MOD_API_VERSION, "experimental", "2027-03-20"),
 +];
 +pub const MOD_CAPABILITIES: &[&str] = &[
@@ -26242,6 +26275,18 @@ index 0000000..c2abb8d
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 +#[serde(deny_unknown_fields)]
++pub struct ModTerminalView {
++    pub view: ModView,
++    #[serde(default)]
++    pub owner: Option<String>,
++    #[serde(default)]
++    pub contributors: Vec<String>,
++    #[serde(default)]
++    pub diagnostics: Vec<String>,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
 +struct Registrations {
 +    tools: Vec<ModTool>,
 +    commands: Vec<ModCommand>,
@@ -26981,10 +27026,8 @@ index 0000000..c2abb8d
 +                    .iter()
 +                    .any(|registered| registered == point)
 +            };
-+            if matches!(
-+                event,
-+                "routing" | "worker_context" | "compaction" | "terminal"
-+            ) && !reply.value.is_null()
++            if matches!(event, "routing" | "worker_context" | "compaction")
++                && !reply.value.is_null()
 +                && !replaces(event)
 +            {
 +                return Err(failure("exclusive_replacement_registration_required"));
@@ -27042,7 +27085,13 @@ index 0000000..c2abb8d
 +                return Err(failure("exclusive_replacement_registration_required"));
 +            }
 +            if event == "terminal" && !reply.value.is_null() {
-+                ModView::parse(reply.value.clone())?;
++                if replaces("terminal") {
++                    ModView::parse(reply.value.clone())?;
++                } else if loaded.package.api == MOD_API_VERSION {
++                    ModViewPatch::parse(reply.value.clone())?;
++                } else {
++                    return Err(failure("exclusive_replacement_registration_required"));
++                }
 +            }
 +            if event == "input" {
 +                let decision = ModInputDecision::parse(&reply.value)?;
@@ -27357,6 +27406,48 @@ index 0000000..c2abb8d
 +            .collect()
 +    }
 +
++    pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
++        let owner = self.replacement_owner("terminal");
++        let results = self.event_guarded("terminal", payload, active);
++        let mut view = ModView::default();
++        let mut patches = Vec::new();
++        let mut diagnostics = Vec::new();
++        for (id, result) in results {
++            match result {
++                Ok(value) if value.is_null() => {}
++                Ok(value) if owner.as_deref() == Some(id.as_str()) => match ModView::parse(value) {
++                    Ok(candidate) => view = candidate,
++                    Err(error) => diagnostics.push(format!("{id}: {error}")),
++                },
++                Ok(value) => match ModViewPatch::parse(value) {
++                    Ok(patch) => patches.push((id, patch)),
++                    Err(error) => diagnostics.push(format!("{id}: {error}")),
++                },
++                Err(error) => diagnostics.push(format!("{id}: {error}")),
++            }
++        }
++        let mut replaced_sites = BTreeSet::new();
++        let mut completed_tools_owner = false;
++        let mut contributors = Vec::new();
++        for (id, patch) in patches {
++            match patch.apply(&mut view, &mut replaced_sites, &mut completed_tools_owner) {
++                Ok(()) => contributors.push(id),
++                Err(error) => {
++                    diagnostics.push(format!("{id}: {error}"));
++                    if let Some(loaded) = self.loaded.get_mut(&id) {
++                        loaded.error = Some(error.to_string());
++                    }
++                }
++            }
++        }
++        ModTerminalView {
++            view,
++            owner,
++            contributors,
++            diagnostics,
++        }
++    }
++
 +    pub fn turn_boundary(&mut self) {
 +        if let Err(error) = self.reload() {
 +            self.reload_error = Some(error.to_string());
@@ -27547,10 +27638,10 @@ index 0000000..c2abb8d
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000..204d72c
+index 0000000..ec9ad49
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,391 @@
+@@ -0,0 +1,464 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -27856,12 +27947,22 @@ index 0000000..204d72c
 +                if kind == "terminal_mount" {
 +                    return Ok(view);
 +                }
-+                let key = required_string(step, "key")?;
-+                let action = parsed
-+                    .keybindings
-+                    .get(key)
-+                    .ok_or_else(|| failure("offline_terminal_key_not_mounted"))?;
-+                let action = serde_json::to_value(action)?;
++                let action = if let Some(component) = step.get("component").and_then(Value::as_str)
++                {
++                    terminal_component_action(
++                        &parsed,
++                        component,
++                        step.get("value").and_then(Value::as_str),
++                    )?
++                } else {
++                    let key = required_string(step, "key")?;
++                    serde_json::to_value(
++                        parsed
++                            .keybindings
++                            .get(key)
++                            .ok_or_else(|| failure("offline_terminal_key_not_mounted"))?,
++                    )?
++                };
 +                if let Some(command) = action.get("command").and_then(Value::as_str) {
 +                    let (owner, name) = command.split_once(':').unwrap_or((id, command));
 +                    let args = action.get("args").cloned().unwrap_or_else(|| json!(""));
@@ -27889,6 +27990,69 @@ index 0000000..204d72c
 +        .get(key)
 +        .and_then(Value::as_str)
 +        .ok_or_else(|| failure(format!("offline_{key}_required")))
++}
++
++fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'a ModComponent> {
++    components.iter().find_map(|component| {
++        let (component_id, children) = match component {
++            ModComponent::Box { id, children, .. }
++            | ModComponent::Pane { id, children, .. }
++            | ModComponent::Dialog { id, children, .. } => (Some(id.as_str()), children.as_slice()),
++            ModComponent::Text { id, .. }
++            | ModComponent::Button { id, .. }
++            | ModComponent::Input { id, .. }
++            | ModComponent::Select { id, .. }
++            | ModComponent::Markdown { id, .. }
++            | ModComponent::Code { id, .. } => (Some(id.as_str()), &[][..]),
++            ModComponent::Slot => (None, &[][..]),
++        };
++        if component_id == Some(id) {
++            Some(component)
++        } else {
++            terminal_component(children, id)
++        }
++    })
++}
++
++fn terminal_component_action(view: &ModView, id: &str, value: Option<&str>) -> Result<Value> {
++    let component = view
++        .sites
++        .values()
++        .find_map(|site| terminal_component(&site.components, id))
++        .ok_or_else(|| failure("offline_terminal_component_not_mounted"))?;
++    let command = |action: &ModCommandAction, value: Option<&str>| {
++        let args = match value {
++            Some(value) if action.args.is_empty() => value.to_owned(),
++            Some(value) => format!("{} {value}", action.args),
++            None => action.args.clone(),
++        };
++        serde_json::to_value(ModKeyAction::Command {
++            command: action.command.clone(),
++            args,
++        })
++        .map_err(failure)
++    };
++    match component {
++        ModComponent::Button { action, .. } => serde_json::to_value(action).map_err(failure),
++        ModComponent::Input {
++            action,
++            value: current,
++            ..
++        } => command(action, value.or(Some(current))),
++        ModComponent::Select {
++            action,
++            value: current,
++            options,
++            ..
++        } => {
++            let selected = value.unwrap_or(current);
++            if !options.iter().any(|option| option.value == selected) {
++                return Err(failure("offline_terminal_select_value_not_mounted"));
++            }
++            command(action, Some(selected))
++        }
++        _ => Err(failure("offline_terminal_component_not_interactive")),
++    }
 +}
 +
 +fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]) {
@@ -27944,10 +28108,10 @@ index 0000000..204d72c
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000..5a19cef
+index 0000000..5da08c4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,127 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -28002,6 +28166,7 @@ index 0000000..5a19cef
 +            return Err(failure("callback_cancelled"));
 +        }
 +        let request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
++            "api": MOD_API_VERSION,
 +            "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": loaded.selection.settings,
 +            "state": loaded.state, "event": event, "name": name, "payload": payload, "receipts": receipts,
 +            "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
@@ -30215,7 +30380,7 @@ index 0000000..4f51961
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 0000000..34a0926
+index 0000000..8854caa
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
 @@ -0,0 +1,235 @@
@@ -30292,7 +30457,7 @@ index 0000000..34a0926
 +  map.set(name, handler);
 +}
 +const api = Object.freeze({
-+  version: '0.1.0-experimental.6',
++  version: request.api,
 +  fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
 +  host: Object.freeze({ call: hostCall }),
 +  services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
@@ -30741,13 +30906,14 @@ index 0000000..6b02aee
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 0000000..971d96b
+index 0000000..ce09dd4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,1005 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
++pub const MOD_COMPONENT_LIMIT: usize = 64;
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 +#[serde(deny_unknown_fields)]
@@ -30769,11 +30935,44 @@ index 0000000..971d96b
 +    #[serde(default)]
 +    pub footer: Option<ModPanel>,
 +    #[serde(default)]
++    pub sites: BTreeMap<String, ModRenderSite>,
++    #[serde(default)]
 +    pub status: Vec<String>,
 +    #[serde(default)]
 +    pub keybindings: BTreeMap<String, ModKeyAction>,
 +    #[serde(default)]
 +    pub theme: ModTheme,
++    #[serde(default)]
++    pub completed_tools: ModCompletedTools,
++    #[serde(default)]
++    pub message_template: Option<String>,
++    #[serde(default)]
++    pub tool_template: Option<String>,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModViewPatch {
++    #[serde(default)]
++    pub title: Option<String>,
++    #[serde(default)]
++    pub foreground: Option<u8>,
++    #[serde(default)]
++    pub background: Option<u8>,
++    #[serde(default)]
++    pub sidebar_width: Option<u16>,
++    #[serde(default)]
++    pub sidebar_side: Option<ModSidebarSide>,
++    #[serde(default)]
++    pub sites: BTreeMap<String, ModRenderSite>,
++    #[serde(default)]
++    pub status: Vec<String>,
++    #[serde(default)]
++    pub keybindings: BTreeMap<String, ModKeyAction>,
++    #[serde(default)]
++    pub theme: ModThemePatch,
++    #[serde(default)]
++    pub completed_tools: Option<ModCompletedTools>,
 +    #[serde(default)]
 +    pub message_template: Option<String>,
 +    #[serde(default)]
@@ -30795,6 +30994,139 @@ index 0000000..971d96b
 +    pub lines: Vec<String>,
 +}
 +
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModSiteMode {
++    #[default]
++    Replace,
++    Wrap,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModRenderSite {
++    #[serde(default)]
++    pub mode: ModSiteMode,
++    #[serde(default)]
++    pub components: Vec<ModComponent>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
++pub enum ModComponent {
++    Box {
++        id: String,
++        label: String,
++        #[serde(default)]
++        title: Option<String>,
++        #[serde(default)]
++        children: Vec<ModComponent>,
++    },
++    Text {
++        id: String,
++        label: String,
++        text: String,
++        #[serde(default)]
++        tone: ModTone,
++    },
++    Button {
++        id: String,
++        label: String,
++        text: String,
++        action: ModComponentAction,
++    },
++    Input {
++        id: String,
++        label: String,
++        #[serde(default)]
++        value: String,
++        #[serde(default)]
++        placeholder: String,
++        action: ModCommandAction,
++    },
++    Select {
++        id: String,
++        label: String,
++        value: String,
++        options: Vec<ModSelectOption>,
++        action: ModCommandAction,
++    },
++    Markdown {
++        id: String,
++        label: String,
++        text: String,
++    },
++    Code {
++        id: String,
++        label: String,
++        text: String,
++        #[serde(default)]
++        language: Option<String>,
++    },
++    Pane {
++        id: String,
++        label: String,
++        #[serde(default)]
++        title: Option<String>,
++        #[serde(default)]
++        collapsed: bool,
++        #[serde(default)]
++        scroll: u16,
++        #[serde(default)]
++        children: Vec<ModComponent>,
++    },
++    Dialog {
++        id: String,
++        label: String,
++        title: String,
++        #[serde(default)]
++        children: Vec<ModComponent>,
++    },
++    Slot,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct ModSelectOption {
++    pub value: String,
++    pub label: String,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(untagged)]
++pub enum ModComponentAction {
++    Command(ModCommandAction),
++    Copy { copy: String, label: String },
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(deny_unknown_fields)]
++pub struct ModCommandAction {
++    pub command: String,
++    #[serde(default)]
++    pub args: String,
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModTone {
++    #[default]
++    Normal,
++    Accent,
++    Success,
++    Attention,
++    Failure,
++    Muted,
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModCompletedTools {
++    #[default]
++    Normal,
++    Compact,
++}
++
 +#[derive(Clone, Debug, Serialize, PartialEq)]
 +#[serde(untagged)]
 +pub enum ModKeyAction {
@@ -30802,6 +31134,8 @@ index 0000000..971d96b
 +    Insert { insert: String },
 +    Submit { submit: String },
 +    Command { command: String, args: String },
++    Focus { focus: String },
++    Copy { copy: String, label: String },
 +}
 +
 +impl<'de> Deserialize<'de> for ModKeyAction {
@@ -30832,7 +31166,7 @@ index 0000000..971d96b
 +                submit: text(&object["submit"])?,
 +            });
 +        }
-+        if keys == BTreeSet::from(["command"]) || keys == BTreeSet::from(["command", "args"]) {
++        if keys == BTreeSet::from(["command"]) || keys == BTreeSet::from(["args", "command"]) {
 +            return Ok(Self::Command {
 +                command: text(&object["command"])?,
 +                args: object
@@ -30840,6 +31174,17 @@ index 0000000..971d96b
 +                    .map(text)
 +                    .transpose()?
 +                    .unwrap_or_default(),
++            });
++        }
++        if keys == BTreeSet::from(["focus"]) {
++            return Ok(Self::Focus {
++                focus: text(&object["focus"])?,
++            });
++        }
++        if keys == BTreeSet::from(["copy", "label"]) {
++            return Ok(Self::Copy {
++                copy: text(&object["copy"])?,
++                label: text(&object["label"])?,
 +            });
 +        }
 +        Err(serde::de::Error::custom("invalid keybinding action"))
@@ -30861,6 +31206,72 @@ index 0000000..971d96b
 +    pub attention: Option<ModColor>,
 +    #[serde(default)]
 +    pub failure: Option<ModColor>,
++    #[serde(default)]
++    pub diff_added: Option<ModColor>,
++    #[serde(default)]
++    pub diff_removed: Option<ModColor>,
++    #[serde(default)]
++    pub muted: Option<ModColor>,
++    #[serde(default)]
++    pub border: ModBorder,
++    #[serde(default)]
++    pub density: ModDensity,
++    #[serde(default)]
++    pub icons: ModIcons,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct ModThemePatch {
++    #[serde(default)]
++    pub accent: Option<ModColor>,
++    #[serde(default)]
++    pub user_message_background: Option<ModColor>,
++    #[serde(default)]
++    pub syntax: Option<String>,
++    #[serde(default)]
++    pub success: Option<ModColor>,
++    #[serde(default)]
++    pub attention: Option<ModColor>,
++    #[serde(default)]
++    pub failure: Option<ModColor>,
++    #[serde(default)]
++    pub diff_added: Option<ModColor>,
++    #[serde(default)]
++    pub diff_removed: Option<ModColor>,
++    #[serde(default)]
++    pub muted: Option<ModColor>,
++    #[serde(default)]
++    pub border: Option<ModBorder>,
++    #[serde(default)]
++    pub density: Option<ModDensity>,
++    #[serde(default)]
++    pub icons: Option<ModIcons>,
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModBorder {
++    #[default]
++    Plain,
++    Rounded,
++    Double,
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModDensity {
++    Compact,
++    #[default]
++    Comfortable,
++}
++
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModIcons {
++    #[default]
++    Unicode,
++    Ascii,
 +}
 +
 +#[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30927,9 +31338,15 @@ index 0000000..971d96b
 +    #[serde(default)]
 +    pub epoch: u64,
 +    #[serde(default)]
++    pub revision: u64,
++    #[serde(default)]
 +    pub view: ModView,
 +    #[serde(default)]
 +    pub owner: Option<String>,
++    #[serde(default)]
++    pub contributors: Vec<String>,
++    #[serde(default)]
++    pub input: Value,
 +    #[serde(default)]
 +    pub progress: Option<ModPanel>,
 +    #[serde(default)]
@@ -30947,6 +31364,14 @@ index 0000000..971d96b
 +        && !text
 +            .chars()
 +            .any(|c| c.is_control() && c != '\n' && c != '\t')
++}
++
++fn component_id(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 48
++        && value
++            .bytes()
++            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 +}
 +
 +pub fn mod_key_name(key: &str) -> bool {
@@ -30979,46 +31404,475 @@ index 0000000..971d96b
 +    }
 +}
 +
++impl ModCommandAction {
++    fn valid(&self) -> bool {
++        mod_command_reference(&self.command) && multiline(&self.args, 4096)
++    }
++}
++
++impl ModComponentAction {
++    fn valid(&self) -> bool {
++        match self {
++            Self::Command(action) => action.valid(),
++            Self::Copy { copy, label } => {
++                !copy.is_empty()
++                    && multiline(copy, 4096)
++                    && !label.is_empty()
++                    && visible(label, 128)
++            }
++        }
++    }
++}
++
++impl ModComponent {
++    fn validate(
++        &self,
++        depth: usize,
++        count: &mut usize,
++        ids: &mut BTreeSet<String>,
++        slots: &mut usize,
++    ) -> bool {
++        if depth > 6 {
++            return false;
++        }
++        *count += 1;
++        if *count > MOD_COMPONENT_LIMIT {
++            return false;
++        }
++        let identified = |id: &str, label: &str, ids: &mut BTreeSet<String>| {
++            component_id(id)
++                && !label.is_empty()
++                && visible(label, 128)
++                && ids.insert(id.to_owned())
++        };
++        let children = |children: &[Self],
++                        count: &mut usize,
++                        ids: &mut BTreeSet<String>,
++                        slots: &mut usize| {
++            children
++                .iter()
++                .all(|child| child.validate(depth + 1, count, ids, slots))
++        };
++        match self {
++            Self::Box {
++                id,
++                label,
++                title,
++                children: nested,
++            }
++            | Self::Pane {
++                id,
++                label,
++                title,
++                children: nested,
++                ..
++            } => {
++                identified(id, label, ids)
++                    && title.as_ref().is_none_or(|title| visible(title, 128))
++                    && children(nested, count, ids, slots)
++            }
++            Self::Dialog {
++                id,
++                label,
++                title,
++                children: nested,
++            } => {
++                identified(id, label, ids)
++                    && !title.is_empty()
++                    && visible(title, 128)
++                    && children(nested, count, ids, slots)
++            }
++            Self::Text {
++                id, label, text, ..
++            }
++            | Self::Markdown { id, label, text }
++            | Self::Code {
++                id, label, text, ..
++            } => identified(id, label, ids) && multiline(text, 4096),
++            Self::Button {
++                id,
++                label,
++                text,
++                action,
++            } => {
++                identified(id, label, ids)
++                    && !text.is_empty()
++                    && visible(text, 256)
++                    && action.valid()
++            }
++            Self::Input {
++                id,
++                label,
++                value,
++                placeholder,
++                action,
++            } => {
++                identified(id, label, ids)
++                    && multiline(value, 1024)
++                    && visible(placeholder, 256)
++                    && action.valid()
++            }
++            Self::Select {
++                id,
++                label,
++                value,
++                options,
++                action,
++            } => {
++                let values = options
++                    .iter()
++                    .map(|option| option.value.as_str())
++                    .collect::<BTreeSet<_>>();
++                identified(id, label, ids)
++                    && (1..=16).contains(&options.len())
++                    && values.len() == options.len()
++                    && options.iter().any(|option| option.value == *value)
++                    && options.iter().all(|option| {
++                        !option.value.is_empty()
++                            && visible(&option.value, 128)
++                            && !option.label.is_empty()
++                            && visible(&option.label, 128)
++                    })
++                    && action.valid()
++            }
++            Self::Slot => {
++                *slots += 1;
++                *slots <= 1
++            }
++        }
++    }
++}
++
++impl ModRenderSite {
++    fn valid(&self, patch: bool, ids: &mut BTreeSet<String>) -> bool {
++        let mut count = 0;
++        let mut slots = 0;
++        let valid = self
++            .components
++            .iter()
++            .all(|component| component.validate(1, &mut count, ids, &mut slots));
++        valid
++            && if patch && self.mode == ModSiteMode::Wrap {
++                slots == 1
++            } else {
++                slots == 0
++            }
++    }
++}
++
++fn valid_site(name: &str) -> bool {
++    ["sidebar", "header", "above_composer", "dialog"].contains(&name)
++}
++
++fn valid_action(action: &ModKeyAction) -> bool {
++    match action {
++        ModKeyAction::Draft(text)
++        | ModKeyAction::Insert { insert: text }
++        | ModKeyAction::Submit { submit: text } => !text.is_empty() && multiline(text, 4096),
++        ModKeyAction::Command { command, args } => {
++            mod_command_reference(command) && multiline(args, 4096)
++        }
++        ModKeyAction::Focus { focus } => component_id(focus),
++        ModKeyAction::Copy { copy, label } => {
++            !copy.is_empty() && multiline(copy, 4096) && !label.is_empty() && visible(label, 128)
++        }
++    }
++}
++
++fn valid_templates(message: &Option<String>, tool: &Option<String>) -> bool {
++    [message, tool]
++        .into_iter()
++        .flatten()
++        .all(|template| visible(template, 1024) && template.matches("{text}").count() == 1)
++}
++
++fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>) -> bool {
++    bindings.len() <= MOD_KEY_LIMIT
++        && bindings
++            .iter()
++            .all(|(key, action)| mod_key_name(key) && valid_action(action))
++}
++
++fn valid_status(status: &[String]) -> bool {
++    status.len() <= 4
++        && status
++            .iter()
++            .all(|segment| !segment.is_empty() && visible(segment, 40))
++}
++
++fn valid_sites(sites: &BTreeMap<String, ModRenderSite>, patch: bool) -> bool {
++    let mut ids = BTreeSet::new();
++    sites.len() <= 4
++        && sites
++            .iter()
++            .all(|(name, site)| valid_site(name) && site.valid(patch, &mut ids))
++}
++
++fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
++    match component {
++        ModComponent::Box { id, children, .. }
++        | ModComponent::Pane { id, children, .. }
++        | ModComponent::Dialog { id, children, .. } => {
++            ids.insert(id.clone());
++            for child in children {
++                component_ids(child, ids);
++            }
++        }
++        ModComponent::Text { id, .. }
++        | ModComponent::Button { id, .. }
++        | ModComponent::Input { id, .. }
++        | ModComponent::Select { id, .. }
++        | ModComponent::Markdown { id, .. }
++        | ModComponent::Code { id, .. } => {
++            ids.insert(id.clone());
++        }
++        ModComponent::Slot => {}
++    }
++}
++
++fn valid_focus_targets(
++    bindings: &BTreeMap<String, ModKeyAction>,
++    sites: &BTreeMap<String, ModRenderSite>,
++) -> bool {
++    let mut ids = BTreeSet::new();
++    for site in sites.values() {
++        for component in &site.components {
++            component_ids(component, &mut ids);
++        }
++    }
++    bindings.values().all(|action| match action {
++        ModKeyAction::Focus { focus } => ids.contains(focus),
++        _ => true,
++    })
++}
++
++fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<ModComponent> {
++    components
++        .into_iter()
++        .flat_map(|component| match component {
++            ModComponent::Slot => current.to_vec(),
++            ModComponent::Box {
++                id,
++                label,
++                title,
++                children,
++            } => vec![ModComponent::Box {
++                id,
++                label,
++                title,
++                children: replace_slot(children, current),
++            }],
++            ModComponent::Pane {
++                id,
++                label,
++                title,
++                collapsed,
++                scroll,
++                children,
++            } => vec![ModComponent::Pane {
++                id,
++                label,
++                title,
++                collapsed,
++                scroll,
++                children: replace_slot(children, current),
++            }],
++            ModComponent::Dialog {
++                id,
++                label,
++                title,
++                children,
++            } => vec![ModComponent::Dialog {
++                id,
++                label,
++                title,
++                children: replace_slot(children, current),
++            }],
++            component => vec![component],
++        })
++        .collect()
++}
++
++impl ModThemePatch {
++    fn apply(self, target: &mut ModTheme) {
++        macro_rules! assign {
++            ($field:ident) => {
++                if self.$field.is_some() {
++                    target.$field = self.$field;
++                }
++            };
++        }
++        assign!(accent);
++        assign!(user_message_background);
++        assign!(syntax);
++        assign!(success);
++        assign!(attention);
++        assign!(failure);
++        assign!(diff_added);
++        assign!(diff_removed);
++        assign!(muted);
++        if let Some(border) = self.border {
++            target.border = border;
++        }
++        if let Some(density) = self.density {
++            target.density = density;
++        }
++        if let Some(icons) = self.icons {
++            target.icons = icons;
++        }
++    }
++}
++
++impl ModViewPatch {
++    pub fn parse(value: Value) -> Result<Self> {
++        let patch: Self = serde_json::from_value(value)?;
++        if patch.sidebar_width.is_some_and(|width| width > 60)
++            || patch
++                .title
++                .as_ref()
++                .is_some_and(|title| !visible(title, 1024))
++            || !valid_sites(&patch.sites, true)
++            || !valid_status(&patch.status)
++            || !valid_bindings(&patch.keybindings)
++            || !valid_templates(&patch.message_template, &patch.tool_template)
++            || patch
++                .theme
++                .syntax
++                .as_ref()
++                .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
++            || serde_json::to_vec(&patch)?.len() > 16_384
++        {
++            return Err(failure("invalid_terminal_patch"));
++        }
++        Ok(patch)
++    }
++
++    pub fn apply(
++        self,
++        target: &mut ModView,
++        replaced_sites: &mut BTreeSet<String>,
++        completed_tools_owner: &mut bool,
++    ) -> Result<()> {
++        let mut candidate = target.clone();
++        let mut candidate_sites = replaced_sites.clone();
++        let mut candidate_completed_tools = *completed_tools_owner;
++        self.apply_to(
++            &mut candidate,
++            &mut candidate_sites,
++            &mut candidate_completed_tools,
++        )?;
++        *target = candidate;
++        *replaced_sites = candidate_sites;
++        *completed_tools_owner = candidate_completed_tools;
++        Ok(())
++    }
++
++    fn apply_to(
++        self,
++        target: &mut ModView,
++        replaced_sites: &mut BTreeSet<String>,
++        completed_tools_owner: &mut bool,
++    ) -> Result<()> {
++        if let Some(title) = self.title {
++            target.title = Some(title);
++        }
++        if let Some(foreground) = self.foreground {
++            target.foreground = Some(foreground);
++        }
++        if let Some(background) = self.background {
++            target.background = Some(background);
++        }
++        if let Some(width) = self.sidebar_width {
++            target.sidebar_width = width;
++        }
++        if let Some(side) = self.sidebar_side {
++            target.sidebar_side = side;
++        }
++        for (name, site) in self.sites {
++            match site.mode {
++                ModSiteMode::Replace => {
++                    if !replaced_sites.insert(name.clone()) {
++                        return Err(failure(format!("terminal_site_conflict: {name}")));
++                    }
++                    target.sites.insert(name, site);
++                }
++                ModSiteMode::Wrap => {
++                    let current = target
++                        .sites
++                        .get(&name)
++                        .map(|site| site.components.as_slice())
++                        .unwrap_or_default();
++                    target.sites.insert(
++                        name,
++                        ModRenderSite {
++                            mode: ModSiteMode::Replace,
++                            components: replace_slot(site.components, current),
++                        },
++                    );
++                }
++            }
++        }
++        for (key, action) in self.keybindings {
++            if target.keybindings.insert(key.clone(), action).is_some() {
++                return Err(failure(format!("terminal_key_conflict: {key}")));
++            }
++        }
++        target.status.extend(self.status);
++        if target.status.len() > 4 {
++            return Err(failure("terminal_status_limit"));
++        }
++        self.theme.apply(&mut target.theme);
++        if let Some(mode) = self.completed_tools {
++            if *completed_tools_owner {
++                return Err(failure("terminal_completed_tools_conflict"));
++            }
++            *completed_tools_owner = true;
++            target.completed_tools = mode;
++        }
++        if let Some(template) = self.message_template {
++            target.message_template = Some(match target.message_template.take() {
++                Some(current) => template.replace("{text}", &current),
++                None => template,
++            });
++        }
++        if let Some(template) = self.tool_template {
++            target.tool_template = Some(match target.tool_template.take() {
++                Some(current) => template.replace("{text}", &current),
++                None => template,
++            });
++        }
++        ModView::parse(serde_json::to_value(target.clone())?)?;
++        Ok(())
++    }
++}
++
 +impl ModView {
 +    pub fn parse(value: Value) -> Result<Self> {
 +        let view: Self = serde_json::from_value(value)?;
-+        let action = |action: &ModKeyAction| match action {
-+            ModKeyAction::Draft(text)
-+            | ModKeyAction::Insert { insert: text }
-+            | ModKeyAction::Submit { submit: text } => !text.is_empty() && multiline(text, 4096),
-+            ModKeyAction::Command { command, args } => {
-+                mod_command_reference(command) && multiline(args, 4096)
-+            }
-+        };
 +        if view.sidebar_width > 60
 +            || view.panels.len() > 8
-+            || view.keybindings.len() > MOD_KEY_LIMIT
-+            || view.status.len() > 4
-+            || view.title.as_ref().is_some_and(|s| !visible(s, 1024))
-+            || [&view.message_template, &view.tool_template]
-+                .into_iter()
-+                .flatten()
-+                .any(|s| !visible(s, 1024) || s.matches("{text}").count() != 1)
-+            || view.panels.iter().any(|p| !p.valid(32))
++            || view
++                .title
++                .as_ref()
++                .is_some_and(|title| !visible(title, 1024))
++            || !valid_templates(&view.message_template, &view.tool_template)
++            || view.panels.iter().any(|panel| !panel.valid(32))
 +            || [&view.header, &view.footer]
 +                .into_iter()
 +                .flatten()
-+                .any(|p| !p.valid(3))
-+            || view.status.iter().any(|s| s.is_empty() || !visible(s, 40))
++                .any(|panel| !panel.valid(3))
++            || !valid_sites(&view.sites, false)
++            || !valid_status(&view.status)
++            || !valid_bindings(&view.keybindings)
++            || !valid_focus_targets(&view.keybindings, &view.sites)
 +            || view
 +                .theme
 +                .syntax
 +                .as_ref()
-+                .is_some_and(|s| s.is_empty() || !visible(s, 128))
-+            || view
-+                .keybindings
-+                .iter()
-+                .any(|(key, value)| !mod_key_name(key) || !action(value))
++                .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
++            || serde_json::to_vec(&view)?.len() > 16_384
 +        {
 +            return Err(failure("invalid_terminal_view"));
-+        }
-+        if serde_json::to_vec(&view)?.len() > 16_384 {
-+            return Err(failure("terminal_view_limit"));
 +        }
 +        Ok(view)
 +    }
@@ -31030,11 +31884,20 @@ index 0000000..971d96b
 +
 +impl ModViewSnapshot {
 +    pub fn read(path: &Path) -> Result<Self> {
-+        let value: Value = serde_json::from_slice(&store::read(path, 65_536)?)?;
++        let value: Value = serde_json::from_slice(&store::read(path, 131_072)?)?;
 +        let mut snapshot: Self = serde_json::from_value(value)?;
 +        snapshot.view = ModView::parse(serde_json::to_value(&snapshot.view)?)?;
-+        if snapshot.progress.as_ref().is_some_and(|p| !p.valid(8))
++        if snapshot
++            .progress
++            .as_ref()
++            .is_some_and(|panel| !panel.valid(8))
 +            || snapshot.activity.len() > 32
++            || snapshot.contributors.len() > 16
++            || snapshot
++                .contributors
++                .iter()
++                .any(|contributor| !identifier(contributor))
++            || serde_json::to_vec(&snapshot.input)?.len() > 65_536
 +            || snapshot.diagnostics.len() > 16
 +            || snapshot
 +                .diagnostics
@@ -35212,10 +36075,10 @@ index 0000000..aef9c99
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000..690b078
+index 0000000..d2f08d2
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2171 @@
+@@ -0,0 +1,2302 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
 +use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
@@ -35996,6 +36859,9 @@ index 0000000..690b078
 +        json!({"theme":{"accent":"blue"}}),
 +        json!({"theme":{"syntax":""}}),
 +        json!({"theme":{"border":81}}),
++        json!({"sites":{"sidebar":{"components":[{"type":"text","id":"bad-id","label":"Bad","text":"bad"}]}}}),
++        json!({"sites":{"sidebar":{"components":[{"type":"slot"}]}}}),
++        json!({"sites":{"sidebar":{"components":[{"type":"text","id":"same","label":"One","text":"one"},{"type":"text","id":"same","label":"Two","text":"two"}]}}}),
 +    ] {
 +        assert!(codex_omd::ModView::parse(value.clone()).is_err(), "{value}");
 +    }
@@ -36006,8 +36872,22 @@ index 0000000..690b078
 +        "header":{"title":"Header","lines":["one"]},
 +        "footer":{"title":"Footer","lines":["two","three"]},
 +        "status":["build ok","2 agents"],
-+        "theme":{"accent":81,"user_message_background":"#202830","syntax":"github","success":"#00FF00","attention":214,"failure":196},
-+        "keybindings":{"F6":"draft","F7":{"insert":"inserted"},"Ctrl+r":{"submit":"Run the tests"},"Alt+x":{"command":"counter:reset","args":"now"},"Alt+y":{"command":"reset"}}
++        "theme":{"accent":81,"user_message_background":"#202830","syntax":"github","success":"#00FF00","attention":214,"failure":196,"diff_added":46,"diff_removed":196,"muted":244,"border":"rounded","density":"compact","icons":"ascii"},
++        "sites":{
++            "sidebar":{"components":[{
++                "type":"box","id":"root_box","label":"Root box","title":"Components","children":[
++                    {"type":"text","id":"plain_text","label":"Plain text","text":"plain","tone":"accent"},
++                    {"type":"button","id":"run_button","label":"Run button","text":"Run","action":{"command":"counter:reset"}},
++                    {"type":"input","id":"review_input","label":"Review input","placeholder":"Review","action":{"command":"counter:review"}},
++                    {"type":"select","id":"side_select","label":"Side","value":"left","options":[{"value":"left","label":"Left"},{"value":"right","label":"Right"}],"action":{"command":"counter:side"}},
++                    {"type":"markdown","id":"help_markdown","label":"Help","text":"**help**"},
++                    {"type":"code","id":"code_sample","label":"Code","text":"let ok = true;","language":"typescript"},
++                    {"type":"pane","id":"detail_pane","label":"Details","title":"Details","children":[]}
++                ]
++            }]},
++            "dialog":{"components":[{"type":"dialog","id":"settings_dialog","label":"Settings","title":"Settings","children":[]}]}
++        },
++        "keybindings":{"F6":"draft","F7":{"insert":"inserted"},"F8":{"focus":"review_input"},"F9":{"copy":"copy me","label":"fixture text"},"Ctrl+r":{"submit":"Run the tests"},"Alt+x":{"command":"counter:reset","args":"now"},"Alt+y":{"command":"reset"}}
 +    }))
 +    .unwrap();
 +    assert_eq!(view.sidebar_side, codex_omd::ModSidebarSide::Left);
@@ -36025,6 +36905,18 @@ index 0000000..690b078
 +    assert_eq!(
 +        serde_json::to_value(&view.theme).unwrap()["user_message_background"],
 +        json!("#202830")
++    );
++    assert!(
++        codex_omd::ModViewPatch::parse(
++            json!({"sites":{"sidebar":{"mode":"wrap","components":[]}}})
++        )
++        .is_err()
++    );
++    assert!(
++        codex_omd::ModViewPatch::parse(
++            json!({"sites":{"sidebar":{"mode":"wrap","components":[{"type":"slot"}]}}})
++        )
++        .is_ok()
 +    );
 +    let temp = TempDir::new().unwrap();
 +    let path = temp.path().join("mod-view.json");
@@ -36044,12 +36936,117 @@ index 0000000..690b078
 +            status: "completed".into(),
 +        }],
 +        diagnostics: vec!["keybinding dropped".into()],
++        ..Default::default()
 +    };
 +    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
 +    assert_eq!(codex_omd::ModViewSnapshot::read(&path).unwrap(), snapshot);
 +    snapshot.activity[0].label = "bad\u{1b}".into();
 +    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
 +    assert!(codex_omd::ModViewSnapshot::read(&path).is_err());
++}
++
++#[test]
++fn terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = ModStore::create(root.join("store"), node()).unwrap();
++    let workspace = packaged(
++        &root,
++        "workspace",
++        "workspace",
++        "export default api => api.replace('terminal',()=>({title:'Workspace',sites:{sidebar:{components:[{type:'text',id:'base_text',label:'Base text',text:'base'}]}},status:['workspace'],keybindings:{F8:{focus:'base_text'}}}))",
++        &["terminal"],
++        &[],
++    );
++    trust(&store, &workspace, &["terminal"]);
++    let focus = packaged(
++        &root,
++        "focus",
++        "focus",
++        "export default api => api.on('terminal',()=>({sites:{sidebar:{mode:'wrap',components:[{type:'box',id:'focus_box',label:'Focus box',children:[{type:'text',id:'focus_text',label:'Focus text',text:'focus'},{type:'slot'}]}]}},completed_tools:'compact',status:['focus'],keybindings:{F9:{command:'focus:toggle'}}}))",
++        &["terminal"],
++        &["workspace"],
++    );
++    trust(&store, &focus, &["terminal"]);
++    let theme = packaged(
++        &root,
++        "theme",
++        "theme",
++        "export default api => api.on('terminal',()=>({theme:{accent:'#7dd3fc',border:'rounded',density:'compact',icons:'ascii'},status:['theme'],keybindings:{F10:{copy:'palette',label:'palette'}}}))",
++        &["terminal"],
++        &["workspace"],
++    );
++    trust(&store, &theme, &["terminal"]);
++    let mut runtime = host(&temp);
++    let terminal = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
++    assert_eq!(
++        terminal.owner.as_deref(),
++        Some("workspace"),
++        "{}",
++        runtime.status()
++    );
++    assert_eq!(terminal.contributors, vec!["focus", "theme"]);
++    assert!(
++        terminal.diagnostics.is_empty(),
++        "{:?}",
++        terminal.diagnostics
++    );
++    assert_eq!(terminal.view.status, vec!["workspace", "focus", "theme"]);
++    assert_eq!(
++        terminal.view.completed_tools,
++        codex_omd::ModCompletedTools::Compact
++    );
++    assert_eq!(terminal.view.theme.border, codex_omd::ModBorder::Rounded);
++    let sidebar = serde_json::to_value(&terminal.view.sites["sidebar"]).unwrap();
++    assert_eq!(sidebar["components"][0]["id"], "focus_box");
++    assert_eq!(sidebar["components"][0]["children"][1]["id"], "base_text");
++
++    let legacy = package(
++        &root,
++        "legacy",
++        "export default api => api.on('terminal',()=>({theme:{accent:81}}))",
++        &["terminal"],
++    );
++    let mut manifest: Value =
++        serde_json::from_slice(&std::fs::read(legacy.join("mod.json")).unwrap()).unwrap();
++    manifest["api"] = json!("0.1.0-experimental.6");
++    std::fs::write(
++        legacy.join("mod.json"),
++        serde_json::to_vec(&manifest).unwrap(),
++    )
++    .unwrap();
++    trust(&store, &legacy, &["terminal"]);
++    runtime.reload().unwrap();
++    let terminal = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
++    assert!(
++        terminal
++            .diagnostics
++            .iter()
++            .any(|diagnostic| diagnostic.contains("legacy")
++                && diagnostic.contains("exclusive_replacement_registration_required"))
++    );
++}
++
++#[test]
++fn a_failed_terminal_patch_is_transactional() {
++    let mut view = codex_omd::ModView::parse(json!({"title":"Base","sites":{"sidebar":{"components":[{"type":"text","id":"base","label":"Base","text":"base"}]}}})).unwrap();
++    let first = codex_omd::ModViewPatch::parse(json!({"title":"First","sites":{"sidebar":{"components":[{"type":"text","id":"first","label":"First","text":"first"}]}}})).unwrap();
++    let second = codex_omd::ModViewPatch::parse(json!({"title":"Leaked","sites":{"sidebar":{"components":[{"type":"text","id":"second","label":"Second","text":"second"}]}}})).unwrap();
++    let mut sites = std::collections::BTreeSet::new();
++    let mut completed_tools = false;
++    first
++        .apply(&mut view, &mut sites, &mut completed_tools)
++        .unwrap();
++    assert!(
++        second
++            .apply(&mut view, &mut sites, &mut completed_tools)
++            .is_err()
++    );
++    assert_eq!(view.title.as_deref(), Some("First"));
++    assert_eq!(
++        serde_json::to_value(&view.sites["sidebar"]).unwrap()["components"][0]["id"],
++        "first"
++    );
 +}
 +
 +#[test]
@@ -37170,11 +38167,7 @@ index 0000000..690b078
 +    );
 +    let mut runtime = host(&temp);
 +    let results = runtime.event("worker_context", payload.clone());
-+    assert!(
-+        !results.is_empty(),
-+        "{}",
-+        runtime.status()
-+    );
++    assert!(!results.is_empty(), "{}", runtime.status());
 +    assert!(
 +        results[0]
 +            .1
@@ -37273,7 +38266,7 @@ index 0000000..690b078
 +    let harness = package(
 +        &root,
 +        "harness",
-+        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('checkpoint.update',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.replace('terminal',()=>({title:'Offline UI',keybindings:{F2:{command:'harness:ping'}}})); }",
++        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('checkpoint.update',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.replace('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
 +        &[
 +            "tools",
 +            "commands",
@@ -37341,8 +38334,9 @@ index 0000000..690b078
 +            {"type":"agent","payload":{"phase":"end","agent_id":"agent-1","parent_agent_id":null,"role":"worker","status":"completed"},"expect":[{"mod":"harness","value":null}]},
 +            {"type":"response_stream","payload":{"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,"opaque_reasoning":false,"protected":false,"text":"hello"}},
 +            {"type":"invoke","mod":"consumer","event":"command","name":"call","expect":"HELLO"},
-+            {"type":"terminal_mount","mod":"harness","payload":{"event":"draw","checkpoint":null},"expect":{"title":"Offline UI","keybindings":{"F2":{"command":"harness:ping"}}}},
++            {"type":"terminal_mount","mod":"harness","payload":{"event":"draw","checkpoint":null},"expect":{"title":"Offline UI","sites":{"dialog":{"components":[{"type":"button","id":"ping_button","label":"Ping button","text":"Ping","action":{"command":"harness:ping"}}]}},"keybindings":{"F2":{"command":"harness:ping"}}}},
 +            {"type":"terminal_interact","mod":"harness","key":"F2","payload":{"event":"draw","checkpoint":null},"expect":{"action":{"command":"harness:ping","args":""},"result":1}},
++            {"type":"terminal_interact","mod":"harness","component":"ping_button","payload":{"event":"draw","checkpoint":null},"expect":{"action":{"command":"harness:ping","args":""},"result":2}},
 +            {"type":"reload"},
 +            {"type":"invoke","mod":"harness","event":"command","name":"clock","cancelled":true,"expect_error":"callback_cancelled"}
 +        ]
@@ -37353,7 +38347,7 @@ index 0000000..690b078
 +    assert_eq!(result["virtual_time_ms"], 1025);
 +    assert_eq!(result["host_calls"].as_array().unwrap().len(), 4);
 +    assert_eq!(result["steps"][6]["value"]["effective"], "HELLO");
-+    assert_eq!(result["steps"][10]["value"]["generation"], 2);
++    assert_eq!(result["steps"][11]["value"]["generation"], 2);
 +}
 +
 +#[test]
@@ -38339,7 +39333,7 @@ index f72429a..63f5121 100644
  codex-plugin = { workspace = true }
  codex-protocol = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index 4e4f534..b0c8b19 100644
+index 4e4f534..74baa3e 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -174,7 +174,11 @@ use crossterm::event::KeyCode;
@@ -38402,7 +39396,7 @@ index 4e4f534..b0c8b19 100644
          if self.reconnect.offline
              && let TuiEvent::Key(key) = &event
          {
-@@ -1000,11 +1030,44 @@ impl App {
+@@ -1000,11 +1030,51 @@ impl App {
                      }
                  }
                  TuiEvent::FocusLost => {}
@@ -38414,6 +39408,13 @@ index 4e4f534..b0c8b19 100644
  
 +    fn handle_omd_mouse(&mut self, tui: &mut tui::Tui, event: MouseEvent) {
 +        if !crate::omd::mouse_enabled() || !tui.is_alt_screen_active() {
++            return;
++        }
++        if let Some(pointer) = crate::mod_ui::pointer(event) {
++            if let crate::mod_ui::ModPointer::Action(name, action) = pointer {
++                self.dispatch_mod_key_action(&name, action);
++            }
++            tui.frame_requester().schedule_frame();
 +            return;
 +        }
 +        let position = Position::new(event.column, event.row);
@@ -38447,7 +39448,7 @@ index 4e4f534..b0c8b19 100644
      pub(super) fn show_shutdown_feedback(&mut self, tui: &mut tui::Tui) -> Result<()> {
          self.disable_ambient_pet_before_shutdown(tui)?;
          self.chat_widget.show_shutdown_in_progress();
-@@ -1015,7 +1078,24 @@ impl App {
+@@ -1015,7 +1085,24 @@ impl App {
          Ok(())
      }
  
@@ -38472,15 +39473,17 @@ index 4e4f534..b0c8b19 100644
          self.sync_thread_title_progress();
          let dashboard_visible = self
              .chat_widget
-@@ -1035,20 +1115,30 @@ impl App {
+@@ -1035,20 +1122,31 @@ impl App {
              self.schedule_immediate_resize_reflow(tui);
              self.maybe_run_resize_reflow(tui, screen_size)?;
          }
 +        let mouse_selection = tui.mouse_selection();
 +        let mod_snapshot = crate::mod_ui::snapshot();
 +        let header_rows = crate::mod_ui::header_rows(screen_size.height, &mod_snapshot);
++        let mod_dialog_visible = crate::mod_ui::dialog_visible(&mod_snapshot);
          self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
-             let desired_height = if dashboard_visible {
+-            let desired_height = if dashboard_visible {
++            let desired_height = if dashboard_visible || mod_dialog_visible {
                  screen_size.height
              } else {
                  desired_height
@@ -38547,10 +39550,10 @@ index bcd076f..2d76a8a 100644
                  self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
                  self.reset_app_ui_state_after_clear();
 diff --git a/codex-rs/tui/src/app/input.rs b/codex-rs/tui/src/app/input.rs
-index a599bc6..61249c4 100644
+index a599bc6..f359cdc 100644
 --- a/codex-rs/tui/src/app/input.rs
 +++ b/codex-rs/tui/src/app/input.rs
-@@ -120,6 +120,51 @@ impl App {
+@@ -120,6 +120,65 @@ impl App {
          self.chat_widget.set_footer_hint_override(items);
      }
  
@@ -38581,7 +39584,7 @@ index a599bc6..61249c4 100644
 +        .then(|| "key chord".to_string())
 +    }
 +
-+    fn dispatch_mod_key_action(&mut self, name: &str, action: codex_omd::ModKeyAction) {
++    pub(super) fn dispatch_mod_key_action(&mut self, name: &str, action: codex_omd::ModKeyAction) {
 +        match action {
 +            codex_omd::ModKeyAction::Draft(text)
 +            | codex_omd::ModKeyAction::Insert { insert: text } => {
@@ -38596,32 +39599,59 @@ index a599bc6..61249c4 100644
 +                    )),
 +                }
 +            }
++            codex_omd::ModKeyAction::Focus { focus } => {
++                if !crate::mod_ui::focus(&focus) {
++                    self.chat_widget.add_error_message(format!(
++                        "Mod keybinding {name}: component {focus} is not available"
++                    ));
++                }
++            }
++            codex_omd::ModKeyAction::Copy { copy, label } => {
++                self.app_event_tx.send(AppEvent::CopySelection {
++                    text: Arc::from(copy),
++                    label,
++                    format: crate::clipboard_copy::CopyFormat::PlainText,
++                });
++            }
 +        }
 +    }
 +
      fn active_keymap_contexts(&self) -> crate::keymap::KeymapContextSet {
          use crate::keymap::KeymapContext;
          use crate::keymap::KeymapContextSet;
-@@ -245,6 +290,25 @@ impl App {
+@@ -245,6 +304,38 @@ impl App {
          app_server: &mut AppServerSession,
          key_event: KeyEvent,
      ) {
 +        if !self.chat_widget.is_external_writer_view()
 +            && self.overlay.is_none()
 +            && self.chat_widget.no_modal_or_popup_active()
-+            && let Some((name, action)) = crate::mod_ui::input(key_event)
++            && let Some(input) = crate::mod_ui::input(key_event)
 +        {
-+            match self.native_binding_for(key_event) {
-+                Some(native) => {
-+                    if crate::mod_ui::first_warning(&format!("key:{name}")) {
-+                        self.chat_widget.add_error_message(format!(
-+                            "Mod keybinding {name} ignored: it conflicts with native {native}"
-+                        ));
-+                    }
-+                }
-+                None => {
-+                    self.dispatch_mod_key_action(&name, action);
++            match input {
++                crate::mod_ui::ModInput::Consumed => {
++                    tui.frame_requester().schedule_frame();
 +                    return;
++                }
++                crate::mod_ui::ModInput::Interaction(name, action) => {
++                    self.dispatch_mod_key_action(&name, action);
++                    tui.frame_requester().schedule_frame();
++                    return;
++                }
++                crate::mod_ui::ModInput::Binding(name, action) => {
++                    match self.native_binding_for(key_event) {
++                        Some(native) => {
++                            if crate::mod_ui::first_warning(&format!("key:{name}")) {
++                                self.chat_widget.add_error_message(format!(
++                                    "Mod keybinding {name} ignored: it conflicts with native {native}"
++                                ));
++                            }
++                        }
++                        None => {
++                            self.dispatch_mod_key_action(&name, action);
++                            return;
++                        }
++                    }
 +                }
 +            }
 +        }
@@ -38735,7 +39765,7 @@ index c36e83b..20b1d93 100644
          }
          Ok(true)
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 7611d89..774fec6 100644
+index 7611d89..b601775 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
 @@ -427,6 +427,16 @@ pub(crate) enum AppEvent {
@@ -38750,7 +39780,7 @@ index 7611d89..774fec6 100644
 +    },
 +    ModCommandFinished {
 +        invocation: String,
-+        result: Result<codex_omd::ModCommandOutcome, String>,
++        result: Result<crate::mod_runtime::ModCommandResult, String>,
 +    },
  
      /// Persist a submitted prompt in the cross-session message history.
@@ -39429,13 +40459,13 @@ index d6ad607..04095ca 100644
              }
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 0000000..7f28aaa
+index 0000000..f55fb4e
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,68 @@
 +use super::*;
++use crate::mod_runtime::ModCommandResult;
 +use crate::mod_runtime::ModSlashCommand;
-+use codex_omd::ModCommandOutcome;
 +use ratatui::text::Line;
 +
 +impl ChatWidget {
@@ -39452,10 +40482,10 @@ index 0000000..7f28aaa
 +    pub(crate) fn on_mod_command_finished(
 +        &mut self,
 +        invocation: String,
-+        result: Result<ModCommandOutcome, String>,
++        result: Result<ModCommandResult, String>,
 +    ) {
-+        let outcome = match result {
-+            Ok(outcome) => outcome,
++        let ModCommandResult { outcome, preview } = match result {
++            Ok(result) => result,
 +            Err(error) => {
 +                self.add_error_message(format!("/{invocation} failed: {error}"));
 +                return;
@@ -39474,6 +40504,9 @@ index 0000000..7f28aaa
 +        }
 +        if let Some(submit) = outcome.submit {
 +            self.submit_mod_text(submit);
++        }
++        if let Some(preview) = preview {
++            crate::mod_ui::preview(preview);
 +        }
 +        self.request_redraw();
 +    }
@@ -39888,14 +40921,14 @@ index 0000000..22223e0
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/rendering.rs b/codex-rs/tui/src/chatwidget/rendering.rs
-index 8163ae2..8aa3eab 100644
+index 8163ae2..fd2713f 100644
 --- a/codex-rs/tui/src/chatwidget/rendering.rs
 +++ b/codex-rs/tui/src/chatwidget/rendering.rs
 @@ -191,6 +191,17 @@ impl ChatWidget {
                  })),
              );
          }
-+        let footer = crate::mod_ui::footer_lines();
++        let footer = crate::mod_ui::footer_lines(self.last_rendered_width.get().unwrap_or(80));
 +        if !footer.is_empty() {
 +            flex.push(
 +                /*flex*/ 0,
@@ -40019,6 +41052,161 @@ index b0d6205..dd77c7e 100644
                  TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
                      tui.draw(u16::MAX, |frame| {
                          frame.render_widget_ref(&screen, frame.area());
+diff --git a/codex-rs/tui/src/diff_render.rs b/codex-rs/tui/src/diff_render.rs
+index f9e3b03..0d35f37 100644
+--- a/codex-rs/tui/src/diff_render.rs
++++ b/codex-rs/tui/src/diff_render.rs
+@@ -400,9 +400,19 @@ fn line_counts(change: &FileChange) -> (usize, usize) {
+ fn render_line_count_summary(added: usize, removed: usize) -> Vec<RtSpan<'static>> {
+     let mut spans = Vec::new();
+     spans.push("(".into());
+-    spans.push(format!("+{added}").green());
++    spans.push(
++        match crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffAdded) {
++            Some(color) => format!("+{added}").fg(color),
++            None => format!("+{added}").green(),
++        },
++    );
+     spans.push(" ".into());
+-    spans.push(format!("-{removed}").red());
++    spans.push(
++        match crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffRemoved) {
++            Some(color) => format!("-{removed}").fg(color),
++            None => format!("-{removed}").red(),
++        },
++    );
+     spans.push(")".into());
+     spans
+ }
+@@ -1239,6 +1249,9 @@ fn style_sign_add(
+     color_level: DiffColorLevel,
+     diff_backgrounds: ResolvedDiffBackgrounds,
+ ) -> Style {
++    if let Some(color) = crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffAdded) {
++        return style_add(theme, color_level, diff_backgrounds).fg(color);
++    }
+     match theme {
+         DiffTheme::Light => Style::default().fg(Color::Green),
+         DiffTheme::Dark => style_add(theme, color_level, diff_backgrounds),
+@@ -1251,6 +1264,9 @@ fn style_sign_del(
+     color_level: DiffColorLevel,
+     diff_backgrounds: ResolvedDiffBackgrounds,
+ ) -> Style {
++    if let Some(color) = crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffRemoved) {
++        return style_del(theme, color_level, diff_backgrounds).fg(color);
++    }
+     match theme {
+         DiffTheme::Light => Style::default().fg(Color::Red),
+         DiffTheme::Dark => style_del(theme, color_level, diff_backgrounds),
+@@ -1273,7 +1289,7 @@ fn style_add(
+     color_level: DiffColorLevel,
+     diff_backgrounds: ResolvedDiffBackgrounds,
+ ) -> Style {
+-    match (theme, color_level, diff_backgrounds.add) {
++    let style = match (theme, color_level, diff_backgrounds.add) {
+         (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Green),
+         (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
+         | (DiffTheme::Light, DiffColorLevel::Ansi256, Some(bg)) => Style::default().bg(bg),
+@@ -1285,6 +1301,10 @@ fn style_add(
+         | (DiffTheme::Light, DiffColorLevel::Ansi256, None) => Style::default(),
+         (DiffTheme::Dark, DiffColorLevel::TrueColor, None)
+         | (DiffTheme::Dark, DiffColorLevel::Ansi256, None) => Style::default().fg(Color::Green),
++    };
++    match crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffAdded) {
++        Some(color) => style.fg(color),
++        None => style,
+     }
+ }
+ 
+@@ -1297,7 +1317,7 @@ fn style_del(
+     color_level: DiffColorLevel,
+     diff_backgrounds: ResolvedDiffBackgrounds,
+ ) -> Style {
+-    match (theme, color_level, diff_backgrounds.del) {
++    let style = match (theme, color_level, diff_backgrounds.del) {
+         (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Red),
+         (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
+         | (DiffTheme::Light, DiffColorLevel::Ansi256, Some(bg)) => Style::default().bg(bg),
+@@ -1309,6 +1329,10 @@ fn style_del(
+         | (DiffTheme::Light, DiffColorLevel::Ansi256, None) => Style::default(),
+         (DiffTheme::Dark, DiffColorLevel::TrueColor, None)
+         | (DiffTheme::Dark, DiffColorLevel::Ansi256, None) => Style::default().fg(Color::Red),
++    };
++    match crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffRemoved) {
++        Some(color) => style.fg(color),
++        None => style,
+     }
+ }
+ 
+diff --git a/codex-rs/tui/src/exec_cell/render.rs b/codex-rs/tui/src/exec_cell/render.rs
+index ed09151..812a7f2 100644
+--- a/codex-rs/tui/src/exec_cell/render.rs
++++ b/codex-rs/tui/src/exec_cell/render.rs
+@@ -429,6 +429,21 @@ impl ExecCell {
+         }
+ 
+         if let Some(output) = call.output.as_ref() {
++            if output.exit_code == 0
++                && !call.is_user_shell_command()
++                && !call.is_unified_exec_interaction()
++                && crate::mod_ui::completed_tools() == codex_omd::ModCompletedTools::Compact
++            {
++                let (total, _) = output.line_counts();
++                lines.extend(prefix_lines(
++                    vec![Line::from(
++                        format!("completed · {total} output lines · {TRANSCRIPT_HINT}").dim(),
++                    )],
++                    Span::from(layout.output_block.initial_prefix).dim(),
++                    Span::from(layout.output_block.subsequent_prefix),
++                ));
++                return lines;
++            }
+             let line_limit = if call.is_user_shell_command() {
+                 USER_SHELL_TOOL_CALL_MAX_LINES
+             } else {
+@@ -875,6 +890,42 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    #[serial_test::serial]
++    fn focus_flow_compacts_only_successful_agent_output() {
++        crate::mod_ui::preview(codex_omd::ModViewSnapshot {
++            view: codex_omd::ModView::parse(serde_json::json!({"completed_tools":"compact"}))
++                .unwrap(),
++            ..Default::default()
++        });
++        let completed = |exit_code| {
++            let mut cell = new_active_exec_command(
++                "call-id".to_string(),
++                vec!["bash".into(), "-lc".into(), "run fixture".into()],
++                Vec::new(),
++                ExecCommandSource::Agent,
++                None,
++                false,
++            );
++            assert!(cell.complete_call(
++                "call-id",
++                CommandOutput::new(exit_code, "alpha_output\nbeta_output\n".into()),
++                std::time::Duration::from_millis(1),
++            ));
++            cell.display_lines(80)
++                .iter()
++                .map(render_line_text)
++                .join("\n")
++        };
++        let success = completed(0);
++        assert!(success.contains("completed · 2 output lines"), "{success}");
++        assert!(!success.contains("alpha_output"), "{success}");
++        let failure = completed(1);
++        assert!(failure.contains("alpha_output"), "{failure}");
++        assert!(failure.contains("beta_output"), "{failure}");
++        crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
++    }
++
+     #[test]
+     fn output_lines_handles_newline_dense_output_without_materializing_every_line() {
+         let output = CommandOutput::new(/*exit_code*/ 0, "\n".repeat(100_000));
 diff --git a/codex-rs/tui/src/external_agent_config_migration/mod.rs b/codex-rs/tui/src/external_agent_config_migration/mod.rs
 index a80fe03..bd6683a 100644
 --- a/codex-rs/tui/src/external_agent_config_migration/mod.rs
@@ -40132,14 +41320,15 @@ index 43591ec..4e6478b 100644
      session_log::log_session_end();
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000..d2a09c9
+index 0000000..e21afb1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,271 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
 +use codex_omd::ModStore;
++use codex_omd::ModViewSnapshot;
 +use serde_json::Value;
 +use std::collections::BTreeMap;
 +use std::path::Path;
@@ -40161,6 +41350,12 @@ index 0000000..d2a09c9
 +    pub(crate) invocation: String,
 +    pub(crate) description: String,
 +    pub(crate) target: ModSlashTarget,
++}
++
++#[derive(Debug)]
++pub(crate) struct ModCommandResult {
++    pub(crate) outcome: ModCommandOutcome,
++    pub(crate) preview: Option<ModViewSnapshot>,
 +}
 +
 +pub(crate) struct Entry {
@@ -40315,7 +41510,7 @@ index 0000000..d2a09c9
 +        .find(|command| command.invocation == invocation)
 +}
 +
-+pub(crate) fn run(target: &ModSlashTarget, args: &str) -> Result<ModCommandOutcome, String> {
++pub(crate) fn run(target: &ModSlashTarget, args: &str) -> Result<ModCommandResult, String> {
 +    let paths = crate::omd::mod_paths().ok_or("mods are not configured for this session")?;
 +    match target {
 +        ModSlashTarget::Mod { id, command } => {
@@ -40340,7 +41535,21 @@ index 0000000..d2a09c9
 +                    Value::String(args.to_owned()),
 +                )
 +                .map_err(|e| e.to_string())?;
-+            ModCommandOutcome::parse(&value).map_err(|e| e.to_string())
++            let outcome = ModCommandOutcome::parse(&value).map_err(|e| e.to_string())?;
++            let preview = match ModViewSnapshot::read(&paths.evidence.join("mod-view.json")) {
++                Ok(mut snapshot) => {
++                    let terminal = runtime.terminal_view(snapshot.input.clone(), || true);
++                    snapshot.revision = snapshot.revision.saturating_add(1);
++                    snapshot.view = terminal.view;
++                    snapshot.owner = terminal.owner;
++                    snapshot.contributors = terminal.contributors;
++                    snapshot.diagnostics.extend(terminal.diagnostics);
++                    snapshot.diagnostics.truncate(16);
++                    Some(snapshot)
++                }
++                Err(_) => None,
++            };
++            Ok(ModCommandResult { outcome, preview })
 +        }
 +        ModSlashTarget::PiPrompt { name } => {
 +            let user = paths
@@ -40358,8 +41567,12 @@ index 0000000..d2a09c9
 +                .as_str()
 +                .filter(|text| !text.trim().is_empty())
 +                .ok_or("Pi prompt expanded to empty text")?;
-+            ModCommandOutcome::parse(&serde_json::json!({ "submit": text }))
-+                .map_err(|e| e.to_string())
++            let outcome = ModCommandOutcome::parse(&serde_json::json!({ "submit": text }))
++                .map_err(|e| e.to_string())?;
++            Ok(ModCommandResult {
++                outcome,
++                preview: None,
++            })
 +        }
 +    }
 +}
@@ -40465,21 +41678,34 @@ index 0000000..7172901
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 0000000..9b8d7aa
+index 0000000..14f59ae
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,406 @@
+@@ -0,0 +1,1304 @@
 +use codex_omd::ModActivity;
++use codex_omd::ModBorder;
 +use codex_omd::ModColor;
++use codex_omd::ModCommandAction;
++use codex_omd::ModCompletedTools;
++use codex_omd::ModComponent;
++use codex_omd::ModComponentAction;
++use codex_omd::ModDensity;
++use codex_omd::ModIcons;
 +use codex_omd::ModKeyAction;
 +use codex_omd::ModPanel;
++use codex_omd::ModRenderSite;
 +use codex_omd::ModSidebarSide;
++use codex_omd::ModTheme;
++use codex_omd::ModTone;
 +use codex_omd::ModView;
 +use codex_omd::ModViewSnapshot;
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyEventKind;
 +use crossterm::event::KeyModifiers;
++use crossterm::event::MouseButton;
++use crossterm::event::MouseEvent;
++use crossterm::event::MouseEventKind;
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Rect;
 +use ratatui::style::Color;
@@ -40487,9 +41713,14 @@ index 0000000..9b8d7aa
 +use ratatui::style::Stylize;
 +use ratatui::text::Line;
 +use ratatui::widgets::Block;
++use ratatui::widgets::BorderType;
 +use ratatui::widgets::Borders;
++use ratatui::widgets::Clear;
 +use ratatui::widgets::Paragraph;
 +use ratatui::widgets::Widget;
++use std::collections::BTreeMap;
++use std::collections::BTreeSet;
++use std::sync::Mutex;
 +use std::sync::RwLock;
 +
 +#[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40499,19 +41730,84 @@ index 0000000..9b8d7aa
 +    Success,
 +    Attention,
 +    Failure,
++    DiffAdded,
++    DiffRemoved,
++    Muted,
 +}
 +
 +#[derive(Default)]
 +struct Cache {
 +    snapshot: ModViewSnapshot,
 +    terminal: bool,
-+    colors: [Option<Color>; 5],
++    colors: [Option<Color>; 8],
 +    seen: Option<(u64, u64)>,
++    preview: bool,
++}
++
++#[derive(Clone)]
++enum ComponentTarget {
++    Button(ModComponentAction),
++    Input(ModCommandAction),
++    Select {
++        action: ModCommandAction,
++        options: Vec<(String, String)>,
++    },
++    Pane,
++}
++
++#[derive(Clone)]
++struct HitBox {
++    id: String,
++    label: String,
++    area: Rect,
++    target: ComponentTarget,
++}
++
++#[derive(Default)]
++struct Interaction {
++    focused: Option<String>,
++    ids: BTreeSet<String>,
++    targets: BTreeMap<String, ComponentTarget>,
++    order: Vec<String>,
++    hitboxes: Vec<HitBox>,
++    input_values: BTreeMap<String, String>,
++    selected: BTreeMap<String, usize>,
++    collapsed: BTreeMap<String, bool>,
++    scroll: BTreeMap<String, u16>,
++}
++
++struct ComponentRow {
++    id: Option<String>,
++    label: Option<String>,
++    line: Line<'static>,
++    target: Option<ComponentTarget>,
++}
++
++pub(crate) enum ModInput {
++    Consumed,
++    Interaction(String, ModKeyAction),
++    Binding(String, ModKeyAction),
++}
++
++pub(crate) enum ModPointer {
++    Consumed,
++    Action(String, ModKeyAction),
 +}
 +
 +static CACHE: RwLock<Option<Cache>> = RwLock::new(None);
-+static APPLIED_SYNTAX: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-+static WARNED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
++static INTERACTION: Mutex<Interaction> = Mutex::new(Interaction {
++    focused: None,
++    ids: BTreeSet::new(),
++    targets: BTreeMap::new(),
++    order: Vec::new(),
++    hitboxes: Vec::new(),
++    input_values: BTreeMap::new(),
++    selected: BTreeMap::new(),
++    collapsed: BTreeMap::new(),
++    scroll: BTreeMap::new(),
++});
++static APPLIED_SYNTAX: Mutex<Option<String>> = Mutex::new(None);
++static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 +
 +pub(crate) fn first_warning(key: &str) -> bool {
 +    let mut warned = WARNED
@@ -40574,10 +41870,13 @@ index 0000000..9b8d7aa
 +        ThemeSlot::Success => 2,
 +        ThemeSlot::Attention => 3,
 +        ThemeSlot::Failure => 4,
++        ThemeSlot::DiffAdded => 5,
++        ThemeSlot::DiffRemoved => 6,
++        ThemeSlot::Muted => 7,
 +    }
 +}
 +
-+pub(crate) fn colors(snapshot: &ModViewSnapshot) -> [Option<Color>; 5] {
++pub(crate) fn colors(snapshot: &ModViewSnapshot) -> [Option<Color>; 8] {
 +    let theme = &snapshot.view.theme;
 +    [
 +        theme.accent,
@@ -40585,12 +41884,113 @@ index 0000000..9b8d7aa
 +        theme.success,
 +        theme.attention,
 +        theme.failure,
++        theme.diff_added,
++        theme.diff_removed,
++        theme.muted,
 +    ]
 +    .map(|slot| slot.map(color))
 +}
 +
++pub(crate) fn preserve_preview(preview: &ModViewSnapshot, incoming: &ModViewSnapshot) -> bool {
++    (preview.epoch == incoming.epoch && preview.revision > incoming.revision)
++        || (site(&preview.view, "dialog").is_some()
++            && !incoming
++                .view
++                .panels
++                .iter()
++                .any(|panel| panel.title == "Mod errors"))
++}
++
++fn collect_component(component: &ModComponent, interaction: &mut Interaction) {
++    match component {
++        ModComponent::Box { id, children, .. } | ModComponent::Dialog { id, children, .. } => {
++            interaction.ids.insert(id.clone());
++            for child in children {
++                collect_component(child, interaction);
++            }
++        }
++        ModComponent::Pane {
++            id,
++            collapsed,
++            scroll,
++            children,
++            ..
++        } => {
++            interaction.ids.insert(id.clone());
++            interaction
++                .collapsed
++                .entry(id.clone())
++                .or_insert(*collapsed);
++            interaction.scroll.entry(id.clone()).or_insert(*scroll);
++            for child in children {
++                collect_component(child, interaction);
++            }
++        }
++        ModComponent::Input { id, value, .. } => {
++            interaction.ids.insert(id.clone());
++            interaction
++                .input_values
++                .entry(id.clone())
++                .or_insert_with(|| value.clone());
++        }
++        ModComponent::Select {
++            id, value, options, ..
++        } => {
++            interaction.ids.insert(id.clone());
++            let selected = options
++                .iter()
++                .position(|option| option.value == *value)
++                .unwrap_or_default();
++            interaction.selected.entry(id.clone()).or_insert(selected);
++        }
++        ModComponent::Text { id, .. }
++        | ModComponent::Button { id, .. }
++        | ModComponent::Markdown { id, .. }
++        | ModComponent::Code { id, .. } => {
++            interaction.ids.insert(id.clone());
++        }
++        ModComponent::Slot => {}
++    }
++}
++
++fn sync_interaction(view: &ModView) {
++    let mut interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    interaction.ids.clear();
++    for site in view.sites.values() {
++        for component in &site.components {
++            collect_component(component, &mut interaction);
++        }
++    }
++    let ids = interaction.ids.clone();
++    interaction.input_values.retain(|id, _| ids.contains(id));
++    interaction.selected.retain(|id, _| ids.contains(id));
++    interaction.collapsed.retain(|id, _| ids.contains(id));
++    interaction.scroll.retain(|id, _| ids.contains(id));
++    if interaction
++        .focused
++        .as_ref()
++        .is_some_and(|id| !ids.contains(id))
++    {
++        interaction.focused = None;
++    }
++}
++
 +pub(crate) fn refresh() {
 +    let (terminal, snapshot) = crate::omd::mod_snapshot();
++    {
++        let cache = CACHE
++            .read()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        if cache.as_ref().is_some_and(|cache| {
++            (terminal && snapshot.epoch == 0)
++                || (cache.preview && preserve_preview(&cache.snapshot, &snapshot))
++        }) {
++            return;
++        }
++    }
++    sync_interaction(&snapshot.view);
 +    let mut cache = CACHE
 +        .write()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -40610,6 +42010,22 @@ index 0000000..9b8d7aa
 +        snapshot,
 +        terminal,
 +        seen,
++        preview: false,
++    });
++}
++
++pub(crate) fn preview(snapshot: ModViewSnapshot) {
++    sync_interaction(&snapshot.view);
++    let mut cache = CACHE
++        .write()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let seen = cache.as_ref().and_then(|cache| cache.seen);
++    *cache = Some(Cache {
++        colors: colors(&snapshot),
++        snapshot,
++        terminal: true,
++        seen,
++        preview: true,
 +    });
 +}
 +
@@ -40621,6 +42037,12 @@ index 0000000..9b8d7aa
 +}
 +
 +pub(crate) fn theme_color(slot: ThemeSlot) -> Option<Color> {
++    if matches!(
++        crate::terminal_palette::effective_stdout_color_level(),
++        crate::terminal_palette::StdoutColorLevel::Unknown
++    ) {
++        return None;
++    }
 +    with_cache(|cache| cache.colors[slot_index(slot)]).flatten()
 +}
 +
@@ -40630,6 +42052,10 @@ index 0000000..9b8d7aa
 +
 +pub(crate) fn status_segments() -> Vec<String> {
 +    with_cache(|cache| cache.snapshot.view.status.clone()).unwrap_or_default()
++}
++
++pub(crate) fn completed_tools() -> ModCompletedTools {
++    with_cache(|cache| cache.snapshot.view.completed_tools).unwrap_or_default()
 +}
 +
 +pub(crate) fn take_new_activity() -> Vec<ModActivity> {
@@ -40675,6 +42101,10 @@ index 0000000..9b8d7aa
 +    snapshot().view
 +}
 +
++pub(crate) fn dialog_visible(snapshot: &ModViewSnapshot) -> bool {
++    site(&snapshot.view, "dialog").is_some_and(|dialog| !dialog.components.is_empty())
++}
++
 +fn sidebar_panels(snapshot: &ModViewSnapshot) -> Vec<ModPanel> {
 +    let mut panels = snapshot.view.panels.clone();
 +    if let Some(progress) = &snapshot.progress {
@@ -40692,17 +42122,61 @@ index 0000000..9b8d7aa
 +    panels
 +}
 +
++fn site<'a>(view: &'a ModView, name: &str) -> Option<&'a ModRenderSite> {
++    view.sites.get(name)
++}
++
++fn component_height(components: &[ModComponent]) -> u16 {
++    components
++        .iter()
++        .map(|component| match component {
++            ModComponent::Box { children, .. } | ModComponent::Dialog { children, .. } => {
++                1 + component_height(children)
++            }
++            ModComponent::Pane {
++                collapsed,
++                children,
++                ..
++            } => {
++                if *collapsed {
++                    1
++                } else {
++                    1 + component_height(children).min(8)
++                }
++            }
++            ModComponent::Text { text, .. }
++            | ModComponent::Markdown { text, .. }
++            | ModComponent::Code { text, .. } => {
++                u16::try_from(text.lines().count().max(1)).unwrap_or(u16::MAX)
++            }
++            ModComponent::Button { .. }
++            | ModComponent::Input { .. }
++            | ModComponent::Select { .. } => 1,
++            ModComponent::Slot => 0,
++        })
++        .sum()
++}
++
 +pub(crate) fn header_rows(screen_height: u16, snapshot: &ModViewSnapshot) -> u16 {
++    if screen_height < 16 {
++        return 0;
++    }
++    if let Some(header) = site(&snapshot.view, "header") {
++        return component_height(&header.components).clamp(1, 4) + 1;
++    }
 +    match &snapshot.view.header {
-+        Some(header) if screen_height >= 16 => {
-+            u16::try_from(header.lines.len()).unwrap_or(3).min(3) + 2
-+        }
-+        _ => 0,
++        Some(header) => u16::try_from(header.lines.len()).unwrap_or(3).min(3) + 2,
++        None => 0,
 +    }
 +}
 +
++fn has_sidebar(snapshot: &ModViewSnapshot) -> bool {
++    site(&snapshot.view, "sidebar").is_some_and(|site| !site.components.is_empty())
++        || !sidebar_panels(snapshot).is_empty()
++}
++
 +fn sidebar(area: Rect, snapshot: &ModViewSnapshot) -> Option<Rect> {
-+    if area.width < 80 || sidebar_panels(snapshot).is_empty() {
++    if area.width < 80 || !has_sidebar(snapshot) {
 +        return None;
 +    }
 +    let width = snapshot
@@ -40756,55 +42230,466 @@ index 0000000..9b8d7aa
 +    style
 +}
 +
++fn tone_style(tone: ModTone) -> Style {
++    let slot = match tone {
++        ModTone::Normal => return Style::default(),
++        ModTone::Accent => ThemeSlot::Accent,
++        ModTone::Success => ThemeSlot::Success,
++        ModTone::Attention => ThemeSlot::Attention,
++        ModTone::Failure => ThemeSlot::Failure,
++        ModTone::Muted => ThemeSlot::Muted,
++    };
++    theme_color(slot)
++        .map(|color| Style::default().fg(color))
++        .unwrap_or_else(|| match tone {
++            ModTone::Success => Style::default().fg(Color::Green),
++            ModTone::Failure => Style::default().fg(Color::Red),
++            ModTone::Attention => Style::default().fg(Color::Yellow),
++            ModTone::Muted => Style::default().dim(),
++            _ => Style::default(),
++        })
++}
++
 +fn panel_lines(panel: &ModPanel) -> Vec<Line<'static>> {
 +    std::iter::once(Line::from(panel.title.clone()).bold())
 +        .chain(panel.lines.iter().cloned().map(Line::from))
 +        .collect()
 +}
 +
++fn component_action(action: &ModComponentAction) -> ModKeyAction {
++    match action {
++        ModComponentAction::Command(action) => ModKeyAction::Command {
++            command: action.command.clone(),
++            args: action.args.clone(),
++        },
++        ModComponentAction::Copy { copy, label } => ModKeyAction::Copy {
++            copy: copy.clone(),
++            label: label.clone(),
++        },
++    }
++}
++
++fn component_rows(
++    components: &[ModComponent],
++    width: u16,
++    interaction: &mut Interaction,
++    indent: usize,
++) -> Vec<ComponentRow> {
++    let mut rows = Vec::new();
++    let prefix = " ".repeat(indent);
++    for component in components {
++        match component {
++            ModComponent::Box {
++                title, children, ..
++            } => {
++                if let Some(title) = title {
++                    rows.push(ComponentRow {
++                        id: None,
++                        label: None,
++                        line: Line::from(format!("{prefix}{title}")).bold(),
++                        target: None,
++                    });
++                }
++                rows.extend(component_rows(children, width, interaction, indent + 1));
++            }
++            ModComponent::Text {
++                id,
++                label,
++                text,
++                tone,
++            } => {
++                for (index, text) in text.lines().enumerate() {
++                    rows.push(ComponentRow {
++                        id: (index == 0).then(|| id.clone()),
++                        label: (index == 0).then(|| label.clone()),
++                        line: Line::from(format!("{prefix}{text}")).patch_style(tone_style(*tone)),
++                        target: None,
++                    });
++                }
++            }
++            ModComponent::Button {
++                id,
++                label,
++                text,
++                action,
++            } => rows.push(ComponentRow {
++                id: Some(id.clone()),
++                label: Some(label.clone()),
++                line: Line::from(format!("{prefix}[ {text} ]")),
++                target: Some(ComponentTarget::Button(action.clone())),
++            }),
++            ModComponent::Input {
++                id,
++                label,
++                value,
++                placeholder,
++                action,
++            } => {
++                let current = interaction
++                    .input_values
++                    .entry(id.clone())
++                    .or_insert_with(|| value.clone());
++                let shown = if current.is_empty() {
++                    placeholder
++                } else {
++                    current
++                };
++                rows.push(ComponentRow {
++                    id: Some(id.clone()),
++                    label: Some(label.clone()),
++                    line: Line::from(format!("{prefix}{label}: {shown}")),
++                    target: Some(ComponentTarget::Input(action.clone())),
++                });
++            }
++            ModComponent::Select {
++                id,
++                label,
++                value,
++                options,
++                action,
++            } => {
++                let fallback = options
++                    .iter()
++                    .position(|option| option.value == *value)
++                    .unwrap_or_default();
++                let selected = interaction.selected.entry(id.clone()).or_insert(fallback);
++                *selected = (*selected).min(options.len().saturating_sub(1));
++                let shown = options
++                    .get(*selected)
++                    .map(|option| option.label.as_str())
++                    .unwrap_or("—");
++                rows.push(ComponentRow {
++                    id: Some(id.clone()),
++                    label: Some(label.clone()),
++                    line: Line::from(format!("{prefix}{label}: ‹ {shown} ›")),
++                    target: Some(ComponentTarget::Select {
++                        action: action.clone(),
++                        options: options
++                            .iter()
++                            .map(|option| (option.value.clone(), option.label.clone()))
++                            .collect(),
++                    }),
++                });
++            }
++            ModComponent::Markdown { id, label, text } => {
++                let mut rendered = Vec::new();
++                crate::markdown::append_markdown(
++                    text,
++                    Some(usize::from(
++                        width.saturating_sub(u16::try_from(indent).unwrap_or(0)),
++                    )),
++                    None,
++                    &mut rendered,
++                );
++                for (index, line) in rendered.into_iter().enumerate() {
++                    rows.push(ComponentRow {
++                        id: (index == 0).then(|| id.clone()),
++                        label: (index == 0).then(|| label.clone()),
++                        line,
++                        target: None,
++                    });
++                }
++            }
++            ModComponent::Code {
++                id,
++                label,
++                text,
++                language,
++            } => {
++                if let Some(language) = language {
++                    rows.push(ComponentRow {
++                        id: Some(id.clone()),
++                        label: Some(label.clone()),
++                        line: Line::from(format!("{prefix}{language}")).dim(),
++                        target: None,
++                    });
++                }
++                for line in text.lines() {
++                    rows.push(ComponentRow {
++                        id: None,
++                        label: None,
++                        line: Line::from(format!("{prefix}{line}")).cyan(),
++                        target: None,
++                    });
++                }
++            }
++            ModComponent::Pane {
++                id,
++                label,
++                title,
++                collapsed,
++                scroll,
++                children,
++            } => {
++                let collapsed = interaction
++                    .collapsed
++                    .entry(id.clone())
++                    .or_insert(*collapsed);
++                let marker = if *collapsed {
++                    if crate::omd::ligatures_enabled() {
++                        "▸"
++                    } else {
++                        ">"
++                    }
++                } else if crate::omd::ligatures_enabled() {
++                    "▾"
++                } else {
++                    "v"
++                };
++                rows.push(ComponentRow {
++                    id: Some(id.clone()),
++                    label: Some(label.clone()),
++                    line: Line::from(format!(
++                        "{prefix}{marker} {}",
++                        title.as_deref().unwrap_or(label)
++                    ))
++                    .bold(),
++                    target: Some(ComponentTarget::Pane),
++                });
++                if !*collapsed {
++                    let nested = component_rows(children, width, interaction, indent + 1);
++                    let offset =
++                        usize::from(*interaction.scroll.entry(id.clone()).or_insert(*scroll))
++                            .min(nested.len().saturating_sub(1));
++                    rows.extend(nested.into_iter().skip(offset).take(8));
++                }
++            }
++            ModComponent::Dialog {
++                title, children, ..
++            } => {
++                rows.push(ComponentRow {
++                    id: None,
++                    label: None,
++                    line: Line::from(format!("{prefix}{title}")).bold(),
++                    target: None,
++                });
++                rows.extend(component_rows(children, width, interaction, indent));
++            }
++            ModComponent::Slot => {}
++        }
++    }
++    rows
++}
++
++fn render_site(
++    area: Rect,
++    components: &[ModComponent],
++    style: Style,
++    buffer: &mut Buffer,
++    interaction: &mut Interaction,
++    block: Option<Block<'static>>,
++    comfortable_spacing: bool,
++) {
++    if area.is_empty() {
++        return;
++    }
++    let inner = block
++        .as_ref()
++        .map(|block| block.inner(area))
++        .unwrap_or(area);
++    let rows = component_rows(components, inner.width.max(1), interaction, 0);
++    let rows = if comfortable_spacing
++        && with_cache(|cache| cache.snapshot.view.theme.density) == Some(ModDensity::Comfortable)
++    {
++        rows.into_iter()
++            .flat_map(|row| {
++                [
++                    row,
++                    ComponentRow {
++                        id: None,
++                        label: None,
++                        line: Line::from(""),
++                        target: None,
++                    },
++                ]
++            })
++            .collect::<Vec<_>>()
++    } else {
++        rows
++    };
++    let lines = rows.iter().map(|row| row.line.clone()).collect::<Vec<_>>();
++    let paragraph = Paragraph::new(lines).style(style);
++    match block {
++        Some(block) => paragraph.block(block).render(area, buffer),
++        None => paragraph.render(area, buffer),
++    }
++    for (index, row) in rows.into_iter().enumerate() {
++        let Some(target) = row.target else {
++            continue;
++        };
++        let Ok(offset) = u16::try_from(index) else {
++            continue;
++        };
++        if offset >= inner.height {
++            break;
++        }
++        let id = row.id.unwrap_or_default();
++        let label = row.label.unwrap_or_else(|| id.clone());
++        interaction.targets.insert(id.clone(), target.clone());
++        if !interaction.order.contains(&id) {
++            interaction.order.push(id.clone());
++        }
++        interaction.hitboxes.push(HitBox {
++            id,
++            label,
++            area: Rect::new(inner.x, inner.y + offset, inner.width, 1),
++            target,
++        });
++    }
++}
++
++fn border_type(theme: &ModTheme) -> BorderType {
++    if !crate::omd::ligatures_enabled() || theme.icons == ModIcons::Ascii {
++        return BorderType::Plain;
++    }
++    match theme.border {
++        ModBorder::Plain => BorderType::Plain,
++        ModBorder::Rounded => BorderType::Rounded,
++        ModBorder::Double => BorderType::Double,
++    }
++}
++
 +pub(crate) fn render(area: Rect, chat: Rect, buffer: &mut Buffer, snapshot: &ModViewSnapshot) {
 +    let style = panel_style(&snapshot.view);
++    let mut interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    interaction.targets.clear();
++    interaction.order.clear();
++    interaction.hitboxes.clear();
 +    if let Some(bar) = sidebar(area, snapshot) {
-+        let lines = sidebar_panels(snapshot)
-+            .iter()
-+            .flat_map(|panel| {
-+                let mut lines = panel_lines(panel);
-+                lines.push(Line::from(""));
-+                lines
-+            })
-+            .collect::<Vec<_>>();
++        let mut components = site(&snapshot.view, "sidebar")
++            .map(|site| site.components.clone())
++            .unwrap_or_default();
++        for (index, panel) in sidebar_panels(snapshot).into_iter().enumerate() {
++            components.push(ModComponent::Pane {
++                id: format!("@native_panel_{index}"),
++                label: panel.title.clone(),
++                title: Some(panel.title),
++                collapsed: false,
++                scroll: 0,
++                children: panel
++                    .lines
++                    .into_iter()
++                    .enumerate()
++                    .map(|(line, text)| ModComponent::Text {
++                        id: format!("@native_panel_{index}_{line}"),
++                        label: format!("Native panel line {}", line + 1),
++                        text,
++                        tone: ModTone::Normal,
++                    })
++                    .collect(),
++            });
++        }
 +        let borders = match snapshot.view.sidebar_side {
 +            ModSidebarSide::Left => Borders::RIGHT,
 +            ModSidebarSide::Right => Borders::LEFT,
 +        };
-+        Paragraph::new(lines)
-+            .style(style)
-+            .block(
-+                Block::default()
-+                    .borders(borders)
-+                    .title(snapshot.view.title.clone().unwrap_or_else(|| "Mods".into())),
-+            )
-+            .render(bar, buffer);
++        let block = Block::default()
++            .borders(borders)
++            .border_type(border_type(&snapshot.view.theme))
++            .title(snapshot.view.title.clone().unwrap_or_else(|| "Mods".into()));
++        render_site(
++            bar,
++            &components,
++            style,
++            buffer,
++            &mut interaction,
++            Some(block),
++            true,
++        );
 +    }
 +    let column = column(area, snapshot);
 +    let height = chat.y.saturating_sub(column.y);
-+    if let Some(header) = &snapshot.view.header
-+        && height > 0
++    if height > 0 {
++        if let Some(header) = site(&snapshot.view, "header") {
++            render_site(
++                Rect { height, ..column },
++                &header.components,
++                style,
++                buffer,
++                &mut interaction,
++                Some(Block::default().borders(Borders::BOTTOM)),
++                true,
++            );
++        } else if let Some(header) = &snapshot.view.header {
++            Paragraph::new(panel_lines(header))
++                .style(style)
++                .block(Block::default().borders(Borders::BOTTOM))
++                .render(Rect { height, ..column }, buffer);
++        }
++    }
++    if let Some(dialog) = site(&snapshot.view, "dialog")
++        && !dialog.components.is_empty()
++        && area.width >= 48
++        && area.height >= 14
 +    {
-+        let rect = Rect { height, ..column };
-+        Paragraph::new(panel_lines(header))
-+            .style(style)
-+            .block(Block::default().borders(Borders::BOTTOM))
-+            .render(rect, buffer);
++        let dialog_start = interaction.order.len();
++        let width = area.width.saturating_sub(8).min(76);
++        let height = component_height(&dialog.components)
++            .saturating_add(2)
++            .clamp(8, area.height.saturating_sub(4));
++        let dialog_area = Rect::new(
++            area.x + (area.width - width) / 2,
++            area.y + (area.height - height) / 2,
++            width,
++            height,
++        );
++        Clear.render(dialog_area, buffer);
++        render_site(
++            dialog_area,
++            &dialog.components,
++            style,
++            buffer,
++            &mut interaction,
++            Some(
++                Block::default()
++                    .borders(Borders::ALL)
++                    .border_type(border_type(&snapshot.view.theme))
++                    .title("Oh My Diff"),
++            ),
++            false,
++        );
++        let dialog_order = interaction.order[dialog_start..].to_vec();
++        let dialog_ids = dialog_order.iter().cloned().collect::<BTreeSet<_>>();
++        interaction.order = dialog_order;
++        interaction.targets.retain(|id, _| dialog_ids.contains(id));
++        interaction
++            .hitboxes
++            .retain(|hitbox| dialog_ids.contains(&hitbox.id));
++        if interaction
++            .focused
++            .as_ref()
++            .is_none_or(|focused| !dialog_ids.contains(focused))
++        {
++            interaction.focused = interaction.order.first().cloned();
++        }
++    }
++    if let Some(focused) = interaction.focused.clone()
++        && let Some(hitbox) = interaction
++            .hitboxes
++            .iter()
++            .find(|hitbox| hitbox.id == focused)
++    {
++        buffer.set_style(hitbox.area, crate::style::accent_style());
 +    }
 +}
 +
-+pub(crate) fn footer_lines() -> Vec<Line<'static>> {
++pub(crate) fn footer_lines(width: u16) -> Vec<Line<'static>> {
 +    let snapshot = snapshot();
++    let style = panel_style(&snapshot.view);
++    if let Some(site) = site(&snapshot.view, "above_composer") {
++        let mut interaction = INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        return component_rows(&site.components, width, &mut interaction, 0)
++            .into_iter()
++            .map(|row| row.line.patch_style(style))
++            .collect();
++    }
 +    let Some(footer) = &snapshot.view.footer else {
 +        return Vec::new();
 +    };
-+    let style = panel_style(&snapshot.view);
 +    panel_lines(footer)
 +        .into_iter()
 +        .map(|line| line.patch_style(style))
@@ -40836,8 +42721,234 @@ index 0000000..9b8d7aa
 +    Some((name, action))
 +}
 +
-+pub(crate) fn input(key: KeyEvent) -> Option<(String, ModKeyAction)> {
-+    with_cache(|cache| action_for(&cache.snapshot.view, key)).flatten()
++fn command_action(action: &ModCommandAction, value: Option<&str>) -> ModKeyAction {
++    let args = match value {
++        Some(value) if action.args.is_empty() => value.to_owned(),
++        Some(value) => format!("{} {value}", action.args),
++        None => action.args.clone(),
++    };
++    ModKeyAction::Command {
++        command: action.command.clone(),
++        args,
++    }
++}
++
++fn activate_target(
++    id: &str,
++    label: &str,
++    target: &ComponentTarget,
++    interaction: &mut Interaction,
++) -> Option<ModInput> {
++    match target {
++        ComponentTarget::Button(action) => Some(ModInput::Interaction(
++            label.to_owned(),
++            component_action(action),
++        )),
++        ComponentTarget::Input(action) => {
++            let value = interaction.input_values.get(id).map(String::as_str);
++            Some(ModInput::Interaction(
++                label.to_owned(),
++                command_action(action, value),
++            ))
++        }
++        ComponentTarget::Select { action, options } => {
++            let selected = *interaction.selected.get(id).unwrap_or(&0);
++            let value = options.get(selected).map(|option| option.0.as_str());
++            Some(ModInput::Interaction(
++                label.to_owned(),
++                command_action(action, value),
++            ))
++        }
++        ComponentTarget::Pane => {
++            let collapsed = interaction.collapsed.entry(id.to_owned()).or_default();
++            *collapsed = !*collapsed;
++            Some(ModInput::Consumed)
++        }
++    }
++}
++
++pub(crate) fn focus(id: &str) -> bool {
++    let mut interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if !interaction.ids.contains(id) {
++        return false;
++    }
++    interaction.focused = Some(id.to_owned());
++    true
++}
++
++pub(crate) fn input(key: KeyEvent) -> Option<ModInput> {
++    if key.kind != KeyEventKind::Press {
++        return None;
++    }
++    let mut interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    if matches!(
++        (key.code, key.modifiers),
++        (KeyCode::Tab, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT)
++    ) && interaction.focused.is_none()
++        && !interaction.order.is_empty()
++    {
++        interaction.focused = if key.code == KeyCode::BackTab {
++            interaction.order.last().cloned()
++        } else {
++            interaction.order.first().cloned()
++        };
++        return Some(ModInput::Consumed);
++    }
++    if let Some(focused) = interaction.focused.clone()
++        && let Some(target) = interaction.targets.get(&focused).cloned()
++    {
++        match (key.code, key.modifiers) {
++            (KeyCode::Tab, KeyModifiers::NONE) | (KeyCode::BackTab, KeyModifiers::SHIFT) => {
++                let mut index = interaction
++                    .order
++                    .iter()
++                    .position(|id| id == &focused)
++                    .unwrap_or_default();
++                if key.code == KeyCode::BackTab {
++                    index = index
++                        .checked_sub(1)
++                        .unwrap_or(interaction.order.len().saturating_sub(1));
++                } else if !interaction.order.is_empty() {
++                    index = (index + 1) % interaction.order.len();
++                }
++                interaction.focused = interaction.order.get(index).cloned();
++                return Some(ModInput::Consumed);
++            }
++            (KeyCode::Enter, KeyModifiers::NONE) => {
++                let label = interaction
++                    .hitboxes
++                    .iter()
++                    .find(|hitbox| hitbox.id == focused)
++                    .map(|hitbox| hitbox.label.clone())
++                    .unwrap_or_else(|| focused.clone());
++                return activate_target(&focused, &label, &target, &mut interaction);
++            }
++            (KeyCode::Left | KeyCode::Up, KeyModifiers::NONE) => match target {
++                ComponentTarget::Select { ref options, .. } => {
++                    let selected = interaction.selected.entry(focused).or_default();
++                    *selected = selected
++                        .checked_sub(1)
++                        .unwrap_or(options.len().saturating_sub(1));
++                    return Some(ModInput::Consumed);
++                }
++                ComponentTarget::Pane => {
++                    let scroll = interaction.scroll.entry(focused).or_default();
++                    *scroll = scroll.saturating_sub(1);
++                    return Some(ModInput::Consumed);
++                }
++                _ => {}
++            },
++            (KeyCode::Right | KeyCode::Down, KeyModifiers::NONE) => match target {
++                ComponentTarget::Select { ref options, .. } => {
++                    let selected = interaction.selected.entry(focused).or_default();
++                    if !options.is_empty() {
++                        *selected = (*selected + 1) % options.len();
++                    }
++                    return Some(ModInput::Consumed);
++                }
++                ComponentTarget::Pane => {
++                    let scroll = interaction.scroll.entry(focused).or_default();
++                    *scroll = scroll.saturating_add(1);
++                    return Some(ModInput::Consumed);
++                }
++                _ => {}
++            },
++            (KeyCode::Backspace, KeyModifiers::NONE)
++                if matches!(target, ComponentTarget::Input(_)) =>
++            {
++                interaction.input_values.entry(focused).or_default().pop();
++                return Some(ModInput::Consumed);
++            }
++            (KeyCode::Char(character), KeyModifiers::NONE)
++                if matches!(target, ComponentTarget::Input(_)) =>
++            {
++                let value = interaction.input_values.entry(focused).or_default();
++                if value.len() < 1024 {
++                    value.push(character);
++                }
++                return Some(ModInput::Consumed);
++            }
++            _ => {}
++        }
++    }
++    with_cache(|cache| action_for(&cache.snapshot.view, key))
++        .flatten()
++        .map(|(name, action)| ModInput::Binding(name, action))
++}
++
++fn contains(area: Rect, column: u16, row: u16) -> bool {
++    column >= area.x && column < area.right() && row >= area.y && row < area.bottom()
++}
++
++pub(crate) fn pointer(event: MouseEvent) -> Option<ModPointer> {
++    let mut interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let hit = interaction
++        .hitboxes
++        .iter()
++        .find(|hitbox| contains(hitbox.area, event.column, event.row))
++        .cloned();
++    let Some(hit) = hit else {
++        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
++            interaction.focused = None;
++        }
++        return None;
++    };
++    match event.kind {
++        MouseEventKind::Down(MouseButton::Left) => {
++            interaction.focused = Some(hit.id);
++            Some(ModPointer::Consumed)
++        }
++        MouseEventKind::Up(MouseButton::Left) => {
++            interaction.focused = Some(hit.id.clone());
++            activate_target(&hit.id, &hit.label, &hit.target, &mut interaction).map(|input| {
++                match input {
++                    ModInput::Consumed => ModPointer::Consumed,
++                    ModInput::Interaction(name, action) | ModInput::Binding(name, action) => {
++                        ModPointer::Action(name, action)
++                    }
++                }
++            })
++        }
++        MouseEventKind::ScrollUp => {
++            match hit.target {
++                ComponentTarget::Select { ref options, .. } => {
++                    let selected = interaction.selected.entry(hit.id).or_default();
++                    *selected = selected
++                        .checked_sub(1)
++                        .unwrap_or(options.len().saturating_sub(1));
++                }
++                ComponentTarget::Pane => {
++                    let scroll = interaction.scroll.entry(hit.id).or_default();
++                    *scroll = scroll.saturating_sub(1);
++                }
++                _ => {}
++            }
++            Some(ModPointer::Consumed)
++        }
++        MouseEventKind::ScrollDown => {
++            match hit.target {
++                ComponentTarget::Select { ref options, .. } => {
++                    let selected = interaction.selected.entry(hit.id).or_default();
++                    if !options.is_empty() {
++                        *selected = (*selected + 1) % options.len();
++                    }
++                }
++                ComponentTarget::Pane => {
++                    let scroll = interaction.scroll.entry(hit.id).or_default();
++                    *scroll = scroll.saturating_add(1);
++                }
++                _ => {}
++            }
++            Some(ModPointer::Consumed)
++        }
++        _ => Some(ModPointer::Consumed),
++    }
 +}
 +
 +#[expect(
@@ -40877,10 +42988,10 @@ index 0000000..9b8d7aa
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 0000000..9a0294c
+index 0000000..149dc31
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,255 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -40903,6 +43014,7 @@ index 0000000..9a0294c
 +}
 +
 +#[test]
++#[serial_test::serial]
 +fn custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer() {
 +    let snapshot = snapshot(
 +        serde_json::json!({"title":"Workspace","sidebar_width":30,"panels":[{"title":"Worker","lines":["running"]}]}),
@@ -40922,6 +43034,7 @@ index 0000000..9a0294c
 +}
 +
 +#[test]
++#[serial_test::serial]
 +fn left_sidebar_header_progress_and_diagnostics_share_the_layout() {
 +    let mut snapshot = snapshot(serde_json::json!({
 +        "title":"Left","sidebar_side":"left","sidebar_width":24,
@@ -40949,6 +43062,7 @@ index 0000000..9a0294c
 +}
 +
 +#[test]
++#[serial_test::serial]
 +fn native_escape_and_cancel_keys_cannot_be_intercepted() {
 +    let view = ModView::parse(serde_json::json!({"keybindings":{"F6":"draft","Ctrl+r":{"submit":"run"},"Alt+x":{"command":"counter:reset"}}})).unwrap();
 +    assert_eq!(
@@ -40997,6 +43111,7 @@ index 0000000..9a0294c
 +}
 +
 +#[test]
++#[serial_test::serial]
 +#[expect(
 +    clippy::disallowed_methods,
 +    reason = "The mod theme contract explicitly selects 256-color palette indices"
@@ -41010,6 +43125,127 @@ index 0000000..9a0294c
 +        colors[4],
 +        Some(crate::terminal_palette::best_color((255, 0, 0)))
 +    );
++}
++
++#[test]
++fn modal_preview_survives_stale_redraw_but_yields_to_recovery() {
++    let mut preview = snapshot(serde_json::json!({
++        "sites":{"dialog":{"components":[{
++            "type":"dialog","id":"settings","label":"Settings","title":"Settings","children":[]
++        }]}}
++    }));
++    preview.epoch = 7;
++    preview.revision = 4;
++    preview.owner = Some("workspace".into());
++    let mut stale = snapshot(serde_json::json!({}));
++    stale.epoch = 7;
++    stale.revision = 5;
++    stale.owner = Some("workspace".into());
++    assert!(preserve_preview(&preview, &stale));
++    stale.view.panels.push(codex_omd::ModPanel {
++        title: "Mod errors".into(),
++        lines: vec!["workspace failed".into()],
++    });
++    assert!(!preserve_preview(&preview, &stale));
++}
++
++#[test]
++#[serial_test::serial]
++fn components_preserve_focus_scroll_and_values_across_redraw_and_resize() {
++    let snapshot = snapshot(serde_json::json!({
++        "title":"Components",
++        "theme":{"density":"compact","icons":"ascii","border":"double"},
++        "sites":{"dialog":{"components":[{
++            "type":"dialog","id":"settings","label":"Settings dialog","title":"Settings","children":[
++                {"type":"text","id":"intro","label":"Introduction","text":"Configure the workspace","tone":"accent"},
++                {"type":"input","id":"review","label":"Review input","value":"seed","placeholder":"Review","action":{"command":"workspace:layout","args":"review"}},
++                {"type":"select","id":"side","label":"Sidebar side","value":"left","options":[{"value":"left","label":"Left"},{"value":"right","label":"Right"}],"action":{"command":"workspace:layout","args":"side"}},
++                {"type":"button","id":"copy","label":"Copy shortcuts","text":"Copy","action":{"copy":"F8 settings","label":"workspace shortcuts"}},
++                {"type":"pane","id":"details","label":"Details pane","title":"Details","children":[{"type":"markdown","id":"help","label":"Help","text":"**Keyboard** help"},{"type":"code","id":"sample","label":"Code sample","text":"const ok = true;","language":"typescript"}]}
++            ]
++        }]}}
++    }));
++    assert!(dialog_visible(&snapshot));
++    sync_interaction(&snapshot.view);
++    let area = Rect::new(0, 0, 80, 24);
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &snapshot);
++    assert_eq!(
++        INTERACTION
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .focused
++            .as_deref(),
++        Some("review")
++    );
++    assert!(matches!(
++        input(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
++        Some(ModInput::Consumed)
++    ));
++    match input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
++        Some(ModInput::Interaction(name, ModKeyAction::Command { command, args })) => {
++            assert_eq!(name, "Review input");
++            assert_eq!(command, "workspace:layout");
++            assert_eq!(args, "review seedx");
++        }
++        _ => panic!("input activation missing"),
++    }
++    assert!(focus("side"));
++    assert!(matches!(
++        input(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)),
++        Some(ModInput::Consumed)
++    ));
++    match input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
++        Some(ModInput::Interaction(_, ModKeyAction::Command { args, .. })) => {
++            assert_eq!(args, "side right");
++        }
++        _ => panic!("select activation missing"),
++    }
++    assert!(focus("details"));
++    assert!(matches!(
++        input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
++        Some(ModInput::Consumed)
++    ));
++    sync_interaction(&snapshot.view);
++    let interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    assert_eq!(interaction.focused.as_deref(), Some("details"));
++    assert_eq!(interaction.input_values["review"], "seedx");
++    assert_eq!(interaction.selected["side"], 1);
++    assert_eq!(interaction.scroll["details"], 1);
++    drop(interaction);
++
++    let copy = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .hitboxes
++        .iter()
++        .find(|hitbox| hitbox.id == "copy")
++        .cloned()
++        .unwrap();
++    let down = MouseEvent {
++        kind: MouseEventKind::Down(MouseButton::Left),
++        column: copy.area.x,
++        row: copy.area.y,
++        modifiers: KeyModifiers::NONE,
++    };
++    assert!(matches!(pointer(down), Some(ModPointer::Consumed)));
++    let up = MouseEvent {
++        kind: MouseEventKind::Up(MouseButton::Left),
++        ..down
++    };
++    match pointer(up) {
++        Some(ModPointer::Action(name, ModKeyAction::Copy { copy, label })) => {
++            assert_eq!(name, "Copy shortcuts");
++            assert_eq!(copy, "F8 settings");
++            assert_eq!(label, "workspace shortcuts");
++        }
++        _ => panic!("pointer activation missing"),
++    }
++    assert_eq!(border_type(&snapshot.view.theme), BorderType::Plain);
++    let narrow = Rect::new(0, 0, 40, 12);
++    render(narrow, narrow, &mut Buffer::empty(narrow), &snapshot);
 +}
 diff --git a/codex-rs/tui/src/model_migration.rs b/codex-rs/tui/src/model_migration.rs
 index 094fb73..56dec6b 100644
@@ -42363,7 +44599,7 @@ index 99fea9e..fc8f2a7 100644
          }
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
 new file mode 100644
-index 0000000..e768df3
+index 0000000..24c87ae
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
 @@ -0,0 +1,22 @@
@@ -42372,14 +44608,14 @@ index 0000000..e768df3
 +expression: "rows(&buffer, area)"
 +---
 +Left                   │Build                                                             
-+Agents                 │main · clean                                                      
-+2 running              │──────────────────────────────────────────────────────────────────
++v Agents               │main · clean                                                      
++ 2 running             │──────────────────────────────────────────────────────────────────
++v Progress · Echo      │                                                                  
++ almost done           │                                                                  
++v Mod diagnostics      │                                                                  
++ Ctrl+t conflicts      │                                                                  
 +                       │                                                                  
-+Progress · Echo        │                                                                  
-+almost done            │                                                                  
 +                       │                                                                  
-+Mod diagnostics        │                                                                  
-+Ctrl+t conflicts       │                                                                  
 +                       │                                                                  
 +                       │                                                                  
 +                       │                                                                  
@@ -42391,18 +44627,17 @@ index 0000000..e768df3
 +                       │
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap
 new file mode 100644
-index 0000000..9c820b8
+index 0000000..1453b9b
 --- /dev/null
 +++ b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_workspace_panel.snap
-@@ -0,0 +1,13 @@
+@@ -0,0 +1,12 @@
 +---
 +source: tui/src/mod_ui_tests.rs
-+assertion_line: 16
-+expression: rows
++expression: "rows(&buffer, area)"
 +---
 +                                                            │Workspace                    
-+                                                            │Worker                       
-+                                                            │running                      
++                                                            │v Worker                     
++                                                            │ running                     
 +                                                            │                             
 +                                                            │                             
 +                                                            │                             
