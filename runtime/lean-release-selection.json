@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "status": "inventory_candidate_unqualified",
+  "upstream_commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+  "mod_api": "0.1.0-experimental.7",
+  "no_omd_baseline": "upstream_direct",
+  "installation_profiles": {
+    "modding_platform_only": {
+      "first_party_installed": [],
+      "first_party_active": []
+    },
+    "full_omd": {
+      "first_party_default_candidate": ["omd_workspace"],
+      "installed_inactive_candidate": ["omd_coordination", "omd_recovery", "omd-guidance-hooks", "omd-review-policy"],
+      "qualification": "offline workspace-only task passes; real first-run benefit and responsiveness decision pending; three-mod preview stops before completion"
+    }
+  },
+  "on_demand_candidates": {
+    "browser_bundle": "supported_opt_in_candidate",
+    "application_bridges": "supported_opt_in_candidate",
+    "repository_graph_health": "supported_opt_in_candidate",
+    "lsp_adapters": "supported_opt_in_candidate",
+    "artifact_reading": "supported_opt_in_candidate",
+    "code_execution": "deferred_pending_full_private_install_and_task_value"
+  },
+  "activation_rule": "installation never enables a mod, plugin, skill, hook, MCP server, browser, application bridge, or language server",
+  "current_private_installer_exception": "private_lean_v1.py still injects the browser MCP config for OMD activation; Phase 11 must remove this from the new profile path",
+  "qualification_evidence": ".docs/audits/lean-release-inventory-20260922.md"
+}

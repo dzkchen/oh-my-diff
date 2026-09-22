@@ -734,7 +734,7 @@ enabled = false
             )
             assert status["direct_single_agent"] is True
         if mod_node is not None:
-            expected_marker = scenario != "omd-off" and mod_profile not in ("preview-denied", "coordination-broken")
+            expected_marker = scenario != "omd-off" and mod_profile not in ("preview-denied", "coordination-broken", "workspace-only")
             assert (context_marker in json.dumps(requests)) == expected_marker
             if scenario != "omd-off":
                 from benchmarks.mod_fixture import verify
@@ -769,7 +769,7 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
-    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise"), default="counter")
+    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only"), default="counter")
     args = parser.parse_args()
     print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 

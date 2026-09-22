@@ -25,6 +25,8 @@ def install_preview(destination, manifest, node, profile):
     store.mkdir()
     selections = []
     for identifier, pinned in sorted(lock["packages"].items()):
+        if profile == "workspace-only" and identifier != "omd_workspace":
+            continue
         source = ROOT / pinned["source"]
         package = destination / identifier
         package.mkdir()
@@ -196,7 +198,7 @@ def install(destination, manifest, node, profile):
         return install_exercise(destination, manifest, node, profile)
     if profile.startswith("conformance"):
         return install_conformance(destination, manifest, node, profile)
-    if profile.startswith("preview") or profile.startswith("coordination") or profile.startswith("recovery"):
+    if profile.startswith("preview") or profile.startswith("coordination") or profile.startswith("recovery") or profile == "workspace-only":
         return install_preview(destination, manifest, node, profile)
     package = destination / "fixture-mod"
     package.mkdir()
@@ -490,7 +492,8 @@ def verify_preview(destination, requests, profile, scenario):
         assert errors.get("omd_coordination") == "undeclared_operation_use: delegation.contribute", errors
         assert errors.get("omd_workspace") is None, "an unrelated mod was disabled by the denial"
         assert view["view"]["title"] == "Oh My Diff workspace", "a healthy UI mod lost the terminal to an unrelated failure"
-        assert any(panel["title"] == "Mod errors" for panel in view["view"]["panels"]), view["view"]
+        panels = view["view"]["panels"] or view["view"].get("sites", {}).get("sidebar", {}).get("components", [])
+        assert any(panel.get("title") == "Mod errors" for panel in panels), view["view"]
         return
     assert not any(errors.values()), errors
     assert any(provenance in json.dumps(request["body"]["input"]) for request in lead), \
@@ -518,7 +521,8 @@ def verify_preview(destination, requests, profile, scenario):
     assert any("ran " in entry for entry in activity), activity
     assert view["view"]["title"] == "Oh My Diff workspace", view["view"]
     assert view["view"]["sidebar_side"] == "right" and view["view"]["status"] == ["omd:compact"], view["view"]
-    assert [panel["title"] for panel in view["view"]["panels"]] == ["Task", "Activity"], view["view"]
+    panels = view["view"]["panels"] or view["view"].get("sites", {}).get("sidebar", {}).get("components", [])
+    assert [panel.get("title") for panel in panels] == ["Task", "Activity"], view["view"]
 
 
 def verify_conformance(destination, requests, profile, scenario):
@@ -645,6 +649,15 @@ def verify_recovery(destination, requests, profile, scenario):
 
 
 def verify(destination, requests, profile, scenario="success"):
+    if profile == "workspace-only":
+        status = json.loads((destination / "evidence/mod-status.json").read_text())
+        view = json.loads((destination / "evidence/mod-view.json").read_text())["view"]
+        assert [mod["id"] for mod in status["mods"]] == ["omd_workspace"], status
+        assert all(mod["error"] is None for mod in status["mods"]), status
+        assert view["title"] == "Oh My Diff workspace", view
+        panels = view["panels"] or view.get("sites", {}).get("sidebar", {}).get("components", [])
+        assert [panel.get("title") for panel in panels] == ["Task", "Activity"], view
+        return
     if profile.startswith("exercise"):
         return verify_exercise(destination, requests, profile, scenario)
     if profile.startswith("conformance"):
