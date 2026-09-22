@@ -33,7 +33,8 @@ def sources():
     def constant(name):
         return re.search(rf"{name}: &\[[^]]*\] = &\[(.*?)\];", host, re.S).group(1)
 
-    languages = re.findall(r"Self::(\w+) => \"([a-z]+)\"", lsp)
+    language_ids = re.search(r"pub fn language_id\(self\).*?\n    \}", lsp, re.S).group(0)
+    languages = re.findall(r"Self::(\w+) => \"([a-z]+)\"", language_ids)
     candidates = re.search(r"fn candidates\(self\).*?\n    \}", lsp, re.S).group(0)
     servers = {}
     for arm, block in re.findall(r"((?:Self::\w+ \| )*Self::\w+) =>\s*&\[(.*?)\],\n", candidates, re.S):
@@ -135,6 +136,9 @@ def check(matrix):
     repository_plugin = source["plugin"]["plugins"]["omd-repository-tools"]
     claim("omd_repository_tools", "version", repository_plugin["version"])
     claim("omd_repository_tools", "extension_type", repository_plugin["extension_types"])
+    lsp_plugin = source["plugin"]["plugins"]["omd-lsp-adapters"]
+    claim("omd_lsp_adapters", "version", lsp_plugin["version"])
+    claim("omd_lsp_adapters", "extension_type", lsp_plugin["extension_types"])
     claim("pi_resources", "version", source["pi_adapter"])
     browser = source["browser"]
     claim("browser_bundle", "versions", {

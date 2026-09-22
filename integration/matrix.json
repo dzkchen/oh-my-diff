@@ -241,6 +241,26 @@
       "removal": "Remove omd-repository-tools from Codex. The native graph, health binaries and `/graph` fallback remain available until the private OMD installation itself is removed."
     },
     {
+      "id": "omd_lsp_adapters",
+      "area": "native",
+      "name": "OMD five-language LSP adapter plugin",
+      "extension_type": [
+        "plugin",
+        "mcp"
+      ],
+      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
+      "version": "0.1.0",
+      "status": "opt_in",
+      "fixtures": [
+        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary",
+        "python:test_unsupported_server_is_a_visible_non_success_fallback",
+        "rust:omd/src/lsp.rs::five_language_plugin_adapter_matrix_uses_native_sessions",
+        "python:test_pinned_bundle_matches_plugin_sources"
+      ],
+      "limitations": "Explicitly installed and prompt-approved. It installs no language server and owns only language-specific MCP commands and fallback presentation; server admission, synchronization, process bounds, edit validation, writes and cleanup stay in the native omd-lsp operator.",
+      "removal": "Remove omd-lsp-adapters from Codex. The repository preference and native omd_lsp fallback remain unchanged."
+    },
+    {
       "id": "pi_resources",
       "area": "native",
       "name": "Pi resource adapter",
@@ -281,23 +301,24 @@
       "id": "lsp_rust",
       "area": "lsp",
       "name": "Rust language server adapter",
-      "owner": "OMD semantic LSP (runtime/omd/src/lsp.rs)",
+      "owner": "OMD LSP plugin over native omd-lsp",
       "version": [
         "rust-analyzer"
       ],
       "status": "opt_in",
       "fixtures": [
         "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::unavailable_server_has_an_explicit_non_success_fallback"
+        "rust:omd/src/lsp.rs::unavailable_server_has_an_explicit_non_success_fallback",
+        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary"
       ],
-      "limitations": "Detects installed servers, never installs them; an absent server is an explicit non-success fallback and edits stay repository-scoped and hash-bound.",
-      "removal": "Disable `semantic_lsp` in the manifest capabilities; native editing behaviour is unchanged."
+      "limitations": "The plugin detects through the native operator and never installs a server; an absent server is a visible non-success fallback and edits stay repository-scoped and hash-bound.",
+      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
     },
     {
       "id": "lsp_typescript",
       "area": "lsp",
       "name": "TypeScript language server adapter",
-      "owner": "OMD semantic LSP (runtime/omd/src/lsp.rs)",
+      "owner": "OMD LSP plugin over native omd-lsp",
       "version": [
         "typescript-language-server",
         "vtsls"
@@ -305,16 +326,17 @@
       "status": "opt_in",
       "fixtures": [
         "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::edit_scope_and_expected_hashes_fail_closed"
+        "rust:omd/src/lsp.rs::edit_scope_and_expected_hashes_fail_closed",
+        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary"
       ],
       "limitations": "First detected candidate wins; no server version is pinned or installed by OMD.",
-      "removal": "Disable `semantic_lsp` in the manifest capabilities."
+      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
     },
     {
       "id": "lsp_javascript",
       "area": "lsp",
       "name": "JavaScript language server adapter",
-      "owner": "OMD semantic LSP (runtime/omd/src/lsp.rs)",
+      "owner": "OMD LSP plugin over native omd-lsp",
       "version": [
         "typescript-language-server",
         "vtsls"
@@ -322,16 +344,17 @@
       "status": "opt_in",
       "fixtures": [
         "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::file_uri_round_trip_stays_in_repository"
+        "rust:omd/src/lsp.rs::file_uri_round_trip_stays_in_repository",
+        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary"
       ],
       "limitations": "Shares the TypeScript server candidates; a document whose language does not match its server is refused.",
-      "removal": "Disable `semantic_lsp` in the manifest capabilities."
+      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
     },
     {
       "id": "lsp_python",
       "area": "lsp",
       "name": "Python language server adapter",
-      "owner": "OMD semantic LSP (runtime/omd/src/lsp.rs)",
+      "owner": "OMD LSP plugin over native omd-lsp",
       "version": [
         "pyright-langserver",
         "pylsp",
@@ -340,26 +363,28 @@
       "status": "opt_in",
       "fixtures": [
         "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::failed_post_edit_synchronization_rolls_back_filesystem_change"
+        "rust:omd/src/lsp.rs::failed_post_edit_synchronization_rolls_back_filesystem_change",
+        "python:test_edit_command_preserves_exact_scope_hashes_and_native_failure"
       ],
       "limitations": "Candidate order is fixed and capability differences between the three servers are not normalised.",
-      "removal": "Disable `semantic_lsp` in the manifest capabilities."
+      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
     },
     {
       "id": "lsp_java",
       "area": "lsp",
       "name": "Java language server adapter",
-      "owner": "OMD semantic LSP (runtime/omd/src/lsp.rs)",
+      "owner": "OMD LSP plugin over native omd-lsp",
       "version": [
         "jdtls"
       ],
       "status": "opt_in",
       "fixtures": [
         "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::installed_server_smoke_when_requested"
+        "rust:omd/src/lsp.rs::installed_server_smoke_when_requested",
+        "python:test_unsupported_server_is_a_visible_non_success_fallback"
       ],
       "limitations": "The live smoke is opt-in and skipped when jdtls is absent; startup cost is bounded by the configured limits rather than tuned.",
-      "removal": "Disable `semantic_lsp` in the manifest capabilities."
+      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
     },
     {
       "id": "bridge_browser",
@@ -755,13 +780,17 @@
         "lsp_javascript",
         "lsp_python",
         "lsp_java",
+        "omd_lsp_adapters",
         "omd_host"
       ],
       "boundaries": [
         "optional_integration_isolation"
       ],
-      "result": "The five-language protocol matrix stays version and scope bound, an absent server produces an explicit non-success fallback rather than a failure, and a failed post-edit synchronisation rolls the filesystem change back.",
+      "result": "Five prompt-approved plugin commands dispatch fixed language routes into the native boundary. The protocol matrix stays version and scope bound, an absent server remains a visible non-success fallback, and a failed post-edit synchronisation rolls the filesystem change back.",
       "evidence": [
+        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary",
+        "python:test_unsupported_server_is_a_visible_non_success_fallback",
+        "rust:omd/src/lsp.rs::five_language_plugin_adapter_matrix_uses_native_sessions",
         "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
         "rust:omd/src/lsp.rs::unavailable_server_has_an_explicit_non_success_fallback",
         "rust:omd/src/lsp.rs::failed_post_edit_synchronization_rolls_back_filesystem_change"

@@ -239,6 +239,7 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
                 self.executable(target / "release/omd-mod", "omd-mod fixture")
                 self.executable(target / "release/omd-graph", "omd-graph fixture")
                 self.executable(target / "release/omd-health", "omd-health fixture")
+                self.executable(target / "release/omd-lsp", "omd-lsp fixture")
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
             environment = {"PATH": str(upstream.parent), "CODEX_HOME": str(root / "state"),
@@ -265,12 +266,17 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             for name in installer.REPOSITORY_TOOL_NAMES:
                 self.assertTrue((prefix / f"artifacts/omd/{name}").is_file())
                 self.assertTrue((bin_dir / name).is_file())
+            self.assertEqual(set(manifest["lsp_tools"]["binaries"]), {"omd-lsp"})
+            for name in installer.LSP_TOOL_NAMES:
+                self.assertTrue((prefix / f"artifacts/omd/{name}").is_file())
+                self.assertTrue((bin_dir / name).is_file())
             self.assertEqual(manifest["bundled_plugin"]["marketplace"], "oh-my-diff")
             self.assertEqual(manifest["bundled_plugin"]["shared_state"],
                              "not installed or configured")
             self.assertTrue((prefix / "plugins/oh-my-diff/.agents/plugins/marketplace.json").is_file())
             self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-guidance-hooks/hooks/hooks.json").is_file())
             self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-repository-tools/.mcp.json").is_file())
+            self.assertTrue((prefix / "plugins/oh-my-diff/plugins/omd-lsp-adapters/.mcp.json").is_file())
             self.assertFalse((prefix / "target").exists())
             self.assertEqual(installer.status(prefix, bin_dir)["repository_tools"],
                              manifest["repository_tools"])
@@ -286,7 +292,7 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             self.assertTrue(removed["uninstalled"])
             self.assertFalse(prefix.exists())
             self.assertFalse(any((bin_dir / name).exists()
-                                 for name in ("codex", *installer.REPOSITORY_TOOL_NAMES)))
+                                 for name in ("codex", *installer.PLUGIN_TOOL_NAMES)))
 
 
 class PreviewLockTests(unittest.TestCase):
@@ -310,7 +316,7 @@ class PluginLockTests(unittest.TestCase):
         lock = installer.plugin_sources()
         self.assertEqual(lock["marketplace"], "oh-my-diff")
         self.assertEqual(set(lock["plugins"]),
-                         {"omd-guidance-hooks", "omd-repository-tools"})
+                         {"omd-guidance-hooks", "omd-repository-tools", "omd-lsp-adapters"})
         self.assertEqual(
             lock["plugins"]["omd-guidance-hooks"]["extension_types"],
             ["plugin", "skill", "hook"],
@@ -321,6 +327,11 @@ class PluginLockTests(unittest.TestCase):
             ["plugin", "skill", "mcp"],
         )
         self.assertFalse(lock["plugins"]["omd-repository-tools"]["mod_required"])
+        self.assertEqual(
+            lock["plugins"]["omd-lsp-adapters"]["extension_types"],
+            ["plugin", "mcp"],
+        )
+        self.assertFalse(lock["plugins"]["omd-lsp-adapters"]["mod_required"])
 
     def test_installed_bundle_verification_rejects_edits(self):
         with tempfile.TemporaryDirectory() as temporary:

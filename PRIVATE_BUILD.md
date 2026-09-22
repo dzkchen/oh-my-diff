@@ -122,14 +122,15 @@ is added explicitly to the selected application and removed during teardown.
 ## Bundled plugins
 
 The install retains a hash-pinned local Codex marketplace at
-`$OMD_PREFIX/plugins/oh-my-diff`. It does not install the plugin or edit shared
-Codex state. After reviewing the bundle, an operator can install either plugin
+`$OMD_PREFIX/plugins/oh-my-diff`. It does not install the plugins or edit shared
+Codex state. After reviewing the bundle, an operator can install any plugin
 explicitly:
 
 ```sh
 codex plugin marketplace add "$OMD_PREFIX/plugins/oh-my-diff"
 codex plugin add omd-guidance-hooks@oh-my-diff
 codex plugin add omd-repository-tools@oh-my-diff
+codex plugin add omd-lsp-adapters@oh-my-diff
 ```
 
 The plugin supplies versioned simplicity guidance, independent lead-update and
@@ -150,6 +151,13 @@ launchers without touching shared Codex data. Artifact paths are confined to the
 selected repository, and the health tools write evidence but never edit source.
 The native `/graph` view remains available for optional live navigation, so no
 additional terminal mod is installed.
+
+The LSP-adapters plugin supplies one prompt-approved MCP tool for each supported
+language and requires the managed `omd-lsp` binary and launcher installed by the
+private build. The plugin handles command schemas and fallback presentation;
+native Rust retains repository opt-in, installed-server admission, process and
+workspace bounds, synchronization, exact-scope/hash validation, atomic edits,
+rollback, permissions, and cleanup. No language server is installed.
 
 ## Mod preview
 
@@ -181,7 +189,7 @@ store afterwards; uninstall refuses to delete locally edited sources without
   quotas, prices, model availability, and route behavior must be checked in the
   current environment. Synthetic fixtures do not verify them.
 - The private build carries the two first-party preview mods described above; the
-  guidance/hooks plugin source described above; and no curated mod catalog,
+  bundled plugin sources described above; and no curated mod catalog,
   author tooling, external registry/repository package installation, cross-release
   compatibility matrix, Kiro, code-mode host, or later breadth features.
 - Browser automation is headless Chromium on Apple Silicon macOS. Browser and

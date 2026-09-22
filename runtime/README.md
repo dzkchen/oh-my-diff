@@ -300,9 +300,22 @@ execution, and cached only while that digest remains exact.
 
 ```sh
 cargo run --locked -p codex-omd --bin omd-lsp -- detect
-cargo run --locked -p codex-omd --bin omd-lsp -- preference /absolute/host-owned/lsp-preferences.json owner/repository enabled
+cargo run --locked -p codex-omd --bin omd-lsp -- preference /absolute/host-owned/lsp-preferences.json owner/repository enabled /absolute/repository
 cargo run --locked -p codex-omd --bin omd-lsp -- status /absolute/host-owned/lsp-preferences.json owner/repository
+printf '%s' '{"action":"diagnostics","paths":["src/lib.rs"]}' | cargo run --locked -p codex-omd --bin omd-lsp -- adapter /absolute/repository /absolute/host-owned/lsp-preferences.json owner/repository rust
 ```
+
+The `adapter` command is the native safety boundary used by the bundled
+`omd-lsp-adapters` plugin. It accepts one bounded JSON request on stdin, checks
+the exact remembered repository opt-in and its canonical-workspace sidecar
+binding, admits only a responsive installed server for the selected language,
+synchronizes the declared coherent path batch, performs one semantic command,
+and terminates the server before return. The sidecar keeps the original
+preference schema byte-compatible for older retained runtimes.
+It returns `unsupported` with an ordinary-tool fallback for absent servers or
+capabilities. The plugin supplies the five language-specific MCP commands and
+presentation; native Rust still owns every process, document, edit, permission,
+and cleanup invariant described above.
 
 The offline `omd-graph` operator builds one schema-versioned JSON code/impact
 graph for the patched TUI and a self-contained interactive HTML snapshot. Its

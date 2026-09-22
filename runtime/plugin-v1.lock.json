@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "004a76cc61815217f8789c64b82c960dbe2f92ac6378bd852d9dd0e6f825989a"
+    "sha256": "88c19a4f828848c21e8b485a7b2edb46c089a544f735bab2d62bfb92a7606b5e"
   },
   "plugins": {
     "omd-guidance-hooks": {
@@ -25,10 +25,18 @@
         "mcp"
       ],
       "mod_required": false
+    },
+    "omd-lsp-adapters": {
+      "version": "0.1.0",
+      "extension_types": [
+        "plugin",
+        "mcp"
+      ],
+      "mod_required": false
     }
   },
   "files": {
-    ".agents/plugins/marketplace.json": "91cfedbc815b5b2a8081e15b4c439f2bdf4aa531b9775bbf47dcf8284cd7c8b9",
+    ".agents/plugins/marketplace.json": "0ed944b753a4394f86e3f928eb85f44ca8a042fb81c2939ca519556dd1b4e046",
     "plugins/omd-guidance-hooks/.codex-plugin/plugin.json": "f025f02f2597d1ebbba616d8fb520cd1a1f72bc88a0b767f3f63e22f5a4223d5",
     "plugins/omd-guidance-hooks/hooks/hooks.json": "012112646dc59cf0af1562c1f779ab0e39752c2d6d50bb85f21e44f5298675bc",
     "plugins/omd-guidance-hooks/hooks/omd_lifecycle.py": "075b27e37409c3f6f15834a68b1d1392a2c7611ba658a2b93d02f6838c0890b3",
@@ -37,6 +45,9 @@
     "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/references/full-short-v1.md": "548f64606aedcd29d24e0b962df2ebd2696c51c47b1fcadef6a068bd76e14459",
     "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/references/tiny-selected-v1.md": "6d82565c7a81fd1c2ddf8d5fff10573cad9ee9bd4d8601bcba9ba64c1204581b",
     "plugins/omd-guidance-hooks/skills/omd-structured-reports/SKILL.md": "6de37a55033d4389109ff564f5bd03d337f511a94803d5bbc409d6373deb29aa",
+    "plugins/omd-lsp-adapters/.codex-plugin/plugin.json": "c1699260d31797495820b7d983c96c9cc1f875a69a031f2c46dd3f9d331e98a1",
+    "plugins/omd-lsp-adapters/.mcp.json": "6fea67fecdc43abe836753080e7844be6322112ad28ca22b264fba88412a0adb",
+    "plugins/omd-lsp-adapters/scripts/omd_lsp_mcp.py": "339084ab072d08d5ef3286fffa05cb64397a3559a99e4ba5126d15fa97df7c57",
     "plugins/omd-repository-tools/.codex-plugin/plugin.json": "ce5e196395058a6f6bd9f753554cb23fcbd2b3b95ded949ac3d11db50ca23dee",
     "plugins/omd-repository-tools/.mcp.json": "9fd3f0b1c0ac500e8d05020d254f2dc8d4cac2eefb19bb953363bf3cc326afe8",
     "plugins/omd-repository-tools/scripts/omd_repository_mcp.py": "5c9783228fef772de8506a7f3908ec7d32947ad9697318f19e51e3bf6ff94dec",

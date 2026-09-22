@@ -12,11 +12,11 @@
   },
   "runtime_patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "f48aad988b2c0c4d6607c1cab390273ec51f8cfafc06a7ea3715890c50342592"
+    "sha256": "756b55fac27861957602b3391ed88bd82eef3b7b64c5cc93722a8774c52a2fc0"
   },
   "private_installation": {
     "manager": "scripts/private_lean_v1.py",
-    "build": "cargo +1.95.0 build --locked --release -p codex-cli --bin codex -p codex-omd --bin omd-mod",
+    "build": "cargo +1.95.0 build --locked --release -p codex-cli --bin codex -p codex-omd --bin omd-mod --bin omd-graph --bin omd-health --bin omd-lsp",
     "default_activation": "omd:upstream_direct",
     "supported_upstream": "codex-cli 0.155.1",
     "shared_state": "inherit CODEX_HOME and CODEX_SQLITE_HOME unchanged",

@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "f48aad988b2c0c4d6607c1cab390273ec51f8cfafc06a7ea3715890c50342592"
+    "sha256": "756b55fac27861957602b3391ed88bd82eef3b7b64c5cc93722a8774c52a2fc0"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -221,7 +221,7 @@
     },
     "codex-rs/omd/src/bin/omd-lsp.rs": {
       "before": null,
-      "after": "4ebee64decf01fbf6db14e276b39ff077284e37e3efdc5fd16ac434076d4d37c"
+      "after": "4296173d27ac52252f6d9aa1c98d27efa451d1a9513244b5c95475584bcb439a"
     },
     "codex-rs/omd/src/bin/omd-mod.rs": {
       "before": null,
@@ -281,11 +281,11 @@
     },
     "codex-rs/omd/src/lib.rs": {
       "before": null,
-      "after": "263105496e96290285bdc807dc529a434c82ca364ee53a02d1da6c4b05c23ab9"
+      "after": "0f436cbd2cc09b507183a8f7a9a7bd3b444fcb99c3ba56d325859e8b013e15ac"
     },
     "codex-rs/omd/src/lsp.rs": {
       "before": null,
-      "after": "b2a78dfedb17048ff090b3f680e8149ff418f7f8f48d7864d50b5700197d5f68"
+      "after": "4c8add3f09e537a06f07d638292897baacc5bbe3f449d9a163e11eb7d2570c4c"
     },
     "codex-rs/omd/src/mode.rs": {
       "before": null,

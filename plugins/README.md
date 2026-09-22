@@ -1,6 +1,6 @@
 # Bundled Codex plugins
 
-OMD ships two Codex plugins in the local `oh-my-diff` marketplace:
+OMD ships three Codex plugins in the local `oh-my-diff` marketplace:
 
 - `omd-guidance-hooks` contains three explicit skills and two controlled
   lifecycle hooks. It has no MCP server, app connector, network dependency, or
@@ -9,6 +9,10 @@ OMD ships two Codex plugins in the local `oh-my-diff` marketplace:
   operators through seven prompt-approved local MCP tools and includes the
   `$omd-repository-tools:omd-code-health` skill. It has no network dependency,
   app connector, hook, or TypeScript mod.
+- `omd-lsp-adapters` exposes separate Rust, TypeScript, JavaScript, Python, and
+  Java MCP tools over the retained native `omd-lsp` operator. It owns the
+  language-specific commands and explicit fallback presentation, but no
+  language-server, source-write, permission-grant, or edit authority.
 
 The private installer copies the hash-pinned marketplace to
 `$OMD_PREFIX/plugins/oh-my-diff` without editing shared Codex state. Installation
@@ -18,6 +22,7 @@ into Codex is a separate operator action:
 codex plugin marketplace add "$OMD_PREFIX/plugins/oh-my-diff"
 codex plugin add omd-guidance-hooks@oh-my-diff
 codex plugin add omd-repository-tools@oh-my-diff
+codex plugin add omd-lsp-adapters@oh-my-diff
 ```
 
 Review and trust the plugin hook hashes when Codex prompts. Do not bypass hook
@@ -58,10 +63,32 @@ create an explicitly approved baseline, run the one-shot check, and page through
 introduced, debt, and uncertain findings without treating repair scope as edit
 authorization.
 
+The LSP plugin requires the managed `omd-lsp` executable on `PATH` and the same
+canonical external preference store and exact repository identity selected by
+the controlled manifest. Bind and enable that identity explicitly with
+`omd-lsp preference STORE REPOSITORY_ID enabled REPOSITORY`; the plugin never
+enables a repository or installs a server. Its
+five prompt-approved tools are `rust_lsp`, `typescript_lsp`, `javascript_lsp`,
+`python_lsp`, and `java_lsp`. Each supports `status`, `diagnostics`,
+`definition`, `references`, `code_actions`, `apply_code_action`,
+`rename_symbol`, and `rename_file` commands.
+
+Pass the complete coherent path batch before every semantic command. Applying a
+code action or rename also requires the complete affected scope and the current
+SHA256 of every existing path, or `null` for an absent destination. The native
+operator alone admits responsive installed servers, bounds startup and requests,
+synchronizes documents, validates UTF-16 edits and exact scope/hashes, writes
+atomically, rolls back failed synchronization, and terminates the server before
+the tool returns. Missing servers and capabilities remain visible `unsupported`
+results with ordinary search/edit/check guidance; they are never presented as
+passed semantic evidence. Removing the plugin leaves the native `omd_lsp`
+session tool and repository preference unchanged.
+
 Remove the installed copy and marketplace before deleting the private prefix:
 
 ```sh
 codex plugin remove omd-guidance-hooks@oh-my-diff
 codex plugin remove omd-repository-tools@oh-my-diff
+codex plugin remove omd-lsp-adapters@oh-my-diff
 codex plugin marketplace remove oh-my-diff
 ```

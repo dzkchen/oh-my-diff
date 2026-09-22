@@ -24,6 +24,7 @@ use std::time::Instant;
 
 pub const LSP_PREFERENCE_SCHEMA: u32 = 1;
 pub const LSP_RESULT_SCHEMA: u32 = 1;
+pub const LSP_WORKSPACE_BINDING_SCHEMA: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -225,6 +226,123 @@ impl LspPreferenceStore {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct LspWorkspaceBinding {
+    pub repository_identity: String,
+    pub repository: PathBuf,
+    pub revision: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LspWorkspaceBindingFile {
+    schema: u32,
+    repositories: BTreeMap<String, LspWorkspaceBinding>,
+}
+
+pub struct LspWorkspaceBindingStore {
+    path: PathBuf,
+    state: LspWorkspaceBindingFile,
+}
+
+pub fn lsp_workspace_binding_path(preference_store: &Path) -> io::Result<PathBuf> {
+    let parent = preference_store
+        .parent()
+        .ok_or_else(|| io::Error::other("LSP preference parent missing"))?;
+    let name = preference_store
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::other("invalid LSP preference path"))?;
+    Ok(parent.join(format!("{name}.workspaces.json")))
+}
+
+impl LspWorkspaceBindingStore {
+    pub fn open(path: PathBuf) -> io::Result<Self> {
+        let state = if path.exists() {
+            let bytes = fs::read(&path)?;
+            if bytes.len() > 1024 * 1024 {
+                return Err(io::Error::other(
+                    "LSP workspace binding store exceeds limit",
+                ));
+            }
+            let state: LspWorkspaceBindingFile = serde_json::from_slice(&bytes)?;
+            if state.schema != LSP_WORKSPACE_BINDING_SCHEMA || state.repositories.len() > 10_000 {
+                return Err(io::Error::other("invalid LSP workspace binding store"));
+            }
+            state
+        } else {
+            LspWorkspaceBindingFile {
+                schema: LSP_WORKSPACE_BINDING_SCHEMA,
+                repositories: BTreeMap::new(),
+            }
+        };
+        Ok(Self { path, state })
+    }
+
+    pub fn binding(&self, repository_identity: &str) -> Option<&LspWorkspaceBinding> {
+        self.state.repositories.get(repository_identity)
+    }
+
+    pub fn matches(&self, repository_identity: &str, repository: &Path) -> bool {
+        self.binding(repository_identity)
+            .is_some_and(|binding| binding.repository == repository)
+    }
+
+    pub fn set(
+        &mut self,
+        repository_identity: String,
+        repository: PathBuf,
+    ) -> io::Result<LspWorkspaceBinding> {
+        if repository_identity.is_empty() || repository_identity.len() > 512 {
+            return Err(io::Error::other("invalid repository identity"));
+        }
+        if !repository.is_absolute() || repository.is_symlink() {
+            return Err(io::Error::other(
+                "repository binding must be a canonical absolute directory",
+            ));
+        }
+        let canonical = repository.canonicalize()?;
+        if repository != canonical || !canonical.is_dir() {
+            return Err(io::Error::other(
+                "repository binding must be a canonical absolute directory",
+            ));
+        }
+        let revision = self
+            .state
+            .repositories
+            .get(&repository_identity)
+            .map_or(1, |prior| prior.revision.saturating_add(1));
+        let binding = LspWorkspaceBinding {
+            repository_identity: repository_identity.clone(),
+            repository: canonical,
+            revision,
+        };
+        self.state
+            .repositories
+            .insert(repository_identity, binding.clone());
+        self.write()?;
+        Ok(binding)
+    }
+
+    fn write(&self) -> io::Result<()> {
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| io::Error::other("LSP workspace binding parent missing"))?;
+        fs::create_dir_all(parent)?;
+        let name = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| io::Error::other("invalid LSP workspace binding path"))?;
+        let temporary = parent.join(format!(".{name}.tmp-{}", std::process::id()));
+        let bytes = serde_json::to_vec_pretty(&self.state)?;
+        fs::write(&temporary, bytes)?;
+        fs::rename(temporary, &self.path)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct InstalledServer {
     pub language: LspLanguage,
     pub executable: Option<PathBuf>,
@@ -312,9 +430,85 @@ pub struct LspRange {
     pub end: LspPosition,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LspAdapterRequest {
+    Status,
+    Diagnostics {
+        paths: Vec<String>,
+    },
+    Definition {
+        paths: Vec<String>,
+        path: String,
+        position: LspPosition,
+    },
+    References {
+        paths: Vec<String>,
+        path: String,
+        position: LspPosition,
+        #[serde(default)]
+        include_declaration: bool,
+    },
+    CodeActions {
+        paths: Vec<String>,
+        path: String,
+        range: LspRange,
+    },
+    ApplyCodeAction {
+        paths: Vec<String>,
+        action_value: Value,
+        scope: Vec<String>,
+        expected_versions: BTreeMap<String, Option<String>>,
+    },
+    RenameSymbol {
+        paths: Vec<String>,
+        path: String,
+        position: LspPosition,
+        new_name: String,
+        scope: Vec<String>,
+        expected_versions: BTreeMap<String, Option<String>>,
+    },
+    RenameFile {
+        paths: Vec<String>,
+        old_path: String,
+        new_path: String,
+        scope: Vec<String>,
+        expected_versions: BTreeMap<String, Option<String>>,
+    },
+}
+
+impl LspAdapterRequest {
+    pub fn command(&self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Diagnostics { .. } => "diagnostics",
+            Self::Definition { .. } => "definition",
+            Self::References { .. } => "references",
+            Self::CodeActions { .. } => "code_actions",
+            Self::ApplyCodeAction { .. } => "apply_code_action",
+            Self::RenameSymbol { .. } => "rename_symbol",
+            Self::RenameFile { .. } => "rename_file",
+        }
+    }
+
+    fn paths(&self) -> &[String] {
+        match self {
+            Self::Status => &[],
+            Self::Diagnostics { paths }
+            | Self::Definition { paths, .. }
+            | Self::References { paths, .. }
+            | Self::CodeActions { paths, .. }
+            | Self::ApplyCodeAction { paths, .. }
+            | Self::RenameSymbol { paths, .. }
+            | Self::RenameFile { paths, .. } => paths,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticOperation {
+    Diagnostics,
     Definition,
     References,
     CodeAction,
@@ -1091,6 +1285,162 @@ impl Drop for LspSession {
     }
 }
 
+pub fn execute_lsp_adapter_request(
+    repository: PathBuf,
+    language: LspLanguage,
+    limits: LspLimits,
+    server: Option<InstalledServer>,
+    request: LspAdapterRequest,
+) -> Value {
+    let command = request.command();
+    let server = server
+        .or_else(|| {
+            detect_installed_servers()
+                .into_iter()
+                .find(|candidate| candidate.language == language)
+        })
+        .unwrap_or(InstalledServer {
+            language,
+            executable: None,
+            arguments: Vec::new(),
+        });
+    if server.language != language {
+        return json!({
+            "schema": LSP_RESULT_SCHEMA,
+            "status": "failed",
+            "language": language,
+            "command": command,
+            "error": "native server admission returned the wrong language",
+        });
+    }
+    if matches!(request, LspAdapterRequest::Status) {
+        let Some(executable) = &server.executable else {
+            return json!({
+                "schema": LSP_RESULT_SCHEMA,
+                "status": "unsupported",
+                "language": language,
+                "command": command,
+                "reason": format!("no installed {} language server responded", language.language_id()),
+                "fallback": "Use exact text search and ordinary scoped edits, then run the selected executable check; do not claim semantic coverage.",
+                "auto_install": false,
+            });
+        };
+        return json!({
+            "schema": LSP_RESULT_SCHEMA,
+            "status": "ready",
+            "language": language,
+            "command": command,
+            "server": {"executable": executable, "arguments": server.arguments},
+            "limits": limits,
+            "auto_install": false,
+        });
+    }
+    let mut session = match LspSession::start(repository, language, limits, Some(server)) {
+        Ok(session) => session,
+        Err(fallback) => {
+            let mut value = serde_json::to_value(fallback).unwrap_or_else(|error| {
+                json!({
+                    "schema": LSP_RESULT_SCHEMA,
+                    "status": "failed",
+                    "language": language,
+                    "command": command,
+                    "error": error.to_string(),
+                })
+            });
+            value["schema"] = json!(LSP_RESULT_SCHEMA);
+            value["language"] = json!(language);
+            value["command"] = json!(command);
+            return value;
+        }
+    };
+    let synchronization = match session.sync(request.paths()) {
+        Ok(result) => result,
+        Err(error) => {
+            return json!({
+                "schema": LSP_RESULT_SCHEMA,
+                "status": "failed",
+                "language": language,
+                "command": command,
+                "error": error.to_string(),
+            });
+        }
+    };
+    let result = match request {
+        LspAdapterRequest::Status => unreachable!("status returned before session startup"),
+        LspAdapterRequest::Diagnostics { .. } => {
+            serde_json::to_value(&synchronization).map_err(|error| {
+                SemanticFallback::new(SemanticOperation::Diagnostics, error.to_string())
+            })
+        }
+        LspAdapterRequest::Definition { path, position, .. } => session.definition(&path, position),
+        LspAdapterRequest::References {
+            path,
+            position,
+            include_declaration,
+            ..
+        } => session.references(&path, position, include_declaration),
+        LspAdapterRequest::CodeActions { path, range, .. } => session.code_actions(&path, range),
+        LspAdapterRequest::ApplyCodeAction {
+            action_value,
+            scope,
+            expected_versions,
+            ..
+        } => session
+            .apply_code_action(&action_value, &scope, &expected_versions)
+            .and_then(|value| {
+                serde_json::to_value(value).map_err(|error| {
+                    SemanticFallback::new(SemanticOperation::CodeAction, error.to_string())
+                })
+            }),
+        LspAdapterRequest::RenameSymbol {
+            path,
+            position,
+            new_name,
+            scope,
+            expected_versions,
+            ..
+        } => session
+            .rename_symbol(&path, position, &new_name, &scope, &expected_versions)
+            .and_then(|value| {
+                serde_json::to_value(value).map_err(|error| {
+                    SemanticFallback::new(SemanticOperation::RenameSymbol, error.to_string())
+                })
+            }),
+        LspAdapterRequest::RenameFile {
+            old_path,
+            new_path,
+            scope,
+            expected_versions,
+            ..
+        } => session
+            .rename_file(&old_path, &new_path, &scope, &expected_versions)
+            .and_then(|value| {
+                serde_json::to_value(value).map_err(|error| {
+                    SemanticFallback::new(SemanticOperation::RenameFile, error.to_string())
+                })
+            }),
+    };
+    match result {
+        Ok(result) => json!({
+            "schema": LSP_RESULT_SCHEMA,
+            "status": "completed",
+            "language": language,
+            "command": command,
+            "synchronization": synchronization,
+            "result": result,
+        }),
+        Err(fallback) => {
+            let mut value = serde_json::to_value(fallback)
+                .unwrap_or_else(|error| json!({"status": "failed", "error": error.to_string()}));
+            value["schema"] = json!(LSP_RESULT_SCHEMA);
+            value["language"] = json!(language);
+            value["command"] = json!(command);
+            value["synchronization"] = serde_json::to_value(synchronization).unwrap_or(Value::Null);
+            value
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppliedEdit {
@@ -1796,15 +2146,33 @@ mod tests {
     }
 
     #[test]
-    fn preference_is_repository_bound_and_monotonic() {
+    fn preference_and_workspace_binding_are_separate_and_monotonic() {
         let temporary = tempfile::tempdir().unwrap();
         let path = temporary.path().join("lsp.json");
         let mut store = LspPreferenceStore::open(path.clone()).unwrap();
         assert!(store.preference("owner/repo").is_none());
         assert_eq!(store.set("owner/repo".into(), true).unwrap().revision, 1);
         assert_eq!(store.set("owner/repo".into(), false).unwrap().revision, 2);
-        let reopened = LspPreferenceStore::open(path).unwrap();
-        assert!(!reopened.preference("owner/repo").unwrap().enabled);
+        let reopened = LspPreferenceStore::open(path.clone()).unwrap();
+        let preference = reopened.preference("owner/repo").unwrap();
+        assert!(!preference.enabled);
+        let repository = temporary.path().canonicalize().unwrap();
+        let binding_path = lsp_workspace_binding_path(&path).unwrap();
+        assert_ne!(binding_path, path);
+        let mut bindings = LspWorkspaceBindingStore::open(binding_path.clone()).unwrap();
+        assert_eq!(
+            bindings
+                .set("owner/repo".into(), repository.clone())
+                .unwrap()
+                .revision,
+            1
+        );
+        assert!(bindings.matches("owner/repo", &repository));
+        assert!(!bindings.matches("other/repo", &repository));
+        let reopened_bindings = LspWorkspaceBindingStore::open(binding_path).unwrap();
+        assert!(reopened_bindings.matches("owner/repo", &repository));
+        let serialized = fs::read_to_string(path).unwrap();
+        assert!(!serialized.contains("repository\""));
     }
 
     #[test]
@@ -2011,6 +2379,78 @@ mod tests {
             assert!(!repository.join(second).exists());
             assert!(repository.join(renamed).exists());
         }
+    }
+
+    #[test]
+    fn five_language_plugin_adapter_matrix_uses_native_sessions() {
+        let Some(python) = resolve_executable("python3") else {
+            return;
+        };
+        for (language, extension) in [
+            (LspLanguage::Rust, "rs"),
+            (LspLanguage::TypeScript, "ts"),
+            (LspLanguage::JavaScript, "js"),
+            (LspLanguage::Python, "py"),
+            (LspLanguage::Java, "java"),
+        ] {
+            let temporary = tempfile::tempdir().unwrap();
+            let repository = temporary.path().canonicalize().unwrap();
+            let path = format!("main.{extension}");
+            fs::write(repository.join(&path), "old one\n").unwrap();
+            let response = execute_lsp_adapter_request(
+                repository,
+                language,
+                LspLimits {
+                    startup_ms: 2_000,
+                    request_ms: 2_000,
+                    diagnostic_batch_ms: 25,
+                    idle_ms: 3_000,
+                    ..LspLimits::default()
+                },
+                Some(InstalledServer {
+                    language,
+                    executable: Some(python.clone()),
+                    arguments: vec!["-u".into(), "-c".into(), FAKE_SERVER.into()],
+                }),
+                LspAdapterRequest::Definition {
+                    paths: vec![path.clone()],
+                    path: path.clone(),
+                    position: LspPosition {
+                        line: 0,
+                        character: 0,
+                    },
+                },
+            );
+            assert_eq!(response["status"], "completed");
+            assert_eq!(response["language"], language.language_id());
+            assert_eq!(response["command"], "definition");
+            assert_eq!(
+                response["synchronization"]["documents"][&path]["version"],
+                1
+            );
+            assert!(!response["result"].is_null());
+        }
+    }
+
+    #[test]
+    fn plugin_adapter_status_keeps_unavailable_server_as_non_success() {
+        let temporary = tempfile::tempdir().unwrap();
+        let repository = temporary.path().canonicalize().unwrap();
+        let response = execute_lsp_adapter_request(
+            repository,
+            LspLanguage::Java,
+            LspLimits::default(),
+            Some(InstalledServer {
+                language: LspLanguage::Java,
+                executable: None,
+                arguments: Vec::new(),
+            }),
+            LspAdapterRequest::Status,
+        );
+        assert_eq!(response["status"], "unsupported");
+        assert_eq!(response["language"], "java");
+        assert_eq!(response["auto_install"], false);
+        assert!(response["fallback"].as_str().unwrap().contains("ordinary"));
     }
 
     #[test]
