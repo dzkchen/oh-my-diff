@@ -148,6 +148,9 @@ def check(matrix):
     artifact_plugin = source["plugin"]["plugins"]["omd-artifact-reading"]
     claim("omd_artifact_reading", "version", artifact_plugin["version"])
     claim("omd_artifact_reading", "extension_type", artifact_plugin["extension_types"])
+    execution_plugin = source["plugin"]["plugins"]["omd-code-execution"]
+    claim("omd_code_execution", "version", execution_plugin["version"])
+    claim("omd_code_execution", "extension_type", execution_plugin["extension_types"])
     claim("pi_resources", "version", source["pi_adapter"])
     browser = source["browser"]
     claim("browser_bundle", "versions", {

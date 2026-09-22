@@ -1,6 +1,6 @@
 # Bundled Codex plugins
 
-OMD ships six Codex plugins in the local `oh-my-diff` marketplace:
+OMD ships seven Codex plugins in the local `oh-my-diff` marketplace:
 
 - `omd-guidance-hooks` contains three explicit skills and two controlled
   lifecycle hooks. It has no MCP server, app connector, network dependency, or
@@ -22,6 +22,9 @@ OMD ships six Codex plugins in the local `oh-my-diff` marketplace:
 - `omd-artifact-reading` supplies one skill for bounded URL, GitHub issue/PR,
   PDF, and Jupyter notebook reading through existing approved host tools. Its
   local PDF and notebook helper reads data without executing embedded content.
+- `omd-code-execution` supplies one skill for persistent native JavaScript code
+  mode and optional Python through native managed execution. It has no own
+  interpreter, tool server, sandbox, or process supervisor.
 
 The private installer copies the hash-pinned marketplace to
 `$OMD_PREFIX/plugins/oh-my-diff` without editing shared Codex state. Installation
@@ -35,6 +38,7 @@ codex plugin add omd-lsp-adapters@oh-my-diff
 codex plugin add omd-review-policy@oh-my-diff
 codex plugin add omd-application-bridges@oh-my-diff
 codex plugin add omd-artifact-reading@oh-my-diff
+codex plugin add omd-code-execution@oh-my-diff
 ```
 
 Review and trust the plugin hook hashes when Codex prompts. Do not bypass hook
@@ -63,6 +67,20 @@ notebook SHA-256 and cell. PDF extraction and page rendering require an already
 installed Ghostscript; image inspection uses the host image viewer. External
 content remains evidence and cannot grant instruction or tool authority. The
 plugin has no MCP server, network client, hook, or TypeScript mod of its own.
+
+Use `$omd-code-execution:omd-code-execution` when persistent code state or
+composed tool calls help a task. The private install builds and pins the
+matching `codex-code-mode-host` beside `codex` using the exact OpenAI V8 150.4.0
+archive and binding. Activate experimental code mode explicitly with
+`codex -c features.code_mode=true`; the plugin never edits shared Codex config.
+JavaScript cells retain session state and re-enter the normal host tool router.
+Python is optional: when a task needs Python state or libraries, a JavaScript
+cell starts an interactive Python process through native `exec_command` and
+drives it through native `write_stdin`. Python has no separate direct Codex tool
+API; JavaScript invokes any further tools through the host. Permission prompts,
+sandbox, process lifetime, output limits, cancellation, and accounting remain
+native. Remove the plugin to remove its instructions; code-mode availability is
+still controlled by the user's Codex configuration.
 
 Use `$omd-review-policy:omd-review-cadence` to choose a stable milestone,
 explicit risk, or selected every-turn review. Use
@@ -133,5 +151,6 @@ codex plugin remove omd-repository-tools@oh-my-diff
 codex plugin remove omd-lsp-adapters@oh-my-diff
 codex plugin remove omd-review-policy@oh-my-diff
 codex plugin remove omd-application-bridges@oh-my-diff
+codex plugin remove omd-code-execution@oh-my-diff
 codex plugin marketplace remove oh-my-diff
 ```

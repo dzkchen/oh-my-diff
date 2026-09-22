@@ -319,6 +319,22 @@
       "removal": "Remove omd-artifact-reading from Codex. Existing host web, shell and image tools remain available."
     },
     {
+      "id": "omd_code_execution",
+      "area": "native",
+      "name": "OMD code execution plugin",
+      "extension_type": ["plugin", "skill"],
+      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
+      "version": "0.1.0",
+      "status": "opt_in",
+      "fixtures": [
+        "python:test_pinned_v8_assets_reject_changed_inputs",
+        "python:test_default_install_target_is_removed_but_source_and_artifacts_remain",
+        "rust:codex-code-mode-host/tests/stdio.rs"
+      ],
+      "limitations": "Experimental code mode requires explicit user configuration. JavaScript tool calls and optional managed Python stay under native permission, sandbox, process, output, cancellation and accounting controls. Python has no separate direct Codex tool API.",
+      "removal": "Remove omd-code-execution from Codex; disable features.code_mode to hide the native JavaScript tool."
+    },
+    {
       "id": "pi_resources",
       "area": "native",
       "name": "Pi resource adapter",
@@ -875,6 +891,24 @@
       ]
     },
     {
+      "id": "reading_and_code_execution_skill_packages",
+      "components": [
+        "upstream_plugins",
+        "omd_artifact_reading",
+        "omd_code_execution"
+      ],
+      "boundaries": [
+        "upstream_plugin_coexistence",
+        "optional_integration_isolation"
+      ],
+      "result": "Both opt-in skill plugins are pinned in the same marketplace and install into an isolated Codex home without claiming a tool namespace. The artifact helper does not execute notebook cells; code execution uses the separate native host. Combined live task use remains untested.",
+      "evidence": [
+        "python:test_pinned_bundle_matches_plugin_sources",
+        "python:test_notebook_cell_and_figure_are_versioned_without_execution",
+        "python:test_default_install_target_is_removed_but_source_and_artifacts_remain"
+      ]
+    },
+    {
       "id": "mod_interception_beside_native_handlers",
       "components": [
         "upstream_hooks",
@@ -1002,6 +1036,11 @@
     }
   ],
   "untested": [
+    {
+      "id": "reader_and_code_mode_live_task",
+      "combination": "Artifact reading and code-mode execution in one live model-driven task",
+      "reason": "isolated Codex installation and separate host fixtures establish package coexistence and runtime controls; a live provider task has not been authorized or run."
+    },
     {
       "id": "browser_driven_by_a_mod",
       "combination": "A mod driving the bundled browser inside a live task",

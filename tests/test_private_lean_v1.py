@@ -50,6 +50,22 @@ class ManagedFixture:
 
 
 class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
+    def test_pinned_v8_assets_reject_changed_inputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            archive = directory / "fixture.a.gz"
+            binding = directory / "fixture.rs"
+            archive.write_bytes(b"archive")
+            binding.write_bytes(b"binding")
+            hashes = {archive.name: installer.digest(archive),
+                      binding.name: installer.digest(binding)}
+            with mock.patch.object(installer, "V8_ASSET_HASHES", hashes):
+                assets = installer.prepare_v8_assets(directory / "unused", directory)
+                self.assertEqual(assets, {"archive": archive, "binding": binding})
+                binding.write_bytes(b"changed")
+                with self.assertRaisesRegex(ValueError, "pinned V8 asset"):
+                    installer.prepare_v8_assets(directory / "unused", directory)
+
     def browser(self, destination, *_args):
         self.executable(destination / "runtime/bin/node", "v24.21.0")
         self.executable(destination / "bin/omd-browser-mcp", "Version 0.0.81")
@@ -241,6 +257,7 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
                 self.executable(target / "release/omd-graph", "omd-graph fixture")
                 self.executable(target / "release/omd-health", "omd-health fixture")
                 self.executable(target / "release/omd-lsp", "omd-lsp fixture")
+                self.executable(target / "release/codex-code-mode-host", "code-mode fixture")
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
             environment = {"PATH": str(upstream.parent), "CODEX_HOME": str(root / "state"),
@@ -251,6 +268,8 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
                     mock.patch.object(installer, "clone_pinned", side_effect=clone), \
                     mock.patch.object(installer, "output", side_effect=command_output), \
                     mock.patch.object(installer, "run", side_effect=command_run), \
+                    mock.patch.object(installer, "prepare_v8_assets", return_value={
+                        "archive": root / "archive", "binding": root / "binding"}), \
                     mock.patch.object(installer.browser_bundle, "build_bundle", side_effect=self.browser):
                 manifest = installer.install(args)
             self.assertEqual(manifest["activation"]["selection"], "omd")
@@ -262,6 +281,9 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             self.assertTrue((prefix / "artifacts/omd/omd-mod").is_file())
             self.assertEqual(manifest["mod_manager"]["installed_path"],
                              str(prefix / "artifacts/omd/omd-mod"))
+            self.assertEqual(manifest["code_mode_host"]["installed_path"],
+                             str(prefix / "artifacts/omd/codex-code-mode-host"))
+            self.assertTrue((prefix / "artifacts/omd/codex-code-mode-host").is_file())
             self.assertEqual(set(manifest["repository_tools"]["binaries"]),
                              {"omd-graph", "omd-health"})
             for name in installer.REPOSITORY_TOOL_NAMES:
@@ -283,6 +305,11 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             self.assertFalse((prefix / "target").exists())
             self.assertEqual(installer.status(prefix, bin_dir)["repository_tools"],
                              manifest["repository_tools"])
+            host = prefix / "artifacts/omd/codex-code-mode-host"
+            host.write_text("modified\n")
+            with self.assertRaisesRegex(ValueError, "code-mode host"):
+                installer.status(prefix, bin_dir)
+            self.executable(host, "code-mode fixture")
             health_launcher = bin_dir / "omd-health"
             original_launcher = health_launcher.read_text()
             health_launcher.write_text("unmanaged\n")
@@ -321,7 +348,7 @@ class PluginLockTests(unittest.TestCase):
         self.assertEqual(set(lock["plugins"]),
                          {"omd-guidance-hooks", "omd-repository-tools", "omd-lsp-adapters",
                           "omd-review-policy", "omd-application-bridges",
-                          "omd-artifact-reading"})
+                          "omd-artifact-reading", "omd-code-execution"})
         self.assertEqual(
             lock["plugins"]["omd-guidance-hooks"]["extension_types"],
             ["plugin", "skill", "hook"],
@@ -352,6 +379,9 @@ class PluginLockTests(unittest.TestCase):
             ["plugin", "skill"],
         )
         self.assertFalse(lock["plugins"]["omd-artifact-reading"]["mod_required"])
+        self.assertEqual(lock["plugins"]["omd-code-execution"]["extension_types"],
+                         ["plugin", "skill"])
+        self.assertFalse(lock["plugins"]["omd-code-execution"]["mod_required"])
 
     def test_installed_bundle_verification_rejects_edits(self):
         with tempfile.TemporaryDirectory() as temporary:

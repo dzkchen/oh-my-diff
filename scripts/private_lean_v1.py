@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from datetime import datetime, timezone
 
 try:
@@ -31,6 +32,14 @@ PLUGIN_PRODUCT = "oh-my-diff-bundled-plugin-v1"
 PACKAGE_FILES = ("mod.json", "index.ts")
 REPOSITORY_TOOL_NAMES = ("omd-graph", "omd-health")
 LSP_TOOL_NAMES = ("omd-lsp",)
+CODE_MODE_HOST_NAME = "codex-code-mode-host"
+V8_RELEASE = "https://github.com/openai/codex/releases/download/rusty-v8-v150.4.0"
+V8_ASSET_HASHES = {
+    "librusty_v8_ptrcomp_sandbox_release_aarch64-apple-darwin.a.gz":
+        "00adbb48798848c77550441c68673a5e8529b8e1b73eabcdee232cb39b40f4a1",
+    "src_binding_ptrcomp_sandbox_release_aarch64-apple-darwin.rs":
+        "ca5adf0cf89c9a70ad460ae73648b2fe89b74aa113b3cb7f757b6a02b758394f",
+}
 PLUGIN_TOOL_GROUPS = (
     ("repository_tools", REPOSITORY_TOOL_NAMES),
     ("lsp_tools", LSP_TOOL_NAMES),
@@ -40,6 +49,29 @@ PLUGIN_TOOL_NAMES = REPOSITORY_TOOL_NAMES + LSP_TOOL_NAMES
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def prepare_v8_assets(directory, supplied=None):
+    directory = Path(directory)
+    source = resolved(supplied) if supplied else directory
+    directory.mkdir(parents=True, exist_ok=True)
+    assets = {}
+    for name, expected in V8_ASSET_HASHES.items():
+        path = source / name
+        if not supplied:
+            limit = 64 * 1024 * 1024 if name.endswith(".gz") else 1024 * 1024
+            request = urllib.request.Request(f"{V8_RELEASE}/{name}")
+            with urllib.request.urlopen(request, timeout=60) as response, path.open("xb") as output_file:
+                copied = 0
+                while chunk := response.read(1024 * 1024):
+                    copied += len(chunk)
+                    if copied > limit:
+                        raise ValueError(f"pinned V8 asset exceeds its size limit: {name}")
+                    output_file.write(chunk)
+        if not path.is_file() or digest(path) != expected:
+            raise ValueError(f"pinned V8 asset is absent or changed: {name}")
+        assets["archive" if name.endswith(".gz") else "binding"] = path
+    return assets
 
 
 def run(arguments, cwd=None, env=None, capture=True):
@@ -393,13 +425,18 @@ def install(args):
         build = ["cargo", f"+{upstream_lock['rust_toolchain']}", "build", "--locked",
                  "--release", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd",
                  "--bin", "omd-mod", "--bin", "omd-graph", "--bin", "omd-health",
-                 "--bin", "omd-lsp"]
-        run(build, cwd=checkout / "codex-rs", env=environment, capture=False)
+                 "--bin", "omd-lsp", "-p", CODE_MODE_HOST_NAME, "--bin", CODE_MODE_HOST_NAME]
+        with tempfile.TemporaryDirectory(prefix=".v8-", dir=staging) as v8_temporary:
+            v8_assets = prepare_v8_assets(v8_temporary, getattr(args, "v8_asset_dir", None))
+            environment["RUSTY_V8_ARCHIVE"] = str(v8_assets["archive"])
+            environment["RUSTY_V8_SRC_BINDING_PATH"] = str(v8_assets["binding"])
+            run(build, cwd=checkout / "codex-rs", env=environment, capture=False)
         candidate_source = cargo_target / "release/codex"
         manager_source = cargo_target / "release/omd-mod"
         graph_source = cargo_target / "release/omd-graph"
         health_source = cargo_target / "release/omd-health"
         lsp_source = cargo_target / "release/omd-lsp"
+        code_mode_host_source = cargo_target / f"release/{CODE_MODE_HOST_NAME}"
         candidate = binary_identity(candidate_source)
         if candidate["version"] != upstream["version"]:
             raise ValueError("candidate and supported upstream versions differ")
@@ -408,7 +445,8 @@ def install(args):
             raise ValueError("candidate is not an arm64 executable")
         for name, source in (("upstream/codex", Path(upstream["path"])), ("omd/codex", candidate_source),
                              ("omd/omd-mod", manager_source), ("omd/omd-graph", graph_source),
-                             ("omd/omd-health", health_source), ("omd/omd-lsp", lsp_source)):
+                             ("omd/omd-health", health_source), ("omd/omd-lsp", lsp_source),
+                             (f"omd/{CODE_MODE_HOST_NAME}", code_mode_host_source)):
             destination = staging / f"artifacts/{name}"
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
@@ -449,6 +487,8 @@ def install(args):
             "mod_manager": {"sha256": digest(staging / "artifacts/omd/omd-mod"),
                             "installed_path": str(staging / "artifacts/omd/omd-mod"),
                             "mod_api": preview_lock()["mod_api"]},
+            "code_mode_host": {"sha256": digest(staging / f"artifacts/omd/{CODE_MODE_HOST_NAME}"),
+                               "installed_path": str(staging / f"artifacts/omd/{CODE_MODE_HOST_NAME}")},
             "repository_tools": {
                 "version": 1,
                 "approval": "Codex default_tools_approval_mode=prompt",
@@ -494,7 +534,8 @@ def install(args):
             "linux_benchmark": {"retained": True, "runtime_install_target": False,
                                 "guide": "benchmarks/README.md"},
         }
-        for artifact in (*manifest["artifacts"].values(), manifest["mod_manager"]):
+        for artifact in (*manifest["artifacts"].values(), manifest["mod_manager"],
+                         manifest["code_mode_host"]):
             artifact["installed_path"] = artifact["installed_path"].replace(str(staging), str(prefix), 1)
         for artifact in manifest["repository_tools"]["binaries"].values():
             artifact["installed_path"] = artifact["installed_path"].replace(str(staging), str(prefix), 1)
@@ -559,6 +600,12 @@ def status(prefix, bin_dir):
     recorded_manager = manifest.get("mod_manager")
     if recorded_manager and digest(prefix / "artifacts/omd/omd-mod") != recorded_manager["sha256"]:
         raise ValueError("installed omd-mod manager is modified")
+    recorded_host = manifest.get("code_mode_host")
+    if recorded_host:
+        host = prefix / f"artifacts/omd/{CODE_MODE_HOST_NAME}"
+        if (resolved(recorded_host["installed_path"]) != host or not host.is_file()
+                or digest(host) != recorded_host["sha256"]):
+            raise ValueError("installed code-mode host is absent or modified")
     for section, names in PLUGIN_TOOL_GROUPS:
         recorded_tools = manifest.get(section)
         if not recorded_tools:
@@ -793,6 +840,7 @@ def parser():
     install_parser.add_argument("--browser-node-archive", type=Path)
     install_parser.add_argument("--browser-archive", type=Path)
     install_parser.add_argument("--browser-archive-sha256")
+    install_parser.add_argument("--v8-asset-dir", type=Path)
     activate_parser = commands.add_parser("activate")
     activate_parser.add_argument("selection", choices=("omd", "upstream"))
     activate_parser.add_argument("--mode", choices=("upstream_direct", "enabled"))

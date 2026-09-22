@@ -137,6 +137,7 @@ codex plugin add omd-lsp-adapters@oh-my-diff
 codex plugin add omd-review-policy@oh-my-diff
 codex plugin add omd-application-bridges@oh-my-diff
 codex plugin add omd-artifact-reading@oh-my-diff
+codex plugin add omd-code-execution@oh-my-diff
 ```
 
 The plugin supplies versioned simplicity guidance, independent lead-update and
@@ -196,8 +197,10 @@ store afterwards; uninstall refuses to delete locally edited sources without
   current environment. Synthetic fixtures do not verify them.
 - The private build carries the two first-party preview mods described above; the
   bundled plugin sources described above; and no curated mod catalog,
-  author tooling, external registry/repository package installation, cross-release
-  compatibility matrix, Kiro, code-mode host, or later breadth features.
+  external registry/repository package installation, Kiro, or later breadth
+  features. It builds the matching experimental code-mode host from the pinned
+  Codex source with SHA256-pinned OpenAI V8 assets. Use `--v8-asset-dir DIR`
+  with those exact archive and binding files for an offline build.
 - Browser automation is headless Chromium on Apple Silicon macOS. Browser and
   MCP network or remote side effects are outside the shell filesystem sandbox;
   every browser tool defaults to an explicit Codex approval prompt.
