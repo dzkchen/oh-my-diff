@@ -274,6 +274,7 @@ class PreviewLockTests(unittest.TestCase):
             manifest = json.loads((installer.ROOT / package["source"] / "mod.json").read_text())
             self.assertEqual(manifest["api"], api, identifier)
             self.assertEqual(manifest["capabilities"], package["capabilities"], identifier)
+            self.assertEqual(package["extension_type"], "mod", identifier)
 
 
 class ShippedPatchTests(unittest.TestCase):
@@ -319,12 +320,14 @@ class PreviewSliceTests(ManagedFixture, unittest.TestCase):
             self.assertEqual(installed["mod_api"], lock["mod_api"])
             for identifier, package in installed["packages"].items():
                 self.assertEqual(package["sha256"], lock["packages"][identifier]["package_sha256"])
+                self.assertEqual(package["extension_type"], "mod")
                 self.assertTrue((Path(package["path"]) / "index.ts").is_file())
             self.assertTrue((store / "api.d.ts").is_file())
             self.assertTrue((store / "PREVIEW.md").is_file())
             self.assertIn(f'"mods": "{store}"', "\n".join(installed["next"]))
             state = installer.preview_status(prefix, bin_dir, store)
             self.assertTrue(state["mod_api"]["compatible"])
+            self.assertTrue(all(package["extension_type"] == "mod" for package in state["packages"]))
             self.assertTrue(all(package["enabled"] for package in state["packages"]))
             self.assertFalse(any(package["locally_edited"] for package in state["packages"]))
             self.assertFalse(any(package["error"] for package in state["packages"]))

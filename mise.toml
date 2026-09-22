@@ -10,6 +10,9 @@ run = "pnpm --dir mods test"
 [tasks."mods:package"]
 run = "pnpm --dir mods package"
 
+[tasks."mods:extension-types"]
+run = "python3 scripts/mod_extension_types.py"
+
 [tasks."mods:author-acceptance"]
 run = "python3 scripts/mod_author_acceptance.py"
 

@@ -444,6 +444,8 @@ def preview_sources(lock):
     if digest(ROOT / lock["types"]["path"]) != lock["types"]["sha256"]:
         raise ValueError(f"pinned preview types changed: {lock['types']['path']}")
     for identifier, package in lock["packages"].items():
+        if package.get("extension_type") != "mod":
+            raise ValueError(f"pinned preview package {identifier} must be labeled as a mod")
         base = ROOT / package["source"]
         for name, expected in package["files"].items():
             if digest(base / name) != expected:
@@ -532,6 +534,7 @@ def preview_install(prefix, bin_dir, store, node):
         omd_mod(prefix, "trust", str(store), str(target), inspected["sha256"], ",".join(package["capabilities"]))
         omd_mod(prefix, "enable", str(store), str(target))
         installed[identifier] = {"path": str(target), "version": package["version"],
+                                 "extension_type": package["extension_type"],
                                  "sha256": inspected["sha256"], "capabilities": package["capabilities"]}
     record = {"schema": PREVIEW_SCHEMA, "product": PREVIEW_PRODUCT,
               "installed_at": datetime.now(timezone.utc).isoformat(),
@@ -562,6 +565,7 @@ def preview_status(prefix, bin_dir, store, controlled_manifest=None):
         pinned = preview_lock()["packages"].get(identifier, {}).get("files", {})
         active = next((item for item in host.get("mods", []) if item.get("id") == identifier), None)
         packages.append({"id": identifier, "path": str(target), "version": package["version"],
+                         "extension_type": package["extension_type"],
                          "trusted_sha256": package["sha256"],
                          "locally_edited": edited != pinned,
                          "trusted_digest_current": digest_of_package(target) == package["sha256"],

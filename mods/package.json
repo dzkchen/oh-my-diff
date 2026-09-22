@@ -20,7 +20,14 @@
   "files": [
     "api.d.ts",
     "author",
-    "examples",
+    "examples/coordination",
+    "examples/kernel",
+    "examples/recovery",
+    "examples/routing",
+    "examples/terminal",
+    "examples/workflow",
+    "EXTENSION_TYPES.md",
+    "extension-types.json",
     "REFERENCE.md",
     "README.md"
   ],

@@ -21,7 +21,7 @@ export default function activate(api: ModAPI) {
   api.command('workflow', () => api.host.call('workflow.status', null), {
     description: 'Show the active workflow contract, its assurance label, and its provenance',
   });
-  api.command('no-delegation', () => api.host.call('workflow.restrict', {
+  api.command('no_delegation', () => api.host.call('workflow.restrict', {
     operations: ['delegate', 'spawn_child_agent'],
     reason: 'this repository reviews every change in a pair instead of delegating',
   }), { description: 'Remove delegation authority for the rest of this task' });

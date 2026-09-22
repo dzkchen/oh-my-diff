@@ -18,6 +18,7 @@
         "task",
         "tools"
       ],
+      "extension_type": "mod",
       "files": {
         "index.ts": "01f876dbf13fbd1428da61dcbba1c1525f04d5835588d1f63f91f1bc377181b6",
         "mod.json": "97686e543409655de45614b452a19afb446f224b4f87699ca40735c0a218f9d3"
@@ -33,6 +34,7 @@
         "lifecycle",
         "state"
       ],
+      "extension_type": "mod",
       "files": {
         "index.ts": "1ba5ab05e7fdcb1bbe31418b9be4fe458ef232315e1df88848e1a285a2442425",
         "mod.json": "1c6ecf493cda9a61e492ccccc74b2dfed57a2177d31589b7a2c127c67b18f3b5"

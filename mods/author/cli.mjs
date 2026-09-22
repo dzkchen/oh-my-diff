@@ -11,6 +11,7 @@ const sdkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiVersion = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf8')).version;
 const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
+const publicExamples = ['routing', 'coordination', 'recovery', 'terminal', 'kernel', 'workflow'];
 
 function fail(message) {
   throw new Error(message);
@@ -106,16 +107,34 @@ function scenarioFor(name) {
         { type: 'invoke', mod: 'recovery', event: 'tool', name: 'checkpoint', payload: {} },
       ],
     },
+    kernel: {
+      schema: 1,
+      steps: [
+        { type: 'event', event: 'model_request', payload: { authorized_presets: [{ name: 'sol' }, { name: 'astra' }] }, expect: [{ mod: 'kernel', value: { preset: 'astra' } }] },
+        { type: 'event', event: 'response_stream', payload: { protected: false, text: 'experimental API' }, expect: [{ mod: 'kernel', value: { text: 'preview API' } }] },
+      ],
+    },
     counter: {
       schema: 1,
       steps: [{ type: 'invoke', mod: 'counter', event: 'tool', name: 'count', payload: {}, expect: { count: 1 } }],
     },
     terminal: {
       schema: 1,
-      packages: ['../counter'],
       steps: [
         { type: 'terminal_mount', mod: 'terminal', payload: { event: 'draw', checkpoint: null } },
-        { type: 'terminal_interact', mod: 'terminal', key: 'Alt+x', payload: { event: 'draw', checkpoint: null }, expect: { action: { command: 'counter:reset', args: '' }, result: { display: 'Counter reset to 0' } } },
+        { type: 'terminal_interact', mod: 'terminal', key: 'Alt+r', payload: { event: 'draw', checkpoint: null }, expect: { action: { submit: 'Review the current changes and list remaining risks.' } } },
+      ],
+    },
+    workflow: {
+      schema: 1,
+      host_operations: {
+        'workflow.status': [{ result: { id: 'reviewed_omd', version: 1, assurance: 'independent' } }],
+        'workflow.restrict': [{ result: { restricted: true } }],
+      },
+      steps: [
+        { type: 'event', event: 'workflow', payload: { id: 'reviewed_omd', version: 1 } },
+        { type: 'invoke', mod: 'workflow', event: 'command', name: 'workflow', payload: null },
+        { type: 'invoke', mod: 'workflow', event: 'command', name: 'no_delegation', payload: null, expect: { restricted: true } },
       ],
     },
     'service-consumer': {
@@ -160,6 +179,7 @@ async function createProject(directory, name) {
 }
 
 async function copyExample(directory, name) {
+  if (!publicExamples.includes(name)) fail(`unknown_example: ${name}`);
   const source = join(sdkRoot, 'examples', name);
   if (!statSync(source).isDirectory()) fail(`unknown_example: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
@@ -170,8 +190,7 @@ async function copyExample(directory, name) {
 async function copyExamples(directory) {
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
   mkdirSync(directory, { recursive: true });
-  const names = ['routing', 'coordination', 'context', 'recovery', 'service-provider', 'service-consumer', 'counter', 'terminal'];
-  for (const name of names) await copyExample(join(directory, name), name);
+  for (const name of publicExamples) await copyExample(join(directory, name), name);
   await writeJson(join(directory, 'package.json'), { name: 'omd-mod-examples', private: true, scripts: { check: 'pnpm -r check', test: 'pnpm -r test', package: 'pnpm -r package' } });
   await writeFile(join(directory, 'pnpm-workspace.yaml'), "packages:\n  - '*'\n");
 }

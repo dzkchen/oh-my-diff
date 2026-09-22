@@ -39,6 +39,7 @@ def build():
             raise ValueError(f"{base.name} must declare its directory name and mod API {api}")
         packages[manifest["id"]] = {
             "version": manifest["version"],
+            "extension_type": "mod",
             "capabilities": manifest["capabilities"],
             "source": str(base.relative_to(ROOT)),
             "files": {name: digest(base / name) for name in FILES},

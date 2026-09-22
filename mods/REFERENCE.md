@@ -11,7 +11,7 @@ running host and the exact service contracts available to consumers.
 | Command | Result |
 | --- | --- |
 | `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
-| `omd-mod-author examples DIR` | Routing, coordination, context, recovery, service, tool, and terminal examples |
+| `omd-mod-author examples DIR` | Live routing, coordination, recovery, terminal, workflow, and stream-replacement mod examples |
 | `pnpm check` | Strict TypeScript validation against this exact SDK |
 | `pnpm test` | Engine-owned scenario execution with no provider requests |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |

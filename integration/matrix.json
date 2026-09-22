@@ -77,6 +77,7 @@
       "id": "omd_coordination",
       "area": "first_party_mod",
       "name": "omd_coordination",
+      "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_coordination)",
       "version": "0.1.0-preview.1",
       "capabilities": [
@@ -104,6 +105,7 @@
       "id": "omd_workspace",
       "area": "first_party_mod",
       "name": "omd_workspace",
+      "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_workspace)",
       "version": "0.1.0-preview.1",
       "capabilities": [
@@ -698,7 +700,7 @@
         "disabled_dependencies",
         "host_upgrade"
       ],
-      "result": "Two outside-author packages that replace coordination, context and the terminal run in one live session beside two published examples; the terminal's cross-mod keys reach both other packages, the context replacement drops evidence outside the declared scope before the worker sees it, and the same four packages install, upgrade from mod API `.5` to `.6` with a state migration, roll back and re-upgrade through the package manager.",
+      "result": "Two outside-author packages that replace coordination, context and the terminal run in one live session beside two repository-only conformance fixtures; the terminal's cross-mod keys reach both other packages, the context replacement drops evidence outside the declared scope before the worker sees it, and the same four packages install, upgrade from mod API `.5` to `.6` with a state migration, roll back and re-upgrade through the package manager.",
       "evidence": [
         "fixture:exercise/success",
         "script:scripts/mod_full_api_exercise.py"

@@ -4,10 +4,13 @@ A private preview of two first-party TypeScript mods on the pinned Codex 0.155.1
 OMD host, Apple Silicon macOS and Node 24.18.0. You can read, edit and reload
 both of them without rebuilding Codex.
 
-| Package | What it changes |
-| --- | --- |
-| `omd_workspace` | The terminal workspace: sidebar panels for the task, remaining acceptance criteria, workers and allowance; header, footer and status line; theme; `F6`/`Alt+r`/`Alt+w`/`Alt+s` keys; message and tool rendering |
-| `omd_coordination` | Coordination policy: which configured route leads, what operating brief the model receives, and which evidence a delegated worker is given |
+| Package | Extension type | What it changes and why a mod is required |
+| --- | --- | --- |
+| `omd_workspace` | mod | Replaces the live terminal workspace: sidebar panels for the task, remaining acceptance criteria, workers and allowance; header, footer and status line; theme; `F6`/`Alt+r`/`Alt+w`/`Alt+s` keys; message and tool rendering |
+| `omd_coordination` | mod | Replaces live coordination and context policy: which configured route leads, what operating brief the model receives, and which evidence a delegated worker is given |
+
+The checked classification for every bundled package, author example, and
+retained conformance fixture is in [EXTENSION_TYPES.md](EXTENSION_TYPES.md).
 
 This is a preview slice, not the release bundle. It is API
 `0.1.0-experimental.6`, which is experimental and not frozen. Its finite

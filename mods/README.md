@@ -24,8 +24,11 @@ pnpm run package
 `pnpm test` is owned by the OMD engine and refuses unmocked host operations, so
 author checks do not make paid requests. `pnpm watch -- /absolute/mod-store`
 re-inspects an edited local source, retains the exact declared capability set,
-and queues a safe-boundary reload. The author package also ships all executable
-examples with `omd-mod-author examples DIR`.
+and queues a safe-boundary reload. The author package ships the executable
+live-replacement examples with `omd-mod-author examples DIR`. Small
+demonstrations remain repository-only conformance fixtures.
+[EXTENSION_TYPES.md](EXTENSION_TYPES.md) records the checked classification and
+rationale for every package.
 
 ## Install, edit, and recover
 
@@ -151,30 +154,32 @@ an update is interrupted between their atomic writes.
 
 ## Write a mod
 
-Use [api.d.ts](api.d.ts) and the examples:
+Use [api.d.ts](api.d.ts) and the author examples. Every offered example is a
+`mod` because it replaces live engine or terminal behavior:
 
-| Example | Working capability |
-| --- | --- |
-| [counter](examples/counter/index.ts) | Labeled native tool with progress, slash commands with display/submit results, durable state |
-| [routing](examples/routing/index.ts) | Select a host-approved model/provider/reasoning preset |
-| [coordination](examples/coordination/index.ts) | Two native roles, parallel work, bounded waits, result consumption, `agent_end` |
-| [recovery](examples/recovery/index.ts) | Checkpoint context, checkpoint inspection, compaction threshold and prompt |
-| [interception](examples/interception/index.ts) | Replace a built-in tool with a registered mod tool |
-| [terminal](examples/terminal/index.ts) | Left sidebar, header/footer, status segment, native theme, key actions, templates |
-| [guard](examples/guard/index.ts) | Input rewrite/denial and turn lifecycle events |
-| [context](examples/context/index.ts) | Bounded context contribution |
-| [kernel](examples/kernel/index.ts) | Request/stream middleware with field-policy inspection |
-| [service-provider](examples/service-provider/index.ts) | Versioned typed service export |
-| [service-consumer](examples/service-consumer/index.ts) | Host-routed service import without shared memory |
+| Example | Extension type | Why a mod is required |
+| --- | --- | --- |
+| [routing](examples/routing/index.ts) | mod | Replaces the admitted model/provider/reasoning preset at the live request boundary |
+| [coordination](examples/coordination/index.ts) | mod | Drives native agent coordination and consumes results during the active task |
+| [recovery](examples/recovery/index.ts) | mod | Replaces live compaction and context recovery policy |
+| [terminal](examples/terminal/index.ts) | mod | Replaces live terminal layout, rendering, theme, and key actions |
+| [kernel](examples/kernel/index.ts) | mod | Alters admitted model requests and the live response stream |
+| [workflow](examples/workflow/index.ts) | mod | Registers and restricts a host-enforced live workflow contract |
+
+The context observer, counter, guard, simple interception, service provider and
+service consumer sources stay in this repository for conformance. The synthetic
+reader and tool packages stay in Rust integration tests. They are not packed as
+SDK examples or offered by `omd-mod-author`; their user-facing forms belong in a
+skill/hook or plugin rather than a mod.
 
 Two first-party packages are shipped as an installable private preview of the
 selected signature workflows. They use the same public API and capabilities as
 any outside package:
 
-| Package | Workflow |
-| --- | --- |
-| [omd_workspace](first-party/omd_workspace/index.ts) | An editable, reloadable terminal workspace: task/worker/allowance panels, theme, keys, rendering |
-| [omd_coordination](first-party/omd_coordination/index.ts) | Replaceable coordination and context policy: lead route, operating brief, delegated worker evidence |
+| Package | Extension type | Workflow and mod requirement |
+| --- | --- | --- |
+| [omd_workspace](first-party/omd_workspace/index.ts) | mod | Replaces the live terminal workspace: task/worker/allowance panels, theme, keys, rendering |
+| [omd_coordination](first-party/omd_coordination/index.ts) | mod | Replaces live coordination and context policy: lead route, operating brief, delegated worker evidence |
 
 [PREVIEW.md](PREVIEW.md) is the first-use and customization guide;
 `scripts/private_lean_v1.py preview install` provisions them from pinned

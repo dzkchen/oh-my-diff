@@ -139,6 +139,7 @@ def check(matrix):
     })
     for name, package in source["preview"]["packages"].items():
         claim(name, "version", package["version"])
+        claim(name, "extension_type", package["extension_type"])
         claim(name, "capabilities", sorted(package["capabilities"]))
         if not set(package["capabilities"]) <= source["capabilities"]:
             problems.append(f"{name}: capabilities outside the published API")
@@ -213,7 +214,7 @@ def table(rows, headers):
     return "\n".join(lines)
 
 
-DETAILS = ("versions", "supported_versions", "capabilities", "features", "hooks", "operations")
+DETAILS = ("extension_type", "versions", "supported_versions", "capabilities", "features", "hooks", "operations")
 
 
 def listed(value):

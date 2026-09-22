@@ -11,7 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / ".docs/audits/evidence/full-api-conformance-20260921"
 SOURCES = ROOT / "mods/exercise"
-PUBLISHED = {"counter": "counter", "service_provider": "service-provider"}
+FIXTURES = {"counter": "counter", "service_provider": "service-provider"}
 AUTHORED = ("atlas_policy", "atlas_console")
 PACKAGE_FILES = ("mod.json", "index.ts", "mod.test.json", "debug.test.json")
 SETTINGS = {"atlas_policy": {"mode": "solo", "focus": ["solution.py"]}}
@@ -157,11 +157,22 @@ def main():
         )
         author = ["pnpm", "exec", "omd-mod-author"]
 
-        for identifier, example in PUBLISHED.items():
+        fixture_scenarios = {
+            "counter": {
+                "schema": 1,
+                "steps": [{"type": "invoke", "mod": "counter", "event": "tool", "name": "count", "payload": {}, "expect": {"count": 1}}],
+            },
+            "service_provider": {"schema": 1, "steps": [{"type": "status"}]},
+        }
+        for identifier, example in FIXTURES.items():
             project = work / identifier
-            run(logs, f"{identifier}-example", [*author, "example", str(project), example], cwd=tool, env=env)
+            run(logs, f"{identifier}-scaffold", [*author, "create", str(project), identifier], cwd=tool, env=env)
+            source = ROOT / "mods/examples" / example
+            shutil.copy2(source / "mod.json", project / "mod.json")
+            shutil.copy2(source / "index.ts", project / "index.ts")
+            (project / "mod.test.json").write_text(json.dumps(fixture_scenarios[identifier], indent=2) + "\n")
             run(logs, f"{identifier}-install", ["pnpm", "install", "--offline"], cwd=project, env=env)
-            author_checks(logs, project, identifier, "published", env, ("check", "test", "package"))
+            author_checks(logs, project, identifier, "fixture", env, ("check", "test", "package"))
 
         manifests = {}
         for identifier in AUTHORED:
@@ -173,7 +184,7 @@ def main():
 
         store = work / "store"
         engine(logs, "store-init", binary, ["init", str(store), node], env)
-        for identifier in (*PUBLISHED, *AUTHORED):
+        for identifier in (*FIXTURES, *AUTHORED):
             project = work / identifier
             declared = json.loads((project / "mod.json").read_text())
             manifests[identifier] = declared
@@ -296,7 +307,7 @@ def main():
         errors = {mod["id"]: mod["error"] for mod in final_status["mods"]}
         if any(errors.values()) or final_status["rejected"]:
             raise RuntimeError(f"combined store did not settle cleanly: {errors} {final_status['rejected']}")
-        if {mod["id"] for mod in final_status["mods"]} != {*PUBLISHED, *AUTHORED}:
+        if {mod["id"] for mod in final_status["mods"]} != {*FIXTURES, *AUTHORED}:
             raise RuntimeError("the four separately packaged mods are not all active")
 
         scratch = work / "scratch-store"
@@ -343,7 +354,7 @@ def main():
                     "api": manifests[identifier]["api"],
                     "capabilities": manifests[identifier]["capabilities"],
                 }
-                for identifier in (*PUBLISHED, *AUTHORED)
+                for identifier in (*FIXTURES, *AUTHORED)
             },
             "upgrade": {
                 "from_api": "0.1.0-experimental.5",

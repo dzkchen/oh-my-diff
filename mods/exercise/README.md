@@ -11,8 +11,8 @@ handler.
 `python3 scripts/mod_full_api_exercise.py` (or `mise run mods:full-api-exercise`)
 replays the whole exercise from a clean root: it packs the SDK, scaffolds both
 packages with `omd-mod-author create`, copies these sources in, checks, tests,
-debugs and packages them, installs them next to the published `counter` and
-`service-provider` examples as four separate managed packages, runs
+debugs and packages them, installs them next to the repository-only `counter`
+and `service-provider` conformance fixtures as four separate managed packages, runs
 `combined-v1.test.json`, upgrades both authored packages through
 `package-plan`/`package-apply`, migrates their state, runs
 `combined-v2.test.json`, rolls `atlas_console` back in both package and state
