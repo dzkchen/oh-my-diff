@@ -5,7 +5,7 @@
     {
       "path": "mods/first-party/omd_coordination",
       "id": "omd_coordination",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Replaces live task-entry routing, context assembly, delegation interception, and worker coordination while a task is running."

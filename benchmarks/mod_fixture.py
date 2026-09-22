@@ -13,7 +13,7 @@ def package_digest(manifest, source, entrypoint=b"index.ts"):
 
 
 PREVIEW_SETTINGS = {
-    "omd_coordination": {"lead_policy": "astra", "worker_context": "focused", "evidence": ["solution.py"]},
+    "omd_coordination": {"lead_policy": "astra", "worker_context": "focused_brief", "evidence": ["solution.py"]},
     "omd_workspace": {"density": "compact", "side": "right", "review_prompt": "PREVIEW_REVIEW_PROMPT"},
 }
 
@@ -34,6 +34,17 @@ def install_preview(destination, manifest, node, profile):
         if profile == "preview-broken" and identifier == "omd_workspace":
             body = body.replace(b"export default function activate(api: ModAPI) {",
                                 b"export default function activate(api: ModAPI) {\n  throw new Error('PREVIEW_BROKEN_SENTINEL');", 1)
+        if profile == "coordination-broken" and identifier == "omd_coordination":
+            body = body.replace(b"export default function activate(api: ModAPI) {",
+                                b"export default function activate(api: ModAPI) {\n  throw new Error('COORDINATION_BROKEN_SENTINEL');", 1)
+        settings = dict(PREVIEW_SETTINGS[identifier])
+        if identifier == "omd_coordination":
+            settings["worker_context"] = {
+                "coordination-shared": "shared_task_packet",
+                "coordination-parent": "parent_history",
+            }.get(profile, "focused_brief")
+            if profile == "coordination-task-entry":
+                settings["lead_policy"] = "task_entry"
         package_manifest = json.dumps(declared).encode()
         (package / "mod.json").write_bytes(package_manifest)
         (package / "index.ts").write_bytes(body)
@@ -42,7 +53,7 @@ def install_preview(destination, manifest, node, profile):
             "sha256": package_digest(package_manifest, body),
             "enabled": True,
             "capabilities": declared["capabilities"],
-            "settings": PREVIEW_SETTINGS[identifier],
+            "settings": settings,
         })
     (store / "mods.json").write_text(json.dumps(
         {"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": selections}))
@@ -115,7 +126,7 @@ def install_conformance(destination, manifest, node, profile):
         for scope in ("user", "project") if profile == "conformance-conflict" and identifier == "omd_coordination" else ("user",):
             package = destination / f"{identifier}-{scope}"
             package.mkdir()
-            variant = body.replace(b"0.1.0-preview.1'", b"0.1.0-preview.1+project'") if scope == "project" else body
+            variant = body.replace(b"0.1.0-preview.2'", b"0.1.0-preview.2+project'") if scope == "project" else body
             (package / "mod.json").write_bytes(declared)
             (package / "index.ts").write_bytes(variant)
             selections.append({
@@ -176,7 +187,7 @@ def install(destination, manifest, node, profile):
         return install_exercise(destination, manifest, node, profile)
     if profile.startswith("conformance"):
         return install_conformance(destination, manifest, node, profile)
-    if profile.startswith("preview"):
+    if profile.startswith("preview") or profile.startswith("coordination"):
         return install_preview(destination, manifest, node, profile)
     package = destination / "fixture-mod"
     package.mkdir()
@@ -455,6 +466,14 @@ def verify_preview(destination, requests, profile, scenario):
         assert any(provenance in json.dumps(request["body"]["input"]) for request in lead), \
             "the healthy mod stopped contributing after the other one broke"
         return
+    if profile == "coordination-broken":
+        assert "COORDINATION_BROKEN_SENTINEL" in (errors.get("omd_coordination") or ""), errors
+        assert "index.ts:" in errors["omd_coordination"], "the broken coordination error is not source-located"
+        context = json.loads((destination / "evidence/context.json").read_text())
+        assert context["context"]["policy"] == "focused_brief", context
+        assert context["worker_context"]["policy"] == "native_fallback", context
+        assert context["worker_context"]["provenance"]["owner"]["kind"] == "bundled", context
+        return
     if profile == "preview-denied":
         outputs = [item for request in requests for item in request["body"].get("input", [])
                    if item.get("type") == "function_call_output" and item.get("call_id") == "preview-delegate"]
@@ -469,12 +488,21 @@ def verify_preview(destination, requests, profile, scenario):
         "the coordination brief never reached the lead"
     decisions = json.loads((destination / "mod-store/state-omd_coordination.json").read_text())["value"]
     delegation = next((item for item in decisions if item.get("operation") == "delegate"), None)
-    assert delegation == {"operation": "delegate", "policy": "focused", "selected": ["solution.py"]}, decisions
+    expected_policy = {
+        "coordination-shared": "shared_task_packet",
+        "coordination-parent": "parent_history",
+    }.get(profile, "focused_brief")
+    expected_selected = ["solution.py"] if expected_policy == "focused_brief" else []
+    assert delegation == {"operation": "delegate", "policy": expected_policy, "selected": expected_selected}, decisions
+    context = json.loads((destination / "evidence/context.json").read_text())
+    assert context["worker_context"]["value"] == expected_policy, context
+    assert context["worker_context"]["provenance"]["owner"]["id"] == "omd_coordination", context
     if scenario == "success":
         worker = json.dumps([request["body"] for request in requests
                              if request["native_owner"].startswith("contributor")])
-        assert provenance in worker, "the policy provenance did not reach the worker"
-        assert "return a - b" in worker, "the declared evidence did not reach the worker"
+        assert (provenance in worker) == (expected_policy != "shared_task_packet"), \
+            "the worker-context payload did not match the selected policy"
+        assert ("return a - b" in worker) == (expected_policy == "focused_brief"), "focused evidence selection drifted"
         assert "tracked user notes" not in worker, "evidence outside the declared policy reached the worker"
     activity = json.loads((destination / "mod-store/state-omd_workspace.json").read_text())["value"]["activity"]
     assert any(entry.startswith("▸ turn") for entry in activity), activity
@@ -567,6 +595,8 @@ def verify(destination, requests, profile, scenario="success"):
         return verify_exercise(destination, requests, profile, scenario)
     if profile.startswith("conformance"):
         return verify_conformance(destination, requests, profile, scenario)
+    if profile.startswith("coordination"):
+        return verify_preview(destination, requests, profile, scenario)
     if profile.startswith("preview"):
         return verify_preview(destination, requests, profile, scenario)
     if profile == "lifecycle":

@@ -149,6 +149,8 @@ struct Manifest {
     lead_policy: LeadPolicy,
     leads: LeadRoutes,
     context_policy: WorkerContextPolicy,
+    #[serde(default)]
+    worker_contexts: Vec<WorkerContextPolicy>,
     escalation: EscalationPolicy,
     worker: Route,
     check_command: Vec<String>,
@@ -402,6 +404,24 @@ struct PacketReference {
     sha256: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, serde::Serialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+enum WorkerContextName {
+    FocusedBrief,
+    SharedTaskPacket,
+    ParentHistory,
+}
+
+impl WorkerContextName {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::FocusedBrief => "focused_brief",
+            Self::SharedTaskPacket => "shared_task_packet",
+            Self::ParentHistory => "parent_history",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 enum WorkerContextPolicy {
@@ -418,11 +438,11 @@ enum WorkerContextPolicy {
 }
 
 impl WorkerContextPolicy {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> WorkerContextName {
         match self {
-            Self::FocusedBrief { .. } => "focused_brief",
-            Self::SharedTaskPacket { .. } => "shared_task_packet",
-            Self::ParentHistory { .. } => "parent_history",
+            Self::FocusedBrief { .. } => WorkerContextName::FocusedBrief,
+            Self::SharedTaskPacket { .. } => WorkerContextName::SharedTaskPacket,
+            Self::ParentHistory { .. } => WorkerContextName::ParentHistory,
         }
     }
 
@@ -433,6 +453,13 @@ impl WorkerContextPolicy {
             | Self::ParentHistory { max_bytes } => *max_bytes,
         }
     }
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct PolicySelection {
+    policy: String,
+    value: String,
+    provenance: Value,
 }
 
 struct Extension(Arc<Host>);
@@ -452,6 +479,8 @@ struct Host {
     requirements: ContractRequirements,
     contract: std::sync::Mutex<ActiveContract>,
     mod_owners: PolicyOwners,
+    lead_routing: std::sync::Mutex<PolicySelection>,
+    worker_context: std::sync::Mutex<PolicySelection>,
     contribution_started: std::sync::atomic::AtomicBool,
     operation: std::sync::atomic::AtomicBool,
     lead_completed: std::sync::atomic::AtomicBool,
@@ -1337,10 +1366,28 @@ pub fn install(
             "manifest requires canonical source, external evidence, and in-scope scratch".into(),
         );
     }
-    if let WorkerContextPolicy::SharedTaskPacket { packet, .. } = &manifest.context_policy {
-        let canonical = packet.path.canonicalize().map_err(|e| e.to_string())?;
-        if canonical != packet.path || packet.path.starts_with(&manifest.repository) {
-            return Err("shared task packet must be canonical and host-owned".into());
+    let configured_contexts = std::iter::once(&manifest.context_policy)
+        .chain(manifest.worker_contexts.iter())
+        .collect::<Vec<_>>();
+    let context_names = configured_contexts
+        .iter()
+        .map(|policy| policy.name())
+        .collect::<std::collections::BTreeSet<_>>();
+    if context_names.len() != configured_contexts.len()
+        || configured_contexts.iter().any(|policy| {
+            policy.max_bytes() == 0 || policy.max_bytes() > manifest.max_request_bytes
+        })
+    {
+        return Err(
+            "worker context configurations must be distinct and within the request bound".into(),
+        );
+    }
+    for policy in configured_contexts {
+        if let WorkerContextPolicy::SharedTaskPacket { packet, .. } = policy {
+            let canonical = packet.path.canonicalize().map_err(|e| e.to_string())?;
+            if canonical != packet.path || packet.path.starts_with(&manifest.repository) {
+                return Err("shared task packet must be canonical and host-owned".into());
+            }
         }
     }
     let reactive_rules = match (
@@ -1498,10 +1545,29 @@ pub fn install(
         "routing": {
             "lead_policy": manifest.lead_policy.name(),
             "worker_context": manifest.context_policy.name(),
+            "available_worker_contexts": std::iter::once(&manifest.context_policy)
+                .chain(manifest.worker_contexts.iter())
+                .map(|policy| policy.name())
+                .collect::<Vec<_>>(),
         },
         "limits": manifest.limits,
         "task_cost_capture": manifest.evidence.join("task-cost.json"),
     });
+    let native_provenance = json!({"owner": codex_omd::PolicyOwner::bundled()});
+    let native_lead = match &manifest.lead_policy {
+        LeadPolicy::Fixed { lead } => lead.as_str(),
+        LeadPolicy::TaskEntry => "task_entry",
+    };
+    let lead_routing = PolicySelection {
+        policy: manifest.lead_policy.name().into(),
+        value: native_lead.into(),
+        provenance: native_provenance.clone(),
+    };
+    let worker_context = PolicySelection {
+        policy: "native_fallback".into(),
+        value: manifest.context_policy.name().as_str().into(),
+        provenance: native_provenance,
+    };
     let host = Arc::new(Host {
         lsp: lsp_enabled.then(|| {
             let policy = manifest.lsp.as_ref().expect("enabled LSP policy");
@@ -1519,6 +1585,8 @@ pub fn install(
         requirements,
         contract: std::sync::Mutex::new(contract),
         mod_owners,
+        lead_routing: std::sync::Mutex::new(lead_routing),
+        worker_context: std::sync::Mutex::new(worker_context),
         contribution_started: std::sync::atomic::AtomicBool::new(false),
         operation: std::sync::atomic::AtomicBool::new(false),
         lead_completed: std::sync::atomic::AtomicBool::new(false),
@@ -1586,6 +1654,39 @@ impl Host {
         self.manifest.leads.get(lead)
     }
 
+    fn context_policy(&self, name: WorkerContextName) -> Option<&WorkerContextPolicy> {
+        std::iter::once(&self.manifest.context_policy)
+            .chain(self.manifest.worker_contexts.iter())
+            .find(|policy| policy.name() == name)
+    }
+
+    fn available_worker_contexts(&self) -> Vec<WorkerContextName> {
+        std::iter::once(&self.manifest.context_policy)
+            .chain(self.manifest.worker_contexts.iter())
+            .map(WorkerContextPolicy::name)
+            .collect()
+    }
+
+    fn active_worker_context(&self) -> (WorkerContextPolicy, PolicySelection) {
+        let fallback = PolicySelection {
+            policy: "native_fallback".into(),
+            value: self.manifest.context_policy.name().as_str().into(),
+            provenance: json!({"owner": codex_omd::PolicyOwner::bundled()}),
+        };
+        let selection = self
+            .worker_context
+            .lock()
+            .map(|selection| selection.clone())
+            .unwrap_or(fallback);
+        let name = serde_json::from_value::<WorkerContextName>(json!(selection.value))
+            .unwrap_or_else(|_| self.manifest.context_policy.name());
+        let policy = self
+            .context_policy(name)
+            .cloned()
+            .unwrap_or_else(|| self.manifest.context_policy.clone());
+        (policy, selection)
+    }
+
     fn resolve_lead(&self, config: &Config) -> Option<LeadName> {
         let matches = |lead| {
             let route = self.route(lead);
@@ -1593,6 +1694,11 @@ impl Host {
                 && config.model_provider_id == route.provider
                 && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
         };
+        if let Ok(selection) = self.lead_routing.lock()
+            && let Ok(lead) = serde_json::from_value::<LeadName>(json!(selection.value))
+        {
+            return matches(lead).then_some(lead);
+        }
         match self.manifest.lead_policy {
             LeadPolicy::Fixed { lead } => matches(lead).then_some(lead),
             LeadPolicy::TaskEntry => [LeadName::Sol, LeadName::Astra]
@@ -3232,7 +3338,8 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
     }
     fn spec(&self) -> ToolSpec {
         let mut properties = BTreeMap::new();
-        let required = match self.0.host.manifest.context_policy {
+        let (context_policy, _) = self.0.host.active_worker_context();
+        let required = match &context_policy {
             WorkerContextPolicy::FocusedBrief { .. } => {
                 properties.insert(
                     "brief".into(),
@@ -3260,7 +3367,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ContributionTool {
             name: "omd_contribute".into(),
             description: format!(
                 "Delegate one bounded implementation to isolated Muse Contributor using the configured {} context. Host runs configured checks and separate opposite-lead review, rejects conflicts, and integrates only accepted changes. All attempts use the shared task allowance.",
-                self.0.host.manifest.context_policy.name()
+                context_policy.name().as_str()
             ),
             strict: false,
             defer_loading: None,

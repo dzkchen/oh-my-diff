@@ -16,7 +16,8 @@ operation that is not documented here fails `scripts/mod_conformance.py`.
 
 | Decision | Observe | Alter | Replace | Timing | Ownership | Limits |
 | --- | --- | --- | --- | --- | --- | --- |
-| **Lead model, provider and reasoning preset** | `routes.list` returns the host-configured presets | no partial edit; a preset is selected whole | `routing` | thread creation and resume, before the first request of the session | host: the preset table, the fixed/task-entry lead policy and native admission | only host-configured presets; an unauthorized name fails the turn visibly; a fixed host selection wins; arbitrary models, endpoints or credentials are never reachable |
+| **Lead model, provider and reasoning preset** | `routes.list` returns the host-configured presets | no partial edit; a preset is selected whole | `routing` | thread creation and resume, before the first request of the session | mod: fixed/task-entry choice; host: the preset table, exact task-entry match and native admission | only host-configured presets; an unauthorized name or task-entry mismatch retains the native fallback; arbitrary models, endpoints or credentials are never reachable |
+| **Delegated worker context policy** | the configured modes and active native fallback | select one complete configured policy | `worker_context` | thread creation, resume and each turn-boundary reload | mod: focused-brief, shared-packet or parent-history choice; host: configuration and context assembly | only configured bounded policies; invalid, unavailable or broken decisions retain the native fallback; instruction priority, permissions and accounting remain native |
 | **Read-only worker agents: spawn, message, cancel, wait, list, consume** | `agents.list`, `agents.result`, and the `agent_end` event | role, route and prompt of each spawn | no | inside a native tool callback, within the current task | host: worker threads, the worker ledger, permissions, deadlines and the shared allowance | read-only permissions; private handles owned by the spawning mod and generation; recursion, isolation and accounting stay native; handles die with the turn |
 | **Delegated contribution: brief and evidence selection** | the request the model made | brief text and selected evidence before dispatch | `tool_before` (redirects `omd_contribute` to a mod tool) | pre-dispatch, inside the replacing mod tool | host: worker context assembly, review, integration and the recorded result | cannot widen evidence beyond what the host exposes, forge a contribution result, or bypass the native reviewed path |
 | **Review cadence and final review invocation** | the active contract requirements | when review runs and on which candidate | `tool_before` (redirects `omd_complete`) | inside a native tool callback during the task | host: reviewer route, the candidate-bound findings ledger, shared limits and acceptance | no implicit downgrade of the selected contract; evidence and findings stay native; a stale candidate digest fails closed |
@@ -76,6 +77,7 @@ deterministic and composable; the added control per decision is:
 | Decision | Native plugins and hooks today | Added by the mod API |
 | --- | --- | --- |
 | Lead model, provider and reasoning preset | native plugins and hooks cannot change model, provider or reasoning effort at all | exclusive `routing` replacement; no partial edit; a preset is selected whole |
+| Delegated worker context policy | native plugins and hooks can add context but cannot select the bounded delegated-worker context policy | exclusive `worker_context` replacement; select one complete configured policy |
 | Read-only worker agents: spawn, message, cancel, wait, list, consume | native plugins cannot spawn or steer agents; `subagent_start`/`subagent_stop` hooks only observe | role, route and prompt of each spawn |
 | Delegated contribution: brief and evidence selection | `pre_tool_use` can block a tool or rewrite its JSON input, but cannot route it to another implementation | exclusive `tool_before` replacement; brief text and selected evidence before dispatch |
 | Review cadence and final review invocation | no native hook can run or replace a review | exclusive `tool_before` replacement; when review runs and on which candidate |
@@ -146,6 +148,7 @@ Each reference is resolved by `scripts/mod_conformance.py`.
 | Decision or rule | Executable evidence |
 | --- | --- |
 | coordination.lead_route | `rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose` · `fixture:routing/success` · `fixture:conformance/success` |
+| coordination.worker_context | `rust:worker_context_is_exclusive_typed_and_failure_isolated` · `fixture:coordination-focused/success` · `fixture:coordination-shared/success` · `fixture:coordination-parent/success` |
 | coordination.agents | `fixture:full/success` · `fixture:cancel/success` · `rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks` |
 | coordination.delegation | `fixture:conformance/success` · `fixture:preview/success` · `fixture:preview-denied/direct` |
 | coordination.review | `fixture:policy/completion` |

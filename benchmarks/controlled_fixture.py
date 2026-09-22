@@ -26,7 +26,7 @@ def contract_plan(binary, choice):
 
 
 def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None, mod_profile="counter"):
-    policy_mod = mod_profile.startswith(("preview", "conformance", "exercise"))
+    policy_mod = mod_profile.startswith(("preview", "coordination", "conformance", "exercise"))
     context_marker = ("atlas_policy 2.0.0 (paired) assembled turn" if mod_profile.startswith("exercise")
                       else "Coordination policy (omd_coordination" if policy_mod else "MOD_CONTEXT_SENTINEL")
     if mod_node is not None and scenario not in ("direct", "omd-off", "success", "client-loss-resume", "completion", "escalation"):
@@ -65,7 +65,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             if scenario in ("contract-downgrade", "contract-resume") and owner and owner.startswith("contributor-") and not Provider.abrupt_delay_started:
                 Provider.abrupt_delay_started = True
                 time.sleep(30)
-            if scenario == "client-loss-resume" and owner and ((mod_node is None and owner.startswith("contributor-")) or (mod_node is not None and owner.startswith("mod-") and "MOD_ADAPTER" in json.dumps(body))) and not Provider.abrupt_delay_started:
+            if scenario == "client-loss-resume" and owner and ((mod_node is None and owner.startswith("contributor-")) or (mod_node is not None and policy_mod and owner.startswith("contributor-")) or (mod_node is not None and owner.startswith("mod-") and "MOD_ADAPTER" in json.dumps(body))) and not Provider.abrupt_delay_started:
                 Provider.abrupt_delay_started = True
                 time.sleep(30)
             if scenario == "outage-fallback" and owner and owner.startswith("contributor-") and "fallback" not in owner:
@@ -284,6 +284,13 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     if scenario == "direct":
         capabilities.update({"delegation": False, "checkpoints": False, "unified_review": False, "completion_gate": False})
     manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "capabilities": capabilities, "communication": {"concise_user_updates": concise_user_updates, "structured_worker_reports": structured_worker_reports}, "checkpoint": {"objective": "Fix solution.py so add returns the sum while preserving unrelated work.", "acceptance_criteria": ["candidate check passes", "separate review approves the exact candidate", "reviewed candidate integrates without losing unrelated work"], "max_no_progress_calls": 2}, "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"], "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
+    if mod_node is not None and policy_mod:
+        available_contexts = {
+            "focused_brief": {"mode": "focused_brief", "max_bytes": 2000000},
+            "shared_task_packet": {"mode": "shared_task_packet", "max_bytes": 2000000, "packet": {"path": str(task_packet.resolve()), "sha256": hashlib.sha256(task_packet.read_bytes()).hexdigest()}},
+            "parent_history": {"mode": "parent_history", "max_bytes": 2000000},
+        }
+        manifest["worker_contexts"] = [value for name, value in available_contexts.items() if name != context_policy]
     if reactive_rules or scenario == "reactive":
         reactive_source = destination / "reactive-rules.json"
         reactive_source.write_text(json.dumps({"schema": 1, "version": "fixture-reactive-v1", "rules": [{"id": "inspect-command-result", "scope": "lead", "trigger": {"event": "tool_finished", "tool": "exec_command", "outcome": "completed_host_success"}, "instruction": "Inspect the exact command result and exit code before choosing any follow-up.", "max_activations": 1, "max_context_reactivations": 1}, {"id": "inspect-worker-command-result", "scope": "worker", "trigger": {"event": "tool_finished", "tool": "exec_command", "outcome": "completed_host_success"}, "instruction": "Inspect the exact worker command result before reporting completion.", "max_activations": 1, "max_context_reactivations": 1}]}, sort_keys=True))
@@ -446,7 +453,7 @@ enabled = false
             assert Provider.abrupt_delay_started, "Contributor request did not become in-flight"
             first.kill()
             first.communicate(timeout=10)
-            if mod_node is not None:
+            if mod_node is not None and (destination / "adapter-port").exists():
                 import socket
                 port = int((destination / "adapter-port").read_text())
                 deadline = time.monotonic() + 4
@@ -493,18 +500,20 @@ enabled = false
             assert worker_requests, "worker route was not observed"
         if scenario in SOLO_SCENARIOS:
             assert not worker_requests, "solo contract admitted a Contributor route"
+        expected_context = {"coordination-shared": "shared_task_packet", "coordination-parent": "parent_history"}.get(mod_profile, context_policy)
         if worker_requests:
             assert all("GLOBAL_INSTRUCTION_SENTINEL" in json.dumps(request) for request in worker_requests + reviewer_requests), "project instructions were not inherited"
             worker_context = json.dumps(worker_requests)
-            assert ("SHARED_PACKET_SENTINEL" in worker_context) == (context_policy == "shared_task_packet"), "shared packet selection drifted"
-            assert ("PARENT_HISTORY_SENTINEL" in worker_context) == (context_policy == "parent_history"), "parent history selection drifted"
-            assert ("return a - b" in worker_context) == (context_policy == "focused_brief"), "focused evidence selection drifted"
-            assert ("LEAD_ONLY_INSTRUCTION_SENTINEL" in worker_context) == (context_policy == "parent_history"), "parent instruction selection drifted"
+            assert ("SHARED_PACKET_SENTINEL" in worker_context) == (expected_context == "shared_task_packet"), "shared packet selection drifted"
+            assert ("PARENT_HISTORY_SENTINEL" in worker_context) == (expected_context == "parent_history"), "parent history selection drifted"
+            assert ("return a - b" in worker_context) == (expected_context == "focused_brief"), "focused evidence selection drifted"
+            assert ("LEAD_ONLY_INSTRUCTION_SENTINEL" in worker_context) == (expected_context == "parent_history"), "parent instruction selection drifted"
             assert ("required_clarification" in worker_context) == structured_worker_reports, "worker report schema selection drifted"
         lead_context = json.dumps(requests[0]["body"].get("input", []))
         assert ("concise ordinary-language sentences" in lead_context) == concise_user_updates, "user update policy selection drifted"
-        mod_routed = mod_profile == "routing" or (policy_mod and mod_profile != "preview-denied")
-        expected_lead = "gpt-6-astra" if mod_routed and lead_policy == "task_entry" else lead_model
+        mod_routed = mod_profile == "routing" or (policy_mod and mod_profile not in ("preview-denied", "coordination-broken"))
+        task_entry_mod = mod_profile == "coordination-task-entry"
+        expected_lead = lead_model if task_entry_mod else "gpt-6-astra" if mod_routed else lead_model
         effective_lead = {"gpt-5.6-sol": "sol", "gpt-6-astra": "astra"}[expected_lead]
         assert requests[0]["model"] == expected_lead
         if mod_routed:
@@ -660,7 +669,7 @@ enabled = false
                 assert any(event.get("event") == "task_resumed" for event in events)
                 reconciliation = json.loads(next((destination / "evidence").glob("resume-*-reconciliation.json")).read_text())
                 assert reconciliation["workspace"]["current_sha256"] != reconciliation["workspace"]["prior_sha256"]
-                if mod_node is None:
+                if mod_node is None or policy_mod:
                     assert reconciliation["workspace"]["changed_paths"] == ["notes.txt"]
                 else:
                     assert reconciliation["workspace"]["changed_paths"] is None
@@ -716,7 +725,7 @@ enabled = false
             )
             assert status["direct_single_agent"] is True
         if mod_node is not None:
-            expected_marker = scenario != "omd-off" and mod_profile != "preview-denied"
+            expected_marker = scenario != "omd-off" and mod_profile not in ("preview-denied", "coordination-broken")
             assert (context_marker in json.dumps(requests)) == expected_marker
             if scenario != "omd-off":
                 from benchmarks.mod_fixture import verify
@@ -727,7 +736,7 @@ enabled = false
             assert not (destination / "evidence").exists()
         if scenario not in ("direct", "escalation", "reactive") and (destination / "evidence/context.json").exists():
             context_record = json.loads((destination / "evidence/context.json").read_text())
-            assert context_record["context"]["policy"] == context_policy
+            assert context_record["context"]["policy"] == expected_context
             assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == effective_lead
             assert context_record["communication"] == manifest["communication"]
         record = {"status": "pass", "scenario": scenario, "failure_class": failure_class if scenario == "escalation" else None, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "communication": manifest["communication"], "reactive_rules": manifest.get("reactive_rules"), "mods": mod_node is not None, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "escalation_result": escalation_result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
@@ -751,7 +760,7 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
-    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "conformance", "conformance-conflict", "exercise"), default="counter")
+    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "conformance", "conformance-conflict", "exercise"), default="counter")
     args = parser.parse_args()
     print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 

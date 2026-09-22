@@ -76,15 +76,18 @@ Both mods read settings, so the smallest change needs no code:
 OMD_MOD="$OMD_PREFIX/artifacts/omd/omd-mod"
 
 "$OMD_MOD" settings "$OMD_STORE" "$OMD_STORE/sources/omd_workspace" '{"density":"compact","side":"right"}'
-"$OMD_MOD" settings "$OMD_STORE" "$OMD_STORE/sources/omd_coordination" '{"lead_policy":"astra","worker_context":"shared"}'
+"$OMD_MOD" settings "$OMD_STORE" "$OMD_STORE/sources/omd_coordination" '{"lead_policy":"astra","worker_context":"shared_task_packet"}'
 "$OMD_MOD" reload "$OMD_STORE"
 ```
 
 `density`, `side`, `review_prompt` and `syntax` configure the workspace;
-`lead_policy` (`sol`, `astra`, `task_entry`), `worker_context` (`focused`,
-`shared`, `inherit`) and `evidence` configure coordination. Settings and reloads
-take effect at the next turn boundary; the running task, transcript and composer
-are preserved. Routing and compaction decisions apply to the next thread.
+`lead_policy` (`sol`, `astra`, `task_entry`), `worker_context`
+(`focused_brief`, `shared_task_packet`, `parent_history`) and `evidence` configure
+coordination. The shorter `focused`, `shared` and `inherit` values remain accepted
+aliases. Settings and reloads take effect at the next turn boundary; the running
+task, transcript and composer are preserved. Lead routing applies when a thread
+is created or resumed, while worker-context selection is refreshed at each turn
+boundary.
 
 `/omd_workspace:layout compact` and `Alt+w` switch density from inside the TUI
 without touching a file.
@@ -151,9 +154,11 @@ touches the installed build, your Codex state or your manifests.
 - The API is experimental and may change. Only the rows and finite windows in
   [COMPATIBILITY.md](COMPATIBILITY.md) are supported; arbitrary-version session
   or state interchange is not promised.
-- Both packages are a working slice of their first-party migrations, not the
-  finished migrations. Native routing, worker-context policy and the terminal
-  driver remain authoritative and keep running when a mod is missing or broken.
+- The coordination migration is complete: the TypeScript mod owns fixed versus
+  task-entry routing and the delegated-worker context choice. Rust admits only
+  configured routes and bounded context policies, records provenance, and keeps
+  the native policy as the disabled, missing or broken-mod fallback. The terminal
+  package remains a preview migration and its native driver remains available.
 - A mod cannot change permissions, spending grants, credentials, cancellation,
   accounting, workspace integrity, evidence or the selected workflow contract.
 - There is no cost, quality or savings claim here.

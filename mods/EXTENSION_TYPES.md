@@ -12,7 +12,7 @@ contains only the packages labeled `bundled` below.
 
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
-| `omd_coordination@0.1.0-preview.1` | `mod` | `mods/first-party/omd_coordination` | Replaces live task-entry routing, context assembly, delegation interception, and worker coordination while a task is running. |
+| `omd_coordination@0.1.0-preview.2` | `mod` | `mods/first-party/omd_coordination` | Replaces live task-entry routing, context assembly, delegation interception, and worker coordination while a task is running. |
 | `omd_workspace@0.1.0-preview.1` | `mod` | `mods/first-party/omd_workspace` | Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation. |
 
 ## Author examples

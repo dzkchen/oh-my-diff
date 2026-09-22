@@ -124,6 +124,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("tool_before", "interception"),
     ("input", "input"),
     ("routing", "routing"),
+    ("worker_context", "context"),
     ("terminal", "terminal"),
     ("compaction", "compaction"),
     ("start", "lifecycle"),
@@ -148,6 +149,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "tool_before",
     "routing",
+    "worker_context",
     "terminal",
     "compaction",
     "context",
@@ -1714,8 +1716,10 @@ impl ModHost {
                     .iter()
                     .any(|registered| registered == point)
             };
-            if matches!(event, "routing" | "compaction" | "terminal")
-                && !reply.value.is_null()
+            if matches!(
+                event,
+                "routing" | "worker_context" | "compaction" | "terminal"
+            ) && !reply.value.is_null()
                 && !replaces(event)
             {
                 return Err(failure("exclusive_replacement_registration_required"));
@@ -1728,6 +1732,42 @@ impl ModHost {
                     .ok_or_else(|| failure("invalid_context_result"))?;
                 if text.len() > 1024 {
                     return Err(failure("context_limit"));
+                }
+            }
+            if event == "worker_context" && !reply.value.is_null() {
+                let object = reply
+                    .value
+                    .as_object()
+                    .filter(|object| object.len() == 1)
+                    .ok_or_else(|| failure("invalid_worker_context_result"))?;
+                if object
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .is_none_or(|mode| {
+                        !["focused_brief", "shared_task_packet", "parent_history"].contains(&mode)
+                    })
+                {
+                    return Err(failure("invalid_worker_context_result"));
+                }
+            }
+            if event == "routing" && !reply.value.is_null() {
+                let valid = reply
+                    .value
+                    .as_str()
+                    .is_some_and(|route| ["sol", "astra"].contains(&route))
+                    || reply.value.as_object().is_some_and(|object| {
+                        object.len() == 2
+                            && object
+                                .get("route")
+                                .and_then(Value::as_str)
+                                .is_some_and(|route| ["sol", "astra"].contains(&route))
+                            && object
+                                .get("policy")
+                                .and_then(Value::as_str)
+                                .is_some_and(|policy| ["fixed", "task_entry"].contains(&policy))
+                    });
+                if !valid {
+                    return Err(failure("invalid_routing_result"));
                 }
             }
             if event == "tool_before"
@@ -2133,6 +2173,10 @@ impl ModHost {
 
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub fn configuration_sha256(&self) -> &str {
+        &self.configuration_sha256
     }
 
     fn write_installed_service_types(&self) -> Result<()> {

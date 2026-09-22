@@ -365,9 +365,13 @@ impl TurnLifecycleContributor for Mods {
             self.agents.cleanup().await;
             self.services.cleanup().await;
             let runtime = self.runtime.clone();
+            let owner = self.owner.clone();
+            let views = self.views.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 if let Ok(mut runtime) = runtime.lock() {
                     runtime.turn_boundary();
+                    let diagnostic = policy::refresh_worker_context(&mut runtime, &owner);
+                    views.diagnostic(&owner, "coordination_policy", diagnostic);
                 }
             })
             .await;

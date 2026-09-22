@@ -1,11 +1,18 @@
 import type { Json, ModAPI } from '../../api.d.ts';
 
-type ContextPolicy = 'focused' | 'shared' | 'inherit';
+type ContextPolicy = 'focused_brief' | 'shared_task_packet' | 'parent_history';
 type LeadPolicy = 'sol' | 'astra' | 'task_entry';
 
-const CONTEXT_POLICIES: ContextPolicy[] = ['focused', 'shared', 'inherit'];
+const CONTEXT_ALIASES: Record<string, ContextPolicy> = {
+  focused: 'focused_brief',
+  focused_brief: 'focused_brief',
+  shared: 'shared_task_packet',
+  shared_task_packet: 'shared_task_packet',
+  inherit: 'parent_history',
+  parent_history: 'parent_history',
+};
 const LEAD_POLICIES: LeadPolicy[] = ['sol', 'astra', 'task_entry'];
-const VERSION = '0.1.0-preview.1';
+const VERSION = '0.1.0-preview.2';
 
 export default function activate(api: ModAPI) {
   const strings = (value: Json | undefined): string[] =>
@@ -15,7 +22,10 @@ export default function activate(api: ModAPI) {
     allowed.find(value => value === api.settings[key]) ?? fallback;
 
   const leadPolicy = () => choice('lead_policy', LEAD_POLICIES, 'task_entry');
-  const contextPolicy = () => choice('worker_context', CONTEXT_POLICIES, 'focused');
+  const contextPolicy = (): ContextPolicy =>
+    typeof api.settings.worker_context === 'string'
+      ? CONTEXT_ALIASES[api.settings.worker_context] ?? 'focused_brief'
+      : 'focused_brief';
   const evidence = () => strings(api.settings.evidence).slice(0, 8);
 
   const provenance = () =>
@@ -32,22 +42,29 @@ export default function activate(api: ModAPI) {
     return { denied: error.message, policy: provenance() };
   };
 
-  api.replace('routing', ({ routes, model }) => {
+  api.replace('routing', ({ routes, model, provider, reasoning }) => {
     const policy = leadPolicy();
     const selected =
       policy === 'task_entry'
-        ? routes.find(route => route.model === model)
+        ? routes.find(
+            route => route.model === model && route.provider === provider && route.reasoning === reasoning,
+          )
         : routes.find(route => route.name === policy);
-    return selected?.name ?? null;
+    return selected ? { route: selected.name, policy: policy === 'task_entry' ? 'task_entry' : 'fixed' } : null;
+  });
+
+  api.replace('worker_context', ({ available }) => {
+    const mode = contextPolicy();
+    return available.includes(mode) ? { mode } : null;
   });
 
   api.replace('context', () => {
     const policy = contextPolicy();
     const selected = evidence();
     const rules: Record<ContextPolicy, string> = {
-      focused: `Workers receive a focused brief plus only these paths: ${selected.join(', ') || 'none declared'}.`,
-      shared: 'Workers receive the host-owned shared task packet; model-authored evidence is dropped.',
-      inherit: 'Workers inherit the bounded parent history the host supplies; no extra evidence is selected.',
+      focused_brief: `Workers receive a focused brief plus only these paths: ${selected.join(', ') || 'none declared'}.`,
+      shared_task_packet: 'Workers receive the host-owned shared task packet; model-authored evidence is dropped.',
+      parent_history: 'Workers inherit the bounded parent history the host supplies; no extra evidence is selected.',
     };
     return {
       text: `Coordination policy (${provenance()}). ${rules[policy]} Delegate with omd_contribute; this policy rewrites its evidence selection before the native reviewed contribution runs. Native permissions, limits, review and accounting stay authoritative.`,
@@ -71,7 +88,7 @@ export default function activate(api: ModAPI) {
       const declared = evidence();
       const requested = strings(request.selected_evidence);
       const selected =
-        policy === 'focused'
+        policy === 'focused_brief'
           ? declared.length
             ? requested.filter(path => declared.includes(path))
             : requested
@@ -80,6 +97,8 @@ export default function activate(api: ModAPI) {
       api.progress(`worker context: ${policy}`);
       remember({ operation: 'delegate', policy, selected });
       try {
+        if (policy === 'shared_task_packet') return api.host.call('delegation.contribute', {});
+        if (policy === 'parent_history') return api.host.call('delegation.contribute', { brief });
         return api.host.call('delegation.contribute', { brief, selected_evidence: selected });
       } catch (error) {
         return failed(error);

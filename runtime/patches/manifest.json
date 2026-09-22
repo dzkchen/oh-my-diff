@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "a5729ac7560411749405ad1194d39367a132a2a81e9c42808f68b1907f529f40"
+    "sha256": "f21265c7e9061717f25554959e50f4b3955fbadc5095f74d6f3bcfd3493bce9b"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -133,7 +133,7 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "f3b4aa5f073029940e198148c2d2f1d83a02027837b434e9dafe739af8f1e490"
+      "after": "71bea819506855f49db872c3533bab09f3f08579d2d9608f6ef655b75bc0124a"
     },
     "codex-rs/ext/omd/src/execution_tests.rs": {
       "before": null,
@@ -141,11 +141,11 @@
     },
     "codex-rs/ext/omd/src/lib.rs": {
       "before": null,
-      "after": "acc65bbdcc39619a2ceac3a6429376404c6abc80374d3d24eea41d3f1b5fb90b"
+      "after": "0d28d81a57ce318a9d302fe32096a79f45bc7a3ed582571b19f12a9e90e86123"
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "0a3dcab73231dced5b2eb64531e1213e3b04497666d55e56658d8e0742866069"
+      "after": "c19beb7512ea12e9f9ad6dfa7f9d6c3b5d8e24e712c6db43e08091deddf77017"
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
@@ -157,7 +157,7 @@
     },
     "codex-rs/ext/omd/src/mods/policy.rs": {
       "before": null,
-      "after": "9078a9b5e3f6af32648c4844f7c5636bfee28edfd41dd13b18796996622ef5f4"
+      "after": "760ae2972e500cbd2f03030d7f5cfc0e0f839aefd159a03c22b58029548050c6"
     },
     "codex-rs/ext/omd/src/mods/services.rs": {
       "before": null,
@@ -293,7 +293,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "461473c19a235d7069f88bee2acf739ddfcff5e38b4e0574eeda263e30c16af4"
+      "after": "d4d142b64a9b071ec268fc41c44e2bc6e1d7679caeec253d56ecb13c8939430e"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -329,7 +329,7 @@
     },
     "codex-rs/omd/src/mods/runner.mjs": {
       "before": null,
-      "after": "dd0e4478beb6c3c47823e6885484832f950e85066934d1f58659e98c64990384"
+      "after": "7675941bb956d5cfb4267e06965c9110dfcc611cb4bc2df322168ffa22fe3185"
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
@@ -385,7 +385,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "1a3ea77827653682325f4b58d7fa61eb190a3ed4b4066fb02497dfe6f784361a"
+      "after": "9040f096950af71e224e8a6f9dbd46bcc54d0885d9f88681eed2f7c7389e706d"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,

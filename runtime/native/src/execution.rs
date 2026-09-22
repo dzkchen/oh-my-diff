@@ -404,8 +404,10 @@ pub(super) fn protected_paths(manifest: &Manifest) -> Vec<PathBuf> {
     if let Some(policy) = &manifest.knowledge {
         paths.push(policy.store.clone());
     }
-    if let WorkerContextPolicy::SharedTaskPacket { packet, .. } = &manifest.context_policy {
-        paths.push(packet.path.clone());
+    for policy in std::iter::once(&manifest.context_policy).chain(manifest.worker_contexts.iter()) {
+        if let WorkerContextPolicy::SharedTaskPacket { packet, .. } = policy {
+            paths.push(packet.path.clone());
+        }
     }
     paths
 }
@@ -1574,7 +1576,8 @@ pub async fn contribute(
         )?;
     }
     let base_ref = host.evidence("base.json", &serde_json::to_value(&base).map_err(error)?)?;
-    let context = build_context(&manifest.context_policy, request, call, &base)?;
+    let (context_policy, context_selection) = host.active_worker_context();
+    let context = build_context(&context_policy, request, call, &base)?;
     let parent_thread = manager.get_thread(lead.thread).await.map_err(error)?;
     let instruction_sources = parent_thread
         .instruction_sources()
@@ -1590,6 +1593,8 @@ pub async fn contribute(
             "schema": 1,
             "context": context.provenance,
             "lead_policy": manifest.lead_policy.name(),
+            "lead_routing": host.lead_routing.lock().map_err(|_| "lead routing lock poisoned")?.clone(),
+            "worker_context": context_selection,
             "selected_lead": {"name": lead.route.as_str(), "provider": host.route(lead.route).provider, "model": host.route(lead.route).model, "reasoning_effort": host.route(lead.route).reasoning_effort},
             "reviewer": {"name": reviewer_name.as_str(), "provider": reviewer_route.provider, "model": reviewer_route.model, "reasoning_effort": reviewer_route.reasoning_effort},
             "worker": {"provider": manifest.worker.provider, "model": manifest.worker.model, "reasoning_effort": manifest.worker.reasoning_effort},

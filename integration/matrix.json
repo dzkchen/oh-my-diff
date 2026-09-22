@@ -79,7 +79,7 @@
       "name": "omd_coordination",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_coordination)",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "capabilities": [
         "agents",
         "commands",
@@ -95,11 +95,12 @@
       "status": "supported",
       "fixtures": [
         "python:test_first_party_mods_use_only_the_published_api",
-        "fixture:preview/success",
-        "fixture:conformance/success"
+        "fixture:coordination-focused/success",
+        "fixture:coordination-task-entry/success",
+        "fixture:coordination-broken/success"
       ],
-      "limitations": "Preview package on the published API only; it does not replace the native coordination, review or completion policy, which stays authoritative.",
-      "removal": "Disable it in the mod store; the native policy continues unchanged and no state migration is required."
+      "limitations": "Owns lead-policy and delegated-worker-context selection through the published API; Rust still owns configured-route admission, context assembly and bounds, instructions, permissions, review, completion and accounting.",
+      "removal": "Disable it in the mod store; the manifest's native lead and worker-context policies resume without a state migration."
     },
     {
       "id": "omd_workspace",

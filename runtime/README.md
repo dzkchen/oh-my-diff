@@ -124,15 +124,18 @@ dispatch. Escalation reuses the task's remaining request, exposure, time, and
 permission limits; it does not widen access or reset an allowance. The returned
 advice does not edit or integrate files, so the original lead retains task ownership.
 
-The manifest configures lead routing and worker context independently. `lead_policy`
-is either fixed to `sol` or `astra`, or `task_entry`, which admits the exact configured
-model, provider, and reasoning effort selected at task entry. Both lead routes remain
-explicit in `leads`; the non-lead route performs final review. `context_policy` selects
-one bounded mode: a lead-authored focused brief plus named files from the admitted
-snapshot, an immutable host-owned shared task packet bound by SHA256, or the exact
-parent history plus a bounded assignment. `context.json` records the selected policy,
-content hashes, effective-permission hash, instruction sources, authorization binding,
-and all selected routes.
+The manifest configures native fallback lead routing and worker context independently.
+The first-party TypeScript coordination mod selects fixed `sol`/`astra` or exact
+`task_entry` routing and one configured `focused_brief`, `shared_task_packet`, or
+`parent_history` worker policy. Rust still admits only a complete configured route,
+including its provider and reasoning effort, and assembles the selected bounded
+context: a lead-authored brief plus named files from the admitted snapshot, an
+immutable host-owned packet bound by SHA256, or the exact parent history plus a
+bounded assignment. Missing, disabled, invalid or broken mod decisions retain the
+manifest's native `lead_policy` and `context_policy`. `context.json` records both
+effective decisions with owner, package digest, configuration digest and generation,
+plus content hashes, effective-permission hash, instruction sources, authorization
+binding and all selected routes.
 
 `limits.max_depth` and `limits.max_reassessments` apply across the native tree.
 Each supported Sol/Astra descendant is enrolled with its parent and depth before

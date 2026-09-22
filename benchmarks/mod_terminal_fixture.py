@@ -183,11 +183,11 @@ def drain(fd, output, duration):
         output.extend(chunk)
 
 
-def drain_until(fd, output, needle, timeout):
+def drain_until(fd, output, needle, timeout, start=0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         drain(fd, output, 0.2)
-        if needle in output:
+        if needle in output[start:]:
             return True
     return False
 
@@ -289,6 +289,7 @@ def run_preview():
         route["responses_url"] = url + "/responses"
     manifest["limits"]["requests"] = 40
     manifest["checkpoint"]["max_no_progress_calls"] = 16
+    manifest["worker_contexts"] = [{"mode": "parent_history", "max_bytes": manifest["max_request_bytes"]}]
     install(root, manifest, NODE, "preview")
     manifest_path.write_text(json.dumps(manifest))
     store = root / "mod-store"
@@ -319,10 +320,11 @@ def run_preview():
     checks = {}
 
     def command(text, needle, timeout=20):
+        start = len(output)
         os.write(master, b"\x15" + text.encode())
         drain(master, output, 0.6)
         os.write(master, b"\r")
-        return drain_until(master, output, needle, timeout)
+        return drain_until(master, output, needle, timeout, start)
 
     checks["first_use_workspace"] = drain_until(master, output, b"Oh My Diff workspace", 20)
     checks["task_panel"] = drain_until(master, output, b"PTY terminal", 5)
@@ -330,6 +332,17 @@ def run_preview():
     checks["coordination_policy_visible"] = command("/omd_coordination:policy", b"worker context focused")
     checks["ordinary_turn"] = command("PREVIEW_TASK inspect the sample file", b"PTY_DONE", 40)
     checks["lifecycle_recorded"] = command("/omd_workspace:activity", b"turn ")
+    coordination = root / "omd_coordination"
+    omd_mod = BINARY.parent / "omd-mod"
+    changed = subprocess.run(
+        [str(omd_mod), "settings", str(store), str(coordination), json.dumps({"lead_policy": "astra", "worker_context": "parent_history", "evidence": ["solution.py"]})],
+        capture_output=True,
+    )
+    reloaded = subprocess.run([str(omd_mod), "reload", str(store)], capture_output=True)
+    checks["coordination_settings_changed"] = changed.returncode == 0 and reloaded.returncode == 0
+    checks["coordination_reload_turn"] = command("PREVIEW_COORDINATION_RELOAD", b"PTY_DONE", 40)
+    checks["coordination_reload_applied"] = command("/omd_coordination:policy", b"worker context parent_history")
+    checks["session_preserved_across_coordination_reload"] = b"PREVIEW_TASK inspect the sample file" in bytes(output)
     checks["customized_density"] = command("/omd_workspace:layout full", b"density is now full")
     checks["customized_panels"] = command("PREVIEW_FULL_DENSITY", b"Allowance", 40)
     os.write(master, b"\x1bw")
@@ -353,7 +366,6 @@ def run_preview():
     checks["native_ui_usable_after_failure"] = command("/omd", b"Close inspector", 15)
     os.write(master, b"\x1b")
     drain(master, output, 0.5)
-    omd_mod = BINARY.parent / "omd-mod"
     subprocess.run([str(omd_mod), "disable", str(store), str(workspace)], capture_output=True)
     subprocess.run([str(omd_mod), "reload", str(store)], capture_output=True)
     checks["disable_restores_native_terminal"] = command("PREVIEW_DISABLED", b"PTY_DONE", 40)
@@ -483,10 +495,11 @@ def run_extensions(inline=False):
         checks["footer"] = drain_until(master, output, b"PTY_FOOTER", 5)
 
     def command(text, needle, timeout=15):
+        start = len(output)
         os.write(master, b"\x15" + text.encode())
         drain(master, output, 0.6)
         os.write(master, b"\r")
-        return drain_until(master, output, needle, timeout)
+        return drain_until(master, output, needle, timeout, start)
 
     checks["namespaced_command"] = command("/fixture:hello world", b"PTY_HELLO world")
     checks["bare_alias"] = command("/hello again", b"PTY_HELLO again")

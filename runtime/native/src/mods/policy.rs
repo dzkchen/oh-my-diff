@@ -7,6 +7,82 @@ use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
+fn mod_provenance(runtime: &codex_omd::ModHost, id: &str) -> Value {
+    let owner = runtime
+        .owners()
+        .into_iter()
+        .find_map(|(candidate, owner)| (candidate == id).then_some(owner));
+    json!({
+        "owner": owner,
+        "configuration_sha256": runtime.configuration_sha256(),
+        "generation": runtime.generation(),
+    })
+}
+
+fn native_worker_context(owner: &Host) -> PolicySelection {
+    PolicySelection {
+        policy: "native_fallback".into(),
+        value: owner.manifest.context_policy.name().as_str().into(),
+        provenance: json!({"owner": codex_omd::PolicyOwner::bundled()}),
+    }
+}
+
+pub(super) fn refresh_worker_context(
+    runtime: &mut codex_omd::ModHost,
+    owner: &Host,
+) -> Option<String> {
+    let fallback = native_worker_context(owner);
+    let available = owner.available_worker_contexts();
+    let active = owner
+        .worker_context
+        .lock()
+        .map(|selection| selection.value.clone())
+        .unwrap_or_else(|_| fallback.value.clone());
+    let payload = json!({
+        "available": available,
+        "native_fallback": owner.manifest.context_policy.name(),
+        "active": active,
+    });
+    let mut selected = None;
+    let mut diagnostic = None;
+    for (id, result) in runtime.event("worker_context", payload) {
+        match result {
+            Ok(value) if value.is_null() => {}
+            Ok(value) => {
+                let parsed = value["mode"]
+                    .as_str()
+                    .and_then(|mode| serde_json::from_value::<WorkerContextName>(json!(mode)).ok());
+                match parsed.filter(|mode| available.contains(mode)) {
+                    Some(mode) if selected.is_none() => {
+                        selected = Some(PolicySelection {
+                            policy: "mod".into(),
+                            value: mode.as_str().into(),
+                            provenance: mod_provenance(runtime, &id),
+                        });
+                    }
+                    Some(_) => diagnostic = Some("mod_worker_context_conflict".into()),
+                    None => {
+                        diagnostic = Some(format!(
+                            "mod_worker_context_not_configured: {id}; native fallback retained"
+                        ));
+                    }
+                }
+            }
+            Err(error) => {
+                diagnostic = Some(format!(
+                    "mod_worker_context_failed: {id}: {error}; native fallback retained"
+                ));
+            }
+        }
+    }
+    if let Ok(mut current) = owner.worker_context.lock() {
+        *current = selected.unwrap_or(fallback);
+    } else {
+        diagnostic = Some("worker_context_lock_poisoned".into());
+    }
+    diagnostic
+}
+
 impl codex_extension_api::ConfigContributor<Config> for Mods {
     fn prepare_thread_config(&self, config: &mut Config) -> Result<(), String> {
         if !self.owner.manifest.mod_secret_refs.is_empty() || self.owner.manifest.mods.is_some() {
@@ -56,10 +132,7 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
                 ))
                 .map_err(|e| e.to_string())?;
         }
-        let choices: Vec<LeadName> = match self.owner.manifest.lead_policy {
-            LeadPolicy::Fixed { lead } => vec![lead],
-            LeadPolicy::TaskEntry => vec![LeadName::Sol, LeadName::Astra],
-        };
+        let choices = [LeadName::Sol, LeadName::Astra];
         let routes = choices.iter().map(|name| {
             let route = self.owner.route(*name);
             json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
@@ -131,23 +204,80 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             }
             selected_compaction = Some((id, limit, prompt));
         }
-        let values = runtime.event("routing", json!({"routes":routes,"model":config.model,"provider":config.model_provider_id,"reasoning":config.model_reasoning_effort}));
-        let mut selected = None;
+        let entry = choices.iter().copied().find(|name| {
+            let route = self.owner.route(*name);
+            config.model.as_deref() == Some(route.model.as_str())
+                && config.model_provider_id == route.provider
+                && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
+        });
+        let native = match self.owner.manifest.lead_policy {
+            LeadPolicy::Fixed { lead } => ("fixed", Some(lead)),
+            LeadPolicy::TaskEntry => ("task_entry", entry),
+        };
+        let values = runtime.event(
+            "routing",
+            json!({
+                "routes":routes,
+                "model":config.model,
+                "provider":config.model_provider_id,
+                "reasoning":config.model_reasoning_effort,
+                "native_fallback":{"policy":native.0,"route":native.1},
+            }),
+        );
+        let mut selected: Option<(LeadName, String, String)> = None;
+        let mut routing_diagnostic = None;
         for (id, result) in values {
-            let value = result.map_err(|e| format!("mod_routing_failed: {id}: {e}"))?;
+            let value = match result {
+                Ok(value) => value,
+                Err(error) => {
+                    routing_diagnostic = Some(format!(
+                        "mod_routing_failed: {id}: {error}; native fallback retained"
+                    ));
+                    continue;
+                }
+            };
             if value.is_null() {
                 continue;
             }
             if selected.is_some() {
-                return Err("mod_routing_conflict".into());
+                routing_diagnostic = Some("mod_routing_conflict; native fallback retained".into());
+                selected = None;
+                break;
             }
-            let name: LeadName = serde_json::from_value(value).map_err(|e| e.to_string())?;
-            if !choices.contains(&name) {
-                return Err("route_not_authorized_by_selected_policy".into());
+            let (name, policy) = if let Some(name) = value.as_str() {
+                (
+                    serde_json::from_value(json!(name)).map_err(|e| e.to_string())?,
+                    "fixed".to_owned(),
+                )
+            } else {
+                let object = value.as_object().ok_or("invalid_routing_decision")?;
+                if object.len() != 2 {
+                    return Err("invalid_routing_decision".into());
+                }
+                let name = serde_json::from_value(
+                    object
+                        .get("route")
+                        .cloned()
+                        .ok_or("invalid_routing_decision")?,
+                )
+                .map_err(|e| e.to_string())?;
+                let policy = object
+                    .get("policy")
+                    .and_then(Value::as_str)
+                    .filter(|policy| ["fixed", "task_entry"].contains(policy))
+                    .ok_or("invalid_routing_decision")?
+                    .to_owned();
+                (name, policy)
+            };
+            if !choices.contains(&name) || policy == "task_entry" && entry != Some(name) {
+                routing_diagnostic = Some(format!(
+                    "mod_route_not_authorized: {id}; native fallback retained"
+                ));
+                continue;
             }
-            selected = Some(name);
+            selected = Some((name, policy, id));
         }
-        if let Some(name) = selected {
+        if let Some((name, policy, id)) = selected {
             let route = self.owner.route(name);
             config.model = Some(route.model.clone());
             config.model_provider_id = route.provider.clone();
@@ -157,8 +287,27 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
                 .cloned()
                 .ok_or("configured_provider_missing")?;
             config.model_reasoning_effort = Some(route.reasoning_effort.clone());
+            if let Ok(mut active) = self.owner.lead_routing.lock() {
+                *active = PolicySelection {
+                    policy,
+                    value: name.as_str().into(),
+                    provenance: mod_provenance(&runtime, &id),
+                };
+            }
+        } else if let Ok(mut active) = self.owner.lead_routing.lock() {
+            *active = PolicySelection {
+                policy: native.0.into(),
+                value: native.1.map(LeadName::as_str).unwrap_or("unmatched").into(),
+                provenance: json!({"owner": codex_omd::PolicyOwner::bundled()}),
+            };
         }
+        let worker_diagnostic = refresh_worker_context(&mut runtime, &self.owner);
         drop(runtime);
+        self.views.diagnostic(
+            &self.owner,
+            "coordination_policy",
+            routing_diagnostic.or(worker_diagnostic),
+        );
         let key = "compaction_prompt";
         match selected_compaction {
             Some((id, _, Some(prompt))) => {

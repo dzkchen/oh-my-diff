@@ -304,7 +304,8 @@ a later reload is transactional, so a broken edit keeps the previous working set
 loaded and shows the reason once.
 
 `api.on` observes lifecycle or contributes context. `api.replace` exclusively
-claims `routing`, `compaction`, `context`, `tool_before`, `terminal`, or `input`.
+claims `routing`, `worker_context`, `compaction`, `context`, `tool_before`,
+`terminal`, or `input`.
 Duplicate replacement claims fail before activation. Other callbacks run in
 lexicographic mod-ID order. Multiple tool argument replacements fail closed;
 denial wins over execution. Replacement tools pass through ordinary native
@@ -328,8 +329,11 @@ explicitly. Cancellation, turn completion, disable/reload boundaries, and shutdo
 release workers; unused completed results are recorded as discarded and replay as such on resume. Callback failure immediately releases the failed mod's agents and services.
 
 Routing selects among the host's Sol/Astra presets when creating/resuming a lead
-thread; a fixed host selection takes precedence. Agents select a preset on each
-spawn. Each preset includes its provider, model, and reasoning setting. Compaction
+thread; a task-entry selection must exactly match the configured model, provider and
+reasoning effort. `worker_context` selects one configured bounded delegated-worker
+policy and refreshes at turn-boundary reload. Invalid or failed decisions keep the
+native manifest fallback. Agents select a preset on each spawn. Each preset includes
+its provider, model, and reasoning setting. Compaction
 replacement returns a threshold or `{threshold, prompt}` at thread creation. The
 threshold stays bounded by the host's configured threshold/window. The prompt
 replaces the native summarization prompt only when the final route uses native

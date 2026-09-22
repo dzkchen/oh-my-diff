@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_coordination",
-  "version": "0.1.0-preview.1",
+  "version": "0.1.0-preview.2",
   "api": "0.1.0-experimental.6",
   "state_version": 1,
   "capabilities": [
@@ -15,5 +15,25 @@
     "state",
     "task",
     "tools"
-  ]
+  ],
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "lead_policy": {
+        "type": "string",
+        "enum": ["sol", "astra", "task_entry"],
+        "default": "task_entry"
+      },
+      "worker_context": {
+        "type": "string",
+        "enum": ["focused", "focused_brief", "shared", "shared_task_packet", "inherit", "parent_history"],
+        "default": "focused_brief"
+      },
+      "evidence": {
+        "type": "array",
+        "default": []
+      }
+    },
+    "additionalProperties": false
+  }
 }

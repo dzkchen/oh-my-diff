@@ -35,6 +35,10 @@ export interface ToolSpec {
 export interface Context { thread_id: string; turn_id: string; checkpoint: Json }
 export interface ContextResult { text: string }
 export interface Route { name: 'sol' | 'astra'; model: string; provider: string; reasoning: string }
+export type LeadRoutingDecision = 'sol' | 'astra' | { route: 'sol' | 'astra'; policy: 'fixed' | 'task_entry' } | null;
+export type WorkerContextMode = 'focused_brief' | 'shared_task_packet' | 'parent_history';
+export interface WorkerContextInput { available: WorkerContextMode[]; native_fallback: WorkerContextMode; active: WorkerContextMode }
+export interface WorkerContextDecision { mode: WorkerContextMode }
 export interface Agent { handle: string; route: string; permissions: 'read_only' }
 export type AgentResult = { status: 'running' } | { status: 'failed'; error: string } | { status: 'completed'; text: string; consumed: boolean };
 export type Letter = 'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'i'|'j'|'k'|'l'|'m'|'n'|'o'|'p'|'q'|'r'|'s'|'t'|'u'|'v'|'w'|'x'|'y'|'z';
@@ -118,7 +122,8 @@ export interface HostOperations {
 export interface Events {
   context: { input: Context; output: ContextResult | null };
   migrate: { input: { from: number; to: number }; output: void };
-  routing: { input: { routes: Route[]; model: string | null; provider: string; reasoning: string | null }; output: 'sol' | 'astra' | null };
+  routing: { input: { routes: Route[]; model: string | null; provider: string; reasoning: string | null; native_fallback?: { policy: 'fixed' | 'task_entry'; route: 'sol' | 'astra' | null } }; output: LeadRoutingDecision };
+  worker_context: { input: WorkerContextInput; output: WorkerContextDecision | null };
   compaction: { input: { token_limit: number | null; context_window: number | null }; output: CompactionDecision };
   input: { input: { text: string; attachments: number }; output: InputDecision };
   tool_before: { input: { tool: string; arguments: Json; call_id: string }; output: { deny: string } | { arguments: Json; tool?: string } | null };
@@ -150,7 +155,7 @@ export interface ModAPI {
   readonly services: { call<T extends Json = Json>(name: string, method: string, input?: Json): T };
   on<K extends keyof Events>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   middleware<K extends 'model_request' | 'response_stream' | 'prompt' | 'session' | 'agent' | 'tool_call' | 'tool_result' | 'host_operation'>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
-  replace<K extends 'context' | 'routing' | 'compaction' | 'tool_before' | 'terminal' | 'input'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  replace<K extends 'context' | 'routing' | 'worker_context' | 'compaction' | 'tool_before' | 'terminal' | 'input'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   contract(definition: WorkflowContract): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;
   tool(spec: ToolSpec, handler: (arguments_: Json) => Json | Promise<Json>): void;

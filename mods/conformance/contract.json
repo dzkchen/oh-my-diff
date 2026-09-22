@@ -11,8 +11,8 @@
       "alter": "no partial edit; a preset is selected whole",
       "replace": "routing",
       "timing": "thread creation and resume, before the first request of the session",
-      "ownership": "host: the preset table, the fixed/task-entry lead policy and native admission",
-      "limits": "only host-configured presets; an unauthorized name fails the turn visibly; a fixed host selection wins; arbitrary models, endpoints or credentials are never reachable",
+      "ownership": "mod: fixed/task-entry choice; host: the preset table, exact task-entry match and native admission",
+      "limits": "only host-configured presets; an unauthorized name or task-entry mismatch retains the native fallback; arbitrary models, endpoints or credentials are never reachable",
       "native": "native plugins and hooks cannot change model, provider or reasoning effort at all",
       "covers": {
         "capabilities": [
@@ -32,6 +32,37 @@
         "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose",
         "fixture:routing/success",
         "fixture:conformance/success"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "coordination.worker_context",
+      "group": "coordination",
+      "decision": "Delegated worker context policy",
+      "observe": "the configured modes and active native fallback",
+      "alter": "select one complete configured policy",
+      "replace": "worker_context",
+      "timing": "thread creation, resume and each turn-boundary reload",
+      "ownership": "mod: focused-brief, shared-packet or parent-history choice; host: configuration and context assembly",
+      "limits": "only configured bounded policies; invalid, unavailable or broken decisions retain the native fallback; instruction priority, permissions and accounting remain native",
+      "native": "native plugins and hooks can add context but cannot select the bounded delegated-worker context policy",
+      "covers": {
+        "capabilities": [
+          "context"
+        ],
+        "events": [
+          "worker_context"
+        ],
+        "replacements": [
+          "worker_context"
+        ],
+        "operations": []
+      },
+      "evidence": [
+        "rust:worker_context_is_exclusive_typed_and_failure_isolated",
+        "fixture:coordination-focused/success",
+        "fixture:coordination-shared/success",
+        "fixture:coordination-parent/success"
       ],
       "replace_note": null
     },

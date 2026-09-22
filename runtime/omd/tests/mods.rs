@@ -1894,6 +1894,33 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
         Some("fixture")
     );
 
+    let routes = json!({"routes":[{"name":"sol","model":"m","provider":"p","reasoning":"medium"}],
+        "model":null,"provider":"p","reasoning":null});
+    let (temp, _, _) = fixture(
+        "export default api => api.replace('routing', () => ({route:'sol',policy:'task_entry'}))",
+        &["routing"],
+    );
+    let mut runtime = host(&temp);
+    assert_eq!(
+        runtime.event("routing", routes)[0].1.as_ref().unwrap(),
+        &json!({"route":"sol","policy":"task_entry"})
+    );
+
+    let (temp, _, _) = fixture(
+        "export default api => api.replace('routing', () => ({route:'unauthorized',policy:'fixed'}))",
+        &["routing"],
+    );
+    let mut runtime = host(&temp);
+    assert!(
+        runtime.event("routing", json!({}))[0]
+            .1
+            .as_ref()
+            .unwrap_err()
+            .to_string()
+            .contains("invalid_routing_result")
+    );
+    assert!(runtime.status()["mods"][0]["error"].is_string());
+
     let temp = TempDir::new().unwrap();
     composed(&temp, &[("alpha", &[]), ("beta", &[])]);
     let mut runtime = host(&temp);
@@ -1910,6 +1937,66 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
         [json!({"text":"alpha"}), json!({"text":"beta"})]
     );
     assert_eq!(runtime.replacement_owner("context"), None);
+}
+
+#[test]
+fn worker_context_is_exclusive_typed_and_failure_isolated() {
+    let payload = json!({
+        "available":["focused_brief","shared_task_packet","parent_history"],
+        "native_fallback":"focused_brief",
+        "active":"focused_brief"
+    });
+    let (temp, _, _) = fixture(
+        "export default api => api.on('worker_context', () => ({mode:'parent_history'}))",
+        &["context"],
+    );
+    let mut runtime = host(&temp);
+    let results = runtime.event("worker_context", payload.clone());
+    assert!(
+        !results.is_empty(),
+        "{}",
+        runtime.status()
+    );
+    assert!(
+        results[0]
+            .1
+            .as_ref()
+            .unwrap_err()
+            .to_string()
+            .contains("exclusive_replacement_registration_required")
+    );
+
+    let (temp, _, _) = fixture(
+        "export default api => api.replace('worker_context', () => ({mode:'shared_task_packet'}))",
+        &["context"],
+    );
+    let mut runtime = host(&temp);
+    assert_eq!(
+        runtime.event("worker_context", payload.clone())[0]
+            .1
+            .as_ref()
+            .unwrap(),
+        &json!({"mode":"shared_task_packet"})
+    );
+    assert_eq!(
+        runtime.replacement_owner("worker_context").as_deref(),
+        Some("fixture")
+    );
+
+    let (temp, _, _) = fixture(
+        "export default api => api.replace('worker_context', () => ({mode:'unbounded'}))",
+        &["context"],
+    );
+    let mut runtime = host(&temp);
+    assert!(
+        runtime.event("worker_context", payload)[0]
+            .1
+            .as_ref()
+            .unwrap_err()
+            .to_string()
+            .contains("invalid_worker_context_result")
+    );
+    assert!(runtime.status()["mods"][0]["error"].is_string());
 }
 
 #[test]
