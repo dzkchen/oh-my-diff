@@ -12,7 +12,7 @@
   },
   "runtime_patch": {
     "path": "runtime/patches/controlled-contributor.patch",
-    "sha256": "f4a48e40d92b5c3a71fbf28da1dd25e28d135ca3becb48d86f58e8d35f930692"
+    "sha256": "696f676c4c06d77b7d22b0e4af6dd8955593146376985a90b6009a28fbe28d94"
   },
   "private_installation": {
     "manager": "scripts/private_lean_v1.py",
