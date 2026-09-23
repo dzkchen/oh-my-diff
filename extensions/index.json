@@ -10,17 +10,17 @@
   "packages": [
     {
       "id": "omd_coordination",
-      "version": "0.1.0-preview.3",
+      "version": "0.1.0-preview.4",
       "extension_type": "mod",
       "capability": "Live task routing, worker context, and delegation preparation",
       "source": "mods/first-party/omd_coordination",
       "license": "undeclared",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.7; Node 24.18.0",
+      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
       "tested_versions": [
         "Codex 0.155.1",
         "OMD 0.1.0",
-        "mod API 0.1.0-experimental.7",
+        "mod API 0.1.0-experimental.8",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate",
@@ -28,17 +28,17 @@
     },
     {
       "id": "omd_recovery",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "capability": "Failure-aware escalation and delegation dispatch",
       "source": "mods/first-party/omd_recovery",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.7; Node 24.18.0",
+      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
       "tested_versions": [
         "Codex 0.155.1",
         "OMD 0.1.0",
-        "mod API 0.1.0-experimental.7",
+        "mod API 0.1.0-experimental.8",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate",
@@ -46,17 +46,17 @@
     },
     {
       "id": "omd_workspace",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "extension_type": "mod",
       "capability": "Live terminal task and worker workspace",
       "source": "mods/first-party/omd_workspace",
       "license": "undeclared",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.7; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.155.1",
         "OMD 0.1.0",
-        "mod API 0.1.0-experimental.7",
+        "mod API 0.1.0-experimental.8",
         "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate",

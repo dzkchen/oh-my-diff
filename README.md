@@ -27,3 +27,5 @@ include the curated first-party bundle, polished setup, and mod controls.
 [Comparison measurement tools and offline validation](benchmarks/README.md)
 
 [Private Apple Silicon foundation installation and operation](PRIVATE_BUILD.md)
+
+[Local platform-only and Full OMD candidate profiles](LEAN_PROFILES.md)

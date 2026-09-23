@@ -5,7 +5,7 @@
     {
       "path": "mods/first-party/omd_coordination",
       "id": "omd_coordination",
-      "version": "0.1.0-preview.3",
+      "version": "0.1.0-preview.4",
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Replaces live task-entry routing and context assembly, and exports bounded delegation preparation to the recovery policy."
@@ -13,7 +13,7 @@
     {
       "path": "mods/first-party/omd_recovery",
       "id": "omd_recovery",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Replaces live escalation and delegation dispatch with failure classification, eligible-tool, advisory-route, and Contributor-outage choices."
@@ -21,7 +21,7 @@
     {
       "path": "mods/first-party/omd_workspace",
       "id": "omd_workspace",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation."

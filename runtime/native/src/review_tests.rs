@@ -147,6 +147,19 @@ fn review_schema_keeps_typed_findings_and_optional_report_independent() {
 }
 
 #[test]
+fn provider_output_schemas_omit_unsupported_unique_items() {
+    for schema in [
+        worker_report_schema(),
+        review_schema(ReviewReportMode::Plain),
+        review_schema(ReviewReportMode::Structured),
+        completion_schema(ReviewReportMode::Plain),
+        completion_schema(ReviewReportMode::Structured),
+    ] {
+        assert!(!schema.to_string().contains("\"uniqueItems\""));
+    }
+}
+
+#[test]
 fn completion_schema_requires_exact_requirements_and_all_challenge_kinds() {
     let plain = completion_schema(ReviewReportMode::Plain);
     let structured = completion_schema(ReviewReportMode::Structured);

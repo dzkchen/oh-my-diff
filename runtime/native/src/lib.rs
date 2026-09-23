@@ -1,6 +1,7 @@
 mod accounting;
 mod execution;
 mod mods;
+mod platform_mods;
 
 #[cfg(test)]
 #[path = "review_tests.rs"]
@@ -906,8 +907,7 @@ fn string_array_schema(max_items: u32) -> Value {
     json!({
         "type": "array",
         "items": {"type": "string", "minLength": 1},
-        "maxItems": max_items,
-        "uniqueItems": true
+        "maxItems": max_items
     })
 }
 
@@ -951,7 +951,7 @@ fn review_schema(report_mode: ReviewReportMode) -> Value {
         "properties": {
             "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "findings": {"type": "array", "items": finding, "maxItems": 256},
-            "resolved_finding_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 128, "uniqueItems": true}
+            "resolved_finding_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 128}
         },
         "required": ["candidate_sha256", "findings", "resolved_finding_ids"],
         "additionalProperties": false
@@ -973,7 +973,7 @@ fn completion_schema(report_mode: ReviewReportMode) -> Value {
             "criterion": {"type": "string", "minLength": 1, "maxLength": 1024},
             "verdict": {"type": "string", "enum": ["satisfied", "unsatisfied", "blocked", "unverified"]},
             "summary": {"type": "string", "minLength": 1, "maxLength": 2048},
-            "evidence_sha256s": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "maxItems": 16, "uniqueItems": true}
+            "evidence_sha256s": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "maxItems": 16}
         },
         "required": ["criterion", "verdict", "summary", "evidence_sha256s"],
         "additionalProperties": false
@@ -1319,6 +1319,9 @@ pub fn install(
     manager: Weak<ThreadManager>,
 ) -> Result<(), String> {
     let effective_mode = codex_omd::effective_mode()?;
+    if effective_mode.mode == codex_omd::RuntimeMode::Platform {
+        return platform_mods::install(registry);
+    }
     if !effective_mode.mode.task_hooks_enabled() {
         return Ok(());
     }

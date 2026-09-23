@@ -14,7 +14,7 @@ The checked classification for every bundled package, author example, and
 retained conformance fixture is in [EXTENSION_TYPES.md](EXTENSION_TYPES.md).
 
 This is a preview slice, not the release bundle. It is API
-`0.1.0-experimental.7`, which is experimental and not frozen. Its finite
+`0.1.0-experimental.8`, which is experimental and not frozen. Its finite
 cross-release policy is published in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Install

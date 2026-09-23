@@ -26,15 +26,17 @@ def contract_plan(binary, choice):
 
 
 def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None, mod_profile="counter"):
-    policy_mod = mod_profile.startswith(("preview", "coordination", "recovery", "conformance", "exercise"))
+    policy_mod = scenario != "omd-off" and mod_profile != "preview-inactive" and mod_profile.startswith(("preview", "coordination", "recovery", "conformance", "exercise"))
     candidate_profile = mod_profile in ("candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts")
     anchor_profile = mod_profile in ("candidate-anchor", "candidate-anchor-baseline")
     typescript_candidate = candidate_profile and mod_profile.endswith("-ts")
     candidate_check = "typescript" if typescript_candidate else "python"
     context_marker = ("Checkpoint " if candidate_profile or anchor_profile else "atlas_policy 2.0.0 (paired) assembled turn" if mod_profile.startswith("exercise")
                       else "Coordination policy (omd_coordination" if policy_mod else "MOD_CONTEXT_SENTINEL")
-    if mod_node is not None and scenario not in ("direct", "omd-off", "success", "client-loss-resume", "completion", "escalation", "outage-fallback", "outage-drift") and not (anchor_profile and scenario == "checkpoint"):
+    if mod_node is not None and scenario not in ("direct", "omd-off", "platform", "success", "client-loss-resume", "completion", "escalation", "outage-fallback", "outage-drift") and not (anchor_profile and scenario == "checkpoint"):
         raise ValueError("mod fixture requires direct, omd-off, success, or client-loss-resume scenario")
+    if scenario == "platform" and (mod_node is None or mod_profile not in ("counter", "platform-inactive", "platform-broken")):
+        raise ValueError("platform fixture requires a node runtime and supported fixture mod profile")
     destination.mkdir(parents=True, exist_ok=False)
     repo, home = destination / "repo", destination / "home"
     repo.mkdir()
@@ -67,7 +69,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             model = body["model"]
             native_owner = self.headers.get("x-omd-owner")
             owner = native_owner
-            if scenario == "omd-off" and owner is None:
+            if scenario in ("omd-off", "platform") and owner is None:
                 owner = {"gpt-5.6-sol": "lead", "muse-spark-1.3-contributor": "contributor", "gpt-6-astra": "reviewer"}[model]
             requests.append({"path": self.path, "model": model, "thread_id": self.headers.get("thread-id"), "native_request_id": self.headers.get("x-omd-request-id"), "native_owner": native_owner, "body": body})
             if owner and owner.startswith("mod-") and "MOD_CANCEL" in json.dumps(body):
@@ -161,7 +163,11 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "tool_search_call", "id": "search-status", "call_id": "search-status", "status": "completed", "execution": "client", "arguments": {"query": "effective settings task cost capture"}}
             elif owner == "lead" and scenario == "direct" and not status_outputs:
                 item = {"type": "function_call", "id": "status", "call_id": "status", "name": "omd_status", "arguments": "{}"}
-            elif owner == "lead" and scenario in ("direct", "omd-off") and not exec_outputs:
+            elif owner == "lead" and scenario == "platform" and mod_profile == "counter" and not search_outputs:
+                item = {"type": "tool_search_call", "id": "search-platform-mod", "call_id": "search-platform-mod", "status": "completed", "execution": "client", "arguments": {"query": "mod_fixture_count user selected counter"}}
+            elif owner == "lead" and scenario == "platform" and mod_profile == "counter" and not mod_outputs:
+                item = {"type": "function_call", "id": "platform-mod", "call_id": "platform-mod", "name": "mod_fixture_count", "arguments": "{}"}
+            elif owner == "lead" and scenario in ("direct", "omd-off", "platform") and not exec_outputs:
                 edit = "printf 'export function add(a: number, b: number) { return a + b; }\\n' > solution.ts" if typescript_candidate else "printf 'def add(a, b):\\n    return a + b\\n' > solution.py"
                 item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": edit, "max_output_tokens": 500})}
             elif owner == "lead" and scenario == "reactive" and not exec_outputs:
@@ -411,6 +417,8 @@ enabled = false
     env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(home), "CODEX_HOME": str(home), "CODEX_SQLITE_HOME": str(home), "NO_PROXY": "127.0.0.1,localhost", "TERM": "dumb"}
     if scenario == "omd-off":
         env["OMD_MODE"] = "upstream_direct"
+    elif scenario == "platform":
+        env.update({"OMD_MODE": "platform", "OMD_MOD_STORE": manifest["mods"]})
     else:
         env.update({"OMD_MODE": "enabled", "OMD_CONTROLLED_MANIFEST": str(manifest_path)})
     started = time.monotonic()
@@ -509,11 +517,36 @@ enabled = false
             manifest_path.write_text(json.dumps(manifest, indent=2))
             process = subprocess.run(command, cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=150)
         else:
-            instruction = "PARENT_HISTORY_SENTINEL Fix the addition bug yourself, then run the final review and completion gate." if scenario in SOLO_SCENARIOS else "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."
+            instruction = "PARENT_HISTORY_SENTINEL Fix the addition bug after running the user-selected mod counter." if scenario == "platform" else "PARENT_HISTORY_SENTINEL Fix the addition bug yourself, then run the final review and completion gate." if scenario in SOLO_SCENARIOS else "PARENT_HISTORY_SENTINEL Use omd_contribute to fix the addition bug."
             process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", instruction], cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=150)
         (destination / "stdout.txt").write_text(process.stdout)
         (destination / "stderr.txt").write_text(process.stderr)
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
+        if scenario == "platform":
+            assert process.returncode == 0, process.stderr[-4000:]
+            assert len(requests) >= (3 if mod_profile == "counter" else 2), requests
+            assert all(request["native_owner"] is None and request["native_request_id"] is None for request in requests)
+            assert ("MOD_CONTEXT_SENTINEL" in json.dumps(requests[0]["body"])) == (mod_profile == "counter")
+            first_tools = json.dumps([item for item in requests[0]["body"].get("input", []) if item.get("type") == "additional_tools"])
+            assert "omd_contribute" not in first_tools
+            assert any(item.get("call_id") == "platform-mod" and item.get("type") == "function_call_output"
+                       for request in requests for item in request["body"].get("input", [])) == (mod_profile == "counter")
+            status = json.loads((destination / "mod-store/mod-status.json").read_text())
+            if mod_profile == "counter":
+                assert [item["id"] for item in status["mods"]] == ["fixture"], status
+                assert not status["rejected"] and status["mods"][0]["error"] is None, status
+                assert json.loads((destination / "mod-store/state-fixture.json").read_text())["value"] == 1
+            elif mod_profile == "platform-broken":
+                assert any("PLATFORM_BROKEN_SENTINEL" in item.get("error", "") for item in status["mods"]), status
+            else:
+                assert not status["mods"] and not status["rejected"], status
+                assert not (destination / "mod-store/state-fixture.json").exists()
+            assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
+            assert not (destination / "evidence").exists()
+            record = {"status": "pass", "scenario": scenario, "profile": mod_profile, "exit_code": process.returncode,
+                      "requests": len(requests), "scope": "synthetic provider and user-selected mod; no real model"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
         if mod_profile == "deny":
             from benchmarks.mod_fixture import verify_denied
             return verify_denied(destination, process, requests)
@@ -778,7 +811,7 @@ enabled = false
             )
             assert status["direct_single_agent"] is True
         if mod_node is not None:
-            expected_marker = scenario != "omd-off" and mod_profile not in ("preview-denied", "coordination-broken", "workspace-only", "candidate", "candidate-static", "candidate-ts", "candidate-static-ts")
+            expected_marker = scenario != "omd-off" and mod_profile not in ("preview-denied", "preview-inactive", "coordination-broken", "workspace-only", "candidate", "candidate-static", "candidate-ts", "candidate-static-ts")
             assert (context_marker in json.dumps(requests)) == expected_marker
             if scenario != "omd-off":
                 from benchmarks.mod_fixture import verify
@@ -807,7 +840,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
     parser.add_argument("destination", type=Path)
-    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "omd-off", "escalation", "reactive", "outage-fallback", "outage-drift", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified", *CONTRACT_SCENARIOS), default="success")
+    parser.add_argument("--scenario", choices=("success", "permissions", "conflict", "index-conflict", "review-reject", "request-cap", "revoked", "deadline", "runner", "direct", "omd-off", "platform", "escalation", "reactive", "outage-fallback", "outage-drift", "client-loss-resume", "recursion", "checkpoint", "no-progress", "structured-clarification", "completion", "completion-unverified", *CONTRACT_SCENARIOS), default="success")
     parser.add_argument("--context-policy", choices=("focused_brief", "shared_task_packet", "parent_history"), default="focused_brief")
     parser.add_argument("--lead-policy", choices=("fixed", "task_entry"), default="fixed")
     parser.add_argument("--lead", choices=("sol", "astra"), default="sol")
@@ -816,7 +849,7 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
-    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "coordination-only", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery-pair", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only", "candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts", "candidate-anchor", "candidate-anchor-baseline"), default="counter")
+    parser.add_argument("--mod-profile", choices=("counter", "platform-inactive", "platform-broken", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-inactive", "preview-denied", "preview-broken", "coordination-only", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery-pair", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only", "candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts", "candidate-anchor", "candidate-anchor-baseline"), default="counter")
     args = parser.parse_args()
     print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 

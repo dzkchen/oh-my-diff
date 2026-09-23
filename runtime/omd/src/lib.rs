@@ -186,6 +186,7 @@ pub use lsp::hash as lsp_hash;
 pub use lsp::lsp_workspace_binding_path;
 pub use mode::EffectiveMode;
 pub use mode::MANIFEST_ENV;
+pub use mode::MOD_STORE_ENV;
 pub use mode::MODE_ENV;
 pub use mode::ModeSource;
 pub use mode::PINNED_UPSTREAM;

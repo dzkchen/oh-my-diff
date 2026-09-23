@@ -12,7 +12,7 @@ const CONTEXT_ALIASES: Record<string, ContextPolicy> = {
   parent_history: 'parent_history',
 };
 const LEAD_POLICIES: LeadPolicy[] = ['sol', 'astra', 'task_entry'];
-const VERSION = '0.1.0-preview.3';
+const VERSION = '0.1.0-preview.4';
 
 const COORDINATION_SERVICE: ServiceContract = {
   name: 'omd.coordination',

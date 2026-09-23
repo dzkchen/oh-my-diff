@@ -522,7 +522,7 @@ class PreviewSliceTests(ManagedFixture, unittest.TestCase):
                 "types": {"path": "mods/api.d.ts", "sha256": installer.digest(pinned / "mods/api.d.ts")},
                 "guide": {"path": "mods/PREVIEW.md"},
                 "packages": {"omd_workspace": {
-                    "version": manifest["version"], "capabilities": manifest["capabilities"],
+                    "version": manifest["version"], "extension_type": "mod", "capabilities": manifest["capabilities"],
                     "source": relative,
                     "files": {name: installer.digest(source / name) for name in installer.PACKAGE_FILES},
                     "package_sha256": installer.digest_of_package(source)}},

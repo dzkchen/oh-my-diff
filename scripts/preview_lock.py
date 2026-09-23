@@ -11,6 +11,7 @@ SCHEMA = 1
 PRODUCT = "oh-my-diff-private-preview-v1"
 NODE = "24.18.0"
 FILES = ("mod.json", "index.ts")
+PACKAGES = ("omd_coordination", "omd_recovery", "omd_workspace")
 
 
 def digest(path):
@@ -31,9 +32,8 @@ def package_digest(base):
 def build():
     api = json.loads((ROOT / "mods/package.json").read_text())["version"]
     packages = {}
-    for base in sorted((ROOT / "mods/first-party").iterdir()):
-        if not base.is_dir():
-            continue
+    for name in PACKAGES:
+        base = ROOT / "mods/first-party" / name
         manifest = json.loads((base / "mod.json").read_text())
         if manifest["id"] != base.name or manifest["api"] != api:
             raise ValueError(f"{base.name} must declare its directory name and mod API {api}")

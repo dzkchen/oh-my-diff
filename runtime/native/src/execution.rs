@@ -135,6 +135,7 @@ struct ChildTurn<'a> {
     prompt: String,
     history: InitialHistory,
     writable: bool,
+    host_evidence_read: bool,
     output_schema: Option<Value>,
     output_instruction: Option<&'static str>,
 }
@@ -412,6 +413,20 @@ pub(super) fn protected_paths(manifest: &Manifest) -> Vec<PathBuf> {
     paths
 }
 
+fn verifier_evidence_paths(
+    reads: &mut Vec<PathBuf>,
+    denied: &mut Vec<PathBuf>,
+    evidence: &Path,
+    writable: bool,
+) -> Result<(), String> {
+    if writable {
+        return Err("writable child cannot inspect host-owned evidence".into());
+    }
+    denied.retain(|path| path != evidence);
+    reads.push(evidence.to_path_buf());
+    Ok(())
+}
+
 fn build_context(
     policy: &WorkerContextPolicy,
     request: ContributionRequest,
@@ -510,6 +525,7 @@ async fn run_child(
         prompt,
         history,
         writable,
+        host_evidence_read,
         output_schema,
         output_instruction,
     } = turn;
@@ -521,14 +537,12 @@ async fn run_child(
         .manager
         .upgrade()
         .ok_or("native thread manager stopped")?;
-    let denied = protected_paths(&host.manifest);
-    let mut config = isolated(
-        parent,
-        root,
-        &host.manifest.toolchain_reads,
-        &denied,
-        writable,
-    )?;
+    let mut denied = protected_paths(&host.manifest);
+    let mut reads = host.manifest.toolchain_reads.clone();
+    if host_evidence_read {
+        verifier_evidence_paths(&mut reads, &mut denied, &host.manifest.evidence, writable)?;
+    }
+    let mut config = isolated(parent, root, &reads, &denied, writable)?;
     config.model = Some(route.model.clone());
     config.model_provider_id = route.provider.clone();
     config.model_provider = config
@@ -634,8 +648,8 @@ async fn run_child(
             let event = child.thread.next_event().await.map_err(error)?;
             match event.msg {
                 EventMsg::TurnComplete(completed) => {
-                    if completed.error.is_some() {
-                        return Err("native child turn failed".into());
+                    if let Some(failure) = completed.error {
+                        return Err(format!("native child turn failed: {}", failure.message));
                     }
                     return completed
                         .last_agent_message
@@ -990,6 +1004,7 @@ pub async fn review_current(
             ),
             history: InitialHistory::New,
             writable: false,
+            host_evidence_read: false,
             output_schema: Some(review_schema(
                 if manifest.communication.structured_worker_reports {
                     ReviewReportMode::Structured
@@ -1003,7 +1018,15 @@ pub async fn review_current(
                 .then_some(review_report_prompt()),
         },
     )
-    .await?;
+    .await;
+    let output = match output {
+        Ok(output) => output,
+        Err(reason) => {
+            codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch)
+                .map_err(error)?;
+            return Err(reason);
+        }
+    };
     let review: Review = serde_json::from_str(&output).map_err(error)?;
     host.task.consume_worker_result(&role).map_err(error)?;
     let structured_review_complete = !manifest.communication.structured_worker_reports
@@ -1326,6 +1349,7 @@ pub async fn complete_current(
             ),
             history: InitialHistory::New,
             writable: false,
+            host_evidence_read: true,
             output_schema: Some(completion_schema(report_mode)),
             output_instruction: manifest
                 .communication
@@ -1647,6 +1671,7 @@ pub async fn contribute(
                 prompt: context.prompt.clone(),
                 history: context.history.clone(),
                 writable: true,
+                host_evidence_read: false,
                 output_schema: manifest.communication.worker_output_schema(),
                 output_instruction: manifest
                     .communication
@@ -1732,6 +1757,7 @@ pub async fn contribute(
                 ),
                 history: context.history.clone(),
                 writable: true,
+                host_evidence_read: false,
                 output_schema: manifest.communication.worker_output_schema(),
                 output_instruction: manifest
                     .communication
@@ -1929,6 +1955,7 @@ pub async fn contribute(
             prompt: format!("Perform the final review of this exact candidate against the task context. Inspect correctness, regressions, scope, and relevant negative cases. Executable checks passed: {}. Candidate SHA256: {candidate_hash}. Changed paths: {}. Prior unresolved findings: {}. Return only JSON with fields {review_fields}. Each finding must have a short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Repeat a prior key when it remains; list a prior numeric finding ID in resolved_finding_ids only when this candidate proves it fixed or no longer applicable. Do not approve or edit files.\nTask context:\n{}", serde_json::to_string(&manifest.check_command).map_err(error)?, serde_json::to_string(&changed).map_err(error)?, serde_json::to_string(&prior_findings).map_err(error)?, context.prompt),
             history: context.history,
             writable: false,
+            host_evidence_read: false,
             output_schema: manifest.communication.review_output_schema(),
             output_instruction: manifest
                 .communication
@@ -2299,6 +2326,7 @@ pub async fn escalate(
             ),
             history: InitialHistory::New,
             writable: false,
+            host_evidence_read: false,
             output_schema: manifest.communication.worker_output_schema(),
             output_instruction: manifest
                 .communication

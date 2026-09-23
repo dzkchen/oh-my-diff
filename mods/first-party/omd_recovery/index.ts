@@ -4,7 +4,7 @@ type RecoveryTool = 'direct' | 'delegation' | 'advisory';
 
 const FAILURE_CLASSES: FailureClass[] = ['environment', 'edit', 'diagnosis', 'model'];
 const RECOVERY_TOOLS: RecoveryTool[] = ['direct', 'delegation', 'advisory'];
-const VERSION = '0.1.0-preview.1';
+const VERSION = '0.1.0-preview.2';
 
 export default function activate(api: ModAPI) {
   const setting = (key: string) => api.settings[key];

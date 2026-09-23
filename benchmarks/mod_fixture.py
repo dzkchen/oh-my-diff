@@ -66,7 +66,7 @@ def install_preview(destination, manifest, node, profile):
         selections.append({
             "path": str(package),
             "sha256": package_digest(package_manifest, body),
-            "enabled": True,
+            "enabled": profile != "preview-inactive",
             "capabilities": declared["capabilities"],
             "settings": settings,
         })
@@ -469,6 +469,8 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
     if profile in ("full", "provider", "cancel"):
         assert body.count("api.state.set(1);") == 1
         body = body.replace("api.state.set(1);", "api.state.set({count:1,agents:[]});")
+    if profile == "platform-broken":
+        setup = "throw new Error('PLATFORM_BROKEN_SENTINEL');"
     source = (
         "export default api => { api.on('context', () => ({text:'MOD_CONTEXT_SENTINEL'})); "
         + setup
@@ -501,7 +503,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
                     {
                         "path": str(package),
                         "sha256": package_digest(package_manifest, source),
-                        "enabled": True,
+                        "enabled": profile != "platform-inactive",
                         "capabilities": capabilities,
                         "settings": {},
                     }
@@ -707,6 +709,19 @@ def verify_recovery(destination, requests, profile, scenario):
 
 
 def verify(destination, requests, profile, scenario="success"):
+    if profile == "preview-inactive":
+        installed = json.loads((destination / "mod-store/mods.json").read_text())["mods"]
+        assert {Path(mod["path"]).name for mod in installed} == set(PREVIEW_SETTINGS), installed
+        assert all(mod["enabled"] is False for mod in installed), installed
+        status = json.loads((destination / "evidence/mod-status.json").read_text())
+        assert not status["mods"] and not status["rejected"], status
+        assert not any((destination / "mod-store").glob("state-*.json"))
+        assert not any("omd_coordination" in json.dumps(request["body"]) for request in requests)
+        assert not any("omd_workspace" in json.dumps(request["body"]) for request in requests)
+        assert not any("omd_recovery" in json.dumps(request["body"]) for request in requests)
+        view = json.loads((destination / "evidence/mod-view.json").read_text())["view"]
+        assert view["title"] != "Oh My Diff workspace", view
+        return
     if profile in ("coordination-only", "recovery-pair"):
         status = json.loads((destination / "evidence/mod-status.json").read_text())
         expected = ["omd_coordination"] if profile == "coordination-only" else ["omd_coordination", "omd_recovery"]

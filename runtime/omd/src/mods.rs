@@ -2281,13 +2281,11 @@ impl ModHost {
                 .loaded
                 .get(&id)
                 .is_some_and(|loaded| loaded.error.is_none())
+                && let Some(loaded) = self.loaded.get_mut(&id)
             {
-                if let Some(loaded) = self.loaded.get_mut(&id) {
-                    loaded.error = Some(
-                        "invalid_tool_exposure: only owned task-scoped tools may be selected"
-                            .into(),
-                    );
-                }
+                loaded.error = Some(
+                    "invalid_tool_exposure: only owned task-scoped tools may be selected".into(),
+                );
             }
         }
         self.tools()

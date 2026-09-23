@@ -4,7 +4,7 @@
   "release": {
     "codex": "0.155.1",
     "omd": "0.1.0",
-    "mod_api": "0.1.0-experimental.7",
+    "mod_api": "0.1.0-experimental.8",
     "package_schema": 1,
     "upstream_tag": "rust-v0.155.1",
     "upstream_commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
@@ -29,7 +29,8 @@
         "state_migration_v1",
         "terminal_components_v1",
         "terminal_render_sites_v1",
-        "transactional_reload_v1"
+        "transactional_reload_v1",
+        "task_tool_exposure_v1"
       ],
       "status": "supported",
       "fixtures": [
@@ -45,12 +46,13 @@
       "area": "host",
       "name": "Public TypeScript mod API",
       "owner": "OMD mod host (runtime/omd/src/mods.rs)",
-      "version": "0.1.0-experimental.7",
+      "version": "0.1.0-experimental.8",
       "supported_versions": [
         "0.1.0-experimental.4",
         "0.1.0-experimental.5",
         "0.1.0-experimental.6",
-        "0.1.0-experimental.7"
+        "0.1.0-experimental.7",
+        "0.1.0-experimental.8"
       ],
       "status": "supported",
       "fixtures": [
@@ -82,7 +84,7 @@
       "name": "omd_coordination",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_coordination)",
-      "version": "0.1.0-preview.3",
+      "version": "0.1.0-preview.4",
       "capabilities": [
         "agents",
         "commands",
@@ -111,7 +113,7 @@
       "name": "omd_recovery",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_recovery)",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "capabilities": [
         "commands",
         "interception",
@@ -138,7 +140,7 @@
       "name": "omd_workspace",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_workspace)",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "capabilities": [
         "commands",
         "lifecycle",

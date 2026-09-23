@@ -12,9 +12,9 @@ contains only the packages labeled `bundled` below.
 
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
-| `omd_coordination@0.1.0-preview.3` | `mod` | `mods/first-party/omd_coordination` | Replaces live task-entry routing and context assembly, and exports bounded delegation preparation to the recovery policy. |
-| `omd_recovery@0.1.0-preview.1` | `mod` | `mods/first-party/omd_recovery` | Replaces live escalation and delegation dispatch with failure classification, eligible-tool, advisory-route, and Contributor-outage choices. |
-| `omd_workspace@0.2.0-preview.1` | `mod` | `mods/first-party/omd_workspace` | Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation. |
+| `omd_coordination@0.1.0-preview.4` | `mod` | `mods/first-party/omd_coordination` | Replaces live task-entry routing and context assembly, and exports bounded delegation preparation to the recovery policy. |
+| `omd_recovery@0.1.0-preview.2` | `mod` | `mods/first-party/omd_recovery` | Replaces live escalation and delegation dispatch with failure classification, eligible-tool, advisory-route, and Contributor-outage choices. |
+| `omd_workspace@0.2.0-preview.2` | `mod` | `mods/first-party/omd_workspace` | Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation. |
 
 ## Unqualified first-party candidates
 

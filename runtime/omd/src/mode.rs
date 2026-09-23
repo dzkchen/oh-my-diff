@@ -2,11 +2,13 @@ use std::ffi::OsStr;
 
 pub const MODE_ENV: &str = "OMD_MODE";
 pub const MANIFEST_ENV: &str = "OMD_CONTROLLED_MANIFEST";
+pub const MOD_STORE_ENV: &str = "OMD_MOD_STORE";
 pub const PINNED_UPSTREAM: &str = "rust-v0.155.1 / be2951ea34f0d295ed0becf97079f92fa5f6950e";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeMode {
     UpstreamDirect,
+    Platform,
     Enabled,
 }
 
@@ -14,12 +16,17 @@ impl RuntimeMode {
     pub fn label(self) -> &'static str {
         match self {
             Self::UpstreamDirect => "upstream-style direct",
+            Self::Platform => "Modding platform only",
             Self::Enabled => "OMD enabled",
         }
     }
 
     pub fn task_hooks_enabled(self) -> bool {
         matches!(self, Self::Enabled)
+    }
+
+    pub fn mod_host_enabled(self) -> bool {
+        matches!(self, Self::Platform | Self::Enabled)
     }
 }
 
@@ -65,6 +72,13 @@ pub fn effective_mode_from(
             mode: RuntimeMode::UpstreamDirect,
             source: ModeSource::Explicit,
         }),
+        Some("platform") if controlled_manifest_present => Err(format!(
+            "{MODE_ENV}=platform forbids {MANIFEST_ENV}; platform mods run without controlled task policy"
+        )),
+        Some("platform") => Ok(EffectiveMode {
+            mode: RuntimeMode::Platform,
+            source: ModeSource::Explicit,
+        }),
         Some("enabled") if controlled_manifest_present => Ok(EffectiveMode {
             mode: RuntimeMode::Enabled,
             source: ModeSource::Explicit,
@@ -73,10 +87,10 @@ pub fn effective_mode_from(
             "{MODE_ENV}=enabled requires {MANIFEST_ENV} for explicit OMD activation"
         )),
         Some(value) => Err(format!(
-            "invalid {MODE_ENV} value {value:?}; expected upstream_direct or enabled"
+            "invalid {MODE_ENV} value {value:?}; expected upstream_direct, platform, or enabled"
         )),
         None if selected.is_some() => Err(format!(
-            "invalid non-Unicode {MODE_ENV}; expected upstream_direct or enabled"
+            "invalid non-Unicode {MODE_ENV}; expected upstream_direct, platform, or enabled"
         )),
         None if controlled_manifest_present => Ok(EffectiveMode {
             mode: RuntimeMode::Enabled,
@@ -116,6 +130,19 @@ mod tests {
     }
 
     #[test]
+    fn platform_mode_registers_mods_without_task_hooks_or_manifest() {
+        let platform = effective_mode_from(Some(OsStr::new("platform")), false).unwrap();
+        assert_eq!(platform.mode, RuntimeMode::Platform);
+        assert!(platform.mode.mod_host_enabled());
+        assert!(!platform.mode.task_hooks_enabled());
+        assert!(
+            effective_mode_from(Some(OsStr::new("platform")), true)
+                .unwrap_err()
+                .contains("forbids OMD_CONTROLLED_MANIFEST")
+        );
+    }
+
+    #[test]
     fn compatibility_paths_preserve_prior_activation_without_ambiguity() {
         assert_eq!(
             effective_mode_from(None, false).unwrap(),
@@ -136,6 +163,6 @@ mod tests {
     #[test]
     fn unknown_mode_never_silently_falls_back() {
         let error = effective_mode_from(Some(OsStr::new("off")), false).unwrap_err();
-        assert!(error.contains("expected upstream_direct or enabled"));
+        assert!(error.contains("expected upstream_direct, platform, or enabled"));
     }
 }

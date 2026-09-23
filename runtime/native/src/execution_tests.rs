@@ -144,3 +144,17 @@ fn isolated_worktree_access_does_not_expose_host_siblings() {
         Access::Deny
     );
 }
+
+#[test]
+fn only_read_only_completion_turns_can_inspect_host_evidence() {
+    let evidence = PathBuf::from("/tmp/omd-evidence");
+    let authorization = PathBuf::from("/tmp/omd-authorization");
+    let mut reads = Vec::new();
+    let mut denied = vec![evidence.clone(), authorization.clone()];
+    assert!(verifier_evidence_paths(&mut reads, &mut denied, &evidence, true).is_err());
+    assert!(reads.is_empty());
+    assert_eq!(denied, vec![evidence.clone(), authorization.clone()]);
+    verifier_evidence_paths(&mut reads, &mut denied, &evidence, false).unwrap();
+    assert_eq!(reads, vec![evidence]);
+    assert_eq!(denied, vec![authorization]);
+}
