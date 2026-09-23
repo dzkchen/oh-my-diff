@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "virtual_time_ms": 1000,
+  "settings": {"omd_task_tools": {"python_command": ["python3", "-m", "py_compile", "solution.py"]}},
+  "host_operations": {
+    "tools.exec": [
+      {"result": {"exit_code": 0, "stdout": "Python tests passed"}},
+      {"result": {"exit_code": 0, "stdout": "TypeScript check passed"}}
+    ]
+  },
+  "steps": [
+    {"type": "status"},
+    {"type": "tool_exposure", "thread_id": "one", "payload": {"remaining_work": ["fix src/main.py"]}, "expect": ["mod_omd_task_tools_check_python"]},
+    {"type": "invoke", "mod": "omd_task_tools", "event": "tool", "name": "check_python", "payload": {}, "expect": {"exit_code": 0, "stdout": "Python tests passed"}},
+    {"type": "tool_exposure", "thread_id": "one", "payload": {"remaining_work": ["fix src/view.ts"]}, "expect": ["mod_omd_task_tools_check_typescript"]},
+    {"type": "invoke", "mod": "omd_task_tools", "event": "tool", "name": "check_typescript", "payload": {}, "expect": {"exit_code": 0, "stdout": "TypeScript check passed"}},
+    {"type": "tool_exposure", "thread_id": "one", "payload": {"remaining_work": ["write README"]}, "expect": []},
+    {"type": "reload"},
+    {"type": "tool_exposure", "thread_id": "one", "payload": {"remaining_work": ["fix src/lib.rs"]}, "expect": ["mod_omd_task_tools_check_rust"]}
+  ]
+}

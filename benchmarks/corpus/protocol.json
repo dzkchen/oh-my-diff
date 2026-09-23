@@ -1,0 +1,89 @@
+{
+  "disagreement": {
+    "action": "Preserve all original results. Predeclare a third distinct assessor before the run when its evaluation budget is authorized; use that independent judgment to adjudicate disagreements. With only two assessors or missing adjudication evidence, mark the dispute unresolved.",
+    "adjudicator_scheduling": "The current dispatcher evaluates every predeclared assessor for every candidate. Include that evaluation overhead in the budget; do not add models after inspecting held-out results.",
+    "aggregation": "Report per-dimension mean of all completed independent assessments, original scores, range and pairwise absolute distance. Never replace original scores with adjudication.",
+    "agreement_limit": "Agreement can reflect shared model bias; keep executable outcomes and review dimensions separate.",
+    "missing_or_failed": "No imputation; retain failed assessor costs and mark review incomplete.",
+    "trigger": "Any unequal dimension score or assessment contradicting executable evidence",
+    "unresolved_gate": "Do not certify a confirmatory quality gate while disputes remain unresolved."
+  },
+  "freeze": "benchmarks/corpus/freeze.json",
+  "leakage": {
+    "excluded_inputs": [
+      "gold patch",
+      "test patch",
+      "hints",
+      "solution transcripts",
+      "prior trials",
+      "evaluator images and credentials",
+      "blinding key"
+    ],
+    "held_out_access": "Export requires a matching approved freeze record; no routing/guideline/memory tuning on held-out feedback.",
+    "memory": "Restore approved immutable seeds for every trial; no cross-split state or learned lessons.",
+    "provider_cache": "Record uncontrolled provider cache separately from local cold/reuse.",
+    "public_contamination": "Public task exposure or model pretraining cannot be ruled out; no claim that public holdout is unseen.",
+    "quarantine": [
+      "astropy/astropy",
+      "serde-rs/serde"
+    ],
+    "split_unit": "Repository/family; related revisions and duplicate gold hashes cannot cross splits. Release suites have disjoint repositories.",
+    "task_inputs": [
+      "problem_statement",
+      "source at pinned base commit",
+      "frozen approved seed and instructions"
+    ]
+  },
+  "pilot_freeze_required": [
+    "spending/runtime caps",
+    "savings/quality targets",
+    "held-out trial count",
+    "resource/latency limits",
+    "assessor model identities and adjudication allowance",
+    "uncertainty analysis and retesting rules"
+  ],
+  "rubric": {
+    "blinding": "Two distinct returned model identities, independent fresh sessions, source-only candidate packet, no arm/cost/transcript/check-outcome/key access.",
+    "correctness": {
+      "0": "Requirements fail or no usable candidate",
+      "0.25": "Major behavior missing or broken",
+      "0.5": "Partial behavior with material unhandled cases",
+      "0.75": "Core behavior works with a bounded remaining defect",
+      "1": "All required behavior and relevant edge cases supported by evidence"
+    },
+    "executable_checks": "Official fixed-test and fail/new/skip-to-pass plus pass-to-pass expectations; preserve categories and require nonempty parsed results. Assessors do not override failed executable checks.",
+    "maintainability": {
+      "0": "Unreviewable or unsustainable patch",
+      "0.25": "Serious complexity or fragile assumptions",
+      "0.5": "Material duplication, unclear structure or weak tests",
+      "0.75": "Clear design with minor avoidable complexity",
+      "1": "Clear, proportionate change using suitable existing abstractions and evidence"
+    },
+    "scale": [
+      0,
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "scope": {
+      "0": "Violates explicit scope or damages unrelated work",
+      "0.25": "Major unrelated changes or omitted requirements",
+      "0.5": "Material avoidable scope expansion",
+      "0.75": "Small unnecessary changes",
+      "1": "Complete requested scope with unrelated work preserved"
+    }
+  },
+  "schema": 1,
+  "status": "User-approved numerical freeze; held-out execution locked pending development qualification and complete-schedule feasibility",
+  "trials": {
+    "development": 3,
+    "failed_runs": "Retain in success denominator and cost numerator; infrastructure invalidity requires recorded evidence and identical rerun treatment across arms.",
+    "held-out": 3,
+    "held_out_rule": "Three repeats approved on 2026-09-13; criteria approval alone does not authorize held-out export or execution.",
+    "retries": "Count every attempt in its original task trial; retries do not create new samples.",
+    "run_order": "Seeded six-permutation balanced order; same task, seed state and trial across all three arms.",
+    "validation": 3
+  },
+  "version": "curation-protocol-v1"
+}
