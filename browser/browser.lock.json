@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "node": {
+    "version": "24.21.0",
+    "platform": "darwin-arm64",
+    "archive": "node-v24.21.0-darwin-arm64.tar.xz",
+    "url": "https://nodejs.org/download/release/v24.21.0/node-v24.21.0-darwin-arm64.tar.xz",
+    "sha256": "6239d4cf92d864487ec8cd3615038f7b67e7f58b77b21cd2f09ea9fbd68065fe"
+  },
+  "package_manager": {
+    "name": "pnpm",
+    "version": "11.14.0"
+  },
+  "mcp": {
+    "package": "@playwright/mcp",
+    "version": "0.0.81",
+    "playwright": "1.64.0-alpha-2026-09-14"
+  },
+  "browser": {
+    "name": "chromium",
+    "revision": "1244",
+    "browser_version": "154.0.8037.0",
+    "install": "chromium --only-shell"
+  }
+}

@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/plan_mode.rs
+assertion_line: 76
+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
+---
+› make a plan
+
+  Oh My Diff · upstream-style direct · hooks off · gpt-5 default · /tmp/project

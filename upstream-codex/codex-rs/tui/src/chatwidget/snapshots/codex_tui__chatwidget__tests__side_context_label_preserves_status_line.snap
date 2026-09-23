@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/side.rs
+assertion_line: 409
+expression: terminal.backend()
+---
+"                                                                                "
+"                                                                                "
+"› Ask a follow-up question                                                      "
+"                                                                                "
+"  Oh My Diff · ups… Side from main thread · ctrl+/ to switch · ctrl+c to close  "

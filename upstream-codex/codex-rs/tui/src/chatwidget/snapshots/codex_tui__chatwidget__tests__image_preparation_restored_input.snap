@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/composer_submission.rs
+assertion_line: 2708
+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 80))"
+---
+  [Image #1]
+
+› [Image #2] describe $file
+
+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…

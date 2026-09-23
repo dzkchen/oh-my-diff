@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "omd_lsp_adapters": {
+      "command": "./scripts/omd_lsp_mcp.py",
+      "args": [],
+      "cwd": ".",
+      "env_vars": [
+        "PATH"
+      ],
+      "default_tools_approval_mode": "prompt",
+      "startup_timeout_sec": 10,
+      "tool_timeout_sec": 180
+    }
+  }
+}

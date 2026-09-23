@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/terminal_title.rs
+assertion_line: 363
+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 100))"
+---
+› Ask Codex to do anything
+
+  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/project · ⠋

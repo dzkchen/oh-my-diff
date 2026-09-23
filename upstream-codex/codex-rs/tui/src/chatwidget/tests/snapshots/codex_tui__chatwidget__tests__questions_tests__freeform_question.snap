@@ -1,0 +1,14 @@
+---
+source: tui/src/chatwidget/tests/questions_tests.rs
+assertion_line: 40
+expression: "render_bottom_popup(&chat, 80)"
+---
+• Queued follow-up inputs
+
+  1 of 2
+
+  Which way?
+
+  Type your answer
+
+  enter submit   ctrl+] skip   ⌥+↓ main prompt   shift+← next question

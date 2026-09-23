@@ -1,0 +1,10 @@
+---
+source: tui/src/app/tests.rs
+expression: rendered
+---
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>)        │
+│                                                    │
+│ model:     gpt-5.4 xhigh   fast   /model to change │
+│ directory: /tmp/project                            │
+╰────────────────────────────────────────────────────╯

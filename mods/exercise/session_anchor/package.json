@@ -1,0 +1,11 @@
+{
+  "name": "omd-author-session-anchor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {"check": "omd-mod-author check ."},
+  "devDependencies": {
+    "@oh-my-diff/mod-api": "link:../..",
+    "typescript": "5.9.3"
+  }
+}

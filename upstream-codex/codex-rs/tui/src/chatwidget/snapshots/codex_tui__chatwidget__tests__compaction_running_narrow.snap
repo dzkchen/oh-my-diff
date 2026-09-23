@@ -1,0 +1,12 @@
+---
+source: tui/src/chatwidget/tests/compaction_tests.rs
+assertion_line: 56
+expression: "normalize_compaction_snapshot(render_bottom_popup(&chat, 40))"
+---
+• Compacting context (<elapsed> • esc to i…
+  └ Making room to continue.
+
+
+› Ask Codex to do anything
+
+  Oh My Diff · upstream-style direct · …

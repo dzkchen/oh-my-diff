@@ -1,0 +1,30 @@
+{
+  "name": "omd-lsp-adapters",
+  "version": "0.1.0",
+  "description": "Prompt-approved five-language semantic tools over Oh My Diff's native LSP safety boundary.",
+  "author": {
+    "name": "Oh My Diff"
+  },
+  "interface": {
+    "displayName": "OMD LSP Adapters",
+    "shortDescription": "Bounded diagnostics and semantic edits",
+    "longDescription": "Use installed Rust, TypeScript, JavaScript, Python, and Java language servers through repository opt-in, native synchronization, exact-scope edits, and explicit ordinary-tool fallbacks.",
+    "developerName": "Oh My Diff",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Local MCP Tools"
+    ],
+    "defaultPrompt": [
+      "Check changed files with the matching language adapter",
+      "Find a definition or references with fresh LSP state",
+      "Preview and apply an exact-scope semantic rename"
+    ]
+  },
+  "mcpServers": "./.mcp.json",
+  "license": "UNLICENSED",
+  "keywords": [
+    "language-server",
+    "diagnostics",
+    "semantic-edit"
+  ]
+}

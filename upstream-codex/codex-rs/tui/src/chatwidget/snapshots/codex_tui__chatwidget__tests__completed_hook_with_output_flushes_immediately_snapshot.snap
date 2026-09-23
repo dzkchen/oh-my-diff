@@ -1,0 +1,27 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 5127
+expression: "format!(\"{running_snapshot}\\n\\n{completed_snapshot}\")"
+---
+running
+activity:
+"                                                                                "
+"• Checking command                                                              "
+"                                                                                "
+"                                                                                "
+"› Ask Codex to do anything                                                      "
+"                                                                                "
+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
+history:
+<empty>
+
+completed
+activity:
+"                                                                                "
+"                                                                                "
+"› Ask Codex to do anything                                                      "
+"                                                                                "
+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
+history:
+• Blocked by hook
+  └ command blocked by policy

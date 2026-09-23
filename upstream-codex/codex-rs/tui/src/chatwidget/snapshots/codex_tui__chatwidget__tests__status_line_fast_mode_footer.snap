@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 3985
+expression: normalized_backend_snapshot(terminal.backend())
+---
+"                                                                                "
+"                                                                                "
+"› Ask Codex to do anything                                                      "
+"                                                                                "
+"  Oh My Diff · upstream-style direct · hooks off · gpt-5.2 high                 "

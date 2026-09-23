@@ -1,0 +1,67 @@
+---
+source: tui/src/app/owned_transcript_tests.rs
+assertion_line: 275
+expression: "snapshots.join(\"\\n\\n\")"
+---
+Latest
+Transcript row 35
+Transcript row 36
+Transcript row 37
+Transcript row 38
+Transcript row 39
+Transcript row 40
+
+
+› draft
+
+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
+
+
+Reading
+Transcript row 30
+Transcript row 31
+Transcript row 32
+Transcript row 33
+Transcript row 34
+Transcript row 35
+                             ↓ Back to bottom · esc
+
+› draft
+
+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
+  esc latest
+
+Resized multiline composer
+Transcript row 30
+Transcript row 31
+Transcript row 32
+Transcript row 33
+         ↓ Back to bottom · esc
+
+› draft
+  second line
+  third line
+
+  Oh My Diff · upstream-style direct · …
+  esc latest
+
+Tiny terminal
+
+› draft
+
+  Oh My Diff · upstream-style direct · …
+  esc latest
+
+Detailed
+• Viewed image assets/detail-image.png
+
+
+
+
+
+
+
+› preserved draft
+
+  Oh My Diff · upstream-style direct · hooks off · gpt-test default · /tmp/proj…
+  esc latest

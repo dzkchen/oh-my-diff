@@ -1,0 +1,10 @@
+---
+source: tui/src/status/tests.rs
+expression: "render_lines(&lines).join(\"\\n\")"
+---
+ Profile:
+Modding platform
+only
+ Mode:
+Oh My Diff ·
+platform

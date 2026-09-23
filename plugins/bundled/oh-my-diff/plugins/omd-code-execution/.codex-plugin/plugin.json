@@ -1,0 +1,23 @@
+{
+  "name": "omd-code-execution",
+  "version": "0.1.0",
+  "description": "Persistent JavaScript and optional managed Python for Oh My Diff.",
+  "author": {
+    "name": "Oh My Diff"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OMD Code Execution",
+    "shortDescription": "Persistent JavaScript over native tool calls",
+    "longDescription": "Use Codex code mode for persistent JavaScript with host mediated tool calls, and a managed Python session only when a task needs it.",
+    "developerName": "Oh My Diff",
+    "category": "Developer Tools",
+    "capabilities": ["Skills"],
+    "defaultPrompt": [
+      "Use persistent JavaScript to inspect these results",
+      "Run this bounded Python calculation through managed execution"
+    ]
+  },
+  "license": "UNLICENSED",
+  "keywords": ["javascript", "python", "code-mode", "execution"]
+}

@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/luna_reserve_usage_tests.rs
+assertion_line: 123
+expression: rendered
+---
+› Ask Codex to do anything
+
+  Oh My Diff · upstream-style direct · hooks off · Luna Reserve default · /tmp/…

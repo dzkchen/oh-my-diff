@@ -1,0 +1,10 @@
+---
+source: tui/src/chatwidget/tests/side.rs
+assertion_line: 461
+expression: terminal.backend()
+---
+"                                                                                "
+"                                                                                "
+"› Ask Codex to do anything                                                      "
+"                                                                                "
+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol ctrl+/ for side  "

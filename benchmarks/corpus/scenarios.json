@@ -1,0 +1,604 @@
+{
+  "scenarios": [
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "behavior.passed"
+        },
+        {
+          "equals": true,
+          "path": "diagnostics.candidate_current"
+        },
+        {
+          "equals": false,
+          "path": "diagnostics.unrelated_files_checked"
+        }
+      ],
+      "category": "diagnostics",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "python-import-binding",
+      "id": "python-import-binding",
+      "initial_files": {
+        "app.py": "from helpers import amount\nprint(amout)\n",
+        "helpers.py": "amount = 3\n"
+      },
+      "language": "Python",
+      "prompt": "Fix the unresolved name and report fresh diagnostics for the changed file.",
+      "split": "development",
+      "steps": [
+        "Run baseline check",
+        "Edit the unresolved name",
+        "Run a fresh check once"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "behavior.passed"
+        },
+        {
+          "equals": false,
+          "path": "diagnostics.stale_applied"
+        },
+        {
+          "equals": true,
+          "path": "diagnostics.candidate_current"
+        }
+      ],
+      "category": "diagnostics",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "typescript-stale-revision",
+      "id": "typescript-stale-revision",
+      "initial_files": {
+        "count.ts": "export const count: number = \"3\";\n"
+      },
+      "language": "TypeScript",
+      "prompt": "Fix the type error; ignore a delayed diagnostic from the old document version.",
+      "split": "validation",
+      "steps": [
+        "Capture version 1 diagnostics",
+        "Correct the value in version 2",
+        "Deliver delayed version 1 diagnostics",
+        "Request version 2 check"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "behavior.passed"
+        },
+        {
+          "equals": false,
+          "path": "diagnostics.claimed_lsp_success"
+        },
+        {
+          "equals": true,
+          "path": "diagnostics.fallback_used"
+        }
+      ],
+      "category": "diagnostics",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "java-server-unavailable",
+      "id": "java-server-unavailable",
+      "initial_files": {
+        "Main.java": "class Main { public static void main(String[] a) { System.out.println(42); } }\n"
+      },
+      "language": "Java",
+      "prompt": "Verify the program when its configured language server is unavailable.",
+      "split": "held-out",
+      "steps": [
+        "Start without a language server",
+        "Attempt configured diagnostics",
+        "Use installed compiler fallback"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "graph.correct_target"
+        },
+        {
+          "equals": true,
+          "path": "graph.source_cited"
+        },
+        {
+          "equals": true,
+          "path": "cost.cold_build_recorded"
+        }
+      ],
+      "category": "graph",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "python-alias-edge",
+      "id": "python-alias-edge",
+      "initial_files": {
+        "entry.py": "from worker import calculate as compute\nvalue = compute(3)\n",
+        "worker.py": "def calculate(x):\n    return x * 2\n"
+      },
+      "language": "Python",
+      "prompt": "Identify the actual callee behind the imported alias and cite its source.",
+      "split": "development",
+      "steps": [
+        "Build graph cold",
+        "Query compute",
+        "Verify the cited definition"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "graph.unknown_marked"
+        },
+        {
+          "equals": 0,
+          "path": "graph.false_definite_edges"
+        },
+        {
+          "equals": true,
+          "path": "graph.source_cited"
+        }
+      ],
+      "category": "graph",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "javascript-dynamic-edge",
+      "id": "javascript-dynamic-edge",
+      "initial_files": {
+        "load.js": "export async function load(name) { return import(name); }\n"
+      },
+      "language": "JavaScript",
+      "prompt": "Describe possible dynamic import targets without presenting inferred targets as definite.",
+      "split": "validation",
+      "steps": [
+        "Build static graph",
+        "Query the dynamic import",
+        "Compare inferred and verified edges"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": 0,
+          "path": "graph.stale_links"
+        },
+        {
+          "equals": true,
+          "path": "graph.views_same_version"
+        },
+        {
+          "equals": true,
+          "path": "cost.refresh_recorded"
+        }
+      ],
+      "category": "graph",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "rust-module-refresh",
+      "id": "rust-module-refresh",
+      "initial_files": {
+        "first.rs": "pub fn value() -> i32 { 7 }\n",
+        "lib.rs": "mod first;\npub use first::value;\n"
+      },
+      "language": "Rust",
+      "prompt": "Refresh graph references after a module move and regenerate both graph views.",
+      "split": "held-out",
+      "steps": [
+        "Build graph",
+        "Move first.rs to second.rs and update module",
+        "Refresh graph",
+        "Compare terminal and HTML view versions"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": 9,
+          "path": "memory.current_fact"
+        },
+        {
+          "equals": false,
+          "path": "memory.stale_fact_used"
+        },
+        {
+          "equals": true,
+          "path": "memory.provenance_present"
+        }
+      ],
+      "category": "memory",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "file-fingerprint-change",
+      "id": "file-fingerprint-change",
+      "initial_files": {
+        "settings.py": "TIMEOUT = 5\n"
+      },
+      "language": "Python",
+      "prompt": "Recheck a saved configuration fact after its source changes.",
+      "split": "development",
+      "steps": [
+        "Seed memory with TIMEOUT=5 and file hash",
+        "Change TIMEOUT to 9",
+        "Ask for current timeout"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": false,
+          "path": "memory.cross_branch_leak"
+        },
+        {
+          "equals": 4,
+          "path": "memory.current_fact"
+        },
+        {
+          "equals": true,
+          "path": "state.seed_unchanged"
+        }
+      ],
+      "category": "memory",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "branch-seed-isolation",
+      "id": "branch-seed-isolation",
+      "initial_files": {
+        "config.js": "export const retries = 2;\n"
+      },
+      "language": "JavaScript",
+      "prompt": "Keep repository facts isolated when switching branches with different settings.",
+      "split": "validation",
+      "steps": [
+        "Seed branch A with retries=2",
+        "Switch to branch B with retries=4",
+        "Restore branch A seed in an isolated trial"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "memory.newer_fact_preserved"
+        },
+        {
+          "equals": true,
+          "path": "memory.conflict_visible"
+        },
+        {
+          "equals": false,
+          "path": "memory.unapproved_lesson_promoted"
+        }
+      ],
+      "category": "memory",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "concurrent-fact-writer",
+      "id": "concurrent-fact-writer",
+      "initial_files": {
+        "Options.java": "class Options { static int LIMIT = 4; }\n"
+      },
+      "language": "Java",
+      "prompt": "Resolve concurrent memory refreshes without overwriting a fact backed by a newer source.",
+      "split": "held-out",
+      "steps": [
+        "Start two refreshes on different source revisions",
+        "Finish the new revision first",
+        "Deliver the old result second"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "browser.dialog_opened"
+        },
+        {
+          "equals": true,
+          "path": "browser.dialog_closed"
+        },
+        {
+          "equals": 0,
+          "path": "browser.console_errors"
+        },
+        {
+          "equals": true,
+          "path": "browser.screenshot_bound_to_revision"
+        }
+      ],
+      "category": "browser",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "dialog-user-path",
+      "id": "dialog-user-path",
+      "initial_files": {
+        "index.html": "<button id=\"open\">Open</button><dialog id=\"dialog\"><form method=\"dialog\"><button>Close</button></form></dialog><script>document.getElementById(\"open\").onclick=()=>document.getElementById(\"dialog\").showModal()</script>"
+      },
+      "language": "HTML/JavaScript",
+      "prompt": "Verify opening and closing the dialog using browser interaction evidence.",
+      "split": "development",
+      "steps": [
+        "Open local page",
+        "Click Open",
+        "Capture dialog state",
+        "Click Close",
+        "Capture closed state"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": false,
+          "path": "bridge.stale_error_applied"
+        },
+        {
+          "equals": true,
+          "path": "bridge.current_revision_seen"
+        },
+        {
+          "equals": false,
+          "path": "bridge.unexposed_state_requested"
+        }
+      ],
+      "category": "browser",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "bridge-stale-service-error",
+      "id": "bridge-stale-service-error",
+      "initial_files": {
+        "server.ts": "export const revision = \"v2\";\n"
+      },
+      "language": "TypeScript",
+      "prompt": "Use application feedback while rejecting a delayed error from the previous service revision.",
+      "split": "validation",
+      "steps": [
+        "Start revision v2",
+        "Deliver v1 error log",
+        "Deliver v2 health event",
+        "Associate observations with the candidate"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "browser.download_verified"
+        },
+        {
+          "equals": false,
+          "path": "browser.cross_trial_cookie_leak"
+        },
+        {
+          "equals": true,
+          "path": "browser.processes_cleaned"
+        }
+      ],
+      "category": "browser",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "profile-and-download-isolation",
+      "id": "profile-and-download-isolation",
+      "initial_files": {
+        "index.html": "<a download=\"report.txt\" href=\"data:text/plain,report\">Download</a>"
+      },
+      "language": "HTML/JavaScript",
+      "prompt": "Verify a download and clean browser state without exposing a previous trial profile.",
+      "split": "held-out",
+      "steps": [
+        "Start fresh profile with frozen seed",
+        "Download report",
+        "Terminate browser",
+        "Start next isolated trial"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "edit.target_changed"
+        },
+        {
+          "equals": false,
+          "path": "edit.shadowed_binding_changed"
+        },
+        {
+          "equals": true,
+          "path": "edit.syntax_valid"
+        }
+      ],
+      "category": "structural-edit",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "python-shadowed-binding",
+      "id": "python-shadowed-binding",
+      "initial_files": {
+        "scope.py": "value = 1\ndef f(value):\n    return value + 1\n"
+      },
+      "language": "Python",
+      "prompt": "Rename only the module-level binding, preserving the shadowed function parameter.",
+      "split": "development",
+      "steps": [
+        "Parse source",
+        "Select module binding",
+        "Rename it",
+        "Verify exact scope and syntax"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "edit.references_updated"
+        },
+        {
+          "equals": false,
+          "path": "edit.literal_changed"
+        },
+        {
+          "equals": true,
+          "path": "edit.syntax_valid"
+        }
+      ],
+      "category": "structural-edit",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "tsx-symbol-versus-string",
+      "id": "tsx-symbol-versus-string",
+      "initial_files": {
+        "view.tsx": "const label = \"label\";\nexport const View = () => <span>{label}</span>;\n"
+      },
+      "language": "TypeScript",
+      "prompt": "Rename the binding and its JSX reference while preserving the string literal.",
+      "split": "validation",
+      "steps": [
+        "Resolve symbol references",
+        "Apply rename",
+        "Check literal and JSX syntax"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "edit.stale_write_rejected"
+        },
+        {
+          "equals": false,
+          "path": "edit.other_overload_changed"
+        },
+        {
+          "equals": true,
+          "path": "edit.concurrent_change_preserved"
+        }
+      ],
+      "category": "structural-edit",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "java-overload-stale-selection",
+      "id": "java-overload-stale-selection",
+      "initial_files": {
+        "Service.java": "class Service { int run(int x) { return x; } String run(String x) { return x; } }\n"
+      },
+      "language": "Java",
+      "prompt": "Apply a scoped overload edit only if the selection still matches the current revision.",
+      "split": "held-out",
+      "steps": [
+        "Select integer overload",
+        "Modify source concurrently",
+        "Attempt stale edit",
+        "Refresh selection and retry"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "recovery.reassessment_observed"
+        },
+        {
+          "equals": true,
+          "path": "behavior.passed"
+        },
+        {
+          "equals": true,
+          "path": "cost.failed_attempts_recorded"
+        }
+      ],
+      "category": "recovery",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "repeated-test-reassessment",
+      "id": "repeated-test-reassessment",
+      "initial_files": {
+        "calc.py": "def divide(a,b):\n    return a/b\n"
+      },
+      "language": "Python",
+      "prompt": "Handle zero division; reassess after repeating an ineffective fix.",
+      "split": "development",
+      "steps": [
+        "Run failing zero-divisor test",
+        "Apply an ineffective patch twice",
+        "Observe reassessment",
+        "Run final targeted check"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": false,
+          "path": "recovery.auto_resumed"
+        },
+        {
+          "equals": true,
+          "path": "recovery.state_preserved"
+        },
+        {
+          "equals": false,
+          "path": "recovery.allowance_reset"
+        },
+        {
+          "equals": true,
+          "path": "cost.unknown_exposure_preserved"
+        }
+      ],
+      "category": "recovery",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "cancel-and-explicit-resume",
+      "id": "cancel-and-explicit-resume",
+      "initial_files": {
+        "main.rs": "fn main() { loop { std::thread::sleep(std::time::Duration::from_secs(1)); } }\n"
+      },
+      "language": "Rust",
+      "prompt": "Preserve resumable evidence when execution is cancelled without automatically restarting work.",
+      "split": "validation",
+      "steps": [
+        "Start bounded work",
+        "Interrupt while request is in flight",
+        "Inspect saved state",
+        "Resume only after explicit instruction"
+      ]
+    },
+    {
+      "assertions": [
+        {
+          "equals": true,
+          "path": "recovery.conflict_detected"
+        },
+        {
+          "equals": true,
+          "path": "recovery.concurrent_change_preserved"
+        },
+        {
+          "equals": false,
+          "path": "recovery.stale_review_accepted"
+        }
+      ],
+      "category": "recovery",
+      "evidence_contract": "Trusted evaluator observations bound to candidate, source revision, timestamp and trial; missing observations fail.",
+      "execution_status": "curated scenario contract; feature execution awaits its implementation and pilot authorization",
+      "family": "concurrent-integration-conflict",
+      "id": "concurrent-integration-conflict",
+      "initial_files": {
+        "math.js": "export const add = (a,b) => a-b;\n"
+      },
+      "language": "JavaScript",
+      "prompt": "Integrate a reviewed fix while preserving a conflicting concurrent change.",
+      "split": "held-out",
+      "steps": [
+        "Prepare isolated fix",
+        "Review candidate hash",
+        "Change same line in primary workspace",
+        "Attempt integration"
+      ]
+    }
+  ],
+  "schema": 1,
+  "version": "scenarios-v1"
+}

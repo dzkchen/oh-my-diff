@@ -1,0 +1,17 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 5227
+expression: "hook_status_and_history_snapshot(&chat, \"restarted\", &history)"
+---
+restarted
+activity:
+"                                                                                "
+"• Checking stop condition                                                       "
+"                                                                                "
+"                                                                                "
+"› Ask Codex to do anything                                                      "
+"                                                                                "
+"  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…"
+history:
+• Hook stopped
+  └ continue with more context

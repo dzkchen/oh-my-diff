@@ -1,0 +1,8 @@
+---
+source: tui/src/chatwidget/tests/luna_reserve_usage_tests.rs
+assertion_line: 124
+expression: "normalize_snapshot_paths(render_bottom_popup(&chat, 34))"
+---
+› Ask Codex to do anything
+
+  Oh My Diff · upstream-style dir…
