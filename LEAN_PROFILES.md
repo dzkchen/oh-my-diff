@@ -1,15 +1,48 @@
 # Local lean candidate profiles
 
-These are local Apple Silicon candidate profiles for the pinned Codex `0.155.1`
+These are local Apple Silicon candidate profiles for the active Codex `0.156.1`
 patch. They are not a public release or a qualified default. Build the patched
-`codex` and `omd-mod` executables from `runtime/lean-v1.lock.json`, then use a
-Node `24.18.0` executable from `mise which node`. The platform profile copies
-only those two executables into its base artifact. It does not change
+`codex`, `omd-mod`, `omd-graph`, `omd-health`, and `omd-lsp` executables from
+`upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
+SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
+and copy that archive to `/path/to/release/mod-api.tgz`. Use Node `24.18.0` from
+`mise which node`. The platform profile installs the host, mod manager, author
+SDK/CLI, and a local package-control command. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
-The normalized patch-and-build steps are in [PRIVATE_BUILD.md](PRIVATE_BUILD.md).
-Before installation, verify all five release binaries against the frozen
-candidate lock with
-`python3 -m scripts.lean_candidate_lock --artifact-dir /path/to/release`.
+The historical `0.155.1` candidate and private build remain frozen. Verify the
+current six package artifacts with
+`python3 -m scripts.lean_release_lock --artifact-dir /path/to/release`.
+
+To create a checksum-bound prebuilt archive and install either profile locally:
+
+```sh
+python3 -m scripts.lean_package pack --artifact-dir /path/to/release --output /path/to/omd-package.tar.xz
+python3 -m scripts.lean_package install --archive /path/to/omd-package.tar.xz --sha256 PRINTED_SHA256 \
+  --upstream /path/to/upstream/codex --profile platform --prefix /path/to/omd-candidate \
+  --bin-dir /path/to/omd-bin --store /path/to/omd-mod-store --node "$(mise which node)"
+```
+
+Use `--profile full` for the provisional Full collection. The archive is
+verified before installation. For an automated patch-and-build install:
+
+```sh
+python3 -m scripts.lean_package source-install \
+  --repository /absolute/local/codex-mirror --author-archive /path/to/release/mod-api.tgz \
+  --output-archive /path/to/source-built-omd-package.tar.xz \
+  --upstream /path/to/upstream/codex --profile platform --prefix /path/to/omd-candidate \
+  --bin-dir /path/to/omd-bin --store /path/to/omd-mod-store --node "$(mise which node)"
+```
+
+Use `--profile full` for the Full candidate. An
+optional `--target-dir` retains a separate Cargo build cache. The source route
+verifies the upstream commit, normalizes the lock, applies the hash-checked
+patch, and builds the matching binaries. It requires Rust 1.95.0 and the pinned
+Cargo dependencies.
+The source package records its own exact binary hashes. Compiler build paths
+can make those hashes differ from the prebuilt archive; the installer checks
+the same source, patch, profile inventory, package contents, and pinned host
+version before activation. Omit `--output-archive` to discard the source-built
+archive after installation.
 
 Run these commands from this checkout, replacing the paths with the local
 patched build and separate writable installation directories:
@@ -18,6 +51,7 @@ patched build and separate writable installation directories:
 NODE_PATH="$(mise which node)"
 python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path/to/omd-bin install \
   --profile platform --binary /path/to/patched/codex --manager /path/to/patched/omd-mod \
+  --author-archive /path/to/release/mod-api.tgz \
   --node "$NODE_PATH" --store /path/to/omd-mod-store
 ```
 
@@ -32,14 +66,14 @@ installed but disabled. Six curated plugin source packages are available in
 started. Full includes inert `omd-graph`, `omd-health`, and `omd-lsp` launchers
 for the matching opt-in plugins. The deferred code-execution plugin, browser,
 bridge service, external language servers, code-mode host, and sidecars are
-absent from the base artifact.
+absent from the installed base profile.
 
 Inspect and switch the effective profile:
 
 ```sh
-python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path/to/omd-bin status
-python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path/to/omd-bin activate direct
-python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path/to/omd-bin activate full
+/path/to/omd-bin/omd-package status
+/path/to/omd-bin/omd-package activate direct
+/path/to/omd-bin/omd-package activate full
 ```
 
 Use `activate platform` for a platform installation. `direct` immediately
@@ -49,7 +83,7 @@ mod errors, and staged plugins. The TUI `/omd` inspector shows the live mode
 and mod state. To disable a broken first-party Full mod:
 
 ```sh
-python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path/to/omd-bin mod disable omd_workspace
+/path/to/omd-bin/omd-package mod disable omd_workspace
 ```
 
 Full OMD can explicitly select the controlled task contract with
@@ -81,7 +115,7 @@ and launcher directory for a side-by-side candidate upgrade. Removal deletes
 only the managed launcher and installation prefix:
 
 ```sh
-python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path/to/omd-bin uninstall
+/path/to/omd-bin/omd-package uninstall
 ```
 
 The mod store and Codex state remain. The installer refuses removal if its

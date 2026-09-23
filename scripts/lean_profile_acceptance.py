@@ -27,7 +27,7 @@ def call(arguments, env, parse=True):
     return json.loads(result.stdout) if parse else result.stdout.strip()
 
 
-def run(artifact_dir, output):
+def run(artifact_dir, upstream, output):
     if output.exists():
         raise ValueError("evidence output already exists")
     started = time.monotonic()
@@ -38,8 +38,16 @@ def run(artifact_dir, output):
         home.mkdir()
         sentinel = home / "config.toml"
         sentinel.write_text('model = "preserve-user-choice"\n')
+        auth = home / "auth.json"
+        auth.write_text("{}\n")
+        session = home / "sessions/2026/09/23/package-smoke.jsonl"
+        session.parent.mkdir(parents=True)
+        session.write_text('{"type":"preserve-session"}\n')
+        shared_hashes = {str(path.relative_to(home)): private.digest(path)
+                         for path in (sentinel, auth, session)}
         env = os.environ.copy()
         env.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home))
+        env["PATH"] = str(upstream.parent) + os.pathsep + env.get("PATH", "")
         observations = {}
 
         def command(profile, *args):
@@ -50,11 +58,16 @@ def run(artifact_dir, output):
 
         platform_store = base / "platform-store"
         platform = command("platform", "install", "--profile", "platform", "--binary", artifact_dir / "codex",
-                           "--manager", artifact_dir / "omd-mod", "--node", node, "--store", platform_store)
+                           "--manager", artifact_dir / "omd-mod", "--author-archive", artifact_dir / "mod-api.tgz",
+                           "--node", node, "--store", platform_store)
         assert platform["host_mode"] == "platform" and not any(item["installed"] for item in platform["packages"])
         assert platform["installed_tools"] == [] and platform["plugin_bundle"] is None
+        assert call([base / "platform-bin/omd-package", "status"], env)["profile"] == "platform"
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
-        assert call([base / "platform-bin/codex", "--version"], env, False) == "codex-cli 0.155.1"
+        version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
+        assert call([base / "platform-bin/codex", "--version"], env, False) == f"codex-cli {version}"
+        call([base / "platform-bin/omd-mod-author", "examples", base / "author-examples"], env, False)
+        assert (base / "author-examples/coordination/mod.json").is_file()
         package = base / "user-counter"
         shutil.copytree(ROOT / "mods/examples/counter", package)
         declared = json.loads((package / "mod.json").read_text())
@@ -75,20 +88,37 @@ def run(artifact_dir, output):
         assert offline["steps"][0]["value"] == {"count": 1}
         call([manager, "disable", platform_store, package], env)
         assert command("platform", "status")["other_active_mods"] == []
+        broken = base / "broken-counter"
+        broken.mkdir()
+        failed_manifest = {**declared, "id": "broken_counter"}
+        (broken / "mod.json").write_text(json.dumps(failed_manifest))
+        (broken / "index.ts").write_text("throw new Error('intentional package recovery test');\n")
+        failed_digest = call([manager, "inspect", broken], env)["sha256"]
+        call([manager, "trust", platform_store, broken, failed_digest,
+              ",".join(failed_manifest["capabilities"])], env)
+        call([manager, "enable", platform_store, broken], env)
+        failed = command("platform", "status")["other_active_mods"]
+        assert len(failed) == 1 and failed[0]["id"] == "broken_counter" and failed[0]["error"]
+        call([manager, "disable", platform_store, broken], env)
+        call([manager, "reload", platform_store], env)
+        assert command("platform", "status")["other_active_mods"] == []
         command("platform", "activate", "direct")
         assert command("platform", "status")["host_mode"] == "upstream_direct"
         command("platform", "activate", "platform")
-        command("platform", "uninstall")
+        assert call([base / "platform-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert platform_store.is_dir()
         observations["platform"] = {"empty_first_party": True, "user_mod_tool": offline["steps"][0]["value"],
-                                    "disable": True, "direct_switch": True, "store_preserved": True}
+                                    "disable": True, "broken_mod_recovery": True,
+                                    "direct_switch": True, "store_preserved": True}
 
         full_store = base / "full-store"
         install = ["install", "--profile", "full", "--binary", artifact_dir / "codex",
-                   "--manager", artifact_dir / "omd-mod", "--node", node, "--store", full_store]
+                   "--manager", artifact_dir / "omd-mod", "--author-archive", artifact_dir / "mod-api.tgz",
+                   "--node", node, "--store", full_store]
         for name in TOOLS:
             install += [f"--{name}", artifact_dir / name]
         full = command("full", *install)
+        assert call([base / "full-bin/omd-package", "status"], env)["profile"] == "full"
         active = [item["id"] for item in full["packages"] if item["loaded_by_profile"]]
         assert active == ["omd_workspace"]
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
@@ -170,13 +200,13 @@ def run(artifact_dir, output):
         else:
             raise AssertionError("uninstall removed an unmanaged user file")
         note.unlink()
-        command("full", "uninstall")
+        assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
         assert not any(item["loaded_by_profile"] for item in attached["packages"])
         enabled = command("full", "mod", "enable", "omd_workspace")
         assert next(item for item in enabled["packages"] if item["id"] == "omd_workspace")["loaded_by_profile"]
-        command("full", "uninstall")
+        assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         observations["full"] = {"installed_mods": [item["id"] for item in full["packages"]],
                                 "default_active": active, "staged_plugins": full["plugin_bundle"]["plugins"],
                                 "inert_tool_binaries": full["installed_tools"],
@@ -188,8 +218,10 @@ def run(artifact_dir, output):
                                 "attach_preserved_disable": True,
                                 "side_by_side_attach_preserved_disable": True,
                                 "state_preserved": True}
-    result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-candidate.lock.json"),
-              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in ("codex", "omd-mod", *TOOLS)},
+        assert {str(path.relative_to(home)): private.digest(path)
+                for path in (sentinel, auth, session)} == shared_hashes
+    result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
+              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in ("codex", "omd-mod", *TOOLS, "mod-api.tgz")},
               "elapsed_seconds": time.monotonic() - started, "checks": observations,
               "scope": "isolated local profile, package and author operations; no provider request or independent author"}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -200,9 +232,10 @@ def run(artifact_dir, output):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact-dir", type=Path, required=True)
+    parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    run(args.artifact_dir.resolve(), args.output.resolve())
+    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve())
 
 
 if __name__ == "__main__":

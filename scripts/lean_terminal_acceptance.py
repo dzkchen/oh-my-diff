@@ -15,7 +15,10 @@ import tempfile
 import termios
 import time
 
-from scripts import private_lean_v1 as private
+try:
+    from scripts import private_lean_v1 as private
+except ModuleNotFoundError:
+    import private_lean_v1 as private
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +86,7 @@ def terminal(binary, repo, env, width, expected):
                     process.wait(timeout=10)
 
 
-def run(artifact_dir, output):
+def run(artifact_dir, upstream, output):
     if output.exists():
         raise ValueError("evidence output already exists")
     node = Path(subprocess.check_output(["mise", "which", "node"], cwd=ROOT, text=True).strip()).resolve()
@@ -105,6 +108,7 @@ def run(artifact_dir, output):
         )
         env = os.environ.copy()
         env.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home), TERM="xterm-256color")
+        env["PATH"] = str(upstream.parent) + os.pathsep + env.get("PATH", "")
         observations = {}
         for profile, expected in (("platform", "Modding platform only"), ("full", "Full OMD")):
             prefix = base / f"{profile}-prefix"
@@ -113,7 +117,8 @@ def run(artifact_dir, output):
             command = ["python3", "-m", "scripts.lean_profiles", "--prefix", prefix,
                        "--bin-dir", bin_dir]
             install = ["install", "--profile", profile, "--binary", artifact_dir / "codex",
-                       "--manager", artifact_dir / "omd-mod", "--node", node, "--store", store]
+                       "--manager", artifact_dir / "omd-mod", "--author-archive", artifact_dir / "mod-api.tgz",
+                       "--node", node, "--store", store]
             if profile == "full":
                 for name in TOOLS:
                     install += [f"--{name}", artifact_dir / name]
@@ -126,7 +131,7 @@ def run(artifact_dir, output):
             observations[f"{profile}_direct"] = terminal(bin_dir / "codex", repo, env, 80,
                                                            "upstream-style direct")
             call(command + ["uninstall"], env)
-    result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-candidate.lock.json"),
+    result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
               "artifact_sha256": private.digest(artifact_dir / "codex"),
               "checks": observations,
               "scope": "isolated local PTY title and status with an inactive loopback provider; no model request"}
@@ -138,9 +143,10 @@ def run(artifact_dir, output):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact-dir", type=Path, required=True)
+    parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    run(args.artifact_dir.resolve(), args.output.resolve())
+    run(args.artifact_dir.resolve(), args.upstream.resolve(), args.output.resolve())
 
 
 if __name__ == "__main__":

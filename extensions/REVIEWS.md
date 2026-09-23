@@ -1,8 +1,11 @@
 # Extension review register
 
 Review date: September 22, 2026. These are source and functional reviews of
-release candidates on Codex 0.155.1 / OMD 0.1.0. They do not qualify a public
-support promise, a Full OMD default, task value over configured Codex, or
+release candidates on Codex 0.155.1 / OMD 0.1.0. A September 23 local package
+smoke covered the current Codex 0.156.1 pin, the mod API, and staged plugin
+installation and removal; it did not rerun each task-value gate. These reviews
+do not qualify a public support promise, a Full OMD default, task value over
+configured Codex, or
 independent community use. Exact current identities and dependencies are in
 [`index.json`](index.json); development-only sources are in
 [`development.json`](development.json). Maintainer audit files under `.docs/`

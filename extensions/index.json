@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "as_of": "2026-09-22",
+  "as_of": "2026-09-23",
   "release_pin": {
-    "codex": "0.155.1",
+    "codex": "0.156.1",
     "omd": "0.1.0",
     "mod_api": "0.1.0-experimental.8",
     "node": "24.18.0"
@@ -16,9 +16,9 @@
       "source": "mods/first-party/omd_coordination",
       "license": "undeclared",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
+      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "mod API 0.1.0-experimental.8",
         "Node 24.18.0"
@@ -34,9 +34,9 @@
       "source": "mods/first-party/omd_recovery",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
+      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "mod API 0.1.0-experimental.8",
         "Node 24.18.0"
@@ -52,9 +52,9 @@
       "source": "mods/first-party/omd_workspace",
       "license": "undeclared",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.155.1; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "mod API 0.1.0-experimental.8",
         "Node 24.18.0"
@@ -70,9 +70,9 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-guidance-hooks",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.155.1 and OMD 0.1.0; selected hooks require OMD_MODE=enabled and matching controlled manifest",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; selected hooks require OMD_MODE=enabled and matching controlled manifest",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "plugin 0.1.0"
       ],
@@ -105,9 +105,9 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-review-policy",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.155.1 and OMD 0.1.0; every-turn hook requires explicit controlled-manifest selection",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; every-turn hook requires explicit controlled-manifest selection",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "plugin 0.1.0"
       ],
@@ -136,9 +136,9 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-application-bridges",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.155.1 and OMD 0.1.0; requires the matching bridge host and explicit application_bridge capability",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires the matching bridge host and explicit application_bridge capability",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "plugin 0.1.0"
       ],
@@ -159,9 +159,9 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-repository-tools",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.155.1 and OMD 0.1.0; requires matching omd-graph and omd-health binaries",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires matching omd-graph and omd-health binaries",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "plugin 0.1.0"
       ],
@@ -182,9 +182,9 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-lsp-adapters",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.155.1 and OMD 0.1.0; requires matching omd-lsp and separately installed language servers",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires matching omd-lsp and separately installed language servers",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "plugin 0.1.0"
       ],
@@ -199,9 +199,9 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.155.1 and OMD 0.1.0; PDF rendering requires an installed Ghostscript",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; PDF rendering requires an installed Ghostscript",
       "tested_versions": [
-        "Codex 0.155.1",
+        "Codex 0.156.1",
         "OMD 0.1.0",
         "plugin 0.1.0"
       ],

@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import tomllib
 from datetime import datetime, timezone
 
@@ -19,11 +20,14 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCT = "oh-my-diff-lean-candidate-v1"
+PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
 DEFAULT_ACTIVE = ("omd_workspace",)
 PACKAGES = ("omd_coordination", "omd_recovery", "omd_workspace")
 TOOL_NAMES = ("omd-graph", "omd-health", "omd-lsp")
+MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/private_lean_v1.py",
+                    "scripts/preview_lock.py", "scripts/browser_bundle.py",
+                    "runtime/preview-v1.lock.json", "LEAN_PROFILES.md")
 
 
 def invoke(*arguments):
@@ -47,19 +51,20 @@ def paths(prefix, bin_dir, store):
 def identity(binary):
     binary = private.resolved(binary)
     result = private.binary_identity(binary)
-    if result["version"] != "codex-cli 0.155.1":
-        raise ValueError("candidate requires the pinned Codex 0.155.1 host")
+    version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
+    if result["version"] != f"codex-cli {version}":
+        raise ValueError(f"candidate requires the pinned Codex {version} host")
     return result
 
 
-def candidate_lock(upstream, lean, preview):
-    record = json.loads((ROOT / "runtime/lean-candidate.lock.json").read_text())
+def candidate_lock(upstream, patch, preview):
+    record = json.loads((ROOT / "runtime/lean-release.lock.json").read_text())
     if (record.get("schema") != SCHEMA or record.get("product") != PRODUCT
             or record.get("upstream_commit") != upstream["commit"]
-            or record.get("runtime_patch_sha256") != lean["runtime_patch"]["sha256"]
+            or record.get("runtime_patch_sha256") != patch["patch"]["sha256"]
             or record.get("mod_api") != preview["mod_api"]
             or record.get("node") != preview["node"]):
-        raise ValueError("lean candidate lock disagrees with pinned runtime sources")
+        raise ValueError("lean release lock disagrees with pinned runtime sources")
     for name, expected in record["source_sha256"].items():
         if private.digest(ROOT / name) != expected:
             raise ValueError(f"lean candidate source changed: {name}")
@@ -67,22 +72,32 @@ def candidate_lock(upstream, lean, preview):
 
 
 def copy_curated_plugins(destination):
-    lock = private.plugin_sources()
+    lock = private.plugin_lock()
     index = json.loads((ROOT / "extensions/index.json").read_text())
     selected = {package["id"] for package in index["packages"]
                 if package["extension_type"] == "plugin"
-                and package["support_status"] == "reviewed_candidate"}
+                and package["support_status"] in ("reviewed_candidate", "supported")}
     if not selected or not selected <= set(lock["plugins"]):
         raise ValueError("curated plugin selection disagrees with the pinned bundle")
     source = ROOT / lock["source"]
+    if private.digest(ROOT / lock["guide"]["path"]) != lock["guide"]["sha256"]:
+        raise ValueError("pinned bundled plugin guide changed")
     files = {}
     for name, expected in lock["files"].items():
         if name.startswith("plugins/") and name.split("/")[1] in selected:
+            if private.digest(source / name) != expected:
+                raise ValueError(f"pinned curated plugin source changed: {name}")
             target = destination / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source / name, target)
             files[name] = expected
     marketplace = json.loads((source / ".agents/plugins/marketplace.json").read_text())
+    listed = {entry["name"] for entry in marketplace["plugins"]}
+    if marketplace.get("name") != lock["marketplace"] or not selected <= listed:
+        raise ValueError("curated plugin marketplace changed")
+    if listed == set(lock["plugins"]) and private.digest(
+            source / ".agents/plugins/marketplace.json") != lock["files"][".agents/plugins/marketplace.json"]:
+        raise ValueError("pinned bundled plugin marketplace changed")
     marketplace["plugins"] = [entry for entry in marketplace["plugins"] if entry["name"] in selected]
     private.atomic_text(destination / ".agents/plugins/marketplace.json",
                         json.dumps(marketplace, indent=2) + "\n")
@@ -151,6 +166,24 @@ def check(record, bin_dir):
         marketplace = root / ".agents/plugins/marketplace.json"
         if not marketplace.is_file() or private.digest(marketplace) != bundle["marketplace_sha256"]:
             raise ValueError("managed plugin marketplace changed")
+    author = record["author"]
+    for name, expected in author["files"].items():
+        path = Path(record["prefix"]) / name
+        if not path.is_file() or private.digest(path) != expected:
+            raise ValueError(f"managed author package changed: {name}")
+    author_launcher = bin_dir / "omd-mod-author"
+    if (author_launcher.is_symlink() or not author_launcher.is_file()
+            or private.digest(author_launcher) != author["launcher_sha256"]):
+        raise ValueError("managed author launcher changed")
+    management = record["management"]
+    for name, expected in management["files"].items():
+        path = Path(record["prefix"]) / "management" / name
+        if not path.is_file() or private.digest(path) != expected:
+            raise ValueError(f"managed package control changed: {name}")
+    control_launcher = bin_dir / "omd-package"
+    if (control_launcher.is_symlink() or not control_launcher.is_file()
+            or private.digest(control_launcher) != management["launcher_sha256"]):
+        raise ValueError("managed package control launcher changed")
     return binary, manager
 
 
@@ -186,6 +219,8 @@ def status(prefix, bin_dir):
             "store": str(store), "mod_api": host["api"], "packages": packages,
             "effective_mod_selection": selection,
             "plugin_bundle": record.get("plugin_bundle"),
+            "author": record["author"],
+            "package_control": str(bin_dir / "omd-package"),
             "installed_tools": sorted(record.get("tools", {})),
             "other_active_mods": [item for item in host["mods"] if item["id"] not in PACKAGES],
             "installer_configured_optional_services": [], "shared_state": record["shared_state"]}
@@ -232,7 +267,9 @@ def install(args):
     prefix, bin_dir, store = paths(args.prefix, args.bin_dir, args.store)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("this candidate installer supports Apple Silicon macOS")
-    if prefix.exists() or (bin_dir / "codex").exists() or (bin_dir / "codex").is_symlink():
+    if (prefix.exists() or (bin_dir / "codex").exists() or (bin_dir / "codex").is_symlink()
+            or (bin_dir / "omd-mod-author").exists() or (bin_dir / "omd-mod-author").is_symlink()
+            or (bin_dir / "omd-package").exists() or (bin_dir / "omd-package").is_symlink()):
         raise ValueError("managed prefix or launcher already exists")
     if args.profile == "full":
         if any(getattr(args, name.replace("-", "_")) is None for name in TOOL_NAMES):
@@ -243,9 +280,12 @@ def install(args):
         raise ValueError("the platform-only profile has no bundled optional tools")
     if store.exists() != args.attach_store:
         raise ValueError("use --attach-store for an existing mod store; omit it for a new store")
-    upstream_lock, lean_lock = private.lock_inputs()
+    upstream_lock = json.loads((ROOT / "upstream.lock.json").read_text())
+    patch_lock = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
+    if private.digest(ROOT / patch_lock["patch"]["path"]) != patch_lock["patch"]["sha256"]:
+        raise ValueError("active runtime patch hash mismatch")
     locked = private.preview_sources(private.preview_lock())
-    candidate = candidate_lock(upstream_lock, lean_lock, locked)
+    candidate = candidate_lock(upstream_lock, patch_lock, locked)
     if tuple(sorted(locked["packages"])) != PACKAGES:
         raise ValueError("first-party candidate inventory changed")
     binary = identity(args.binary)
@@ -257,6 +297,10 @@ def install(args):
         raise ValueError("mod manager executable is unavailable")
     if private.digest(manager) != candidate["artifacts"]["omd-mod"]["sha256"]:
         raise ValueError("mod manager differs from frozen lean candidate")
+    author_archive = private.resolved(args.author_archive)
+    if (not author_archive.is_file()
+            or private.digest(author_archive) != candidate["artifacts"]["mod-api.tgz"]["sha256"]):
+        raise ValueError("mod author archive differs from pinned lean package")
     if private.output([str(node), "--version"]) != f"v{locked['node']}":
         raise ValueError(f"Node {locked['node']} is required")
     fallback = shutil.which("codex", path=private.path_without(bin_dir))
@@ -283,6 +327,22 @@ def install(args):
         artifacts.mkdir()
         for source, name in ((Path(binary["path"]), "codex"), (manager, "omd-mod")):
             shutil.copy2(source, artifacts / name)
+        author_root = prefix / "author"
+        author_root.mkdir()
+        with tarfile.open(author_archive, "r:gz") as archive:
+            archive.extractall(author_root, filter="data")
+        author_cli = author_root / "package/author/cli.mjs"
+        if not author_cli.is_file():
+            raise ValueError("packed mod author CLI is absent")
+        author_files = {path.relative_to(prefix).as_posix(): private.digest(path)
+                        for path in author_root.rglob("*") if path.is_file()}
+        management_root = prefix / "management"
+        management_files = {}
+        for name in MANAGEMENT_FILES:
+            target = management_root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, target)
+            management_files[name] = private.digest(target)
         installed_manager = artifacts / "omd-mod"
         if not args.attach_store:
             store.parent.mkdir(parents=True, exist_ok=True)
@@ -333,10 +393,13 @@ def install(args):
                              "sha256": private.digest(artifacts / "codex")},
                   "manager": {"installed_path": str(installed_manager),
                               "sha256": private.digest(installed_manager)},
+                  "author": {"archive_sha256": private.digest(author_archive),
+                             "node": str(node), "files": author_files},
+                  "management": {"files": management_files},
                   "tools": tools,
                   "upstream_fallback": fallback_id,
                   "upstream_commit": upstream_lock["commit"],
-                  "runtime_patch_sha256": lean_lock["runtime_patch"]["sha256"],
+                  "runtime_patch_sha256": patch_lock["patch"]["sha256"],
                   "shared_state": {"codex_home": str(home), "codex_sqlite_home": str(sqlite),
                                    "policy": "inherited unchanged; never removed by uninstall"},
                   "activation": {"selection": args.profile}}
@@ -344,6 +407,21 @@ def install(args):
         private.atomic_text(launcher, selected_text(record), 0o755)
         made_launchers.append(launcher)
         record["activation"]["sha256"] = private.digest(launcher)
+        author_launcher = bin_dir / "omd-mod-author"
+        private.atomic_text(author_launcher,
+                            f"#!/bin/sh\nexec {shlex.quote(str(node))} {shlex.quote(str(author_cli))} \"$@\"\n",
+                            0o755)
+        made_launchers.append(author_launcher)
+        record["author"]["launcher_sha256"] = private.digest(author_launcher)
+        control_launcher = bin_dir / "omd-package"
+        private.atomic_text(control_launcher,
+                            f"#!/bin/sh\nexport PYTHONDONTWRITEBYTECODE=1\n"
+                            f"cd {shlex.quote(str(management_root))} || exit 1\n"
+                            f"exec {shlex.quote(sys.executable)} -m scripts.lean_profiles "
+                            f"--prefix {shlex.quote(str(prefix))} --bin-dir {shlex.quote(str(bin_dir))} \"$@\"\n",
+                            0o755)
+        made_launchers.append(control_launcher)
+        record["management"]["launcher_sha256"] = private.digest(control_launcher)
         for name, details in tools.items():
             tool_launcher = bin_dir / name
             private.atomic_text(tool_launcher,
@@ -371,6 +449,8 @@ def uninstall(prefix, bin_dir):
     managed = {prefix / "install.json", Path(record["binary"]["installed_path"]),
                Path(record["manager"]["installed_path"])}
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
+    managed.update(prefix / name for name in record["author"]["files"])
+    managed.update(prefix / "management" / name for name in record["management"]["files"])
     bundle = record.get("plugin_bundle")
     if bundle:
         root = Path(bundle["marketplace"])
@@ -394,6 +474,8 @@ def uninstall(prefix, bin_dir):
         raise ValueError("upstream fallback no longer resolves on PATH")
     for name in record.get("tools", {}):
         (bin_dir / name).unlink()
+    (bin_dir / "omd-package").unlink()
+    (bin_dir / "omd-mod-author").unlink()
     (bin_dir / "codex").unlink()
     shutil.rmtree(prefix)
     return {"uninstalled": True, "upstream": fallback["path"],
@@ -409,6 +491,7 @@ def main():
     install_parser.add_argument("--profile", choices=("platform", "full"), required=True)
     install_parser.add_argument("--binary", type=Path, required=True)
     install_parser.add_argument("--manager", type=Path, required=True)
+    install_parser.add_argument("--author-archive", type=Path, required=True)
     install_parser.add_argument("--node", type=Path, required=True)
     install_parser.add_argument("--store", type=Path, required=True)
     for name in TOOL_NAMES:
