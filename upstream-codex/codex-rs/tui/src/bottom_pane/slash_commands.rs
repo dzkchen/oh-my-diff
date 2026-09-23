@@ -21,6 +21,7 @@ pub(crate) struct ServiceTierCommand {
 pub(crate) enum SlashCommandItem {
     Builtin(SlashCommand),
     ServiceTier(ServiceTierCommand),
+    Mod(crate::mod_runtime::ModSlashCommand),
 }
 
 impl SlashCommandItem {
@@ -28,6 +29,7 @@ impl SlashCommandItem {
         match self {
             Self::Builtin(cmd) => cmd.command(),
             Self::ServiceTier(command) => &command.name,
+            Self::Mod(command) => &command.invocation,
         }
     }
 
@@ -35,20 +37,21 @@ impl SlashCommandItem {
         match self {
             Self::Builtin(cmd) => cmd.supports_inline_args(),
             Self::ServiceTier(_) => false,
+            Self::Mod(_) => true,
         }
     }
 
     pub(crate) fn available_in_side_conversation(&self) -> bool {
         match self {
             Self::Builtin(cmd) => cmd.available_in_side_conversation(),
-            Self::ServiceTier(_) => false,
+            Self::ServiceTier(_) | Self::Mod(_) => false,
         }
     }
 
     pub(crate) fn available_during_task(&self) -> bool {
         match self {
             Self::Builtin(cmd) => cmd.available_during_task(),
-            Self::ServiceTier(_) => true,
+            Self::ServiceTier(_) | Self::Mod(_) => true,
         }
     }
 }
@@ -100,6 +103,20 @@ pub(crate) fn commands_for_input(
             );
         }
     }
+    let tier_names = if tiers_enabled {
+        service_tier_commands
+            .iter()
+            .map(|command| command.name.as_str())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    commands.extend(
+        crate::mod_runtime::slash_commands()
+            .into_iter()
+            .filter(|command| !tier_names.contains(&command.invocation.as_str()))
+            .map(SlashCommandItem::Mod),
+    );
     commands
         .into_iter()
         .filter(|cmd| !flags.side_conversation_active || cmd.available_in_side_conversation())
@@ -146,6 +163,7 @@ pub(crate) fn find_slash_command(
                 .map(SlashCommandItem::ServiceTier)
         })
         .flatten()
+        .or_else(|| crate::mod_runtime::find(name).map(SlashCommandItem::Mod))
 }
 
 pub(crate) fn has_slash_command_prefix(
@@ -334,6 +352,7 @@ mod tests {
                 SlashCommand::Status,
                 SlashCommand::Daemon,
                 SlashCommand::Warnings,
+                SlashCommand::Omd,
                 SlashCommand::Pwd,
                 SlashCommand::Usage,
             ]

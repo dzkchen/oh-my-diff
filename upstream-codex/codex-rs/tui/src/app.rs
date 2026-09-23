@@ -169,7 +169,11 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
+use crossterm::event::MouseButton;
+use crossterm::event::MouseEvent;
+use crossterm::event::MouseEventKind;
 use ratatui::backend::Backend;
+use ratatui::layout::Position;
 use ratatui::layout::Rect;
 use ratatui::layout::Size;
 use ratatui::style::Stylize;
@@ -919,6 +923,7 @@ impl App {
         }
 
         let mut event = if let TuiEvent::Key(mut key_event) = event {
+            tui.clear_mouse_selection();
             let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
             if self.should_recover_vim_insert_escape(key_event)
                 && !(tui.is_owned_screen()
@@ -938,6 +943,31 @@ impl App {
         } else {
             event
         };
+
+        if let TuiEvent::Mouse(mouse_event) = &event {
+            let mouse_event = *mouse_event;
+            if matches!(
+                mouse_event.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            ) && self.overlay.is_some()
+            {
+                let code = if mouse_event.kind == MouseEventKind::ScrollUp {
+                    KeyCode::Up
+                } else {
+                    KeyCode::Down
+                };
+                let _ = self
+                    .handle_backtrack_overlay_event(
+                        tui,
+                        app_server,
+                        TuiEvent::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+                    )
+                    .await?;
+            } else {
+                self.handle_omd_mouse(tui, mouse_event);
+            }
+            return Ok(AppRunControl::Continue);
+        }
 
         self.cancel_primed_browsing_for_event(&event);
         if self.handle_owned_transcript_event(tui, app_server, &event)? {
@@ -1106,6 +1136,45 @@ impl App {
         Ok(AppRunControl::Continue)
     }
 
+    fn handle_omd_mouse(&mut self, tui: &mut tui::Tui, event: MouseEvent) {
+        if !crate::omd::mouse_enabled() || !tui.is_alt_screen_active() {
+            return;
+        }
+        if let Some(pointer) = crate::mod_ui::pointer(event) {
+            if let crate::mod_ui::ModPointer::Action(name, action) = pointer {
+                self.dispatch_mod_key_action(&name, action);
+            }
+            tui.frame_requester().schedule_frame();
+            return;
+        }
+        let position = Position::new(event.column, event.row);
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.chat_widget
+                    .position_composer_cursor_from_screen(position);
+                tui.begin_mouse_selection(position);
+            }
+            MouseEventKind::Drag(MouseButton::Left) => tui.drag_mouse_selection(position),
+            MouseEventKind::Up(MouseButton::Left) => {
+                let Some(selection) = tui.finish_mouse_selection(position) else {
+                    return;
+                };
+                let text = self
+                    .chat_widget
+                    .composer_selected_text_from_screen(selection)
+                    .unwrap_or_else(|| tui.selected_text(selection));
+                if !text.is_empty() {
+                    self.app_event_tx.send(AppEvent::CopySelection {
+                        text: Arc::from(text),
+                        label: "highlighted text".to_string(),
+                        format: crate::clipboard_copy::CopyFormat::PlainText,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn show_shutdown_feedback(&mut self, tui: &mut tui::Tui) -> Result<()> {
         self.disable_ambient_pet_before_shutdown(tui)?;
         self.chat_widget.show_shutdown_in_progress();
@@ -1116,7 +1185,24 @@ impl App {
         Ok(())
     }
 
+    fn sync_mod_ui(&mut self) {
+        let before = crate::mod_ui::status_segments();
+        crate::mod_ui::refresh();
+        if let Some(warning) = crate::mod_ui::sync_syntax_theme()
+            && crate::mod_ui::first_warning(&warning)
+        {
+            self.chat_widget.add_error_message(warning);
+        }
+        for activity in crate::mod_ui::take_new_activity() {
+            self.chat_widget.add_mod_activity(activity);
+        }
+        if before != crate::mod_ui::status_segments() {
+            self.chat_widget.refresh_status_line();
+        }
+    }
+
     fn render_chat_widget_frame(&mut self, tui: &mut tui::Tui, screen_size: Size) -> Result<Rect> {
+        self.sync_mod_ui();
         self.sync_thread_title_progress();
         self.chat_widget
             .set_sparkle_terminal_focus(tui.is_terminal_focused());
@@ -1146,20 +1232,31 @@ impl App {
             self.schedule_immediate_resize_reflow(tui);
             self.maybe_run_resize_reflow(tui, screen_size)?;
         }
+        let mouse_selection = tui.mouse_selection();
+        let mod_snapshot = crate::mod_ui::snapshot();
+        let header_rows = crate::mod_ui::header_rows(screen_size.height, &mod_snapshot);
+        let mod_dialog_visible = crate::mod_ui::dialog_visible(&mod_snapshot);
         self.with_chat_widget_frame(screen_size.width, |desired_height, chat_widget| {
-            let desired_height = if dashboard_visible {
+            let desired_height = if dashboard_visible || mod_dialog_visible {
                 screen_size.height
             } else {
                 desired_height
+                    .saturating_add(header_rows)
+                    .min(screen_size.height)
             };
             let mut rendered_area = Rect::default();
             tui.draw_with_resize_reflow(desired_height, screen_size, |frame| {
                 let area = frame.area();
                 rendered_area = area;
-                chat_widget.render(area, frame.buffer);
-                self.chat_widget.note_rendered_width(area.width);
-                if let Some((x, y)) = chat_widget.cursor_pos(area) {
-                    frame.set_cursor_style(chat_widget.cursor_style(area));
+                let chat_area = crate::mod_ui::chat_area(area, &mod_snapshot, header_rows);
+                chat_widget.render(chat_area, frame.buffer);
+                crate::mod_ui::render(area, chat_area, frame.buffer, &mod_snapshot);
+                if let Some(selection) = mouse_selection {
+                    crate::omd::highlight_selection(frame.buffer_mut(), selection);
+                }
+                self.chat_widget.note_rendered_width(chat_area.width);
+                if let Some((x, y)) = chat_widget.cursor_pos(chat_area) {
+                    frame.set_cursor_style(chat_widget.cursor_style(chat_area));
                     frame.set_cursor_position((x, y));
                 }
             })?;

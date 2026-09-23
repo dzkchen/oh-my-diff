@@ -276,6 +276,10 @@ where
         &self.buffers[1 - self.current]
     }
 
+    pub(crate) fn rendered_buffer(&self) -> &Buffer {
+        self.previous_buffer()
+    }
+
     /// Gets the previous buffer as a mutable reference.
     fn previous_buffer_mut(&mut self) -> &mut Buffer {
         &mut self.buffers[1 - self.current]

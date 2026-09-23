@@ -534,11 +534,34 @@ pub(crate) async fn run_turn_interrupt_hooks(
     emit_hook_completed_events(sess, turn_context, outcome.hook_events).await;
 }
 
+async fn notify_compaction_lifecycle(
+    sess: &Session,
+    turn_context: &TurnContext,
+    trigger: CompactionTrigger,
+    started: bool,
+) {
+    for contributor in sess.services.extensions.turn_lifecycle_contributors() {
+        let input = codex_extension_api::CompactionLifecycleInput {
+            turn_id: turn_context.sub_id.as_str(),
+            trigger: compaction_trigger_label(trigger),
+            session_store: &sess.services.session_extension_data,
+            thread_store: &sess.services.thread_extension_data,
+            turn_store: turn_context.extension_data.as_ref(),
+        };
+        if started {
+            contributor.on_compaction_start(input).await;
+        } else {
+            contributor.on_compaction_end(input).await;
+        }
+    }
+}
+
 pub(crate) async fn run_pre_compact_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
 ) -> PreCompactHookOutcome {
+    notify_compaction_lifecycle(sess, turn_context, trigger, true).await;
     let request = codex_hooks::PreCompactRequest {
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
@@ -576,6 +599,7 @@ pub(crate) async fn run_post_compact_hooks(
     turn_context: &Arc<TurnContext>,
     trigger: CompactionTrigger,
 ) -> PostCompactHookOutcome {
+    notify_compaction_lifecycle(sess, turn_context, trigger, false).await;
     let request = codex_hooks::PostCompactRequest {
         session_id: sess.session_id().into(),
         turn_id: turn_context.sub_id.clone(),
@@ -839,8 +863,8 @@ impl HookRuntimeOutcome {
 }
 
 pub(crate) async fn record_additional_contexts(
-    sess: &Arc<Session>,
-    turn_context: &Arc<TurnContext>,
+    sess: &Session,
+    turn_context: &TurnContext,
     additional_contexts: Vec<String>,
 ) {
     let developer_messages = additional_context_messages(additional_contexts);

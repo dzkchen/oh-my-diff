@@ -279,6 +279,8 @@ pub struct StartThreadOptions {
     pub user_instructions: Option<LoadedUserInstructions>,
     pub thread_extension_init: ExtensionDataInit,
     pub client_mcp_extensions: ClientMcpExtensions,
+    /// Optional isolated extension registry for a controlled child session.
+    pub isolated_extensions: Option<Arc<ExtensionRegistry<Config>>>,
     /// Thread ID reserved before startup so the caller can associate host-owned state with it.
     pub reserved_thread_id: Option<ThreadId>,
     /// Initial thread-owned plugin selection; omission restores persisted settings.
@@ -304,6 +306,7 @@ impl StartThreadOptions {
             user_instructions: None,
             thread_extension_init: ExtensionDataInit::default(),
             client_mcp_extensions: ClientMcpExtensions::default(),
+            isolated_extensions: None,
             reserved_thread_id: None,
             disabled_plugin_ids: None,
         }
@@ -323,6 +326,8 @@ struct ThreadSpawnRequest {
     inherited_instructions: Option<SessionInstructions>,
     inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
     user_shell_override: Option<crate::shell::Shell>,
+    inherit_user_instructions: bool,
+    inherit_extensions: bool,
 }
 
 impl ThreadSpawnRequest {
@@ -344,6 +349,8 @@ impl ThreadSpawnRequest {
             inherited_instructions: None,
             inherited_exec_policy: None,
             user_shell_override: None,
+            inherit_user_instructions: true,
+            inherit_extensions: true,
         }
     }
 }
@@ -1095,6 +1102,23 @@ impl ThreadManager {
             inherited_instructions,
         });
         self.start_thread(options).await
+    }
+
+    pub async fn spawn_controlled_subagent(
+        &self,
+        parent_thread_id: ThreadId,
+        options: StartThreadOptions,
+    ) -> CodexResult<NewThread> {
+        let parent = self.get_thread(parent_thread_id).await?;
+        let mut request = ThreadSpawnRequest::new(
+            options,
+            Arc::clone(&parent.session.services.auth_manager),
+            parent.session.services.agent_control.clone(),
+        );
+        request.parent_thread_id = Some(parent_thread_id);
+        request.inherit_extensions = false;
+        request.inherited_exec_policy = Some(Arc::clone(&parent.session.services.exec_policy));
+        Box::pin(self.state.spawn_thread(request)).await
     }
 
     /// Allocates a thread ID before startup so a caller can associate host-owned state with it.
@@ -2019,6 +2043,8 @@ impl ThreadManagerState {
             inherited_instructions,
             inherited_exec_policy,
             user_shell_override,
+            inherit_user_instructions,
+            inherit_extensions,
         } = request;
         let StartThreadOptions {
             mut config,
@@ -2037,6 +2063,7 @@ impl ThreadManagerState {
             user_instructions: supplied_user_instructions,
             mut thread_extension_init,
             client_mcp_extensions,
+            isolated_extensions,
             reserved_thread_id,
             disabled_plugin_ids,
         } = options;
@@ -2147,11 +2174,34 @@ impl ThreadManagerState {
                     .await,
                 )
             };
+        let (extensions, mcp_manager, multi_agent_version) = if isolation
+            != codex_extension_api::SessionIsolation::Isolated
+            && (isolated_extensions.is_some() || !inherit_extensions)
+        {
+            (
+                isolated_extensions.unwrap_or_else(empty_extension_registry),
+                Arc::new(McpManager::new(Arc::clone(&self.plugins_manager))),
+                Some(MultiAgentVersion::Disabled),
+            )
+        } else {
+            (extensions, mcp_manager, multi_agent_version)
+        };
         let mut instructions = instructions;
+        if !inherit_user_instructions {
+            instructions.user = None;
+            instructions.user_provider = None;
+        }
         if let Some(supplied) = supplied_user_instructions {
             instructions.user = supplied.instructions;
             instructions.user_provider = None;
             config.startup_warnings.extend(supplied.warnings);
+        }
+        if !matches!(session_source, SessionSource::SubAgent(_)) {
+            for contributor in extensions.config_contributors() {
+                contributor
+                    .prepare_thread_config(&mut config)
+                    .map_err(CodexErr::Fatal)?;
+            }
         }
         let parent_rollout_thread_trace = self
             .parent_rollout_thread_trace_for_source(&session_source, &initial_history)

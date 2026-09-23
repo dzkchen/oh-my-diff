@@ -208,6 +208,7 @@ pub(super) async fn handle(
     mode: TurnInputMode,
     submission_id: String,
 ) -> CodexResult<TurnInputSubmission> {
+    let request = intercept_user_input(session, request, &submission_id).await?;
     match mode {
         TurnInputMode::StartOrSteer => start_or_steer(session, request, submission_id).await,
         TurnInputMode::StartIfIdle => {
@@ -249,6 +250,78 @@ pub(super) async fn handle(
             steer(session, request, expected_turn_id, submission_id).await
         }
     }
+}
+
+async fn intercept_user_input(
+    session: &Arc<Session>,
+    mut request: TurnInputRequest,
+    submission_id: &str,
+) -> CodexResult<TurnInputRequest> {
+    let contributors = session.services.extensions.turn_lifecycle_contributors();
+    let SubmittedTurnInput::UserInput { content, .. } = &mut request.input else {
+        return Ok(request);
+    };
+    if contributors.is_empty() {
+        return Ok(request);
+    }
+    let mut text = content
+        .iter()
+        .filter_map(|item| match item {
+            UserInput::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() {
+        return Ok(request);
+    }
+    let attachments = content
+        .iter()
+        .filter(|item| !matches!(item, UserInput::Text { .. }))
+        .count();
+    for contributor in contributors {
+        let decision = contributor
+            .intercept_user_input(codex_extension_api::UserInputInterceptInput {
+                text: &text,
+                attachments,
+                session_store: &session.services.session_extension_data,
+                thread_store: &session.services.thread_extension_data,
+            })
+            .await;
+        match decision {
+            codex_extension_api::UserInputDecision::Keep => {}
+            codex_extension_api::UserInputDecision::Deny { notice } => {
+                return Err(CodexErr::InvalidRequest(notice));
+            }
+            codex_extension_api::UserInputDecision::Rewrite {
+                text: rewritten,
+                notice,
+            } => {
+                let position = content
+                    .iter()
+                    .position(|item| matches!(item, UserInput::Text { .. }))
+                    .unwrap_or(0);
+                content.retain(|item| !matches!(item, UserInput::Text { .. }));
+                content.insert(
+                    position.min(content.len()),
+                    UserInput::Text {
+                        text: rewritten.clone(),
+                        text_elements: Vec::new(),
+                    },
+                );
+                text = rewritten;
+                session
+                    .send_event_raw(Event {
+                        id: submission_id.to_string(),
+                        msg: EventMsg::Warning(codex_protocol::protocol::WarningEvent {
+                            message: notice,
+                        }),
+                    })
+                    .await;
+            }
+        }
+    }
+    Ok(request)
 }
 
 pub(super) async fn handle_recovery(

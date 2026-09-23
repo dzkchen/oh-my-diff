@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "omd",
+    "ext/omd",
     "aws-auth",
     "analytics",
     "agent-graph-store",
@@ -163,6 +165,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+codex-omd-extension = { path = "ext/omd" }
 # Internal
 codex-realtime-webrtc = { path = "realtime-webrtc" }
 app_test_support = { path = "app-server/tests/common" }

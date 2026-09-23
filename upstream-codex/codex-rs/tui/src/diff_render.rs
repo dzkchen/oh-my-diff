@@ -432,9 +432,19 @@ fn line_counts(change: &FileChange) -> (usize, usize) {
 fn render_line_count_summary(added: usize, removed: usize) -> Vec<RtSpan<'static>> {
     let mut spans = Vec::new();
     spans.push("(".into());
-    spans.push(format!("+{added}").green());
+    spans.push(
+        match crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffAdded) {
+            Some(color) => format!("+{added}").fg(color),
+            None => format!("+{added}").green(),
+        },
+    );
     spans.push(" ".into());
-    spans.push(format!("-{removed}").red());
+    spans.push(
+        match crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffRemoved) {
+            Some(color) => format!("-{removed}").fg(color),
+            None => format!("-{removed}").red(),
+        },
+    );
     spans.push(")".into());
     spans
 }
@@ -1285,6 +1295,9 @@ fn style_sign_add(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
+    if let Some(color) = crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffAdded) {
+        return style_add(theme, color_level, diff_backgrounds).fg(color);
+    }
     match theme {
         DiffTheme::Light => Style::default().fg(Color::Green),
         DiffTheme::Dark => style_add(theme, color_level, diff_backgrounds),
@@ -1297,6 +1310,9 @@ fn style_sign_del(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
+    if let Some(color) = crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffRemoved) {
+        return style_del(theme, color_level, diff_backgrounds).fg(color);
+    }
     match theme {
         DiffTheme::Light => Style::default().fg(Color::Red),
         DiffTheme::Dark => style_del(theme, color_level, diff_backgrounds),
@@ -1319,7 +1335,7 @@ fn style_add(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
-    match (theme, color_level, diff_backgrounds.add) {
+    let style = match (theme, color_level, diff_backgrounds.add) {
         (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Green),
         (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
         | (DiffTheme::Light, DiffColorLevel::Ansi256, Some(bg)) => Style::default().bg(bg),
@@ -1331,6 +1347,10 @@ fn style_add(
         | (DiffTheme::Light, DiffColorLevel::Ansi256, None) => Style::default(),
         (DiffTheme::Dark, DiffColorLevel::TrueColor, None)
         | (DiffTheme::Dark, DiffColorLevel::Ansi256, None) => Style::default().fg(Color::Green),
+    };
+    match crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffAdded) {
+        Some(color) => style.fg(color),
+        None => style,
     }
 }
 
@@ -1343,7 +1363,7 @@ fn style_del(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
-    match (theme, color_level, diff_backgrounds.del) {
+    let style = match (theme, color_level, diff_backgrounds.del) {
         (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Red),
         (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
         | (DiffTheme::Light, DiffColorLevel::Ansi256, Some(bg)) => Style::default().bg(bg),
@@ -1355,6 +1375,10 @@ fn style_del(
         | (DiffTheme::Light, DiffColorLevel::Ansi256, None) => Style::default(),
         (DiffTheme::Dark, DiffColorLevel::TrueColor, None)
         | (DiffTheme::Dark, DiffColorLevel::Ansi256, None) => Style::default().fg(Color::Red),
+    };
+    match crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffRemoved) {
+        Some(color) => style.fg(color),
+        None => style,
     }
 }
 

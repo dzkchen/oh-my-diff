@@ -89,6 +89,7 @@ use crate::store::error_context_sub_error_type;
 use crate::tool_suggest_metadata::ToolSuggestMetadataCache;
 use codex_analytics::AnalyticsEventsClient;
 use codex_analytics::PluginInstallSource;
+use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerStack;
 use codex_config::SkillConfigRules;
 use codex_config::clear_user_plugin;
@@ -126,6 +127,7 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -2207,6 +2209,19 @@ impl PluginsManager {
         &self,
         resolved: ResolvedMarketplacePlugin,
     ) -> Result<PluginInstallOutcome, PluginInstallError> {
+        let plugin_key = resolved.plugin_id.as_key();
+        let configured_enabled = match fs::read_to_string(self.codex_home.join(CONFIG_TOML_FILE)) {
+            Ok(contents) => {
+                let config: toml::Value = toml::from_str(&contents).map_err(anyhow::Error::from)?;
+                config
+                    .get("plugins")
+                    .and_then(|plugins| plugins.get(&plugin_key))
+                    .and_then(|plugin| plugin.get("enabled"))
+                    .and_then(toml::Value::as_bool)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(anyhow::Error::from(error).into()),
+        };
         let auth_policy = resolved.policy.authentication;
         let plugin_version =
             if is_openai_curated_marketplace_name(&resolved.plugin_id.marketplace_name) {
@@ -2256,7 +2271,7 @@ impl PluginsManager {
         set_user_plugin_enabled(
             &self.codex_home,
             result.plugin_id.as_key(),
-            /*enabled*/ true,
+            configured_enabled.unwrap_or(true),
         )
         .await
         .map_err(anyhow::Error::from)?;

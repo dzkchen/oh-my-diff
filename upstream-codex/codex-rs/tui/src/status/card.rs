@@ -56,6 +56,33 @@ use std::sync::RwLock;
 
 const CHATGPT_USAGE_URL: &str = "https://chatgpt.com/codex/settings/usage";
 
+pub(super) fn omd_status_lines(
+    profile: &str,
+    mode: &str,
+    value_width: usize,
+    available_inner_width: usize,
+    formatter: &FieldFormatter,
+) -> Vec<Line<'static>> {
+    if value_width < 12 {
+        let mut lines = vec![Line::from(vec![Span::from(" Profile:").dim()])];
+        lines.extend(word_wrap_lines(
+            [Line::from(profile.to_string())],
+            RtOptions::new(available_inner_width),
+        ));
+        lines.push(Line::from(vec![Span::from(" Mode:").dim()]));
+        lines.extend(word_wrap_lines(
+            [Line::from(mode.to_string())],
+            RtOptions::new(available_inner_width),
+        ));
+        lines
+    } else {
+        vec![
+            formatter.line("Install profile", vec![Span::from(profile.to_string())]),
+            formatter.line("Effective mode", vec![Span::from(mode.to_string())]),
+        ]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct StatusContextWindowData {
     percent_remaining: i64,
@@ -763,6 +790,11 @@ impl StatusHistoryCell {
             .map(str::to_string)
             .collect();
         let mut seen: BTreeSet<String> = labels.iter().cloned().collect();
+        let install_profile = crate::omd::install_profile();
+        if install_profile.is_some() {
+            push_label(&mut labels, &mut seen, "Install profile");
+            push_label(&mut labels, &mut seen, "Effective mode");
+        }
         let thread_name = self.thread_name.as_deref().filter(|name| !name.is_empty());
         #[expect(clippy::expect_used)]
         let rate_limit_state = self
@@ -859,6 +891,18 @@ impl StatusHistoryCell {
         lines.push(formatter.line("Directory", vec![Span::from(directory_value)]));
         lines.push(formatter.line("Permissions", vec![Span::from(self.permissions.clone())]));
         lines.push(formatter.line("Agents.md", vec![Span::from(agents_summary)]));
+        if let Some(profile) = install_profile {
+            let mode = crate::omd::effective_mode()
+                .map(|value| value.mode.label().to_string())
+                .unwrap_or_else(|error| format!("invalid: {error}"));
+            lines.extend(omd_status_lines(
+                profile,
+                &mode,
+                value_width,
+                available_inner_width,
+                &formatter,
+            ));
+        }
 
         if let Some(account_value) = account_value {
             lines.push(formatter.line("Account", vec![Span::from(account_value)]));

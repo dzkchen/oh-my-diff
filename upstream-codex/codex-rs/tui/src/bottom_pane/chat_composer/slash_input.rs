@@ -370,7 +370,7 @@ impl ChatComposer {
                                     |(_, args, _)| parent_owned_command_is_allowed(*cmd, args),
                                 )
                             }
-                            CommandItem::ServiceTier(_) => false,
+                            CommandItem::ServiceTier(_) | CommandItem::Mod(_) => false,
                         };
                         if !command_is_allowed {
                             return (InputResult::ParentOwnedInputBlocked, true);
@@ -385,6 +385,10 @@ impl ChatComposer {
                         return (result, true);
                     }
 
+                    let mod_args = parse_slash_name(self.draft.textarea.text())
+                        .filter(|(name, _, _)| *name == sel.command())
+                        .map(|(_, args, _)| args.trim().to_string())
+                        .unwrap_or_default();
                     self.stage_selected_slash_command_history(&sel);
                     if !matches!(sel, CommandItem::Builtin(cmd) if cmd.requires_dispatch_validation())
                     {
@@ -397,6 +401,7 @@ impl ChatComposer {
                             CommandItem::ServiceTier(command) => {
                                 InputResult::ServiceTierCommand(command)
                             }
+                            CommandItem::Mod(command) => InputResult::ModCommand(command, mod_args),
                         },
                         true,
                     );

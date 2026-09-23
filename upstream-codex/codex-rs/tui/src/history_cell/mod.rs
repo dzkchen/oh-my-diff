@@ -262,7 +262,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
     fn display_lines_for_mode(&self, width: u16, mode: HistoryRenderMode) -> Vec<Line<'static>> {
         match mode {
-            HistoryRenderMode::Rich => visible_lines(self.display_hyperlink_lines(width)),
+            HistoryRenderMode::Rich => {
+                visible_lines(self.display_hyperlink_lines_for_mode(width, mode))
+            }
             HistoryRenderMode::Raw => self.live_raw_lines(),
         }
     }
@@ -273,7 +275,16 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         mode: HistoryRenderMode,
     ) -> Vec<HyperlinkLine> {
         match mode {
-            HistoryRenderMode::Rich => self.display_hyperlink_lines(width),
+            HistoryRenderMode::Rich => {
+                let kind = if self.type_id() == std::any::TypeId::of::<AgentMarkdownCell>() {
+                    "message"
+                } else if self.type_id() == std::any::TypeId::of::<crate::exec_cell::ExecCell>() {
+                    "tool"
+                } else {
+                    "native"
+                };
+                crate::mod_ui::history(kind, self.display_hyperlink_lines(width))
+            }
             HistoryRenderMode::Raw => plain_hyperlink_lines(self.live_raw_lines()),
         }
     }
@@ -344,7 +355,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
 impl Renderable for Box<dyn HistoryCell> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let hyperlink_lines = self.display_hyperlink_lines(area.width);
+        let hyperlink_lines =
+            self.display_hyperlink_lines_for_mode(area.width, HistoryRenderMode::Rich);
         let paragraph = HyperlinkParagraph::new(&hyperlink_lines, Style::default());
         let y = if area.height == 0 {
             0

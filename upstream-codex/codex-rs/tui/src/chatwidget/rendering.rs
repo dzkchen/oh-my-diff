@@ -184,6 +184,17 @@ impl ChatWidget {
                 })),
             );
         }
+        let footer = crate::mod_ui::footer_lines(self.last_rendered_width.get().unwrap_or(80));
+        if !footer.is_empty() {
+            flex.push(
+                /*flex*/ 0,
+                RenderableItem::Owned(Box::new(ratatui::widgets::Paragraph::new(footer))).inset(
+                    Insets::tlbr(
+                        /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
+                    ),
+                ),
+            );
+        }
         flex.push(
             /*flex*/ 0,
             self.bottom_pane_renderable(

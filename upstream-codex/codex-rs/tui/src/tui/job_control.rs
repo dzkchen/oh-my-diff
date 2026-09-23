@@ -192,6 +192,7 @@ impl PreparedResumeAction {
                 if owned {
                     terminal.hide_cursor()?;
                 }
+                crate::omd::set_fullscreen_active(true);
                 terminal.set_viewport_area(Rect::from(screen_size));
                 terminal.clear()?;
             }

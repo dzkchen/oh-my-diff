@@ -258,6 +258,91 @@ async fn pasted_text_normalizes_mixed_line_endings_at_app_boundary() -> Result<(
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn mouse_highlight_release_queues_automatic_copy() -> Result<()> {
+    struct RestoreManifest(Option<std::ffi::OsString>);
+
+    impl Drop for RestoreManifest {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => unsafe { std::env::set_var(crate::omd::MANIFEST_ENV, value) },
+                None => unsafe { std::env::remove_var(crate::omd::MANIFEST_ENV) },
+            }
+        }
+    }
+
+    let restore = RestoreManifest(std::env::var_os(crate::omd::MANIFEST_ENV));
+    let fixture = tempdir()?;
+    let manifest = fixture.path().join("manifest.json");
+    std::fs::write(
+        &manifest,
+        serde_json::to_vec(&serde_json::json!({
+            "evidence": fixture.path(),
+            "authorization": fixture.path().join("authorization.json"),
+            "authorization_sha256": "fixture",
+            "repository_identity": "fixture"
+        }))?,
+    )?;
+    unsafe { std::env::set_var(crate::omd::MANIFEST_ENV, &manifest) };
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    while app_event_rx.try_recv().is_ok() {}
+    let mut tui = crate::tui::test_support::make_test_tui()?;
+    tui.enter_persistent_alt_screen()?;
+    assert!(tui.is_alt_screen_active());
+    assert!(tui.mouse_capture_enabled());
+    assert!(crate::omd::fullscreen_active());
+    tui.draw(u16::MAX, |frame| {
+        frame
+            .buffer_mut()
+            .set_string(0, 0, "hello", ratatui::style::Style::default());
+    })?;
+
+    for event in [
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+        MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 4,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+        MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 4,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    ] {
+        app.handle_omd_mouse(&mut tui, event);
+    }
+
+    assert_matches!(
+        app_event_rx.try_recv(),
+        Ok(AppEvent::CopySelection { text, label, .. })
+            if &*text == "hello" && label == "highlighted text"
+    );
+    tui.leave_alt_screen()?;
+    assert!(tui.is_alt_screen_active());
+    assert!(tui.mouse_capture_enabled());
+    assert!(crate::omd::fullscreen_active());
+    tui.leave_persistent_alt_screen()?;
+    assert!(!tui.is_alt_screen_active());
+    assert!(!tui.mouse_capture_enabled());
+    assert!(!crate::omd::fullscreen_active());
+    tui.set_alt_screen_enabled(/*enabled*/ false);
+    tui.enter_alt_screen()?;
+    assert!(!tui.is_alt_screen_active());
+    assert!(!tui.mouse_capture_enabled());
+    assert!(!crate::omd::fullscreen_active());
+    drop(restore);
+    Ok(())
+}
+
+#[tokio::test]
 async fn duplicate_named_resume_renders_error_without_replacing_current_session() -> Result<()> {
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
     let label = format!("duplicate-{}", ThreadId::new());

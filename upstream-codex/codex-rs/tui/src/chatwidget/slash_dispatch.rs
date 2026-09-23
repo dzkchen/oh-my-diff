@@ -518,6 +518,8 @@ impl ChatWidget {
                     );
                 }
             }
+            SlashCommand::Omd => self.open_omd_inspector(),
+            SlashCommand::Graph => self.open_omd_graph(),
             SlashCommand::Cd => {
                 self.dispatch_command_with_args(SlashCommand::Cd, "~".to_string(), Vec::new());
             }
@@ -1110,7 +1112,15 @@ impl ChatWidget {
                     self.handle_service_tier_command_dispatch(command);
                     QueueDrain::Continue
                 }
+                SlashCommandItem::Mod(command) => {
+                    self.run_mod_command(command, String::new());
+                    QueueDrain::Continue
+                }
             };
+        }
+        if let SlashCommandItem::Mod(command) = command {
+            self.run_mod_command(command, rest.trim().to_string());
+            return QueueDrain::Continue;
         }
 
         if !command.supports_inline_args() {
@@ -1202,6 +1212,8 @@ impl ChatWidget {
             SlashCommand::Ide
             | SlashCommand::Status
             | SlashCommand::Daemon
+            | SlashCommand::Omd
+            | SlashCommand::Graph
             | SlashCommand::Pwd
             | SlashCommand::Usage
             | SlashCommand::DebugConfig

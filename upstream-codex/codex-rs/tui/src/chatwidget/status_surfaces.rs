@@ -200,13 +200,7 @@ impl ChatWidget {
     }
 
     fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
-        let enabled = !selections.status_line_items.is_empty();
-        self.bottom_pane.set_status_line_enabled(enabled);
-        if !enabled {
-            self.set_status_line(/*status_line*/ None);
-            self.set_status_line_hyperlink(/*url*/ None);
-            return;
-        }
+        self.bottom_pane.set_status_line_enabled(true);
 
         let mut segments = Vec::new();
         for item in &selections.status_line_items {
@@ -215,11 +209,22 @@ impl ChatWidget {
             }
         }
 
-        self.set_status_line(status_line_from_segments(
+        let status_line = status_line_from_segments(
             segments,
             self.local_settings.tui.status_line_use_colors,
             self.thread_id,
-        ));
+        );
+        let mut spans = vec![crate::omd::compact_status().bold()];
+        for segment in crate::mod_ui::status_segments() {
+            spans.push(" · ".dim());
+            spans.push(segment.into());
+        }
+        if let Some(line) = status_line {
+            spans.push(" · ".dim());
+            spans.extend(line.spans);
+        }
+        let status_line = Some(Line::from(spans));
+        self.set_status_line(status_line);
         let hyperlink_url = selections
             .status_line_items
             .contains(&StatusLineItem::PullRequestNumber)

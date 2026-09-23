@@ -1,3 +1,4 @@
+use super::format::FieldFormatter;
 use super::new_status_output;
 use super::new_status_output_with_rate_limits;
 use super::new_status_output_with_rate_limits_handle;
@@ -59,6 +60,19 @@ use ratatui::prelude::*;
 use std::sync::Arc;
 use tempfile::TempDir;
 use unicode_width::UnicodeWidthStr;
+
+#[test]
+fn status_omd_profile_values_wrap_in_narrow_terminal() {
+    let formatter = FieldFormatter::from_labels(["Install profile", "Effective mode"]);
+    let lines = super::card::omd_status_lines(
+        "Modding platform only",
+        "Oh My Diff · platform",
+        formatter.value_width(20),
+        20,
+        &formatter,
+    );
+    assert_snapshot!("status_omd_profile_narrow", render_lines(&lines).join("\n"));
+}
 
 #[test]
 fn stale_monthly_limit_marks_fresh_rolling_snapshot_stale() {

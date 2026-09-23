@@ -344,6 +344,60 @@ impl App {
             AppEvent::CopySelection { text, label, format } => {
                 self.chat_widget.copy_selection(text, label, format);
             }
+            AppEvent::OmdContributorRevocation { result } => match result {
+                Ok(message) => self.chat_widget.add_info_message(message, None),
+                Err(error) => self
+                    .chat_widget
+                    .add_error_message(format!("Contributor revocation failed: {error}")),
+            },
+            AppEvent::OmdOpenExtensions => self.chat_widget.open_omd_extensions(),
+            AppEvent::OmdOpenPlugins => self.chat_widget.add_plugins_output(),
+            AppEvent::OmdModToggle {
+                id,
+                path,
+                managed,
+                enabled,
+            } => {
+                let paths = crate::omd::mod_paths();
+                let tx = self.app_event_tx.clone();
+                std::thread::spawn(move || {
+                    let result = (|| {
+                        let root = paths
+                            .and_then(|paths| paths.store)
+                            .ok_or("mod store is not configured")?;
+                        let store = codex_omd::ModStore::open(root).map_err(|e| e.to_string())?;
+                        if managed {
+                            if enabled {
+                                store.package_enable(&id).map_err(|e| e.to_string())?;
+                            } else {
+                                store.package_disable(&id).map_err(|e| e.to_string())?;
+                            }
+                        } else {
+                            store.enable(&path, enabled).map_err(|e| e.to_string())?;
+                        }
+                        Ok(format!(
+                            "Mod {id} {}. Selection applies at the next turn boundary.",
+                            if enabled { "enabled" } else { "disabled" }
+                        ))
+                    })();
+                    tx.send(AppEvent::OmdModToggled { result });
+                });
+            }
+            AppEvent::OmdModToggled { result } => {
+                match result {
+                    Ok(message) => self.chat_widget.add_info_message(message, None),
+                    Err(error) => self
+                        .chat_widget
+                        .add_error_message(format!("Mod selection failed: {error}")),
+                }
+                self.chat_widget.open_omd_extensions();
+            }
+            AppEvent::OmdGraphSelection { prompt } => {
+                self.chat_widget.insert_omd_graph_selection(&prompt);
+            }
+            AppEvent::ModCommandFinished { invocation, result } => {
+                self.chat_widget.on_mod_command_finished(invocation, result);
+            }
             AppEvent::ClearUi { name } => {
                 if self.reject_pending_permission_root_switch() {
                     return Ok(AppRunControl::Continue);

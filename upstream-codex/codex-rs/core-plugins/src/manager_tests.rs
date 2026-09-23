@@ -3368,6 +3368,28 @@ async fn install_plugin_updates_config_with_relative_path_and_plugin_key() {
     let config = fs::read_to_string(tmp.path().join("config.toml")).unwrap();
     assert!(config.contains(r#"[plugins."sample-plugin@debug"]"#));
     assert!(config.contains("enabled = true"));
+    fs::write(
+        tmp.path().join("config.toml"),
+        config.replace("enabled = true", "enabled = false"),
+    )
+    .unwrap();
+    write_plugin_with_version(&repo_root, "sample-plugin", "sample-plugin", Some("0.1.1"));
+    let updated = test_plugins_manager(tmp.path().to_path_buf())
+        .install_plugin(
+            &unrestricted_plugins_config_input(),
+            PluginInstallRequest {
+                plugin_name: "sample-plugin".to_string(),
+                marketplace_path: AbsolutePathBuf::try_from(
+                    repo_root.join(".agents/plugins/marketplace.json"),
+                )
+                .unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.plugin_version, "0.1.1");
+    let config = fs::read_to_string(tmp.path().join("config.toml")).unwrap();
+    assert!(config.contains("enabled = false"));
 }
 
 #[tokio::test]

@@ -360,13 +360,24 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
-        let title_spans: Vec<Span<'static>> = vec![
-            Span::from(">_ ").dim(),
-            Span::from("OpenAI Codex").bold(),
-            Span::from(" ").dim(),
-            Span::from(format!("(v{})", self.version)).dim(),
-        ];
+        let title_spans: Vec<Span<'static>> =
+            if display_width(format!(">_ {}", crate::omd::launch_title(self.version)).as_str())
+                <= inner_width
+            {
+                vec![
+                    Span::from(">_ ").dim(),
+                    Span::from("OpenAI Codex | Oh My Diffed").bold(),
+                    Span::from(" ").dim(),
+                    Span::from(format!("(v{})", self.version)).dim(),
+                ]
+            } else {
+                vec![
+                    Span::from(">_ ").dim(),
+                    Span::from("OMD").bold(),
+                    Span::from(" ").dim(),
+                    Span::from(format!("(v{})", self.version)).dim(),
+                ]
+            };
 
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
@@ -434,7 +445,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         let mut lines = vec![
-            Line::from(format!("OpenAI Codex (v{})", self.version)),
+            Line::from(crate::omd::launch_title(self.version)),
             Line::from(format!(
                 "model: {}{}",
                 self.model,

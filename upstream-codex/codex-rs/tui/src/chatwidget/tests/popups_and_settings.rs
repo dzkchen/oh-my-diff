@@ -15,6 +15,24 @@ use codex_connectors::AppInfo;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn omd_extension_controls_stay_available_at_narrow_width_during_stream_updates() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.open_omd_extensions();
+    let narrow = render_bottom_popup(&chat, /*width*/ 48);
+    assert!(narrow.contains("Plugins"), "{narrow}");
+    assert!(narrow.contains("Skills"), "{narrow}");
+    assert!(narrow.contains("Hooks"), "{narrow}");
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    assert!(matches!(rx.try_recv(), Ok(AppEvent::OmdOpenPlugins)));
+    chat.open_omd_extensions();
+    chat.add_plain_history_lines(vec![ratatui::text::Line::from("streamed result")]);
+    let resized = render_bottom_popup(&chat, /*width*/ 100);
+    assert!(resized.contains("Plugins"), "{resized}");
+    assert!(resized.contains("Skills"), "{resized}");
+    assert!(resized.contains("Hooks"), "{resized}");
+}
+
+#[tokio::test]
 async fn experimental_mode_plan_is_ignored_on_startup() {
     let codex_home = tempdir().expect("tempdir");
     let cfg = ConfigBuilder::default()

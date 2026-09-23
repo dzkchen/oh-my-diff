@@ -866,7 +866,6 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
 
     let default_cwd = config.cwd.to_path_buf();
     let default_approval_policy = config.permissions.approval_policy.value();
-    let default_effort = config.model_reasoning_effort.clone();
 
     let (initial_operation, prompt_summary) = match (command.as_ref(), prompt, images) {
         (Some(ExecCommand::Review(review_cli)), _, _) => {
@@ -1095,6 +1094,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     // Waiting for a later streamed `SessionConfigured` event adds up to 10s of
     // avoidable startup latency on the in-process path.
     let session_configured = fallback_session_configured;
+    let default_effort = session_configured.reasoning_effort.clone();
 
     exec_span.record("thread.id", primary_thread_id_for_span.as_str());
 

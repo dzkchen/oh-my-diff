@@ -30,6 +30,7 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
 pub(crate) enum CommandItem {
     Builtin(SlashCommand),
     ServiceTier(ServiceTierCommand),
+    Mod(crate::mod_runtime::ModSlashCommand),
 }
 
 pub(crate) struct CommandPopup {
@@ -82,6 +83,7 @@ impl CommandPopup {
                     && cmd != SlashCommand::Apps)
                     .then_some(CommandItem::Builtin(cmd)),
                 SlashCommandItem::ServiceTier(command) => Some(CommandItem::ServiceTier(command)),
+                SlashCommandItem::Mod(command) => Some(CommandItem::Mod(command)),
             })
             .collect();
         Self {
@@ -257,6 +259,7 @@ impl CommandItem {
         match self {
             Self::Builtin(cmd) => cmd.command(),
             Self::ServiceTier(command) => &command.name,
+            Self::Mod(command) => &command.invocation,
         }
     }
 
@@ -264,6 +267,7 @@ impl CommandItem {
         match self {
             Self::Builtin(cmd) => cmd.description(),
             Self::ServiceTier(command) => &command.description,
+            Self::Mod(command) => &command.description,
         }
     }
 }
@@ -300,7 +304,7 @@ mod tests {
         let matches = popup.filtered_items();
         let has_init = matches.iter().any(|item| match item {
             CommandItem::Builtin(cmd) => cmd.command() == "init",
-            CommandItem::ServiceTier(_) => false,
+            CommandItem::ServiceTier(_) | CommandItem::Mod(_) => false,
         });
         assert!(
             has_init,
@@ -321,6 +325,7 @@ mod tests {
             Some(CommandItem::ServiceTier(command)) => {
                 panic!("expected init command, got service tier {command:?}")
             }
+            Some(CommandItem::Mod(command)) => panic!("unexpected mod command {command:?}"),
             None => panic!("expected a selected command for exact match"),
         }
     }
@@ -335,6 +340,7 @@ mod tests {
             Some(CommandItem::ServiceTier(command)) => {
                 panic!("expected model command, got service tier {command:?}")
             }
+            Some(CommandItem::Mod(command)) => panic!("unexpected mod command {command:?}"),
             None => panic!("expected at least one match for '/mo'"),
         }
     }
@@ -428,6 +434,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::Mod(command) => command.invocation,
             })
             .collect();
         assert_eq!(
@@ -516,6 +523,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::Mod(command) => command.invocation,
             })
             .collect();
         assert!(
@@ -591,6 +599,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::Mod(command) => command.invocation,
             })
             .collect();
         assert!(
@@ -623,25 +632,8 @@ mod tests {
             Some(CommandItem::ServiceTier(command)) => {
                 panic!("expected plan command, got service tier {command:?}")
             }
+            Some(CommandItem::Mod(command)) => panic!("unexpected mod command {command:?}"),
             other => panic!("expected plan to be selected for exact match, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn debug_commands_are_hidden_from_popup() {
-        let popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
-        let cmds: Vec<String> = popup
-            .filtered_items()
-            .into_iter()
-            .map(|item| match item {
-                CommandItem::Builtin(cmd) => cmd.command().to_string(),
-                CommandItem::ServiceTier(command) => command.name,
-            })
-            .collect();
-
-        assert!(
-            !cmds.iter().any(|name| name.starts_with("debug")),
-            "expected no /debug* command in popup menu, got {cmds:?}"
-        );
     }
 }

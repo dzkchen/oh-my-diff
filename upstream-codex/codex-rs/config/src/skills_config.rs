@@ -100,10 +100,18 @@ impl SkillConfigRules {
         for entry in &self.entries {
             match &entry.selector {
                 SkillConfigRuleSelector::Path(path) => {
-                    if entry.enabled {
-                        disabled_paths.remove(path);
-                    } else {
-                        disabled_paths.insert(path.clone());
+                    for selected in std::iter::once(path).chain(
+                        skills
+                            .clone()
+                            .into_iter()
+                            .map(|(_, candidate)| candidate)
+                            .filter(|candidate| plugin_cache_skill_equivalent(path, candidate)),
+                    ) {
+                        if entry.enabled {
+                            disabled_paths.remove(selected);
+                        } else {
+                            disabled_paths.insert(selected.clone());
+                        }
                     }
                 }
                 SkillConfigRuleSelector::Name(name) => {
@@ -123,6 +131,23 @@ impl SkillConfigRules {
 
         disabled_paths
     }
+}
+
+fn plugin_cache_skill_equivalent(left: &AbsolutePathBuf, right: &AbsolutePathBuf) -> bool {
+    let left = left.as_path().components().collect::<Vec<_>>();
+    let right = right.as_path().components().collect::<Vec<_>>();
+    let Some(index) = left
+        .windows(2)
+        .position(|pair| pair[0].as_os_str() == "plugins" && pair[1].as_os_str() == "cache")
+    else {
+        return false;
+    };
+    let version = index + 4;
+    left.len() == right.len()
+        && left.len() > version + 1
+        && left[version + 1].as_os_str() == "skills"
+        && left[..version] == right[..version]
+        && left[version + 1..] == right[version + 1..]
 }
 
 /// Returns whether bundled skills are enabled by the effective configuration.

@@ -179,6 +179,62 @@ impl App {
         self.chat_widget.set_footer_hint_override(items);
     }
 
+    fn native_binding_for(&self, key_event: KeyEvent) -> Option<String> {
+        let contexts = self.active_keymap_contexts();
+        if let Some(action) = keymap_action_ids()
+            .filter(|action| contexts.contains(action.context))
+            .find(|action| {
+                bindings_for_action(&self.keymap, action.context.config_name(), action.action)
+                    .is_some_and(|bindings| bindings.is_pressed(key_event))
+            })
+        {
+            return Some(format!(
+                "{}.{}",
+                action.context.config_name(),
+                action.action
+            ));
+        }
+        matches!(
+            self.key_chord_matcher
+                .clone()
+                .advance(key_event, &self.keymap.chords, contexts,),
+            crate::keymap::KeyChordMatch::Pending(_) | crate::keymap::KeyChordMatch::Completed(_)
+        )
+        .then(|| "key chord".to_string())
+    }
+
+    pub(super) fn dispatch_mod_key_action(&mut self, name: &str, action: codex_omd::ModKeyAction) {
+        match action {
+            codex_omd::ModKeyAction::Draft(text)
+            | codex_omd::ModKeyAction::Insert { insert: text } => {
+                self.chat_widget.handle_paste(text);
+            }
+            codex_omd::ModKeyAction::Submit { submit } => self.chat_widget.submit_mod_text(submit),
+            codex_omd::ModKeyAction::Command { command, args } => {
+                match crate::mod_runtime::find(&command) {
+                    Some(command) => self.chat_widget.run_mod_command(command, args),
+                    None => self.chat_widget.add_error_message(format!(
+                        "Mod keybinding {name}: /{command} is not an available mod command"
+                    )),
+                }
+            }
+            codex_omd::ModKeyAction::Focus { focus } => {
+                if !crate::mod_ui::focus(&focus) {
+                    self.chat_widget.add_error_message(format!(
+                        "Mod keybinding {name}: component {focus} is not available"
+                    ));
+                }
+            }
+            codex_omd::ModKeyAction::Copy { copy, label } => {
+                self.app_event_tx.send(AppEvent::CopySelection {
+                    text: Arc::from(copy),
+                    label,
+                    format: crate::clipboard_copy::CopyFormat::PlainText,
+                });
+            }
+        }
+    }
+
     pub(super) fn active_keymap_contexts(&self) -> crate::keymap::KeymapContextSet {
         use crate::keymap::KeymapContext;
         use crate::keymap::KeymapContextSet;
@@ -346,6 +402,38 @@ impl App {
         app_server: &mut AppServerSession,
         key_event: KeyEvent,
     ) {
+        if !self.chat_widget.is_external_writer_view()
+            && self.overlay.is_none()
+            && self.chat_widget.no_modal_or_popup_active()
+            && let Some(input) = crate::mod_ui::input(key_event)
+        {
+            match input {
+                crate::mod_ui::ModInput::Consumed => {
+                    tui.frame_requester().schedule_frame();
+                    return;
+                }
+                crate::mod_ui::ModInput::Interaction(name, action) => {
+                    self.dispatch_mod_key_action(&name, action);
+                    tui.frame_requester().schedule_frame();
+                    return;
+                }
+                crate::mod_ui::ModInput::Binding(name, action) => {
+                    match self.native_binding_for(key_event) {
+                        Some(native) => {
+                            if crate::mod_ui::first_warning(&format!("key:{name}")) {
+                                self.chat_widget.add_error_message(format!(
+                                    "Mod keybinding {name} ignored: it conflicts with native {native}"
+                                ));
+                            }
+                        }
+                        None => {
+                            self.dispatch_mod_key_action(&name, action);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         if self.chat_widget.is_external_writer_view()
             && self.overlay.is_none()
             && self.chat_widget.no_modal_or_popup_active()

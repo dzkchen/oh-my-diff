@@ -7,7 +7,6 @@ use crate::rate_limits::parse_all_rate_limits;
 use crate::safety_buffering::treatment_from_headers;
 use crate::telemetry::SseTelemetry;
 use codex_client::ByteStream;
-use codex_client::StreamResponse;
 use codex_protocol::ResponseUsageMetadata;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::MisalignmentErrorDetails;
@@ -33,12 +32,34 @@ const OPENAI_MODEL_HEADER: &str = "openai-model";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION: &str = "trusted_access_for_cyber";
 
+#[cfg(test)]
 pub fn spawn_response_stream(
-    stream_response: StreamResponse,
+    stream_response: codex_client::StreamResponse,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
     turn_state: Option<Arc<OnceLock<String>>>,
 ) -> ResponseStream {
+    spawn_observed_response_stream(
+        crate::request_observer::ObservedStream {
+            response: stream_response,
+            attempt: None,
+        },
+        idle_timeout,
+        telemetry,
+        turn_state,
+    )
+}
+
+pub(crate) fn spawn_observed_response_stream(
+    observed: crate::request_observer::ObservedStream,
+    idle_timeout: Duration,
+    telemetry: Option<Arc<dyn SseTelemetry>>,
+    turn_state: Option<Arc<OnceLock<String>>>,
+) -> ResponseStream {
+    let crate::request_observer::ObservedStream {
+        response: stream_response,
+        attempt,
+    } = observed;
     let rate_limit_snapshots = parse_all_rate_limits(&stream_response.headers);
     let models_etag = stream_response
         .headers
@@ -85,12 +106,13 @@ pub fn spawn_response_stream(
                 .send(Ok(ResponseEvent::ServerReasoningIncluded(true)))
                 .await;
         }
-        process_sse_with_treatment(
+        process_observed_sse(
             stream_response.bytes,
             tx_event,
             idle_timeout,
             telemetry,
             safety_buffering_treatment,
+            attempt,
         )
         .await;
     });
@@ -572,12 +594,32 @@ pub async fn process_sse(
     .await;
 }
 
+#[cfg(test)]
 async fn process_sse_with_treatment(
     stream: ByteStream,
     tx_event: mpsc::Sender<Result<ResponseEvent, ApiError>>,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
     safety_buffering_treatment: SafetyBufferingTreatment,
+) {
+    process_observed_sse(
+        stream,
+        tx_event,
+        idle_timeout,
+        telemetry,
+        safety_buffering_treatment,
+        None,
+    )
+    .await;
+}
+
+async fn process_observed_sse(
+    stream: ByteStream,
+    tx_event: mpsc::Sender<Result<ResponseEvent, ApiError>>,
+    idle_timeout: Duration,
+    telemetry: Option<Arc<dyn SseTelemetry>>,
+    safety_buffering_treatment: SafetyBufferingTreatment,
+    mut attempt: Option<Box<dyn crate::request_observer::ResponseAttempt>>,
 ) {
     let mut stream = stream.eventsource();
     let mut response_error: Option<ApiError> = None;
@@ -617,7 +659,42 @@ async fn process_sse_with_treatment(
 
         trace!("SSE event: {}", &sse.data);
 
-        let event: ResponsesStreamEvent = match serde_json::from_str(&sse.data) {
+        let mut raw: Value = match serde_json::from_str(&sse.data) {
+            Ok(raw) => raw,
+            Err(e) => {
+                if let Some(attempt) = attempt.as_mut() {
+                    let mut raw = Value::Null;
+                    if let Err(error) = attempt.observe(&mut raw, false) {
+                        let _ = tx_event
+                            .send(Err(ApiError::InvalidRequest {
+                                message: error.to_string(),
+                            }))
+                            .await;
+                        return;
+                    }
+                }
+                debug!(
+                    error_category = ?e.classify(),
+                    error_line = e.line(),
+                    error_column = e.column(),
+                    payload_bytes = sse.data.len(),
+                    "Failed to parse SSE event"
+                );
+                continue;
+            }
+        };
+        let valid = serde_json::from_value::<ResponsesStreamEvent>(raw.clone()).is_ok();
+        if let Some(attempt) = attempt.as_mut()
+            && let Err(error) = attempt.observe(&mut raw, valid)
+        {
+            let _ = tx_event
+                .send(Err(ApiError::InvalidRequest {
+                    message: error.to_string(),
+                }))
+                .await;
+            return;
+        }
+        let event: ResponsesStreamEvent = match serde_json::from_value(raw) {
             Ok(event) => event,
             Err(e) => {
                 debug!(
@@ -625,7 +702,7 @@ async fn process_sse_with_treatment(
                     error_line = e.line(),
                     error_column = e.column(),
                     payload_bytes = sse.data.len(),
-                    "Failed to parse SSE event"
+                    "Failed to parse transformed SSE event"
                 );
                 continue;
             }
@@ -671,7 +748,8 @@ async fn process_sse_with_treatment(
             return;
         }
 
-        match process_responses_event(event) {
+        let result = process_responses_event(event);
+        match result {
             Ok(Some(event)) => {
                 let is_completed = matches!(event, ResponseEvent::Completed { .. });
                 if tx_event.send(Ok(event)).await.is_err() {

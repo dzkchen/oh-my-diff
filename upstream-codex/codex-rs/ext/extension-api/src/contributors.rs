@@ -52,11 +52,14 @@ pub use tool_lifecycle::ToolLifecycleFuture;
 pub use tool_lifecycle::ToolStartInput;
 pub use turn_input::TurnInputContext;
 pub use turn_input::TurnInputEnvironment;
+pub use turn_lifecycle::CompactionLifecycleInput;
 pub use turn_lifecycle::TurnAbortInput;
 pub use turn_lifecycle::TurnErrorInput;
 pub use turn_lifecycle::TurnStartInput;
 pub use turn_lifecycle::TurnStartPhase;
 pub use turn_lifecycle::TurnStopInput;
+pub use turn_lifecycle::UserInputDecision;
+pub use turn_lifecycle::UserInputInterceptInput;
 pub use world_state::PreviousWorldStateSection;
 pub use world_state::RenderedWorldStateFragment;
 pub use world_state::WorldStateContributionInput;
@@ -241,6 +244,37 @@ pub trait TurnLifecycleContributor: Send + Sync {
             let _input = input;
         })
     }
+
+    fn intercept_user_input<'a>(
+        &'a self,
+        input: UserInputInterceptInput<'a>,
+    ) -> ExtensionFuture<'a, UserInputDecision> {
+        Box::pin(async move {
+            let _self = self;
+            let _input = input;
+            UserInputDecision::Keep
+        })
+    }
+
+    fn on_compaction_start<'a>(
+        &'a self,
+        input: CompactionLifecycleInput<'a>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let _self = self;
+            let _input = input;
+        })
+    }
+
+    fn on_compaction_end<'a>(
+        &'a self,
+        input: CompactionLifecycleInput<'a>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let _self = self;
+            let _input = input;
+        })
+    }
 }
 
 /// Extension contribution that can add turn-local model input.
@@ -267,6 +301,11 @@ pub trait TurnInputContributor: Send + Sync {
 /// Implementations should treat the supplied values as immutable before/after
 /// snapshots of the effective thread configuration.
 pub trait ConfigContributor<C>: Send + Sync {
+    /// Selects configuration before a new lead thread is admitted by native lifecycle policy.
+    fn prepare_thread_config(&self, _config: &mut C) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Called after the host commits a changed thread configuration.
     fn on_config_changed(
         &self,
@@ -349,6 +388,20 @@ pub trait ToolContributor: Send + Sync {
 /// rewriting the invocation. Use `ToolContributor` for owning a tool implementation
 /// and hooks for policy that changes tool payloads.
 pub trait ToolLifecycleContributor: Send + Sync {
+    /// Transforms arguments or denies a call before native hooks and permission checks.
+    fn intercept_tool<'a>(
+        &'a self,
+        input: ToolStartInput<'a>,
+    ) -> ExtensionFuture<
+        'a,
+        Result<Option<(codex_tools::ToolName, codex_tools::ToolPayload)>, String>,
+    > {
+        Box::pin(async move {
+            let _ = input;
+            Ok(None)
+        })
+    }
+
     /// Called after pre-tool hooks finalize an invocation and before execution.
     ///
     /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
@@ -376,6 +429,20 @@ pub trait ToolLifecycleContributor: Send + Sync {
     /// hook-provided input cannot be applied, or cancellation wins first.
     fn on_tool_finish<'a>(&'a self, _input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(std::future::ready(()))
+    }
+}
+
+/// Contributes bounded developer context after a host-observed tool outcome without implying rollback.
+pub trait ToolReactionContributor: Send + Sync {
+    fn on_tool_finish_reaction<'a>(
+        &'a self,
+        _input: ToolFinishInput<'a>,
+    ) -> ExtensionFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let _self = self;
+            let _input = _input;
+            None
+        })
     }
 }
 

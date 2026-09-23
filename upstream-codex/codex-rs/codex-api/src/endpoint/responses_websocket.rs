@@ -876,6 +876,7 @@ async fn send_websocket_request(
     telemetry: Option<&Arc<dyn WebsocketTelemetry>>,
     connection_reused: bool,
 ) -> Result<(), ApiError> {
+    crate::request_observer::reject_unobserved_transport()?;
     let request_start = Instant::now();
     let result = tokio::time::timeout(
         idle_timeout,

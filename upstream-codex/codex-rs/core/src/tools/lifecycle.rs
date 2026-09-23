@@ -81,6 +81,51 @@ pub(crate) async fn notify_command_start(
     }
 }
 
+pub(crate) async fn intercept_tool(
+    invocation: &mut ToolInvocation,
+) -> Result<(), codex_tools::FunctionCallError> {
+    let contributors = invocation
+        .session
+        .services
+        .extensions
+        .tool_lifecycle_contributors();
+    if contributors.is_empty() {
+        return Ok(());
+    }
+    let thread_store = &invocation.session.services.thread_extension_data;
+    let conversation_history = invocation.session.conversation_history_snapshot().await;
+    let root_turn_id = invocation.turn.turn_metadata_state.root_turn_id();
+    let originating_item_id = invocation
+        .originating_call()
+        .await
+        .and_then(|origin| origin.item_id);
+
+    for contributor in contributors {
+        let replacement = contributor
+            .intercept_tool(ToolStartInput {
+                session_store: &invocation.session.services.session_extension_data,
+                thread_store,
+                turn_store: invocation.turn.extension_data.as_ref(),
+                turn_id: invocation.turn.sub_id.as_str(),
+                root_turn_id: root_turn_id.as_deref(),
+                call_id: invocation.call_id.as_str(),
+                originating_item_id: originating_item_id.as_ref(),
+                tool_name: &invocation.tool_name,
+                mcp_tool: None,
+                payload: &invocation.payload,
+                conversation_history: Arc::clone(&conversation_history),
+                source: extension_tool_call_source(invocation.source.clone()),
+            })
+            .await
+            .map_err(codex_tools::FunctionCallError::RespondToModel)?;
+        if let Some((name, payload)) = replacement {
+            invocation.tool_name = name.with_default_namespace();
+            invocation.payload = payload;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn process_mcp_tool_result(
     session: &Session,
     turn: &TurnContext,
@@ -157,6 +202,30 @@ async fn notify_tool_finish_parts(
             })
             .await;
     }
+    let mut additional_contexts = Vec::new();
+    for contributor in session.services.extensions.tool_reaction_contributors() {
+        if additional_contexts.len() == 16 {
+            break;
+        }
+        if let Some(context) = contributor
+            .on_tool_finish_reaction(ToolFinishInput {
+                session_store: &session.services.session_extension_data,
+                thread_store: &session.services.thread_extension_data,
+                turn_store: turn.extension_data.as_ref(),
+                turn_id: turn.sub_id.as_str(),
+                call_id,
+                tool_name,
+                source: extension_tool_call_source(source.clone()),
+                outcome,
+            })
+            .await
+            && !context.trim().is_empty()
+            && context.len() <= 4096
+        {
+            additional_contexts.push(context);
+        }
+    }
+    crate::hook_runtime::record_additional_contexts(session, turn, additional_contexts).await;
 }
 
 pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {

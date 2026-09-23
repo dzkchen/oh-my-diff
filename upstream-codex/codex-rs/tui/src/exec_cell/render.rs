@@ -551,6 +551,27 @@ impl ExecCell {
         }
 
         if let Some(output) = call.output.as_ref() {
+            if output.exit_code == 0
+                && !call.is_user_shell_command()
+                && !call.is_unified_exec_interaction()
+                && crate::mod_ui::completed_tools() == codex_omd::ModCompletedTools::Compact
+            {
+                let (total, _) = output.line_counts();
+                lines.extend(prefix_hyperlink_lines(
+                    vec![
+                        Line::from(
+                            format!("completed · {total} output lines · {TRANSCRIPT_HINT}").dim(),
+                        )
+                        .into(),
+                    ],
+                    Span::from(layout.output_block.initial_prefix).dim(),
+                    Span::from(layout.output_block.subsequent_prefix),
+                ));
+                return CommandDisplay {
+                    lines,
+                    hidden_details: hidden_details || total > 0,
+                };
+            }
             if !call.is_user_shell_command() {
                 let preview = output_preview_lines(output, layout.output_block.wrap_width(width));
                 let preview = if preview.is_empty() && !call.is_unified_exec_interaction() {
@@ -1007,6 +1028,42 @@ mod tests {
             rendered,
             vec!["1", "2", "… +3 lines (ctrl+t to view transcript)", "6", "7",]
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn focus_flow_compacts_only_successful_agent_output() {
+        crate::mod_ui::preview(codex_omd::ModViewSnapshot {
+            view: codex_omd::ModView::parse(serde_json::json!({"completed_tools":"compact"}))
+                .unwrap(),
+            ..Default::default()
+        });
+        let completed = |exit_code| {
+            let mut cell = new_active_exec_command(
+                "call-id".to_string(),
+                vec!["bash".into(), "-lc".into(), "run fixture".into()],
+                Vec::new(),
+                ExecCommandSource::Agent,
+                None,
+                false,
+            );
+            assert!(cell.complete_call(
+                "call-id",
+                CommandOutput::new(exit_code, "alpha_output\nbeta_output\n".into()),
+                std::time::Duration::from_millis(1),
+            ));
+            cell.display_lines(80)
+                .iter()
+                .map(render_line_text)
+                .join("\n")
+        };
+        let success = completed(0);
+        assert!(success.contains("completed · 2 output lines"), "{success}");
+        assert!(!success.contains("alpha_output"), "{success}");
+        let failure = completed(1);
+        assert!(failure.contains("alpha_output"), "{failure}");
+        assert!(failure.contains("beta_output"), "{failure}");
+        crate::mod_ui::preview(codex_omd::ModViewSnapshot::default());
     }
 
     #[test]

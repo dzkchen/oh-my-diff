@@ -19,11 +19,15 @@ use crossterm::SynchronizedUpdate;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::DisableBracketedPaste;
 use crossterm::event::DisableFocusChange;
+use crossterm::event::DisableMouseCapture;
 use crossterm::event::EnableBracketedPaste;
 #[cfg(not(windows))]
 use crossterm::event::EnableFocusChange;
+use crossterm::event::EnableMouseCapture;
 use crossterm::event::KeyEvent;
 use crossterm::event::MouseEvent;
+use crossterm::terminal::EnterAlternateScreen;
+use crossterm::terminal::LeaveAlternateScreen;
 #[cfg(not(unix))]
 use crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::backend::Backend;
@@ -323,7 +327,10 @@ fn restore_common(
     if let Err(err) = execute!(stdout(), DisableBracketedPaste) {
         first_error.get_or_insert(err);
     }
+    let _ = execute!(stdout(), DisableMouseCapture);
     let _ = execute!(stdout(), DisableFocusChange);
+    let _ = execute!(stdout(), DisableAlternateScroll, LeaveAlternateScreen);
+    crate::omd::set_fullscreen_active(false);
     if matches!(raw_mode_restore, RawModeRestore::Disable)
         && let Err(err) = disable_raw_mode()
     {
@@ -639,6 +646,8 @@ pub struct Tui {
     overlay_input: OverlayInput,
     // Selection copies survive closing a transcript overlay or startup session picker.
     selection_clipboard_lease: Option<crate::clipboard_copy::ClipboardLease>,
+    mouse_capture_enabled: bool,
+    mouse_selection: Option<crate::omd::MouseSelection>,
     // Keeps unmanaged process stderr writes out of the inline viewport.
     _stderr_guard: terminal_stderr::TerminalStderrGuard,
 }
@@ -707,6 +716,8 @@ impl Tui {
             owned_screen: false,
             overlay_input: OverlayInput::Default,
             selection_clipboard_lease: None,
+            mouse_capture_enabled: false,
+            mouse_selection: None,
             _stderr_guard: stderr_guard,
         }
     }
@@ -717,6 +728,9 @@ impl Tui {
             let _ = self.set_owned_screen(/*owned*/ false);
         }
         self.alt_screen_enabled = enabled;
+        if !enabled {
+            crate::omd::set_fullscreen_active(false);
+        }
     }
 
     /// Defer a fresh fullscreen launch until its first synchronized frame is ready.
@@ -810,6 +824,52 @@ impl Tui {
         self.alt_screen_active.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn mouse_selection(&self) -> Option<crate::omd::MouseSelection> {
+        self.mouse_selection
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mouse_capture_enabled(&self) -> bool {
+        self.mouse_capture_enabled
+    }
+
+    pub(crate) fn begin_mouse_selection(&mut self, position: Position) {
+        self.mouse_selection = Some(crate::omd::MouseSelection {
+            anchor: position,
+            head: position,
+            dragged: false,
+        });
+        self.frame_requester.schedule_frame();
+    }
+
+    pub(crate) fn drag_mouse_selection(&mut self, position: Position) {
+        if let Some(selection) = self.mouse_selection.as_mut() {
+            selection.head = position;
+            selection.dragged = true;
+            self.frame_requester.schedule_frame();
+        }
+    }
+
+    pub(crate) fn finish_mouse_selection(
+        &mut self,
+        position: Position,
+    ) -> Option<crate::omd::MouseSelection> {
+        let selection = self.mouse_selection.as_mut()?;
+        selection.head = position;
+        self.frame_requester.schedule_frame();
+        selection.dragged.then_some(*selection)
+    }
+
+    pub(crate) fn clear_mouse_selection(&mut self) {
+        if self.mouse_selection.take().is_some() {
+            self.frame_requester.schedule_frame();
+        }
+    }
+
+    pub(crate) fn selected_text(&self, selection: crate::omd::MouseSelection) -> String {
+        crate::omd::selected_text(self.terminal.rendered_buffer(), selection)
+    }
+
     // Drop crossterm EventStream to avoid stdin conflicts with other processes.
     pub fn pause_events(&mut self) {
         self.event_broker.pause_events();
@@ -833,6 +893,14 @@ impl Tui {
     /// Reclaim terminal modes and stderr after a panic hook ran inside a recovery boundary.
     pub(crate) fn recover_after_caught_panic(&mut self) -> Result<()> {
         set_modes()?;
+        if self.is_alt_screen_active() {
+            execute!(self.terminal.backend_mut(), EnterAlternateScreen)?;
+            execute!(self.terminal.backend_mut(), EnableAlternateScroll)?;
+            crate::omd::set_fullscreen_active(true);
+        }
+        self.mouse_capture_enabled = self.is_alt_screen_active()
+            && crate::omd::mouse_enabled()
+            && execute!(self.terminal.backend_mut(), EnableMouseCapture).is_ok();
         self._stderr_guard.recover_after_caught_panic()?;
         self.terminal.invalidate_cursor_state();
         if self.is_owned_screen() || self.overlay_input != OverlayInput::Default {
@@ -989,6 +1057,9 @@ impl Tui {
         );
         self.alt_screen_active
             .store(ALTERNATE_SCREEN.is_active(), Ordering::Relaxed);
+        self.mouse_capture_enabled =
+            self.is_alt_screen_active() && self.overlay_input.captures_mouse(self.owned_screen);
+        crate::omd::set_fullscreen_active(self.is_alt_screen_active());
         if !self.is_alt_screen_active() {
             return result;
         }
@@ -1008,6 +1079,14 @@ impl Tui {
             let _ = self.terminal.clear();
         }
         result
+    }
+
+    pub(crate) fn enter_persistent_alt_screen(&mut self) -> Result<()> {
+        self.set_owned_screen(true)
+    }
+
+    pub(crate) fn leave_persistent_alt_screen(&mut self) -> Result<()> {
+        self.set_owned_screen(false)
     }
 
     /// Close an overlay, preserving the alternate screen when the session owns it.
@@ -1031,6 +1110,9 @@ impl Tui {
             return result;
         }
         self.terminal.invalidate_cursor_state();
+        self.mouse_capture_enabled = false;
+        self.mouse_selection = None;
+        crate::omd::set_fullscreen_active(false);
         if let Some(saved) = self.alt_saved_viewport.take() {
             self.terminal.set_viewport_area(saved);
         }

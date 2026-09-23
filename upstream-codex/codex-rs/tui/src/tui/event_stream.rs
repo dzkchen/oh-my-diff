@@ -200,8 +200,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
     /// a mapped event, hits `Pending`, or sees EOF/error. When the broker is paused, it drops
     /// the underlying stream and returns `Pending` to fully release stdin.
     pub fn poll_crossterm_event(&mut self, cx: &mut Context<'_>) -> Poll<Option<TuiEvent>> {
-        // Some crossterm events map to None (e.g. mouse); loop so we keep polling
-        // until we return a mapped event, hit Pending, or see EOF/error.
+        // Keep polling until we return a mapped event, hit Pending, or see EOF/error.
         loop {
             let poll_result = {
                 let mut state = self
@@ -283,6 +282,7 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
                 }
                 Some(TuiEvent::Key(key_event))
             }
+            Event::Mouse(mouse_event) => Some(TuiEvent::Mouse(mouse_event)),
             Event::Resize(width, height) => {
                 let size = ratatui::layout::Size { width, height };
                 if let Some(monitor) = &self.broker.size_monitor {
@@ -301,7 +301,6 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
                 self.terminal_focused.store(false, Ordering::Relaxed);
                 Some(TuiEvent::FocusLost)
             }
-            Event::Mouse(mouse) => Some(TuiEvent::Mouse(mouse)),
         }
     }
 }

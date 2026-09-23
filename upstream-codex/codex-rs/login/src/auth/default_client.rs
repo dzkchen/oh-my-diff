@@ -297,9 +297,14 @@ pub async fn create_client_for_route_async(
 }
 
 fn default_http_client_builder() -> HttpClientBuilder {
-    HttpClientBuilder::new()
+    let builder = HttpClientBuilder::new()
         .default_headers(default_headers())
-        .with_chatgpt_cloudflare_cookie_store()
+        .with_chatgpt_cloudflare_cookie_store();
+    if std::env::var_os("OMD_CONTROLLED_MANIFEST").is_some() {
+        builder.without_redirects()
+    } else {
+        builder
+    }
 }
 
 // These legacy constructors intentionally preserve the infallible behavior of `create_client`.

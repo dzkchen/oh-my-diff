@@ -409,6 +409,11 @@ pub(crate) fn resolve_theme_by_name(name: &str, codex_home: Option<&Path>) -> Op
     model_themes::resolve(name)
 }
 
+pub(crate) fn resolve_theme_with_configured_home(name: &str) -> Option<Theme> {
+    let home = CODEX_HOME.get().cloned().flatten();
+    resolve_theme_by_name(name, home.as_deref())
+}
+
 /// A theme available in the picker, either bundled or loaded from a custom
 /// `.tmTheme` file under `{CODEX_HOME}/themes/`.
 pub(crate) struct ThemeEntry {

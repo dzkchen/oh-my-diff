@@ -547,6 +547,37 @@ impl TextArea {
         Some((area.x + col as u16, area.y + screen_row))
     }
 
+    pub(crate) fn source_position_from_screen(
+        &self,
+        area: Rect,
+        state: TextAreaState,
+        position: ratatui::layout::Position,
+        after_cell: bool,
+    ) -> Option<usize> {
+        if area.is_empty() || !area.contains(position) {
+            return None;
+        }
+        let lines = self.wrapped_lines(area.width);
+        let scroll = self.effective_scroll(area, &lines, state.scroll) as usize;
+        let line = lines.get(scroll + usize::from(position.y.saturating_sub(area.y)))?;
+        let end = line.end.saturating_sub(1).min(self.text.len());
+        let text = &self.text[line.start..end];
+        let target_col = usize::from(position.x.saturating_sub(area.x));
+        let mut current_col = 0usize;
+        for (offset, grapheme) in text.grapheme_indices(true) {
+            let width = display_width(text_for_display(grapheme).as_ref()).max(1);
+            if target_col < current_col + width {
+                return Some(if after_cell {
+                    line.start + offset + grapheme.len()
+                } else {
+                    line.start + offset
+                });
+            }
+            current_col += width;
+        }
+        Some(end)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
@@ -2223,13 +2254,9 @@ impl TextArea {
             let line_range = r.start..r.start + visible.len();
             buf.set_style(Rect::new(area.x, y, area.width, 1), base_style);
             // Draw base line with the provided style.
-            buf.set_stringn(
-                area.x,
-                y,
-                text_for_display(visible),
-                usize::from(area.width),
-                base_style,
-            );
+            let display = text_for_display(visible);
+            let display = crate::omd::visual_input(display.as_ref());
+            buf.set_stringn(area.x, y, display, usize::from(area.width), base_style);
 
             // Selection takes precedence over elements and search highlights.
             let selection = self.mouse_selection_range();
@@ -2255,10 +2282,12 @@ impl TextArea {
                     continue;
                 }
                 let x_off = x_off as u16;
+                let display = text_for_display(styled);
+                let display = crate::omd::visual_input(display.as_ref());
                 buf.set_stringn(
                     area.x + x_off,
                     y,
-                    text_for_display(styled),
+                    display,
                     usize::from(area.width.saturating_sub(x_off)),
                     style,
                 );
@@ -2398,6 +2427,32 @@ mod tests {
         t.replace_range(0..1, "AA");
         assert_eq!(t.text(), "AAbcd");
         assert_eq!(t.cursor(), 5);
+    }
+
+    #[test]
+    fn screen_positions_map_to_literal_ligature_source() {
+        let mut t = ta_with("a === b -> c <= d");
+        let area = Rect::new(4, 2, 40, 1);
+        let state = TextAreaState::default();
+
+        assert_eq!(
+            t.source_position_from_screen(
+                area,
+                state,
+                ratatui::layout::Position::new(6, 2),
+                false,
+            ),
+            Some(2)
+        );
+        assert_eq!(
+            t.source_position_from_screen(area, state, ratatui::layout::Position::new(8, 2), true,),
+            Some(5)
+        );
+        t.set_cursor(5);
+        t.insert_str("!");
+
+        assert_eq!(t.text(), "a ===! b -> c <= d");
+        assert_eq!(t.cursor(), 6);
     }
 
     #[test]

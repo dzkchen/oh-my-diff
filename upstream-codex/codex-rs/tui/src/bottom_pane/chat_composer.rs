@@ -414,6 +414,7 @@ use codex_file_search::FileMatch;
 #[cfg(test)]
 use codex_plugin::AppConnectorId;
 use codex_plugin::PluginCapabilitySummary;
+use std::cell::Cell;
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -456,6 +457,7 @@ pub enum InputResult {
     Command(SlashCommand),
     /// A bare model service-tier command parsed by the composer.
     ServiceTierCommand(ServiceTierCommand),
+    ModCommand(crate::mod_runtime::ModSlashCommand, String),
     /// An inline slash command and its trimmed argument text.
     ///
     /// The `TextElement` ranges are rebased into the argument string, while any pending local
@@ -601,6 +603,7 @@ pub(crate) struct ChatComposer {
     luna_reserve_active: bool,
     attachments: AttachmentState,
     placeholder_text: String,
+    last_textarea_rect: Cell<Rect>,
     blocks_direct_input: bool,
     is_task_running: bool,
     queue_submissions: bool,
@@ -774,6 +777,7 @@ impl ChatComposer {
             luna_reserve_active: false,
             attachments: AttachmentState::default(),
             placeholder_text,
+            last_textarea_rect: Cell::new(Rect::ZERO),
             blocks_direct_input: false,
             is_task_running: false,
             queue_submissions: false,
@@ -1106,6 +1110,63 @@ impl ChatComposer {
 
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         self.cursor_pos_with_options(area, ComposerRenderOptions::default())
+    }
+
+    pub(crate) fn position_cursor_from_screen(
+        &mut self,
+        position: ratatui::layout::Position,
+    ) -> bool {
+        if !self.draft.input_enabled || !matches!(self.popups.active, ActivePopup::None) {
+            return false;
+        }
+        let area = self.last_textarea_rect.get();
+        let state = *self.draft.textarea_state.borrow();
+        let Some(cursor) = self
+            .draft
+            .textarea
+            .source_position_from_screen(area, state, position, false)
+        else {
+            return false;
+        };
+        self.draft.textarea.set_cursor(cursor);
+        true
+    }
+
+    pub(crate) fn selected_text_from_screen(
+        &self,
+        selection: crate::omd::MouseSelection,
+    ) -> Option<String> {
+        let area = self.last_textarea_rect.get();
+        if area.is_empty() || !area.contains(selection.anchor) {
+            return None;
+        }
+        let clamp = |position: ratatui::layout::Position| {
+            ratatui::layout::Position::new(
+                position
+                    .x
+                    .clamp(area.left(), area.right().saturating_sub(1)),
+                position
+                    .y
+                    .clamp(area.top(), area.bottom().saturating_sub(1)),
+            )
+        };
+        let anchor = clamp(selection.anchor);
+        let head = clamp(selection.head);
+        let (start_position, end_position) = if (anchor.y, anchor.x) <= (head.y, head.x) {
+            (anchor, head)
+        } else {
+            (head, anchor)
+        };
+        let state = *self.draft.textarea_state.borrow();
+        let start =
+            self.draft
+                .textarea
+                .source_position_from_screen(area, state, start_position, false)?;
+        let end =
+            self.draft
+                .textarea
+                .source_position_from_screen(area, state, end_position, true)?;
+        Some(self.draft.textarea.text()[start..end].to_string())
     }
 
     /// Returns true if the composer currently contains no user-entered input.
@@ -3134,6 +3195,7 @@ impl ChatComposer {
                 | InputResult::Queued { .. }
                 | InputResult::Command(_)
                 | InputResult::ServiceTierCommand(_)
+                | InputResult::ModCommand(_, _)
                 | InputResult::CommandWithArgs(_, _, _)
         ) && self.config.reset_vim_on_submission
         {
@@ -3318,6 +3380,7 @@ impl ChatComposer {
         Some(match command {
             SlashCommandItem::Builtin(cmd) => InputResult::Command(cmd),
             SlashCommandItem::ServiceTier(command) => InputResult::ServiceTierCommand(command),
+            SlashCommandItem::Mod(command) => InputResult::ModCommand(command, String::new()),
         })
     }
 
@@ -3342,6 +3405,11 @@ impl ChatComposer {
         );
         let trimmed_rest = inline_command.rest.trim();
         args_elements = Self::trim_text_elements(inline_command.rest, trimmed_rest, args_elements);
+        if let SlashCommandItem::Mod(command) = command {
+            self.draft.textarea.set_text_clearing_elements("");
+            self.draft.is_bash_mode = false;
+            return Some(InputResult::ModCommand(command, trimmed_rest.to_string()));
+        }
         let SlashCommandItem::Builtin(cmd) = command else {
             return None;
         };
@@ -4599,6 +4667,7 @@ impl ChatComposer {
             popup: popup_rect,
             footer: footer_rect,
         } = self.layout_with_options(area, options);
+        self.last_textarea_rect.set(textarea_rect);
         self.render_status_surface(status, buf);
         if self.popups.active.is_above_composer()
             && options.command_popup_placement != CommandPopupPlacement::Hidden
@@ -5162,6 +5231,27 @@ mod tests {
             );
             insta::assert_snapshot!("light_terminal_palette_composer", format!("{buffer:?}"));
         });
+    }
+
+    #[test]
+    fn reverse_mouse_selection_copies_literal_composer_text() {
+        let (mut composer, _rx) = new_test_composer();
+        composer.set_text_content("a === b".to_string(), Vec::new(), Vec::new());
+        let area = Rect::new(0, 0, 40, 6);
+        let mut buffer = Buffer::empty(area);
+        composer.render(area, &mut buffer);
+        let textarea = composer.last_textarea_rect.get();
+        let selection = crate::omd::MouseSelection {
+            anchor: ratatui::layout::Position::new(textarea.x + 4, textarea.y),
+            head: ratatui::layout::Position::new(textarea.x + 2, textarea.y),
+            dragged: true,
+        };
+
+        assert_eq!(
+            composer.selected_text_from_screen(selection).as_deref(),
+            Some("===")
+        );
+        assert_eq!(composer.current_text(), "a === b");
     }
 
     #[test]
@@ -9476,6 +9566,7 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected model command, got service tier {command:?}")
                 }
+                Some(CommandItem::Mod(command)) => panic!("unexpected mod command {command:?}"),
                 None => panic!("no selected command for '/mo'"),
             },
             _ => panic!("slash popup not active after typing '/mo'"),
@@ -9558,6 +9649,7 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected resume command, got service tier {command:?}")
                 }
+                Some(CommandItem::Mod(command)) => panic!("unexpected mod command {command:?}"),
                 None => panic!("no selected command for '/res'"),
             },
             _ => panic!("slash popup not active after typing '/res'"),
@@ -9612,6 +9704,7 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected pets command, got service tier {command:?}")
                 }
+                Some(CommandItem::Mod(command)) => panic!("unexpected mod command {command:?}"),
                 None => panic!("no selected command for '/pet'"),
             },
             _ => panic!("slash popup not active after typing '/pet'"),
@@ -9666,6 +9759,7 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected btw command, got service tier {command:?}")
                 }
+                Some(CommandItem::Mod(command)) => panic!("unexpected mod command {command:?}"),
                 None => panic!("no selected command for '/bt'"),
             },
             _ => panic!("slash popup not active after typing '/bt'"),
@@ -9720,6 +9814,7 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected side command, got service tier {command:?}")
                 }
+                Some(CommandItem::Mod(command)) => panic!("unexpected mod command {command:?}"),
                 None => panic!("no selected command for '/si'"),
             },
             _ => panic!("slash popup not active after typing '/si'"),
@@ -9818,6 +9913,7 @@ mod tests {
             InputResult::ServiceTierCommand(command) => {
                 panic!("expected init command, got service tier {command:?}")
             }
+            InputResult::ModCommand(command, _) => panic!("unexpected mod command {command:?}"),
             InputResult::Submitted { text, .. } => {
                 panic!("expected command dispatch, but composer submitted literal text: {text}")
             }
@@ -10328,6 +10424,7 @@ mod tests {
             InputResult::ServiceTierCommand(command) => {
                 panic!("expected diff command, got service tier {command:?}")
             }
+            InputResult::ModCommand(command, _) => panic!("unexpected mod command {command:?}"),
             InputResult::Submitted { text, .. } => {
                 panic!("expected command dispatch after Tab completion, got literal submit: {text}")
             }
@@ -10528,6 +10625,7 @@ mod tests {
             InputResult::ServiceTierCommand(command) => {
                 panic!("expected mention command, got service tier {command:?}")
             }
+            InputResult::ModCommand(command, _) => panic!("unexpected mod command {command:?}"),
             InputResult::Submitted { text, .. } => {
                 panic!("expected command dispatch, but composer submitted literal text: {text}")
             }

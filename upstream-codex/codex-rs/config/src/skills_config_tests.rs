@@ -194,6 +194,36 @@ fn path_rule_disables_selected_path() {
 }
 
 #[test]
+fn plugin_skill_path_rule_survives_package_version_update() {
+    let home = TempDir::new().expect("temp dir");
+    let cache = home
+        .path()
+        .join("plugins/cache/oh-my-diff/omd-guidance-hooks");
+    let previous = cache
+        .join("0.1.0/skills/omd-simplicity-guidance/SKILL.md")
+        .abs();
+    let updated = cache
+        .join("0.1.1/skills/omd-simplicity-guidance/SKILL.md")
+        .abs();
+    let other = cache
+        .join("0.1.1/skills/omd-concise-updates/SKILL.md")
+        .abs();
+    let rules = SkillConfigRules {
+        entries: vec![SkillConfigRule {
+            selector: SkillConfigRuleSelector::Path(previous.clone()),
+            enabled: false,
+        }],
+    };
+    let disabled = rules.resolve_disabled_paths([
+        ("omd-guidance-hooks:omd-simplicity-guidance", &updated),
+        ("omd-guidance-hooks:omd-concise-updates", &other),
+    ]);
+    assert!(disabled.contains(&previous));
+    assert!(disabled.contains(&updated));
+    assert!(!disabled.contains(&other));
+}
+
+#[test]
 fn later_name_rule_reenables_path_disabled_skill() {
     let codex_home = TempDir::new().expect("temp dir");
     let path = codex_home.path().join("reenable-by-name/SKILL.md").abs();

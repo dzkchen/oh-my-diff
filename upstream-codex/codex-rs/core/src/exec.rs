@@ -122,6 +122,9 @@ pub enum ExecCapturePolicy {
     FullBufferWithExpiration,
     /// Full-buffer helpers that honor expiration and suppress unredacted sandbox diagnostics.
     SensitiveFullBuffer,
+    Controlled {
+        max_bytes: usize,
+    },
 }
 
 fn select_process_exec_tool_sandbox_type(
@@ -276,6 +279,7 @@ impl ExecCapturePolicy {
         match self {
             Self::ShellTool => Some(EXEC_OUTPUT_MAX_BYTES),
             Self::FullBuffer | Self::FullBufferWithExpiration | Self::SensitiveFullBuffer => None,
+            Self::Controlled { max_bytes } => Some(max_bytes),
         }
     }
 
@@ -285,7 +289,10 @@ impl ExecCapturePolicy {
 
     fn uses_expiration(self) -> bool {
         match self {
-            Self::ShellTool | Self::FullBufferWithExpiration | Self::SensitiveFullBuffer => true,
+            Self::ShellTool
+            | Self::FullBufferWithExpiration
+            | Self::SensitiveFullBuffer
+            | Self::Controlled { .. } => true,
             Self::FullBuffer => false,
         }
     }
@@ -364,6 +371,9 @@ pub fn build_exec_request(
         justification: _,
         sandbox_permissions: _,
     } = params;
+    let narrow_controlled_sandbox = env
+        .remove("OMD_CONTROLLED_NARROW_SANDBOX")
+        .is_some_and(|value| value == "1");
 
     let enforce_managed_network = network.is_some();
     let sandbox_type = select_process_exec_tool_sandbox_type(
@@ -389,7 +399,11 @@ pub fn build_exec_request(
     let cwd = PathUri::from_abs_path(&cwd);
     let sandbox_policy_cwd_uri = PathUri::from_abs_path(sandbox_cwd);
 
-    let manager = SandboxManager::new();
+    let manager = if narrow_controlled_sandbox {
+        SandboxManager::for_file_system_helpers()
+    } else {
+        SandboxManager::new()
+    };
     let command = SandboxCommand {
         program: program.clone().into(),
         args: args.to_vec(),
@@ -999,6 +1013,21 @@ async fn consume_output(
         ))
     })?;
 
+    struct ControlledGroup(Option<u32>);
+    impl Drop for ControlledGroup {
+        fn drop(&mut self) {
+            if let Some(pid) = self.0.take() {
+                let _ = codex_utils_pty::process_group::kill_process_group(pid);
+            }
+        }
+    }
+    let controlled_group = ControlledGroup(
+        if matches!(capture_policy, ExecCapturePolicy::Controlled { .. }) {
+            child.id()
+        } else {
+            None
+        },
+    );
     let retained_bytes_cap = capture_policy.retained_bytes_cap();
     let stdout_handle = tokio::spawn(read_output(
         BufReader::new(stdout_reader),
@@ -1080,6 +1109,8 @@ async fn consume_output(
             (synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + SIGKILL_CODE), false)
         }
     };
+
+    drop(controlled_group);
 
     // We need mutable bindings so we can `abort()` them on timeout.
     use tokio::task::JoinHandle;

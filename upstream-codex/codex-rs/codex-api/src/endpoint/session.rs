@@ -1,6 +1,7 @@
 use crate::auth::SharedAuthProvider;
 use crate::error::ApiError;
 use crate::provider::Provider;
+use crate::request_observer::ObservedStream;
 use crate::telemetry::run_with_request_telemetry;
 use codex_client::EncodedJsonBody;
 use codex_client::HttpTransport;
@@ -8,7 +9,6 @@ use codex_client::Request;
 use codex_client::RequestBody;
 use codex_client::RequestTelemetry;
 use codex_client::Response;
-use codex_client::StreamResponse;
 use codex_client::TransportError;
 use http::HeaderMap;
 use http::Method;
@@ -88,6 +88,9 @@ impl<T: HttpTransport> EndpointSession<T> {
     where
         C: Fn(&mut Request),
     {
+        if method == Method::POST {
+            crate::request_observer::reject_unobserved_transport()?;
+        }
         let body = body.map(RequestBody::Json);
         let make_request = || {
             let mut req = self.make_request(&method, path, &extra_headers, body.as_ref());
@@ -126,13 +129,15 @@ impl<T: HttpTransport> EndpointSession<T> {
         extra_headers: HeaderMap,
         body: Option<EncodedJsonBody>,
         configure: C,
-    ) -> Result<StreamResponse, ApiError>
+    ) -> Result<ObservedStream, ApiError>
     where
         C: Fn(&mut Request),
     {
-        let body = body.map(RequestBody::EncodedJson);
-        let mut request = self.make_request(&method, path, &extra_headers, body.as_ref());
+        let mut observation_body = body;
+        let mut request = self.make_request(&method, path, &extra_headers, None);
         configure(&mut request);
+        crate::request_observer::prepare(&mut request, &mut observation_body)?;
+        request.body = observation_body.clone().map(RequestBody::EncodedJson);
         let request = request.into_prepared().map_err(TransportError::Build)?;
         let make_request = || request.clone();
 
@@ -143,9 +148,20 @@ impl<T: HttpTransport> EndpointSession<T> {
             |req| {
                 let auth = self.auth.clone();
                 let transport = &self.transport;
+                let observation_body = &observation_body;
                 async move {
-                    let req = auth.apply_auth(req).await.map_err(TransportError::from)?;
-                    transport.stream(req).await
+                    let mut req = auth.apply_auth(req).await.map_err(TransportError::from)?;
+                    let mut attempt =
+                        crate::request_observer::admit(&mut req, observation_body.as_ref())?;
+                    match transport.stream(req).await {
+                        Ok(response) => Ok(ObservedStream { response, attempt }),
+                        Err(error) => {
+                            if let Some(attempt) = attempt.as_mut() {
+                                attempt.failed("transport request failed");
+                            }
+                            Err(error)
+                        }
+                    }
                 }
             },
         )

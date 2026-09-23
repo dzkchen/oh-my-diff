@@ -99,8 +99,10 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
             ));
         }
     }
-    #[cfg(target_os = "windows")]
     let mut env = env;
+    let narrow_controlled_sandbox = env
+        .remove("OMD_CONTROLLED_NARROW_SANDBOX")
+        .is_some_and(|value| value == "1");
     #[cfg(target_os = "windows")]
     let network_proxy = if params.sandbox.is_none() {
         // Shared Windows ingress selects a route from the sandbox token's SID. Native launches
@@ -205,7 +207,11 @@ pub(crate) async fn prepare_exec_request_with_telemetry(
         &file_system_policy,
         network_policy,
     );
-    let sandbox_manager = SandboxManager::new();
+    let sandbox_manager = if narrow_controlled_sandbox {
+        SandboxManager::for_file_system_helpers()
+    } else {
+        SandboxManager::new()
+    };
     #[cfg(target_os = "macos")]
     let sandbox_manager = sandbox_manager
         .with_allowed_symlinked_codex_home(runtime_paths.allowed_symlinked_codex_home.clone());

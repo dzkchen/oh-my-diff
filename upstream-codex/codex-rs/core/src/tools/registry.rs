@@ -518,7 +518,6 @@ impl ToolRegistry {
         mut invocation: ToolInvocation,
         call_state: Option<Arc<ToolCallState>>,
     ) -> Result<AnyToolResult, FunctionCallError> {
-        let tool_name = invocation.tool_name.clone();
         let call_id_owned = invocation.call_id.clone();
         let otel = invocation.step_context.session_telemetry.clone();
         // TODO(anp): Reconcile these tags with TurnEnvironment::sandbox_context
@@ -533,6 +532,16 @@ impl ToolRegistry {
             }
         }
 
+        if let Err(error) = crate::tools::lifecycle::intercept_tool(&mut invocation).await {
+            notify_tool_finish_if_unclaimed(
+                &invocation,
+                call_state.as_deref(),
+                ToolCallOutcome::Blocked,
+            )
+            .await;
+            return Err(error);
+        }
+        let tool_name = invocation.tool_name.clone();
         let dispatch_trace = ToolDispatchTrace::start(&invocation);
         let tool = match self.tool(&tool_name) {
             Some(tool) => tool,

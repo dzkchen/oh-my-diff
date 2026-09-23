@@ -171,6 +171,8 @@ mod markdown_render;
 mod markdown_stream;
 mod markdown_text_merge;
 mod mention_codec;
+mod mod_runtime;
+mod mod_ui;
 mod model_catalog;
 mod model_migration;
 mod motion;
@@ -179,6 +181,7 @@ mod named_session_lookup;
 mod notifications;
 #[cfg(any(not(debug_assertions), test))]
 mod npm_registry;
+mod omd;
 pub(crate) mod onboarding;
 mod oss_selection;
 mod pager_overlay;
@@ -1956,6 +1959,9 @@ async fn run_ratatui_app(
         Ok(StartupHooksReviewOutcome::OpenHooksBrowser(data)) => Some(data),
     };
 
+    if use_alt_screen {
+        tui.enter_persistent_alt_screen()?;
+    }
     // Keep the large event-loop future out of the enclosing startup futures so session
     // transitions have enough stack headroom to rebuild configuration and the chat widget.
     let app_result = Box::pin(App::run(
@@ -1985,6 +1991,10 @@ async fn run_ratatui_app(
         daemon_cli_executable,
     ))
     .await;
+
+    if use_alt_screen {
+        let _ = tui.leave_persistent_alt_screen();
+    }
 
     terminal_restore_guard.restore_silently();
     // Mark the end of the recorded session.

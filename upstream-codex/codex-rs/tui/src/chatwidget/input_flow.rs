@@ -36,6 +36,7 @@ impl ChatWidget {
             ) => false,
             InputResult::Command(_)
             | InputResult::ServiceTierCommand(_)
+            | InputResult::ModCommand(_, _)
             | InputResult::CommandWithArgs(..) => true,
             InputResult::Submitted { .. }
             | InputResult::Queued { .. }
@@ -102,6 +103,9 @@ impl ChatWidget {
             }
             InputResult::ServiceTierCommand(command) => {
                 self.handle_service_tier_command_dispatch(command);
+            }
+            InputResult::ModCommand(command, args) => {
+                self.run_mod_command(command, args);
             }
             InputResult::CommandWithArgs(cmd, args, text_elements) => {
                 self.handle_slash_command_with_args_dispatch(cmd, args, text_elements);

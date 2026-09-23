@@ -142,7 +142,17 @@ impl ToolOrchestrator {
         let mut already_approved = false;
 
         let environment = tool.turn_environment(req);
-        let sandbox_manager = SandboxManager::new();
+        let sandbox_config = environment.config();
+        let narrow_controlled_sandbox = sandbox_config
+            .shell_environment_policy
+            .r#set
+            .get("OMD_CONTROLLED_NARROW_SANDBOX")
+            .is_some_and(|value| value == "1");
+        let sandbox_manager = if narrow_controlled_sandbox {
+            SandboxManager::for_file_system_helpers()
+        } else {
+            SandboxManager::new()
+        };
         #[cfg(target_os = "macos")]
         let sandbox_manager = sandbox_manager.with_allowed_symlinked_codex_home(
             environment
@@ -150,7 +160,6 @@ impl ToolOrchestrator {
                 .local_runtime_paths()
                 .and_then(|paths| paths.allowed_symlinked_codex_home.clone()),
         );
-        let sandbox_config = environment.config();
         let owner_network_policy = sandbox_config.network_policy.is_some();
         let workspace_roots = environment.workspace_roots();
         let executor_managed_process_sandbox = tool.uses_executor_managed_process_sandbox(req);

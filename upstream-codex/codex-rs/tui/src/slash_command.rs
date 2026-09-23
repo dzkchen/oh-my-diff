@@ -53,6 +53,8 @@ pub enum SlashCommand {
     Status,
     Daemon,
     Warnings,
+    Omd,
+    Graph,
     Cd,
     #[strum(to_string = "pwd", serialize = "cwd")]
     Pwd,
@@ -116,6 +118,8 @@ impl SlashCommand {
             SlashCommand::Daemon => "Manage the local background server.",
             SlashCommand::Warnings => "view retained warnings and diagnostic details",
             SlashCommand::Status => "show current session configuration and token usage",
+            SlashCommand::Omd => "inspect Oh My Diff binary, mode, and effective runtime state",
+            SlashCommand::Graph => "navigate a versioned Oh My Diff code graph",
             SlashCommand::Cd => "change the current working directory",
             SlashCommand::Pwd => "show the current working directory",
             SlashCommand::Usage => "view account usage or use a usage limit reset",
@@ -202,6 +206,8 @@ impl SlashCommand {
                 | SlashCommand::Status
                 | SlashCommand::Daemon
                 | SlashCommand::Warnings
+                | SlashCommand::Omd
+                | SlashCommand::Graph
                 | SlashCommand::Pwd
                 | SlashCommand::Usage
                 | SlashCommand::Ide
@@ -274,6 +280,8 @@ impl SlashCommand {
             | SlashCommand::Status
             | SlashCommand::Daemon
             | SlashCommand::Warnings
+            | SlashCommand::Omd
+            | SlashCommand::Graph
             | SlashCommand::Pwd
             | SlashCommand::Usage
             | SlashCommand::DebugConfig
@@ -306,6 +314,8 @@ impl SlashCommand {
             SlashCommand::Copy => !cfg!(target_os = "android"),
             SlashCommand::App => cfg!(any(target_os = "macos", target_os = "windows")),
             SlashCommand::Voice => true,
+            SlashCommand::Omd => true,
+            SlashCommand::Graph => crate::omd::graph_active(),
             SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
             _ => true,
         }

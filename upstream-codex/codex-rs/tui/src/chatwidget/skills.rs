@@ -74,7 +74,12 @@ impl ChatWidget {
             .iter()
             .map(|skill| {
                 let display_name = skill_display_name(skill);
-                let description = skill_description(skill).to_string();
+                let description = format!(
+                    "{} · {:?} · {}",
+                    skill_description(skill),
+                    skill.scope,
+                    skill.path.display()
+                );
                 SkillsToggleItem {
                     name: display_name,
                     skill_name: skill.name.clone(),

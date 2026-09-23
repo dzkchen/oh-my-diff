@@ -35,6 +35,14 @@ pub(crate) enum StatusTone {
 
 /// Semantic status colors that preserve the terminal's configured palette.
 pub(crate) fn status_style(tone: StatusTone) -> Style {
+    let slot = match tone {
+        StatusTone::Success => crate::mod_ui::ThemeSlot::Success,
+        StatusTone::Attention => crate::mod_ui::ThemeSlot::Attention,
+        StatusTone::Failure => crate::mod_ui::ThemeSlot::Failure,
+    };
+    if let Some(color) = crate::mod_ui::theme_color(slot) {
+        return Style::default().fg(color).bold();
+    }
     status_style_for(tone, default_bg(), effective_stdout_color_level())
 }
 
@@ -58,6 +66,10 @@ fn status_style_for(
 const TABLE_SEPARATOR_FG_ALPHA: f32 = 0.20;
 
 pub fn user_message_style() -> Style {
+    if let Some(color) = crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::UserMessageBackground)
+    {
+        return Style::default().bg(color);
+    }
     user_message_style_for(default_bg())
 }
 
@@ -85,6 +97,9 @@ pub(crate) fn table_separator_style() -> Style {
 
 /// Returns the shared accent style for active or selected TUI controls.
 pub(crate) fn accent_style() -> Style {
+    if let Some(color) = crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::Accent) {
+        return Style::default().fg(color).bold();
+    }
     if matches!(
         effective_stdout_color_level(),
         StdoutColorLevel::TrueColor | StdoutColorLevel::Ansi256

@@ -379,9 +379,13 @@ use self::plugins::PluginListFetchState;
 use self::plugins::PluginsCacheState;
 mod plan_implementation;
 use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
+mod mod_commands;
 mod model_popup_state;
 mod model_popups;
 mod notifications;
+mod omd_extensions;
+mod omd_graph;
+mod omd_inspector;
 mod session_model_selection;
 use self::notifications::Notification;
 pub(crate) use self::session_model_selection::AstraModelPickerAction;
@@ -1764,6 +1768,22 @@ impl ChatWidget {
         self.bottom_pane.composer_is_empty() && !self.bottom_pane.is_in_paste_burst()
     }
 
+    pub(crate) fn position_composer_cursor_from_screen(
+        &mut self,
+        position: ratatui::layout::Position,
+    ) -> bool {
+        self.bottom_pane
+            .position_composer_cursor_from_screen(position)
+    }
+
+    pub(crate) fn composer_selected_text_from_screen(
+        &self,
+        selection: crate::omd::MouseSelection,
+    ) -> Option<String> {
+        self.bottom_pane
+            .composer_selected_text_from_screen(selection)
+    }
+
     #[cfg(test)]
     pub(crate) fn is_task_running_for_test(&self) -> bool {
         self.bottom_pane.is_task_running()
@@ -2067,7 +2087,13 @@ impl ChatWidget {
 
     #[cfg(test)]
     pub(crate) fn status_line_text(&self) -> Option<String> {
-        self.bottom_pane.status_line_text()
+        let text = self.bottom_pane.status_line_text()?;
+        let status = crate::omd::compact_status();
+        match text.strip_prefix(&status) {
+            Some("") => None,
+            Some(rest) => rest.strip_prefix(" · ").map(str::to_string),
+            None => Some(text),
+        }
     }
 
     pub(crate) fn clear_token_usage(&mut self) {

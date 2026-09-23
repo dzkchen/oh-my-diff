@@ -1829,6 +1829,26 @@ fn completed_mcp_tool_call_multiple_outputs_inline_snapshot() {
 }
 
 #[test]
+fn session_header_uses_installed_codex_version_in_visual_and_plain_output() {
+    let cell = SessionHeaderHistoryCell::new(
+        "gpt-4o".to_string(),
+        None,
+        false,
+        PathBuf::from("project"),
+        "9.8.7",
+    );
+    let visual = render_lines(&cell.display_lines(80)).join("\n");
+    assert!(visual.contains(">_ OpenAI Codex | Oh My Diffed (v9.8.7)"));
+    assert_eq!(
+        cell.raw_lines()[0].to_string(),
+        "OpenAI Codex | Oh My Diffed (v9.8.7)"
+    );
+    let narrow = cell.display_lines(24);
+    assert!(narrow.iter().all(|line| line_width(line) <= 24));
+    assert!(render_lines(&narrow).join("\n").contains(">_ OMD (v9.8.7)"));
+}
+
+#[test]
 fn session_header_includes_reasoning_level_when_present() {
     let cell = SessionHeaderHistoryCell::new(
         "gpt-4o".to_string(),

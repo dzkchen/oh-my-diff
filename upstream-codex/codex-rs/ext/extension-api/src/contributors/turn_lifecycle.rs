@@ -67,3 +67,25 @@ pub struct TurnErrorInput<'a> {
     /// Store scoped to this turn runtime.
     pub turn_store: &'a ExtensionData,
 }
+
+pub struct UserInputInterceptInput<'a> {
+    pub text: &'a str,
+    pub attachments: usize,
+    pub session_store: &'a ExtensionData,
+    pub thread_store: &'a ExtensionData,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UserInputDecision {
+    Keep,
+    Rewrite { text: String, notice: String },
+    Deny { notice: String },
+}
+
+pub struct CompactionLifecycleInput<'a> {
+    pub turn_id: &'a str,
+    pub trigger: &'a str,
+    pub session_store: &'a ExtensionData,
+    pub thread_store: &'a ExtensionData,
+    pub turn_store: &'a ExtensionData,
+}

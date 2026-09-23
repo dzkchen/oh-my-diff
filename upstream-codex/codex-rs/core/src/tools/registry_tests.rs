@@ -840,3 +840,84 @@ fn test_invocation(
         },
     }
 }
+
+struct ModInterceptionFixture {
+    deny: bool,
+}
+
+impl codex_extension_api::ToolLifecycleContributor for ModInterceptionFixture {
+    fn intercept_tool<'a>(
+        &'a self,
+        input: codex_extension_api::ToolStartInput<'a>,
+    ) -> codex_extension_api::ExtensionFuture<
+        'a,
+        Result<Option<(codex_tools::ToolName, ToolPayload)>, String>,
+    > {
+        Box::pin(async move {
+            assert_eq!(input.tool_name.name, "original");
+            if self.deny {
+                return Err("mod_fixture_denial".into());
+            }
+            Ok(Some((
+                codex_tools::ToolName::plain("replacement"),
+                ToolPayload::Function {
+                    arguments: "{\"changed\":true}".into(),
+                },
+            )))
+        })
+    }
+}
+
+#[tokio::test]
+async fn mod_interception_denies_or_routes_through_registered_native_handler() {
+    for deny in [true, false] {
+        let (mut session, turn) = crate::session::tests::make_session_and_context().await;
+        let records = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut builder =
+            codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
+        builder.tool_lifecycle_contributor(Arc::new(ModInterceptionFixture { deny }));
+        builder.tool_lifecycle_contributor(Arc::new(ToolLifecycleRecorder {
+            records: records.clone(),
+        }));
+        session.services.extensions = Arc::new(builder.build());
+        let registry = ToolRegistry::from_tools([Arc::new(LifecycleTestHandler {
+            tool_name: codex_tools::ToolName::plain("replacement"),
+            result: LifecycleTestResult::Ok { success: true },
+        }) as Arc<dyn CoreToolRuntime>]);
+        let result = registry
+            .dispatch_any_with_state(
+                test_invocation(
+                    Arc::new(session),
+                    Arc::new(turn),
+                    "mod-call",
+                    codex_tools::ToolName::plain("original"),
+                ),
+                None,
+            )
+            .await;
+        let records = records.lock().unwrap();
+        if deny {
+            assert_eq!(result.err().unwrap().to_string(), "mod_fixture_denial");
+            assert_eq!(
+                *records,
+                vec![RecordedToolLifecycle::Finish {
+                    call_id: "mod-call".into(),
+                    tool_name: codex_tools::ToolName::plain("original"),
+                    outcome: ToolCallOutcome::Blocked
+                }]
+            );
+        } else {
+            let output = result.unwrap();
+            assert_eq!(
+                output.payload,
+                ToolPayload::Function {
+                    arguments: "{\"changed\":true}".into()
+                }
+            );
+            assert_eq!(records.len(), 2);
+            assert!(
+                matches!(&records[0], RecordedToolLifecycle::Start {tool_name,..} if tool_name.name == "replacement")
+            );
+        }
+    }
+}

@@ -71,6 +71,15 @@ pub(crate) fn thread_extensions(
     if let Some(queue_service) = queue_service {
         codex_queue_extension::install(&mut builder, queue_service);
     }
+    if let Err(error) = codex_omd_extension::install(&mut builder, thread_manager.clone()) {
+        // Fail closed without unwinding: a panic here lands on a worker task and strands the
+        // runtime instead of reporting the refusal.
+        #[allow(clippy::print_stderr)]
+        {
+            eprintln!("controlled runtime activation failed: {error}");
+        }
+        std::process::exit(70);
+    }
     codex_history_notes_extension::install(&mut builder, auth_manager.clone());
     codex_core::install_agent_message_board(&mut builder, thread_manager.clone());
     if let Some(state_db) = state_db {

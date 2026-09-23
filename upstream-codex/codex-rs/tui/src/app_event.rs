@@ -440,6 +440,27 @@ pub(crate) enum AppEvent {
         label: String,
         format: crate::clipboard_copy::CopyFormat,
     },
+    OmdContributorRevocation {
+        result: Result<String, String>,
+    },
+    OmdOpenExtensions,
+    OmdOpenPlugins,
+    OmdModToggle {
+        id: String,
+        path: PathBuf,
+        managed: bool,
+        enabled: bool,
+    },
+    OmdModToggled {
+        result: Result<String, String>,
+    },
+    OmdGraphSelection {
+        prompt: String,
+    },
+    ModCommandFinished {
+        invocation: String,
+        result: Result<crate::mod_runtime::ModCommandResult, String>,
+    },
 
     /// Persist a submitted prompt in the cross-session message history.
     AppendMessageHistoryEntry {

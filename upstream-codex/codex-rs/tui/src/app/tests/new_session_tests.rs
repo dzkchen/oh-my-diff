@@ -173,12 +173,12 @@ async fn replacement_uses_server_defaults_and_preserves_explicit_launch_settings
             vec![serde_json::json!({"cwd": server_config.cwd.display().to_string()})],
         );
         if explicit == "saved" {
-            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 80)
+            let rendered = render_bottom_popup(&app.chat_widget, /*width*/ 200)
                 .replace(&server_config.cwd.display().to_string(), "<PROJECT>");
             insta::assert_snapshot!(rendered, @r"
             › Ask Codex to do anything
 
-              server-model high · <PROJECT>
+              Oh My Diff · upstream-style direct · hooks off · server-model high · <PROJECT>
             ");
         }
         server.shutdown().await?;

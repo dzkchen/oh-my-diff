@@ -1117,6 +1117,40 @@ impl BottomPane {
         self.composer.current_text()
     }
 
+    pub(crate) fn position_composer_cursor_from_screen(
+        &mut self,
+        position: ratatui::layout::Position,
+    ) -> bool {
+        if self.has_active_view()
+            || self
+                .questions
+                .as_ref()
+                .is_some_and(|question| question.expanded)
+        {
+            return false;
+        }
+        let positioned = self.composer.position_cursor_from_screen(position);
+        if positioned {
+            self.request_redraw();
+        }
+        positioned
+    }
+
+    pub(crate) fn composer_selected_text_from_screen(
+        &self,
+        selection: crate::omd::MouseSelection,
+    ) -> Option<String> {
+        if self.has_active_view()
+            || self
+                .questions
+                .as_ref()
+                .is_some_and(|question| question.expanded)
+        {
+            return None;
+        }
+        self.composer.selected_text_from_screen(selection)
+    }
+
     #[cfg(test)]
     pub(crate) fn composer_cursor(&self) -> usize {
         self.composer.cursor()
