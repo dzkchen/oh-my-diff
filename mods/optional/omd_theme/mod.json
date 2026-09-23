@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "omd_theme",
+  "version": "0.1.0-candidate.1",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/optional/omd_theme" },
+  "capabilities": ["terminal"],
+  "requires": ["omd_workspace"],
+  "compatibility": { "required_features": ["terminal_render_sites_v1"] },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "palette": { "type": "string", "enum": ["midnight", "paper", "contrast"], "default": "midnight" },
+      "symbols": { "type": "string", "enum": ["ascii", "unicode"], "default": "ascii" }
+    },
+    "additionalProperties": false
+  }
+}
