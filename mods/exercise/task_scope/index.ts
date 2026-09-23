@@ -18,9 +18,9 @@ function selected(checkpoint: Json): string[] {
 
 export default function activate(api: ModAPI) {
   const parameters = { type: 'object' as const, properties: {}, additionalProperties: false };
-  api.tool({ name: 'check_python', description: 'Check the CAI Python conformance script syntax.', parameters, task_scoped: true },
+  api.tool({ name: 'check_python', description: 'Check the Oh My Diff Python conformance script syntax.', parameters, task_scoped: true },
     () => api.host.call('tools.exec', ['python3', '-m', 'py_compile', 'scripts/mod_conformance.py']));
-  api.tool({ name: 'check_typescript', description: 'Typecheck the CAI mod author package.', parameters, task_scoped: true },
+  api.tool({ name: 'check_typescript', description: 'Typecheck the Oh My Diff mod author package.', parameters, task_scoped: true },
     () => api.host.call('tools.exec', ['pnpm', '--dir', 'mods', 'check']));
   api.on('tool_exposure', ({ checkpoint, available }) => ({
     enable: selected(checkpoint).filter(name => available.includes(name)),
