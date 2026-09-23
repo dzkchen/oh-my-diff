@@ -105,10 +105,12 @@ class PrivateLeanV1Tests(ManagedFixture, unittest.TestCase):
             installer.activate(prefix, bin_dir, "omd", "upstream_direct")
             wrapper = (bin_dir / "codex").read_text()
             self.assertIn("export OMD_MODE=upstream_direct", wrapper)
+            self.assertIn("export OMD_INSTALL_PROFILE=private", wrapper)
             self.assertNotIn("CODEX_HOME=", wrapper)
             installer.activate(prefix, bin_dir, "upstream")
             wrapper = (bin_dir / "codex").read_text()
             self.assertIn("unset OMD_MODE", wrapper)
+            self.assertIn("unset OMD_INSTALL_PROFILE", wrapper)
             self.assertEqual(hashlib.sha256(marker.read_bytes()).hexdigest(), before)
 
     def test_enabled_mode_requires_existing_manifest(self):

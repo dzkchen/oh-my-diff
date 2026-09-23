@@ -60,6 +60,10 @@ python3 scripts/private_lean_v1.py \
 ```
 
 Inside the OMD binary, `/omd` shows the effective mode and settings.
+The managed OMD launcher reports the current private-foundation install
+profile separately from its effective mode; this private package is neither
+public Full OMD nor Modding platform only. `/status` shows the same profile
+and mode. The retained upstream launcher has its original Codex welcome line.
 
 Upstream-style direct mode keeps the custom binary but disables OMD task hooks:
 

@@ -41361,6 +41361,30 @@ index a599bc6..f359cdc 100644
          if self.chat_widget.is_external_writer_view()
              && self.overlay.is_none()
              && self.chat_widget.no_modal_or_popup_active()
+diff --git a/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap b/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap
+index 4b9aa6a..ddcf11e 100644
+--- a/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap
++++ b/codex-rs/tui/src/app/snapshots/codex_tui__app__tests__app_server_thread_replacement_clears_previous_transcript_before_replay-2.snap
+@@ -1,14 +1,13 @@
+ ---
+ source: tui/src/app/tests.rs
+-assertion_line: 6350
+ expression: rendered
+ ---
+-╭────────────────────────────────────────╮
+-│ >_ OpenAI Codex (v0.0.0)               │
+-│                                        │
+-│ model:     gpt-test   /model to change │
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v0.155.1) │
++│                                           │
++│ model:     gpt-test   /model to change    │
+ │ directory: <thread cwd>                │
+-╰────────────────────────────────────────╯
++╰───────────────────────────────────────────╯
+ 
+ 
+ › Next thread prompt
 diff --git a/codex-rs/tui/src/app/tests.rs b/codex-rs/tui/src/app/tests.rs
 index 1cb3cf2..835c86f 100644
 --- a/codex-rs/tui/src/app/tests.rs
@@ -41446,6 +41470,107 @@ index 1cb3cf2..835c86f 100644
  #[tokio::test]
  async fn duplicate_named_resume_renders_error_without_replacing_current_session() -> Result<()> {
      let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap
+index 0b25023..bde85b8 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_buffered_replay_reconciles_captions.snap
+@@ -1,14 +1,13 @@
+ ---
+ source: tui/src/app/tests/realtime_requests.rs
+-assertion_line: 645
+ expression: "normalize_voice_snapshot_directory(&rendered, &app.config.cwd)"
+ ---
+-╭────────────────────────────────────────╮
+-│ >_ OpenAI Codex (v0.0.0)               │
+-│                                        │
+-│ model:     gpt-test   /model to change │
+-│ directory: /tmp/project                │
+-╰────────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v0.155.1) │
++│                                           │
++│ model:     gpt-test   /model to change    │
++│ directory: /tmp/project                   │
++╰───────────────────────────────────────────╯
+ 
+   To get started, describe a task or try one of these commands:
+ 
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_completed_after_thread_switch.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_completed_after_thread_switch.snap
+index 45a423c..06ff124 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_completed_after_thread_switch.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_completed_after_thread_switch.snap
+@@ -1,14 +1,13 @@
+ ---
+ source: tui/src/app/tests/realtime_requests.rs
+-assertion_line: 182
+-expression: "rendered.replace(&app.config.cwd.display().to_string(), \"/tmp/project\")"
++expression: "normalize_voice_snapshot_directory(&rendered, &app.config.cwd)"
+ ---
+-╭────────────────────────────────────────╮
+-│ >_ OpenAI Codex (v0.0.0)               │
+-│                                        │
+-│ model:     gpt-test   /model to change │
+-│ directory: /tmp/project                │
+-╰────────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v0.155.1) │
++│                                           │
++│ model:     gpt-test   /model to change    │
++│ directory: /tmp/project                   │
++╰───────────────────────────────────────────╯
+ 
+   To get started, describe a task or try one of these commands:
+ 
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
+index 44a8b74..c92b0e1 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_partial_completed_after_thread_switch.snap
+@@ -1,14 +1,13 @@
+ ---
+ source: tui/src/app/tests/realtime_requests.rs
+-assertion_line: 302
+ expression: "normalize_voice_snapshot_directory(&rendered, &app.config.cwd)"
+ ---
+-╭────────────────────────────────────────╮
+-│ >_ OpenAI Codex (v0.0.0)               │
+-│                                        │
+-│ model:     gpt-test   /model to change │
+-│ directory: /tmp/project                │
+-╰────────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v0.155.1) │
++│                                           │
++│ model:     gpt-test   /model to change    │
++│ directory: /tmp/project                   │
++╰───────────────────────────────────────────╯
+ 
+   To get started, describe a task or try one of these commands:
+ 
+diff --git a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_replay_reconciles_matching_captions.snap b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_replay_reconciles_matching_captions.snap
+index 76e81da..352876a 100644
+--- a/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_replay_reconciles_matching_captions.snap
++++ b/codex-rs/tui/src/app/tests/snapshots/codex_tui__app__tests__realtime_requests__voice_replay_reconciles_matching_captions.snap
+@@ -1,14 +1,13 @@
+ ---
+ source: tui/src/app/tests/realtime_requests.rs
+-assertion_line: 561
+ expression: "normalize_voice_snapshot_directory(&rendered, &app.config.cwd)"
+ ---
+-╭────────────────────────────────────────╮
+-│ >_ OpenAI Codex (v0.0.0)               │
+-│                                        │
+-│ model:     gpt-test   /model to change │
+-│ directory: /tmp/project                │
+-╰────────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v0.155.1) │
++│                                           │
++│ model:     gpt-test   /model to change    │
++│ directory: /tmp/project                   │
++╰───────────────────────────────────────────╯
+ 
+   To get started, describe a task or try one of these commands:
+ 
 diff --git a/codex-rs/tui/src/app_backtrack/legacy_input.rs b/codex-rs/tui/src/app_backtrack/legacy_input.rs
 index c36e83b..20b1d93 100644
 --- a/codex-rs/tui/src/app_backtrack/legacy_input.rs
@@ -42600,10 +42725,10 @@ index 0000000..4282243
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_inspector.rs b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 new file mode 100644
-index 0000000..78efbe9
+index 0000000..908bdf3
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_inspector.rs
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,191 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -42693,6 +42818,7 @@ index 0000000..78efbe9
 +            format!("{:?}", self.local_settings.tui.alternate_screen).to_ascii_lowercase();
 +        let header = Paragraph::new(vec![
 +            Line::from("Oh My Diff · OMD enabled".bold()),
++            Line::from(crate::omd::install_profile_status()),
 +            Line::from(format!("Selection {}", mode.source.label())),
 +            Line::from("Binary Oh My Diff custom binary; disabling OMD does not restore upstream"),
 +            Line::from(format!(
@@ -42816,6 +42942,29 @@ index 8163ae2..fd2713f 100644
          let bottom = if self.external_writer_view && !self.bottom_pane.has_active_view() {
              RenderableItem::Owned(Box::new(ExternalWriterNotice {
                  transcript_hint: self.bottom_pane.transcript_shortcut_hint(),
+diff --git a/codex-rs/tui/src/chatwidget/rendering_tests.rs b/codex-rs/tui/src/chatwidget/rendering_tests.rs
+index 2d7abb9..8362d93 100644
+--- a/codex-rs/tui/src/chatwidget/rendering_tests.rs
++++ b/codex-rs/tui/src/chatwidget/rendering_tests.rs
+@@ -222,12 +222,12 @@ async fn initial_session_header_starts_at_the_top_of_the_viewport() {
+     let normalized_cwd = format!("{:<width$}", "/tmp/project", width = cwd.len());
+ 
+     insta::assert_snapshot!(header.replace(&cwd, &normalized_cwd), @r"
+-    ╭───────────────────────────────────────╮
+-    │ >_ OpenAI Codex (v<VERSION>)              │
+-    │                                       │
+-    │ model:     loading   /model to change │
+-    │ directory: /tmp/project               │
+-    ╰───────────────────────────────────────╯
++    ╭───────────────────────────────────────────╮
++    │ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++    │                                           │
++    │ model:     loading   /model to change     │
++    │ directory: /tmp/project                   │
++    ╰───────────────────────────────────────────╯
+     ");
+ }
+ 
 diff --git a/codex-rs/tui/src/chatwidget/skills.rs b/codex-rs/tui/src/chatwidget/skills.rs
 index 77fa911..6f230a8 100644
 --- a/codex-rs/tui/src/chatwidget/skills.rs
@@ -43197,6 +43346,187 @@ index bcbcd8d..78425b3 100644
          let paragraph = HyperlinkParagraph::new(&hyperlink_lines, Style::default());
          let y = if area.height == 0 {
              0
+diff --git a/codex-rs/tui/src/history_cell/session.rs b/codex-rs/tui/src/history_cell/session.rs
+index 4af9a17..ce841b4 100644
+--- a/codex-rs/tui/src/history_cell/session.rs
++++ b/codex-rs/tui/src/history_cell/session.rs
+@@ -322,13 +322,24 @@ impl HistoryCell for SessionHeaderHistoryCell {
+ 
+         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
+ 
+-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
+-        let title_spans: Vec<Span<'static>> = vec![
+-            Span::from(">_ ").dim(),
+-            Span::from("OpenAI Codex").bold(),
+-            Span::from(" ").dim(),
+-            Span::from(format!("(v{})", self.version)).dim(),
+-        ];
++        let title_spans: Vec<Span<'static>> =
++            if display_width(format!(">_ {}", crate::omd::launch_title(self.version)).as_str())
++                <= inner_width
++            {
++                vec![
++                    Span::from(">_ ").dim(),
++                    Span::from("OpenAI Codex | Oh My Diffed").bold(),
++                    Span::from(" ").dim(),
++                    Span::from(format!("(v{})", self.version)).dim(),
++                ]
++            } else {
++                vec![
++                    Span::from(">_ ").dim(),
++                    Span::from("OMD").bold(),
++                    Span::from(" ").dim(),
++                    Span::from(format!("(v{})", self.version)).dim(),
++                ]
++            };
+ 
+         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
+         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
+@@ -396,7 +407,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
+ 
+     fn raw_lines(&self) -> Vec<Line<'static>> {
+         let mut lines = vec![
+-            Line::from(format!("OpenAI Codex (v{})", self.version)),
++            Line::from(crate::omd::launch_title(self.version)),
+             Line::from(format!(
+                 "model: {}{}",
+                 self.model,
+diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_clamps_to_narrow_width.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_clamps_to_narrow_width.snap
+index 2baf486..4fc2d03 100644
+--- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_clamps_to_narrow_width.snap
++++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_clamps_to_narrow_width.snap
+@@ -3,7 +3,7 @@ source: tui/src/history_cell/tests.rs
+ expression: "render_lines(&lines).join(\"\\n\")"
+ ---
+ ╭──────────────────────────────────────────╮
+-│ >_ OpenAI Codex (vtest)                  │
++│ >_ OpenAI Codex | Oh My Diffed (vtest)   │
+ │                                          │
+ │ model:       gpt-5.6-sol xhigh   fast  … │
+ │ directory:   project                     │
+diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_directory.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_directory.snap
+index 51d3652..94524d2 100644
+--- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_directory.snap
++++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_directory.snap
+@@ -6,7 +6,7 @@ Buffer {
+     area: Rect { x: 0, y: 0, width: 42, height: 6 },
+     content: [
+         "╭────────────────────────────────────────╮",
+-        "│ >_ OpenAI Codex (vtest)                │",
++        "│ >_ OpenAI Codex | Oh My Diffed (vtest) │",
+         "│                                        │",
+         "│ model:     gpt-5   /model to change    │",
+         "│ directory: …ﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟｶﾞﾊﾟ-project │", // hidden by multi-width symbols: [(15, " "), (17, " "), (19, " "), (21, " "), (23, " "), (25, " "), (27, " "), (29, " "), (31, " ")]
+@@ -15,7 +15,7 @@ Buffer {
+     styles: [
+         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+         x: 5, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+-        x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
++        x: 32, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+         x: 13, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+         x: 18, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+         x: 21, y: 3, fg: Cyan, bg: Reset, underline: Reset, modifier: NONE,
+diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_sound_marks.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_sound_marks.snap
+index 0fb1727..83ebcda 100644
+--- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_sound_marks.snap
++++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_halfwidth_sound_marks.snap
+@@ -6,7 +6,7 @@ Buffer {
+     area: Rect { x: 0, y: 0, width: 80, height: 6 },
+     content: [
+         "╭───────────────────────────────────────────╮                                   ",
+-        "│ >_ OpenAI Codex (vtest)                   │                                   ",
++        "│ >_ OpenAI Codex | Oh My Diffed (vtest)    │                                   ",
+         "│                                           │                                   ",
+         "│ model:     gpt-5-ｶﾞ-ﾊﾟ   /model to change │                                   ", // hidden by multi-width symbols: [(20, " "), (23, " ")]
+         "│ directory: project                        │                                   ",
+@@ -17,7 +17,7 @@ Buffer {
+         x: 45, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+         x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+         x: 5, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+-        x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
++        x: 32, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+         x: 45, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+         x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+         x: 45, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_indicates_yolo_mode.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_indicates_yolo_mode.snap
+index 04f6458..5308f2b 100644
+--- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_indicates_yolo_mode.snap
++++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_header_indicates_yolo_mode.snap
+@@ -1,11 +1,11 @@
+ ---
+-source: tui/src/history_cell.rs
++source: tui/src/history_cell/tests.rs
+ expression: rendered
+ ---
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (vtest)               │
+-│                                       │
+-│ model:       gpt-5   /model to change │
+-│ directory:   /tmp/project             │
+-│ permissions: YOLO mode                │
+-╰───────────────────────────────────────╯
++╭────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (vtest) │
++│                                        │
++│ model:       gpt-5   /model to change  │
++│ directory:   /tmp/project              │
++│ permissions: YOLO mode                 │
++╰────────────────────────────────────────╯
+diff --git a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_info_availability_nux_tooltip_snapshot.snap b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_info_availability_nux_tooltip_snapshot.snap
+index ad0fc4b..08a1a94 100644
+--- a/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_info_availability_nux_tooltip_snapshot.snap
++++ b/codex-rs/tui/src/history_cell/snapshots/codex_tui__history_cell__tests__session_info_availability_nux_tooltip_snapshot.snap
+@@ -1,12 +1,12 @@
+ ---
+-source: tui/src/history_cell.rs
++source: tui/src/history_cell/tests.rs
+ expression: rendered
+ ---
+-╭─────────────────────────────────────╮
+-│ >_ OpenAI Codex (v0.0.0)            │
+-│                                     │
+-│ model:     gpt-5   /model to change │
+-│ directory: /tmp/project             │
+-╰─────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v0.155.1) │
++│                                           │
++│ model:     gpt-5   /model to change       │
++│ directory: /tmp/project                   │
++╰───────────────────────────────────────────╯
+ 
+   Tip: Model just became available
+diff --git a/codex-rs/tui/src/history_cell/tests.rs b/codex-rs/tui/src/history_cell/tests.rs
+index 138c9b5..b71b45a 100644
+--- a/codex-rs/tui/src/history_cell/tests.rs
++++ b/codex-rs/tui/src/history_cell/tests.rs
+@@ -1788,6 +1788,26 @@ fn completed_mcp_tool_call_multiple_outputs_inline_snapshot() {
+     insta::assert_snapshot!(rendered);
+ }
+ 
++#[test]
++fn session_header_uses_installed_codex_version_in_visual_and_plain_output() {
++    let cell = SessionHeaderHistoryCell::new(
++        "gpt-4o".to_string(),
++        None,
++        false,
++        PathBuf::from("project"),
++        "9.8.7",
++    );
++    let visual = render_lines(&cell.display_lines(80)).join("\n");
++    assert!(visual.contains(">_ OpenAI Codex | Oh My Diffed (v9.8.7)"));
++    assert_eq!(
++        cell.raw_lines()[0].to_string(),
++        "OpenAI Codex | Oh My Diffed (v9.8.7)"
++    );
++    let narrow = cell.display_lines(24);
++    assert!(narrow.iter().all(|line| line_width(line) <= 24));
++    assert!(render_lines(&narrow).join("\n").contains(">_ OMD (v9.8.7)"));
++}
++
+ #[test]
+ fn session_header_includes_reasoning_level_when_present() {
+     let cell = SessionHeaderHistoryCell::new(
 diff --git a/codex-rs/tui/src/lib.rs b/codex-rs/tui/src/lib.rs
 index 43591ec..4e6478b 100644
 --- a/codex-rs/tui/src/lib.rs
@@ -45183,10 +45513,10 @@ index 094fb73..56dec6b 100644
                          frame.render_widget_ref(&screen, frame.area());
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 0000000..6cd0243
+index 0000000..7935ab6
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,848 @@
+@@ -0,0 +1,893 @@
 +use ratatui::buffer::Buffer;
 +use ratatui::layout::Position;
 +use ratatui::style::Modifier;
@@ -45208,6 +45538,7 @@ index 0000000..6cd0243
 +pub(crate) const MODE_ENV: &str = codex_omd::MODE_ENV;
 +pub(crate) const MANIFEST_ENV: &str = codex_omd::MANIFEST_ENV;
 +pub(crate) const GRAPH_ENV: &str = "OMD_GRAPH_SNAPSHOT";
++pub(crate) const INSTALL_PROFILE_ENV: &str = "OMD_INSTALL_PROFILE";
 +pub(crate) const REVOCATION_FILE: &str = "contributor-revoked.json";
 +static FULLSCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 +
@@ -45399,9 +45730,36 @@ index 0000000..6cd0243
 +    codex_omd::effective_mode()
 +}
 +
++pub(crate) fn launch_title(version: &str) -> String {
++    format!("OpenAI Codex | Oh My Diffed (v{version})")
++}
++
++fn profile_label(value: &str) -> &'static str {
++    match value {
++        "full" => "Full OMD",
++        "platform_only" => "Modding platform only",
++        "private" => "Private foundation",
++        _ => "Unknown",
++    }
++}
++
++pub(crate) fn install_profile() -> Option<&'static str> {
++    std::env::var(INSTALL_PROFILE_ENV)
++        .ok()
++        .map(|value| profile_label(&value))
++}
++
++pub(crate) fn install_profile_status() -> String {
++    format!(
++        "Install profile {}",
++        install_profile().unwrap_or("Unreported")
++    )
++}
++
 +pub(crate) fn direct_mode_details(mode: codex_omd::EffectiveMode) -> Vec<String> {
 +    vec![
 +        "Oh My Diff · upstream-style direct".to_string(),
++        install_profile_status(),
 +        format!("Selection {}", mode.source.label()),
 +        format!(
 +            "Task behavior Pinned upstream Codex flow ({})",
@@ -45838,6 +46196,22 @@ index 0000000..6cd0243
 +    }
 +
 +    #[test]
++    fn launch_identity_and_profile_labels_are_bounded() {
++        assert_eq!(
++            launch_title("0.155.1"),
++            "OpenAI Codex | Oh My Diffed (v0.155.1)"
++        );
++        assert_eq!(
++            launch_title("0.156.0"),
++            "OpenAI Codex | Oh My Diffed (v0.156.0)"
++        );
++        assert_eq!(profile_label("full"), "Full OMD");
++        assert_eq!(profile_label("platform_only"), "Modding platform only");
++        assert_eq!(profile_label("private"), "Private foundation");
++        assert_eq!(profile_label("unexpected"), "Unknown");
++    }
++
++    #[test]
 +    fn unicode_input_is_width_preserving() {
 +        let source = "a === b -> c <= d";
 +        let visual = visual_input_unicode(source);
@@ -45941,6 +46315,7 @@ index 0000000..6cd0243
 +            "Oh My Diff · upstream-style direct · hooks off"
 +        );
 +        let details = direct_mode_details(effective_mode().unwrap()).join("\n");
++        assert!(details.contains("Install profile"));
 +        assert!(details.contains(codex_omd::PINNED_UPSTREAM));
 +        assert!(details.contains("Disabled before extension registration"));
 +        assert!(details.contains("upstream executable not restored"));
@@ -46518,6 +46893,38 @@ index 99fea9e..fc8f2a7 100644
              SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
              _ => true,
          }
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_after_long_transcript_fresh_header_only.snap b/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_after_long_transcript_fresh_header_only.snap
+index 98d6015..a5b22e7 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_after_long_transcript_fresh_header_only.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_after_long_transcript_fresh_header_only.snap
+@@ -1,9 +1,9 @@
+ ---
+-source: tui/src/app.rs
++source: tui/src/app/tests.rs
+ expression: rendered
+ ---
+ ╭─────────────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)                │
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
+ │                                             │
+ │ model:     gpt-test high   /model to change │
+ │ directory: /tmp/project                     │
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_header_fast_status_fast_capable_models.snap b/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_header_fast_status_fast_capable_models.snap
+index 08afd02..d6504f0 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_header_fast_status_fast_capable_models.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__app__tests__clear_ui_header_fast_status_fast_capable_models.snap
+@@ -1,9 +1,9 @@
+ ---
+-source: tui/src/app.rs
++source: tui/src/app/tests.rs
+ expression: rendered
+ ---
+ ╭────────────────────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)                       │
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>)        │
+ │                                                    │
+ │ model:     gpt-5.4 xhigh   fast   /model to change │
+ │ directory: /tmp/project                            │
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap b/codex-rs/tui/src/snapshots/codex_tui__mod_ui__tests__mod_left_sidebar_header.snap
 new file mode 100644
 index 0000000..24c87ae
@@ -46654,6 +47061,234 @@ index 024964c..22d7a69 100644
 -" q close   esc to edit prev             "
 +" q close   esc to edit prev   / search  "
  "                                        "
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_fresh_session_transitions.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_fresh_session_transitions.snap
+index 32f6de9..f05f55b 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_fresh_session_transitions.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_fresh_session_transitions.snap
+@@ -4,24 +4,24 @@ expression: "snapshots.join(\"\\n---\\n\")"
+ ---
+ resume lookup fallback:
+ before:
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+   Resuming session…
+ 
+ › draft while loading
+ 
+ 
+ after:
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+ 
+ 
+ › draft while loading
+@@ -30,24 +30,24 @@ after:
+ ---
+ fork lookup fallback:
+ before:
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+   Forking session…
+ 
+ › draft while loading
+ 
+ 
+ after:
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+ 
+ 
+ › draft while loading
+@@ -58,12 +58,12 @@ resume picker cancellation:
+ before:
+ hidden while picker owns input
+ after:
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+ 
+ 
+ › Ask Codex to do anything
+@@ -74,12 +74,12 @@ fork picker cancellation:
+ before:
+ hidden while picker owns input
+ after:
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+ 
+ 
+ › Ask Codex to do anything
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_full_frames.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_full_frames.snap
+index 9195af7..b2fb45f 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_full_frames.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_full_frames.snap
+@@ -3,12 +3,12 @@ source: tui/src/startup_draft_tests.rs
+ expression: "snapshots.join(\"\\n---\\n\")"
+ ---
+ empty (48 columns):
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+ 
+ 
+ › Ask Codex to do anything
+@@ -16,12 +16,12 @@ empty (48 columns):
+   ? for shortcuts
+ ---
+ resuming (48 columns):
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+   Resuming session…
+ 
+ › Ask Codex to do anything
+@@ -29,12 +29,12 @@ resuming (48 columns):
+   ? for shortcuts
+ ---
+ forking (48 columns):
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+   Forking session…
+ 
+ › draft while loading
+@@ -42,12 +42,12 @@ forking (48 columns):
+ 
+ ---
+ multiline (48 columns):
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+ 
+ 
+ › first startup line
+@@ -57,7 +57,7 @@ multiline (48 columns):
+ ---
+ narrow (18 columns):
+ ╭────────────────╮
+-│ >_ OpenAI Cod… │
++│ >_ OMD (v0.15… │
+ │                │
+ │ model:     lo… │
+ │ directory: …ng │
+diff --git a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_onboarding_transition.snap b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_onboarding_transition.snap
+index 6284b07..c71708c 100644
+--- a/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_onboarding_transition.snap
++++ b/codex-rs/tui/src/snapshots/codex_tui__startup_draft__tests__startup_draft_onboarding_transition.snap
+@@ -5,12 +5,12 @@ expression: frames
+ before onboarding: hidden (0x0 viewport)
+ ---
+ after onboarding:
+-╭───────────────────────────────────────╮
+-│ >_ OpenAI Codex (v<VERSION>)              │
+-│                                       │
+-│ model:     loading   /model to change │
+-│ directory: loading                    │
+-╰───────────────────────────────────────╯
++╭───────────────────────────────────────────╮
++│ >_ OpenAI Codex | Oh My Diffed (v<VERSION>) │
++│                                           │
++│ model:     loading   /model to change     │
++│ directory: loading                        │
++╰───────────────────────────────────────────╯
+ 
+ 
+ › Ask Codex to do anything
 diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
 index 4c3dbe0..2de94ee 100644
 --- a/codex-rs/tui/src/startup_draft.rs
@@ -46693,6 +47328,36 @@ index 002e58b..9090b62 100644
              TuiEvent::Draw | TuiEvent::Resume | TuiEvent::Resize(_) | TuiEvent::FocusGained => {
                  draw_view(tui, &view)?;
              }
+diff --git a/codex-rs/tui/src/status/card.rs b/codex-rs/tui/src/status/card.rs
+index 86437fe..b61a9ec 100644
+--- a/codex-rs/tui/src/status/card.rs
++++ b/codex-rs/tui/src/status/card.rs
+@@ -769,6 +769,11 @@ impl StatusHistoryCell {
+             .map(str::to_string)
+             .collect();
+         let mut seen: BTreeSet<String> = labels.iter().cloned().collect();
++        let install_profile = crate::omd::install_profile();
++        if install_profile.is_some() {
++            push_label(&mut labels, &mut seen, "Install profile");
++            push_label(&mut labels, &mut seen, "Effective mode");
++        }
+         let thread_name = self.thread_name.as_deref().filter(|name| !name.is_empty());
+         #[expect(clippy::expect_used)]
+         let rate_limit_state = self
+@@ -863,6 +868,13 @@ impl StatusHistoryCell {
+         lines.push(formatter.line("Directory", vec![Span::from(directory_value)]));
+         lines.push(formatter.line("Permissions", vec![Span::from(self.permissions.clone())]));
+         lines.push(formatter.line("Agents.md", vec![Span::from(agents_summary)]));
++        if let Some(profile) = install_profile {
++            lines.push(formatter.line("Install profile", vec![Span::from(profile)]));
++            let mode = crate::omd::effective_mode()
++                .map(|value| value.mode.label().to_string())
++                .unwrap_or_else(|error| format!("invalid: {error}"));
++            lines.push(formatter.line("Effective mode", vec![Span::from(mode)]));
++        }
+ 
+         if let Some(account_value) = account_value {
+             lines.push(formatter.line("Account", vec![Span::from(account_value)]));
 diff --git a/codex-rs/tui/src/style.rs b/codex-rs/tui/src/style.rs
 index 99a7375..1899b79 100644
 --- a/codex-rs/tui/src/style.rs

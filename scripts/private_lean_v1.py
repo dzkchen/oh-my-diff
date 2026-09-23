@@ -266,13 +266,14 @@ def browser_config_args(browser):
 def wrapper_text(binary, selection, mode=None, controlled_manifest=None, browser=None):
     lines = ["#!/bin/sh"]
     if selection == "omd":
+        lines.append("export OMD_INSTALL_PROFILE=private")
         lines.append(f"export OMD_MODE={shlex.quote(mode)}")
         if controlled_manifest:
             lines.append(f"export OMD_CONTROLLED_MANIFEST={shlex.quote(str(controlled_manifest))}")
         else:
             lines.append("unset OMD_CONTROLLED_MANIFEST")
     else:
-        lines.extend(["unset OMD_MODE", "unset OMD_CONTROLLED_MANIFEST"])
+        lines.extend(["unset OMD_INSTALL_PROFILE", "unset OMD_MODE", "unset OMD_CONTROLLED_MANIFEST"])
     command = [str(binary)]
     if selection == "omd" and browser:
         command.extend(browser_config_args(browser))

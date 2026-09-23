@@ -24,6 +24,17 @@ fails closed. Disabling Oh My Diff changes behavior inside the custom binary;
 restoring upstream means selecting or reinstalling the retained upstream
 executable and is a separate operation.
 
+The patched TUI session header reads the compiled Codex package version and
+shows `>_ OpenAI Codex | Oh My Diffed (vVERSION)`. The existing `codex` command,
+`--version`, noninteractive output, and retained upstream executable keep their
+CLI behavior. Managed launchers set `OMD_INSTALL_PROFILE` to `private` for the
+current private foundation; the planned public installer must set `full` or
+`platform_only` for its selected package path. `/status` and `/omd` report the
+install profile separately from the effective `OMD_MODE`. A Full OMD profile
+means packages are installed, not that its optional extensions are active.
+The retained upstream launcher clears the profile marker. This presentation
+does not add startup processes or model context.
+
 Enabled manifests may select each foundation capability explicitly through the
 required boolean fields in `capabilities`: `delegation`, `escalation`,
 `checkpoints`, `guidelines`, `repository_knowledge`, `code_graph`, `code_health`,
