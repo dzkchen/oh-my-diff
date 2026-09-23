@@ -1,6 +1,6 @@
 # TypeScript mods
 
-API `0.1.0-experimental.8` runs on the pinned Codex 0.155.1 OMD 0.1.0 host,
+API `0.1.0-experimental.8` runs on the pinned Codex 0.156.1 OMD 0.1.0 host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.

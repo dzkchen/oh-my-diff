@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.1.0-experimental.8` on OMD `0.1.0` and Codex `0.155.1`. The package's
+`0.1.0-experimental.8` on OMD `0.1.0` and Codex `0.156.1`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. A store also generates
 `active-host.d.ts` and `installed-contracts.d.ts`; those files identify the
 running host and the exact service contracts available to consumers.

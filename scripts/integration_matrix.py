@@ -70,7 +70,8 @@ def resolve(reference, profiles, scenarios):
         source = ROOT / "runtime" / path
         return source.exists() and re.search(rf"fn {re.escape(function)}\(", source.read_text()) is not None
     if kind == "patch":
-        return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", (ROOT / "runtime/patches/controlled-contributor.patch").read_text(), re.M) is not None
+        patch = ROOT / json.loads((ROOT / "upstream.lock.json").read_text())["runtime_patches"][0]["path"]
+        return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", patch.read_text(), re.M) is not None
     if kind == "node":
         return f"test('{name}'" in (ROOT / "mods/runner.test.mjs").read_text()
     if kind == "python":
@@ -87,6 +88,8 @@ def check(matrix):
     source = sources()
     problems = []
     release = matrix["release"]
+    if not matrix.get("qualification"):
+        raise ValueError("integration matrix needs an explicit release qualification")
     expected = {
         "codex": source["compatibility"]["host"]["codex"],
         "omd": source["compatibility"]["host"]["omd"],
@@ -265,11 +268,13 @@ def render(matrix):
         "<!-- Generated from integration/matrix.json by scripts/integration_matrix.py --write. -->",
         "",
         f"Accumulated integration coverage for the {release['upstream_tag']} pinned runtime as of",
-        f"{matrix['as_of']}. Every component below is maintained with this release: it names its",
-        "owner, the exact version it is supported against, the fixtures that exercise it, what it",
-        "does not cover, and how it is removed or migrated. The matrix is checked against the",
+        f"{matrix['as_of']}. Each component names its owner, version, retained fixtures, limits,",
+        "and removal path. Fixture references are cumulative; this source check does not rerun",
+        "them or qualify the full release candidate. The matrix is checked against the",
         "shipped sources by `scripts/integration_matrix.py`: a version, capability, hook, language",
         "or evidence reference that disagrees with the runtime fails the check.",
+        "",
+        f"**Qualification:** {matrix['qualification']}",
         "",
         "Combinations below are representative, not exhaustive. Exercising every possible",
         "combination of mods, adapters and optional integrations is not promised; the untested",

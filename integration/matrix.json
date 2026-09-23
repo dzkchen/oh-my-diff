@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "as_of": "2026-09-22",
+  "as_of": "2026-09-23",
   "release": {
-    "codex": "0.155.1",
+    "codex": "0.156.1",
     "omd": "0.1.0",
     "mod_api": "0.1.0-experimental.8",
     "package_schema": 1,
-    "upstream_tag": "rust-v0.155.1",
-    "upstream_commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+    "upstream_tag": "rust-v0.156.1",
+    "upstream_commit": "b412ff32c417f855c2b2d1581b77058eed87c84b",
     "target": "aarch64-apple-darwin",
     "node": "24.18.0"
   },
@@ -17,7 +17,7 @@
       "area": "host",
       "name": "OMD host runtime",
       "owner": "OMD runtime (runtime/omd, runtime/native)",
-      "version": "0.1.0 on Codex 0.155.1",
+      "version": "0.1.0 on Codex 0.156.1",
       "features": [
         "author_diagnostics_v1",
         "author_offline_runner_v1",
@@ -161,7 +161,7 @@
       "area": "native",
       "name": "Codex plugins (plugin.json)",
       "owner": "upstream Codex",
-      "version": "0.155.1",
+      "version": "0.156.1",
       "status": "supported",
       "fixtures": [
         "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique",
@@ -175,7 +175,7 @@
       "area": "native",
       "name": "Codex hooks",
       "owner": "upstream Codex",
-      "version": "0.155.1",
+      "version": "0.156.1",
       "hooks": [
         "pre_tool_use",
         "permission_request",
@@ -308,7 +308,10 @@
       "id": "omd_artifact_reading",
       "area": "native",
       "name": "OMD artifact reading plugin",
-      "extension_type": ["plugin", "skill"],
+      "extension_type": [
+        "plugin",
+        "skill"
+      ],
       "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
       "version": "0.1.0",
       "status": "opt_in",
@@ -324,7 +327,10 @@
       "id": "omd_code_execution",
       "area": "native",
       "name": "OMD code execution plugin",
-      "extension_type": ["plugin", "skill"],
+      "extension_type": [
+        "plugin",
+        "skill"
+      ],
       "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
       "version": "0.1.0",
       "status": "opt_in",
@@ -580,7 +586,7 @@
       "area": "optional",
       "name": "Remote control",
       "owner": "upstream Codex",
-      "version": "0.155.1 native",
+      "version": "0.156.1 native",
       "status": "removed",
       "fixtures": [],
       "limitations": "The OMD-specific wrapper was reverted on 2026-09-16; no OMD account, pairing or compatibility claim is retained.",
@@ -1015,7 +1021,7 @@
     {
       "id": "pinned_codex_baseline",
       "retained_for": [
-        "0.155.1"
+        "0.156.1"
       ],
       "case": "The shipped runtime patch still applies byte-for-byte to the pinned upstream commit and stays compatible with the recorded upstream surfaces.",
       "evidence": [
@@ -1091,5 +1097,6 @@
     "python3 -m unittest discover -s tests",
     "OMD_TEST_NODE=/absolute/node-24.18.0/bin/node cargo +1.95.0 test --locked -p codex-omd",
     "pnpm --dir mods test"
-  ]
+  ],
+  "qualification": "Development pin: the 0.156.1 patch, scoped checks, and an isolated prior-host mod-store migration passed. The selected Full package upgrade, both public installation routes, archive compatibility, and candidate freeze remain unqualified; see .docs/audits/release-candidate-upstream-freshness-20260923.md."
 }

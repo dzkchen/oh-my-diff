@@ -402,7 +402,8 @@ class ShippedPatchTests(unittest.TestCase):
         patch = installer.ROOT / manifest["patch"]["path"]
         self.assertEqual(hashlib.sha256(patch.read_bytes()).hexdigest(), manifest["patch"]["sha256"])
         lock = json.loads((installer.ROOT / "runtime/lean-v1.lock.json").read_text())
-        self.assertEqual(lock["runtime_patch"]["sha256"], manifest["patch"]["sha256"])
+        frozen_patch = installer.ROOT / lock["runtime_patch"]["path"]
+        self.assertEqual(hashlib.sha256(frozen_patch.read_bytes()).hexdigest(), lock["runtime_patch"]["sha256"])
         checked = 0
         for name, hashes in manifest["files"].items():
             for prefix, source in (("codex-rs/omd/", "runtime/omd/"), ("codex-rs/ext/omd/", "runtime/native/")):

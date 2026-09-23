@@ -734,7 +734,6 @@ pub(super) async fn command(
             network_environment_id: None,
             sandbox_permissions: SandboxPermissions::UseDefault,
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
-            windows_sandbox_private_desktop: false,
             justification: None,
             arg0: None,
         },
@@ -742,6 +741,7 @@ pub(super) async fn command(
         &config.cwd,
         config.permissions.workspace_roots(),
         &config.codex_linux_sandbox_exe,
+        &config.codex_self_exe,
         false,
         None,
     )
@@ -821,9 +821,7 @@ pub async fn review_current(
     let actual: PermissionProfile = call.environments[0]
         .file_system_sandbox_context
         .permissions
-        .clone()
-        .try_into()
-        .map_err(error)?;
+        .clone();
     let mut roots = call.environments[0]
         .file_system_sandbox_context
         .workspace_roots
@@ -1160,9 +1158,7 @@ pub async fn complete_current(
     let actual: PermissionProfile = call.environments[0]
         .file_system_sandbox_context
         .permissions
-        .clone()
-        .try_into()
-        .map_err(error)?;
+        .clone();
     let mut roots = call.environments[0]
         .file_system_sandbox_context
         .workspace_roots
@@ -1527,9 +1523,7 @@ pub async fn contribute(
     let actual: PermissionProfile = call.environments[0]
         .file_system_sandbox_context
         .permissions
-        .clone()
-        .try_into()
-        .map_err(error)?;
+        .clone();
     let mut roots = call.environments[0]
         .file_system_sandbox_context
         .workspace_roots
@@ -2225,9 +2219,7 @@ pub async fn escalate(
     let actual: PermissionProfile = call.environments[0]
         .file_system_sandbox_context
         .permissions
-        .clone()
-        .try_into()
-        .map_err(error)?;
+        .clone();
     let mut roots = call.environments[0]
         .file_system_sandbox_context
         .workspace_roots

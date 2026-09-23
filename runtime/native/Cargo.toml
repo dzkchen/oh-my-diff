@@ -1,6 +1,6 @@
 [package]
 name = "codex-omd-extension"
-version = "0.155.1"
+version = "0.156.1"
 edition = "2024"
 license = "Apache-2.0"
 
