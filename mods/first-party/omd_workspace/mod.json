@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "id": "omd_workspace",
+  "version": "0.2.0-preview.2",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "capabilities": [
+    "terminal",
+    "commands",
+    "lifecycle",
+    "state"
+  ],
+  "compatibility": {
+    "required_features": ["terminal_components_v1", "terminal_render_sites_v1"]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "density": {
+        "type": "string",
+        "enum": ["full", "compact"],
+        "default": "full"
+      },
+      "side": {
+        "type": "string",
+        "enum": ["left", "right"],
+        "default": "left"
+      },
+      "review_prompt": {
+        "type": "string",
+        "default": "Review the current candidate and list the remaining risks."
+      }
+    },
+    "additionalProperties": false
+  }
+}

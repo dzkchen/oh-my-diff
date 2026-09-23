@@ -1,0 +1,57 @@
+import json
+from pathlib import Path
+import re
+import unittest
+
+from scripts import mod_compatibility, mod_conformance
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class ContractTests(unittest.TestCase):
+    def test_published_compatibility_matrix_matches_the_host(self):
+        matrix = json.loads(mod_compatibility.MATRIX.read_text())
+        self.assertEqual(mod_compatibility.check(matrix), [])
+
+    def test_contract_covers_the_host_api_and_resolves_its_evidence(self):
+        contract = json.loads(mod_conformance.CONTRACT.read_text())
+        version, sets = mod_conformance.host_sets()
+        self.assertEqual(mod_conformance.check(contract, version, sets), [])
+
+    def test_published_coverage_table_matches_the_contract(self):
+        contract = json.loads(mod_conformance.CONTRACT.read_text())
+        self.assertEqual(
+            mod_conformance.COVERAGE.read_text(),
+            mod_conformance.render(contract),
+            "mods/COVERAGE.md is stale; rerun scripts/mod_conformance.py --write",
+        )
+
+    def test_first_party_mods_use_only_the_published_api(self):
+        capabilities = mod_conformance.host_sets()[1]["capabilities"]
+        interface = re.search(r"export interface ModAPI \{(.*?)\n\}", (ROOT / "mods/api.d.ts").read_text(), re.S)
+        published = set(re.findall(r"^  (?:readonly )?(\w+)[(<:]", interface.group(1), re.M))
+        rust = "\n".join(
+            path.read_text()
+            for path in list((ROOT / "runtime").rglob("*.rs")) + [ROOT / "runtime/omd/src/mods/runner.mjs"]
+        )
+        packages = sorted((ROOT / "mods/first-party").iterdir())
+        self.assertTrue(packages)
+        for package in packages:
+            manifest = json.loads((package / "mod.json").read_text())
+            source = (package / "index.ts").read_text()
+            with self.subTest(mod=manifest["id"]):
+                self.assertLessEqual(set(manifest["capabilities"]), capabilities)
+                self.assertEqual(manifest["api"], mod_conformance.host_sets()[0])
+                self.assertEqual(
+                    re.findall(r"from '([^']+)'", source), ["../../api.d.ts"] * source.count("from '")
+                )
+                self.assertNotIn("__omd", source)
+                self.assertNotIn("globalThis", source)
+                body = "\n".join(line for line in source.splitlines() if not line.startswith("import "))
+                for symbol in set(re.findall(r"\bapi\.(\w+)", body)):
+                    self.assertIn(symbol, published)
+                self.assertNotIn(manifest["id"], rust, "a first-party mod is named in host source")
+
+
+if __name__ == "__main__":
+    unittest.main()

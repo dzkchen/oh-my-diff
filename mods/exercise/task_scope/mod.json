@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "task_scope",
+  "version": "1.0.0",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/exercise/task_scope"},
+  "capabilities": ["tools", "context", "execution"]
+}

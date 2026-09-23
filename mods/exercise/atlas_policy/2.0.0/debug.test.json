@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "packages": [
+    "../service_provider"
+  ],
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "atlas_policy",
+      "event": "tool",
+      "name": "delegate",
+      "payload": {},
+      "expect_error": "brief required"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "omd_recovery",
+  "version": "0.1.0-preview.2",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party"
+  },
+  "capabilities": [
+    "commands",
+    "interception",
+    "lifecycle",
+    "recovery",
+    "services",
+    "state",
+    "tools"
+  ],
+  "services": {
+    "imports": [
+      {
+        "name": "omd.coordination",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "failure_policy": {
+        "type": "string",
+        "enum": ["lead_asserted", "environment", "edit", "diagnosis", "model"],
+        "default": "lead_asserted"
+      },
+      "eligible_tools": {
+        "type": "array",
+        "default": ["direct", "delegation", "advisory"]
+      },
+      "outage_action": {
+        "type": "string",
+        "enum": ["opposite_lead", "pause"],
+        "default": "opposite_lead"
+      }
+    },
+    "additionalProperties": false
+  }
+}

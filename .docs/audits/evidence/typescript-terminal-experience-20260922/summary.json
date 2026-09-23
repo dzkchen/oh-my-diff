@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "date": "2026-09-22",
+  "scope": "Phase 10 terminal experience batch",
+  "result": {
+    "terminal_ui_mod": "kept",
+    "theme_mod": "rejected_after_prototype",
+    "focus_flow_mod": "rejected_after_prototype"
+  },
+  "api": {
+    "version": "0.1.0-experimental.7",
+    "features": [
+      "terminal_components_v1",
+      "terminal_render_sites_v1"
+    ],
+    "components": [
+      "box",
+      "text",
+      "button",
+      "input",
+      "select",
+      "markdown",
+      "code",
+      "pane",
+      "dialog",
+      "slot"
+    ],
+    "sites": [
+      "sidebar",
+      "header",
+      "above_composer",
+      "dialog"
+    ]
+  },
+  "optional_mod_benchmark": {
+    "startup": {
+      "method": "15 randomized omd-mod status process runs per package combination, seed 7, Node 24.18.0",
+      "variants": {
+        "workspace": {
+          "median_ms": 388.854,
+          "p95_ms": 404.763
+        },
+        "workspace_theme": {
+          "median_ms": 495.872,
+          "p95_ms": 515.976,
+          "median_delta_ms": 107.018
+        },
+        "workspace_focus": {
+          "median_ms": 493.179,
+          "p95_ms": 502.616,
+          "median_delta_ms": 104.325
+        },
+        "workspace_theme_focus": {
+          "median_ms": 598.759,
+          "p95_ms": 609.886,
+          "median_delta_ms": 209.905
+        }
+      }
+    },
+    "terminal_callback": {
+      "method": "20 zero-spend offline terminal callbacks per package using host telemetry",
+      "packages": {
+        "omd_theme": {
+          "median_micros": 104673,
+          "p95_micros": 111415
+        },
+        "omd_focus_flow": {
+          "median_micros": 103849.5,
+          "p95_micros": 108030
+        },
+        "omd_workspace": {
+          "median_micros": 134070.5,
+          "p95_micros": 137761
+        }
+      }
+    },
+    "decision": "Both optional packages add clearly measurable activation and terminal recomposition latency, so neither package is retained or shipped."
+  },
+  "physical_terminal": {
+    "profiles": 5,
+    "passed": 5,
+    "roots": [
+      "/private/tmp/omd-pty-mods-9905a9wx",
+      "/private/tmp/omd-pty-extensions-iu47qqg9",
+      "/private/tmp/omd-pty-inline-2xgwdkgo",
+      "/private/tmp/omd-pty-preview-dialog-apyapvyx",
+      "/private/tmp/omd-pty-preview-5edb54v2"
+    ]
+  },
+  "validation": {
+    "codex_omd_tests": "pass",
+    "codex_omd_extension_tests": "23 passed",
+    "codex_tui_terminal_tests": "7 passed",
+    "mod_runner_tests": "11 passed",
+    "python_tests": "23 run, 18 passed, 5 skipped",
+    "conformance": "30 decisions and 12 composition rules resolved",
+    "format": "pass",
+    "clippy": "pass"
+  },
+  "patch": {
+    "sha256": "9ed3a885f7112cfa3a843e53f285d681c057ac8ee11e6c8ccbda25aea2628685",
+    "destinations": 157,
+    "fresh_normalized_replay": "pass",
+    "second_apply": "no_op",
+    "byte_parity": "pass"
+  },
+  "limits": [
+    "Desktop, VS Code and mobile renderers remain out of scope.",
+    "Clipboard action dispatch and native authorization are automated; this audit does not claim a manual macOS pasteboard readback."
+  ]
+}
