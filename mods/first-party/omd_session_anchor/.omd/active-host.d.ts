@@ -1,0 +1,9 @@
+export type ActiveHostRelease = '0.1.0';
+export type ActiveCodexRelease = '0.155.1';
+export type ActiveModApi = '0.1.0-experimental.8';
+export type ActivePackageSchema = 1;
+export type ActiveStateStorageSchema = 1;
+export type ActiveCapability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'providers' | 'sidecars' | 'compaction' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services';
+export type ActiveEvent = 'context' | 'migrate' | 'tool_before' | 'tool_exposure' | 'input' | 'routing' | 'worker_context' | 'terminal' | 'compaction' | 'start' | 'idle' | 'stop' | 'resume' | 'tool_result' | 'turn_start' | 'turn_end' | 'compaction_start' | 'compaction_end' | 'agent_end' | 'workflow' | 'model_request' | 'response_stream' | 'prompt' | 'session' | 'agent' | 'tool_call' | 'host_operation';
+export type ActiveReplacementPoint = 'tool_before' | 'routing' | 'worker_context' | 'terminal' | 'compaction' | 'context' | 'input';
+export type ActiveHostOperation = 'task.status' | 'routes.list' | 'checkpoint.read' | 'checkpoint.update' | 'agents.spawn' | 'agents.message' | 'agents.cancel' | 'agents.result' | 'agents.wait' | 'agents.list' | 'review.run' | 'review.complete' | 'delegation.contribute' | 'recovery.escalate' | 'tools.exec' | 'pi.discover' | 'pi.expand' | 'providers.unregister' | 'providers.register' | 'sidecars.start' | 'sidecars.status' | 'sidecars.stop' | 'workflow.status' | 'workflow.restrict';

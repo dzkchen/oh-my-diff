@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "id": "atlas_policy",
+  "version": "2.0.0",
+  "api": "0.1.0-experimental.6",
+  "state_version": 2,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Atlas Mods (full-API conformance exercise author)",
+    "source": "mods/exercise/atlas_policy"
+  },
+  "capabilities": [
+    "agents",
+    "commands",
+    "context",
+    "interception",
+    "lifecycle",
+    "recovery",
+    "routing",
+    "services",
+    "state",
+    "task",
+    "tools"
+  ],
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "solo",
+          "paired",
+          "entry"
+        ],
+        "default": "paired"
+      },
+      "focus": {
+        "type": "array"
+      }
+    },
+    "additionalProperties": false
+  },
+  "services": {
+    "imports": [
+      {
+        "name": "example.formatter",
+        "version": "^1.0.0"
+      }
+    ]
+  },
+  "compatibility": {
+    "required_features": [
+      "service_contracts_v1",
+      "state_migration_v1"
+    ]
+  }
+}

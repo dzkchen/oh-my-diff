@@ -1,0 +1,218 @@
+{
+  "schema": 1,
+  "as_of": "2026-09-23",
+  "release_pin": {
+    "codex": "0.156.1",
+    "omd": "0.1.0",
+    "mod_api": "0.1.0-experimental.8",
+    "node": "24.18.0"
+  },
+  "packages": [
+    {
+      "id": "omd_coordination",
+      "version": "0.1.0-preview.4",
+      "extension_type": "mod",
+      "capability": "Live task routing, worker context, and delegation preparation",
+      "source": "mods/first-party/omd_coordination",
+      "license": "undeclared",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "mod API 0.1.0-experimental.8",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_recovery",
+      "version": "0.1.0-preview.2",
+      "extension_type": "mod",
+      "capability": "Failure-aware escalation and delegation dispatch",
+      "source": "mods/first-party/omd_recovery",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "mod API 0.1.0-experimental.8",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_workspace",
+      "version": "0.2.0-preview.2",
+      "extension_type": "mod",
+      "capability": "Live terminal task and worker workspace",
+      "source": "mods/first-party/omd_workspace",
+      "license": "undeclared",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "mod API 0.1.0-experimental.8",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd-guidance-hooks",
+      "version": "0.1.0",
+      "extension_type": "plugin",
+      "capability": "Selected simplicity and communication skills with controlled lifecycle reactions",
+      "source": "plugins/bundled/oh-my-diff/plugins/omd-guidance-hooks",
+      "license": "UNLICENSED",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; selected hooks require OMD_MODE=enabled and matching controlled manifest",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "plugin 0.1.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md",
+      "components": [
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-simplicity-guidance"
+        },
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-concise-updates"
+        },
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-structured-reports"
+        },
+        {
+          "extension_type": "hook",
+          "path": "hooks/hooks.json"
+        }
+      ]
+    },
+    {
+      "id": "omd-review-policy",
+      "version": "0.1.0",
+      "extension_type": "plugin",
+      "capability": "Selected review cadence and final review prompts",
+      "source": "plugins/bundled/oh-my-diff/plugins/omd-review-policy",
+      "license": "UNLICENSED",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; every-turn hook requires explicit controlled-manifest selection",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "plugin 0.1.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md",
+      "components": [
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-review-cadence"
+        },
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-final-review"
+        },
+        {
+          "extension_type": "hook",
+          "path": "hooks/hooks.json"
+        }
+      ]
+    },
+    {
+      "id": "omd-application-bridges",
+      "version": "0.1.0",
+      "extension_type": "plugin",
+      "capability": "Prompt-approved browser and application diagnostics through the managed bridge",
+      "source": "plugins/bundled/oh-my-diff/plugins/omd-application-bridges",
+      "license": "UNLICENSED",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires the matching bridge host and explicit application_bridge capability",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "plugin 0.1.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md",
+      "components": [
+        {
+          "extension_type": "hook",
+          "path": "hooks/hooks.json"
+        }
+      ]
+    },
+    {
+      "id": "omd-repository-tools",
+      "version": "0.1.0",
+      "extension_type": "plugin",
+      "capability": "Source-linked repository graph and focused code health evidence",
+      "source": "plugins/bundled/oh-my-diff/plugins/omd-repository-tools",
+      "license": "UNLICENSED",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires matching omd-graph and omd-health binaries",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "plugin 0.1.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md",
+      "components": [
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-code-health"
+        }
+      ]
+    },
+    {
+      "id": "omd-lsp-adapters",
+      "version": "0.1.0",
+      "extension_type": "plugin",
+      "capability": "Opt-in Rust, TypeScript, JavaScript, Python, and Java LSP operations",
+      "source": "plugins/bundled/oh-my-diff/plugins/omd-lsp-adapters",
+      "license": "UNLICENSED",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires matching omd-lsp and separately installed language servers",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "plugin 0.1.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd-artifact-reading",
+      "version": "0.1.0",
+      "extension_type": "plugin",
+      "capability": "Source-anchored URL, issue, PDF, and notebook reading",
+      "source": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
+      "license": "UNLICENSED",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; PDF rendering requires an installed Ghostscript",
+      "tested_versions": [
+        "Codex 0.156.1",
+        "OMD 0.1.0",
+        "plugin 0.1.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md",
+      "components": [
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-artifact-reading"
+        }
+      ]
+    }
+  ]
+}
