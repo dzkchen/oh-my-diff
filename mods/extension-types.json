@@ -153,6 +153,22 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Exercises current live routing, context, coordination, interception, and cross-mod service replacement."
+    },
+    {
+      "path": "mods/exercise/task_scope",
+      "id": "task_scope",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Exercises task-scoped optional tool exposure at each native sampling step."
+    },
+    {
+      "path": "mods/exercise/session_anchor",
+      "id": "session_anchor",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Exercises bounded live compaction and checkpoint-derived context across reload."
     }
   ],
   "synthetic_fixtures": [

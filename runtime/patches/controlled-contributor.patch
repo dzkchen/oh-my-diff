@@ -1,7 +1,8 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
+index c0daede..414078e 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
-@@ -2213,6 +2213,7 @@
+@@ -2213,6 +2213,7 @@ dependencies = [
   "codex-model-provider-info",
   "codex-models-manager",
   "codex-network-proxy",
@@ -9,10 +10,11 @@ diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4148,6 +4149,44 @@
+@@ -4147,6 +4148,44 @@ dependencies = [
+  "wiremock",
  ]
  
- [[package]]
++[[package]]
 +name = "codex-omd"
 +version = "0.1.0"
 +dependencies = [
@@ -50,11 +52,10 @@ diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
 + "tokio",
 +]
 +
-+[[package]]
+ [[package]]
  name = "codex-otel"
  version = "0.155.1"
- dependencies = [
-@@ -4726,6 +4765,7 @@
+@@ -4726,6 +4765,7 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -26087,7 +26088,7 @@ index 0000000..319c7e3
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000..b05ef83
+index 0000000..17b1641
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,2462 @@
@@ -27210,7 +27211,7 @@ index 0000000..b05ef83
 +            return Ok(false);
 +        }
 +        let config: ModConfiguration = serde_json::from_slice(&bytes)?;
-+        if config.schema != 1 || config.mods.len() > 16 || !config.node.is_absolute() {
++        if config.schema != 1 || !config.node.is_absolute() {
 +            return Err(failure("invalid_mod_configuration"));
 +        }
 +        let initial = self.configuration_sha256.is_empty();
@@ -29285,18 +29286,16 @@ index 0000000..1a7b669
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000..a6f761a
+index 0000000..6e23ea1
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,1100 @@
+@@ -0,0 +1,1090 @@
 +use super::*;
 +use serde_json::Map;
 +use std::process::Command;
 +
 +const PACKAGE_LOCK_SCHEMA: u32 = 1;
-+const PACKAGE_LIMIT: usize = 16;
 +const PACKAGE_HISTORY_LIMIT: usize = 8;
-+const PACKAGE_HISTORY_ID_LIMIT: usize = 64;
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 +#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -29842,9 +29841,6 @@ index 0000000..a6f761a
 +            }
 +            return Err(failure("dependency_resolution_conflict"));
 +        }
-+        if resolved.len() >= PACKAGE_LIMIT {
-+            return Err(failure("package_dependency_limit"));
-+        }
 +        visiting.push(package.id.clone());
 +        let license = package
 +            .license
@@ -30285,12 +30281,10 @@ index 0000000..a6f761a
 +}
 +
 +fn validate_package_lock(lock: &ModPackageLock) -> Result<()> {
-+    if lock.packages.len() > PACKAGE_LIMIT
-+        || lock.history.len() > PACKAGE_HISTORY_ID_LIMIT
-+        || lock
-+            .history
-+            .values()
-+            .any(|history| history.len() > PACKAGE_HISTORY_LIMIT)
++    if lock
++        .history
++        .values()
++        .any(|history| history.len() > PACKAGE_HISTORY_LIMIT)
 +        || lock.packages.iter().any(|(id, package)| {
 +            id != &package.id
 +                || package.integrity.len() != 64
@@ -30306,9 +30300,6 @@ index 0000000..a6f761a
 +}
 +
 +fn push_history(lock: &mut ModPackageLock, id: &str, package: ModLockedPackage) -> Result<()> {
-+    if !lock.history.contains_key(id) && lock.history.len() >= PACKAGE_HISTORY_ID_LIMIT {
-+        return Err(failure("package_history_limit"));
-+    }
 +    let history = lock.history.entry(id.to_owned()).or_default();
 +    history.push(package);
 +    if history.len() > PACKAGE_HISTORY_LIMIT {
@@ -39419,10 +39410,10 @@ index 0000000..eef7895
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000..722b8ec
+index 0000000..5920ab8
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,517 @@
+@@ -0,0 +1,536 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -39503,6 +39494,25 @@ index 0000000..722b8ec
 +            BTreeMap::from([("mode".into(), json!("safe"))]),
 +        )]),
 +    }
++}
++
++#[test]
++fn installed_collection_can_exceed_sixteen_without_activating_packages() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let store = store(&temp);
++    for number in 0..17 {
++        let id = format!("catalog_{number:02}");
++        let package = mod_package(&root, &id, "1.0.0", &["commands"], json!([]));
++        let mut install = request(&package, &["commands"]);
++        install.activate = false;
++        let plan = store.package_plan(install.clone()).unwrap();
++        store.package_apply(install, &plan.confirmation).unwrap();
++    }
++    let lock = store.package_lock().unwrap();
++    assert_eq!(lock.packages.len(), 17);
++    assert!(lock.packages.values().all(|package| !package.enabled));
++    assert_eq!(store.configuration().unwrap().mods.len(), 17);
 +}
 +
 +#[test]

@@ -1117,7 +1117,7 @@ impl ModHost {
             return Ok(false);
         }
         let config: ModConfiguration = serde_json::from_slice(&bytes)?;
-        if config.schema != 1 || config.mods.len() > 16 || !config.node.is_absolute() {
+        if config.schema != 1 || !config.node.is_absolute() {
             return Err(failure("invalid_mod_configuration"));
         }
         let initial = self.configuration_sha256.is_empty();

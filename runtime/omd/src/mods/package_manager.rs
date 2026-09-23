@@ -3,9 +3,7 @@ use serde_json::Map;
 use std::process::Command;
 
 const PACKAGE_LOCK_SCHEMA: u32 = 1;
-const PACKAGE_LIMIT: usize = 16;
 const PACKAGE_HISTORY_LIMIT: usize = 8;
-const PACKAGE_HISTORY_ID_LIMIT: usize = 64;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -551,9 +549,6 @@ impl ModStore {
             }
             return Err(failure("dependency_resolution_conflict"));
         }
-        if resolved.len() >= PACKAGE_LIMIT {
-            return Err(failure("package_dependency_limit"));
-        }
         visiting.push(package.id.clone());
         let license = package
             .license
@@ -994,12 +989,10 @@ fn package_directory(value: &str) -> bool {
 }
 
 fn validate_package_lock(lock: &ModPackageLock) -> Result<()> {
-    if lock.packages.len() > PACKAGE_LIMIT
-        || lock.history.len() > PACKAGE_HISTORY_ID_LIMIT
-        || lock
-            .history
-            .values()
-            .any(|history| history.len() > PACKAGE_HISTORY_LIMIT)
+    if lock
+        .history
+        .values()
+        .any(|history| history.len() > PACKAGE_HISTORY_LIMIT)
         || lock.packages.iter().any(|(id, package)| {
             id != &package.id
                 || package.integrity.len() != 64
@@ -1015,9 +1008,6 @@ fn validate_package_lock(lock: &ModPackageLock) -> Result<()> {
 }
 
 fn push_history(lock: &mut ModPackageLock, id: &str, package: ModLockedPackage) -> Result<()> {
-    if !lock.history.contains_key(id) && lock.history.len() >= PACKAGE_HISTORY_ID_LIMIT {
-        return Err(failure("package_history_limit"));
-    }
     let history = lock.history.entry(id.to_owned()).or_default();
     history.push(package);
     if history.len() > PACKAGE_HISTORY_LIMIT {

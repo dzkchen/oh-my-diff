@@ -81,6 +81,25 @@ fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
 }
 
 #[test]
+fn installed_collection_can_exceed_sixteen_without_activating_packages() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = store(&temp);
+    for number in 0..17 {
+        let id = format!("catalog_{number:02}");
+        let package = mod_package(&root, &id, "1.0.0", &["commands"], json!([]));
+        let mut install = request(&package, &["commands"]);
+        install.activate = false;
+        let plan = store.package_plan(install.clone()).unwrap();
+        store.package_apply(install, &plan.confirmation).unwrap();
+    }
+    let lock = store.package_lock().unwrap();
+    assert_eq!(lock.packages.len(), 17);
+    assert!(lock.packages.values().all(|package| !package.enabled));
+    assert_eq!(store.configuration().unwrap().mods.len(), 17);
+}
+
+#[test]
 fn local_updates_preview_preserve_edits_settings_and_rollback() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

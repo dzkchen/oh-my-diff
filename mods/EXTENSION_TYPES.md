@@ -41,6 +41,8 @@ contains only the packages labeled `bundled` below.
 | `atlas_console@2.0.0` | `mod` | `mods/exercise/atlas_console/2.0.0` | Exercises current live terminal replacement, interaction, and migrated state. |
 | `atlas_policy@1.0.0` | `mod` | `mods/exercise/atlas_policy/1.0.0` | Exercises an older supported API row for live routing policy and state migration. |
 | `atlas_policy@2.0.0` | `mod` | `mods/exercise/atlas_policy/2.0.0` | Exercises current live routing, context, coordination, interception, and cross-mod service replacement. |
+| `task_scope@1.0.0` | `mod` | `mods/exercise/task_scope` | Exercises task-scoped optional tool exposure at each native sampling step. |
+| `session_anchor@1.0.0` | `mod` | `mods/exercise/session_anchor` | Exercises bounded live compaction and checkpoint-derived context across reload. |
 
 ## Synthetic conformance fixtures
 

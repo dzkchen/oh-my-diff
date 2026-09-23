@@ -11,9 +11,9 @@ context, tools, and the terminal experience without maintaining their own Codex
 fork. The intended lasting advantage is a useful mod ecosystem, dependable API
 compatibility, good author tools, and integrations maintained across upgrades.
 
-The native foundation and an [experimental TypeScript mod-host slice](mods/README.md)
-are implemented. The broader public mod API, author tooling, and curated
-distribution remain in progress. Cost reduction is
+The native foundation, [experimental TypeScript mod API and author tools](mods/README.md),
+and a [reviewed extension candidate index](extensions/README.md) are implemented.
+Public release qualification and curated distribution remain in progress. Cost reduction is
 one intended benefit of bundled policies, not an established performance claim
 or the entire product promise.
 
