@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "task_id": "replace-with-task-id",
+  "repository_identity": "replace-with-repository-identity",
+  "connection_file": "/absolute/private/path/bridge-connection.json",
+  "applications": [
+    {
+      "id": "web-dev",
+      "adapter": "browser",
+      "version_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "reproduction_id": "replace-with-reproduction-id",
+      "origins": ["http://127.0.0.1:3000"],
+      "exposed_state": ["router.current"]
+    }
+  ],
+  "limits": {
+    "max_events": 256,
+    "max_total_bytes": 1048576,
+    "max_event_bytes": 16384,
+    "max_log_chars": 4096,
+    "max_pending_state": 8,
+    "state_timeout_ms": 5000
+  },
+  "redact_keys": ["session_id"]
+}

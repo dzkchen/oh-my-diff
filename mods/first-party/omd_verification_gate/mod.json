@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "omd_verification_gate",
+  "version": "0.1.0-candidate.1",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_verification_gate"},
+  "capabilities": ["workflow", "tools", "task", "commands"]
+}
