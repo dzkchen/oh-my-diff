@@ -27,6 +27,10 @@ def install_preview(destination, manifest, node, profile):
     for identifier, pinned in sorted(lock["packages"].items()):
         if profile == "workspace-only" and identifier != "omd_workspace":
             continue
+        if profile == "coordination-only" and identifier != "omd_coordination":
+            continue
+        if profile == "recovery-pair" and identifier == "omd_workspace":
+            continue
         source = ROOT / pinned["source"]
         package = destination / identifier
         package.mkdir()
@@ -703,6 +707,16 @@ def verify_recovery(destination, requests, profile, scenario):
 
 
 def verify(destination, requests, profile, scenario="success"):
+    if profile in ("coordination-only", "recovery-pair"):
+        status = json.loads((destination / "evidence/mod-status.json").read_text())
+        expected = ["omd_coordination"] if profile == "coordination-only" else ["omd_coordination", "omd_recovery"]
+        assert [mod["id"] for mod in status["mods"]] == expected, status
+        assert not status["rejected"] and all(mod["error"] is None for mod in status["mods"]), status
+        context = json.loads((destination / "evidence/context.json").read_text())
+        assert context["worker_context"]["provenance"]["owner"]["id"] == "omd_coordination", context
+        if profile == "recovery-pair":
+            verify_recovery(destination, requests, profile, scenario)
+        return
     if profile == "candidate-anchor":
         status = json.loads((destination / "evidence/mod-status.json").read_text())
         assert [mod["id"] for mod in status["mods"]] == ["omd_session_anchor"], status
