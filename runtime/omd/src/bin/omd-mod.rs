@@ -2,16 +2,140 @@ use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModStore;
 use serde_json::Value;
+use sha2::Digest;
+use sha2::Sha256;
+use std::collections::BTreeMap;
+use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::process::Command;
+
+fn plugin_files(root: &std::path::Path) -> io::Result<BTreeMap<String, String>> {
+    let mut files = BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    let mut total = 0_u64;
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_symlink() {
+                return Err(io::Error::other("plugin_preview_symlink_refused"));
+            }
+            if kind.is_dir() {
+                pending.push(entry.path());
+                continue;
+            }
+            if !kind.is_file() || files.len() >= 512 {
+                return Err(io::Error::other("plugin_preview_file_limit"));
+            }
+            let entry_path = entry.path();
+            let bytes = fs::read(&entry_path)?;
+            total += bytes.len() as u64;
+            if total > 16_777_216 {
+                return Err(io::Error::other("plugin_preview_size_limit"));
+            }
+            let path = entry_path.strip_prefix(root).map_err(io::Error::other)?;
+            files.insert(
+                path.to_string_lossy().into_owned(),
+                format!("{:x}", Sha256::digest(bytes)),
+            );
+        }
+    }
+    Ok(files)
+}
+
+fn plugin_preview(codex: &str, home: &str, id: &str, candidate: &str) -> io::Result<Value> {
+    let (name, marketplace) = id
+        .split_once('@')
+        .ok_or_else(|| io::Error::other("plugin_id_requires_name_at_marketplace"))?;
+    if [name, marketplace].iter().any(|part| {
+        part.is_empty()
+            || !part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    }) {
+        return Err(io::Error::other("invalid_plugin_id"));
+    }
+    let home = PathBuf::from(home).canonicalize()?;
+    let candidate = PathBuf::from(candidate).canonicalize()?;
+    let output = Command::new(codex)
+        .env("CODEX_HOME", &home)
+        .args(["plugin", "list", "--json", "--marketplace", marketplace])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+    let listing: Value = serde_json::from_slice(&output.stdout)?;
+    let installed = listing["installed"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|entry| entry["pluginId"] == id)
+        .ok_or_else(|| io::Error::other("plugin_not_installed"))?;
+    if installed["source"]["source"] != "local" {
+        return Err(io::Error::other("plugin_preview_requires_local_source"));
+    }
+    let version = installed["version"]
+        .as_str()
+        .ok_or_else(|| io::Error::other("installed_plugin_version_missing"))?;
+    if !version
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'_')
+    {
+        return Err(io::Error::other("invalid_installed_plugin_version"));
+    }
+    let installed_path = home
+        .join("plugins/cache")
+        .join(marketplace)
+        .join(name)
+        .join(version);
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(candidate.join(".codex-plugin/plugin.json"))?)?;
+    if manifest["name"] != name || !manifest["version"].is_string() {
+        return Err(io::Error::other("candidate_plugin_manifest_mismatch"));
+    }
+    let current = plugin_files(&installed_path)?;
+    let proposed = plugin_files(&candidate)?;
+    let paths = current
+        .keys()
+        .chain(proposed.keys())
+        .collect::<std::collections::BTreeSet<_>>();
+    let changes = paths
+        .into_iter()
+        .filter_map(|path| {
+            let before = current.get(path);
+            let after = proposed.get(path);
+            (before != after).then(
+                || serde_json::json!({"path":path,"before_sha256":before,"after_sha256":after}),
+            )
+        })
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "plugin": id,
+        "installed_version": version,
+        "candidate_version": manifest["version"],
+        "installed_enabled": installed["enabled"],
+        "installed_path": installed_path,
+        "candidate_path": candidate,
+        "changes": changes,
+        "same_version_changed": manifest["version"] == version && current != proposed,
+        "applied": false,
+        "note": "This is a read-only local file preview. Codex still owns plugin installation and hook trust."
+    }))
+}
 
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
+            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
         )
     };
     match args {
+        [command, codex, home, id, candidate] if command == "plugin-preview" => {
+            plugin_preview(codex, home, id, candidate)
+        }
         [command, root, request] if command == "package-plan" => {
             ModStore::open(PathBuf::from(root).canonicalize()?)?
                 .package_plan(serde_json::from_str::<ModInstallRequest>(request)?)
@@ -33,6 +157,11 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, root, id] if command == "package-disable" => {
             ModStore::open(PathBuf::from(root).canonicalize()?)?
                 .package_disable(id)
+                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
+        }
+        [command, root, id] if command == "package-enable" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .package_enable(id)
                 .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
         }
         [command, root, id]
@@ -123,6 +252,9 @@ fn run(args: &[String]) -> io::Result<Value> {
         }
         [command, root] if command == "status" => {
             Ok(ModHost::open(PathBuf::from(root).canonicalize()?)?.status())
+        }
+        [command, root] if command == "selection-status" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?.selection_status()
         }
         [command, root] if command == "report" => {
             let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();

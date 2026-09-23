@@ -138,6 +138,104 @@ impl ModStore {
         serde_json::from_slice(&read(&self.root.join("mods.json"), 65_536)?).map_err(failure)
     }
 
+    pub fn selection_status(&self) -> Result<Value> {
+        let configuration = self.configuration()?;
+        let lock = self.package_lock()?;
+        let mut selections: Vec<Value> = Vec::new();
+        let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
+        for selection in &configuration.mods {
+            let inspected = package(&selection.path);
+            let (mut id, error) = match inspected {
+                Ok((manifest, _, integrity)) => {
+                    let error = if integrity != selection.sha256 {
+                        Some("source_changed: inspect and trust the new digest".to_owned())
+                    } else if !super::MOD_SCOPES.contains(&selection.scope.as_str()) {
+                        Some(format!("unsupported_scope: {}", selection.scope))
+                    } else if manifest
+                        .capabilities
+                        .iter()
+                        .any(|capability| !selection.capabilities.contains(capability))
+                        || selection.capabilities.iter().any(|capability| {
+                            !super::MOD_CAPABILITIES.contains(&capability.as_str())
+                        })
+                    {
+                        Some("capability_denied".to_owned())
+                    } else {
+                        super::validate_settings(&manifest, &selection.settings)
+                            .err()
+                            .map(|error| error.to_string())
+                    };
+                    (Some(manifest.id), error)
+                }
+                Err(error) => (None, Some(error.to_string())),
+            };
+            if id.is_none() {
+                id = lock
+                    .packages
+                    .values()
+                    .find(|item| item.path == selection.path && item.scope == selection.scope)
+                    .map(|item| item.id.clone());
+            }
+            let managed = id
+                .as_ref()
+                .and_then(|id| lock.packages.get(id))
+                .is_some_and(|item| item.path == selection.path && item.scope == selection.scope);
+            let index = selections.len();
+            if selection.enabled
+                && error.is_none()
+                && let Some(id) = &id
+            {
+                groups.entry(id.clone()).or_default().push(index);
+            }
+            selections.push(json!({
+                "id": id,
+                "path": selection.path,
+                "scope": selection.scope,
+                "selected": selection.enabled,
+                "managed": managed,
+                "settings_keys": selection.settings.keys().collect::<Vec<_>>(),
+                "settings_sha256": digest(&serde_json::to_vec(&selection.settings)?),
+                "error": error,
+                "effective": false,
+                "reason": if selection.enabled { "pending_runtime_validation" } else { "disabled" },
+            }));
+        }
+        for indices in groups.values() {
+            let project = indices
+                .iter()
+                .copied()
+                .filter(|index| selections[*index]["scope"] == "project")
+                .collect::<Vec<_>>();
+            let candidates = if project.is_empty() {
+                indices.clone()
+            } else {
+                project
+            };
+            if candidates.len() != 1 {
+                for index in indices {
+                    selections[*index]["reason"] = if candidates.contains(index) {
+                        json!("duplicate_scope_conflict")
+                    } else {
+                        json!("shadowed_by_project_scope_conflict")
+                    };
+                }
+                continue;
+            }
+            let winner = candidates[0];
+            selections[winner]["effective"] = json!(true);
+            selections[winner]["reason"] = json!("selected");
+            for index in indices.iter().copied().filter(|index| *index != winner) {
+                selections[index]["reason"] = json!("shadowed_by_project_scope");
+            }
+        }
+        Ok(json!({
+            "revision": configuration.revision,
+            "precedence": "valid enabled project selection over valid enabled user selection; runtime conflicts can still reject activation",
+            "selections": selections,
+            "managed_packages": lock.packages.keys().collect::<Vec<_>>(),
+        }))
+    }
+
     pub fn inspect_package(path: &Path) -> Result<Value> {
         let (manifest, _, sha256) = package(path)?;
         Ok(json!({"manifest": manifest, "sha256": sha256, "path": path}))

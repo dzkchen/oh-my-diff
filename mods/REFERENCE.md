@@ -35,7 +35,10 @@ publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
 | `omd-mod package-plan STORE REQUEST_JSON` | Resolve and preview the exact graph, authority, settings, and activation changes |
 | `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION` | Re-resolve and atomically apply only the unchanged preview |
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
+| `omd-mod selection-status STORE` | Show saved user/project selections, precedence, source errors, and setting keys without running mod code |
+| `omd-mod package-enable STORE ID` | Re-enable an unchanged trusted package at the next turn boundary, retaining settings and state |
 | `omd-mod package-disable STORE ID` | Disable a managed package without deleting source, state, or cache |
+| `omd-mod plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE` | Compare a local plugin candidate and its skills/hooks against the installed cache without applying it |
 | `omd-mod package-rollback-plan STORE ID` | Preview the prior integrity-addressed package version |
 | `omd-mod package-rollback STORE ID CONFIRMATION` | Restore the prior cached package disabled, preserving explicit settings |
 | `omd-mod package-uninstall-plan STORE ID` | Preview removal and reject installed dependents |

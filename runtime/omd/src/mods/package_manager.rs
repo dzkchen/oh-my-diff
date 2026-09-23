@@ -362,6 +362,59 @@ impl ModStore {
         self.commit_package_transaction(lock, config)
     }
 
+    pub fn package_enable(&self, id: &str) -> Result<ModPackageLock> {
+        let _guard = self.lock()?;
+        self.recover_package_transaction()?;
+        let mut lock = self.read_package_lock()?;
+        let package = lock
+            .packages
+            .get_mut(id)
+            .ok_or_else(|| failure("package_not_installed"))?;
+        let (manifest, _, integrity) = store::package(&package.path)?;
+        if integrity != package.integrity || manifest.id != package.id {
+            return Err(failure(
+                "source_changed: inspect and preview the new package",
+            ));
+        }
+        if package.state_version != manifest.state_version {
+            return Err(failure(
+                "state_migration_required: previous state preserved",
+            ));
+        }
+        self.state(&package.id, &package.scope, package.state_version)?;
+        package.enabled = true;
+        let path = package.path.clone();
+        let scope = package.scope.clone();
+        lock.revision = lock
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
+        validate_locked_graph(&lock.packages)?;
+        let mut config = self.configuration()?;
+        let selection = config
+            .mods
+            .iter_mut()
+            .find(|selection| selection.path == path && selection.scope == scope)
+            .ok_or_else(|| failure("package_selection_missing"))?;
+        if selection.sha256 != integrity {
+            return Err(failure("source_changed: inspect and trust the new digest"));
+        }
+        if manifest
+            .capabilities
+            .iter()
+            .any(|capability| !selection.capabilities.contains(capability))
+        {
+            return Err(failure("capability_denied"));
+        }
+        super::validate_settings(&manifest, &selection.settings)?;
+        selection.enabled = true;
+        config.revision = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
+        self.commit_package_transaction(lock, config)
+    }
+
     pub fn package_uninstall(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
         let _guard = self.lock()?;
         self.recover_package_transaction()?;

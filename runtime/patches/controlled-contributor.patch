@@ -557,6 +557,171 @@ index e4f5f04..0c5590b 100644
              Ok(Some(event)) => {
                  let is_completed = matches!(event, ResponseEvent::Completed { .. });
                  if tx_event.send(Ok(event)).await.is_err() {
+diff --git a/codex-rs/config/src/skills_config.rs b/codex-rs/config/src/skills_config.rs
+index cc944d8..25f3cbd 100644
+--- a/codex-rs/config/src/skills_config.rs
++++ b/codex-rs/config/src/skills_config.rs
+@@ -100,10 +100,18 @@ impl SkillConfigRules {
+         for entry in &self.entries {
+             match &entry.selector {
+                 SkillConfigRuleSelector::Path(path) => {
+-                    if entry.enabled {
+-                        disabled_paths.remove(path);
+-                    } else {
+-                        disabled_paths.insert(path.clone());
++                    for selected in std::iter::once(path).chain(
++                        skills
++                            .clone()
++                            .into_iter()
++                            .map(|(_, candidate)| candidate)
++                            .filter(|candidate| plugin_cache_skill_equivalent(path, candidate)),
++                    ) {
++                        if entry.enabled {
++                            disabled_paths.remove(selected);
++                        } else {
++                            disabled_paths.insert(selected.clone());
++                        }
+                     }
+                 }
+                 SkillConfigRuleSelector::Name(name) => {
+@@ -125,6 +133,22 @@ impl SkillConfigRules {
+     }
+ }
+ 
++fn plugin_cache_skill_equivalent(left: &AbsolutePathBuf, right: &AbsolutePathBuf) -> bool {
++    let left = left.as_path().components().collect::<Vec<_>>();
++    let right = right.as_path().components().collect::<Vec<_>>();
++    let Some(index) = left.windows(2).position(|pair| {
++        pair[0].as_os_str() == "plugins" && pair[1].as_os_str() == "cache"
++    }) else {
++        return false;
++    };
++    let version = index + 4;
++    left.len() == right.len()
++        && left.len() > version + 1
++        && left[version + 1].as_os_str() == "skills"
++        && left[..version] == right[..version]
++        && left[version + 1..] == right[version + 1..]
++}
++
+ /// Returns whether bundled skills are enabled by the effective configuration.
+ pub fn bundled_skills_enabled_from_stack(config_layer_stack: &ConfigLayerStack) -> bool {
+     let effective_config = config_layer_stack.effective_config();
+diff --git a/codex-rs/config/src/skills_config_tests.rs b/codex-rs/config/src/skills_config_tests.rs
+index 23cb3c5..71eb2ef 100644
+--- a/codex-rs/config/src/skills_config_tests.rs
++++ b/codex-rs/config/src/skills_config_tests.rs
+@@ -193,6 +193,28 @@ fn path_rule_disables_selected_path() {
+     );
+ }
+ 
++#[test]
++fn plugin_skill_path_rule_survives_package_version_update() {
++    let home = TempDir::new().expect("temp dir");
++    let cache = home.path().join("plugins/cache/oh-my-diff/omd-guidance-hooks");
++    let previous = cache.join("0.1.0/skills/omd-simplicity-guidance/SKILL.md").abs();
++    let updated = cache.join("0.1.1/skills/omd-simplicity-guidance/SKILL.md").abs();
++    let other = cache.join("0.1.1/skills/omd-concise-updates/SKILL.md").abs();
++    let rules = SkillConfigRules {
++        entries: vec![SkillConfigRule {
++            selector: SkillConfigRuleSelector::Path(previous.clone()),
++            enabled: false,
++        }],
++    };
++    let disabled = rules.resolve_disabled_paths([
++        ("omd-guidance-hooks:omd-simplicity-guidance", &updated),
++        ("omd-guidance-hooks:omd-concise-updates", &other),
++    ]);
++    assert!(disabled.contains(&previous));
++    assert!(disabled.contains(&updated));
++    assert!(!disabled.contains(&other));
++}
++
+ #[test]
+ fn later_name_rule_reenables_path_disabled_skill() {
+     let codex_home = TempDir::new().expect("temp dir");
+diff --git a/codex-rs/core-plugins/src/manager.rs b/codex-rs/core-plugins/src/manager.rs
+index 69269e6..1c89488 100644
+--- a/codex-rs/core-plugins/src/manager.rs
++++ b/codex-rs/core-plugins/src/manager.rs
+@@ -91,6 +91,7 @@ use crate::store::error_context_sub_error_type;
+ use crate::tool_suggest_metadata::ToolSuggestMetadataCache;
+ use codex_analytics::AnalyticsEventsClient;
+ use codex_analytics::PluginInstallSource;
++use codex_config::CONFIG_TOML_FILE;
+ use codex_config::ConfigLayerStack;
+ use codex_config::SkillConfigRules;
+ use codex_config::clear_user_plugin;
+@@ -126,6 +127,7 @@ use std::collections::BTreeSet;
+ use std::collections::HashMap;
+ use std::collections::HashSet;
+ use std::collections::VecDeque;
++use std::fs;
+ use std::path::Path;
+ use std::path::PathBuf;
+ use std::sync::Arc;
+@@ -2194,6 +2196,19 @@ impl PluginsManager {
+         &self,
+         resolved: ResolvedMarketplacePlugin,
+     ) -> Result<PluginInstallOutcome, PluginInstallError> {
++        let plugin_key = resolved.plugin_id.as_key();
++        let configured_enabled = match fs::read_to_string(self.codex_home.join(CONFIG_TOML_FILE)) {
++            Ok(contents) => {
++                let config: toml::Value = toml::from_str(&contents).map_err(anyhow::Error::from)?;
++                config
++                    .get("plugins")
++                    .and_then(|plugins| plugins.get(&plugin_key))
++                    .and_then(|plugin| plugin.get("enabled"))
++                    .and_then(toml::Value::as_bool)
++            }
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
++            Err(error) => return Err(anyhow::Error::from(error).into()),
++        };
+         let auth_policy = resolved.policy.authentication;
+         let plugin_version =
+             if is_openai_curated_marketplace_name(&resolved.plugin_id.marketplace_name) {
+@@ -2243,7 +2258,7 @@ impl PluginsManager {
+         set_user_plugin_enabled(
+             &self.codex_home,
+             result.plugin_id.as_key(),
+-            /*enabled*/ true,
++            configured_enabled.unwrap_or(true),
+         )
+         .await
+         .map_err(anyhow::Error::from)?;
+diff --git a/codex-rs/core-plugins/src/manager_tests.rs b/codex-rs/core-plugins/src/manager_tests.rs
+index e7963d4..4ccefb9 100644
+--- a/codex-rs/core-plugins/src/manager_tests.rs
++++ b/codex-rs/core-plugins/src/manager_tests.rs
+@@ -3327,6 +3327,28 @@ async fn install_plugin_updates_config_with_relative_path_and_plugin_key() {
+     let config = fs::read_to_string(tmp.path().join("config.toml")).unwrap();
+     assert!(config.contains(r#"[plugins."sample-plugin@debug"]"#));
+     assert!(config.contains("enabled = true"));
++    fs::write(
++        tmp.path().join("config.toml"),
++        config.replace("enabled = true", "enabled = false"),
++    )
++    .unwrap();
++    write_plugin_with_version(&repo_root, "sample-plugin", "sample-plugin", Some("0.1.1"));
++    let updated = test_plugins_manager(tmp.path().to_path_buf())
++        .install_plugin(
++            &unrestricted_plugins_config_input(),
++            PluginInstallRequest {
++                plugin_name: "sample-plugin".to_string(),
++                marketplace_path: AbsolutePathBuf::try_from(
++                    repo_root.join(".agents/plugins/marketplace.json"),
++                )
++                .unwrap(),
++            },
++        )
++        .await
++        .unwrap();
++    assert_eq!(updated.plugin_version, "0.1.1");
++    let config = fs::read_to_string(tmp.path().join("config.toml")).unwrap();
++    assert!(config.contains("enabled = false"));
+ }
+ 
+ #[tokio::test]
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
 index 95b78eb..189c1ed 100644
 --- a/codex-rs/core/src/exec.rs
@@ -14551,24 +14716,148 @@ index 0000000..556a4c7
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 0000000..a0af0b8
+index 0000000..4dacfe7
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,317 @@
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
 +use serde_json::Value;
++use sha2::Digest;
++use sha2::Sha256;
++use std::collections::BTreeMap;
++use std::fs;
 +use std::io;
 +use std::path::PathBuf;
++use std::process::Command;
++
++fn plugin_files(root: &std::path::Path) -> io::Result<BTreeMap<String, String>> {
++    let mut files = BTreeMap::new();
++    let mut pending = vec![root.to_path_buf()];
++    let mut total = 0_u64;
++    while let Some(directory) = pending.pop() {
++        for entry in fs::read_dir(&directory)? {
++            let entry = entry?;
++            let kind = entry.file_type()?;
++            if kind.is_symlink() {
++                return Err(io::Error::other("plugin_preview_symlink_refused"));
++            }
++            if kind.is_dir() {
++                pending.push(entry.path());
++                continue;
++            }
++            if !kind.is_file() || files.len() >= 512 {
++                return Err(io::Error::other("plugin_preview_file_limit"));
++            }
++            let entry_path = entry.path();
++            let bytes = fs::read(&entry_path)?;
++            total += bytes.len() as u64;
++            if total > 16_777_216 {
++                return Err(io::Error::other("plugin_preview_size_limit"));
++            }
++            let path = entry_path.strip_prefix(root).map_err(io::Error::other)?;
++            files.insert(
++                path.to_string_lossy().into_owned(),
++                format!("{:x}", Sha256::digest(bytes)),
++            );
++        }
++    }
++    Ok(files)
++}
++
++fn plugin_preview(codex: &str, home: &str, id: &str, candidate: &str) -> io::Result<Value> {
++    let (name, marketplace) = id
++        .split_once('@')
++        .ok_or_else(|| io::Error::other("plugin_id_requires_name_at_marketplace"))?;
++    if [name, marketplace].iter().any(|part| {
++        part.is_empty()
++            || !part
++                .bytes()
++                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
++    }) {
++        return Err(io::Error::other("invalid_plugin_id"));
++    }
++    let home = PathBuf::from(home).canonicalize()?;
++    let candidate = PathBuf::from(candidate).canonicalize()?;
++    let output = Command::new(codex)
++        .env("CODEX_HOME", &home)
++        .args(["plugin", "list", "--json", "--marketplace", marketplace])
++        .output()?;
++    if !output.status.success() {
++        return Err(io::Error::other(
++            String::from_utf8_lossy(&output.stderr).into_owned(),
++        ));
++    }
++    let listing: Value = serde_json::from_slice(&output.stdout)?;
++    let installed = listing["installed"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .find(|entry| entry["pluginId"] == id)
++        .ok_or_else(|| io::Error::other("plugin_not_installed"))?;
++    if installed["source"]["source"] != "local" {
++        return Err(io::Error::other("plugin_preview_requires_local_source"));
++    }
++    let version = installed["version"]
++        .as_str()
++        .ok_or_else(|| io::Error::other("installed_plugin_version_missing"))?;
++    if !version
++        .bytes()
++        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'_')
++    {
++        return Err(io::Error::other("invalid_installed_plugin_version"));
++    }
++    let installed_path = home
++        .join("plugins/cache")
++        .join(marketplace)
++        .join(name)
++        .join(version);
++    let manifest: Value =
++        serde_json::from_slice(&fs::read(candidate.join(".codex-plugin/plugin.json"))?)?;
++    if manifest["name"] != name || !manifest["version"].is_string() {
++        return Err(io::Error::other("candidate_plugin_manifest_mismatch"));
++    }
++    let current = plugin_files(&installed_path)?;
++    let proposed = plugin_files(&candidate)?;
++    let paths = current
++        .keys()
++        .chain(proposed.keys())
++        .collect::<std::collections::BTreeSet<_>>();
++    let changes = paths
++        .into_iter()
++        .filter_map(|path| {
++            let before = current.get(path);
++            let after = proposed.get(path);
++            (before != after).then(
++                || serde_json::json!({"path":path,"before_sha256":before,"after_sha256":after}),
++            )
++        })
++        .collect::<Vec<_>>();
++    Ok(serde_json::json!({
++        "plugin": id,
++        "installed_version": version,
++        "candidate_version": manifest["version"],
++        "installed_enabled": installed["enabled"],
++        "installed_path": installed_path,
++        "candidate_path": candidate,
++        "changes": changes,
++        "same_version_changed": manifest["version"] == version && current != proposed,
++        "applied": false,
++        "note": "This is a read-only local file preview. Codex still owns plugin installation and hook trust."
++    }))
++}
 +
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(
-+            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
++            "usage: omd-mod init STORE NODE | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | pi-discover USER_AGENT_DIR PROJECT_ROOT | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
 +        )
 +    };
 +    match args {
++        [command, codex, home, id, candidate] if command == "plugin-preview" => {
++            plugin_preview(codex, home, id, candidate)
++        }
 +        [command, root, request] if command == "package-plan" => {
 +            ModStore::open(PathBuf::from(root).canonicalize()?)?
 +                .package_plan(serde_json::from_str::<ModInstallRequest>(request)?)
@@ -14590,6 +14879,11 @@ index 0000000..a0af0b8
 +        [command, root, id] if command == "package-disable" => {
 +            ModStore::open(PathBuf::from(root).canonicalize()?)?
 +                .package_disable(id)
++                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
++        }
++        [command, root, id] if command == "package-enable" => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?
++                .package_enable(id)
 +                .and_then(|lock| serde_json::to_value(lock).map_err(io::Error::other))
 +        }
 +        [command, root, id]
@@ -14680,6 +14974,9 @@ index 0000000..a0af0b8
 +        }
 +        [command, root] if command == "status" => {
 +            Ok(ModHost::open(PathBuf::from(root).canonicalize()?)?.status())
++        }
++        [command, root] if command == "selection-status" => {
++            ModStore::open(PathBuf::from(root).canonicalize()?)?.selection_status()
 +        }
 +        [command, root] if command == "report" => {
 +            let status = ModHost::open(PathBuf::from(root).canonicalize()?)?.status();
@@ -29286,10 +29583,10 @@ index 0000000..1a7b669
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000..6e23ea1
+index 0000000..14bec99
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,1090 @@
+@@ -0,0 +1,1143 @@
 +use super::*;
 +use serde_json::Map;
 +use std::process::Command;
@@ -29647,6 +29944,59 @@ index 0000000..6e23ea1
 +            .find(|selection| selection.path == path && selection.scope == scope)
 +            .ok_or_else(|| failure("package_selection_missing"))?;
 +        selection.enabled = false;
++        config.revision = config
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        self.commit_package_transaction(lock, config)
++    }
++
++    pub fn package_enable(&self, id: &str) -> Result<ModPackageLock> {
++        let _guard = self.lock()?;
++        self.recover_package_transaction()?;
++        let mut lock = self.read_package_lock()?;
++        let package = lock
++            .packages
++            .get_mut(id)
++            .ok_or_else(|| failure("package_not_installed"))?;
++        let (manifest, _, integrity) = store::package(&package.path)?;
++        if integrity != package.integrity || manifest.id != package.id {
++            return Err(failure(
++                "source_changed: inspect and preview the new package",
++            ));
++        }
++        if package.state_version != manifest.state_version {
++            return Err(failure(
++                "state_migration_required: previous state preserved",
++            ));
++        }
++        self.state(&package.id, &package.scope, package.state_version)?;
++        package.enabled = true;
++        let path = package.path.clone();
++        let scope = package.scope.clone();
++        lock.revision = lock
++            .revision
++            .checked_add(1)
++            .ok_or_else(|| failure("revision_overflow"))?;
++        validate_locked_graph(&lock.packages)?;
++        let mut config = self.configuration()?;
++        let selection = config
++            .mods
++            .iter_mut()
++            .find(|selection| selection.path == path && selection.scope == scope)
++            .ok_or_else(|| failure("package_selection_missing"))?;
++        if selection.sha256 != integrity {
++            return Err(failure("source_changed: inspect and trust the new digest"));
++        }
++        if manifest
++            .capabilities
++            .iter()
++            .any(|capability| !selection.capabilities.contains(capability))
++        {
++            return Err(failure("capability_denied"));
++        }
++        super::validate_settings(&manifest, &selection.settings)?;
++        selection.enabled = true;
 +        config.revision = config
 +            .revision
 +            .checked_add(1)
@@ -31542,10 +31892,10 @@ index 0000000..df03093
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 0000000..6b02aee
+index 0000000..297bd21
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,377 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -31684,6 +32034,104 @@ index 0000000..6b02aee
 +
 +    pub fn configuration(&self) -> Result<ModConfiguration> {
 +        serde_json::from_slice(&read(&self.root.join("mods.json"), 65_536)?).map_err(failure)
++    }
++
++    pub fn selection_status(&self) -> Result<Value> {
++        let configuration = self.configuration()?;
++        let lock = self.package_lock()?;
++        let mut selections: Vec<Value> = Vec::new();
++        let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
++        for selection in &configuration.mods {
++            let inspected = package(&selection.path);
++            let (mut id, error) = match inspected {
++                Ok((manifest, _, integrity)) => {
++                    let error = if integrity != selection.sha256 {
++                        Some("source_changed: inspect and trust the new digest".to_owned())
++                    } else if !super::MOD_SCOPES.contains(&selection.scope.as_str()) {
++                        Some(format!("unsupported_scope: {}", selection.scope))
++                    } else if manifest
++                        .capabilities
++                        .iter()
++                        .any(|capability| !selection.capabilities.contains(capability))
++                        || selection.capabilities.iter().any(|capability| {
++                            !super::MOD_CAPABILITIES.contains(&capability.as_str())
++                        })
++                    {
++                        Some("capability_denied".to_owned())
++                    } else {
++                        super::validate_settings(&manifest, &selection.settings)
++                            .err()
++                            .map(|error| error.to_string())
++                    };
++                    (Some(manifest.id), error)
++                }
++                Err(error) => (None, Some(error.to_string())),
++            };
++            if id.is_none() {
++                id = lock
++                    .packages
++                    .values()
++                    .find(|item| item.path == selection.path && item.scope == selection.scope)
++                    .map(|item| item.id.clone());
++            }
++            let managed = id
++                .as_ref()
++                .and_then(|id| lock.packages.get(id))
++                .is_some_and(|item| item.path == selection.path && item.scope == selection.scope);
++            let index = selections.len();
++            if selection.enabled
++                && error.is_none()
++                && let Some(id) = &id
++            {
++                groups.entry(id.clone()).or_default().push(index);
++            }
++            selections.push(json!({
++                "id": id,
++                "path": selection.path,
++                "scope": selection.scope,
++                "selected": selection.enabled,
++                "managed": managed,
++                "settings_keys": selection.settings.keys().collect::<Vec<_>>(),
++                "settings_sha256": digest(&serde_json::to_vec(&selection.settings)?),
++                "error": error,
++                "effective": false,
++                "reason": if selection.enabled { "pending_runtime_validation" } else { "disabled" },
++            }));
++        }
++        for indices in groups.values() {
++            let project = indices
++                .iter()
++                .copied()
++                .filter(|index| selections[*index]["scope"] == "project")
++                .collect::<Vec<_>>();
++            let candidates = if project.is_empty() {
++                indices.clone()
++            } else {
++                project
++            };
++            if candidates.len() != 1 {
++                for index in indices {
++                    selections[*index]["reason"] = if candidates.contains(index) {
++                        json!("duplicate_scope_conflict")
++                    } else {
++                        json!("shadowed_by_project_scope_conflict")
++                    };
++                }
++                continue;
++            }
++            let winner = candidates[0];
++            selections[winner]["effective"] = json!(true);
++            selections[winner]["reason"] = json!("selected");
++            for index in indices.iter().copied().filter(|index| *index != winner) {
++                selections[index]["reason"] = json!("shadowed_by_project_scope");
++            }
++        }
++        Ok(json!({
++            "revision": configuration.revision,
++            "precedence": "valid enabled project selection over valid enabled user selection; runtime conflicts can still reject activation",
++            "selections": selections,
++            "managed_packages": lock.packages.keys().collect::<Vec<_>>(),
++        }))
 +    }
 +
 +    pub fn inspect_package(path: &Path) -> Result<Value> {
@@ -36996,10 +37444,10 @@ index 0000000..aef9c99
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000..eef7895
+index 0000000..aec2c11
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2408 @@
+@@ -0,0 +1,2419 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
 +use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
@@ -38843,7 +39291,7 @@ index 0000000..eef7895
 +
 +#[test]
 +fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() {
-+    let (temp, store, _) = fixture(
++    let (temp, store, broken_path) = fixture(
 +        "export default api => { throw new Error('ACTIVATION_SENTINEL') }",
 +        &["context"],
 +    );
@@ -38869,6 +39317,17 @@ index 0000000..eef7895
 +    let results = runtime.event("context", Value::Null);
 +    assert_eq!(results.len(), 1);
 +    assert_eq!(*results[0].1.as_ref().unwrap(), json!({"text":"hello"}));
++    let selections = store.selection_status().unwrap();
++    assert_eq!(selections["selections"][0]["id"], "fixture");
++    store.enable(&broken_path, false).unwrap();
++    let recovered = host(&temp);
++    assert!(
++        recovered.status()["mods"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .all(|item| item["id"] != "fixture")
++    );
 +}
 +
 +#[test]
@@ -39410,10 +39869,10 @@ index 0000000..eef7895
 +}
 diff --git a/codex-rs/omd/tests/packages.rs b/codex-rs/omd/tests/packages.rs
 new file mode 100644
-index 0000000..5920ab8
+index 0000000..712879a
 --- /dev/null
 +++ b/codex-rs/omd/tests/packages.rs
-@@ -0,0 +1,536 @@
+@@ -0,0 +1,692 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModPackageGrant;
@@ -39516,6 +39975,114 @@ index 0000000..5920ab8
 +}
 +
 +#[test]
++fn selection_status_explains_precedence_and_changed_source() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let user = root.join("user");
++    let project = root.join("project");
++    std::fs::create_dir(&user).unwrap();
++    std::fs::create_dir(&project).unwrap();
++    let user_mod = mod_package(&user, "fixture", "1.0.0", &[], json!([]));
++    let project_mod = mod_package(&project, "fixture", "1.1.0", &[], json!([]));
++    let store = store(&temp);
++    for (path, scope) in [(&user_mod, "user"), (&project_mod, "project")] {
++        let digest = ModStore::inspect_package(path).unwrap()["sha256"]
++            .as_str()
++            .unwrap()
++            .to_owned();
++        store
++            .trust(path.clone(), &digest, Vec::new(), scope)
++            .unwrap();
++        store.enable(path, true).unwrap();
++    }
++    let status = store.selection_status().unwrap();
++    assert_eq!(
++        status["selections"][0]["reason"],
++        "shadowed_by_project_scope"
++    );
++    assert_eq!(status["selections"][1]["effective"], true);
++    std::fs::write(
++        project_mod.join("main.ts"),
++        "export default () => { throw Error('broken') }\n",
++    )
++    .unwrap();
++    let status = store.selection_status().unwrap();
++    assert_eq!(status["selections"][0]["effective"], true);
++    assert!(
++        status["selections"][1]["error"]
++            .as_str()
++            .unwrap()
++            .contains("source_changed")
++    );
++    store.enable(&project_mod, false).unwrap();
++    assert_eq!(
++        store.selection_status().unwrap()["selections"][1]["reason"],
++        "disabled"
++    );
++}
++
++#[test]
++fn selection_status_explains_duplicate_scope_conflict() {
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let first_root = root.join("first");
++    let second_root = root.join("second");
++    std::fs::create_dir(&first_root).unwrap();
++    std::fs::create_dir(&second_root).unwrap();
++    let store = store(&temp);
++    for parent in [&first_root, &second_root] {
++        let path = mod_package(parent, "fixture", "1.0.0", &[], json!([]));
++        let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
++            .as_str()
++            .unwrap()
++            .to_owned();
++        store
++            .trust(path.clone(), &digest, Vec::new(), "user")
++            .unwrap();
++        store.enable(&path, true).unwrap();
++    }
++    let status = store.selection_status().unwrap();
++    assert!(
++        status["selections"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .all(|selection| {
++                selection["effective"] == false && selection["reason"] == "duplicate_scope_conflict"
++            })
++    );
++    for parent in [&first_root, &second_root] {
++        let project = parent.join("project");
++        std::fs::create_dir(&project).unwrap();
++        let path = mod_package(&project, "fixture", "1.0.0", &[], json!([]));
++        let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
++            .as_str()
++            .unwrap()
++            .to_owned();
++        store
++            .trust(path.clone(), &digest, Vec::new(), "project")
++            .unwrap();
++        store.enable(&path, true).unwrap();
++    }
++    let status = store.selection_status().unwrap();
++    assert!(
++        status["selections"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .all(|selection| {
++                selection["effective"] == false
++                    && selection["reason"]
++                        == if selection["scope"] == "project" {
++                            "duplicate_scope_conflict"
++                        } else {
++                            "shadowed_by_project_scope_conflict"
++                        }
++            })
++    );
++}
++
++#[test]
 +fn local_updates_preview_preserve_edits_settings_and_rollback() {
 +    let temp = TempDir::new().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
@@ -39541,6 +40108,33 @@ index 0000000..5920ab8
 +    let lock = store.package_apply(first, &plan.confirmation).unwrap();
 +    assert_eq!(lock.packages["fixture"].version, "1.0.0");
 +    assert!(store.configuration().unwrap().mods[0].enabled);
++    let status = store.selection_status().unwrap();
++    assert_eq!(status["selections"][0]["effective"], true);
++    assert_eq!(status["selections"][0]["managed"], true);
++    assert_eq!(status["selections"][0]["settings_keys"], json!(["mode"]));
++    store.package_disable("fixture").unwrap();
++    assert_eq!(
++        store.selection_status().unwrap()["selections"][0]["reason"],
++        "disabled"
++    );
++    let config_path = root.join("store/mods.json");
++    let original_config = std::fs::read(&config_path).unwrap();
++    let mut untrusted: serde_json::Value = serde_json::from_slice(&original_config).unwrap();
++    untrusted["mods"][0]["sha256"] = json!("untrusted");
++    std::fs::write(&config_path, serde_json::to_vec_pretty(&untrusted).unwrap()).unwrap();
++    assert!(
++        store
++            .package_enable("fixture")
++            .unwrap_err()
++            .to_string()
++            .contains("source_changed")
++    );
++    std::fs::write(&config_path, original_config).unwrap();
++    store.package_enable("fixture").unwrap();
++    assert_eq!(
++        store.selection_status().unwrap()["selections"][0]["effective"],
++        true
++    );
 +    std::fs::write(
 +        root.join("store/state-fixture.json"),
 +        serde_json::to_vec_pretty(&json!({"schema":1,"version":1,"value":null})).unwrap(),
@@ -39562,6 +40156,20 @@ index 0000000..5920ab8
 +        "export default api => api.command('value', () => api.state.get())\n",
 +    )
 +    .unwrap();
++    assert!(
++        store.selection_status().unwrap()["selections"][0]["error"]
++            .as_str()
++            .unwrap()
++            .contains("source_changed")
++    );
++    store.package_disable("fixture").unwrap();
++    assert!(
++        store
++            .package_enable("fixture")
++            .unwrap_err()
++            .to_string()
++            .contains("source_changed")
++    );
 +    let mut update = request(&package, &["commands", "state"]);
 +    update.settings.clear();
 +    let plan = store.package_plan(update.clone()).unwrap();
@@ -39577,6 +40185,13 @@ index 0000000..5920ab8
 +    );
 +    let lock = store.package_apply(update, &plan.confirmation).unwrap();
 +    assert_eq!(lock.packages["fixture"].settings["mode"], "safe");
++    assert!(
++        store
++            .package_enable("fixture")
++            .unwrap_err()
++            .to_string()
++            .contains("state_migration_required")
++    );
 +    assert_eq!(lock.history["fixture"].len(), 1);
 +    assert_eq!(
 +        std::fs::read_to_string(package.join("main.ts")).unwrap(),
@@ -40573,10 +41188,10 @@ index 8ecc6a5..4f128e8 100644
                          tui.draw(u16::MAX, |frame| {
                              progress.render(frame.area(), frame.buffer_mut());
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index bcd076f..2d76a8a 100644
+index bcd076f..44051e9 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -290,6 +290,18 @@ impl App {
+@@ -290,6 +290,60 @@ impl App {
              AppEvent::CopySelection { text, label, format } => {
                  self.chat_widget.copy_selection(text, label, format);
              }
@@ -40586,6 +41201,48 @@ index bcd076f..2d76a8a 100644
 +                    .chat_widget
 +                    .add_error_message(format!("Contributor revocation failed: {error}")),
 +            },
++            AppEvent::OmdOpenExtensions => self.chat_widget.open_omd_extensions(),
++            AppEvent::OmdOpenPlugins => self.chat_widget.add_plugins_output(),
++            AppEvent::OmdModToggle {
++                id,
++                path,
++                managed,
++                enabled,
++            } => {
++                let paths = crate::omd::mod_paths();
++                let tx = self.app_event_tx.clone();
++                std::thread::spawn(move || {
++                    let result = (|| {
++                        let root = paths
++                            .and_then(|paths| paths.store)
++                            .ok_or("mod store is not configured")?;
++                        let store = codex_omd::ModStore::open(root).map_err(|e| e.to_string())?;
++                        if managed {
++                            if enabled {
++                                store.package_enable(&id).map_err(|e| e.to_string())?;
++                            } else {
++                                store.package_disable(&id).map_err(|e| e.to_string())?;
++                            }
++                        } else {
++                            store.enable(&path, enabled).map_err(|e| e.to_string())?;
++                        }
++                        Ok(format!(
++                            "Mod {id} {}. Selection applies at the next turn boundary.",
++                            if enabled { "enabled" } else { "disabled" }
++                        ))
++                    })();
++                    tx.send(AppEvent::OmdModToggled { result });
++                });
++            }
++            AppEvent::OmdModToggled { result } => {
++                match result {
++                    Ok(message) => self.chat_widget.add_info_message(message, None),
++                    Err(error) => self
++                        .chat_widget
++                        .add_error_message(format!("Mod selection failed: {error}")),
++                }
++                self.chat_widget.open_omd_extensions();
++            }
 +            AppEvent::OmdGraphSelection { prompt } => {
 +                self.chat_widget.insert_omd_graph_selection(&prompt);
 +            }
@@ -40811,14 +41468,25 @@ index c36e83b..20b1d93 100644
          }
          Ok(true)
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 7611d89..b601775 100644
+index 7611d89..eae888b 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -427,6 +427,16 @@ pub(crate) enum AppEvent {
+@@ -427,6 +427,27 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
 +    OmdContributorRevocation {
++        result: Result<String, String>,
++    },
++    OmdOpenExtensions,
++    OmdOpenPlugins,
++    OmdModToggle {
++        id: String,
++        path: PathBuf,
++        managed: bool,
++        enabled: bool,
++    },
++    OmdModToggled {
 +        result: Result<String, String>,
 +    },
 +    OmdGraphSelection {
@@ -41433,10 +42101,10 @@ index e8900ad..f73a018 100644
      fn insert_str_at_clamps_to_char_boundary() {
          let mut t = TextArea::new();
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index 4e34536..6393d6e 100644
+index 4e34536..0d553ba 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
-@@ -379,9 +379,12 @@ use self::plugins::PluginListFetchState;
+@@ -379,9 +379,13 @@ use self::plugins::PluginListFetchState;
  use self::plugins::PluginsCacheState;
  mod plan_implementation;
  use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
@@ -41445,11 +42113,12 @@ index 4e34536..6393d6e 100644
  mod model_popups;
  mod notifications;
 +mod omd_graph;
++mod omd_extensions;
 +mod omd_inspector;
  use self::notifications::Notification;
  mod permission_discovery;
  mod permission_popups;
-@@ -1728,6 +1731,22 @@ impl ChatWidget {
+@@ -1728,6 +1732,22 @@ impl ChatWidget {
          self.bottom_pane.composer_is_empty() && !self.bottom_pane.is_in_paste_burst()
      }
  
@@ -41575,6 +42244,147 @@ index 0000000..f55fb4e
 +        } else {
 +            self.queue_user_message(user_message);
 +        }
++    }
++}
+diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
+new file mode 100644
+index 0000000..6faf64d
+--- /dev/null
++++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
+@@ -0,0 +1,135 @@
++use super::*;
++use crate::app_event::AppEvent;
++use crate::bottom_pane::SelectionItem;
++use crate::bottom_pane::SelectionViewParams;
++use crate::bottom_pane::popup_consts::standard_popup_hint_line;
++use codex_omd::ModStore;
++use ratatui::text::Line;
++use ratatui::widgets::Paragraph;
++
++impl ChatWidget {
++    pub(crate) fn open_omd_extensions(&mut self) {
++        let mut lines = vec![
++            Line::from("Extensions".bold()),
++            Line::from("Project mod selection takes precedence over the same user mod."),
++            Line::from("Changes to mods take effect at the next turn boundary."),
++        ];
++        let mut items = Vec::new();
++        let runtime = crate::omd::mod_status();
++        if let Some(root) = crate::omd::mod_paths().and_then(|paths| paths.store) {
++            lines.push(Line::from(format!("Mod store {}", root.display())));
++            lines.push(Line::from(
++                "Update preview: omd-mod package-plan STORE REQUEST_JSON",
++            ));
++            lines.push(Line::from(
++                "Broken mod recovery: disable it here or use omd-mod package-disable STORE ID.",
++            ));
++            match ModStore::open(root).and_then(|store| store.selection_status()) {
++                Ok(status) => {
++                    for selection in status["selections"].as_array().into_iter().flatten() {
++                        let path = selection["path"].as_str().map(PathBuf::from);
++                        let id = selection["id"].as_str().unwrap_or("unreadable_mod");
++                        let scope = selection["scope"].as_str().unwrap_or("unknown");
++                        let enabled = selection["selected"] == true;
++                        let managed = selection["managed"] == true;
++                        let reason = selection["error"]
++                            .as_str()
++                            .or_else(|| selection["reason"].as_str())
++                            .unwrap_or("unknown");
++                        let prior_failure = runtime.as_ref().and_then(|runtime| {
++                            runtime["rejected"]
++                                .as_array()
++                                .into_iter()
++                                .flatten()
++                                .find(|item| item["path"] == selection["path"])
++                                .and_then(|item| item["reason"].as_str())
++                                .or_else(|| {
++                                    runtime["mods"]
++                                        .as_array()
++                                        .into_iter()
++                                        .flatten()
++                                        .find(|item| item["id"] == selection["id"])
++                                        .and_then(|item| item["error"].as_str())
++                                })
++                        });
++                        let Some(path) = path else {
++                            continue;
++                        };
++                        let label = format!(
++                            "{} {id} ({scope})",
++                            if enabled { "Disable" } else { "Enable" }
++                        );
++                        let mut description = format!(
++                            "{} · {} · {reason} · {}",
++                            if enabled { "selected" } else { "disabled" },
++                            if managed { "managed" } else { "local" },
++                            path.display()
++                        );
++                        if let Some(failure) = prior_failure {
++                            description.push_str(&format!(" · last runtime: {failure}"));
++                        }
++                        let id = id.to_owned();
++                        items.push(SelectionItem {
++                            name: label,
++                            description: Some(description),
++                            is_disabled: !enabled && !selection["error"].is_null(),
++                            disabled_reason: (!enabled && !selection["error"].is_null())
++                                .then(|| reason.to_owned()),
++                            require_explicit_confirmation: true,
++                            actions: vec![Box::new(move |tx| {
++                                tx.send(AppEvent::OmdModToggle {
++                                    id: id.clone(),
++                                    path: path.clone(),
++                                    managed,
++                                    enabled: !enabled,
++                                });
++                            })],
++                            dismiss_on_select: true,
++                            ..Default::default()
++                        });
++                    }
++                }
++                Err(error) => lines.push(Line::from(format!("Mod status unavailable: {error}"))),
++            }
++        } else {
++            lines.push(Line::from("Mod store is not configured in this session."));
++        }
++        items.push(SelectionItem {
++            name: "Plugins".to_string(),
++            description: Some(
++                "Installed and active state, details and toggles in /plugins".to_string(),
++            ),
++            actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenPlugins))],
++            dismiss_on_select: true,
++            ..Default::default()
++        });
++        items.push(SelectionItem {
++            name: "Skills".to_string(),
++            description: Some("Enabled state and toggles in /skills".to_string()),
++            actions: vec![Box::new(|tx| tx.send(AppEvent::OpenManageSkillsPopup))],
++            dismiss_on_select: true,
++            ..Default::default()
++        });
++        let cwd = self.config.cwd.to_path_buf();
++        items.push(SelectionItem {
++            name: "Hooks".to_string(),
++            description: Some("Effective lifecycle hooks, trust and toggles in /hooks".to_string()),
++            actions: vec![Box::new(move |tx| {
++                tx.send(AppEvent::FetchHooksList { cwd: cwd.clone() });
++            })],
++            dismiss_on_select: true,
++            ..Default::default()
++        });
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            view_id: Some("omd-extensions"),
++            title: Some("Oh My Diff extensions".to_string()),
++            subtitle: Some("On-demand controls; refresh by reopening".to_string()),
++            header: Box::new(Paragraph::new(lines)),
++            header_gap: 1,
++            footer_hint: Some(standard_popup_hint_line()),
++            items,
++            ..Default::default()
++        });
++        self.request_redraw();
 +    }
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_graph.rs b/codex-rs/tui/src/chatwidget/omd_graph.rs
@@ -41790,10 +42600,10 @@ index 0000000..4282243
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_inspector.rs b/codex-rs/tui/src/chatwidget/omd_inspector.rs
 new file mode 100644
-index 0000000..22223e0
+index 0000000..78efbe9
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_inspector.rs
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,190 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -41826,12 +42636,23 @@ index 0000000..22223e0
 +                header_gap: 1,
 +                initial_selected_idx: Some(0),
 +                footer_hint: Some(standard_popup_hint_line()),
-+                items: vec![SelectionItem {
-+                    name: "Close inspector".to_string(),
-+                    description: Some("Return to the transcript".to_string()),
-+                    dismiss_on_select: true,
-+                    ..Default::default()
-+                }],
++                items: vec![
++                    SelectionItem {
++                        name: "Extensions".to_string(),
++                        description: Some(
++                            "Inspect and manage mods, plugins, skills and hooks".to_string(),
++                        ),
++                        actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenExtensions))],
++                        dismiss_on_select: true,
++                        ..Default::default()
++                    },
++                    SelectionItem {
++                        name: "Close inspector".to_string(),
++                        description: Some("Return to the transcript".to_string()),
++                        dismiss_on_select: true,
++                        ..Default::default()
++                    },
++                ],
 +                ..Default::default()
 +            });
 +            self.request_redraw();
@@ -41937,6 +42758,13 @@ index 0000000..22223e0
 +            footer_hint: Some(standard_popup_hint_line()),
 +            items: vec![
 +                SelectionItem {
++                    name: "Extensions".to_string(),
++                    description: Some("Inspect and manage mods, plugins, skills and hooks".to_string()),
++                    actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenExtensions))],
++                    dismiss_on_select: true,
++                    ..Default::default()
++                },
++                SelectionItem {
 +                    name: "Close inspector".to_string(),
 +                    description: Some("Return to the transcript".to_string()),
 +                    dismiss_on_select: true,
@@ -41988,6 +42816,24 @@ index 8163ae2..fd2713f 100644
          let bottom = if self.external_writer_view && !self.bottom_pane.has_active_view() {
              RenderableItem::Owned(Box::new(ExternalWriterNotice {
                  transcript_hint: self.bottom_pane.transcript_shortcut_hint(),
+diff --git a/codex-rs/tui/src/chatwidget/skills.rs b/codex-rs/tui/src/chatwidget/skills.rs
+index 77fa911..6f230a8 100644
+--- a/codex-rs/tui/src/chatwidget/skills.rs
++++ b/codex-rs/tui/src/chatwidget/skills.rs
+@@ -74,7 +74,12 @@ impl ChatWidget {
+             .iter()
+             .map(|skill| {
+                 let display_name = skill_display_name(skill);
+-                let description = skill_description(skill).to_string();
++                let description = format!(
++                    "{} · {:?} · {}",
++                    skill_description(skill),
++                    skill.scope,
++                    skill.path.display()
++                );
+                 SkillsToggleItem {
+                     name: display_name,
+                     skill_name: skill.name.clone(),
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 index f67ece5..80d75ea 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
@@ -42070,6 +42916,35 @@ index 1059d78..759959d 100644
          let hyperlink_url = selections
              .status_line_items
              .contains(&StatusLineItem::PullRequestNumber)
+diff --git a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
+index 6e538ad..7ac2010 100644
+--- a/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
++++ b/codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs
+@@ -14,6 +14,24 @@ use codex_app_server_protocol::PluginSource;
+ use codex_connectors::AppInfo;
+ use pretty_assertions::assert_eq;
+ 
++#[tokio::test]
++async fn omd_extension_controls_stay_available_at_narrow_width_during_stream_updates() {
++    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.open_omd_extensions();
++    let narrow = render_bottom_popup(&chat, /*width*/ 48);
++    assert!(narrow.contains("Plugins"), "{narrow}");
++    assert!(narrow.contains("Skills"), "{narrow}");
++    assert!(narrow.contains("Hooks"), "{narrow}");
++    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
++    assert!(matches!(rx.try_recv(), Ok(AppEvent::OmdOpenPlugins)));
++    chat.open_omd_extensions();
++    chat.add_plain_history_lines(vec![ratatui::text::Line::from("streamed result")]);
++    let resized = render_bottom_popup(&chat, /*width*/ 100);
++    assert!(resized.contains("Plugins"), "{resized}");
++    assert!(resized.contains("Skills"), "{resized}");
++    assert!(resized.contains("Hooks"), "{resized}");
++}
++
+ #[tokio::test]
+ async fn experimental_mode_plan_is_ignored_on_startup() {
+     let codex_home = tempdir().expect("tempdir");
 diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
 index b667cca..402e8be 100644
 --- a/codex-rs/tui/src/custom_terminal.rs

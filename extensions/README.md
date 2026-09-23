@@ -9,6 +9,42 @@ promise, or evidence of independent community adoption. The Full OMD installed
 collection may grow with every qualified package; only a measured low-overhead
 subset may activate by default. Installation never implies activation.
 
+## Terminal controls
+
+In the patched Codex terminal, open `/omd` and choose **Extensions**. The
+on-demand mod list shows each saved user or project selection, its preferred
+scope, source errors, and the last recorded runtime rejection. Select a mod to
+enable or disable it at the next turn boundary. This view reads the native
+store even when a terminal mod fails; it does not run mod code. `/plugins`,
+`/skills`, and `/hooks` remain Codex's native controls for those types. Their
+screens show activation and source details, and manage native trust or toggles.
+Plugin-provided skills and hooks follow their parent plugin's installation and
+update. None of these screens opens by default.
+
+The `omd-mod` binary remains usable from another terminal if the TUI cannot
+open. `omd-mod selection-status STORE` reads saved mod selections without
+activating them. Use `omd-mod package-disable STORE ID` for a managed broken mod
+or `omd-mod disable STORE PACKAGE` for a locally trusted mod. A changed source
+must be inspected and trusted again before enabling. `omd-mod package-plan
+STORE REQUEST_JSON` previews a managed mod install or update, including the
+activation and settings changes; `package-apply` requires its exact confirmation
+hash. Existing settings are retained when the update request omits that mod's
+settings. `package-enable` restores an unchanged managed selection without
+deleting its state or source.
+
+For a local plugin update, run `omd-mod plugin-preview CODEX_BIN CODEX_HOME
+NAME@MARKETPLACE CANDIDATE`. It compares the exact installed cache against the
+candidate directory by file hash, including `skills/` and `hooks/`, and reports
+installed versus candidate versions and current activation. It makes no
+changes. Review the preview and native Codex plugin and hook prompts before
+using `/plugins` or `codex plugin add` to apply an update. Standalone local
+skills and hooks stay owned by their Codex configuration; OMD does not
+overwrite their files. The native `/hooks` screen reports changed or untrusted
+definitions and offers review before trust. A plugin update retains its saved
+enabled setting. A disabled plugin skill retains its setting across a plugin
+version change, and plugin hook keys use the plugin ID and hook path instead of
+the versioned cache directory.
+
 | Reviewed candidate | Type | Capability | Intended placement |
 | --- | --- | --- | --- |
 | `omd_coordination` | mod | Live task routing and worker context | Full OMD, inactive candidate |

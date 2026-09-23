@@ -1841,7 +1841,7 @@ fn two_mods_may_not_own_the_same_workflow_contract() {
 
 #[test]
 fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() {
-    let (temp, store, _) = fixture(
+    let (temp, store, broken_path) = fixture(
         "export default api => { throw new Error('ACTIVATION_SENTINEL') }",
         &["context"],
     );
@@ -1867,6 +1867,17 @@ fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() 
     let results = runtime.event("context", Value::Null);
     assert_eq!(results.len(), 1);
     assert_eq!(*results[0].1.as_ref().unwrap(), json!({"text":"hello"}));
+    let selections = store.selection_status().unwrap();
+    assert_eq!(selections["selections"][0]["id"], "fixture");
+    store.enable(&broken_path, false).unwrap();
+    let recovered = host(&temp);
+    assert!(
+        recovered.status()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["id"] != "fixture")
+    );
 }
 
 #[test]

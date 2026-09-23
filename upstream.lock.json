@@ -17,7 +17,7 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/controlled-contributor.patch",
-      "sha256": "696f676c4c06d77b7d22b0e4af6dd8955593146376985a90b6009a28fbe28d94"
+      "sha256": "0aa315bd7e85e55ba77731dba6531b02cf7ea8d72cfcdcc8ddf59d69d661fad3"
     }
   ],
   "compatibility_evidence": ".docs/audits/codex-baseline-refresh-20260921.md"

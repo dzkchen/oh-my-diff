@@ -100,6 +100,114 @@ fn installed_collection_can_exceed_sixteen_without_activating_packages() {
 }
 
 #[test]
+fn selection_status_explains_precedence_and_changed_source() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let user = root.join("user");
+    let project = root.join("project");
+    std::fs::create_dir(&user).unwrap();
+    std::fs::create_dir(&project).unwrap();
+    let user_mod = mod_package(&user, "fixture", "1.0.0", &[], json!([]));
+    let project_mod = mod_package(&project, "fixture", "1.1.0", &[], json!([]));
+    let store = store(&temp);
+    for (path, scope) in [(&user_mod, "user"), (&project_mod, "project")] {
+        let digest = ModStore::inspect_package(path).unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store
+            .trust(path.clone(), &digest, Vec::new(), scope)
+            .unwrap();
+        store.enable(path, true).unwrap();
+    }
+    let status = store.selection_status().unwrap();
+    assert_eq!(
+        status["selections"][0]["reason"],
+        "shadowed_by_project_scope"
+    );
+    assert_eq!(status["selections"][1]["effective"], true);
+    std::fs::write(
+        project_mod.join("main.ts"),
+        "export default () => { throw Error('broken') }\n",
+    )
+    .unwrap();
+    let status = store.selection_status().unwrap();
+    assert_eq!(status["selections"][0]["effective"], true);
+    assert!(
+        status["selections"][1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("source_changed")
+    );
+    store.enable(&project_mod, false).unwrap();
+    assert_eq!(
+        store.selection_status().unwrap()["selections"][1]["reason"],
+        "disabled"
+    );
+}
+
+#[test]
+fn selection_status_explains_duplicate_scope_conflict() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let first_root = root.join("first");
+    let second_root = root.join("second");
+    std::fs::create_dir(&first_root).unwrap();
+    std::fs::create_dir(&second_root).unwrap();
+    let store = store(&temp);
+    for parent in [&first_root, &second_root] {
+        let path = mod_package(parent, "fixture", "1.0.0", &[], json!([]));
+        let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store
+            .trust(path.clone(), &digest, Vec::new(), "user")
+            .unwrap();
+        store.enable(&path, true).unwrap();
+    }
+    let status = store.selection_status().unwrap();
+    assert!(
+        status["selections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|selection| {
+                selection["effective"] == false && selection["reason"] == "duplicate_scope_conflict"
+            })
+    );
+    for parent in [&first_root, &second_root] {
+        let project = parent.join("project");
+        std::fs::create_dir(&project).unwrap();
+        let path = mod_package(&project, "fixture", "1.0.0", &[], json!([]));
+        let digest = ModStore::inspect_package(&path).unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store
+            .trust(path.clone(), &digest, Vec::new(), "project")
+            .unwrap();
+        store.enable(&path, true).unwrap();
+    }
+    let status = store.selection_status().unwrap();
+    assert!(
+        status["selections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|selection| {
+                selection["effective"] == false
+                    && selection["reason"]
+                        == if selection["scope"] == "project" {
+                            "duplicate_scope_conflict"
+                        } else {
+                            "shadowed_by_project_scope_conflict"
+                        }
+            })
+    );
+}
+
+#[test]
 fn local_updates_preview_preserve_edits_settings_and_rollback() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -125,6 +233,33 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
     let lock = store.package_apply(first, &plan.confirmation).unwrap();
     assert_eq!(lock.packages["fixture"].version, "1.0.0");
     assert!(store.configuration().unwrap().mods[0].enabled);
+    let status = store.selection_status().unwrap();
+    assert_eq!(status["selections"][0]["effective"], true);
+    assert_eq!(status["selections"][0]["managed"], true);
+    assert_eq!(status["selections"][0]["settings_keys"], json!(["mode"]));
+    store.package_disable("fixture").unwrap();
+    assert_eq!(
+        store.selection_status().unwrap()["selections"][0]["reason"],
+        "disabled"
+    );
+    let config_path = root.join("store/mods.json");
+    let original_config = std::fs::read(&config_path).unwrap();
+    let mut untrusted: serde_json::Value = serde_json::from_slice(&original_config).unwrap();
+    untrusted["mods"][0]["sha256"] = json!("untrusted");
+    std::fs::write(&config_path, serde_json::to_vec_pretty(&untrusted).unwrap()).unwrap();
+    assert!(
+        store
+            .package_enable("fixture")
+            .unwrap_err()
+            .to_string()
+            .contains("source_changed")
+    );
+    std::fs::write(&config_path, original_config).unwrap();
+    store.package_enable("fixture").unwrap();
+    assert_eq!(
+        store.selection_status().unwrap()["selections"][0]["effective"],
+        true
+    );
     std::fs::write(
         root.join("store/state-fixture.json"),
         serde_json::to_vec_pretty(&json!({"schema":1,"version":1,"value":null})).unwrap(),
@@ -146,6 +281,20 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
         "export default api => api.command('value', () => api.state.get())\n",
     )
     .unwrap();
+    assert!(
+        store.selection_status().unwrap()["selections"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("source_changed")
+    );
+    store.package_disable("fixture").unwrap();
+    assert!(
+        store
+            .package_enable("fixture")
+            .unwrap_err()
+            .to_string()
+            .contains("source_changed")
+    );
     let mut update = request(&package, &["commands", "state"]);
     update.settings.clear();
     let plan = store.package_plan(update.clone()).unwrap();
@@ -161,6 +310,13 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
     );
     let lock = store.package_apply(update, &plan.confirmation).unwrap();
     assert_eq!(lock.packages["fixture"].settings["mode"], "safe");
+    assert!(
+        store
+            .package_enable("fixture")
+            .unwrap_err()
+            .to_string()
+            .contains("state_migration_required")
+    );
     assert_eq!(lock.history["fixture"].len(), 1);
     assert_eq!(
         std::fs::read_to_string(package.join("main.ts")).unwrap(),
