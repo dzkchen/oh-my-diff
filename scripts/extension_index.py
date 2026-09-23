@@ -41,7 +41,7 @@ def check():
     if marketplace_ids != listed_plugins:
         raise ValueError("catalog differs from bundled plugin marketplace")
     first_party = {path.parent.name for path in (ROOT / "mods/first-party").glob("*/mod.json")}
-    listed_mods = {entry["id"] for entry in entries if entry["extension_type"] == "mod"}
+    listed_mods = {entry["id"] for entry in entries + experiments if entry["extension_type"] == "mod" and entry["source"].startswith("mods/first-party/")}
     if first_party != listed_mods:
         raise ValueError("catalog differs from first-party mod set")
     for entry in entries:

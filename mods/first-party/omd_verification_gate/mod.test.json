@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "virtual_time_ms": 1000,
+  "host_operations": {
+    "workflow.status": [
+      {"result": {"provenance": {"contract": {"id": "omd_verification_gate"}}}},
+      {"result": {"provenance": {"contract": {"id": "omd_verification_gate"}}}},
+      {"result": {"provenance": {"contract": {"id": "omd_verification_gate"}}}}
+    ],
+    "checkpoint.read": [
+      {"result": {"candidate_versions": [{"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}], "acceptance_criteria": ["tests"], "completed_acceptance": [{"criterion": "tests", "evidence": [{"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}},
+      {"result": {"candidate_versions": [{"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}], "acceptance_criteria": ["tests", "review"], "completed_acceptance": [{"criterion": "tests", "evidence": [{"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}},
+      {"result": {"candidate_versions": [{"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}], "acceptance_criteria": ["tests"], "completed_acceptance": [{"criterion": "tests", "evidence": [{"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}}
+    ],
+    "workflow.restrict": [{"result": {"restrictions": [{"operation": "delegate"}, {"operation": "spawn_child_agent"}]}}]
+  },
+  "steps": [
+    {"type": "invoke", "mod": "omd_verification_gate", "event": "tool", "name": "seal_candidate", "payload": {"candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "expect": {"restrictions": [{"operation": "delegate"}, {"operation": "spawn_child_agent"}]}},
+    {"type": "status"},
+    {"type": "reload"},
+    {"type": "invoke", "mod": "omd_verification_gate", "event": "tool", "name": "seal_candidate", "payload": {"candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "expect_error": "current candidate and all acceptance evidence are required before sealing"},
+    {"type": "reload"},
+    {"type": "invoke", "mod": "omd_verification_gate", "event": "tool", "name": "seal_candidate", "payload": {"candidate_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}, "expect_error": "current candidate and all acceptance evidence are required before sealing"},
+    {"type": "status"}
+  ]
+}

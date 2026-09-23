@@ -182,6 +182,17 @@ any outside package:
 | [omd_coordination](first-party/omd_coordination/index.ts) | mod | Replaces live coordination and context policy: lead route, operating brief, delegated worker evidence; exports bounded delegation preparation |
 | [omd_recovery](first-party/omd_recovery/index.ts) | mod | Replaces live escalation and delegation dispatch policy: failure class, tool eligibility, advisory route, and Contributor-outage action |
 
+Three additional first-party packages are inactive Phase 11 candidates in
+`extensions/development.json`: `omd_task_tools` selects optional checks at the
+per-step tool boundary, `omd_verification_gate` registers a user-selectable
+final-verification workflow and seals delegation through the native host, and
+`omd_session_anchor` replaces local compaction policy with bounded host
+checkpoint context. Their offline scenarios and lifecycle checks are described
+in [the candidate audit](../.docs/audits/additional-first-party-live-mods-20260922.md).
+They are not part of the private preview or a supported release bundle; install
+and enable them only through exact source trust while their task-value and
+overhead gates remain open.
+
 [PREVIEW.md](PREVIEW.md) is the first-use and customization guide;
 `scripts/private_lean_v1.py preview install` provisions them from pinned
 sources into an external store.

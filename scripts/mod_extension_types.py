@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "mods/extension-types.json"
 DOCUMENT = ROOT / "mods/EXTENSION_TYPES.md"
-ROLES = {"bundled", "author_example", "conformance_fixture"}
+ROLES = {"bundled", "candidate", "author_example", "conformance_fixture"}
 EXTENSION_TYPES = {"hook", "mod", "plugin", "skill"}
 PACKAGE_ROOTS = (ROOT / "mods/examples", ROOT / "mods/first-party", ROOT / "mods/exercise")
 
@@ -103,6 +103,7 @@ def render(registry):
     ]
     sections = (
         ("Bundled packages", "bundled"),
+        ("Unqualified first-party candidates", "candidate"),
         ("Author examples", "author_example"),
         ("Conformance fixtures", "conformance_fixture"),
     )

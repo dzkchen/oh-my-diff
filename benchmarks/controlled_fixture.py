@@ -27,15 +27,21 @@ def contract_plan(binary, choice):
 
 def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None, mod_profile="counter"):
     policy_mod = mod_profile.startswith(("preview", "coordination", "recovery", "conformance", "exercise"))
-    context_marker = ("atlas_policy 2.0.0 (paired) assembled turn" if mod_profile.startswith("exercise")
+    candidate_profile = mod_profile in ("candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts")
+    anchor_profile = mod_profile in ("candidate-anchor", "candidate-anchor-baseline")
+    typescript_candidate = candidate_profile and mod_profile.endswith("-ts")
+    candidate_check = "typescript" if typescript_candidate else "python"
+    context_marker = ("Checkpoint " if candidate_profile or anchor_profile else "atlas_policy 2.0.0 (paired) assembled turn" if mod_profile.startswith("exercise")
                       else "Coordination policy (omd_coordination" if policy_mod else "MOD_CONTEXT_SENTINEL")
-    if mod_node is not None and scenario not in ("direct", "omd-off", "success", "client-loss-resume", "completion", "escalation", "outage-fallback", "outage-drift"):
+    if mod_node is not None and scenario not in ("direct", "omd-off", "success", "client-loss-resume", "completion", "escalation", "outage-fallback", "outage-drift") and not (anchor_profile and scenario == "checkpoint"):
         raise ValueError("mod fixture requires direct, omd-off, success, or client-loss-resume scenario")
     destination.mkdir(parents=True, exist_ok=False)
     repo, home = destination / "repo", destination / "home"
     repo.mkdir()
     home.mkdir()
     (repo / "solution.py").write_text("def add(a, b):\n    return a - b\n")
+    if typescript_candidate:
+        (repo / "solution.ts").write_text("export function add(a: number, b: number) { return a - b; }\n")
     (repo / "notes.txt").write_text("tracked user notes\n")
     (repo / "AGENTS.md").write_text("GLOBAL_INSTRUCTION_SENTINEL: preserve unrelated files.\n")
     (repo / ".gitignore").write_text(".omd/\n__pycache__/\n.omd-tmp/\n")
@@ -48,6 +54,10 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     class Provider(http.server.BaseHTTPRequestHandler):
         abrupt_delay_started = False
         compacted = False
+        anchor_compactions = 0
+        anchor_high_usage = 0
+        anchor_checkpoint_issued = False
+        anchor_status_sent = 0
 
         def log_message(self, *_):
             pass
@@ -85,12 +95,23 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             mod_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_fixture_count"]
             preview_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_omd_coordination_delegate"]
             conformance_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_conformance_context_note"]
+            candidate_check_outputs = [i for i in outputs if calls.get(i.get("call_id")) == f"mod_omd_task_tools_check_{candidate_check}"]
             if mod_profile == "lifecycle" and "MOD_COMPACT_PROMPT_SENTINEL" in json.dumps(inputs[-1:]):
                 Provider.compacted = True
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
                 summary = {"type": "message", "id": "summary", "role": "assistant", "content": [{"type": "output_text", "text": "MOD_COMPACTED_SUMMARY"}]}
+                for event in ({"type": "response.created", "response": {"id": str(len(requests))}}, {"type": "response.output_item.done", "item": summary}, {"type": "response.completed", "response": {"id": str(len(requests)), "model": model, "usage": {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 110}}}):
+                    self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
+                    self.wfile.flush()
+                return
+            if anchor_profile and ("CONTEXT CHECKPOINT COMPACTION" in json.dumps(inputs[-1:]) or "Preserve the current task from verified host checkpoints" in json.dumps(inputs[-1:])):
+                Provider.anchor_compactions += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                summary = {"type": "message", "id": f"anchor-summary-{Provider.anchor_compactions}", "role": "assistant", "content": [{"type": "output_text", "text": "Synthetic continuation summary; inspect the host checkpoint for exact evidence."}]}
                 for event in ({"type": "response.created", "response": {"id": str(len(requests))}}, {"type": "response.output_item.done", "item": summary}, {"type": "response.completed", "response": {"id": str(len(requests)), "model": model, "usage": {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 10, "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 110}}}):
                     self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
                     self.wfile.flush()
@@ -104,7 +125,13 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             spawn_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "spawn_agent"]
             wait_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "wait_agent"]
             text = json.dumps(body.get("input", []))
-            if scenario == "recursion" and owner == "lead" and not spawn_outputs:
+            if anchor_profile and owner == "lead" and Provider.anchor_checkpoint_issued and Provider.anchor_status_sent < 2:
+                Provider.anchor_status_sent += 1
+                sequence = Provider.anchor_status_sent
+                item = {"type": "function_call", "id": f"anchor-status-{sequence}", "call_id": f"anchor-status-{sequence}", "name": "omd_status", "arguments": "{}"}
+            elif anchor_profile and owner == "lead" and Provider.anchor_checkpoint_issued:
+                item = {"type": "message", "id": "anchor-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Synthetic checkpoint continuation completed."}]}
+            elif scenario == "recursion" and owner == "lead" and not spawn_outputs:
                 item = {"type": "function_call", "id": "spawn-level-one", "call_id": "spawn-level-one", "namespace": "collaboration", "name": "spawn_agent", "arguments": json.dumps({"message": "LEVEL_ONE_WORKER", "task_name": "level_one"})}
             elif scenario == "recursion" and owner == "lead" and not wait_outputs:
                 item = {"type": "function_call", "id": "wait-level-one", "call_id": "wait-level-one", "namespace": "collaboration", "name": "wait_agent", "arguments": json.dumps({"timeout_ms": 30000})}
@@ -124,16 +151,19 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "tool_search_call", "id": "search-preview", "call_id": "search-preview", "status": "completed", "execution": "client", "arguments": {"query": "coordination policy delegate worker context investigate"}}
             elif owner == "lead" and mod_node is not None and policy_mod and scenario == "direct" and not preview_outputs:
                 item = {"type": "function_call", "id": "preview-delegate", "call_id": "preview-delegate", "name": "mod_omd_coordination_delegate", "arguments": json.dumps({"brief": "Fix solution.py: add must return the sum.", "selected_evidence": ["solution.py"]})}
-            elif owner == "lead" and mod_node is not None and not policy_mod and scenario in ("direct", "success", "client-loss-resume") and not search_outputs:
+            elif owner == "lead" and candidate_profile and mod_node is not None and scenario == "direct" and exec_outputs and not candidate_check_outputs:
+                item = {"type": "function_call", "id": "candidate-check", "call_id": "candidate-check", "name": f"mod_omd_task_tools_check_{candidate_check}", "arguments": "{}"}
+            elif owner == "lead" and mod_node is not None and not policy_mod and not candidate_profile and not anchor_profile and scenario in ("direct", "success", "client-loss-resume") and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-mod", "call_id": "search-mod", "status": "completed", "execution": "client", "arguments": {"query": "mod_fixture_count persistent mod counter effective settings task cost capture delegate isolated contributor implementation"}}
-            elif owner == "lead" and mod_node is not None and not policy_mod and scenario in ("direct", "success", "client-loss-resume") and not mod_outputs:
+            elif owner == "lead" and mod_node is not None and not policy_mod and not candidate_profile and not anchor_profile and scenario in ("direct", "success", "client-loss-resume") and not mod_outputs:
                 item = {"type": "function_call", "id": "mod-count", "call_id": "mod-count", "name": "mod_fixture_count", "arguments": "{}"}
             elif owner == "lead" and scenario == "direct" and not search_outputs:
                 item = {"type": "tool_search_call", "id": "search-status", "call_id": "search-status", "status": "completed", "execution": "client", "arguments": {"query": "effective settings task cost capture"}}
             elif owner == "lead" and scenario == "direct" and not status_outputs:
                 item = {"type": "function_call", "id": "status", "call_id": "status", "name": "omd_status", "arguments": "{}"}
             elif owner == "lead" and scenario in ("direct", "omd-off") and not exec_outputs:
-                item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
+                edit = "printf 'export function add(a: number, b: number) { return a + b; }\\n' > solution.ts" if typescript_candidate else "printf 'def add(a, b):\\n    return a + b\\n' > solution.py"
+                item = {"type": "function_call", "id": "direct-fix", "call_id": "direct-fix", "name": "exec_command", "arguments": json.dumps({"cmd": edit, "max_output_tokens": 500})}
             elif owner == "lead" and scenario == "reactive" and not exec_outputs:
                 item = {"type": "function_call", "id": "reactive-failure", "call_id": "reactive-failure", "name": "exec_command", "arguments": json.dumps({"cmd": "/usr/bin/false", "max_output_tokens": 500})}
             elif owner == "lead" and scenario == "reactive" and len(exec_outputs) == 1:
@@ -163,6 +193,8 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 candidate = {"label": "integrated-candidate", "sha256": contribution["candidate_sha256"], "evidence": contribution["candidate"]["path"], "evidence_sha256": contribution["candidate"]["sha256"]}
                 check = {"label": "candidate-check", "sha256": contribution["candidate_sha256"], "evidence": contribution["checks"]["path"], "evidence_sha256": contribution["checks"]["sha256"]}
                 item = {"type": "function_call", "id": "checkpoint", "call_id": "checkpoint", "name": "omd_checkpoint", "arguments": json.dumps({"completed_acceptance": [], "completed_steering": ["Delegated the bounded implementation and retained its result."], "remaining_work": criteria, "failed_hypotheses": [], "candidate_versions": [candidate], "check_versions": [check]})}
+                if anchor_profile:
+                    Provider.anchor_checkpoint_issued = True
             elif owner == "lead" and scenario in SOLO_SCENARIOS:
                 review_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "omd_review"]
                 criteria = manifest["checkpoint"]["acceptance_criteria"]
@@ -261,6 +293,9 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             usage = {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 20}, "output_tokens": 30, "output_tokens_details": {"reasoning_tokens": 7}, "total_tokens": 130}
             if mod_profile == "lifecycle" and owner == "lead" and not Provider.compacted:
                 usage = {"input_tokens": 40000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 30, "output_tokens_details": {"reasoning_tokens": 7}, "total_tokens": 40030}
+            if anchor_profile and owner == "lead" and item.get("name") == "omd_status" and Provider.anchor_high_usage < 2:
+                Provider.anchor_high_usage += 1
+                usage = {"input_tokens": 40000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 30, "output_tokens_details": {"reasoning_tokens": 7}, "total_tokens": 40030}
             for event in ({"type": "response.created", "response": {"id": str(len(requests))}}, {"type": "response.output_item.done", "item": item}, {"type": "response.completed", "response": {"id": str(len(requests)), "model": model, "usage": usage}}):
                 try:
                     self.wfile.write(("data: " + json.dumps(event) + "\n\n").encode())
@@ -283,7 +318,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     capabilities = {"delegation": True, "escalation": True, "checkpoints": True, "guidelines": True, "repository_knowledge": True, "code_graph": True, "code_health": True, "semantic_lsp": True, "reactive_rules": True, "unified_review": True, "completion_gate": True, "terminal": True, "application_bridge": False}
     if scenario == "direct":
         capabilities.update({"delegation": False, "checkpoints": False, "unified_review": False, "completion_gate": False})
-    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "capabilities": capabilities, "communication": {"concise_user_updates": concise_user_updates, "structured_worker_reports": structured_worker_reports}, "checkpoint": {"objective": "Fix solution.py so add returns the sum while preserving unrelated work.", "acceptance_criteria": ["candidate check passes", "separate review approves the exact candidate", "reviewed candidate integrates without losing unrelated work"], "max_no_progress_calls": 2}, "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"], "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
+    manifest = {"repository": str(repo), "evidence": str(destination / "evidence"), "scratch": str(repo / ".omd"), "authorization": str(grant), "authorization_sha256": hashlib.sha256(grant.read_bytes()).hexdigest(), "repository_identity": "synthetic-fixture", "approved_untracked": [], "limits": {"requests": 24 if anchor_profile else 12, "exposure_microusd": 1000000, "seconds": 120, "concurrent_workers": 2, "max_depth": 2, "max_reassessments": 1}, "worker_limits": {"requests": 4, "exposure_microusd": 400000, "seconds": 40}, "capabilities": capabilities, "communication": {"concise_user_updates": concise_user_updates, "structured_worker_reports": structured_worker_reports}, "checkpoint": {"objective": "Fix solution.py so add returns the sum while preserving unrelated work.", "acceptance_criteria": ["candidate check passes", "separate review approves the exact candidate", "reviewed candidate integrates without losing unrelated work"], "max_no_progress_calls": 2}, "legitimate_wait_tools": ["wait_agent", "write_stdin", "wait"], "lifecycle": {"explicit_resume": None}, "recovery": {"contributor_attempts": 2, "equivalent_failure_threshold": 2, "fallback_to_opposite_lead": True}, "lead_policy": {"mode": lead_policy, **({"lead": lead} if lead_policy == "fixed" else {})}, "leads": {"sol": route("gpt-5.6-sol", "high"), "astra": route("gpt-6-astra", "xhigh")}, "context_policy": context, "escalation": {"allowed_failure_classes": ["environment", "edit", "diagnosis", "model"], "max_attempts": 1, "evidence_bytes": 100000}, "worker": route("muse-spark-1.3-contributor", "low"), "check_command": ["/usr/bin/grep", "return a + b", "solution.ts" if typescript_candidate else "solution.py"], "toolchain_reads": [], "snapshot_bytes": 1000000, "max_request_bytes": 2000000}
     if mod_node is not None and policy_mod:
         available_contexts = {
             "focused_brief": {"mode": "focused_brief", "max_bytes": 2000000},
@@ -316,6 +351,10 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
         if scenario == "client-loss-resume":
             manifest["limits"]["requests"] = 24
             manifest["limits"]["exposure_microusd"] = 2000000
+    if candidate_profile:
+        source_file = "solution.ts" if typescript_candidate else "solution.py"
+        manifest["checkpoint"]["objective"] = f"Fix {source_file} so add returns the sum while preserving unrelated work."
+        manifest["checkpoint"]["acceptance_criteria"][0] = f"Fix {source_file} and run the {candidate_check.title()} check"
     manifest_path = destination / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
     catalog = json.loads((ROOT / "benchmarks/fixtures/controlled-models.json").read_text())
@@ -326,8 +365,9 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     (home / "secret").write_text("SYNTHETIC_SECRET_MUST_NOT_REACH_WORKER")
     lead_model = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead]
     lead_effort = {"sol": "high", "astra": "xhigh"}[lead]
+    compact_config = "model_context_window = 100000\nmodel_auto_compact_token_limit = 20000\n" if anchor_profile else ""
     (home / "config.toml").write_text(f'''model = {json.dumps(lead_model)}
-model_provider = "fixture"
+{compact_config}model_provider = "fixture"
 model_catalog_json = {json.dumps(str(home / "models.json"))}
 model_reasoning_effort = {json.dumps(lead_effort)}
 web_search = "disabled"
@@ -700,7 +740,11 @@ enabled = false
         if mod_profile == "recovery-pause":
             assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
         if scenario in ("direct", "omd-off", "escalation", "reactive", *SOLO_SCENARIOS):
-            assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
+            if typescript_candidate:
+                assert (repo / "solution.ts").read_text() == "export function add(a: number, b: number) { return a + b; }\n"
+                assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
+            else:
+                assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
         if scenario == "conflict":
             assert (repo / "solution.py").read_text() == "intervening user edit\n"
         if scenario == "outage-drift":
@@ -734,7 +778,7 @@ enabled = false
             )
             assert status["direct_single_agent"] is True
         if mod_node is not None:
-            expected_marker = scenario != "omd-off" and mod_profile not in ("preview-denied", "coordination-broken", "workspace-only")
+            expected_marker = scenario != "omd-off" and mod_profile not in ("preview-denied", "coordination-broken", "workspace-only", "candidate", "candidate-static", "candidate-ts", "candidate-static-ts")
             assert (context_marker in json.dumps(requests)) == expected_marker
             if scenario != "omd-off":
                 from benchmarks.mod_fixture import verify
@@ -749,6 +793,9 @@ enabled = false
             assert context_record["lead_policy"] == lead_policy and context_record["selected_lead"]["name"] == effective_lead
             assert context_record["communication"] == manifest["communication"]
         record = {"status": "pass", "scenario": scenario, "failure_class": failure_class if scenario == "escalation" else None, "context_policy": context_policy, "lead_policy": lead_policy, "lead": lead, "communication": manifest["communication"], "reactive_rules": manifest.get("reactive_rules"), "mods": mod_node is not None, "exit_code": process.returncode, "requests": len(requests), "worker_result": result, "escalation_result": escalation_result, "wall_seconds": time.monotonic() - started, "scope": "synthetic native transport and isolation; no provider calls"}
+        if anchor_profile:
+            assert Provider.anchor_compactions == 2, Provider.anchor_compactions
+            record["compactions"] = Provider.anchor_compactions
         (destination / "verification.json").write_text(json.dumps(record, indent=2))
         return record
     finally:
@@ -769,7 +816,7 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
-    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only"), default="counter")
+    parser.add_argument("--mod-profile", choices=("counter", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-denied", "preview-broken", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only", "candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts", "candidate-anchor", "candidate-anchor-baseline"), default="counter")
     args = parser.parse_args()
     print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 

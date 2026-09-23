@@ -16,6 +16,14 @@ contains only the packages labeled `bundled` below.
 | `omd_recovery@0.1.0-preview.1` | `mod` | `mods/first-party/omd_recovery` | Replaces live escalation and delegation dispatch with failure classification, eligible-tool, advisory-route, and Contributor-outage choices. |
 | `omd_workspace@0.2.0-preview.1` | `mod` | `mods/first-party/omd_workspace` | Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation. |
 
+## Unqualified first-party candidates
+
+| Package | Extension type | Source | Why a mod is required for this behavior |
+| --- | --- | --- | --- |
+| `omd_task_tools@0.1.0-candidate.1` | `mod` | `mods/first-party/omd_task_tools` | Selects owned optional tools at the native per-request boundary from the current host checkpoint; a static skill or plugin cannot change that exposure for each task step. |
+| `omd_session_anchor@0.1.0-candidate.1` | `mod` | `mods/first-party/omd_session_anchor` | Replaces the local compaction decision and injects bounded host checkpoint anchors during a live session. |
+| `omd_verification_gate@0.1.0-candidate.1` | `mod` | `mods/first-party/omd_verification_gate` | Registers an explicitly selected native workflow contract and asks the host to restrict delegation when an exact candidate enters final verification. |
+
 ## Author examples
 
 | Package | Extension type | Source | Why a mod is required for this behavior |

@@ -169,6 +169,56 @@ EXERCISE_PACKAGES = {
     "service_provider": ROOT / "mods/examples/service-provider",
 }
 
+CANDIDATE_PACKAGES = (
+    "omd_task_tools",
+    "omd_session_anchor",
+    "omd_verification_gate",
+)
+
+
+def install_candidates(destination, manifest, node, profile):
+    store = destination / "mod-store"
+    store.mkdir()
+    selections = []
+    for identifier in CANDIDATE_PACKAGES:
+        source = ROOT / "mods/first-party" / identifier
+        package = destination / identifier
+        package.mkdir()
+        declared = (source / "mod.json").read_bytes()
+        body = (source / "index.ts").read_bytes()
+        if profile.startswith("candidate-static") and identifier == "omd_task_tools":
+            body = body.replace(b"task_scoped: true", b"task_scoped: false")
+        (package / "mod.json").write_bytes(declared)
+        (package / "index.ts").write_bytes(body)
+        selections.append({
+            "path": str(package),
+            "sha256": package_digest(declared, body),
+            "enabled": True,
+            "capabilities": json.loads(declared)["capabilities"],
+            "settings": ({"typescript_command": ["/usr/bin/grep", "return a + b", "solution.ts"]} if profile.endswith("-ts")
+                         else {"python_command": ["/usr/bin/grep", "return a + b", "solution.py"]}) if identifier == "omd_task_tools" else {},
+        })
+    (store / "mods.json").write_text(json.dumps(
+        {"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": selections}))
+    manifest["mods"] = str(store)
+
+
+def install_anchor(destination, manifest, node):
+    source = ROOT / "mods/first-party/omd_session_anchor"
+    package = destination / "omd_session_anchor"
+    package.mkdir()
+    declared = (source / "mod.json").read_bytes()
+    body = (source / "index.ts").read_bytes()
+    (package / "mod.json").write_bytes(declared)
+    (package / "index.ts").write_bytes(body)
+    store = destination / "mod-store"
+    store.mkdir()
+    (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{
+        "path": str(package), "sha256": package_digest(declared, body), "enabled": True,
+        "capabilities": json.loads(declared)["capabilities"], "settings": {},
+    }]}))
+    manifest["mods"] = str(store)
+
 
 def install_exercise(destination, manifest, node, profile):
     store = destination / "mod-store"
@@ -194,6 +244,10 @@ def install_exercise(destination, manifest, node, profile):
 
 
 def install(destination, manifest, node, profile):
+    if profile in ("candidate", "candidate-static", "candidate-ts", "candidate-static-ts"):
+        return install_candidates(destination, manifest, node, profile)
+    if profile == "candidate-anchor":
+        return install_anchor(destination, manifest, node)
     if profile.startswith("exercise"):
         return install_exercise(destination, manifest, node, profile)
     if profile.startswith("conformance"):
@@ -649,6 +703,21 @@ def verify_recovery(destination, requests, profile, scenario):
 
 
 def verify(destination, requests, profile, scenario="success"):
+    if profile == "candidate-anchor":
+        status = json.loads((destination / "evidence/mod-status.json").read_text())
+        assert [mod["id"] for mod in status["mods"]] == ["omd_session_anchor"], status
+        assert status["mods"][0]["error"] is None, status
+        return
+    if profile in ("candidate", "candidate-static", "candidate-ts", "candidate-static-ts"):
+        status = json.loads((destination / "evidence/mod-status.json").read_text())
+        assert {mod["id"] for mod in status["mods"]} == set(CANDIDATE_PACKAGES), status
+        assert all(mod["error"] is None for mod in status["mods"]), status
+        if scenario == "direct":
+            calls = {item.get("call_id"): item.get("name") for request in requests for item in request["body"].get("input", []) if item.get("type") == "function_call"}
+            check = "typescript" if profile.endswith("-ts") else "python"
+            outputs = [item for request in requests for item in request["body"].get("input", []) if item.get("type") == "function_call_output" and calls.get(item.get("call_id")) == f"mod_omd_task_tools_check_{check}"]
+            assert outputs and any('"exit_code":0' in item.get("output", "").replace(" ", "") for item in outputs), outputs
+        return
     if profile == "workspace-only":
         status = json.loads((destination / "evidence/mod-status.json").read_text())
         view = json.loads((destination / "evidence/mod-view.json").read_text())["view"]

@@ -27,6 +27,30 @@
       "why_mod": "Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation."
     },
     {
+      "path": "mods/first-party/omd_task_tools",
+      "id": "omd_task_tools",
+      "version": "0.1.0-candidate.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Selects owned optional tools at the native per-request boundary from the current host checkpoint; a static skill or plugin cannot change that exposure for each task step."
+    },
+    {
+      "path": "mods/first-party/omd_session_anchor",
+      "id": "omd_session_anchor",
+      "version": "0.1.0-candidate.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Replaces the local compaction decision and injects bounded host checkpoint anchors during a live session."
+    },
+    {
+      "path": "mods/first-party/omd_verification_gate",
+      "id": "omd_verification_gate",
+      "version": "0.1.0-candidate.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Registers an explicitly selected native workflow contract and asks the host to restrict delegation when an exact candidate enters final verification."
+    },
+    {
       "path": "mods/examples/coordination",
       "id": "coordination",
       "version": "1.0.0",

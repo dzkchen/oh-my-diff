@@ -38,6 +38,27 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_task_tools",
+      "extension_type": "mod",
+      "source": "mods/first-party/omd_task_tools",
+      "reason": "First-party candidate; two-language offline selection passed, but usefulness versus configured Codex and package qualification remain unverified",
+      "review": ".docs/audits/additional-first-party-live-mods-20260922.md"
+    },
+    {
+      "id": "omd_session_anchor",
+      "extension_type": "mod",
+      "source": "mods/first-party/omd_session_anchor",
+      "reason": "First-party candidate rejected for promotion: native checkpoint already carried exact evidence across two local compactions while this mod added context and surfaced a stale count",
+      "review": ".docs/audits/additional-first-party-live-mods-20260922.md"
+    },
+    {
+      "id": "omd_verification_gate",
+      "extension_type": "mod",
+      "source": "mods/first-party/omd_verification_gate",
+      "reason": "First-party candidate rejected for promotion: seal callback failed the predeclared latency limit even in the one-call timing probe",
+      "review": ".docs/audits/additional-first-party-live-mods-20260922.md"
+    },
+    {
       "id": "atlas_policy",
       "extension_type": "mod",
       "source": "mods/exercise/atlas_policy/2.0.0",
