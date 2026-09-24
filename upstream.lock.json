@@ -17,7 +17,7 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/controlled-contributor-0.156.1.patch",
-      "sha256": "410ef366691955713eb1540a702e15641960560e906cea2b87e36ec83cc67fa4"
+      "sha256": "031721d87fd597ded8fa7aa220b78f4111280d17010e5eed3fe6fb3249c75c90"
     }
   ],
   "compatibility_evidence": ".docs/audits/release-candidate-upstream-freshness-20260923.md"

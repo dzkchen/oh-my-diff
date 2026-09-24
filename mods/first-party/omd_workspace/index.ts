@@ -187,17 +187,23 @@ export default function activate(api: ModAPI) {
         api.state.set({ ...state, review });
         return { display: 'workspace review prompt updated' };
       }
-      if (requested === 'density' || DENSITIES.some(value => value === requested)) {
-        const next = requested === 'density' ? (density === 'full' ? 'compact' : 'full') : requested as Density;
-        api.state.set({ ...state, density: next });
-        return { display: `workspace density is now ${next}` };
+      // Keybindings send a bare `density`/`side` to toggle; dialog selects send `density VALUE`/`side VALUE`.
+      const [head, choice] = requested.split(/\s+/, 2);
+      const pick = <T extends string>(key: string, allowed: T[], current: T): T | undefined =>
+        head === key
+          ? allowed.find(value => choice === undefined ? value !== current : value === choice)
+          : choice === undefined ? allowed.find(value => value === head) : undefined;
+      const nextDensity = pick('density', DENSITIES, density);
+      if (nextDensity) {
+        api.state.set({ ...state, density: nextDensity });
+        return { display: `workspace density is now ${nextDensity}` };
       }
-      if (requested === 'side' || SIDES.some(value => value === requested)) {
-        const next = requested === 'side' ? (side === 'left' ? 'right' : 'left') : requested as Side;
-        api.state.set({ ...state, side: next });
-        return { display: `workspace sidebar is now on the ${next}` };
+      const nextSide = pick('side', SIDES, side);
+      if (nextSide) {
+        api.state.set({ ...state, side: nextSide });
+        return { display: `workspace sidebar is now on the ${nextSide}` };
       }
-      return { display: `usage: /omd_workspace:layout full|compact|left|right|density|side|dialog|close|review TEXT (now ${density}, ${side})` };
+      return { display: `usage: /omd_workspace:layout full|compact|left|right|density [full|compact]|side [left|right]|dialog|close|review TEXT (now ${density}, ${side})` };
     },
     { description: 'Switch the workspace layout or open its settings' },
   );

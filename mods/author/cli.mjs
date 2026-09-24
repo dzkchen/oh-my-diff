@@ -261,19 +261,25 @@ async function packageProject(directory) {
 
 function watchProject(directory, store, once) {
   const reload = () => {
-    const inspected = engineJson(['inspect', directory]);
-    engineJson(['trust', store, inspected.path, inspected.sha256, inspected.manifest.capabilities.join(','), 'user']);
-    engineJson(['enable', store, inspected.path]);
+    const inspected = trustPackage(store, directory);
     const result = engineJson(['reload', store]);
     process.stdout.write(`${JSON.stringify({ reloaded: directory, sha256: inspected.sha256, result })}\n`);
   };
   reload();
   if (once) return;
+  // Editors save in several writes, so a later reload can see a half-written file; report it and keep watching.
+  const tryReload = () => {
+    try {
+      reload();
+    } catch (error) {
+      process.stderr.write(`${JSON.stringify({ reload_failed: directory, error: error.message })}\n`);
+    }
+  };
   let pending;
   const watcher = watch(directory, { recursive: false }, (_event, filename) => {
     if (!['index.ts', 'mod.json'].includes(String(filename))) return;
     clearTimeout(pending);
-    pending = setTimeout(reload, 100);
+    pending = setTimeout(tryReload, 100);
   });
   process.on('SIGINT', () => watcher.close());
 }

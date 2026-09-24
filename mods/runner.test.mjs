@@ -116,3 +116,15 @@ test('typed middleware and services register without ambient authority', () => {
   assert.equal(service.value, 'hello');
   assert.match(run(source, { capabilities: ['middleware', 'commands'], event: 'inspect' }).error, /capability_denied: services/);
 });
+test('workspace layout accepts bare toggles and dialog select values', () => {
+  const source = readFileSync(new URL('./first-party/omd_workspace/index.ts', import.meta.url), 'utf8');
+  const layout = (payload, state = null) => run(source, { capabilities: ['terminal', 'commands', 'lifecycle', 'state'], event: 'command', name: 'layout', payload, state });
+  for (const [payload, key, value] of [['density compact', 'density', 'compact'], ['density full', 'density', 'full'], ['side right', 'side', 'right'], ['side left', 'side', 'left'], ['compact', 'density', 'compact'], ['right', 'side', 'right']]) {
+    assert.equal(layout(payload).state[key], value, payload);
+  }
+  assert.equal(layout('density', { density: 'compact' }).state.density, 'full');
+  assert.equal(layout('side', { side: 'right' }).state.side, 'left');
+  for (const payload of ['density wide', 'side up', 'compact extra']) {
+    assert.match(layout(payload).value.display, /^usage:/, payload);
+  }
+});

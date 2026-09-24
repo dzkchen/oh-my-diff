@@ -55,10 +55,10 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "7f3f1a33f272c5e3d46240c642c339181abdb9f95d43d7f7551dede8e4a53b7a",
+        "index.ts": "3fd7f1b17f111d8a77fb770e63ce45434fa4d3ed4075edc1e3e74c7ddfa38542",
         "mod.json": "85b84ccf8ea0b912a63f9499fab80345a40f277a73052cd89e67aa8c76a000e3"
       },
-      "package_sha256": "0daf8ce0d9ab89965000df64c970534626e6a845d5626b250d4ff1e83efb15dd",
+      "package_sha256": "f3be85f19c3e04b34579a0390aefca73764c6d1011136dde0035d95d72d46cb1",
       "source": "mods/first-party/omd_workspace",
       "version": "0.2.0-preview.2"
     }

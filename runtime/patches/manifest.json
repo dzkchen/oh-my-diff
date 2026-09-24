@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor-0.156.1.patch",
-    "sha256": "410ef366691955713eb1540a702e15641960560e906cea2b87e36ec83cc67fa4"
+    "sha256": "031721d87fd597ded8fa7aa220b78f4111280d17010e5eed3fe6fb3249c75c90"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -89,7 +89,7 @@
     },
     "codex-rs/core/src/thread_manager.rs": {
       "before": "948b25d26209dae25d319e80fd05c6d83413a30ee3d9681633b81d0451cca363",
-      "after": "1cfa66557245d3f5196303d3b45d8a963d05cced5bf853aa721561a6fbd16484"
+      "after": "cd91e620c3dd6d6dcc86025741d2141b424ee66d9f6841923c9302f70be1e3e7"
     },
     "codex-rs/core/src/tools/lifecycle.rs": {
       "before": "48f543b7053237d13ba0623b0ff8e368519dafb0f3bdcb17ec7b11eb74c8b89d",
@@ -901,7 +901,7 @@
     },
     "codex-rs/tui/src/chatwidget/status_surfaces.rs": {
       "before": "d333d923f16a0efa0f2428f25650a3ec3983d0e17d929a8d498deb709246248b",
-      "after": "b994e462380c810ada5a875686bf53bc15a2c539b39db3e3ab55af117ee35c0b"
+      "after": "2c0b76e8300d7db826b4e375b99930b486979b790841ed7844c2a503e3c0a2c6"
     },
     "codex-rs/tui/src/chatwidget/tests/popups_and_settings.rs": {
       "before": "8a47596df510d1f349370e084b6dc2a9ed7172f8f98a5247c67efbd90198122e",
@@ -943,13 +943,17 @@
       "before": "4f5e55a2e6121566c0cf267216b28e159dac428a136d6a07b83a90fd29c24380",
       "after": "45ec8fd917b47e716b3fc580538c8f03b28aa89d010ba1b3e76234cc1aa9ff4f"
     },
+    "codex-rs/tui/src/chatwidget/tests/status_and_layout.rs": {
+      "before": "aa77b646871c27aeaf064c5c8d28351b7f702699c99e98bfa64cec368db87ce8",
+      "after": "0a2a0a30c88536e9ebc6b1b99c3599e94db0f31bacf8b933e2f0a11f4ea49e8f"
+    },
     "codex-rs/tui/src/custom_terminal.rs": {
       "before": "5c7b64989d1c46e26364035f765162a4bb22b92a94a9f97ff163816fe70d9b5b",
       "after": "353c0db86db344848620f408d157915e273f8ea3fd4e1121341b4e3dcb2fcaf2"
     },
     "codex-rs/tui/src/diff_render.rs": {
       "before": "ab0ef70e507a0c61d7df264a087e83aa98c9cc9d7ad582c812477f701d6ab5c3",
-      "after": "82a1466639fe42e620563c84ee221d2f59cb6b748bc1b771381b669c4e3a0910"
+      "after": "f6665853bbc593d3db8f79b97aed541690ecda8445769d1a97ded4ed8fa60e00"
     },
     "codex-rs/tui/src/exec_cell/render.rs": {
       "before": "e06a37bbca81743e341790062aa4654fb30b3b99233dc8cfd13a7ef114ad79aa",

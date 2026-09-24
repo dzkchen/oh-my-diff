@@ -972,7 +972,7 @@ index b3828789977cf6fd2c6fd6e2b2b7ff2a51f5da2d..a3c28368baca61ed3c5b1850eadcba0c
      session: &Arc<Session>,
      thread_settings: ThreadSettingsOverrides,
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index a0d7a8cdd00e08741b4a0e4177bc09fd39d5014a..894830a3e63243f4286f88ac5f527175ddf2add2 100644
+index a0d7a8cdd00e08741b4a0e4177bc09fd39d5014a..c393f7893d967398fa2a6fc56d59ac5af6aed61e 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -279,6 +279,8 @@ pub struct StartThreadOptions {
@@ -992,25 +992,23 @@ index a0d7a8cdd00e08741b4a0e4177bc09fd39d5014a..894830a3e63243f4286f88ac5f527175
              reserved_thread_id: None,
              disabled_plugin_ids: None,
          }
-@@ -323,6 +326,8 @@ struct ThreadSpawnRequest {
+@@ -323,6 +326,7 @@ struct ThreadSpawnRequest {
      inherited_instructions: Option<SessionInstructions>,
      inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
      user_shell_override: Option<crate::shell::Shell>,
-+    inherit_user_instructions: bool,
 +    inherit_extensions: bool,
  }
  
  impl ThreadSpawnRequest {
-@@ -344,6 +349,8 @@ impl ThreadSpawnRequest {
+@@ -344,6 +348,7 @@ impl ThreadSpawnRequest {
              inherited_instructions: None,
              inherited_exec_policy: None,
              user_shell_override: None,
-+            inherit_user_instructions: true,
 +            inherit_extensions: true,
          }
      }
  }
-@@ -1097,6 +1104,23 @@ impl ThreadManager {
+@@ -1097,6 +1102,23 @@ impl ThreadManager {
          self.start_thread(options).await
      }
  
@@ -1034,16 +1032,15 @@ index a0d7a8cdd00e08741b4a0e4177bc09fd39d5014a..894830a3e63243f4286f88ac5f527175
      /// Allocates a thread ID before startup so a caller can associate host-owned state with it.
      pub fn reserve_thread_id(&self) -> ThreadId {
          self.state.thread_id_generator.as_ref()()
-@@ -2019,6 +2043,8 @@ impl ThreadManagerState {
+@@ -2019,6 +2041,7 @@ impl ThreadManagerState {
              inherited_instructions,
              inherited_exec_policy,
              user_shell_override,
-+            inherit_user_instructions,
 +            inherit_extensions,
          } = request;
          let StartThreadOptions {
              mut config,
-@@ -2037,6 +2063,7 @@ impl ThreadManagerState {
+@@ -2037,6 +2060,7 @@ impl ThreadManagerState {
              user_instructions: supplied_user_instructions,
              mut thread_extension_init,
              client_mcp_extensions,
@@ -1051,7 +1048,7 @@ index a0d7a8cdd00e08741b4a0e4177bc09fd39d5014a..894830a3e63243f4286f88ac5f527175
              reserved_thread_id,
              disabled_plugin_ids,
          } = options;
-@@ -2147,12 +2174,35 @@ impl ThreadManagerState {
+@@ -2147,12 +2171,31 @@ impl ThreadManagerState {
                      .await,
                  )
              };
@@ -1068,10 +1065,6 @@ index a0d7a8cdd00e08741b4a0e4177bc09fd39d5014a..894830a3e63243f4286f88ac5f527175
 +            (extensions, mcp_manager, multi_agent_version)
 +        };
          let mut instructions = instructions;
-+        if !inherit_user_instructions {
-+            instructions.user = None;
-+            instructions.user_provider = None;
-+        }
          if let Some(supplied) = supplied_user_instructions {
              instructions.user = supplied.instructions;
              instructions.user_provider = None;
@@ -45557,25 +45550,10 @@ index 91076caee0cf73a6a8fadc29497274264034816a..e6dc0003ae6bef32378c388494ca5e87
 -  GPT-5.6-Sol default · /tmp/project
 +  Oh My Diff · upstream-style direct · hooks off · GPT-5.6-Sol default · /tmp/p…
 diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-index f84f8758f953bae1ac9de23dfbec029479a68c27..0a041920f9dc48f64162b22aa4f8d531bb4f4361 100644
+index f84f8758f953bae1ac9de23dfbec029479a68c27..5d55bbd72a21a82929ee6fd0cd9feeafe188d776 100644
 --- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
 +++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
-@@ -200,13 +200,7 @@ impl ChatWidget {
-     }
- 
-     fn refresh_status_line_from_selections(&mut self, selections: &StatusSurfaceSelections) {
--        let enabled = !selections.status_line_items.is_empty();
--        self.bottom_pane.set_status_line_enabled(enabled);
--        if !enabled {
--            self.set_status_line(/*status_line*/ None);
--            self.set_status_line_hyperlink(/*url*/ None);
--            return;
--        }
-+        self.bottom_pane.set_status_line_enabled(true);
- 
-         let mut segments = Vec::new();
-         for item in &selections.status_line_items {
-@@ -215,11 +209,22 @@ impl ChatWidget {
+@@ -215,11 +215,22 @@ impl ChatWidget {
              }
          }
  
@@ -45778,6 +45756,29 @@ index ba162e47e11d648a847d9048d609965e76f049ab..684d16f207df9bba484abb756b4650bc
  
 -  enter submit   ctrl+] skip   ⌥+↓ main prompt   ⌥+↑ queued messages
 +  enter submit   ctrl+] skip   ⌥+↓ main prompt   shift+← queued messages
+diff --git a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
+index 1c2308a4d1d88641fec5a46298744c553dccc1e2..b1f80d73b46ebdbe47f1ca1789a774937400ae58 100644
+--- a/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
++++ b/codex-rs/tui/src/chatwidget/tests/status_and_layout.rs
+@@ -120,6 +120,18 @@ async fn resumed_session_hides_unknown_token_usage_until_an_update_arrives() {
+     );
+ }
+ 
++#[tokio::test]
++async fn empty_status_line_config_disables_footer_status_line() {
++    let (mut chat, _rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
++    chat.local_settings.tui.status_line = Some(vec!["model-with-reasoning".to_string()]);
++    chat.refresh_status_surfaces();
++    assert!(chat.bottom_pane.status_line_text().is_some());
++
++    chat.local_settings.tui.status_line = Some(Vec::new());
++    chat.refresh_status_surfaces();
++    assert_eq!(chat.bottom_pane.status_line_text(), None);
++}
++
+ #[tokio::test]
+ async fn app_server_cyber_policy_error_renders_dedicated_notice() {
+     let (mut chat, mut rx, _ops) = make_chatwidget_manual(Some("gpt-5.6-sol")).await;
 diff --git a/codex-rs/tui/src/custom_terminal.rs b/codex-rs/tui/src/custom_terminal.rs
 index 6f7d5cf5a033cfedb619dd01aab9b538d808dc09..d1259e7376cd1e911cd3a5308cba7fc2b83fe415 100644
 --- a/codex-rs/tui/src/custom_terminal.rs
@@ -45794,7 +45795,7 @@ index 6f7d5cf5a033cfedb619dd01aab9b538d808dc09..d1259e7376cd1e911cd3a5308cba7fc2
      fn previous_buffer_mut(&mut self) -> &mut Buffer {
          &mut self.buffers[1 - self.current]
 diff --git a/codex-rs/tui/src/diff_render.rs b/codex-rs/tui/src/diff_render.rs
-index 395a8746e9f5e11a1f1f277bbbf14bfa6f35aaf4..e31e8c63859b46361b4e0cefcba029a48128e42e 100644
+index 395a8746e9f5e11a1f1f277bbbf14bfa6f35aaf4..98e4f1481992c400a8a69951759a7d766dc7f4d2 100644
 --- a/codex-rs/tui/src/diff_render.rs
 +++ b/codex-rs/tui/src/diff_render.rs
 @@ -432,9 +432,19 @@ fn line_counts(change: &FileChange) -> (usize, usize) {
@@ -45819,27 +45820,41 @@ index 395a8746e9f5e11a1f1f277bbbf14bfa6f35aaf4..e31e8c63859b46361b4e0cefcba029a4
      spans.push(")".into());
      spans
  }
-@@ -1285,6 +1295,9 @@ fn style_sign_add(
+@@ -1285,9 +1295,14 @@ fn style_sign_add(
      color_level: DiffColorLevel,
      diff_backgrounds: ResolvedDiffBackgrounds,
  ) -> Style {
-+    if let Some(color) = crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffAdded) {
-+        return style_add(theme, color_level, diff_backgrounds).fg(color);
-+    }
++    // With a mod theme color, light signs also use the content style, which applies it.
      match theme {
-         DiffTheme::Light => Style::default().fg(Color::Green),
-         DiffTheme::Dark => style_add(theme, color_level, diff_backgrounds),
-@@ -1297,6 +1310,9 @@ fn style_sign_del(
+-        DiffTheme::Light => Style::default().fg(Color::Green),
+-        DiffTheme::Dark => style_add(theme, color_level, diff_backgrounds),
++        DiffTheme::Light
++            if crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffAdded).is_none() =>
++        {
++            Style::default().fg(Color::Green)
++        }
++        DiffTheme::Light | DiffTheme::Dark => style_add(theme, color_level, diff_backgrounds),
+     }
+ }
+ 
+@@ -1297,9 +1312,14 @@ fn style_sign_del(
      color_level: DiffColorLevel,
      diff_backgrounds: ResolvedDiffBackgrounds,
  ) -> Style {
-+    if let Some(color) = crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffRemoved) {
-+        return style_del(theme, color_level, diff_backgrounds).fg(color);
-+    }
++    // With a mod theme color, light signs also use the content style, which applies it.
      match theme {
-         DiffTheme::Light => Style::default().fg(Color::Red),
-         DiffTheme::Dark => style_del(theme, color_level, diff_backgrounds),
-@@ -1319,7 +1335,7 @@ fn style_add(
+-        DiffTheme::Light => Style::default().fg(Color::Red),
+-        DiffTheme::Dark => style_del(theme, color_level, diff_backgrounds),
++        DiffTheme::Light
++            if crate::mod_ui::theme_color(crate::mod_ui::ThemeSlot::DiffRemoved).is_none() =>
++        {
++            Style::default().fg(Color::Red)
++        }
++        DiffTheme::Light | DiffTheme::Dark => style_del(theme, color_level, diff_backgrounds),
+     }
+ }
+ 
+@@ -1319,7 +1339,7 @@ fn style_add(
      color_level: DiffColorLevel,
      diff_backgrounds: ResolvedDiffBackgrounds,
  ) -> Style {
@@ -45848,7 +45863,7 @@ index 395a8746e9f5e11a1f1f277bbbf14bfa6f35aaf4..e31e8c63859b46361b4e0cefcba029a4
          (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Green),
          (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
          | (DiffTheme::Light, DiffColorLevel::Ansi256, Some(bg)) => Style::default().bg(bg),
-@@ -1331,6 +1347,10 @@ fn style_add(
+@@ -1331,6 +1351,10 @@ fn style_add(
          | (DiffTheme::Light, DiffColorLevel::Ansi256, None) => Style::default(),
          (DiffTheme::Dark, DiffColorLevel::TrueColor, None)
          | (DiffTheme::Dark, DiffColorLevel::Ansi256, None) => Style::default().fg(Color::Green),
@@ -45859,7 +45874,7 @@ index 395a8746e9f5e11a1f1f277bbbf14bfa6f35aaf4..e31e8c63859b46361b4e0cefcba029a4
      }
  }
  
-@@ -1343,7 +1363,7 @@ fn style_del(
+@@ -1343,7 +1367,7 @@ fn style_del(
      color_level: DiffColorLevel,
      diff_backgrounds: ResolvedDiffBackgrounds,
  ) -> Style {
@@ -45868,7 +45883,7 @@ index 395a8746e9f5e11a1f1f277bbbf14bfa6f35aaf4..e31e8c63859b46361b4e0cefcba029a4
          (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Red),
          (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
          | (DiffTheme::Light, DiffColorLevel::Ansi256, Some(bg)) => Style::default().bg(bg),
-@@ -1355,6 +1375,10 @@ fn style_del(
+@@ -1355,6 +1379,10 @@ fn style_del(
          | (DiffTheme::Light, DiffColorLevel::Ansi256, None) => Style::default(),
          (DiffTheme::Dark, DiffColorLevel::TrueColor, None)
          | (DiffTheme::Dark, DiffColorLevel::Ansi256, None) => Style::default().fg(Color::Red),
