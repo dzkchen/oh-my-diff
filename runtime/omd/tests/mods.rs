@@ -1198,6 +1198,19 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
             .as_str()
             .is_some_and(|error| error.contains("dependency_cycle"))
     }));
+    let own = service_package(
+        &root,
+        "own",
+        &source("own.service", "1.0.0"),
+        json!({"exports":[contract("own.service","1.0.0")],"imports":[{"name":"own.service","version":"1.0.0"}]}),
+        &["services"],
+    );
+    assert!(
+        ModStore::inspect_package(&own)
+            .unwrap_err()
+            .to_string()
+            .contains("service_self_import")
+    );
 }
 
 #[test]
@@ -2248,7 +2261,7 @@ fn worker_context_is_exclusive_typed_and_failure_isolated() {
 
 #[test]
 fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_owned() {
-    let source = "export default api => {\n  api.command('fail', () => {\n    throw new Error('INTENTIONAL_AUTHOR_FAILURE sk-authorsecret123456789');\n  });\n}";
+    let source = "export default api => {\n  api.command('fail', () => {\n    throw new Error('INTENTIONAL_AUTHOR_FAILURE sk- sk-authorsecret123456789');\n  });\n}";
     let (temp, _, path) = fixture(source, &["commands"]);
     let mut runtime = host(&temp);
     assert_eq!(

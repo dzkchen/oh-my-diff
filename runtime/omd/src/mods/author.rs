@@ -459,7 +459,9 @@ fn redact_value(value: &mut Value, key: Option<&str>, paths: &[(String, String)]
 fn redact_text(text: &str) -> String {
     let mut output = text.to_owned();
     for prefix in ["sk-", "ghp_", "github_pat_", "Bearer "] {
-        while let Some(start) = output.find(prefix) {
+        let mut from = 0;
+        while let Some(offset) = output[from..].find(prefix) {
+            let start = from + offset;
             let tail = &output[start + prefix.len()..];
             let length = tail
                 .find(|character: char| {
@@ -468,9 +470,11 @@ fn redact_text(text: &str) -> String {
                 })
                 .unwrap_or(tail.len());
             if length == 0 {
-                break;
+                from = start + prefix.len();
+                continue;
             }
             output.replace_range(start..start + prefix.len() + length, "[REDACTED]");
+            from = start + "[REDACTED]".len();
         }
     }
     output

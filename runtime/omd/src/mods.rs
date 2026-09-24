@@ -772,6 +772,9 @@ impl ModPackage {
             {
                 return Err(failure("invalid_service_import"));
             }
+            if exports.contains(&import.name) {
+                return Err(failure(format!("service_self_import: {}", import.name)));
+            }
         }
         if (!self.services.exports.is_empty() || !self.services.imports.is_empty())
             && !self.capabilities.iter().any(|cap| cap == "services")
@@ -1418,7 +1421,6 @@ impl ModHost {
                 .imports
                 .iter()
                 .filter_map(|import| providers.get(import.name.as_str()).copied())
-                .filter(|provider| *provider != id)
                 .map(str::to_owned),
         );
         dependencies.sort();
@@ -1951,6 +1953,9 @@ impl ModHost {
                 "service_provider_missing"
             }));
         };
+        if provider == caller {
+            return Err(failure(format!("service_self_import: {}", call.name)));
+        }
         if !service_version_satisfies(&import.version, &contract.version) {
             return Err(failure(format!(
                 "service_version_incompatible: consumer {caller} requires {} {} but provider {provider} exports {}",

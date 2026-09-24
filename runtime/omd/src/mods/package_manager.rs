@@ -234,8 +234,15 @@ impl ModStore {
         }
         let mut lock = self.read_package_lock()?;
         let mut config = self.configuration()?;
-        let old_lock = serde_json::to_value(&lock)?;
-        let old_config = serde_json::to_value(&config)?;
+        let mut selection_ids = config
+            .mods
+            .iter()
+            .map(|selection| {
+                store::package(&selection.path)
+                    .ok()
+                    .map(|(manifest, _, _)| manifest.id)
+            })
+            .collect::<Vec<_>>();
         let mut lifecycle = Vec::new();
         for package in &plan.packages {
             match lock.packages.get(&package.id) {
@@ -250,11 +257,13 @@ impl ModStore {
             {
                 push_history(&mut lock, &package.id, previous)?;
             }
-            let selection = config.mods.iter_mut().find(|selection| {
-                selection.scope == package.scope
-                    && store::package(&selection.path)
-                        .is_ok_and(|(manifest, _, _)| manifest.id == package.id)
-            });
+            let selection = config
+                .mods
+                .iter()
+                .zip(&selection_ids)
+                .position(|(selection, id)| {
+                    selection.scope == package.scope && id.as_deref() == Some(package.id.as_str())
+                });
             let next = ModSelection {
                 path: package.path.clone(),
                 sha256: package.integrity.clone(),
@@ -264,9 +273,10 @@ impl ModStore {
                 scope: package.scope.clone(),
             };
             if let Some(selection) = selection {
-                *selection = next;
+                config.mods[selection] = next;
             } else {
                 config.mods.push(next);
+                selection_ids.push(Some(package.id.clone()));
             }
         }
         validate_locked_graph(&lock.packages)?;
@@ -278,24 +288,7 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.write(
-            "package-transaction.json",
-            &json!({"old_lock":old_lock,"old_config":old_config}),
-        )?;
-        let result = (|| {
-            for (package, event) in &lifecycle {
-                self.run_lifecycle(package, event)?;
-            }
-            self.write("mods.json", &serde_json::to_value(&config)?)?;
-            self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
-            std::fs::remove_file(self.root.join("package-transaction.json"))?;
-            std::fs::File::open(&self.root)?.sync_all()?;
-            Ok(lock)
-        })();
-        if result.is_err() {
-            self.recover_package_transaction()?;
-        }
-        result
+        self.commit_package_transaction(lock, config, &lifecycle)
     }
 
     pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -359,7 +352,7 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.commit_package_transaction(lock, config)
+        self.commit_package_transaction(lock, config, &[])
     }
 
     pub fn package_enable(&self, id: &str) -> Result<ModPackageLock> {
@@ -412,7 +405,7 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.commit_package_transaction(lock, config)
+        self.commit_package_transaction(lock, config, &[])
     }
 
     pub fn package_uninstall(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
@@ -442,7 +435,7 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.commit_package_transaction(lock, config)
+        self.commit_package_transaction(lock, config, &[])
     }
 
     pub fn package_rollback_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -527,13 +520,16 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.commit_package_transaction(lock, config)
+        self.commit_package_transaction(lock, config, &[])
     }
 
+    /// Runs `lifecycle` scripts and writes both files, restoring the previous
+    /// lock and configuration if any step fails.
     fn commit_package_transaction(
         &self,
         lock: ModPackageLock,
         config: ModConfiguration,
+        lifecycle: &[(ModLockedPackage, &str)],
     ) -> Result<ModPackageLock> {
         let old_lock = serde_json::to_value(self.read_package_lock()?)?;
         let old_config = serde_json::to_value(self.configuration()?)?;
@@ -542,6 +538,9 @@ impl ModStore {
             &json!({"old_lock":old_lock,"old_config":old_config}),
         )?;
         let result = (|| {
+            for (package, event) in lifecycle {
+                self.run_lifecycle(package, event)?;
+            }
             self.write("mods.json", &serde_json::to_value(&config)?)?;
             self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
             std::fs::remove_file(self.root.join("package-transaction.json"))?;

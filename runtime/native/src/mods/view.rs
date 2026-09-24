@@ -15,11 +15,17 @@ pub(super) struct Views {
     state: Mutex<State>,
 }
 
+/// Keeps at most `limit` UTF-8 bytes, matching the byte bounds that
+/// `ModViewSnapshot::read` enforces on the persisted snapshot.
 fn visible(text: &str, limit: usize) -> String {
-    text.chars()
-        .filter(|c| !c.is_control())
-        .take(limit)
-        .collect()
+    let mut output = String::new();
+    for character in text.chars().filter(|c| !c.is_control()) {
+        if output.len() + character.len_utf8() > limit {
+            break;
+        }
+        output.push(character);
+    }
+    output
 }
 
 impl Views {
@@ -108,5 +114,18 @@ impl Views {
             let excess = state.snapshot.activity.len().saturating_sub(32);
             state.snapshot.activity.drain(..excess);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible;
+
+    #[test]
+    fn visible_bounds_bytes_on_a_character_boundary() {
+        let text = visible(&"💥".repeat(300), 512);
+        assert_eq!(text.len(), 512);
+        assert_eq!(text.chars().count(), 128);
+        assert_eq!(visible("a\u{7}é", 2), "a");
     }
 }

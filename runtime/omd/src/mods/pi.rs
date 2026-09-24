@@ -1,4 +1,5 @@
 use super::*;
+use ignore::gitignore::Gitignore;
 use ignore::gitignore::GitignoreBuilder;
 
 const IGNORE_FILES: &[&str] = &[".gitignore", ".ignore", ".fdignore"];
@@ -122,19 +123,16 @@ fn sorted_entries(directory: &Path) -> Result<Vec<PathBuf>> {
 }
 
 impl Traversal<'_> {
-    fn ignored(&self, path: &Path, directory: bool) -> Result<bool> {
+    fn matcher(&self) -> Result<Gitignore> {
         let mut builder = GitignoreBuilder::new(self.root);
         for pattern in &self.patterns {
             builder
                 .add_line(None, pattern)
                 .map_err(|e| failure(format!("pi_ignore_pattern: {e}")))?;
         }
-        let matcher = builder
+        builder
             .build()
-            .map_err(|e| failure(format!("pi_ignore_pattern: {e}")))?;
-        Ok(matcher
-            .matched_path_or_any_parents(path, directory)
-            .is_ignore())
+            .map_err(|e| failure(format!("pi_ignore_pattern: {e}")))
     }
 
     fn add_rules(&mut self, directory: &Path) -> Result<()> {
@@ -211,6 +209,12 @@ impl Traversal<'_> {
             return Ok(());
         }
         self.add_rules(directory)?;
+        let matcher = self.matcher()?;
+        let ignored = |path: &Path, directory: bool| {
+            matcher
+                .matched_path_or_any_parents(path, directory)
+                .is_ignore()
+        };
         let entries = sorted_entries(directory)?;
         self.visited += entries.len();
         if self.visited > ENTRY_LIMIT {
@@ -221,7 +225,7 @@ impl Traversal<'_> {
             if symlink(&skill)? {
                 self.diagnostics
                     .push(json!({"path":skill,"error":"pi_symlink_unsupported"}));
-            } else if skill.is_file() && !self.ignored(&skill, false)? {
+            } else if skill.is_file() && !ignored(&skill, false) {
                 self.skill(&skill, scope);
                 return Ok(());
             }
@@ -239,7 +243,7 @@ impl Traversal<'_> {
                 continue;
             }
             let is_directory = entry.is_dir();
-            if self.ignored(&entry, is_directory)? {
+            if ignored(&entry, is_directory) {
                 continue;
             }
             if is_directory {

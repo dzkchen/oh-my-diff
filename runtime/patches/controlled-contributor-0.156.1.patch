@@ -11167,10 +11167,10 @@ index 0000000000000000000000000000000000000000..bfcdb383f32d44a686d3d65018d5b3cc
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a1e9d5d4167b648e577af479ca0cecf7a0bb4eaa
+index 0000000000000000000000000000000000000000..bdda5170b7a5da93cc360e891b88dc37d8927533
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,131 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -11188,11 +11188,17 @@ index 0000000000000000000000000000000000000000..a1e9d5d4167b648e577af479ca0cecf7
 +    state: Mutex<State>,
 +}
 +
++/// Keeps at most `limit` UTF-8 bytes, matching the byte bounds that
++/// `ModViewSnapshot::read` enforces on the persisted snapshot.
 +fn visible(text: &str, limit: usize) -> String {
-+    text.chars()
-+        .filter(|c| !c.is_control())
-+        .take(limit)
-+        .collect()
++    let mut output = String::new();
++    for character in text.chars().filter(|c| !c.is_control()) {
++        if output.len() + character.len_utf8() > limit {
++            break;
++        }
++        output.push(character);
++    }
++    output
 +}
 +
 +impl Views {
@@ -11281,6 +11287,19 @@ index 0000000000000000000000000000000000000000..a1e9d5d4167b648e577af479ca0cecf7
 +            let excess = state.snapshot.activity.len().saturating_sub(32);
 +            state.snapshot.activity.drain(..excess);
 +        });
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::visible;
++
++    #[test]
++    fn visible_bounds_bytes_on_a_character_boundary() {
++        let text = visible(&"💥".repeat(300), 512);
++        assert_eq!(text.len(), 512);
++        assert_eq!(text.chars().count(), 128);
++        assert_eq!(visible("a\u{7}é", 2), "a");
 +    }
 +}
 diff --git a/codex-rs/ext/omd/src/platform_mods.rs b/codex-rs/ext/omd/src/platform_mods.rs
@@ -26915,10 +26934,10 @@ index 0000000000000000000000000000000000000000..87789a313403f3d7b863c01bf53da82a
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1fd5642de84efd23c1f43e620e7a09e7bdda95bd
+index 0000000000000000000000000000000000000000..218fa8f665edd3dbce330f5640c04b4ac215d544
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,2460 @@
+@@ -0,0 +1,2465 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -27693,6 +27712,9 @@ index 0000000000000000000000000000000000000000..1fd5642de84efd23c1f43e620e7a09e7
 +            {
 +                return Err(failure("invalid_service_import"));
 +            }
++            if exports.contains(&import.name) {
++                return Err(failure(format!("service_self_import: {}", import.name)));
++            }
 +        }
 +        if (!self.services.exports.is_empty() || !self.services.imports.is_empty())
 +            && !self.capabilities.iter().any(|cap| cap == "services")
@@ -28339,7 +28361,6 @@ index 0000000000000000000000000000000000000000..1fd5642de84efd23c1f43e620e7a09e7
 +                .imports
 +                .iter()
 +                .filter_map(|import| providers.get(import.name.as_str()).copied())
-+                .filter(|provider| *provider != id)
 +                .map(str::to_owned),
 +        );
 +        dependencies.sort();
@@ -28872,6 +28893,9 @@ index 0000000000000000000000000000000000000000..1fd5642de84efd23c1f43e620e7a09e7
 +                "service_provider_missing"
 +            }));
 +        };
++        if provider == caller {
++            return Err(failure(format!("service_self_import: {}", call.name)));
++        }
 +        if !service_version_satisfies(&import.version, &contract.version) {
 +            return Err(failure(format!(
 +                "service_version_incompatible: consumer {caller} requires {} {} but provider {provider} exports {}",
@@ -29381,10 +29405,10 @@ index 0000000000000000000000000000000000000000..1fd5642de84efd23c1f43e620e7a09e7
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..25e860f618915470e917f8591690c5af2311394c
+index 0000000000000000000000000000000000000000..dee9f11ff82aa6215cdf3c1490a97fc5cd3c0233
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,481 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -29846,7 +29870,9 @@ index 0000000000000000000000000000000000000000..25e860f618915470e917f8591690c5af
 +fn redact_text(text: &str) -> String {
 +    let mut output = text.to_owned();
 +    for prefix in ["sk-", "ghp_", "github_pat_", "Bearer "] {
-+        while let Some(start) = output.find(prefix) {
++        let mut from = 0;
++        while let Some(offset) = output[from..].find(prefix) {
++            let start = from + offset;
 +            let tail = &output[start + prefix.len()..];
 +            let length = tail
 +                .find(|character: char| {
@@ -29855,9 +29881,11 @@ index 0000000000000000000000000000000000000000..25e860f618915470e917f8591690c5af
 +                })
 +                .unwrap_or(tail.len());
 +            if length == 0 {
-+                break;
++                from = start + prefix.len();
++                continue;
 +            }
 +            output.replace_range(start..start + prefix.len() + length, "[REDACTED]");
++            from = start + "[REDACTED]".len();
 +        }
 +    }
 +    output
@@ -30111,10 +30139,10 @@ index 0000000000000000000000000000000000000000..1a7b669c2dae3aa2ab5589b9317c6c10
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c44241f17f
+index 0000000000000000000000000000000000000000..2bac03f8513214c2feb3e4ec4295eaa008de3f6d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,1143 @@
+@@ -0,0 +1,1142 @@
 +use super::*;
 +use serde_json::Map;
 +use std::process::Command;
@@ -30351,8 +30379,15 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +        }
 +        let mut lock = self.read_package_lock()?;
 +        let mut config = self.configuration()?;
-+        let old_lock = serde_json::to_value(&lock)?;
-+        let old_config = serde_json::to_value(&config)?;
++        let mut selection_ids = config
++            .mods
++            .iter()
++            .map(|selection| {
++                store::package(&selection.path)
++                    .ok()
++                    .map(|(manifest, _, _)| manifest.id)
++            })
++            .collect::<Vec<_>>();
 +        let mut lifecycle = Vec::new();
 +        for package in &plan.packages {
 +            match lock.packages.get(&package.id) {
@@ -30367,11 +30402,13 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +            {
 +                push_history(&mut lock, &package.id, previous)?;
 +            }
-+            let selection = config.mods.iter_mut().find(|selection| {
-+                selection.scope == package.scope
-+                    && store::package(&selection.path)
-+                        .is_ok_and(|(manifest, _, _)| manifest.id == package.id)
-+            });
++            let selection = config
++                .mods
++                .iter()
++                .zip(&selection_ids)
++                .position(|(selection, id)| {
++                    selection.scope == package.scope && id.as_deref() == Some(package.id.as_str())
++                });
 +            let next = ModSelection {
 +                path: package.path.clone(),
 +                sha256: package.integrity.clone(),
@@ -30381,9 +30418,10 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +                scope: package.scope.clone(),
 +            };
 +            if let Some(selection) = selection {
-+                *selection = next;
++                config.mods[selection] = next;
 +            } else {
 +                config.mods.push(next);
++                selection_ids.push(Some(package.id.clone()));
 +            }
 +        }
 +        validate_locked_graph(&lock.packages)?;
@@ -30395,24 +30433,7 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.write(
-+            "package-transaction.json",
-+            &json!({"old_lock":old_lock,"old_config":old_config}),
-+        )?;
-+        let result = (|| {
-+            for (package, event) in &lifecycle {
-+                self.run_lifecycle(package, event)?;
-+            }
-+            self.write("mods.json", &serde_json::to_value(&config)?)?;
-+            self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
-+            std::fs::remove_file(self.root.join("package-transaction.json"))?;
-+            std::fs::File::open(&self.root)?.sync_all()?;
-+            Ok(lock)
-+        })();
-+        if result.is_err() {
-+            self.recover_package_transaction()?;
-+        }
-+        result
++        self.commit_package_transaction(lock, config, &lifecycle)
 +    }
 +
 +    pub fn package_uninstall_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -30476,7 +30497,7 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config)
++        self.commit_package_transaction(lock, config, &[])
 +    }
 +
 +    pub fn package_enable(&self, id: &str) -> Result<ModPackageLock> {
@@ -30529,7 +30550,7 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config)
++        self.commit_package_transaction(lock, config, &[])
 +    }
 +
 +    pub fn package_uninstall(&self, id: &str, confirmation: &str) -> Result<ModPackageLock> {
@@ -30559,7 +30580,7 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config)
++        self.commit_package_transaction(lock, config, &[])
 +    }
 +
 +    pub fn package_rollback_plan(&self, id: &str) -> Result<ModPackagePlan> {
@@ -30644,13 +30665,16 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.commit_package_transaction(lock, config)
++        self.commit_package_transaction(lock, config, &[])
 +    }
 +
++    /// Runs `lifecycle` scripts and writes both files, restoring the previous
++    /// lock and configuration if any step fails.
 +    fn commit_package_transaction(
 +        &self,
 +        lock: ModPackageLock,
 +        config: ModConfiguration,
++        lifecycle: &[(ModLockedPackage, &str)],
 +    ) -> Result<ModPackageLock> {
 +        let old_lock = serde_json::to_value(self.read_package_lock()?)?;
 +        let old_config = serde_json::to_value(self.configuration()?)?;
@@ -30659,6 +30683,9 @@ index 0000000000000000000000000000000000000000..14bec992fa6d32c4b5d980a396f461c4
 +            &json!({"old_lock":old_lock,"old_config":old_config}),
 +        )?;
 +        let result = (|| {
++            for (package, event) in lifecycle {
++                self.run_lifecycle(package, event)?;
++            }
 +            self.write("mods.json", &serde_json::to_value(&config)?)?;
 +            self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
 +            std::fs::remove_file(self.root.join("package-transaction.json"))?;
@@ -31483,11 +31510,12 @@ index 0000000000000000000000000000000000000000..48e11775d93df2609b094c797287b458
 +}
 diff --git a/codex-rs/omd/src/mods/pi.rs b/codex-rs/omd/src/mods/pi.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..88c4a8224df31478e3d99aba3e2bb103af7c8882
+index 0000000000000000000000000000000000000000..3146a3ef332a1d7bcd64c55ce0ac4eca565a0be4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/pi.rs
-@@ -0,0 +1,517 @@
+@@ -0,0 +1,521 @@
 +use super::*;
++use ignore::gitignore::Gitignore;
 +use ignore::gitignore::GitignoreBuilder;
 +
 +const IGNORE_FILES: &[&str] = &[".gitignore", ".ignore", ".fdignore"];
@@ -31611,19 +31639,16 @@ index 0000000000000000000000000000000000000000..88c4a8224df31478e3d99aba3e2bb103
 +}
 +
 +impl Traversal<'_> {
-+    fn ignored(&self, path: &Path, directory: bool) -> Result<bool> {
++    fn matcher(&self) -> Result<Gitignore> {
 +        let mut builder = GitignoreBuilder::new(self.root);
 +        for pattern in &self.patterns {
 +            builder
 +                .add_line(None, pattern)
 +                .map_err(|e| failure(format!("pi_ignore_pattern: {e}")))?;
 +        }
-+        let matcher = builder
++        builder
 +            .build()
-+            .map_err(|e| failure(format!("pi_ignore_pattern: {e}")))?;
-+        Ok(matcher
-+            .matched_path_or_any_parents(path, directory)
-+            .is_ignore())
++            .map_err(|e| failure(format!("pi_ignore_pattern: {e}")))
 +    }
 +
 +    fn add_rules(&mut self, directory: &Path) -> Result<()> {
@@ -31700,6 +31725,12 @@ index 0000000000000000000000000000000000000000..88c4a8224df31478e3d99aba3e2bb103
 +            return Ok(());
 +        }
 +        self.add_rules(directory)?;
++        let matcher = self.matcher()?;
++        let ignored = |path: &Path, directory: bool| {
++            matcher
++                .matched_path_or_any_parents(path, directory)
++                .is_ignore()
++        };
 +        let entries = sorted_entries(directory)?;
 +        self.visited += entries.len();
 +        if self.visited > ENTRY_LIMIT {
@@ -31710,7 +31741,7 @@ index 0000000000000000000000000000000000000000..88c4a8224df31478e3d99aba3e2bb103
 +            if symlink(&skill)? {
 +                self.diagnostics
 +                    .push(json!({"path":skill,"error":"pi_symlink_unsupported"}));
-+            } else if skill.is_file() && !self.ignored(&skill, false)? {
++            } else if skill.is_file() && !ignored(&skill, false) {
 +                self.skill(&skill, scope);
 +                return Ok(());
 +            }
@@ -31728,7 +31759,7 @@ index 0000000000000000000000000000000000000000..88c4a8224df31478e3d99aba3e2bb103
 +                continue;
 +            }
 +            let is_directory = entry.is_dir();
-+            if self.ignored(&entry, is_directory)? {
++            if ignored(&entry, is_directory) {
 +                continue;
 +            }
 +            if is_directory {
@@ -37972,10 +38003,10 @@ index 0000000000000000000000000000000000000000..aef9c99b6cd1b1cac9eb08e141796e42
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..aec2c118b81ef0e23b5779d57937bd4c285b54e8
+index 0000000000000000000000000000000000000000..d4cc84d5244305b6af54841741c86ec2ea08b1f2
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2419 @@
+@@ -0,0 +1,2432 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
 +use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
@@ -39176,6 +39207,19 @@ index 0000000000000000000000000000000000000000..aec2c118b81ef0e23b5779d57937bd4c
 +            .as_str()
 +            .is_some_and(|error| error.contains("dependency_cycle"))
 +    }));
++    let own = service_package(
++        &root,
++        "own",
++        &source("own.service", "1.0.0"),
++        json!({"exports":[contract("own.service","1.0.0")],"imports":[{"name":"own.service","version":"1.0.0"}]}),
++        &["services"],
++    );
++    assert!(
++        ModStore::inspect_package(&own)
++            .unwrap_err()
++            .to_string()
++            .contains("service_self_import")
++    );
 +}
 +
 +#[test]
@@ -40226,7 +40270,7 @@ index 0000000000000000000000000000000000000000..aec2c118b81ef0e23b5779d57937bd4c
 +
 +#[test]
 +fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_owned() {
-+    let source = "export default api => {\n  api.command('fail', () => {\n    throw new Error('INTENTIONAL_AUTHOR_FAILURE sk-authorsecret123456789');\n  });\n}";
++    let source = "export default api => {\n  api.command('fail', () => {\n    throw new Error('INTENTIONAL_AUTHOR_FAILURE sk- sk-authorsecret123456789');\n  });\n}";
 +    let (temp, _, path) = fixture(source, &["commands"]);
 +    let mut runtime = host(&temp);
 +    assert_eq!(

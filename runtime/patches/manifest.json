@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor-0.156.1.patch",
-    "sha256": "44825fbc9801d03ef8743eaf25219934b4bc6538b9b83a3a9128b8e1bc2227d7"
+    "sha256": "20a555cb11ee258a4b861228b1d13df50a65ba3792b035a1110461bb4b62061f"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -185,7 +185,7 @@
     },
     "codex-rs/ext/omd/src/mods/view.rs": {
       "before": null,
-      "after": "55a6a90f973d781ba02e0f0bed0d7e84bee98af5c5b5b4e51fd5b0afa438f74a"
+      "after": "e3fed574c2954beadfbc7376e71e663105cc92889f72380b2d0d9cc968f67e53"
     },
     "codex-rs/ext/omd/src/platform_mods.rs": {
       "before": null,
@@ -313,11 +313,11 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "458af743047c086635726efc5dedf45cf7f54cc665b5979df876ee8a29ef34f4"
+      "after": "9eb29f1c9f6efa4c693295a994e507e375e9efec5e2fff7ffd3739c94ad3b416"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
-      "after": "142ec7b950f86056b08dcc0a23b9c474cbc5e945d6ebfcd960ed38c137245314"
+      "after": "7312aa76a25f0ab02abf0166c52a7100e69077ba4b87f3f3396a130dd0be1dd4"
     },
     "codex-rs/omd/src/mods/bridge.rs": {
       "before": null,
@@ -329,7 +329,7 @@
     },
     "codex-rs/omd/src/mods/package_manager.rs": {
       "before": null,
-      "after": "c03f9b9d8fd66aab32c300066606b40bc4bb74891da6de3207d3d6e4f2d37e47"
+      "after": "cb335c6b5a74674d2571499adf213012c2586399f3365bcc750ba29d5467b1fa"
     },
     "codex-rs/omd/src/mods/packages.rs": {
       "before": null,
@@ -337,7 +337,7 @@
     },
     "codex-rs/omd/src/mods/pi.rs": {
       "before": null,
-      "after": "1f1032e5035423b497611e8e07b3079e43f48eff63c86b2dcd0e12980bd65517"
+      "after": "f963aa3d4343e30b86ae290376b01b24582f411f46997500232a211861b005bb"
     },
     "codex-rs/omd/src/mods/process.rs": {
       "before": null,
@@ -405,7 +405,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "29933201c8bee243c9048ca716bd44ef820d1c036f197d532fb574d5efdbfffd"
+      "after": "10dbd14993f7cfc764923634da2a084006b4c344b85018e8d94ef38849d68b35"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,
