@@ -100,7 +100,7 @@ impl Services {
 
     #[expect(
         clippy::await_holding_invalid_type,
-        reason = "Keep service startup and readiness atomic with cleanup ownership"
+        reason = "Keep service registration atomic with cleanup ownership"
     )]
     pub(super) async fn call(
         &self,
@@ -127,7 +127,9 @@ impl Services {
             {
                 return Err("unknown_or_foreign_sidecar".into());
             }
-            if let Some(service) = records.remove(&selection.id) {
+            let service = records.remove(&selection.id);
+            drop(records);
+            if let Some(service) = service {
                 service.stop().await;
             }
             return Ok(json!({"stopped":true}));
@@ -326,17 +328,26 @@ impl Services {
             Service {
                 mod_id: mod_id.into(),
                 generation,
-                route: grant.route,
+                // A provider becomes routable only after its readiness handshake succeeds.
+                route: None,
                 job: Some(job),
                 task: host.task.clone(),
-                worker,
+                worker: worker.clone(),
             },
         );
-        if let Some(port) = port {
+        // Every mod shares these records, so wait for readiness without holding the lock.
+        drop(records);
+        if let (Some(port), Some(route)) = (port, grant.route) {
             let ready = tokio::time::timeout(Duration::from_secs(3), async {
                 loop {
                     host.task.check_active().map_err(|e| e.to_string())?;
-                    if records[&grant.id].finished() {
+                    if self
+                        .records
+                        .lock()
+                        .await
+                        .get(&grant.id)
+                        .is_none_or(|s| s.worker != worker || s.finished())
+                    {
                         return Err("provider_sidecar_stopped".to_string());
                     }
                     if let Ok(mut stream) =
@@ -365,11 +376,22 @@ impl Services {
                 }
             })
             .await;
-            if !matches!(ready, Ok(Ok(()))) {
-                if let Some(service) = records.remove(&grant.id) {
-                    service.stop().await;
+            let mut records = self.records.lock().await;
+            match records.get_mut(&grant.id) {
+                Some(service) if service.worker == worker && matches!(ready, Ok(Ok(()))) => {
+                    service.route = Some(route);
                 }
-                return Err("provider_readiness_failed".into());
+                current => {
+                    let stale = current
+                        .is_some_and(|s| s.worker == worker)
+                        .then(|| records.remove(&grant.id))
+                        .flatten();
+                    drop(records);
+                    if let Some(service) = stale {
+                        service.stop().await;
+                    }
+                    return Err("provider_readiness_failed".into());
+                }
             }
         }
         Ok(

@@ -56,6 +56,68 @@ fn preview(text: &str) -> String {
     shown
 }
 
+pub(super) fn event_fragments(
+    runtime: &mut ModHost,
+    event: &str,
+    payload: Value,
+    active: impl Fn() -> bool,
+    authority: &str,
+) -> Vec<PromptFragment> {
+    let mut fragments = Vec::new();
+    let mut remaining_bytes = 6144;
+    let assembler = (event == "context")
+        .then(|| runtime.replacement_owner("context"))
+        .flatten();
+    let mut replaced: Vec<String> = Vec::new();
+    for (id, result) in runtime.event_guarded(event, payload, active) {
+        match result {
+            Ok(value) if event == "context" => {
+                if assembler.as_ref().is_some_and(|owner| *owner != id) {
+                    if value.get("text").is_some() {
+                        replaced.push(id);
+                    }
+                    continue;
+                }
+                if let Some(text) = value.get("text").and_then(Value::as_str) {
+                    if text.len() + 256 > remaining_bytes {
+                        fragments.push(PromptFragment::developer_capability(
+                            "Additional mod context omitted at the host aggregate limit.",
+                            ContentItemKind("oh_my_diff.mod_error".into()),
+                        ));
+                        break;
+                    }
+                    remaining_bytes -= text.len() + 256;
+                    fragments.push(PromptFragment::developer_capability(
+                        format!("User-approved mod {id}. Subordinate to current user/project instructions and {authority}.\n{text}"),
+                        ContentItemKind("oh_my_diff.mod_context".into()),
+                    ));
+                }
+            }
+            Err(error) => {
+                if remaining_bytes < 1024 {
+                    break;
+                }
+                remaining_bytes -= 1024;
+                fragments.push(PromptFragment::developer_capability(
+                    format!("Mod {id} failed and is disabled for this runtime: {error}"),
+                    ContentItemKind("oh_my_diff.mod_error".into()),
+                ));
+            }
+            _ => (),
+        }
+    }
+    if let Some(assembler) = assembler.filter(|_| !replaced.is_empty()) {
+        fragments.push(PromptFragment::developer_capability(
+            format!(
+                "Mod {assembler} assembles mod context; contributions from {} were replaced.",
+                replaced.join(", ")
+            ),
+            ContentItemKind("oh_my_diff.mod_context".into()),
+        ));
+    }
+    fragments
+}
+
 pub(super) fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
     owner: Arc<Host>,
@@ -133,65 +195,80 @@ impl Mods {
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let _cancellation = Cancellation(cancelled.clone());
         let fragments = tokio::task::spawn_blocking(move || {
-            let Ok(mut runtime) = runtime.lock() else { return Vec::new(); };
+            let Ok(mut runtime) = runtime.lock() else {
+                return Vec::new();
+            };
 
-            let mut fragments = Vec::new();
-            let mut remaining_bytes = 6144;
-            let assembler = (event == "context").then(|| runtime.replacement_owner("context")).flatten();
-            let mut replaced: Vec<String> = Vec::new();
-            for (id, result) in runtime.event_guarded(event, payload, || !cancelled.load(std::sync::atomic::Ordering::Acquire)) {
-                match result {
-                    Ok(value) if event == "context" => {
-                        if assembler.as_ref().is_some_and(|owner| *owner != id) {
-                            if value.get("text").is_some() {
-                                replaced.push(id);
-                            }
-                            continue;
-                        }
-                        if let Some(text) = value.get("text").and_then(Value::as_str) {
-                            if text.len() + 256 > remaining_bytes {
-                                fragments.push(PromptFragment::developer_capability(
-                                    "Additional mod context omitted at the host aggregate limit.",
-                                    ContentItemKind("oh_my_diff.mod_error".into()),
-                                ));
-                                break;
-                            }
-                            remaining_bytes -= text.len() + 256;
-                            fragments.push(PromptFragment::developer_capability(
-                                format!("User-approved mod {id}. Subordinate to current user/project instructions and native workflow enforcement.\n{text}"),
-                                ContentItemKind("oh_my_diff.mod_context".into()),
-                            ));
-                        }
-                    }
-                    Err(error) => {
-                        if remaining_bytes < 1024 { break; }
-                        remaining_bytes -= 1024;
-                        fragments.push(PromptFragment::developer_capability(
-                        format!("Mod {id} failed and is disabled for this runtime: {error}"),
-                        ContentItemKind("oh_my_diff.mod_error".into()),
-                    )); },
-                    _ => (),
-                }
-            }
-            if let Some(assembler) = assembler.filter(|_| !replaced.is_empty()) {
-                fragments.push(PromptFragment::developer_capability(
-                    format!("Mod {assembler} assembles mod context; contributions from {} were replaced.", replaced.join(", ")),
-                    ContentItemKind("oh_my_diff.mod_context".into()),
-                ));
-            }
-            let terminal_input = json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()});
-            let mut terminal = runtime.terminal_view(terminal_input.clone(), || !cancelled.load(std::sync::atomic::Ordering::Acquire));
+            let mut fragments = event_fragments(
+                &mut runtime,
+                event,
+                payload,
+                || !cancelled.load(std::sync::atomic::Ordering::Acquire),
+                "native workflow enforcement",
+            );
+            let terminal_input =
+                json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()});
+            let mut terminal = runtime.terminal_view(terminal_input.clone(), || {
+                !cancelled.load(std::sync::atomic::Ordering::Acquire)
+            });
             let status = runtime.status();
-            let mut errors = status["mods"].as_array().into_iter().flatten().filter_map(|item| item["error"].as_str().map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))).collect::<Vec<_>>();
-            errors.extend(status["rejected"].as_array().into_iter().flatten()
-                .filter_map(|item| item["reason"].as_str().filter(|reason| !reason.starts_with("shadowed_"))
-                    .map(|reason| format!("{}: {reason}", item["id"].as_str().or(item["path"].as_str()).unwrap_or("selection")))));
-            if let Some(error) = status["reload_error"].as_str() { errors.push(format!("Reload: {error}")); }
+            let mut errors = status["mods"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| {
+                    item["error"]
+                        .as_str()
+                        .map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))
+                })
+                .collect::<Vec<_>>();
+            errors.extend(
+                status["rejected"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| {
+                        item["reason"]
+                            .as_str()
+                            .filter(|reason| !reason.starts_with("shadowed_"))
+                            .map(|reason| {
+                                format!(
+                                    "{}: {reason}",
+                                    item["id"]
+                                        .as_str()
+                                        .or(item["path"].as_str())
+                                        .unwrap_or("selection")
+                                )
+                            })
+                    }),
+            );
+            if let Some(error) = status["reload_error"].as_str() {
+                errors.push(format!("Reload: {error}"));
+            }
             if !errors.is_empty() {
                 if terminal.owner.is_none() {
-                    terminal.view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
+                    terminal.view = codex_omd::ModView {
+                        title: Some("Mod recovery".into()),
+                        ..Default::default()
+                    };
                 }
-                terminal.view.panels.insert(0, codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
+                terminal.view.panels.insert(
+                    0,
+                    codex_omd::ModPanel {
+                        title: "Mod errors".into(),
+                        lines: errors
+                            .into_iter()
+                            .take(16)
+                            .map(|error| {
+                                error
+                                    .chars()
+                                    .filter(|c| !c.is_control())
+                                    .take(180)
+                                    .collect()
+                            })
+                            .collect(),
+                    },
+                );
             }
             views.base(&owner, terminal, terminal_input);
             if let Some(error) = status["reload_error"].as_str() {
@@ -202,7 +279,9 @@ impl Mods {
             }
             let _ = owner.persist_runtime_file("mod-status.json", &status);
             fragments
-        }).await.unwrap_or_default();
+        })
+        .await
+        .unwrap_or_default();
         self.cleanup_failed().await;
         fragments
     }

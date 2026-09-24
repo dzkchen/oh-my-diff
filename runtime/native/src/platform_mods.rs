@@ -9,8 +9,6 @@ use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use std::fs::OpenOptions;
-use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
@@ -44,24 +42,6 @@ impl Drop for Cancellation {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Release);
     }
-}
-
-fn persist(root: &std::path::Path, name: &str, value: &Value) -> Result<(), String> {
-    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-    let temp = root.join(format!(".{name}.{}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temp)
-        .map_err(|error| error.to_string())?;
-    use std::io::Write;
-    let result = file.write_all(&bytes).and_then(|()| file.sync_all());
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&temp);
-        return Err(error.to_string());
-    }
-    std::fs::rename(&temp, root.join(name)).map_err(|error| error.to_string())
 }
 
 pub(super) fn install(registry: &mut ExtensionRegistryBuilder<Config>) -> Result<(), String> {
@@ -113,33 +93,18 @@ impl PlatformMods {
         let epoch = self.epoch;
         let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
         tokio::task::spawn_blocking(move || {
-            let Ok(mut runtime) = runtime.lock() else { return Vec::new(); };
-            let mut fragments = Vec::new();
-            let mut remaining = 6144usize;
-            let assembler = (name == "context").then(|| runtime.replacement_owner("context")).flatten();
-            for (id, result) in runtime.event_guarded(name, payload.clone(), || !cancelled.load(Ordering::Acquire)) {
-                match result {
-                    Ok(value) if name == "context" && assembler.as_ref().is_none_or(|owner| owner == &id) => {
-                        if let Some(content) = value.get("text").and_then(Value::as_str)
-                            && content.len().saturating_add(256) <= remaining {
-                            remaining -= content.len() + 256;
-                            fragments.push(PromptFragment::developer_capability(
-                                format!("User-approved mod {id}. Subordinate to current user/project instructions and native permissions.\n{content}"),
-                                ContentItemKind("oh_my_diff.mod_context".into()),
-                            ));
-                        }
-                    }
-                    Err(error) if remaining >= 1024 => {
-                        remaining -= 1024;
-                        fragments.push(PromptFragment::developer_capability(
-                            format!("Mod {id} failed and is disabled for this runtime: {error}"),
-                            ContentItemKind("oh_my_diff.mod_error".into()),
-                        ));
-                    }
-                    _ => (),
-                }
-            }
-            let terminal = runtime.terminal_view(json!({"event":name}), || !cancelled.load(Ordering::Acquire));
+            let Ok(mut runtime) = runtime.lock() else {
+                return Vec::new();
+            };
+            let fragments = mods::event_fragments(
+                &mut runtime,
+                name,
+                payload,
+                || !cancelled.load(Ordering::Acquire),
+                "native permissions",
+            );
+            let terminal =
+                runtime.terminal_view(json!({"event":name}), || !cancelled.load(Ordering::Acquire));
             let snapshot = codex_omd::ModViewSnapshot {
                 epoch,
                 revision,
@@ -150,12 +115,18 @@ impl PlatformMods {
                 diagnostics: terminal.diagnostics,
                 ..Default::default()
             };
-            if let Ok(value) = serde_json::to_value(snapshot) {
-                let _ = persist(&root, "mod-view.json", &value);
+            if let Ok(bytes) =
+                serde_json::to_value(snapshot).and_then(|value| serde_json::to_vec(&value))
+            {
+                let _ = persist_atomic(&root, "mod-view.json", &bytes);
             }
-            let _ = persist(&root, "mod-status.json", &runtime.status());
+            if let Ok(bytes) = serde_json::to_vec(&runtime.status()) {
+                let _ = persist_atomic(&root, "mod-status.json", &bytes);
+            }
             fragments
-        }).await.unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default()
     }
 }
 

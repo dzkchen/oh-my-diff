@@ -5115,10 +5115,10 @@ index 0000000000000000000000000000000000000000..fdb143635afaa1994f6c12e8615b1a9e
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c999517a00fdb5180d53daa817bbecf173578265
+index 0000000000000000000000000000000000000000..11e36f13150e654a0fe71653f5523de4c75d62c1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,3849 @@
+@@ -0,0 +1,3880 @@
 +mod accounting;
 +mod execution;
 +mod mods;
@@ -6828,6 +6828,37 @@ index 0000000000000000000000000000000000000000..c999517a00fdb5180d53daa817bbecf1
 +    Ok(())
 +}
 +
++fn persist_atomic(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), String> {
++    use std::io::Write;
++    use std::os::unix::fs::OpenOptionsExt;
++
++    if bytes.len() > 8_388_608 {
++        return Err("runtime state exceeds persistence limit".into());
++    }
++    let temporary = directory.join(format!(
++        ".{name}-{}-{}.tmp",
++        std::process::id(),
++        execution::hash(bytes)
++    ));
++    let mut file = std::fs::OpenOptions::new()
++        .create_new(true)
++        .write(true)
++        .mode(0o600)
++        .open(&temporary)
++        .map_err(|error| error.to_string())?;
++    let result = file
++        .write_all(bytes)
++        .and_then(|_| file.sync_all())
++        .and_then(|_| std::fs::rename(&temporary, directory.join(name)));
++    if let Err(error) = result {
++        let _ = std::fs::remove_file(&temporary);
++        return Err(error.to_string());
++    }
++    std::fs::File::open(directory)
++        .and_then(|directory| directory.sync_all())
++        .map_err(|error| error.to_string())
++}
++
 +impl Host {
 +    fn route(&self, lead: LeadName) -> &Route {
 +        self.manifest.leads.get(lead)
@@ -7108,30 +7139,8 @@ index 0000000000000000000000000000000000000000..c999517a00fdb5180d53daa817bbecf1
 +    }
 +
 +    fn persist_runtime_file<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
-+        use std::io::Write;
-+
 +        let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
-+        if bytes.len() > 8_388_608 {
-+            return Err("runtime state exceeds persistence limit".into());
-+        }
-+        let path = self.manifest.evidence.join(name);
-+        let temporary = self.manifest.evidence.join(format!(
-+            ".{name}-{}-{}.tmp",
-+            std::process::id(),
-+            execution::hash(&bytes)
-+        ));
-+        let mut file = std::fs::OpenOptions::new()
-+            .create_new(true)
-+            .write(true)
-+            .open(&temporary)
-+            .map_err(|error| error.to_string())?;
-+        file.write_all(&bytes)
-+            .and_then(|_| file.sync_all())
-+            .map_err(|error| error.to_string())?;
-+        std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
-+        std::fs::File::open(&self.manifest.evidence)
-+            .and_then(|directory| directory.sync_all())
-+            .map_err(|error| error.to_string())
++        persist_atomic(&self.manifest.evidence, name, &bytes)
 +    }
 +
 +    fn persist_effective_settings(&self) -> Result<(), String> {
@@ -8968,12 +8977,34 @@ index 0000000000000000000000000000000000000000..c999517a00fdb5180d53daa817bbecf1
 +        assert!(prompt.contains("Unapproved candidates are excluded"));
 +    }
 +}
++
++#[cfg(test)]
++mod persistence_tests {
++    use super::*;
++    use std::os::unix::fs::PermissionsExt;
++
++    #[test]
++    fn atomic_persistence_replaces_private_file_without_leftovers() {
++        let directory = tempfile::tempdir().unwrap();
++        persist_atomic(directory.path(), "state.json", b"{\"first\":true}").unwrap();
++        persist_atomic(directory.path(), "state.json", b"{\"second\":true}").unwrap();
++        let path = directory.path().join("state.json");
++        assert_eq!(std::fs::read(&path).unwrap(), b"{\"second\":true}");
++        assert_eq!(
++            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
++            0o600
++        );
++        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
++        assert!(persist_atomic(directory.path(), "large.json", &vec![b' '; 8_388_609]).is_err());
++        assert!(!directory.path().join("large.json").exists());
++    }
++}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8fadc95955a0bbc7be1796f94fc2f31423de388a
+index 0000000000000000000000000000000000000000..a0eff8dd87f60a554d3db0386b6aaf2deea1e567
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,559 @@
+@@ -0,0 +1,638 @@
 +mod agents;
 +mod operations;
 +mod policy;
@@ -9030,6 +9061,68 @@ index 0000000000000000000000000000000000000000..8fadc95955a0bbc7be1796f94fc2f314
 +        shown.push_str("...");
 +    }
 +    shown
++}
++
++pub(super) fn event_fragments(
++    runtime: &mut ModHost,
++    event: &str,
++    payload: Value,
++    active: impl Fn() -> bool,
++    authority: &str,
++) -> Vec<PromptFragment> {
++    let mut fragments = Vec::new();
++    let mut remaining_bytes = 6144;
++    let assembler = (event == "context")
++        .then(|| runtime.replacement_owner("context"))
++        .flatten();
++    let mut replaced: Vec<String> = Vec::new();
++    for (id, result) in runtime.event_guarded(event, payload, active) {
++        match result {
++            Ok(value) if event == "context" => {
++                if assembler.as_ref().is_some_and(|owner| *owner != id) {
++                    if value.get("text").is_some() {
++                        replaced.push(id);
++                    }
++                    continue;
++                }
++                if let Some(text) = value.get("text").and_then(Value::as_str) {
++                    if text.len() + 256 > remaining_bytes {
++                        fragments.push(PromptFragment::developer_capability(
++                            "Additional mod context omitted at the host aggregate limit.",
++                            ContentItemKind("oh_my_diff.mod_error".into()),
++                        ));
++                        break;
++                    }
++                    remaining_bytes -= text.len() + 256;
++                    fragments.push(PromptFragment::developer_capability(
++                        format!("User-approved mod {id}. Subordinate to current user/project instructions and {authority}.\n{text}"),
++                        ContentItemKind("oh_my_diff.mod_context".into()),
++                    ));
++                }
++            }
++            Err(error) => {
++                if remaining_bytes < 1024 {
++                    break;
++                }
++                remaining_bytes -= 1024;
++                fragments.push(PromptFragment::developer_capability(
++                    format!("Mod {id} failed and is disabled for this runtime: {error}"),
++                    ContentItemKind("oh_my_diff.mod_error".into()),
++                ));
++            }
++            _ => (),
++        }
++    }
++    if let Some(assembler) = assembler.filter(|_| !replaced.is_empty()) {
++        fragments.push(PromptFragment::developer_capability(
++            format!(
++                "Mod {assembler} assembles mod context; contributions from {} were replaced.",
++                replaced.join(", ")
++            ),
++            ContentItemKind("oh_my_diff.mod_context".into()),
++        ));
++    }
++    fragments
 +}
 +
 +pub(super) fn install(
@@ -9109,65 +9202,80 @@ index 0000000000000000000000000000000000000000..8fadc95955a0bbc7be1796f94fc2f314
 +        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
 +        let _cancellation = Cancellation(cancelled.clone());
 +        let fragments = tokio::task::spawn_blocking(move || {
-+            let Ok(mut runtime) = runtime.lock() else { return Vec::new(); };
++            let Ok(mut runtime) = runtime.lock() else {
++                return Vec::new();
++            };
 +
-+            let mut fragments = Vec::new();
-+            let mut remaining_bytes = 6144;
-+            let assembler = (event == "context").then(|| runtime.replacement_owner("context")).flatten();
-+            let mut replaced: Vec<String> = Vec::new();
-+            for (id, result) in runtime.event_guarded(event, payload, || !cancelled.load(std::sync::atomic::Ordering::Acquire)) {
-+                match result {
-+                    Ok(value) if event == "context" => {
-+                        if assembler.as_ref().is_some_and(|owner| *owner != id) {
-+                            if value.get("text").is_some() {
-+                                replaced.push(id);
-+                            }
-+                            continue;
-+                        }
-+                        if let Some(text) = value.get("text").and_then(Value::as_str) {
-+                            if text.len() + 256 > remaining_bytes {
-+                                fragments.push(PromptFragment::developer_capability(
-+                                    "Additional mod context omitted at the host aggregate limit.",
-+                                    ContentItemKind("oh_my_diff.mod_error".into()),
-+                                ));
-+                                break;
-+                            }
-+                            remaining_bytes -= text.len() + 256;
-+                            fragments.push(PromptFragment::developer_capability(
-+                                format!("User-approved mod {id}. Subordinate to current user/project instructions and native workflow enforcement.\n{text}"),
-+                                ContentItemKind("oh_my_diff.mod_context".into()),
-+                            ));
-+                        }
-+                    }
-+                    Err(error) => {
-+                        if remaining_bytes < 1024 { break; }
-+                        remaining_bytes -= 1024;
-+                        fragments.push(PromptFragment::developer_capability(
-+                        format!("Mod {id} failed and is disabled for this runtime: {error}"),
-+                        ContentItemKind("oh_my_diff.mod_error".into()),
-+                    )); },
-+                    _ => (),
-+                }
-+            }
-+            if let Some(assembler) = assembler.filter(|_| !replaced.is_empty()) {
-+                fragments.push(PromptFragment::developer_capability(
-+                    format!("Mod {assembler} assembles mod context; contributions from {} were replaced.", replaced.join(", ")),
-+                    ContentItemKind("oh_my_diff.mod_context".into()),
-+                ));
-+            }
-+            let terminal_input = json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()});
-+            let mut terminal = runtime.terminal_view(terminal_input.clone(), || !cancelled.load(std::sync::atomic::Ordering::Acquire));
++            let mut fragments = event_fragments(
++                &mut runtime,
++                event,
++                payload,
++                || !cancelled.load(std::sync::atomic::Ordering::Acquire),
++                "native workflow enforcement",
++            );
++            let terminal_input =
++                json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()});
++            let mut terminal = runtime.terminal_view(terminal_input.clone(), || {
++                !cancelled.load(std::sync::atomic::Ordering::Acquire)
++            });
 +            let status = runtime.status();
-+            let mut errors = status["mods"].as_array().into_iter().flatten().filter_map(|item| item["error"].as_str().map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))).collect::<Vec<_>>();
-+            errors.extend(status["rejected"].as_array().into_iter().flatten()
-+                .filter_map(|item| item["reason"].as_str().filter(|reason| !reason.starts_with("shadowed_"))
-+                    .map(|reason| format!("{}: {reason}", item["id"].as_str().or(item["path"].as_str()).unwrap_or("selection")))));
-+            if let Some(error) = status["reload_error"].as_str() { errors.push(format!("Reload: {error}")); }
++            let mut errors = status["mods"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .filter_map(|item| {
++                    item["error"]
++                        .as_str()
++                        .map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))
++                })
++                .collect::<Vec<_>>();
++            errors.extend(
++                status["rejected"]
++                    .as_array()
++                    .into_iter()
++                    .flatten()
++                    .filter_map(|item| {
++                        item["reason"]
++                            .as_str()
++                            .filter(|reason| !reason.starts_with("shadowed_"))
++                            .map(|reason| {
++                                format!(
++                                    "{}: {reason}",
++                                    item["id"]
++                                        .as_str()
++                                        .or(item["path"].as_str())
++                                        .unwrap_or("selection")
++                                )
++                            })
++                    }),
++            );
++            if let Some(error) = status["reload_error"].as_str() {
++                errors.push(format!("Reload: {error}"));
++            }
 +            if !errors.is_empty() {
 +                if terminal.owner.is_none() {
-+                    terminal.view = codex_omd::ModView { title: Some("Mod recovery".into()), ..Default::default() };
++                    terminal.view = codex_omd::ModView {
++                        title: Some("Mod recovery".into()),
++                        ..Default::default()
++                    };
 +                }
-+                terminal.view.panels.insert(0, codex_omd::ModPanel { title: "Mod errors".into(), lines: errors.into_iter().take(16).map(|error| error.chars().filter(|c| !c.is_control()).take(180).collect()).collect() });
++                terminal.view.panels.insert(
++                    0,
++                    codex_omd::ModPanel {
++                        title: "Mod errors".into(),
++                        lines: errors
++                            .into_iter()
++                            .take(16)
++                            .map(|error| {
++                                error
++                                    .chars()
++                                    .filter(|c| !c.is_control())
++                                    .take(180)
++                                    .collect()
++                            })
++                            .collect(),
++                    },
++                );
 +            }
 +            views.base(&owner, terminal, terminal_input);
 +            if let Some(error) = status["reload_error"].as_str() {
@@ -9178,7 +9286,9 @@ index 0000000000000000000000000000000000000000..8fadc95955a0bbc7be1796f94fc2f314
 +            }
 +            let _ = owner.persist_runtime_file("mod-status.json", &status);
 +            fragments
-+        }).await.unwrap_or_default();
++        })
++        .await
++        .unwrap_or_default();
 +        self.cleanup_failed().await;
 +        fragments
 +    }
@@ -10039,13 +10149,23 @@ index 0000000000000000000000000000000000000000..b6cd44e3828d542288a4fa5720b43107
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3fda1ce4922f52e863a91c772fac539c72e0797c
+index 0000000000000000000000000000000000000000..80d669c2fd5c5196375da59464989903700f4f0b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,154 @@
 +use super::*;
 +use codex_omd::ModHostCall;
 +use std::path::Path;
++
++fn protected_resource(host: &Host, path: Option<&str>) -> bool {
++    path.is_none_or(|path| {
++        host.manifest
++            .mod_secret_refs
++            .values()
++            .chain(host.manifest.mods.iter())
++            .any(|protected| Path::new(path).starts_with(protected))
++    })
++}
 +
 +fn recovery_selection(host: &Host, id: &str, value: Value) -> Result<PolicySelection, String> {
 +    let value = value
@@ -10088,9 +10208,7 @@ index 0000000000000000000000000000000000000000..3fda1ce4922f52e863a91c772fac539c
 +            let mut denied = false;
 +            if let Some(resources) = catalog["resources"].as_array_mut() {
 +                resources.retain(|resource| {
-+                    let protected = resource["path"].as_str().is_none_or(|path| {
-+                        host.manifest.mod_secret_refs.values().chain(host.manifest.mods.iter()).any(|protected| Path::new(path).starts_with(protected))
-+                    });
++                    let protected = protected_resource(host, resource["path"].as_str());
 +                    denied |= protected;
 +                    !protected
 +                });
@@ -10108,10 +10226,7 @@ index 0000000000000000000000000000000000000000..3fda1ce4922f52e863a91c772fac539c
 +                return Err("invalid_pi_expand_arguments".into());
 +            }
 +            let expanded = codex_omd::ModStore::expand_pi_prompt(root, &host.manifest.repository, name, arguments).map_err(|e| e.to_string())?;
-+            let protected = expanded["path"].as_str().is_none_or(|path| {
-+                host.manifest.mod_secret_refs.values().chain(host.manifest.mods.iter()).any(|protected| Path::new(path).starts_with(protected))
-+            });
-+            if protected {
++            if protected_resource(host, expanded["path"].as_str()) {
 +                return Err("pi_protected_resource".into());
 +            }
 +            Ok(expanded)
@@ -10538,10 +10653,10 @@ index 0000000000000000000000000000000000000000..3cd8a84815e12d1f1301027d9499229f
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e9da378cf8473d927664b348548bd9c9daaf5028
+index 0000000000000000000000000000000000000000..66e74d008ee851922b8d8079d524afc451d5c9e8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,379 @@
+@@ -0,0 +1,401 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -10644,7 +10759,7 @@ index 0000000000000000000000000000000000000000..e9da378cf8473d927664b348548bd9c9
 +
 +    #[expect(
 +        clippy::await_holding_invalid_type,
-+        reason = "Keep service startup and readiness atomic with cleanup ownership"
++        reason = "Keep service registration atomic with cleanup ownership"
 +    )]
 +    pub(super) async fn call(
 +        &self,
@@ -10671,7 +10786,9 @@ index 0000000000000000000000000000000000000000..e9da378cf8473d927664b348548bd9c9
 +            {
 +                return Err("unknown_or_foreign_sidecar".into());
 +            }
-+            if let Some(service) = records.remove(&selection.id) {
++            let service = records.remove(&selection.id);
++            drop(records);
++            if let Some(service) = service {
 +                service.stop().await;
 +            }
 +            return Ok(json!({"stopped":true}));
@@ -10870,17 +10987,26 @@ index 0000000000000000000000000000000000000000..e9da378cf8473d927664b348548bd9c9
 +            Service {
 +                mod_id: mod_id.into(),
 +                generation,
-+                route: grant.route,
++                // A provider becomes routable only after its readiness handshake succeeds.
++                route: None,
 +                job: Some(job),
 +                task: host.task.clone(),
-+                worker,
++                worker: worker.clone(),
 +            },
 +        );
-+        if let Some(port) = port {
++        // Every mod shares these records, so wait for readiness without holding the lock.
++        drop(records);
++        if let (Some(port), Some(route)) = (port, grant.route) {
 +            let ready = tokio::time::timeout(Duration::from_secs(3), async {
 +                loop {
 +                    host.task.check_active().map_err(|e| e.to_string())?;
-+                    if records[&grant.id].finished() {
++                    if self
++                        .records
++                        .lock()
++                        .await
++                        .get(&grant.id)
++                        .is_none_or(|s| s.worker != worker || s.finished())
++                    {
 +                        return Err("provider_sidecar_stopped".to_string());
 +                    }
 +                    if let Ok(mut stream) =
@@ -10909,11 +11035,22 @@ index 0000000000000000000000000000000000000000..e9da378cf8473d927664b348548bd9c9
 +                }
 +            })
 +            .await;
-+            if !matches!(ready, Ok(Ok(()))) {
-+                if let Some(service) = records.remove(&grant.id) {
-+                    service.stop().await;
++            let mut records = self.records.lock().await;
++            match records.get_mut(&grant.id) {
++                Some(service) if service.worker == worker && matches!(ready, Ok(Ok(()))) => {
++                    service.route = Some(route);
 +                }
-+                return Err("provider_readiness_failed".into());
++                current => {
++                    let stale = current
++                        .is_some_and(|s| s.worker == worker)
++                        .then(|| records.remove(&grant.id))
++                        .flatten();
++                    drop(records);
++                    if let Some(service) = stale {
++                        service.stop().await;
++                    }
++                    return Err("provider_readiness_failed".into());
++                }
 +            }
 +        }
 +        Ok(
@@ -11304,10 +11441,10 @@ index 0000000000000000000000000000000000000000..bdda5170b7a5da93cc360e891b88dc37
 +}
 diff --git a/codex-rs/ext/omd/src/platform_mods.rs b/codex-rs/ext/omd/src/platform_mods.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0836803da318ffee0ec302c20daf7723f3c6c946
+index 0000000000000000000000000000000000000000..7ca3dd1fe2ad11a0029bfad9c6139bf17b39ba7b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/platform_mods.rs
-@@ -0,0 +1,476 @@
+@@ -0,0 +1,447 @@
 +use super::*;
 +use codex_omd::ModHost;
 +use codex_omd::ModInputDecision;
@@ -11319,8 +11456,6 @@ index 0000000000000000000000000000000000000000..0836803da318ffee0ec302c20daf7723
 +use codex_protocol::permissions::FileSystemSandboxEntry;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_utils_absolute_path::AbsolutePathBuf;
-+use std::fs::OpenOptions;
-+use std::os::unix::fs::OpenOptionsExt;
 +use std::sync::Mutex;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::AtomicU64;
@@ -11354,24 +11489,6 @@ index 0000000000000000000000000000000000000000..0836803da318ffee0ec302c20daf7723
 +    fn drop(&mut self) {
 +        self.0.store(true, Ordering::Release);
 +    }
-+}
-+
-+fn persist(root: &std::path::Path, name: &str, value: &Value) -> Result<(), String> {
-+    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-+    let temp = root.join(format!(".{name}.{}.tmp", std::process::id()));
-+    let mut file = OpenOptions::new()
-+        .write(true)
-+        .create_new(true)
-+        .mode(0o600)
-+        .open(&temp)
-+        .map_err(|error| error.to_string())?;
-+    use std::io::Write;
-+    let result = file.write_all(&bytes).and_then(|()| file.sync_all());
-+    if let Err(error) = result {
-+        let _ = std::fs::remove_file(&temp);
-+        return Err(error.to_string());
-+    }
-+    std::fs::rename(&temp, root.join(name)).map_err(|error| error.to_string())
 +}
 +
 +pub(super) fn install(registry: &mut ExtensionRegistryBuilder<Config>) -> Result<(), String> {
@@ -11423,33 +11540,18 @@ index 0000000000000000000000000000000000000000..0836803da318ffee0ec302c20daf7723
 +        let epoch = self.epoch;
 +        let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
 +        tokio::task::spawn_blocking(move || {
-+            let Ok(mut runtime) = runtime.lock() else { return Vec::new(); };
-+            let mut fragments = Vec::new();
-+            let mut remaining = 6144usize;
-+            let assembler = (name == "context").then(|| runtime.replacement_owner("context")).flatten();
-+            for (id, result) in runtime.event_guarded(name, payload.clone(), || !cancelled.load(Ordering::Acquire)) {
-+                match result {
-+                    Ok(value) if name == "context" && assembler.as_ref().is_none_or(|owner| owner == &id) => {
-+                        if let Some(content) = value.get("text").and_then(Value::as_str)
-+                            && content.len().saturating_add(256) <= remaining {
-+                            remaining -= content.len() + 256;
-+                            fragments.push(PromptFragment::developer_capability(
-+                                format!("User-approved mod {id}. Subordinate to current user/project instructions and native permissions.\n{content}"),
-+                                ContentItemKind("oh_my_diff.mod_context".into()),
-+                            ));
-+                        }
-+                    }
-+                    Err(error) if remaining >= 1024 => {
-+                        remaining -= 1024;
-+                        fragments.push(PromptFragment::developer_capability(
-+                            format!("Mod {id} failed and is disabled for this runtime: {error}"),
-+                            ContentItemKind("oh_my_diff.mod_error".into()),
-+                        ));
-+                    }
-+                    _ => (),
-+                }
-+            }
-+            let terminal = runtime.terminal_view(json!({"event":name}), || !cancelled.load(Ordering::Acquire));
++            let Ok(mut runtime) = runtime.lock() else {
++                return Vec::new();
++            };
++            let fragments = mods::event_fragments(
++                &mut runtime,
++                name,
++                payload,
++                || !cancelled.load(Ordering::Acquire),
++                "native permissions",
++            );
++            let terminal =
++                runtime.terminal_view(json!({"event":name}), || !cancelled.load(Ordering::Acquire));
 +            let snapshot = codex_omd::ModViewSnapshot {
 +                epoch,
 +                revision,
@@ -11460,12 +11562,18 @@ index 0000000000000000000000000000000000000000..0836803da318ffee0ec302c20daf7723
 +                diagnostics: terminal.diagnostics,
 +                ..Default::default()
 +            };
-+            if let Ok(value) = serde_json::to_value(snapshot) {
-+                let _ = persist(&root, "mod-view.json", &value);
++            if let Ok(bytes) =
++                serde_json::to_value(snapshot).and_then(|value| serde_json::to_vec(&value))
++            {
++                let _ = persist_atomic(&root, "mod-view.json", &bytes);
 +            }
-+            let _ = persist(&root, "mod-status.json", &runtime.status());
++            if let Ok(bytes) = serde_json::to_vec(&runtime.status()) {
++                let _ = persist_atomic(&root, "mod-status.json", &bytes);
++            }
 +            fragments
-+        }).await.unwrap_or_default()
++        })
++        .await
++        .unwrap_or_default()
 +    }
 +}
 +

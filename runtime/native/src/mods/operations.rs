@@ -2,6 +2,16 @@ use super::*;
 use codex_omd::ModHostCall;
 use std::path::Path;
 
+fn protected_resource(host: &Host, path: Option<&str>) -> bool {
+    path.is_none_or(|path| {
+        host.manifest
+            .mod_secret_refs
+            .values()
+            .chain(host.manifest.mods.iter())
+            .any(|protected| Path::new(path).starts_with(protected))
+    })
+}
+
 fn recovery_selection(host: &Host, id: &str, value: Value) -> Result<PolicySelection, String> {
     let value = value
         .as_str()
@@ -43,9 +53,7 @@ pub(super) async fn dispatch(
             let mut denied = false;
             if let Some(resources) = catalog["resources"].as_array_mut() {
                 resources.retain(|resource| {
-                    let protected = resource["path"].as_str().is_none_or(|path| {
-                        host.manifest.mod_secret_refs.values().chain(host.manifest.mods.iter()).any(|protected| Path::new(path).starts_with(protected))
-                    });
+                    let protected = protected_resource(host, resource["path"].as_str());
                     denied |= protected;
                     !protected
                 });
@@ -63,10 +71,7 @@ pub(super) async fn dispatch(
                 return Err("invalid_pi_expand_arguments".into());
             }
             let expanded = codex_omd::ModStore::expand_pi_prompt(root, &host.manifest.repository, name, arguments).map_err(|e| e.to_string())?;
-            let protected = expanded["path"].as_str().is_none_or(|path| {
-                host.manifest.mod_secret_refs.values().chain(host.manifest.mods.iter()).any(|protected| Path::new(path).starts_with(protected))
-            });
-            if protected {
+            if protected_resource(host, expanded["path"].as_str()) {
                 return Err("pi_protected_resource".into());
             }
             Ok(expanded)

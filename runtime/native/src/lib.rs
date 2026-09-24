@@ -1707,6 +1707,37 @@ pub fn install(
     Ok(())
 }
 
+fn persist_atomic(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    if bytes.len() > 8_388_608 {
+        return Err("runtime state exceeds persistence limit".into());
+    }
+    let temporary = directory.join(format!(
+        ".{name}-{}-{}.tmp",
+        std::process::id(),
+        execution::hash(bytes)
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&temporary)
+        .map_err(|error| error.to_string())?;
+    let result = file
+        .write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .and_then(|_| std::fs::rename(&temporary, directory.join(name)));
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    std::fs::File::open(directory)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| error.to_string())
+}
+
 impl Host {
     fn route(&self, lead: LeadName) -> &Route {
         self.manifest.leads.get(lead)
@@ -1987,30 +2018,8 @@ impl Host {
     }
 
     fn persist_runtime_file<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
-        use std::io::Write;
-
         let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
-        if bytes.len() > 8_388_608 {
-            return Err("runtime state exceeds persistence limit".into());
-        }
-        let path = self.manifest.evidence.join(name);
-        let temporary = self.manifest.evidence.join(format!(
-            ".{name}-{}-{}.tmp",
-            std::process::id(),
-            execution::hash(&bytes)
-        ));
-        let mut file = std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|error| error.to_string())?;
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|error| error.to_string())?;
-        std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
-        std::fs::File::open(&self.manifest.evidence)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| error.to_string())
+        persist_atomic(&self.manifest.evidence, name, &bytes)
     }
 
     fn persist_effective_settings(&self) -> Result<(), String> {
@@ -3845,5 +3854,27 @@ mod knowledge_tests {
         assert!(prompt.contains("no retained task evidence"));
         assert!(prompt.contains("generation 3"));
         assert!(prompt.contains("Unapproved candidates are excluded"));
+    }
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn atomic_persistence_replaces_private_file_without_leftovers() {
+        let directory = tempfile::tempdir().unwrap();
+        persist_atomic(directory.path(), "state.json", b"{\"first\":true}").unwrap();
+        persist_atomic(directory.path(), "state.json", b"{\"second\":true}").unwrap();
+        let path = directory.path().join("state.json");
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"second\":true}");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert!(persist_atomic(directory.path(), "large.json", &vec![b' '; 8_388_609]).is_err());
+        assert!(!directory.path().join("large.json").exists());
     }
 }
