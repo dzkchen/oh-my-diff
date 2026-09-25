@@ -59,9 +59,9 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 Codex with `OMD_MODE=platform`. User-selected, trusted mods can run without the
 controlled OMD task policy. For `--profile full`, use the same command with
 `--omd-graph`, `--omd-health`, and `--omd-lsp` pointing to matching patched
-executables. Full installs the three current first-party candidate mods. Only
-`omd_workspace` is enabled in a fresh Full store. Coordination and recovery are
-installed but disabled. Six curated plugin source packages are available in
+executables. Full installs four current first-party candidate mods. Only
+`omd_workspace` is enabled in a fresh Full store. Claude, coordination, and
+recovery are installed but disabled. Six curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
 started. Full includes inert `omd-graph`, `omd-health`, and `omd-lsp` launchers
 for the matching opt-in plugins. The deferred code-execution plugin, browser,
@@ -100,6 +100,31 @@ receipt because the verifier could not inspect host-owned evidence. The local
 candidate now grants only the read-only completion verifier that evidence
 access, but this repair has not had a paid provider recheck. Controlled mode
 remains a development candidate.
+
+The Full profile includes an inactive `omd_claude_cli` mod. To use the official
+Claude CLI's logged-in `claude.ai` subscription for one controlled task, enable
+the mod and launch through its package command:
+
+```sh
+/path/to/omd-bin/omd-package mod enable omd_claude_cli
+/path/to/omd-bin/omd-package claude --repository /absolute/repository \
+  --model claude-sonnet-5 --max-requests 2 --prompt 'Your task'
+```
+
+The `--model` choice also accepts `claude-haiku-4-5-20251001`. The optional
+`--max-requests` lowers the task limit from eight to one through eight. The mod requires
+official Claude CLI `2.1.281` with a first-party Pro or Max login and Node
+`24.18.0`. The command rejects inherited API-key and cloud overrides; it has
+no API-key fallback. The mod package owns the model catalog, task setup,
+request translation, and CLI transport in `index.ts`, `setup.mjs`, and
+`transport.mjs`. Its signed assets are checked by the installed mod manager.
+The command explicitly selects OMD's solo-evidence workflow with self-review
+and self-verification; it does not claim independent review.
+The native host retains route admission, process authority, host tool execution,
+approvals, task limits, and usage accounting. Local task evidence is written
+under the installation prefix's `tasks` directory. Move or retain that evidence
+before uninstalling; uninstall refuses to remove an installation containing
+task files. Modding platform only includes no Claude route or assets.
 
 For a user mod in the platform profile, inspect its `mod.json` and source,
 then use the installed `artifacts/omd-mod` binary to inspect, trust its exact

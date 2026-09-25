@@ -1,0 +1,154 @@
+{
+  "models": [
+    {
+      "slug": "claude-sonnet-5",
+      "prefer_websockets": false,
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "input_modalities": [
+        "text"
+      ],
+      "supports_image_detail_original": false,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "tool_mode": null,
+      "multi_agent_version": null,
+      "use_responses_lite": false,
+      "include_skills_usage_instructions": false,
+      "include_apps_usage_instructions": false,
+      "include_plugin_usage_instructions": false,
+      "node_repl_auto_review_required": false,
+      "node_repl_disabled": true,
+      "auto_review_model_override": null,
+      "model_specialty": null,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "auto_compact_token_limit": null,
+      "comp_hash": "2911",
+      "default_reasoning_summary": "none",
+      "display_name": "Claude Sonnet 5",
+      "description": "Official Claude CLI subscription route through the opt-in OMD mod.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "low"
+        },
+        {
+          "effort": "medium",
+          "description": "medium"
+        },
+        {
+          "effort": "high",
+          "description": "high"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.156.1",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "priority": 90,
+      "model_messages": {
+        "instructions_template": "You are Oh My Diff, a coding agent using the selected Claude model. Work in the user workspace, follow repository instructions, ask before irreversible actions, and report changes and checks plainly.",
+        "instructions_variables": null,
+        "approvals": null,
+        "collaboration_modes": null,
+        "auto_review": null,
+        "multi_agent": null,
+        "permissions": null,
+        "token_budget": null,
+        "guardian_v2": null
+      },
+      "experimental_supported_tools": [],
+      "available_in_plans": [],
+      "supports_search_tool": false,
+      "default_service_tier": null,
+      "service_tiers": [],
+      "additional_speed_tiers": [],
+      "supports_reasoning_summary_parameter": false,
+      "supports_reasoning_summaries": false
+    },
+    {
+      "slug": "claude-haiku-4-5-20251001",
+      "prefer_websockets": false,
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "input_modalities": [
+        "text"
+      ],
+      "supports_image_detail_original": false,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "tool_mode": null,
+      "multi_agent_version": null,
+      "use_responses_lite": false,
+      "include_skills_usage_instructions": false,
+      "include_apps_usage_instructions": false,
+      "include_plugin_usage_instructions": false,
+      "node_repl_auto_review_required": false,
+      "node_repl_disabled": true,
+      "auto_review_model_override": null,
+      "model_specialty": null,
+      "context_window": 200000,
+      "max_context_window": 200000,
+      "auto_compact_token_limit": null,
+      "comp_hash": "2911",
+      "default_reasoning_summary": "none",
+      "display_name": "Claude Haiku 4.5",
+      "description": "Official Claude CLI subscription route through the opt-in OMD mod.",
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "low"
+        },
+        {
+          "effort": "medium",
+          "description": "medium"
+        },
+        {
+          "effort": "high",
+          "description": "high"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.156.1",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "priority": 90,
+      "model_messages": {
+        "instructions_template": "You are Oh My Diff, a coding agent using the selected Claude model. Work in the user workspace, follow repository instructions, ask before irreversible actions, and report changes and checks plainly.",
+        "instructions_variables": null,
+        "approvals": null,
+        "collaboration_modes": null,
+        "auto_review": null,
+        "multi_agent": null,
+        "permissions": null,
+        "token_budget": null,
+        "guardian_v2": null
+      },
+      "experimental_supported_tools": [],
+      "available_in_plans": [],
+      "supports_search_tool": false,
+      "default_service_tier": null,
+      "service_tiers": [],
+      "additional_speed_tiers": [],
+      "supports_reasoning_summary_parameter": false,
+      "supports_reasoning_summaries": false
+    }
+  ]
+}

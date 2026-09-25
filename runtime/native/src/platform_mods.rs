@@ -102,6 +102,11 @@ impl PlatformMods {
                 payload,
                 || !cancelled.load(Ordering::Acquire),
                 "native permissions",
+                |_, _| {
+                    Err(std::io::Error::other(
+                        "host_operation_unavailable: requires a native task",
+                    ))
+                },
             );
             let terminal =
                 runtime.terminal_view(json!({"event":name}), || !cancelled.load(Ordering::Acquire));

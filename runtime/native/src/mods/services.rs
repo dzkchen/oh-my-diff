@@ -1,4 +1,10 @@
 use super::*;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::models::PermissionProfileSnapshot;
+use codex_protocol::permissions::FileSystemAccessMode;
+use codex_protocol::permissions::FileSystemPath;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+use std::path::Path;
 use std::time::Duration;
 
 #[derive(Clone, Deserialize)]
@@ -18,6 +24,16 @@ pub(crate) struct Grant {
     network: bool,
     #[serde(default)]
     read_paths: Vec<PathBuf>,
+}
+
+impl Grant {
+    pub(crate) fn covers(&self, candidate: &Route) -> bool {
+        self.route.as_ref().is_some_and(|route| {
+            route.provider == candidate.provider
+                && route.model == candidate.model
+                && route.responses_url == candidate.responses_url
+        })
+    }
 }
 
 #[derive(Default)]
@@ -196,19 +212,50 @@ impl Services {
             .map_err(|e| e.to_string())?;
         reads.push(supervisor.clone());
         reads.extend(grant.read_paths.iter().cloned());
-        let mut config = execution::isolated(
-            &parent,
-            &host.manifest.repository,
-            &reads,
-            &execution::protected_paths(&host.manifest),
-            false,
-        )?;
+        let mut denied = execution::protected_paths(&host.manifest)
+            .into_iter()
+            .filter(|path| Some(path) != host.manifest.mods.as_ref())
+            .collect::<Vec<_>>();
+        let mut parent = (*parent).clone();
+        let inherited = parent.permissions.effective_permission_profile();
+        let source = host
+            .manifest
+            .mods
+            .as_ref()
+            .map(|store| store.join("sources").join(mod_id));
+        for entry in inherited.file_system_sandbox_policy().entries {
+            if entry.access != FileSystemAccessMode::Deny {
+                continue;
+            }
+            let FileSystemPath::Path { path } = entry.path else {
+                return Err("service_parent_denial_unsupported".into());
+            };
+            let path = path.to_path_buf();
+            if path == Path::new("/")
+                || host.manifest.mods.as_ref() == Some(&path)
+                || (source.as_ref() == Some(&path) && grant.read_paths.contains(&path))
+            {
+                continue;
+            }
+            if !denied.contains(&path) {
+                denied.push(path);
+            }
+        }
+        let scope = PermissionProfile::from_runtime_permissions(
+            &FileSystemSandboxPolicy::unrestricted(),
+            inherited.network_sandbox_policy(),
+        );
+        parent
+            .permissions
+            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(scope))
+            .map_err(|e| e.to_string())?;
+        let mut config =
+            execution::isolated(&parent, &host.manifest.repository, &reads, &denied, false)?;
         if grant.network {
-            let parent_profile = parent.permissions.effective_permission_profile();
             let service_profile = config.permissions.effective_permission_profile();
             let profile = codex_protocol::models::PermissionProfile::from_runtime_permissions(
                 &service_profile.file_system_sandbox_policy(),
-                parent_profile.network_sandbox_policy(),
+                codex_protocol::permissions::NetworkSandboxPolicy::Enabled,
             );
             config
                 .permissions
@@ -258,7 +305,7 @@ impl Services {
                 .insert(environment.clone(), value.trim_end().to_string());
         }
         if let Some(route) = &grant.route {
-            if !["gpt-5.6-sol", "gpt-6-astra"].contains(&route.model.as_str()) {
+            if route.model.is_empty() || route.model.len() > 128 {
                 return Err("unsupported_adapter_model".into());
             }
             if !config.model_providers.contains_key(&route.provider)

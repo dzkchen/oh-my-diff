@@ -250,6 +250,10 @@ pub(super) fn isolated(
         "/bin",
         "/usr/sbin",
         "/sbin",
+        "/System",
+        "/usr/lib",
+        "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
+        "/System/Volumes/Preboot/Cryptexes/OS/usr/lib",
         "/Library/Developer/CommandLineTools/usr",
     ]
     .into_iter()

@@ -1360,8 +1360,23 @@ pub fn install(
         &manifest.repository,
         manifest.bridge.as_ref(),
     )?;
-    if manifest.leads.sol.model != "gpt-5.6-sol"
-        || manifest.leads.astra.model != "gpt-6-astra"
+    let external = |route: &Route| {
+        let url = route.responses_url.parse::<http::Uri>().ok();
+        route.provider != "openai"
+            && route.provider != "meta"
+            && url.is_some_and(|url| {
+                url.scheme_str() == Some("http")
+                    && url.host() == Some("127.0.0.1")
+                    && url.port_u16().is_some()
+                    && url.path_and_query().map(|path| path.as_str()) == Some("/v1/responses")
+            })
+            && manifest
+                .mod_services
+                .iter()
+                .any(|grant| grant.covers(route))
+    };
+    if (manifest.leads.sol.model != "gpt-5.6-sol" && !external(&manifest.leads.sol))
+        || (manifest.leads.astra.model != "gpt-6-astra" && !external(&manifest.leads.astra))
         || manifest.worker.model != "muse-spark-1.3-contributor"
         || manifest.check_command.is_empty()
         || manifest.snapshot_bytes == 0
@@ -1556,6 +1571,12 @@ pub fn install(
         )
         .map_err(|e| e.to_string())?,
     );
+    for route in [&manifest.leads.sol, &manifest.leads.astra] {
+        if external(route) {
+            task.authorize_external_route(&route.provider, &route.model)
+                .map_err(|error| error.to_string())?;
+        }
+    }
     codex_api::request_observer::install_response_observer(accounts.clone())
         .map_err(str::to_owned)?;
     let requirements = resolution.effective.contract.requirements;
@@ -1922,7 +1943,16 @@ impl Host {
                         provider: route.provider.clone(),
                         reasoning: reasoning(route)?,
                         url: route.responses_url.clone(),
-                        accounting_provider: "openai".into(),
+                        accounting_provider: if self
+                            .manifest
+                            .mod_services
+                            .iter()
+                            .any(|grant| grant.covers(route))
+                        {
+                            route.provider.clone()
+                        } else {
+                            "openai".into()
+                        },
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?,
@@ -1931,6 +1961,13 @@ impl Host {
                 model: route.model.clone(),
                 provider: if route.model == "muse-spark-1.3-contributor" {
                     "meta"
+                } else if self
+                    .manifest
+                    .mod_services
+                    .iter()
+                    .any(|grant| grant.covers(route))
+                {
+                    route.provider.as_str()
                 } else {
                     "openai"
                 }
@@ -1939,6 +1976,13 @@ impl Host {
                 url: route.responses_url.clone(),
                 accounting_provider: if route.model == "muse-spark-1.3-contributor" {
                     "meta"
+                } else if self
+                    .manifest
+                    .mod_services
+                    .iter()
+                    .any(|grant| grant.covers(route))
+                {
+                    route.provider.as_str()
                 } else {
                     "openai"
                 }
@@ -1951,6 +1995,13 @@ impl Host {
             model: route.model.clone(),
             provider: if route.model == "muse-spark-1.3-contributor" {
                 "meta"
+            } else if self
+                .manifest
+                .mod_services
+                .iter()
+                .any(|grant| grant.covers(route))
+            {
+                route.provider.as_str()
             } else {
                 "openai"
             }

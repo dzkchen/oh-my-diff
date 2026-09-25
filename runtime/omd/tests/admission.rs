@@ -26,6 +26,32 @@ fn limits() -> Limits {
     }
 }
 
+#[test]
+fn granted_subscription_route_records_usage_without_a_settled_cash_charge() {
+    let directory = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), directory.path().join("task")).unwrap();
+    assert!(
+        task.admit_with_billing("lead", "vendor", "model-a", 20, true)
+            .is_err()
+    );
+    assert!(task.authorize_external_route("openai", "model-a").is_err());
+    task.authorize_external_route("vendor", "model-a").unwrap();
+    assert!(
+        task.admit_with_billing("lead", "vendor", "model-b", 20, true)
+            .is_err()
+    );
+    let admitted = task
+        .admit_with_billing("lead", "vendor", "model-a", 20, true)
+        .unwrap();
+    task.dispatch(&admitted, || Ok(())).unwrap();
+    task.settle(&admitted, json!({"input_tokens": 5, "output_tokens": 2}), 7)
+        .unwrap();
+    let capture = task.cost_capture().unwrap();
+    assert_eq!(capture.settled_task_charge_microusd, 0);
+    assert_eq!(capture.subscription_list_equivalent_microusd, 7);
+    assert_eq!(capture.raw_usage_attempts, 1);
+}
+
 fn worker() -> WorkerLimits {
     WorkerLimits {
         requests: 2,

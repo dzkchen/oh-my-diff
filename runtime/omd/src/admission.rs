@@ -55,6 +55,12 @@ pub struct Attempt {
     pub failure_reason: Option<String>,
     pub raw_usage: Option<Value>,
     pub settled_microusd: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub external_subscription: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -62,6 +68,8 @@ pub struct TaskCostCapture {
     pub schema: u32,
     pub attempts: Vec<Attempt>,
     pub settled_task_charge_microusd: u64,
+    #[serde(default)]
+    pub subscription_list_equivalent_microusd: u64,
     pub retained_exposure_upper_bound_microusd: u64,
     pub raw_usage_attempts: u32,
     pub uncertain_requests: Vec<u32>,
@@ -195,6 +203,7 @@ pub struct Task {
     deadline_unix_millis: u128,
     evidence: PathBuf,
     state: Mutex<State>,
+    external_routes: Mutex<BTreeSet<(String, String)>>,
 }
 
 fn denied(message: &str) -> io::Error {
@@ -284,6 +293,7 @@ impl Task {
                 checkpoint: None,
                 calls: BTreeMap::new(),
             }),
+            external_routes: Mutex::new(BTreeSet::new()),
         };
         let mut state = task
             .state
@@ -740,6 +750,7 @@ impl Task {
             deadline_unix_millis,
             evidence,
             state: Mutex::new(state),
+            external_routes: Mutex::new(BTreeSet::new()),
         };
         task.rewrite_compact_checkpoint()?;
         let uncertain = task.uncertain_requests()?;
@@ -1424,12 +1435,43 @@ impl Task {
         Ok(())
     }
 
+    pub fn authorize_external_route(&self, provider: &str, model: &str) -> io::Result<()> {
+        if provider.is_empty()
+            || provider.len() > 64
+            || !provider
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            || model.is_empty()
+            || model.len() > 128
+            || provider == "openai"
+            || provider == "meta"
+        {
+            return Err(denied("invalid external provider route"));
+        }
+        self.external_routes
+            .lock()
+            .map_err(|_| denied("external route lock poisoned"))?
+            .insert((provider.to_owned(), model.to_owned()));
+        Ok(())
+    }
+
     pub fn admit(
         &self,
         owner: &str,
         provider: &str,
         model: &str,
         exposure_microusd: u64,
+    ) -> io::Result<Admission> {
+        self.admit_with_billing(owner, provider, model, exposure_microusd, false)
+    }
+
+    pub fn admit_with_billing(
+        &self,
+        owner: &str,
+        provider: &str,
+        model: &str,
+        exposure_microusd: u64,
+        external_subscription: bool,
     ) -> io::Result<Admission> {
         let mut state = self
             .state
@@ -1443,12 +1485,25 @@ impl Task {
             ("meta", "muse-spark-1.3-contributor") => {
                 state.contributor_authorized && owner != "lead"
             }
-            _ => false,
+            _ => self
+                .external_routes
+                .lock()
+                .map_err(|_| denied("external route lock poisoned"))?
+                .contains(&(provider.to_owned(), model.to_owned())),
         };
         if !allowed {
             return Err(denied(
                 "provider/model or Contributor data authorization denied",
             ));
+        }
+        if external_subscription
+            && !self
+                .external_routes
+                .lock()
+                .map_err(|_| denied("external route lock poisoned"))?
+                .contains(&(provider.to_owned(), model.to_owned()))
+        {
+            return Err(denied("external subscription requires a granted route"));
         }
         let next_exposure = state
             .exposure
@@ -1483,6 +1538,7 @@ impl Task {
             failure_reason: None,
             raw_usage: None,
             settled_microusd: None,
+            external_subscription,
         };
         self.record(
             &mut state,
@@ -2037,6 +2093,12 @@ impl Task {
         let attempts = state.attempts.values().cloned().collect::<Vec<_>>();
         let settled_task_charge_microusd = attempts
             .iter()
+            .filter(|attempt| !attempt.external_subscription)
+            .filter_map(|attempt| attempt.settled_microusd)
+            .sum();
+        let subscription_list_equivalent_microusd = attempts
+            .iter()
+            .filter(|attempt| attempt.external_subscription)
             .filter_map(|attempt| attempt.settled_microusd)
             .sum();
         let retained_exposure_upper_bound_microusd = attempts
@@ -2062,6 +2124,7 @@ impl Task {
             schema: 1,
             attempts,
             settled_task_charge_microusd,
+            subscription_list_equivalent_microusd,
             retained_exposure_upper_bound_microusd,
             raw_usage_attempts,
             uncertain_requests,

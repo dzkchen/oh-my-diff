@@ -21,11 +21,15 @@ pub const REVOCATION_FILE: &str = "contributor-revoked.json";
 pub struct Rates {
     pub input_microusd_per_million: u64,
     pub cached_microusd_per_million: u64,
+    #[serde(default)]
+    pub cache_write_microusd_per_million: Option<u64>,
     pub output_microusd_per_million: u64,
     pub reservation_microusd: u64,
     pub max_output_tokens: u64,
     pub input_token_ceiling: u64,
     pub included_subscription: bool,
+    #[serde(default)]
+    pub external_subscription: bool,
 }
 
 #[derive(Clone)]
@@ -302,32 +306,96 @@ impl ResponseObserver for Accounts {
         {
             return Err(denied("unbounded remote context or unpriced service tier"));
         }
-        let mut nodes = vec![&value];
+        let charged_tool = |value: &Value| {
+            matches!(
+                value.get("type").and_then(Value::as_str),
+                Some(
+                    "web_search"
+                        | "web_search_preview"
+                        | "file_search"
+                        | "computer"
+                        | "computer_use_preview"
+                        | "code_interpreter"
+                        | "image_generation"
+                        | "mcp"
+                )
+            )
+        };
+        let declarations = value
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .chain(
+                value
+                    .get("input")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|item| {
+                        item.get("type").and_then(Value::as_str) == Some("additional_tools")
+                    })
+                    .flat_map(|item| {
+                        item.get("tools")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                    })
+                    .flat_map(|group| {
+                        group
+                            .get("tools")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                    }),
+            );
+        if declarations.into_iter().any(charged_tool) {
+            return Err(denied("unbounded charged tool declaration"));
+        }
+        let mut nodes = value
+            .as_object()
+            .into_iter()
+            .flat_map(|object| object.iter())
+            .filter(|(key, _)| *key != "tools" && *key != "input")
+            .map(|(_, item)| item)
+            .collect::<Vec<_>>();
+        nodes.extend(
+            value
+                .get("input")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|item| {
+                    item.get("type").and_then(Value::as_str) != Some("additional_tools")
+                }),
+        );
         let mut reasoning = 0u64;
         while let Some(node) = nodes.pop() {
             match node {
                 Value::Object(object) => {
-                    if ["image_url", "file_id", "file_data", "audio"]
+                    if let Some(field) = ["image_url", "file_id", "file_data", "audio"]
                         .iter()
-                        .any(|k| object.contains_key(*k))
-                        || matches!(
-                            object.get("type").and_then(Value::as_str),
-                            Some(
-                                "web_search"
-                                    | "web_search_preview"
-                                    | "file_search"
-                                    | "computer"
-                                    | "computer_use_preview"
-                                    | "code_interpreter"
-                                    | "image_generation"
-                                    | "mcp"
-                                    | "input_image"
-                                    | "input_file"
-                                    | "input_audio"
-                            )
-                        )
+                        .find(|field| object.contains_key(**field))
                     {
-                        return Err(denied("unbounded nontext input or charged tool"));
+                        return Err(denied(format!("unbounded nontext input field: {field}")));
+                    }
+                    if let Some(
+                        kind @ ("web_search"
+                        | "web_search_preview"
+                        | "file_search"
+                        | "computer"
+                        | "computer_use_preview"
+                        | "code_interpreter"
+                        | "image_generation"
+                        | "mcp"
+                        | "input_image"
+                        | "input_file"
+                        | "input_audio"),
+                    ) = object.get("type").and_then(Value::as_str)
+                    {
+                        return Err(denied(format!(
+                            "unbounded charged tool or input type: {kind}"
+                        )));
                     }
                     if object.get("type").is_some_and(|v| v == "reasoning") {
                         reasoning += 1;
@@ -365,11 +433,12 @@ impl ResponseObserver for Accounts {
         }
         let admission = account
             .task
-            .admit(
+            .admit_with_billing(
                 &account.owner,
                 &account.provider,
                 &account.model,
                 account.rates.reservation_microusd,
+                account.rates.external_subscription,
             )
             .map_err(denied)?;
         request.headers.insert(
@@ -457,6 +526,10 @@ impl Attempt {
                     let cached = usage
                         .pointer("/input_tokens_details/cached_tokens")
                         .and_then(Value::as_u64);
+                    let cache_write = usage
+                        .pointer("/input_tokens_details/cache_write_tokens")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
                     let output = usage.get("output_tokens").and_then(Value::as_u64);
                     if let (Some(input), Some(cached), Some(output)) = (input, cached, output) {
                         if !rates.included_subscription
@@ -467,15 +540,24 @@ impl Attempt {
                             self.account.task.stop().map_err(denied)?;
                             return Err(denied("provider usage exceeded admitted token ceilings"));
                         }
-                        if cached > input {
-                            return Err(denied("cached input exceeds total input"));
+                        if cached > input || cache_write > input - cached {
+                            return Err(denied("cache input exceeds total input"));
                         }
                         let amount = if rates.included_subscription {
                             0
                         } else {
                             let numerator = [
-                                (input - cached, rates.input_microusd_per_million),
+                                (
+                                    input - cached - cache_write,
+                                    rates.input_microusd_per_million,
+                                ),
                                 (cached, rates.cached_microusd_per_million),
+                                (
+                                    cache_write,
+                                    rates
+                                        .cache_write_microusd_per_million
+                                        .unwrap_or(rates.input_microusd_per_million),
+                                ),
                                 (output, rates.output_microusd_per_million),
                             ]
                             .into_iter()

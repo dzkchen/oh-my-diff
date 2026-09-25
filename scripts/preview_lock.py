@@ -24,9 +24,10 @@ def package_digest(base):
     if declared.get("lifecycle"):
         raise ValueError(f"{base.name} declares lifecycle scripts; install it through the package manager")
     entrypoint = declared.get("entrypoint", "index.ts")
-    return hashlib.sha256(
-        manifest + b"\x00" + entrypoint.encode() + b"\x00" + (base / entrypoint).read_bytes()
-    ).hexdigest()
+    payload = manifest + b"\x00" + entrypoint.encode() + b"\x00" + (base / entrypoint).read_bytes()
+    for name in declared.get('assets', []):
+        payload += b"\x00" + name.encode() + b"\x00" + (base / name).read_bytes()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def build():

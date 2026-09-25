@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "id": "omd_claude_cli",
+  "version": "0.1.0-preview.1",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party"
+  },
+  "capabilities": [
+    "commands",
+    "lifecycle",
+    "middleware",
+    "providers",
+    "task"
+  ],
+  "assets": ["models.json", "setup.mjs", "transport.mjs"],
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "model": {
+        "type": "string",
+        "enum": ["claude-sonnet-5", "claude-haiku-4-5-20251001"],
+        "default": "claude-sonnet-5"
+      }
+    },
+    "additionalProperties": false
+  }
+}

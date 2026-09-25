@@ -15,17 +15,21 @@ from datetime import datetime, timezone
 
 try:
     from scripts import private_lean_v1 as private
+    from scripts import claude_lock
 except ModuleNotFoundError:
     import private_lean_v1 as private
+    import claude_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
 DEFAULT_ACTIVE = ("omd_workspace",)
-PACKAGES = ("omd_coordination", "omd_recovery", "omd_workspace")
+PACKAGES = ("omd_claude_cli", "omd_coordination", "omd_recovery", "omd_workspace")
 TOOL_NAMES = ("omd-graph", "omd-health", "omd-lsp")
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/private_lean_v1.py",
+                    "scripts/claude_lock.py",
+                    "runtime/claude-full.lock.json",
                     "scripts/preview_lock.py", "scripts/browser_bundle.py",
                     "runtime/preview-v1.lock.json", "LEAN_PROFILES.md")
 
@@ -35,6 +39,13 @@ def invoke(*arguments):
     if result.returncode:
         raise ValueError((result.stderr or result.stdout or "command failed").strip())
     return json.loads(result.stdout)
+
+
+def package_sources(preview):
+    claude = claude_lock.load()
+    if claude.get('mod_api') != preview['mod_api']:
+        raise ValueError('Claude mod API disagrees with pinned preview')
+    return {**preview['packages'], claude['package']['id']: claude['package']}
 
 
 def paths(prefix, bin_dir, store):
@@ -198,13 +209,13 @@ def status(prefix, bin_dir):
         raise ValueError("mod store API no longer matches candidate")
     selection = invoke(manager, "selection-status", store)
     active = {item["id"]: item for item in host["mods"]}
-    locked = private.preview_lock()["packages"]
+    locked = package_sources(private.preview_lock())
     packages = []
     for identifier in PACKAGES:
         source = store / "sources" / identifier
         current = source.is_dir() and all(
             (source / name).is_file() and private.digest(source / name) == locked[identifier]["files"][name]
-            for name in private.PACKAGE_FILES
+            for name in locked[identifier]["files"]
         )
         packages.append({"id": identifier, "installed": source.is_dir(), "pinned_source_current": current,
                          "enabled_in_store": identifier in active,
@@ -285,8 +296,11 @@ def install(args):
     if private.digest(ROOT / patch_lock["patch"]["path"]) != patch_lock["patch"]["sha256"]:
         raise ValueError("active runtime patch hash mismatch")
     locked = private.preview_sources(private.preview_lock())
+    if claude_lock.load() != claude_lock.build():
+        raise ValueError('Claude Full lock differs from pinned sources')
+    packages = package_sources(locked)
     candidate = candidate_lock(upstream_lock, patch_lock, locked)
-    if tuple(sorted(locked["packages"])) != PACKAGES:
+    if tuple(sorted(packages)) != PACKAGES:
         raise ValueError("first-party candidate inventory changed")
     binary = identity(args.binary)
     if binary["sha256"] != candidate["artifacts"]["codex"]["sha256"]:
@@ -312,10 +326,10 @@ def install(args):
     if args.attach_store and args.profile == "full":
         for identifier in PACKAGES:
             target = store / "sources" / identifier
-            package = locked["packages"][identifier]
+            package = packages[identifier]
             if not target.is_dir() or any(
                 not (target / name).is_file() or private.digest(target / name) != package["files"][name]
-                for name in private.PACKAGE_FILES
+                for name in package["files"]
             ):
                 raise ValueError(f"existing store lacks the exact Full OMD candidate package: {identifier}")
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -367,11 +381,11 @@ def install(args):
             sources = store / "sources"
             sources.mkdir(exist_ok=True)
             for identifier in PACKAGES:
-                package = locked["packages"][identifier]
+                package = packages[identifier]
                 target = sources / identifier
                 if not args.attach_store:
                     target.mkdir()
-                    for name in private.PACKAGE_FILES:
+                    for name in package["files"]:
                         shutil.copy2(ROOT / package["source"] / name, target / name)
                 inspected = invoke(installed_manager, "inspect", target)
                 if inspected["sha256"] != package["package_sha256"]:
@@ -504,6 +518,12 @@ def main():
     mod_parser = commands.add_parser("mod")
     mod_parser.add_argument("action", choices=("enable", "disable"))
     mod_parser.add_argument("identifier", choices=PACKAGES)
+    claude_parser = commands.add_parser('claude')
+    claude_parser.add_argument('--repository', type=Path, default=Path.cwd())
+    claude_parser.add_argument('--model')
+    claude_parser.add_argument('--claude', type=Path)
+    claude_parser.add_argument('--max-requests', type=int, default=8)
+    claude_parser.add_argument('--prompt', required=True)
     commands.add_parser("uninstall")
     args = parser.parse_args()
     prefix, bin_dir = private.validate_locations(args.prefix, args.bin_dir)
@@ -515,6 +535,17 @@ def main():
         result = activate(prefix, bin_dir, args.selection, args.manifest)
     elif args.command == "mod":
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
+    elif args.command == 'claude':
+        record = load(prefix)
+        check(record, bin_dir)
+        if record['profile'] != 'full':
+            raise ValueError('the Claude mod is available only in Full OMD')
+        node = record['author']['node']
+        setup = Path(record['store']) / 'sources' / 'omd_claude_cli' / 'setup.mjs'
+        os.execv(node, [node, str(setup), str(prefix / 'install.json'),
+                        str(args.repository), args.model or '',
+                        str(args.claude) if args.claude else '',
+                        str(args.max_requests), args.prompt])
     else:
         result = uninstall(prefix, bin_dir)
     print(json.dumps(result, indent=2, sort_keys=True))

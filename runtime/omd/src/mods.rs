@@ -533,6 +533,8 @@ pub struct ModPackage {
     #[serde(default)]
     pub services: ModServiceManifest,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_schema: Option<Value>,
@@ -718,6 +720,16 @@ impl ModPackage {
         {
             return Err(failure("invalid_lifecycle_scripts"));
         }
+        let assets: BTreeSet<_> = self.assets.iter().collect();
+        if self.assets.len() > 8
+            || assets.len() != self.assets.len()
+            || self
+                .assets
+                .iter()
+                .any(|asset| !asset_file(asset) || asset == &self.entrypoint)
+        {
+            return Err(failure("invalid_package_assets"));
+        }
         let environments: BTreeSet<_> = self.environment.iter().collect();
         if environments.len() != self.environment.len()
             || self
@@ -789,6 +801,23 @@ fn package_file(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value.ends_with(".ts")
+        && !value.starts_with('/')
+        && value.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
+}
+
+fn asset_file(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && [".ts", ".mjs", ".json"]
+            .iter()
+            .any(|ending| value.ends_with(ending))
         && !value.starts_with('/')
         && value.split('/').all(|part| {
             !part.is_empty()
@@ -2138,6 +2167,30 @@ impl ModHost {
             .map(|id| {
                 let result =
                     self.invoke_guarded(&id, self.generation, event, "", payload.clone(), &active);
+                (id, result)
+            })
+            .collect()
+    }
+
+    pub fn event_guarded_with(
+        &mut self,
+        event: &str,
+        payload: Value,
+        active: impl Fn() -> bool,
+        mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+    ) -> Vec<(String, Result<Value>)> {
+        let ids = self.event_ids(event);
+        ids.into_iter()
+            .map(|id| {
+                let result = self.invoke_with(
+                    &id,
+                    self.generation,
+                    event,
+                    "",
+                    payload.clone(),
+                    &active,
+                    |call| host(&id, call),
+                );
                 (id, result)
             })
             .collect()

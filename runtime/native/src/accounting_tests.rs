@@ -44,11 +44,13 @@ fn setup() -> (
             rates: Rates {
                 input_microusd_per_million: 100000,
                 cached_microusd_per_million: 2000,
+                cache_write_microusd_per_million: None,
                 output_microusd_per_million: 200000,
                 reservation_microusd: 10000,
                 max_output_tokens: 128,
                 input_token_ceiling: 5000,
                 included_subscription: false,
+                external_subscription: false,
             },
             authorization_sha256: crate::execution::hash(&std::fs::read(&authorization).unwrap()),
             authorization,
@@ -86,6 +88,29 @@ fn setup() -> (
     )
     .unwrap();
     (root, accounts, task, request, body)
+}
+
+#[test]
+fn host_tool_schema_fields_are_not_mistaken_for_nontext_input() {
+    let (_root, accounts, _task, mut request, _body) = setup();
+    let base = json!({"model":"muse-spark-1.3-contributor","reasoning":{"effort":"high"},
+        "stream":true,"max_output_tokens":128,
+        "tools":[{"type":"function","name":"inspect","parameters":{"type":"object",
+            "properties":{"image_url":{"type":"string"}}}}],
+        "input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"inspect"}]},
+            {"type":"additional_tools","tools":[{"name":"functions","tools":[{
+                "type":"function","name":"view_image","parameters":{"type":"object",
+                    "properties":{"image_url":{"type":"string"}}}}]}]}]});
+    let body = EncodedJsonBody::encode(&base).unwrap();
+    assert!(accounts.before_send(&mut request, Some(&body)).is_ok());
+    let mut charged = base.clone();
+    charged["tools"] = json!([{"type":"web_search"}]);
+    let charged = EncodedJsonBody::encode(&charged).unwrap();
+    assert!(accounts.before_send(&mut request, Some(&charged)).is_err());
+    let mut image = base;
+    image["input"][0]["content"] = json!([{"type":"input_image","image_url":"fixture"}]);
+    let image = EncodedJsonBody::encode(&image).unwrap();
+    assert!(accounts.before_send(&mut request, Some(&image)).is_err());
 }
 
 fn install_middleware(accounts: &Accounts, root: &Path, source: &str) {

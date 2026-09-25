@@ -7,6 +7,7 @@ mod view;
 
 use super::*;
 use codex_extension_api::CompactionLifecycleInput;
+use codex_extension_api::ThreadReadyInput;
 use codex_extension_api::ThreadResumeInput;
 use codex_extension_api::TurnLifecycleContributor;
 use codex_extension_api::TurnStartInput;
@@ -62,6 +63,7 @@ pub(super) fn event_fragments(
     payload: Value,
     active: impl Fn() -> bool,
     authority: &str,
+    host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
 ) -> Vec<PromptFragment> {
     let mut fragments = Vec::new();
     let mut remaining_bytes = 6144;
@@ -69,7 +71,7 @@ pub(super) fn event_fragments(
         .then(|| runtime.replacement_owner("context"))
         .flatten();
     let mut replaced: Vec<String> = Vec::new();
-    for (id, result) in runtime.event_guarded(event, payload, active) {
+    for (id, result) in runtime.event_guarded_with(event, payload, active, host) {
         match result {
             Ok(value) if event == "context" => {
                 if assembler.as_ref().is_some_and(|owner| *owner != id) {
@@ -189,12 +191,28 @@ impl Mods {
     }
 
     async fn event(&self, event: &'static str, payload: Value) -> Vec<PromptFragment> {
+        self.event_with_lead(event, payload, None).await
+    }
+
+    async fn event_with_lead(
+        &self,
+        event: &'static str,
+        payload: Value,
+        lead: Option<Arc<Lead>>,
+    ) -> Vec<PromptFragment> {
         let runtime = self.runtime.clone();
         let owner = self.owner.clone();
         let views = self.views.clone();
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let _cancellation = Cancellation(cancelled.clone());
-        let fragments = tokio::task::spawn_blocking(move || {
+        let (requests, mut receiver) = tokio::sync::mpsc::channel::<(
+            String,
+            codex_omd::ModHostCall,
+            std::sync::mpsc::SyncSender<std::io::Result<Value>>,
+        )>(1);
+        let generation = self.runtime.lock().ok().map(|runtime| runtime.generation());
+        let allow_provider = matches!(event, "start" | "resume" | "turn_start");
+        let job = tokio::task::spawn_blocking(move || {
             let Ok(mut runtime) = runtime.lock() else {
                 return Vec::new();
             };
@@ -205,6 +223,25 @@ impl Mods {
                 payload,
                 || !cancelled.load(std::sync::atomic::Ordering::Acquire),
                 "native workflow enforcement",
+                |id, request| {
+                    if !allow_provider
+                        || !matches!(
+                            request.operation.as_str(),
+                            "providers.register" | "routes.list"
+                        )
+                    {
+                        return Err(std::io::Error::other(
+                            "lifecycle_host_operation_unavailable",
+                        ));
+                    }
+                    let (sender, reply) = std::sync::mpsc::sync_channel(1);
+                    requests
+                        .blocking_send((id.to_owned(), request, sender))
+                        .map_err(|_| std::io::Error::other("native_host_stopped"))?;
+                    reply
+                        .recv()
+                        .map_err(|_| std::io::Error::other("native_host_stopped"))?
+                },
             );
             let terminal_input =
                 json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()});
@@ -279,9 +316,24 @@ impl Mods {
             }
             let _ = owner.persist_runtime_file("mod-status.json", &status);
             fragments
-        })
-        .await
-        .unwrap_or_default();
+        });
+        while let Some((id, request, reply)) = receiver.recv().await {
+            let value = match (&lead, generation) {
+                (Some(lead), _) if request.operation == "routes.list" => Ok(json!([LeadName::Sol, LeadName::Astra].map(|name| {
+                    let route = lead.host.route(name);
+                    json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
+                }))),
+                (None, _) if request.operation == "routes.list" => Ok(json!([])),
+                (Some(lead), Some(generation)) => self
+                    .services
+                    .call(lead, &id, generation, request)
+                    .await
+                    .map_err(std::io::Error::other),
+                _ => Err(std::io::Error::other("lifecycle_host_operation_unavailable")),
+            };
+            let _ = reply.send(value);
+        }
+        let fragments = job.await.unwrap_or_default();
         self.cleanup_failed().await;
         fragments
     }
@@ -452,8 +504,12 @@ impl TurnLifecycleContributor for Mods {
                     error: None,
                 });
             }
-            self.event("turn_start", json!({"turn_id":input.turn_id}))
-                .await;
+            self.event_with_lead(
+                "turn_start",
+                json!({"turn_id":input.turn_id}),
+                input.thread_store.get::<Lead>(),
+            )
+            .await;
         })
     }
 }
@@ -489,7 +545,17 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     json!({"phase":"start","thread_id":thread_id(input.thread_store)}),
                 )
                 .await;
-                self.event("start", Value::Null).await;
+            }
+        })
+    }
+    fn on_thread_ready<'a>(
+        &'a self,
+        input: ThreadReadyInput<'a, Config>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            if lead_thread(input.thread_store) {
+                self.event_with_lead("start", Value::Null, input.thread_store.get::<Lead>())
+                    .await;
             }
         })
     }
@@ -501,7 +567,8 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     json!({"phase":"resume","thread_id":thread_id(input.thread_store)}),
                 )
                 .await;
-                self.event("resume", Value::Null).await;
+                self.event_with_lead("resume", Value::Null, input.thread_store.get::<Lead>())
+                    .await;
             }
         })
     }

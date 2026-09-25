@@ -52,6 +52,12 @@ pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
         bytes.push(0);
         bytes.extend_from_slice(&read(&path.join(script), 65_536)?);
     }
+    for asset in &package.assets {
+        bytes.push(0);
+        bytes.extend_from_slice(asset.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(&read(&path.join(asset), 65_536)?);
+    }
     Ok((
         package,
         String::from_utf8(source).map_err(failure)?,

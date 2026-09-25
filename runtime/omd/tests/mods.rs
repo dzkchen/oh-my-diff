@@ -383,6 +383,41 @@ fn native_host_bridge_preserves_once_only_effects_and_rust_capability_checks() {
 }
 
 #[test]
+fn lifecycle_route_registration_resumes_across_two_host_calls() {
+    let source = "export default api => api.on('turn_start', () => { const routes = api.host.call('routes.list', null); if (routes.length) api.host.call('providers.register', {id:'fixture'}); })";
+    let (temp, _, _) = fixture(source, &["lifecycle", "task", "providers"]);
+    let mut runtime = host(&temp);
+    let mut operations = Vec::new();
+    let results = runtime.event_guarded_with(
+        "turn_start",
+        Value::Null,
+        || true,
+        |_, call| {
+            operations.push(call.operation.clone());
+            if call.operation == "routes.list" {
+                Ok(json!([{"provider":"fixture","model":"model"}]))
+            } else {
+                Ok(Value::Null)
+            }
+        },
+    );
+    assert!(results.iter().all(|(_, result)| result.is_ok()));
+    assert_eq!(operations, vec!["routes.list", "providers.register"]);
+    operations.clear();
+    let results = runtime.event_guarded_with(
+        "turn_start",
+        Value::Null,
+        || true,
+        |_, call| {
+            operations.push(call.operation.clone());
+            Ok(json!([]))
+        },
+    );
+    assert!(results.iter().all(|(_, result)| result.is_ok()));
+    assert_eq!(operations, vec!["routes.list"]);
+}
+
+#[test]
 fn migration_is_explicit_bounded_and_preserves_previous_state() {
     let (temp, store, path) = fixture(COUNTER, &["commands", "state"]);
     let mut runtime = host(&temp);
