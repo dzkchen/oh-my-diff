@@ -193,6 +193,12 @@ They are not part of the private preview or a supported release bundle; install
 and enable them only through exact source trust while their task-value and
 overhead gates remain open.
 
+`omd_typed_tasks` is a separately installed, inactive Full OMD candidate. It
+uses the public task tool and host operations to run up to four typed siblings,
+validate each final result and its cited sources before consumption, and
+request host-owned isolated integration for edit workers. Its generic host
+operations are described in [the API reference](REFERENCE.md#typed-worker-and-workspace-operations).
+
 [PREVIEW.md](PREVIEW.md) is the first-use and customization guide;
 `scripts/private_lean_v1.py preview install` provisions them from pinned
 sources into an external store.

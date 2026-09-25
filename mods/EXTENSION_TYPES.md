@@ -20,8 +20,10 @@ contains only the packages labeled `bundled` below.
 
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
+| `omd_claude_cli@0.1.0-preview.1` | `mod` | `mods/first-party/omd_claude_cli` | Translates live admitted model requests through the opt-in official Claude CLI route while the native host retains credentials, permissions, accounting, and cancellation. |
 | `omd_task_tools@0.1.0-candidate.1` | `mod` | `mods/first-party/omd_task_tools` | Selects owned optional tools at the native per-request boundary from the current host checkpoint; a static skill or plugin cannot change that exposure for each task step. |
 | `omd_session_anchor@0.1.0-candidate.1` | `mod` | `mods/first-party/omd_session_anchor` | Replaces the local compaction decision and injects bounded host checkpoint anchors during a live session. |
+| `omd_typed_tasks@0.1.0-preview.1` | `mod` | `mods/first-party/omd_typed_tasks` | Owns the live typed task tool, bounded sibling dispatch and result-schema validation while using generic native worker and isolated integration operations. |
 | `omd_verification_gate@0.1.0-candidate.1` | `mod` | `mods/first-party/omd_verification_gate` | Registers an explicitly selected native workflow contract and asks the host to restrict delegation when an exact candidate enters final verification. |
 
 ## Author examples

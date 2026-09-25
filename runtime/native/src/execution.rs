@@ -2363,7 +2363,7 @@ pub async fn escalate(
     }))
 }
 
-async fn all_paths(host: &Host, config: &Config) -> Result<BTreeSet<String>, String> {
+pub(super) async fn all_paths(host: &Host, config: &Config) -> Result<BTreeSet<String>, String> {
     let output = command(
         host,
         config,
@@ -2397,6 +2397,116 @@ async fn all_paths(host: &Host, config: &Config) -> Result<BTreeSet<String>, Str
         .filter(|p| !p.is_empty() && !p.starts_with(".omd-tmp/"))
         .map(str::to_owned)
         .collect())
+}
+
+pub(super) async fn review_isolated_candidate(
+    lead: &Lead,
+    parent: &Config,
+    candidate: &Snapshot,
+    changed: &BTreeSet<String>,
+    check: &Value,
+    directory: &Path,
+    implementation: &Route,
+) -> Result<Value, String> {
+    let host = &lead.host;
+    let digest = candidate.hash().map_err(error)?;
+    let final_review = host
+        .review
+        .lock()
+        .map_err(|_| "review runtime lock poisoned")?
+        .ledger
+        .snapshot()
+        .policy
+        .final_review;
+    let selected = [LeadName::Sol, LeadName::Astra]
+        .into_iter()
+        .map(|name| (name, host.route(name)))
+        .find(|(_, route)| {
+            route.model != implementation.model || route.provider != implementation.provider
+        })
+        .or_else(|| {
+            (final_review != codex_omd::FinalReview::Separate)
+                .then(|| (LeadName::Sol, host.route(LeadName::Sol)))
+        })
+        .ok_or("separate_reviewer_route_unavailable")?;
+    let reviewer_root = codex_omd::create_worktree(
+        candidate,
+        &directory.join("review"),
+        host.manifest.snapshot_bytes,
+    )
+    .map_err(error)?;
+    let candidate_ref = host.evidence(
+        &format!("mod-review-candidate-{digest}.json"),
+        &serde_json::to_value(candidate).map_err(error)?,
+    )?;
+    let candidate_marker = evidence_marker("mod-review-candidate", &digest, &candidate_ref)?;
+    let check_ref = host.evidence(&format!("mod-check-{digest}.json"), check)?;
+    let check_marker = evidence_marker("mod-candidate-check", &digest, &check_ref)?;
+    let role = format!("mod-reviewer-{}", &digest[..16]);
+    let fields = if host.manifest.communication.structured_worker_reports {
+        "candidate_sha256, findings, resolved_finding_ids, and report"
+    } else {
+        "candidate_sha256, findings, and resolved_finding_ids"
+    };
+    let response = run_child(
+        lead,
+        parent,
+        &reviewer_root,
+        ChildTurn {
+            role: &role,
+            route: selected.1,
+            prompt: format!("Review this isolated exact candidate before integration. Inspect the changed paths, task contract, and relevant negative cases. The configured executable check passed. Candidate SHA256: {digest}. Changed paths: {}. Task contract: {}. Return only JSON with {fields}; findings use short stable key, severity advice/warning/blocking, summary, and repository-relative paths. Use an empty resolved_finding_ids array. Do not edit files.", serde_json::to_string(changed).map_err(error)?, serde_json::to_string(&host.manifest.checkpoint).map_err(error)?),
+            history: InitialHistory::New,
+            writable: false,
+            host_evidence_read: false,
+            output_schema: host.manifest.communication.review_output_schema(),
+            output_instruction: host.manifest.communication.structured_worker_reports.then_some(review_report_prompt()),
+        },
+    ).await?;
+    let review: Review = serde_json::from_str(&response).map_err(error)?;
+    let report_valid = !host.manifest.communication.structured_worker_reports
+        || review.report.as_ref().is_some_and(|report| {
+            report.validate().is_ok() && report.status == WorkerReportStatus::Completed
+        });
+    host.task.consume_worker_result(&role).map_err(error)?;
+    if !report_valid || review.candidate_sha256 != digest || !review.resolved_finding_ids.is_empty()
+    {
+        return Err("isolated_review_did_not_validate_exact_candidate".into());
+    }
+    let cycle = if final_review == codex_omd::FinalReview::Separate {
+        let cycle = host
+            .review
+            .lock()
+            .map_err(|_| "review runtime lock poisoned")?
+            .ledger
+            .submit(codex_omd::ReviewSubmission {
+                cadence: codex_omd::ReviewCadence::Final,
+                candidate: candidate_marker,
+                stable: true,
+                risk: None,
+                reviewer: selected.0.as_str().into(),
+                separate_reviewer: true,
+                checks: vec![check_marker],
+                findings: review_findings(review.findings.clone())?,
+                resolved_finding_ids: Vec::new(),
+            })
+            .map_err(error)?;
+        host.persist_review()?;
+        if !cycle.final_approved {
+            return Err("isolated_review_left_unresolved_findings".into());
+        }
+        Some(cycle)
+    } else {
+        if !review.findings.is_empty() {
+            return Err("isolated_review_left_unresolved_findings".into());
+        }
+        None
+    };
+    let review_ref = host.evidence(
+        &format!("mod-review-{digest}.json"),
+        &json!({"candidate_sha256":digest,"cycle":cycle,"response":review}),
+    )?;
+    Ok(json!({"candidate_sha256":digest,"check":check_ref,"review":review_ref}))
 }
 
 #[cfg(test)]

@@ -1,0 +1,21 @@
+{
+  "mod_api": "0.1.0-experimental.8",
+  "package": {
+    "capabilities": [
+      "agents",
+      "execution",
+      "task",
+      "tools"
+    ],
+    "extension_type": "mod",
+    "files": {
+      "index.ts": "8637458aa929be95ab4fd45d29d2ba8180fa339b718c326297d8617aff10d001",
+      "mod.json": "16087bd5af4c903f3e049751969b058ec7ccab7a65a240f321e8e7dbd278ef9f"
+    },
+    "id": "omd_typed_tasks",
+    "package_sha256": "5c8236f5dd44f1c2c9e01b45f848b52ae6cea94c5c95b23fbcf21b6ab1e9adab",
+    "source": "mods/first-party/omd_typed_tasks",
+    "version": "0.1.0-preview.1"
+  },
+  "schema": 1
+}

@@ -40,8 +40,8 @@ export type LeadRoutingDecision = 'sol' | 'astra' | { route: 'sol' | 'astra'; po
 export type WorkerContextMode = 'focused_brief' | 'shared_task_packet' | 'parent_history';
 export interface WorkerContextInput { available: WorkerContextMode[]; native_fallback: WorkerContextMode; active: WorkerContextMode }
 export interface WorkerContextDecision { mode: WorkerContextMode }
-export interface Agent { handle: string; route: string; permissions: 'read_only' }
-export type AgentResult = { status: 'running' } | { status: 'failed'; error: string } | { status: 'completed'; text: string; consumed: boolean };
+export interface Agent { handle: string; route: string; permissions: 'read_only' | 'isolated_worktree' }
+export type AgentResult = { status: 'running' } | { status: 'failed'; error: string } | { status: 'completed'; text: string; consumed: boolean; evidence: { ref: string; sha256: string } };
 export type Letter = 'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'i'|'j'|'k'|'l'|'m'|'n'|'o'|'p'|'q'|'r'|'s'|'t'|'u'|'v'|'w'|'x'|'y'|'z';
 export type KeyName = 'F2'|'F3'|'F4'|'F5'|'F6'|'F7'|'F8'|'F9'|'F10'|'F11'|'F12' | `Ctrl+${Exclude<Letter, 'c'|'d'|'z'|'h'|'i'|'j'|'m'>}` | `Alt+${Letter}`;
 export type KeyAction = string | { insert: string } | { submit: string } | { command: string; args?: string } | { focus: string } | { copy: string; label: string };
@@ -148,12 +148,13 @@ export interface HostOperations {
   'routes.list': { arguments: null; result: Route[] };
   'checkpoint.read': { arguments: null; result: Json };
   'checkpoint.update': { arguments: CheckpointUpdate; result: Json };
-  'agents.spawn': { arguments: { role: string; route: string; prompt: string }; result: Agent };
+  'agents.spawn': { arguments: { role: string; route: string; prompt: string; workspace?: 'read_only' | 'isolated_worktree' }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
   'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
   'agents.result': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
   'agents.wait': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
   'agents.list': { arguments: null; result: { handle: string; finished: boolean; consumed: boolean }[] };
+  'workspace.integrate': { arguments: { handle: string }; result: { status: 'integrated'; candidate_sha256: string; changed_paths: string[]; evidence: Json } };
   'review.run': { arguments: ReviewRequest; result: Json };
   'review.complete': { arguments: CompletionRequest; result: Json };
   'delegation.contribute': { arguments: ContributionRequest; result: Json };

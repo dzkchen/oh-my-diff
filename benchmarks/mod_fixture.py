@@ -248,6 +248,25 @@ def install_exercise(destination, manifest, node, profile):
 
 
 def install(destination, manifest, node, profile):
+    if profile.startswith("typed-"):
+        source = ROOT / "mods/first-party/omd_typed_tasks"
+        package = destination / "omd_typed_tasks"
+        package.mkdir()
+        declared = (source / "mod.json").read_bytes()
+        body = (source / "index.ts").read_bytes()
+        if profile == "typed-broken":
+            body = body.replace(b"export default function activate(api: ModAPI) {", b"export default function activate(api: ModAPI) {\n  throw new Error('TYPED_BROKEN_SENTINEL');", 1)
+        (package / "mod.json").write_bytes(declared)
+        (package / "index.ts").write_bytes(body)
+        store = destination / "mod-store"
+        store.mkdir()
+        settings = {"max_fan_out": 2, "task_types": {
+            "inspect": {"role": "inspector", "route": "sol", "tools": "read_search", "result_schema": {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"], "additionalProperties": False}},
+            "edit": {"role": "editor", "route": "astra", "tools": "workspace_edit", "result_schema": {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"], "additionalProperties": False}},
+        }}
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": profile != "typed-disabled", "capabilities": json.loads(declared)["capabilities"], "settings": settings}]}))
+        manifest["mods"] = str(store)
+        return
     if profile in ("candidate", "candidate-static", "candidate-ts", "candidate-static-ts"):
         return install_candidates(destination, manifest, node, profile)
     if profile == "candidate-anchor":

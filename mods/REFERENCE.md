@@ -113,6 +113,31 @@ can attach a bounded subordinate fragment for the same task without replacing
 base instructions. In an offline scenario, `{"type":"tool_exposure", "payload":
 {...checkpoint...}}` records the exact names registered for that step.
 
+## Typed worker and workspace operations
+
+`agents.spawn` accepts a host-authorized route and a `workspace` of `read_only`
+or `isolated_worktree`. A writable child receives a captured, isolated worktree
+under the native task scratch area; its parent repository is never its working
+directory. `agents.wait` and `agents.result` return a host-attested thread
+reference and SHA256 of the final text. A mod should validate that text against
+its declared result schema and source-reference rules before calling
+`agents.result` with `consume: true`. The host requires consumption before
+`workspace.integrate` accepts that mod's private handle.
+The typed-task mod reads the native checkpoint before spawning, passes its
+bounded objective and revision into each worker prompt, and reports the
+revision with the validated batch. It never marks acceptance criteria complete
+on behalf of the parent.
+
+`workspace.integrate` captures the worker's changed paths, merges against the
+current parent snapshot, runs the task's configured executable check on an
+isolated candidate, and obtains a candidate review before applying the exact
+checked delta. It refuses conflicting parent edits, a changed candidate, a
+failed check or review, or a changed parent before apply. The native ledger
+owns allowance, permissions, lifecycle, and evidence. A failed apply retains
+diagnostic evidence and may need operator inspection; external concurrent
+writers are not locked. Cancellation, mod disable, and turn end retire owned
+handles and clean their worktrees. Direct mode never loads this mod.
+
 ## Diagnostics and source maps
 
 The engine transforms TypeScript with an inline source map and runs Node with

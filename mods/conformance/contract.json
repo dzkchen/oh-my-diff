@@ -69,17 +69,19 @@
     {
       "id": "coordination.agents",
       "group": "coordination",
-      "decision": "Read-only worker agents: spawn, message, cancel, wait, list, consume",
+      "decision": "Worker agents and isolated integration: spawn, message, cancel, wait, validate, consume, integrate",
       "observe": "`agents.list`, `agents.result`, and the `agent_end` event",
-      "alter": "role, route and prompt of each spawn",
+      "alter": "role, host-authorized route, prompt and read-only or isolated-worktree surface of each spawn; decide when a validated result is consumed and an edit candidate is integrated",
       "replace": null,
       "timing": "inside a native tool callback, within the current task",
-      "ownership": "host: worker threads, the worker ledger, permissions, deadlines and the shared allowance",
-      "limits": "read-only permissions; private handles owned by the spawning mod and generation; recursion, isolation and accounting stay native; handles die with the turn",
+      "ownership": "mod: typed task and result policy; host: worker threads, snapshots, checks, review, conflict-safe integration, permissions, deadlines and the shared allowance",
+      "limits": "private handles owned by the spawning mod and generation; writable workers only receive a native isolated worktree; validation precedes consumption; integration requires a completed consumed worker, exact candidate checks and selected-contract review; recursion, cleanup and accounting stay native; handles die with the turn",
       "native": "native plugins cannot spawn or steer agents; `subagent_start`/`subagent_stop` hooks only observe",
       "covers": {
         "capabilities": [
-          "agents"
+          "agents",
+          "execution",
+          "task"
         ],
         "events": [
           "agent_end"
@@ -91,7 +93,9 @@
           "agents.cancel",
           "agents.result",
           "agents.wait",
-          "agents.list"
+          "agents.list",
+          "checkpoint.read",
+          "workspace.integrate"
         ]
       },
       "evidence": [

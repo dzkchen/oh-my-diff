@@ -1,7 +1,7 @@
 # Extension review register
 
-Review date: September 22, 2026. These are source and functional reviews of
-release candidates on Codex 0.155.1 / OMD 0.1.0. A September 23 local package
+Review date: September 24, 2026. These are source and functional reviews of
+release candidates on Codex 0.155.1 and 0.156.1 / OMD 0.1.0. A September 23 local package
 smoke covered the current Codex 0.156.1 pin, the mod API, and staged plugin
 installation and removal; it did not rerun each task-value gate. These reviews
 do not qualify a public support promise, a Full OMD default, task value over
@@ -13,9 +13,11 @@ retain detailed local evidence but are not required to read this register.
 
 | Candidate | Review basis | Remaining support gate |
 | --- | --- | --- |
+| `omd_claude_cli` | The pinned first-party route has offline and bounded live CLI request evidence in the Phase 11 audit; installed but inactive in Full | Release package and support matrix remain candidate scoped; subscription usage is not an exact billing measure |
 | `omd_coordination` | Public `.7` API implements live route, context and delegation preparation; exact source is in `mods/first-party` | Declare distributable license/provenance; task-matched route value and isolated overhead |
 | `omd_recovery` | Public `.7` API implements bounded recovery choices while native host retains failure and permission authority | Task-matched failure recovery value, repeat-call and overhead checks |
 | `omd_workspace` | Public `.7` terminal API supplies live workspace; measured cold/callback cost is material | Declare distributable license/provenance; terminal responsiveness, accessibility and task benefit |
+| `omd_typed_tasks` | Public `.8` task tool and generic host operations pass offline and synthetic host siblings, edit/review/integration, conflict, failure, resume, and broken/disabled fallback; inactive in Full | Real-model task quality, route compatibility, cost, and broader release support remain unverified |
 | `omd-guidance-hooks` | Local plugin packages three selected skills and controlled hooks with host-gated reactions | Useful report/task result without instruction priority drift or excessive context |
 | `omd-review-policy` | Local plugin packages review skills and a selected every-turn hook; native ledger remains authoritative | Incremental findings beyond native final review at acceptable cost |
 | `omd-application-bridges` | Local plugin exposes prompt-approved managed bridge tools and session hooks | Real application task, exact dependency/teardown and disclosure checks |
@@ -39,6 +41,6 @@ supported release package yet.
 
 The reviewed gap routing is recorded in [the index guide](README.md#workflow-gap-routing).
 Structural editing, debugger inspection, mechanical patch recovery and
-subagent guidance have selected trials but no reviewed installable release
-package. Native/configured Codex remains the current path until a smaller
-extension passes its own task and maintenance gate.
+subagent guidance have selected trials. The typed-task candidate is separately
+installed and locally functional but has not passed the later release support
+gate. Native/configured Codex remains the current path until that gate passes.

@@ -26,6 +26,7 @@ def contract_plan(binary, choice):
 
 
 def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None, mod_profile="counter"):
+    typed_profile = mod_profile.startswith("typed-")
     policy_mod = scenario != "omd-off" and mod_profile != "preview-inactive" and mod_profile.startswith(("preview", "coordination", "recovery", "conformance", "exercise"))
     candidate_profile = mod_profile in ("candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts")
     anchor_profile = mod_profile in ("candidate-anchor", "candidate-anchor-baseline")
@@ -33,7 +34,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     candidate_check = "typescript" if typescript_candidate else "python"
     context_marker = ("Checkpoint " if candidate_profile or anchor_profile else "atlas_policy 2.0.0 (paired) assembled turn" if mod_profile.startswith("exercise")
                       else "Coordination policy (omd_coordination" if policy_mod else "MOD_CONTEXT_SENTINEL")
-    if mod_node is not None and scenario not in ("direct", "omd-off", "platform", "success", "client-loss-resume", "completion", "escalation", "outage-fallback", "outage-drift") and not (anchor_profile and scenario == "checkpoint"):
+    if mod_node is not None and scenario not in ("direct", "omd-off", "platform", "success", "client-loss-resume", "completion", "escalation", "outage-fallback", "outage-drift") and not (anchor_profile and scenario == "checkpoint") and not (typed_profile and scenario == "conflict"):
         raise ValueError("mod fixture requires direct, omd-off, success, or client-loss-resume scenario")
     if scenario == "platform" and (mod_node is None or mod_profile not in ("counter", "platform-inactive", "platform-broken")):
         raise ValueError("platform fixture requires a node runtime and supported fixture mod profile")
@@ -77,9 +78,15 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             if scenario in ("contract-downgrade", "contract-resume") and owner and owner.startswith("contributor-") and not Provider.abrupt_delay_started:
                 Provider.abrupt_delay_started = True
                 time.sleep(30)
-            if scenario == "client-loss-resume" and owner and ((mod_node is None and owner.startswith("contributor-")) or (mod_node is not None and policy_mod and owner.startswith("contributor-")) or (mod_node is not None and owner.startswith("mod-") and "MOD_ADAPTER" in json.dumps(body))) and not Provider.abrupt_delay_started:
+            if scenario == "client-loss-resume" and owner and ((mod_node is None and owner.startswith("contributor-")) or (mod_node is not None and policy_mod and owner.startswith("contributor-")) or (mod_node is not None and owner.startswith("mod-") and (typed_profile or "MOD_ADAPTER" in json.dumps(body)))) and not Provider.abrupt_delay_started:
                 Provider.abrupt_delay_started = True
                 time.sleep(30)
+            if typed_profile and mod_profile == "typed-failed" and owner and owner.startswith("mod-omd_typed_tasks-"):
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":{"message":"synthetic typed worker failure"}}')
+                return
             if scenario in ("outage-fallback", "outage-drift") and owner and owner.startswith("contributor-") and "fallback" not in owner:
                 self.send_response(503)
                 self.send_header("Content-Type", "application/json")
@@ -98,6 +105,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             preview_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_omd_coordination_delegate"]
             conformance_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_conformance_context_note"]
             candidate_check_outputs = [i for i in outputs if calls.get(i.get("call_id")) == f"mod_omd_task_tools_check_{candidate_check}"]
+            typed_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_omd_typed_tasks_run"]
             if mod_profile == "lifecycle" and "MOD_COMPACT_PROMPT_SENTINEL" in json.dumps(inputs[-1:]):
                 Provider.compacted = True
                 self.send_response(200)
@@ -127,7 +135,22 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             spawn_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "spawn_agent"]
             wait_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "wait_agent"]
             text = json.dumps(body.get("input", []))
-            if anchor_profile and owner == "lead" and Provider.anchor_checkpoint_issued and Provider.anchor_status_sent < 2:
+            if typed_profile and owner == "lead" and not search_outputs:
+                item = {"type": "tool_search_call", "id": "typed-search", "call_id": "typed-search", "status": "completed", "execution": "client", "arguments": {"query": "typed subagent tasks run"}}
+            elif typed_profile and owner == "lead" and mod_profile not in ("typed-disabled", "typed-broken") and not typed_outputs:
+                types = ["inspect", "edit"] if mod_profile == "typed-edit" else ["inspect", "inspect"]
+                tasks = [{"id": f"task-{index}", "type": kind, "prompt": "Fix solution.py so add returns the sum." if kind == "edit" else ("Inspect the definition of add in solution.py." if index == 0 else "Inspect callers of add in solution.py.")} for index, kind in enumerate(types)]
+                item = {"type": "function_call", "id": "typed-run", "call_id": "typed-run", "name": "mod_omd_typed_tasks_run", "arguments": json.dumps({"tasks": tasks})}
+            elif typed_profile and owner == "lead" and mod_profile in ("typed-disabled", "typed-broken") and not exec_outputs:
+                item = {"type": "function_call", "id": "typed-direct", "call_id": "typed-direct", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
+            elif typed_profile and owner == "lead":
+                item = {"type": "message", "id": "typed-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Synthetic typed task attempt finished."}]}
+            elif typed_profile and owner and owner.startswith("mod-omd_typed_tasks-") and "editor" in text and not exec_outputs:
+                item = {"type": "function_call", "id": "typed-edit", "call_id": "typed-edit", "namespace": "functions", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
+            elif typed_profile and owner and owner.startswith("mod-omd_typed_tasks-"):
+                answer = "not JSON" if mod_profile == "typed-malformed" else json.dumps({"result": {"answer": "inspected solution.py"}, "sources": [{"ref": "solution.py:1", "why": "inspected source"}]})
+                item = {"type": "message", "id": "typed-worker-answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
+            elif anchor_profile and owner == "lead" and Provider.anchor_checkpoint_issued and Provider.anchor_status_sent < 2:
                 Provider.anchor_status_sent += 1
                 sequence = Provider.anchor_status_sent
                 item = {"type": "function_call", "id": f"anchor-status-{sequence}", "call_id": f"anchor-status-{sequence}", "name": "omd_status", "arguments": "{}"}
@@ -257,7 +280,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "function_call", "id": "edit", "call_id": "edit", "namespace": "functions", "name": "exec_command", "arguments": json.dumps({"cmd": command, "max_output_tokens": 500})}
             elif owner == "contributor-outage-fallback" and not exec_outputs:
                 item = {"type": "function_call", "id": "fallback-edit", "call_id": "fallback-edit", "namespace": "functions", "name": "exec_command", "arguments": json.dumps({"cmd": "printf 'def add(a, b):\\n    return a + b\\n' > solution.py", "max_output_tokens": 500})}
-            elif owner and owner.startswith("reviewer-"):
+            elif owner and owner.startswith(("reviewer-", "mod-reviewer-")):
                 match = re.search(r"Candidate SHA256: ([0-9a-f]{64})", text)
                 if scenario == "index-conflict":
                     (repo / "new-tracked.txt").write_text("concurrent tracked file\n")
@@ -522,6 +545,46 @@ enabled = false
         (destination / "stdout.txt").write_text(process.stdout)
         (destination / "stderr.txt").write_text(process.stderr)
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
+        if typed_profile:
+            assert process.returncode == 0, process.stderr[-4000:]
+            outputs = [item for request in requests for item in request["body"].get("input", []) if item.get("type") == "function_call_output" and item.get("call_id") == "typed-run"]
+            workers = [request for request in requests if (request["native_owner"] or "").startswith("mod-omd_typed_tasks-")]
+            if mod_profile in ("typed-disabled", "typed-broken"):
+                assert not outputs and not workers
+                assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
+                if mod_profile == "typed-broken":
+                    status = json.loads((destination / "evidence/mod-status.json").read_text())
+                    assert any("TYPED_BROKEN_SENTINEL" in item.get("error", "") for item in status["mods"]), status
+            else:
+                assert all("Task checkpoint revision" in json.dumps(request["body"]) and "Fix solution.py so add returns the sum" in json.dumps(request["body"]) for request in workers), workers
+                assert len(outputs) == 1, outputs
+                started = [json.loads(path.read_text())["record"] for path in (destination / "evidence").glob("0*.json")]
+                admitted = [event for event in started if event.get("event") == "worker_started" and event.get("worker", "").startswith("mod-omd_typed_tasks-")]
+                assert len(admitted) >= 2 if scenario == "client-loss-resume" else len(admitted) == 2
+                if mod_profile not in ("typed-malformed", "typed-failed"):
+                    observed = len({request["native_owner"] for request in workers})
+                    assert observed >= 2 if scenario == "client-loss-resume" else observed == 2, workers
+                result = outputs[0]["output"]
+                if mod_profile == "typed-malformed":
+                    assert "malformed_worker_json" in result, result
+                elif mod_profile == "typed-failed":
+                    assert "worker_failed" in result, result
+                elif scenario == "conflict":
+                    assert "parent_changed_before_integration" in result, result
+                    assert (repo / "solution.py").read_text() == "intervening user edit\n"
+                else:
+                    validated = json.loads(result)
+                    assert validated["tasks"] and isinstance(validated["checkpoint_revision"], int), result
+                    if mod_profile == "typed-edit":
+                        assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a + b\n"
+            assert (repo / "unrelated.txt").read_text() == "Uncommitted user work\n"
+            if scenario == "client-loss-resume":
+                assert Provider.abrupt_delay_started
+                assert (repo / "notes.txt").read_text() == "intervening tracked user notes\n"
+            assert not (repo / ".omd").exists(), "owned scratch survived"
+            record = {"status": "pass", "scenario": scenario, "profile": mod_profile, "requests": len(requests), "workers": len({request["native_owner"] for request in workers}), "scope": "synthetic native provider and isolated workspace; no paid model"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
         if scenario == "platform":
             assert process.returncode == 0, process.stderr[-4000:]
             assert len(requests) >= (3 if mod_profile == "counter" else 2), requests
@@ -849,7 +912,7 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
-    parser.add_argument("--mod-profile", choices=("counter", "platform-inactive", "platform-broken", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-inactive", "preview-denied", "preview-broken", "coordination-only", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery-pair", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only", "candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts", "candidate-anchor", "candidate-anchor-baseline"), default="counter")
+    parser.add_argument("--mod-profile", choices=("counter", "platform-inactive", "platform-broken", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-inactive", "preview-denied", "preview-broken", "coordination-only", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery-pair", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only", "candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts", "candidate-anchor", "candidate-anchor-baseline", "typed-read", "typed-edit", "typed-malformed", "typed-failed", "typed-disabled", "typed-broken"), default="counter")
     args = parser.parse_args()
     print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 

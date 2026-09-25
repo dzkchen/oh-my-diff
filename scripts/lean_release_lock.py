@@ -8,9 +8,11 @@ import tarfile
 try:
     from scripts import private_lean_v1 as private
     from scripts import claude_lock
+    from scripts import typed_tasks_lock
 except ModuleNotFoundError:
     import private_lean_v1 as private
     import claude_lock
+    import typed_tasks_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +30,9 @@ SOURCES = (
     "LEAN_PROFILES.md",
     "scripts/claude_lock.py",
     "runtime/claude-full.lock.json",
-) + claude_lock.SOURCES
+    "scripts/typed_tasks_lock.py",
+    "runtime/typed-tasks-full.lock.json",
+) + claude_lock.SOURCES + typed_tasks_lock.SOURCES
 
 
 def selected_plugins(index, package_mode):
@@ -76,8 +80,11 @@ def build(artifact_dir, package_mode=False):
         raise ValueError("active runtime patch hash mismatch")
     preview = private.preview_sources(private.preview_lock())
     claude = claude_lock.load()
+    typed = typed_tasks_lock.load()
     if not package_mode and claude != claude_lock.build():
         raise ValueError("Claude Full lock differs from pinned sources")
+    if not package_mode and typed != typed_tasks_lock.build():
+        raise ValueError("typed task Full lock differs from pinned sources")
     index = json.loads((ROOT / "extensions/index.json").read_text())
     version = upstream["tag"].removeprefix("rust-v")
     if (index["release_pin"]["codex"] != version
@@ -124,7 +131,7 @@ def build(artifact_dir, package_mode=False):
         "profiles": {
             "platform": {"first_party_installed": [], "first_party_default_active": [],
                          "plugin_sources": [], "optional_tool_binaries": []},
-            "full": {"first_party_installed": sorted((*preview["packages"], claude["package"]["id"])),
+            "full": {"first_party_installed": sorted((*preview["packages"], claude["package"]["id"], typed["package"]["id"])),
                      "first_party_default_active": ["omd_workspace"],
                      "plugin_sources": selected,
                      "optional_tool_binaries": ["omd-graph", "omd-health", "omd-lsp"]},

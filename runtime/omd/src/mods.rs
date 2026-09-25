@@ -91,6 +91,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "agents.result",
     "agents.wait",
     "agents.list",
+    "workspace.integrate",
     "review.run",
     "review.complete",
     "delegation.contribute",

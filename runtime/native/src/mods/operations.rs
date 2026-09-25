@@ -40,7 +40,7 @@ pub(super) async fn dispatch(
 ) -> Result<Value, String> {
     let host = &lead.host;
     host.task.check_active().map_err(|e| e.to_string())?;
-    if request.operation.starts_with("agents.") {
+    if request.operation.starts_with("agents.") || request.operation == "workspace.integrate" {
         return agents.call(services, lead, id, generation, request).await;
     }
     if request.operation.starts_with("providers.") || request.operation.starts_with("sidecars.") {

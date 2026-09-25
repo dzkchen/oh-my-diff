@@ -16,20 +16,23 @@ from datetime import datetime, timezone
 try:
     from scripts import private_lean_v1 as private
     from scripts import claude_lock
+    from scripts import typed_tasks_lock
 except ModuleNotFoundError:
     import private_lean_v1 as private
     import claude_lock
+    import typed_tasks_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
 DEFAULT_ACTIVE = ("omd_workspace",)
-PACKAGES = ("omd_claude_cli", "omd_coordination", "omd_recovery", "omd_workspace")
+PACKAGES = ("omd_claude_cli", "omd_coordination", "omd_recovery", "omd_typed_tasks", "omd_workspace")
 TOOL_NAMES = ("omd-graph", "omd-health", "omd-lsp")
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/private_lean_v1.py",
                     "scripts/claude_lock.py",
                     "runtime/claude-full.lock.json",
+                    "scripts/typed_tasks_lock.py", "runtime/typed-tasks-full.lock.json",
                     "scripts/preview_lock.py", "scripts/browser_bundle.py",
                     "runtime/preview-v1.lock.json", "LEAN_PROFILES.md")
 
@@ -43,9 +46,10 @@ def invoke(*arguments):
 
 def package_sources(preview):
     claude = claude_lock.load()
-    if claude.get('mod_api') != preview['mod_api']:
-        raise ValueError('Claude mod API disagrees with pinned preview')
-    return {**preview['packages'], claude['package']['id']: claude['package']}
+    typed = typed_tasks_lock.load()
+    if claude.get('mod_api') != preview['mod_api'] or typed.get('mod_api') != preview['mod_api']:
+        raise ValueError('Full mod API disagrees with pinned preview')
+    return {**preview['packages'], claude['package']['id']: claude['package'], typed['package']['id']: typed['package']}
 
 
 def paths(prefix, bin_dir, store):
@@ -298,6 +302,8 @@ def install(args):
     locked = private.preview_sources(private.preview_lock())
     if claude_lock.load() != claude_lock.build():
         raise ValueError('Claude Full lock differs from pinned sources')
+    if typed_tasks_lock.load() != typed_tasks_lock.build():
+        raise ValueError('typed task Full lock differs from pinned sources')
     packages = package_sources(locked)
     candidate = candidate_lock(upstream_lock, patch_lock, locked)
     if tuple(sorted(packages)) != PACKAGES:

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "omd_typed_tasks",
+  "version": "0.1.0-preview.1",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party"
+  },
+  "capabilities": ["agents", "execution", "task", "tools"],
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "task_types": {
+        "type": "object",
+        "default": {}
+      },
+      "max_fan_out": {
+        "type": "number",
+        "default": 2
+      }
+    },
+    "additionalProperties": false
+  }
+}

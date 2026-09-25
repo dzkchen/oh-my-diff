@@ -27,6 +27,14 @@
       "why_mod": "Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation."
     },
     {
+      "path": "mods/first-party/omd_claude_cli",
+      "id": "omd_claude_cli",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Translates live admitted model requests through the opt-in official Claude CLI route while the native host retains credentials, permissions, accounting, and cancellation."
+    },
+    {
       "path": "mods/first-party/omd_task_tools",
       "id": "omd_task_tools",
       "version": "0.1.0-candidate.1",
@@ -41,6 +49,14 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Replaces the local compaction decision and injects bounded host checkpoint anchors during a live session."
+    },
+    {
+      "path": "mods/first-party/omd_typed_tasks",
+      "id": "omd_typed_tasks",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the live typed task tool, bounded sibling dispatch and result-schema validation while using generic native worker and isolated integration operations."
     },
     {
       "path": "mods/first-party/omd_verification_gate",
