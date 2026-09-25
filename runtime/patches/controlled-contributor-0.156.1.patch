@@ -734,6 +734,48 @@ index fbd1501..9d629a2 100644
  }
  
  #[tokio::test]
+diff --git a/codex-rs/core/src/compact_tests.rs b/codex-rs/core/src/compact_tests.rs
+index 532d80e..6ea4b0b 100644
+--- a/codex-rs/core/src/compact_tests.rs
++++ b/codex-rs/core/src/compact_tests.rs
+@@ -98,6 +98,7 @@ async fn local_compaction_respects_tool_metadata_state(
+         &ToolCallSource::CodeMode {
+             cell_id: cell.as_str().to_string(),
+             runtime_tool_call_id: "nested".to_string(),
++            native_loopback_port: None,
+         },
+         &StepContext::for_test(Arc::clone(&turn)),
+     );
+diff --git a/codex-rs/core/src/config/mod.rs b/codex-rs/core/src/config/mod.rs
+index e71ad88..00628d1 100644
+--- a/codex-rs/core/src/config/mod.rs
++++ b/codex-rs/core/src/config/mod.rs
+@@ -1141,6 +1141,7 @@ pub struct CodeModeConfig {
+     pub direct_only_tool_namespaces: Vec<String>,
+     /// Keep code mode fail-closed when the standalone host is unavailable.
+     pub disable_in_process_fallback: bool,
++    pub omd_kernels: bool,
+ }
+ 
+ impl Default for CodeModeConfig {
+@@ -1151,6 +1152,7 @@ impl Default for CodeModeConfig {
+             excluded_tool_namespaces: Vec::new(),
+             direct_only_tool_namespaces: Vec::new(),
+             disable_in_process_fallback: false,
++            omd_kernels: false,
+         }
+     }
+ }
+@@ -2707,6 +2709,9 @@ fn resolve_code_mode_config(config_toml: &ConfigToml) -> CodeModeConfig {
+         disable_in_process_fallback: host
+             .and_then(|config| config.disable_in_process_fallback)
+             .unwrap_or_default(),
++        omd_kernels: base
++            .and_then(|config| config.omd_kernels)
++            .unwrap_or_default(),
+     }
+ }
+ 
 diff --git a/codex-rs/core/src/exec.rs b/codex-rs/core/src/exec.rs
 index fa458ed..fdce881 100644
 --- a/codex-rs/core/src/exec.rs
@@ -880,6 +922,19 @@ index e3407cd..b429b7c 100644
      additional_contexts: Vec<String>,
  ) {
      let developer_messages = additional_context_messages(additional_contexts);
+diff --git a/codex-rs/core/src/session/handlers.rs b/codex-rs/core/src/session/handlers.rs
+index dcea9a9..b7e133a 100644
+--- a/codex-rs/core/src/session/handlers.rs
++++ b/codex-rs/core/src/session/handlers.rs
+@@ -301,7 +301,7 @@ pub(super) async fn shutdown_session_runtime(sess: &Arc<Session>) {
+         .unified_exec_manager
+         .terminate_all_processes()
+         .await;
+-    if let Err(err) = sess.services.code_mode_service.shutdown().await {
++    if let Err(err) = sess.services.code_mode_service.shutdown(sess).await {
+         warn!("failed to shutdown code mode session: {err}");
+     }
+     sess.stop_mcp_prewarm_worker().await;
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
 index b382878..a3c2836 100644
 --- a/codex-rs/core/src/session/turn_input.rs
@@ -1080,8 +1135,1448 @@ index a0d7a8c..c393f78 100644
          let parent_rollout_thread_trace = self
              .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
              .await;
+diff --git a/codex-rs/core/src/tools/code_mode/delegate.rs b/codex-rs/core/src/tools/code_mode/delegate.rs
+index 9e4429a..21f88bd 100644
+--- a/codex-rs/core/src/tools/code_mode/delegate.rs
++++ b/codex-rs/core/src/tools/code_mode/delegate.rs
+@@ -8,6 +8,7 @@ use codex_code_mode::CellId;
+ use codex_code_mode::CodeModeNestedToolCall;
+ use codex_code_mode::CodeModeSessionDelegate;
+ use codex_code_mode::NotificationFuture;
++use codex_code_mode::ToolDefinition;
+ use codex_code_mode::ToolInvocationFuture;
+ use codex_history::CodexHarnessMetadata;
+ use codex_history::ResponseItemEnvelope;
+@@ -22,6 +23,7 @@ use tokio_util::sync::CancellationToken;
+ use tracing::Instrument;
+ 
+ use super::PUBLIC_TOOL_NAME;
++use super::kernels::KernelManager;
+ use super::submit_nested_tool;
+ use super::telemetry::DispatchInterruption;
+ use super::telemetry::NestedToolDispatchTrace;
+@@ -39,6 +41,7 @@ pub(super) struct CodeModeDispatchBroker {
+     dispatch_rx: async_channel::Receiver<DispatchMessage>,
+     dispatch_gates: Arc<Mutex<HashMap<CellId, CellDispatchGate>>>,
+     executed_tool_calls: ExecutedToolCalls,
++    kernel_manager: Arc<KernelManager>,
+ }
+ 
+ /// Retains the step advertised to one execution, including callbacks after it yields.
+@@ -53,6 +56,7 @@ struct CellDispatchGate {
+     // no origin is attached; Some retains the original item and window across
+     // waits, even if the best-effort item lookup found no ID.
+     originating_call: Option<ToolCallOrigin>,
++    enabled_tools: Vec<ToolDefinition>,
+ }
+ 
+ impl CodeModeDispatchBroker {
+@@ -64,13 +68,24 @@ impl CodeModeDispatchBroker {
+             dispatch_rx,
+             dispatch_gates: Arc::new(Mutex::new(HashMap::new())),
+             executed_tool_calls,
++            kernel_manager: Arc::new(KernelManager::new()),
+         }
+     }
+ 
++    #[cfg(test)]
+     pub(super) fn mark_cell_ready_for_dispatch(
+         &self,
+         cell_id: &CellId,
+         originating_call: Option<ToolCallOrigin>,
++    ) {
++        self.mark_cell_ready_for_dispatch_with_tools(cell_id, originating_call, Vec::new());
++    }
++
++    pub(super) fn mark_cell_ready_for_dispatch_with_tools(
++        &self,
++        cell_id: &CellId,
++        originating_call: Option<ToolCallOrigin>,
++        enabled_tools: Vec<ToolDefinition>,
+     ) {
+         let ready = {
+             let mut dispatch_gates = self
+@@ -82,8 +97,10 @@ impl CodeModeDispatchBroker {
+                 .or_insert_with(|| CellDispatchGate {
+                     ready: watch::channel(false).0,
+                     originating_call: None,
++                    enabled_tools: Vec::new(),
+                 });
+             gate.originating_call = originating_call;
++            gate.enabled_tools = enabled_tools;
+             gate.ready.clone()
+         };
+         ready.send_replace(true);
+@@ -115,6 +132,14 @@ impl CodeModeDispatchBroker {
+             .collect()
+     }
+ 
++    pub(super) fn has_kernel_workers(&self) -> bool {
++        self.kernel_manager.has_workers()
++    }
++
++    pub(super) async fn shutdown_kernels(&self, session: &Arc<Session>) {
++        self.kernel_manager.shutdown(session).await;
++    }
++
+     pub(super) fn start_turn_worker(
+         &self,
+         session: Arc<Session>,
+@@ -125,6 +150,7 @@ impl CodeModeDispatchBroker {
+         let host = Arc::new(CoreTurnHost {
+             session,
+             tool_runtime,
++            kernel_manager: Arc::clone(&self.kernel_manager),
+         });
+         let dispatch_rx = self.dispatch_rx.clone();
+         let dispatch_gates = Arc::clone(&self.dispatch_gates);
+@@ -200,6 +226,18 @@ impl CodeModeDispatchBroker {
+                         let dispatch_gates = Arc::clone(&dispatch_gates);
+                         let span = dispatch_trace.span.clone();
+                         tokio::spawn(async move {
++                            let enabled_tools = if invocation.tool_name.is_default_namespace()
++                                && invocation.tool_name.name == "omd_kernel"
++                            {
++                                dispatch_gates
++                                    .lock()
++                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
++                                    .get(&cell_id)
++                                    .map(|gate| gate.enabled_tools.clone())
++                                    .unwrap_or_default()
++                            } else {
++                                Vec::new()
++                            };
+                             let invocation = {
+                                 let dispatch_gate = track_completeness.then(|| {
+                                     dispatch_gates
+@@ -226,6 +264,7 @@ impl CodeModeDispatchBroker {
+                                         step_context,
+                                         dispatch_trace.call_id.clone(),
+                                         cancellation_token.clone(),
++                                        enabled_tools,
+                                     )
+                                 })
+                                 .instrument(span)
+@@ -261,6 +300,7 @@ fn dispatch_gate(
+         .or_insert_with(|| CellDispatchGate {
+             ready: watch::channel(false).0,
+             originating_call: None,
++            enabled_tools: Vec::new(),
+         })
+         .ready
+         .clone()
+@@ -439,6 +479,7 @@ impl Drop for CodeModeDispatchWorker {
+ struct CoreTurnHost {
+     session: Arc<Session>,
+     tool_runtime: ToolCallRuntime,
++    kernel_manager: Arc<KernelManager>,
+ }
+ 
+ impl CoreTurnHost {
+@@ -448,7 +489,39 @@ impl CoreTurnHost {
+         step_context: Arc<StepContext>,
+         call_id: String,
+         cancellation_token: CancellationToken,
+-    ) -> impl std::future::Future<Output = Result<JsonValue, String>> + Send + 'static {
++        enabled_tools: Vec<ToolDefinition>,
++    ) -> std::pin::Pin<
++        Box<dyn std::future::Future<Output = Result<JsonValue, String>> + Send + 'static>,
++    > {
++        if invocation.tool_name.is_default_namespace() && invocation.tool_name.name == "omd_kernel"
++        {
++            let manager = Arc::clone(&self.kernel_manager);
++            let session = Arc::clone(&self.session);
++            let runtime = self.tool_runtime.clone();
++            return Box::pin(async move {
++                let thread_id = session.thread_id;
++                let turn_id = step_context.turn.sub_id.clone();
++                let tool_name = invocation.tool_name.clone();
++                let result = manager
++                    .run(
++                        session,
++                        step_context,
++                        runtime,
++                        invocation,
++                        enabled_tools,
++                        cancellation_token,
++                    )
++                    .await;
++                call_trace::result_ready(
++                    thread_id,
++                    &turn_id,
++                    &tool_name,
++                    &call_id,
++                    call_trace::Source::CodeMode,
++                );
++                result
++            });
++        }
+         let invocation = submit_nested_tool(
+             Arc::clone(&self.session),
+             step_context,
+@@ -456,9 +529,10 @@ impl CoreTurnHost {
+             invocation,
+             call_id,
+             cancellation_token,
++            None,
+         )
+         .map_err(|error| error.to_string());
+-        async move { invocation?.await.map_err(|error| error.to_string()) }
++        Box::pin(async move { invocation?.await.map_err(|error| error.to_string()) })
+     }
+ 
+     async fn notify(
+diff --git a/codex-rs/core/src/tools/code_mode/execute_handler.rs b/codex-rs/core/src/tools/code_mode/execute_handler.rs
+index e451981..49744e5 100644
+--- a/codex-rs/core/src/tools/code_mode/execute_handler.rs
++++ b/codex-rs/core/src/tools/code_mode/execute_handler.rs
+@@ -66,6 +66,15 @@ impl CodeModeExecuteHandler {
+         }
+         enabled_tools.sort_by(|left, right| left.name.cmp(&right.name));
+         enabled_tools.dedup_by(|left, right| left.name == right.name);
++        if exec.turn.config.code_mode.omd_kernels {
++            enabled_tools.push(super::kernels::definition());
++        }
++        let kernel_tools = exec
++            .turn
++            .config
++            .code_mode
++            .omd_kernels
++            .then(|| enabled_tools.clone());
+         let started_at = std::time::Instant::now();
+         let started_cell = exec
+             .session
+@@ -113,7 +122,11 @@ impl CodeModeExecuteHandler {
+         exec.session
+             .services
+             .code_mode_service
+-            .mark_cell_ready_for_dispatch(&cell_id, originating_call);
++            .mark_cell_ready_for_dispatch_with_tools(
++                &cell_id,
++                originating_call,
++                kernel_tools.unwrap_or_default(),
++            );
+         let response = started_cell
+             .initial_response()
+             .await
+diff --git a/codex-rs/core/src/tools/code_mode/kernel_bun.mjs b/codex-rs/core/src/tools/code_mode/kernel_bun.mjs
+new file mode 100644
+index 0000000..81d17d2
+--- /dev/null
++++ b/codex-rs/core/src/tools/code_mode/kernel_bun.mjs
+@@ -0,0 +1,69 @@
++import net from "node:net";
++import readline from "node:readline";
++import { AsyncLocalStorage } from "node:async_hooks";
++
++const bridgeContext = new AsyncLocalStorage();
++let bridgeFailed = false;
++let output = [];
++
++globalThis.tool = async (name, args = {}) => {
++  const bridge = bridgeContext.getStore();
++  if (!bridge?.active) throw new Error("no active kernel cell");
++  const payload = JSON.stringify({ token: bridge.token, name, arguments: args }) + "\n";
++  if (Buffer.byteLength(payload) > 65536) throw new Error("tool request limit exceeded");
++  return await new Promise((resolve, reject) => {
++    const connection = net.createConnection({ host: "127.0.0.1", port: bridge.port });
++    let response = "";
++    connection.setTimeout(30000, () => connection.destroy(new Error("tool bridge timeout")));
++    connection.on("connect", () => connection.write(payload));
++    connection.on("data", (data) => {
++      response += data.toString();
++      if (Buffer.byteLength(response) > 262144) {
++        connection.destroy(new Error("tool response limit exceeded"));
++      } else if (response.includes("\n")) {
++        connection.end();
++        try {
++          const result = JSON.parse(response.slice(0, response.indexOf("\n")));
++          if (result.ok) resolve(result.result);
++          else reject(new Error(result.error || "tool call failed"));
++        } catch (error) {
++          reject(error);
++        }
++      }
++    });
++    connection.on("error", (error) => { bridgeFailed = true; reject(error); });
++    connection.on("end", () => { if (!response.includes("\n")) { bridgeFailed = true; reject(new Error("tool bridge disconnected")); } });
++  });
++};
++
++const capture = (...values) => {
++  const text = values.map((value) => typeof value === "string" ? value : JSON.stringify(value)).join(" ");
++  if (Buffer.byteLength(output.join("")) + Buffer.byteLength(text) > 65536) throw new Error("kernel output limit exceeded");
++  output.push(text + "\n");
++};
++
++for await (const line of readline.createInterface({ input: process.stdin })) {
++  output = [];
++  bridgeFailed = false;
++  let response;
++  let bridge;
++  try {
++    const request = JSON.parse(line);
++    if (request.shutdown === true) process.exit(0);
++    bridge = { port: request.port, token: request.token, active: true };
++    const priorLog = console.log;
++    console.log = capture;
++    try {
++      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
++      await bridgeContext.run(bridge, () => new AsyncFunction(request.code)());
++      response = { ok: true, output: output.join(""), bridge_failed: bridgeFailed };
++    } finally {
++      console.log = priorLog;
++    }
++  } catch (error) {
++    response = { ok: false, output: output.join(""), error: String(error), bridge_failed: bridgeFailed };
++  } finally {
++    if (bridge) bridge.active = false;
++  }
++  process.stdout.write("OMD_KERNEL_RESULT:" + JSON.stringify(response) + "\n");
++}
+diff --git a/codex-rs/core/src/tools/code_mode/kernel_python.py b/codex-rs/core/src/tools/code_mode/kernel_python.py
+new file mode 100644
+index 0000000..49a6341
+--- /dev/null
++++ b/codex-rs/core/src/tools/code_mode/kernel_python.py
+@@ -0,0 +1,78 @@
++import contextlib
++import contextvars
++import io
++import json
++import socket
++import sys
++
++
++class LimitedOutput(io.StringIO):
++    def __init__(self):
++        super().__init__()
++        self.bytes = 0
++
++    def write(self, value):
++        size = len(value.encode("utf-8"))
++        if self.bytes + size > 65536:
++            raise ValueError("kernel output limit exceeded")
++        self.bytes += size
++        return super().write(value)
++
++
++bridge_context = contextvars.ContextVar("omd_bridge", default=None)
++bridge_failed = False
++state = {"__name__": "__omd_cell__"}
++
++
++def tool(name, arguments=None):
++    global bridge_failed
++    bridge = bridge_context.get()
++    if bridge is None or not bridge[2]["active"]:
++        raise RuntimeError("no active kernel cell")
++    request = {"token": bridge[1], "name": name, "arguments": arguments or {}}
++    payload = json.dumps(request, separators=(",", ":")).encode() + b"\n"
++    if len(payload) > 65536:
++        raise ValueError("tool request limit exceeded")
++    try:
++        with socket.create_connection(("127.0.0.1", bridge[0]), timeout=5) as connection:
++            connection.settimeout(30)
++            connection.sendall(payload)
++            result = bytearray()
++            while not result.endswith(b"\n"):
++                chunk = connection.recv(8192)
++                if not chunk:
++                    raise OSError("tool bridge disconnected")
++                result.extend(chunk)
++                if len(result) > 262144:
++                    raise ValueError("tool response limit exceeded")
++        response = json.loads(result)
++    except (OSError, ValueError) as error:
++        bridge_failed = True
++        raise RuntimeError(f"tool bridge disconnected: {error}") from error
++    if not response.get("ok"):
++        raise RuntimeError(response.get("error", "tool call failed"))
++    return response["result"]
++
++
++state["tool"] = tool
++for line in sys.stdin:
++    output = LimitedOutput()
++    bridge_failed = False
++    try:
++        request = json.loads(line)
++        if request.get("shutdown") is True:
++            break
++        active = {"active": True}
++        context_token = bridge_context.set((request["port"], request["token"], active))
++        with contextlib.redirect_stdout(output):
++            exec(compile(request["code"], "<omd-python-cell>", "exec"), state)
++        response = {"ok": True, "output": output.getvalue(), "bridge_failed": bridge_failed}
++    except Exception as error:
++        response = {"ok": False, "output": output.getvalue(), "error": f"{type(error).__name__}: {error}", "bridge_failed": bridge_failed}
++    finally:
++        if "active" in locals():
++            active["active"] = False
++            bridge_context.reset(context_token)
++            del active
++    sys.stdout.write("OMD_KERNEL_RESULT:" + json.dumps(response, separators=(",", ":")) + "\n")
++    sys.stdout.flush()
+diff --git a/codex-rs/core/src/tools/code_mode/kernels.rs b/codex-rs/core/src/tools/code_mode/kernels.rs
+new file mode 100644
+index 0000000..ae9d35d
+--- /dev/null
++++ b/codex-rs/core/src/tools/code_mode/kernels.rs
+@@ -0,0 +1,847 @@
++use std::collections::HashMap;
++use std::sync::Arc;
++use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++use std::time::Duration;
++
++use codex_code_mode::CellId;
++use codex_code_mode::CodeModeNestedToolCall;
++use codex_code_mode::CodeModeToolKind;
++use codex_code_mode::ToolDefinition;
++use codex_tools::ToolName;
++use serde::Deserialize;
++use serde_json::{Value, json};
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++use tokio::net::{TcpListener, TcpStream};
++use tokio::sync::Mutex;
++use tokio_util::sync::CancellationToken;
++
++use super::submit_nested_tool;
++use crate::session::session::Session;
++use crate::session::step_context::StepContext;
++use crate::tools::parallel::ToolCallRuntime;
++
++const MAX_CODE_BYTES: usize = 32768;
++const MAX_BRIDGE_CALLS: usize = 32;
++const MAX_BRIDGE_REQUEST_BYTES: u64 = 65536;
++const MAX_BRIDGE_RESPONSE_BYTES: usize = 262144;
++const MAX_CELL_DURATION: Duration = Duration::from_secs(120);
++const RESULT_PREFIX: &str = "OMD_KERNEL_RESULT:";
++
++#[derive(Clone, Copy, Eq, Hash, PartialEq)]
++enum Language {
++    Python,
++    Bun,
++}
++
++impl Language {
++    fn parse(value: &str) -> Result<Self, String> {
++        match value {
++            "python" => Ok(Self::Python),
++            "bun" | "javascript" => Ok(Self::Bun),
++            _ => Err("kernel language must be python or bun".into()),
++        }
++    }
++
++    fn name(self) -> &'static str {
++        match self {
++            Self::Python => "python",
++            Self::Bun => "bun",
++        }
++    }
++
++    fn command(self) -> String {
++        let (executable, script) = match self {
++            Self::Python => ("python3 -u -c", include_str!("kernel_python.py")),
++            Self::Bun => ("bun -e", include_str!("kernel_bun.mjs")),
++        };
++        format!(
++            "stty raw -echo; {executable} '{}'",
++            script.replace('\'', "'\\''")
++        )
++    }
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct KernelRequest {
++    language: String,
++    code: String,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct BridgeRequest {
++    token: String,
++    name: String,
++    arguments: Value,
++}
++
++#[derive(Deserialize)]
++struct WorkerResult {
++    ok: bool,
++    output: String,
++    error: Option<String>,
++    #[serde(default)]
++    bridge_failed: bool,
++}
++
++pub(crate) fn definition() -> ToolDefinition {
++    ToolDefinition {
++        name: "omd_kernel".into(),
++        tool_name: ToolName::plain("omd_kernel"),
++        description: "Run a persistent Python or Bun cell. Within the cell, tool(name, arguments) calls the currently authorized agent tools through the native loopback bridge. Input: {language: 'python'|'bun', code: string}. Output is bounded. Requires the opt-in OMD kernel setting and installed interpreter.".into(),
++        kind: CodeModeToolKind::Function,
++        input_schema: None,
++        output_schema: None,
++    }
++}
++
++pub(super) struct KernelManager {
++    workers: Mutex<HashMap<Language, WorkerState>>,
++    active: AtomicBool,
++}
++
++struct WorkerState {
++    process_id: i32,
++    listener: Arc<TcpListener>,
++    port: u16,
++}
++
++impl KernelManager {
++    pub(super) fn new() -> Self {
++        Self {
++            workers: Mutex::new(HashMap::new()),
++            active: AtomicBool::new(false),
++        }
++    }
++
++    pub(super) fn has_workers(&self) -> bool {
++        self.active.load(Ordering::Acquire)
++    }
++
++    pub(super) async fn run(
++        &self,
++        session: Arc<Session>,
++        step_context: Arc<StepContext>,
++        runtime: ToolCallRuntime,
++        invocation: CodeModeNestedToolCall,
++        enabled_tools: Vec<ToolDefinition>,
++        cancellation: CancellationToken,
++    ) -> Result<Value, String> {
++        if !step_context.turn.config.code_mode.omd_kernels {
++            return Err("OMD kernels are disabled".into());
++        }
++        let input = invocation.input.ok_or("kernel input is required")?;
++        let request: KernelRequest =
++            serde_json::from_value(input).map_err(|error| error.to_string())?;
++        let language = Language::parse(&request.language)?;
++        if request.code.len() > MAX_CODE_BYTES {
++            return Err("kernel code limit exceeded".into());
++        }
++        if !enabled_tools.iter().any(|tool| tool.name == "exec_command")
++            || !enabled_tools.iter().any(|tool| tool.name == "write_stdin")
++        {
++            return Err("managed process tools are unavailable in this cell".into());
++        }
++        let cell_cancel = cancellation.child_token();
++        let mut workers = self.workers.lock().await;
++        let (process_id, listener, port) = if let Some(worker) = workers.get(&language) {
++            (worker.process_id, Arc::clone(&worker.listener), worker.port)
++        } else {
++            let listener = Arc::new(
++                TcpListener::bind("127.0.0.1:0")
++                    .await
++                    .map_err(|error| format!("kernel loopback bridge unavailable: {error}"))?,
++            );
++            let port = listener
++                .local_addr()
++                .map_err(|error| error.to_string())?
++                .port();
++            let result = native_call(
++                Arc::clone(&session),
++                Arc::clone(&step_context),
++                runtime.clone(),
++                &invocation.cell_id,
++                "exec_command",
++                json!({
++                    "cmd": language.command(),
++                    "workdir": step_context.turn.config.cwd.as_path().to_string_lossy(),
++                    "tty": true,
++                    "yield_time_ms": 1000,
++                    "max_output_tokens": 256
++                }),
++                cell_cancel.clone(),
++                Some(port),
++            )
++            .await?;
++            let process_id = result["session_id"]
++                .as_i64()
++                .and_then(|value| i32::try_from(value).ok())
++                .ok_or_else(|| {
++                    format!(
++                        "{} worker failed to start: {}",
++                        language.name(),
++                        result["output"]
++                    )
++                })?;
++            workers.insert(
++                language,
++                WorkerState {
++                    process_id,
++                    listener: Arc::clone(&listener),
++                    port,
++                },
++            );
++            self.active.store(true, Ordering::Release);
++            (process_id, listener, port)
++        };
++
++        let token = uuid::Uuid::new_v4().to_string();
++        let bridge_cancel = cell_cancel.child_token();
++        let bridge = tokio::spawn(serve_bridge(
++            listener,
++            token.clone(),
++            invocation.cell_id.clone(),
++            Arc::clone(&session),
++            Arc::clone(&step_context),
++            runtime.clone(),
++            enabled_tools,
++            bridge_cancel.clone(),
++        ));
++        let payload =
++            json!({"code": request.code, "port": port, "token": token}).to_string() + "\n";
++        let result = tokio::time::timeout(MAX_CELL_DURATION, async {
++            let mut buffer = String::new();
++            let mut chars = payload;
++            loop {
++                let result = native_call(
++                    Arc::clone(&session),
++                    Arc::clone(&step_context),
++                    runtime.clone(),
++                    &invocation.cell_id,
++                    "write_stdin",
++                    json!({
++                        "session_id": process_id,
++                        "chars": chars,
++                        "yield_time_ms": if chars.is_empty() { 5000 } else { 1000 },
++                        "max_output_tokens": 4096
++                    }),
++                    cell_cancel.clone(),
++                    None,
++                )
++                .await?;
++                chars.clear();
++                if let Some(output) = result["output"].as_str() {
++                    buffer.push_str(output);
++                }
++                if buffer.len() > MAX_BRIDGE_RESPONSE_BYTES {
++                    return Err("kernel output limit exceeded".into());
++                }
++                if let Some(result) = parse_worker_result(&buffer)? {
++                    return Ok(result);
++                }
++                if result["session_id"].is_null() {
++                    return Err("kernel worker disconnected".into());
++                }
++            }
++        })
++        .await
++        .unwrap_or_else(|_| Err("kernel cell timed out".to_string()));
++        cell_cancel.cancel();
++        bridge_cancel.cancel();
++        bridge.abort();
++        if result.as_ref().map_or(true, |worker| worker.bridge_failed)
++            || cancellation.is_cancelled()
++        {
++            workers.remove(&language);
++            self.active.store(!workers.is_empty(), Ordering::Release);
++            session
++                .services
++                .unified_exec_manager
++                .terminate_process(process_id)
++                .await;
++        }
++        let result = result?;
++        Ok(
++            json!({"language": language.name(), "ok": result.ok, "output": result.output, "error": result.error}),
++        )
++    }
++
++    pub(super) async fn shutdown(&self, session: &Arc<Session>) {
++        let mut workers = self.workers.lock().await;
++        for (_, worker) in workers.drain() {
++            session
++                .services
++                .unified_exec_manager
++                .terminate_process(worker.process_id)
++                .await;
++        }
++        self.active.store(false, Ordering::Release);
++    }
++}
++
++fn parse_worker_result(buffer: &str) -> Result<Option<WorkerResult>, String> {
++    let Some(start) = buffer.find(RESULT_PREFIX) else {
++        return Ok(None);
++    };
++    let body = &buffer[start + RESULT_PREFIX.len()..];
++    let Some(end) = body.find('\n') else {
++        return Ok(None);
++    };
++    serde_json::from_str(&body[..end])
++        .map(Some)
++        .map_err(|error| format!("invalid kernel result: {error}"))
++}
++
++async fn native_call(
++    session: Arc<Session>,
++    step_context: Arc<StepContext>,
++    runtime: ToolCallRuntime,
++    cell_id: &CellId,
++    name: &str,
++    arguments: Value,
++    cancellation: CancellationToken,
++    native_loopback_port: Option<u16>,
++) -> Result<Value, String> {
++    let call = CodeModeNestedToolCall {
++        cell_id: cell_id.clone(),
++        runtime_tool_call_id: uuid::Uuid::new_v4().to_string(),
++        tool_name: ToolName::plain(name),
++        tool_kind: CodeModeToolKind::Function,
++        input: Some(arguments),
++    };
++    let future = submit_nested_tool(
++        session,
++        step_context,
++        runtime,
++        call,
++        uuid::Uuid::new_v4().to_string(),
++        cancellation,
++        native_loopback_port,
++    )
++    .map_err(|error| error.to_string())?;
++    future.await.map_err(|error| error.to_string())
++}
++
++async fn serve_bridge(
++    listener: Arc<TcpListener>,
++    token: String,
++    cell_id: CellId,
++    session: Arc<Session>,
++    step_context: Arc<StepContext>,
++    runtime: ToolCallRuntime,
++    enabled_tools: Vec<ToolDefinition>,
++    cancellation: CancellationToken,
++) {
++    let tools = Arc::new(enabled_tools);
++    let count = Arc::new(AtomicUsize::new(0));
++    loop {
++        let socket = tokio::select! {
++            _ = cancellation.cancelled() => break,
++            accepted = listener.accept() => match accepted {
++                Ok((socket, _)) => socket,
++                Err(_) => break,
++            },
++        };
++        let task_token = token.clone();
++        let task_cell = cell_id.clone();
++        let task_session = Arc::clone(&session);
++        let task_step = Arc::clone(&step_context);
++        let task_runtime = runtime.clone();
++        let task_tools = Arc::clone(&tools);
++        let task_count = Arc::clone(&count);
++        let task_cancel = cancellation.clone();
++        tokio::spawn(async move {
++            handle_connection(
++                socket,
++                task_token,
++                task_cell,
++                task_session,
++                task_step,
++                task_runtime,
++                task_tools,
++                task_count,
++                task_cancel,
++            )
++            .await;
++        });
++    }
++}
++
++async fn handle_connection(
++    socket: TcpStream,
++    token: String,
++    cell_id: CellId,
++    session: Arc<Session>,
++    step_context: Arc<StepContext>,
++    runtime: ToolCallRuntime,
++    enabled_tools: Arc<Vec<ToolDefinition>>,
++    count: Arc<AtomicUsize>,
++    cancellation: CancellationToken,
++) {
++    let mut socket = socket;
++    let mut bytes = Vec::new();
++    let result = tokio::time::timeout(Duration::from_secs(5), async {
++        let mut chunk = [0_u8; 4096];
++        loop {
++            let size = socket.read(&mut chunk).await?;
++            if size == 0 {
++                break;
++            }
++            bytes.extend_from_slice(&chunk[..size]);
++            if bytes.ends_with(b"\n") || bytes.len() as u64 > MAX_BRIDGE_REQUEST_BYTES {
++                break;
++            }
++        }
++        Ok::<(), std::io::Error>(())
++    })
++    .await;
++    let response = match result {
++        Ok(Ok(_)) if bytes.ends_with(b"\n") && bytes.len() as u64 <= MAX_BRIDGE_REQUEST_BYTES => {
++            dispatch_bridge(
++                &bytes,
++                &token,
++                &cell_id,
++                session,
++                step_context,
++                runtime,
++                &enabled_tools,
++                &count,
++                cancellation,
++            )
++            .await
++        }
++        _ => Err("invalid or oversized bridge request".into()),
++    };
++    let message = match response {
++        Ok(value) => json!({"ok": true, "result": value}),
++        Err(error) => json!({"ok": false, "error": error}),
++    };
++    if let Ok(mut payload) = serde_json::to_vec(&message) {
++        if payload.len() <= MAX_BRIDGE_RESPONSE_BYTES {
++            payload.push(b'\n');
++            let _ = socket.write_all(&payload).await;
++        }
++    }
++}
++
++async fn dispatch_bridge(
++    bytes: &[u8],
++    token: &str,
++    cell_id: &CellId,
++    session: Arc<Session>,
++    step_context: Arc<StepContext>,
++    runtime: ToolCallRuntime,
++    enabled_tools: &[ToolDefinition],
++    count: &AtomicUsize,
++    cancellation: CancellationToken,
++) -> Result<Value, String> {
++    let (definition, arguments) = authorize_bridge_request(bytes, token, enabled_tools, count)?;
++    let call = CodeModeNestedToolCall {
++        cell_id: cell_id.clone(),
++        runtime_tool_call_id: uuid::Uuid::new_v4().to_string(),
++        tool_name: definition.tool_name.clone(),
++        tool_kind: definition.kind,
++        input: Some(arguments),
++    };
++    let future = submit_nested_tool(
++        session,
++        step_context,
++        runtime,
++        call,
++        uuid::Uuid::new_v4().to_string(),
++        cancellation,
++        None,
++    )
++    .map_err(|error| error.to_string())?;
++    future.await.map_err(|error| error.to_string())
++}
++
++fn authorize_bridge_request(
++    bytes: &[u8],
++    token: &str,
++    enabled_tools: &[ToolDefinition],
++    count: &AtomicUsize,
++) -> Result<(ToolDefinition, Value), String> {
++    let request: BridgeRequest =
++        serde_json::from_slice(bytes).map_err(|_| "invalid bridge request".to_string())?;
++    if request.token != token {
++        return Err("bridge authentication failed".into());
++    }
++    if count.fetch_add(1, Ordering::AcqRel) >= MAX_BRIDGE_CALLS {
++        return Err("kernel nested tool call limit exceeded".into());
++    }
++    let definition = enabled_tools
++        .iter()
++        .find(|tool| tool.name == request.name)
++        .ok_or("tool was not enabled for this cell")?;
++    if matches!(definition.name.as_str(), "omd_kernel" | "exec" | "wait") {
++        return Err("recursive kernel and code-mode calls are forbidden".into());
++    }
++    Ok((definition.clone(), request.arguments))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::session::step_context::StepContext;
++    use crate::session::tests::make_session_and_context;
++    use crate::tools::context::{FunctionToolOutput, ToolInvocation, ToolOutput};
++    use crate::tools::registry::{CoreToolRuntime, ToolExecutor, ToolRegistry};
++    use crate::tools::router::{ToolCallSource, ToolRouter};
++    use crate::turn_diff_tracker::TurnDiffTracker;
++    use codex_tools::ToolSpec;
++
++    fn tool(name: &str) -> ToolDefinition {
++        ToolDefinition {
++            name: name.into(),
++            tool_name: ToolName::plain(name),
++            description: String::new(),
++            kind: CodeModeToolKind::Function,
++            input_schema: None,
++            output_schema: None,
++        }
++    }
++
++    #[test]
++    fn bridge_requires_current_cell_token_and_tool_surface() {
++        let count = AtomicUsize::new(0);
++        let tools = [tool("read_file"), tool("omd_kernel"), tool("exec")];
++        let request = |token: &str, name: &str| {
++            json!({"token": token, "name": name, "arguments": {"path": "safe.csv"}}).to_string()
++        };
++        assert!(
++            authorize_bridge_request(
++                request("wrong", "read_file").as_bytes(),
++                "secret",
++                &tools,
++                &count
++            )
++            .unwrap_err()
++            .contains("authentication")
++        );
++        assert_eq!(count.load(Ordering::Relaxed), 0);
++        assert!(
++            authorize_bridge_request(
++                request("secret", "unlisted").as_bytes(),
++                "secret",
++                &tools,
++                &count
++            )
++            .unwrap_err()
++            .contains("not enabled")
++        );
++        assert!(
++            authorize_bridge_request(
++                request("secret", "omd_kernel").as_bytes(),
++                "secret",
++                &tools,
++                &count
++            )
++            .unwrap_err()
++            .contains("recursive")
++        );
++        assert!(
++            authorize_bridge_request(
++                request("secret", "exec").as_bytes(),
++                "secret",
++                &tools,
++                &count
++            )
++            .unwrap_err()
++            .contains("recursive")
++        );
++        let (allowed, args) = authorize_bridge_request(
++            request("secret", "read_file").as_bytes(),
++            "secret",
++            &tools,
++            &count,
++        )
++        .unwrap();
++        assert_eq!(allowed.name, "read_file");
++        assert_eq!(args["path"], "safe.csv");
++    }
++
++    #[test]
++    fn bridge_limits_calls_and_rejects_extra_fields() {
++        let count = AtomicUsize::new(MAX_BRIDGE_CALLS);
++        let tools = [tool("read_file")];
++        let valid = br#"{"token":"secret","name":"read_file","arguments":{}}"#;
++        assert!(
++            authorize_bridge_request(valid, "secret", &tools, &count)
++                .unwrap_err()
++                .contains("limit")
++        );
++        let extra = br#"{"token":"secret","name":"read_file","arguments":{},"ignore":"this"}"#;
++        assert!(
++            authorize_bridge_request(extra, "secret", &tools, &AtomicUsize::new(0))
++                .unwrap_err()
++                .contains("invalid")
++        );
++    }
++
++    #[test]
++    fn worker_result_requires_complete_frame() {
++        assert!(parse_worker_result("other output").unwrap().is_none());
++        assert!(
++            parse_worker_result("OMD_KERNEL_RESULT:{\"ok\":true")
++                .unwrap()
++                .is_none()
++        );
++        let result = parse_worker_result("OMD_KERNEL_RESULT:{\"ok\":true,\"output\":\"42\\n\"}\n")
++            .unwrap()
++            .unwrap();
++        assert!(result.ok);
++        assert_eq!(result.output, "42\n");
++    }
++
++    struct Probe;
++
++    impl ToolExecutor<ToolInvocation> for Probe {
++        fn tool_name(&self) -> ToolName {
++            ToolName::plain("audit_probe").with_default_namespace()
++        }
++
++        fn spec(&self) -> ToolSpec {
++            ToolSpec::Function(codex_tools::ResponsesApiTool {
++                name: "audit_probe".into(),
++                description: "Return dispatch identity".into(),
++                strict: false,
++                defer_loading: None,
++                parameters: codex_tools::JsonSchema::default(),
++                output_schema: None,
++            })
++        }
++
++        fn handle<'a>(&'a self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
++        where
++            ToolInvocation: 'a,
++        {
++            Box::pin(async move {
++                let cell = match invocation.source {
++                    ToolCallSource::CodeMode { cell_id, .. } => cell_id,
++                    _ => "wrong source".into(),
++                };
++                Ok(Box::new(FunctionToolOutput::from_text(
++                    json!({
++                        "thread": invocation.session.thread_id.to_string(),
++                        "turn": invocation.turn.sub_id,
++                        "cell": cell,
++                        "csv": "month,total\nJan,2\nFeb,4\nMar,3\n"
++                    })
++                    .to_string(),
++                    Some(true),
++                )) as Box<dyn ToolOutput>)
++            })
++        }
++    }
++
++    impl CoreToolRuntime for Probe {}
++
++    #[tokio::test]
++    async fn bridge_dispatch_keeps_thread_turn_and_cell_identity() {
++        let (session, turn) = make_session_and_context().await;
++        let session = Arc::new(session);
++        let turn = Arc::new(turn);
++        let registry = ToolRegistry::with_handler_for_test(Arc::new(Probe));
++        let router = Arc::new(ToolRouter::from_registry(
++            &turn,
++            turn.model_info(),
++            registry,
++            Vec::new(),
++            &Default::default(),
++        ));
++        let step = StepContext::for_test(Arc::clone(&turn)).with_tool_router_for_test(router);
++        let runtime = ToolCallRuntime::new(
++            Arc::clone(&session),
++            Arc::clone(&step),
++            Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
++        );
++        let cell_id = CellId::new("kernel-cell".into());
++        let result = dispatch_bridge(
++            br#"{"token":"secret","name":"audit_probe","arguments":{}}"#,
++            "secret",
++            &cell_id,
++            Arc::clone(&session),
++            step,
++            runtime,
++            &[tool("audit_probe")],
++            &AtomicUsize::new(0),
++            CancellationToken::new(),
++        )
++        .await
++        .unwrap();
++        assert!(
++            result
++                .as_str()
++                .unwrap()
++                .contains(&session.thread_id.to_string())
++        );
++        assert!(result.as_str().unwrap().contains(&turn.sub_id));
++        assert!(result.as_str().unwrap().contains("kernel-cell"));
++    }
++
++    #[tokio::test]
++    async fn disabled_kernel_does_not_start_a_worker() {
++        let (session, turn) = make_session_and_context().await;
++        let session = Arc::new(session);
++        let turn = Arc::new(turn);
++        let step = StepContext::for_test(turn);
++        let runtime = ToolCallRuntime::new(
++            Arc::clone(&session),
++            Arc::clone(&step),
++            Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
++        );
++        let manager = KernelManager::new();
++        let call = CodeModeNestedToolCall {
++            cell_id: CellId::new("disabled-cell".into()),
++            runtime_tool_call_id: uuid::Uuid::new_v4().to_string(),
++            tool_name: ToolName::plain("omd_kernel"),
++            tool_kind: CodeModeToolKind::Function,
++            input: Some(json!({"language":"python","code":"print(1)"})),
++        };
++        let result = manager
++            .run(
++                session,
++                step,
++                runtime,
++                call,
++                Vec::new(),
++                CancellationToken::new(),
++            )
++            .await;
++        assert_eq!(result.unwrap_err(), "OMD kernels are disabled");
++        assert!(!manager.has_workers());
++    }
++
++    #[tokio::test]
++    #[ignore = "requires local loopback access"]
++    async fn managed_python_and_bun_complete_csv_chart_without_model_reentry() {
++        let (session, turn, _events) =
++            crate::session::tests::make_session_and_context_with_auth_and_config_and_rx(
++                codex_login::CodexAuth::from_api_key("Test API Key"),
++                Vec::new(),
++                |config| {
++                    config.code_mode.omd_kernels = true;
++                    config
++                        .set_legacy_sandbox_policy(
++                            codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
++                                writable_roots: Vec::new(),
++                                network_access: false,
++                                exclude_tmpdir_env_var: false,
++                                exclude_slash_tmp: false,
++                            },
++                        )
++                        .unwrap();
++                },
++            )
++            .await;
++        let mut registry = ToolRegistry::empty_for_test();
++        registry.add(crate::tools::handlers::ExecCommandHandler::default());
++        registry.add(crate::tools::handlers::WriteStdinHandler);
++        registry.add(Probe);
++        let router = Arc::new(ToolRouter::from_registry(
++            &turn,
++            turn.model_info(),
++            registry,
++            Vec::new(),
++            &Default::default(),
++        ));
++        let step = StepContext::for_test(Arc::clone(&turn)).with_tool_router_for_test(router);
++        let runtime = ToolCallRuntime::new(
++            Arc::clone(&session),
++            Arc::clone(&step),
++            Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
++        );
++        let manager = KernelManager::new();
++        let cell_id = CellId::new("csv-chart-cell".into());
++        let tools = vec![
++            tool("exec_command"),
++            tool("write_stdin"),
++            tool("audit_probe"),
++            definition(),
++        ];
++        let call = |language: &str, code: &str| CodeModeNestedToolCall {
++            cell_id: cell_id.clone(),
++            runtime_tool_call_id: uuid::Uuid::new_v4().to_string(),
++            tool_name: ToolName::plain("omd_kernel"),
++            tool_kind: CodeModeToolKind::Function,
++            input: Some(json!({"language": language, "code": code})),
++        };
++        let first = manager.run(
++            Arc::clone(&session), Arc::clone(&step), runtime.clone(),
++            call("python", "import csv, io, json\nr = json.loads(tool('audit_probe', {}))\nvalues = [int(row['total']) for row in csv.DictReader(io.StringIO(r['csv']))]\nprint(json.dumps(values))"),
++            tools.clone(), CancellationToken::new(),
++        ).await.unwrap();
++        assert_eq!(first["ok"], true);
++        assert_eq!(first["output"], "[2, 4, 3]\n");
++        let second = manager
++            .run(
++                Arc::clone(&session),
++                Arc::clone(&step),
++                runtime.clone(),
++                call(
++                    "python",
++                    "json.loads(tool('audit_probe', {})); print(sum(values))",
++                ),
++                tools.clone(),
++                CancellationToken::new(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(second["ok"], true);
++        assert_eq!(second["output"], "9\n");
++        let bun_code = format!(
++            "globalThis.values={}; console.log('<svg>'+values.map(v=>'<rect height=\\\"'+(v*10)+'\\\"/>').join('')+'</svg>')",
++            first["output"].as_str().unwrap().trim(),
++        );
++        let chart = manager
++            .run(
++                Arc::clone(&session),
++                Arc::clone(&step),
++                runtime.clone(),
++                call("bun", &bun_code),
++                tools.clone(),
++                CancellationToken::new(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(chart["ok"], true);
++        assert_eq!(
++            chart["output"].as_str().unwrap().matches("<rect").count(),
++            3
++        );
++        let bun_state = manager
++            .run(
++                Arc::clone(&session),
++                Arc::clone(&step),
++                runtime.clone(),
++                call("bun", "JSON.parse(await tool('audit_probe', {})); console.log(values.reduce((a,b)=>a+b,0))"),
++                tools.clone(),
++                CancellationToken::new(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(bun_state["output"], "9\n");
++        let cancellation = CancellationToken::new();
++        let stop = cancellation.clone();
++        tokio::spawn(async move {
++            tokio::time::sleep(Duration::from_millis(100)).await;
++            stop.cancel();
++        });
++        let interrupted = manager
++            .run(
++                Arc::clone(&session),
++                Arc::clone(&step),
++                runtime,
++                call("python", "import time; time.sleep(10)"),
++                tools,
++                cancellation,
++            )
++            .await;
++        assert!(interrupted.is_err());
++        assert!(!manager.workers.lock().await.contains_key(&Language::Python));
++        manager.shutdown(&session).await;
++        assert!(!manager.has_workers());
++    }
++}
+diff --git a/codex-rs/core/src/tools/code_mode/mod.rs b/codex-rs/core/src/tools/code_mode/mod.rs
+index 95133ec..8a9a713 100644
+--- a/codex-rs/core/src/tools/code_mode/mod.rs
++++ b/codex-rs/core/src/tools/code_mode/mod.rs
+@@ -1,6 +1,7 @@
+ mod delegate;
+ mod execute_handler;
+ pub(crate) mod execute_spec;
++pub(crate) mod kernels;
+ mod output;
+ mod response_adapter;
+ mod telemetry;
+@@ -171,8 +172,9 @@ impl CodeModeService {
+         .await;
+     }
+ 
+-    pub(crate) async fn shutdown(&self) -> Result<(), String> {
++    pub(crate) async fn shutdown(&self, session: &Arc<Session>) -> Result<(), String> {
+         self.shutdown_token.cancel();
++        self.dispatch_broker.shutdown_kernels(session).await;
+         // Join any initialization already in progress without initializing an unused service.
+         match self
+             .session
+@@ -188,13 +190,14 @@ impl CodeModeService {
+         }
+     }
+ 
+-    pub(crate) fn mark_cell_ready_for_dispatch(
++    pub(crate) fn mark_cell_ready_for_dispatch_with_tools(
+         &self,
+         cell_id: &codex_code_mode::CellId,
+         originating_call: Option<crate::tools::context::ToolCallOrigin>,
++        enabled_tools: Vec<codex_code_mode::ToolDefinition>,
+     ) {
+         self.dispatch_broker
+-            .mark_cell_ready_for_dispatch(cell_id, originating_call);
++            .mark_cell_ready_for_dispatch_with_tools(cell_id, originating_call, enabled_tools);
+     }
+ 
+     pub(crate) fn cell_originating_call(
+@@ -214,6 +217,13 @@ impl CodeModeService {
+         step_context: Arc<StepContext>,
+         tracker: SharedTurnDiffTracker,
+     ) -> Option<CodeModeDispatchWorker> {
++        if !step_context.turn.config.code_mode.omd_kernels
++            && self.dispatch_broker.has_kernel_workers()
++        {
++            let broker = Arc::clone(&self.dispatch_broker);
++            let session = Arc::clone(session);
++            tokio::spawn(async move { broker.shutdown_kernels(&session).await });
++        }
+         if !step_context.tool_router.requires_code_mode_worker() {
+             return None;
+         }
+@@ -334,6 +344,7 @@ fn submit_nested_tool(
+     invocation: CodeModeNestedToolCall,
+     call_id: String,
+     cancellation_token: CancellationToken,
++    native_loopback_port: Option<u16>,
+ ) -> Result<
+     impl std::future::Future<Output = Result<JsonValue, FunctionCallError>> + Send + 'static,
+     FunctionCallError,
+@@ -400,6 +411,7 @@ fn submit_nested_tool(
+         ToolCallSource::CodeMode {
+             cell_id: cell_id.to_string(),
+             runtime_tool_call_id,
++            native_loopback_port,
+         },
+         cancellation_token,
+         Arc::default(),
+diff --git a/codex-rs/core/src/tools/context.rs b/codex-rs/core/src/tools/context.rs
+index 1b02ab7..6c00f3c 100644
+--- a/codex-rs/core/src/tools/context.rs
++++ b/codex-rs/core/src/tools/context.rs
+@@ -63,6 +63,7 @@ pub enum ToolCallSource {
+         /// debugging the JS/runtime bridge, but it is not the Codex tool call id
+         /// because the runtime id only needs to be unique within one cell.
+         runtime_tool_call_id: String,
++        native_loopback_port: Option<u16>,
+     },
+ }
+ 
+diff --git a/codex-rs/core/src/tools/executed_tool_calls/request_metadata_tests.rs b/codex-rs/core/src/tools/executed_tool_calls/request_metadata_tests.rs
+index bb617a1..a90b16e 100644
+--- a/codex-rs/core/src/tools/executed_tool_calls/request_metadata_tests.rs
++++ b/codex-rs/core/src/tools/executed_tool_calls/request_metadata_tests.rs
+@@ -95,6 +95,7 @@ fn compaction_attaches_pending_and_retained_code_mode_metadata() {
+         let source = ToolCallSource::CodeMode {
+             cell_id: cell.as_str().to_string(),
+             runtime_tool_call_id: "nested".to_string(),
++            native_loopback_port: None,
+         };
+         assert!(recorder.record_tool_result_metadata(&source, "nested", &json!({"id": "initial"})));
+         recorder.finish_cell_recording(&cell);
+@@ -149,6 +150,7 @@ fn failed_compaction_preserves_observations_absent_from_trimmed_retries() {
+             let source = ToolCallSource::CodeMode {
+                 cell_id: "recent".to_string(),
+                 runtime_tool_call_id: "runtime".to_string(),
++                native_loopback_port: None,
+             };
+             for index in 0..6 {
+                 assert!(recorder.record_tool_result_metadata(
+@@ -432,6 +434,7 @@ async fn recorder_refreshes_without_changing_execution_features_or_claiming_miss
+         let source = ToolCallSource::CodeMode {
+             cell_id: cell.as_str().to_string(),
+             runtime_tool_call_id: "runtime-nested".to_string(),
++            native_loopback_port: None,
+         };
+         let result = MetadataLookup(std::cell::Cell::new(0), json!({}), &calls);
+         calls.record_accepted_result(&source, "nested", &result);
+@@ -809,6 +812,7 @@ fn tool_call_completeness_survives_waits_without_changing_deltas() {
+                     let source = |cell_id: &str| ToolCallSource::CodeMode {
+                         cell_id: cell_id.to_string(),
+                         runtime_tool_call_id: "runtime-call".to_string(),
++                        native_loopback_port: None,
+                     };
+                     assert!(!recorder.record_tool_result_metadata(
+                         &source("other-cell"),
+@@ -1148,6 +1152,7 @@ fn request_truncation_prevents_completion_after_compaction() {
+     let source = ToolCallSource::CodeMode {
+         cell_id: cell_id.as_str().to_string(),
+         runtime_tool_call_id: "runtime-call".to_string(),
++        native_loopback_port: None,
+     };
+     for index in 0..4 {
+         assert!(!recorder.record_tool_result_metadata(
+@@ -1193,6 +1198,7 @@ fn result_metadata_updates_the_exact_retained_call_and_marks_oversized_retries()
+     let source = |cell_id: &str| ToolCallSource::CodeMode {
+         cell_id: cell_id.to_string(),
+         runtime_tool_call_id: "runtime-call".to_string(),
++        native_loopback_port: None,
+     };
+     assert!(!recorder.record_tool_result_metadata(&source("other-cell"), "first", &metadata));
+     assert!(!recorder.record_tool_result_metadata(&source(cell_id.as_str()), "unknown", &metadata));
+@@ -1273,6 +1279,7 @@ fn result_metadata_shedding_preserves_completion_after_compaction() {
+     let source = ToolCallSource::CodeMode {
+         cell_id: cell_id.as_str().to_string(),
+         runtime_tool_call_id: "runtime-call".to_string(),
++        native_loopback_port: None,
+     };
+     let mut retry_cache = HashMap::new();
+     recorder.attach_pending_to_prompt(
+diff --git a/codex-rs/core/src/tools/handlers/extension_tools.rs b/codex-rs/core/src/tools/handlers/extension_tools.rs
+index ca1bc68..54a0a33 100644
+--- a/codex-rs/core/src/tools/handlers/extension_tools.rs
++++ b/codex-rs/core/src/tools/handlers/extension_tools.rs
+@@ -497,6 +497,7 @@ mod tests {
+             source: ToolCallSource::CodeMode {
+                 cell_id: "cell-1".to_string(),
+                 runtime_tool_call_id: "nested-call-1".to_string(),
++                native_loopback_port: None,
+             },
+             payload: ToolPayload::Function {
+                 arguments: json!({ "message": "hello" }).to_string(),
+diff --git a/codex-rs/core/src/tools/handlers/mcp.rs b/codex-rs/core/src/tools/handlers/mcp.rs
+index 67484d1..20b6d58 100644
+--- a/codex-rs/core/src/tools/handlers/mcp.rs
++++ b/codex-rs/core/src/tools/handlers/mcp.rs
+@@ -764,6 +764,7 @@ mod tests {
+         invocation.source = ToolCallSource::CodeMode {
+             cell_id: cell_id.as_str().to_string(),
+             runtime_tool_call_id: "mcp-runtime-call".to_string(),
++            native_loopback_port: None,
+         };
+         let mut output = output;
+         output.result.meta = Some(json!({ "provider/custom": { "items": [1, null] } }));
+diff --git a/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs b/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs
+index bdf6877..12e7a96 100644
+--- a/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs
++++ b/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs
+@@ -156,6 +156,13 @@ impl ExecCommandHandler {
+         &self,
+         invocation: ToolInvocation,
+     ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
++        let native_loopback_port = match &invocation.source {
++            crate::tools::context::ToolCallSource::CodeMode {
++                native_loopback_port,
++                ..
++            } => *native_loopback_port,
++            _ => None,
++        };
+         let ToolInvocation {
+             session,
+             turn,
+@@ -428,6 +435,7 @@ impl ExecCommandHandler {
+             turn_environment: turn_environment.clone(),
+             shell_mode,
+             network: context.step_context.turn.network.clone(),
++            native_loopback_port,
+             tty,
+             sandbox_permissions: effective_additional_permissions.sandbox_permissions,
+             additional_permissions: normalized_additional_permissions,
+diff --git a/codex-rs/core/src/tools/handlers/view_image.rs b/codex-rs/core/src/tools/handlers/view_image.rs
+index e5ff7f2..a1fdaf9 100644
+--- a/codex-rs/core/src/tools/handlers/view_image.rs
++++ b/codex-rs/core/src/tools/handlers/view_image.rs
+@@ -511,6 +511,7 @@ mod tests {
+                 source: ToolCallSource::CodeMode {
+                     cell_id: "cell-1".to_string(),
+                     runtime_tool_call_id: "tool-1".to_string(),
++                    native_loopback_port: None,
+                 },
+                 payload: ToolPayload::Function {
+                     arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index 82ba4a6..3b67214 100644
+index 82ba4a6..4fcfa6c 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -81,6 +81,51 @@ pub(crate) async fn notify_command_start(
@@ -1167,6 +2662,14 @@ index 82ba4a6..3b67214 100644
  }
  
  pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
+@@ -167,6 +236,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+         ToolCallSource::CodeMode {
+             cell_id,
+             runtime_tool_call_id,
++            ..
+         } => ExtensionToolCallSource::CodeMode {
+             cell_id,
+             runtime_tool_call_id,
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
 index f17241a..76e767a 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
@@ -1198,6 +2701,18 @@ index f17241a..76e767a 100644
          let owner_network_policy = sandbox_config.network_policy.is_some();
          let workspace_roots = environment.workspace_roots();
          let executor_managed_process_sandbox = tool.uses_executor_managed_process_sandbox(req);
+diff --git a/codex-rs/core/src/tools/parallel.rs b/codex-rs/core/src/tools/parallel.rs
+index 53ddadc..c7aa895 100644
+--- a/codex-rs/core/src/tools/parallel.rs
++++ b/codex-rs/core/src/tools/parallel.rs
+@@ -486,6 +486,7 @@ mod tests {
+                 &ToolCallSource::CodeMode {
+                     cell_id: "cell-1".to_string(),
+                     runtime_tool_call_id: "runtime-call-1".to_string(),
++                    native_loopback_port: None,
+                 },
+                 /*experimental_show_cell_overhead*/ false,
+             );
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
 index 4d3c50c..4801835 100644
 --- a/codex-rs/core/src/tools/registry.rs
@@ -1316,6 +2831,206 @@ index f199267..cc29647 100644
 +        }
 +    }
 +}
+diff --git a/codex-rs/core/src/tools/runtimes/unified_exec.rs b/codex-rs/core/src/tools/runtimes/unified_exec.rs
+index 354e932..2a6793a 100644
+--- a/codex-rs/core/src/tools/runtimes/unified_exec.rs
++++ b/codex-rs/core/src/tools/runtimes/unified_exec.rs
+@@ -80,6 +80,7 @@ pub struct UnifiedExecRequest {
+     pub shell_snapshot: Option<codex_exec_server::ShellSnapshotRequest>,
+     pub explicit_env_overrides: HashMap<String, String>,
+     pub network: Option<NetworkProxy>,
++    pub native_loopback_port: Option<u16>,
+     pub tty: bool,
+     pub sandbox_permissions: SandboxPermissions,
+     pub additional_permissions: Option<AdditionalPermissionProfile>,
+@@ -352,7 +353,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
+         } else {
+             None
+         };
+-        let (mut env, managed_network_context, network_proxy_launch) = match managed_network {
++        let (mut env, mut managed_network_context, network_proxy_launch) = match managed_network {
+             Some(network) if environment_is_remote => {
+                 let mut launch = network
+                     .remote_launch_config(crate::windows_sandbox::local_binding_policy_for_sandbox(
+@@ -424,6 +425,12 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecAttempt> for UnifiedExecRunt
+             }
+             None => (env, None, None),
+         };
++        if let Some(port) = req.native_loopback_port {
++            let context = managed_network_context.get_or_insert_with(Default::default);
++            context.loopback_ports.push(port);
++            context.loopback_ports.sort_unstable();
++            context.loopback_ports.dedup();
++        }
+         if let Some(snapshot) = shell_snapshot.as_ref() {
+             snapshot.restore_fail_open_aliases(
+                 &mut env,
+@@ -851,6 +858,7 @@ mod tests {
+             shell_snapshot: None,
+             explicit_env_overrides: HashMap::new(),
+             network: None,
++            native_loopback_port: None,
+             tty: false,
+             sandbox_permissions: SandboxPermissions::UseDefault,
+             additional_permissions: None,
+@@ -954,6 +962,7 @@ mod tests {
+             shell_snapshot: None,
+             explicit_env_overrides: HashMap::new(),
+             network: None,
++            native_loopback_port: None,
+             tty: false,
+             sandbox_permissions,
+             additional_permissions: None,
+diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
+index f5c88e3..ecec343 100644
+--- a/codex-rs/core/src/tools/spec_plan.rs
++++ b/codex-rs/core/src/tools/spec_plan.rs
+@@ -864,6 +864,9 @@ fn register_code_mode_executors(
+     let namespace_descriptions = code_mode_namespace_descriptions(&exec_prompt_tool_specs);
+     let mut enabled_tools =
+         collect_code_mode_exec_prompt_tool_definitions(exec_prompt_tool_specs.iter());
++    if turn_context.config.code_mode.omd_kernels {
++        enabled_tools.push(crate::tools::code_mode::kernels::definition());
++    }
+     let deferred_tools = collect_code_mode_exec_prompt_tool_definitions(
+         deferred_exec_prompt_tool_specs.iter().map(Arc::as_ref),
+     );
+diff --git a/codex-rs/core/src/tools/tool_dispatch_trace.rs b/codex-rs/core/src/tools/tool_dispatch_trace.rs
+index deb5fa0..c8086c2 100644
+--- a/codex-rs/core/src/tools/tool_dispatch_trace.rs
++++ b/codex-rs/core/src/tools/tool_dispatch_trace.rs
+@@ -69,6 +69,7 @@ fn tool_dispatch_invocation(invocation: &ToolInvocation) -> Option<ToolDispatchI
+         ToolCallSource::CodeMode {
+             cell_id,
+             runtime_tool_call_id,
++            ..
+         } => ToolDispatchRequester::CodeCell {
+             runtime_cell_id: cell_id.clone(),
+             runtime_tool_call_id: runtime_tool_call_id.clone(),
+diff --git a/codex-rs/core/src/tools/tool_dispatch_trace_tests.rs b/codex-rs/core/src/tools/tool_dispatch_trace_tests.rs
+index 5c841f5..aa9e6c7 100644
+--- a/codex-rs/core/src/tools/tool_dispatch_trace_tests.rs
++++ b/codex-rs/core/src/tools/tool_dispatch_trace_tests.rs
+@@ -153,6 +153,7 @@ async fn dispatch_lifecycle_trace_records_direct_and_code_mode_requesters() -> a
+                 ToolCallSource::CodeMode {
+                     cell_id: "cell-1".to_string(),
+                     runtime_tool_call_id: "tool-1".to_string(),
++                    native_loopback_port: None,
+                 },
+                 "{}",
+             ),
+diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
+index 3645306..611714c 100644
+--- a/codex-rs/core/src/unified_exec/mod.rs
++++ b/codex-rs/core/src/unified_exec/mod.rs
+@@ -123,6 +123,7 @@ pub(crate) struct ExecCommandRequest {
+     pub turn_environment: TurnEnvironment,
+     pub shell_mode: UnifiedExecShellMode,
+     pub network: Option<NetworkProxy>,
++    pub native_loopback_port: Option<u16>,
+     pub tty: bool,
+     pub sandbox_permissions: SandboxPermissions,
+     pub additional_permissions: Option<AdditionalPermissionProfile>,
+diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
+index 1057835..1cecb90 100644
+--- a/codex-rs/core/src/unified_exec/process_manager.rs
++++ b/codex-rs/core/src/unified_exec/process_manager.rs
+@@ -1518,6 +1518,7 @@ impl UnifiedExecProcessManager {
+             shell_snapshot,
+             explicit_env_overrides,
+             network: request.network.clone(),
++            native_loopback_port: request.native_loopback_port,
+             tty: request.tty,
+             sandbox_permissions: request.sandbox_permissions,
+             additional_permissions: request.additional_permissions.clone(),
+diff --git a/codex-rs/core/src/unified_exec/process_manager_tests.rs b/codex-rs/core/src/unified_exec/process_manager_tests.rs
+index 297c84f..b2173ea 100644
+--- a/codex-rs/core/src/unified_exec/process_manager_tests.rs
++++ b/codex-rs/core/src/unified_exec/process_manager_tests.rs
+@@ -469,6 +469,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
+             .expect("primary environment"),
+         shell_mode: codex_tools::UnifiedExecShellMode::Direct,
+         network: None,
++        native_loopback_port: None,
+         tty: true,
+         sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+         additional_permissions: None,
+diff --git a/codex-rs/core/tests/suite/code_mode.rs b/codex-rs/core/tests/suite/code_mode.rs
+index d443287..2d2e873 100644
+--- a/codex-rs/core/tests/suite/code_mode.rs
++++ b/codex-rs/core/tests/suite/code_mode.rs
+@@ -118,6 +118,7 @@ use std::sync::atomic::AtomicUsize;
+ use std::sync::atomic::Ordering;
+ use std::time::Duration;
+ use std::time::Instant;
++use tempfile::tempdir;
+ use test_case::test_case;
+ use tokio::sync::oneshot;
+ use wiremock::Mock;
+@@ -758,6 +759,63 @@ text(JSON.stringify(await tools.exec_command({ cmd: "printf code_mode_exec_marke
+     Ok(())
+ }
+ 
++#[cfg_attr(windows, ignore = "no managed Python and Bun workers on Windows")]
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++#[ignore = "requires installed Python, Bun, and local loopback"]
++async fn code_mode_python_csv_to_bun_chart_stays_in_one_cell() -> Result<()> {
++    let directory = tempdir()?;
++    let csv = directory.path().join("sample.csv");
++    std::fs::write(&csv, "month,total\nJan,2\nFeb,4\nMar,3\n")?;
++    let python = format!(
++        "import csv, io, json\nr = tool('exec_command', {{'cmd': 'head -n 50 {}', 'max_output_tokens': 2000}})\nassert r['exit_code'] == 0\nvalues = [int(row['total']) for row in csv.DictReader(io.StringIO(r['output']))]\nprint(json.dumps(values))",
++        csv.display()
++    );
++    let code = r#"
++const python = await tools.omd_kernel({ language: "python", code: __PYTHON_CODE__ });
++if (!python.ok) throw new Error(python.error);
++const values = JSON.parse(python.output);
++const bun = await tools.omd_kernel({ language: "bun", code: `globalThis.values=${JSON.stringify(values)}; console.log('<svg>' + values.map(v => '<rect height="' + (v * 10) + '"/>').join('') + '</svg>')` });
++text(JSON.stringify({ python, bun }));
++"#
++    .replace("__PYTHON_CODE__", &serde_json::to_string(&python)?);
++    let server = responses::start_mock_server().await;
++    let (_test, second_mock) = run_code_mode_turn_with_config(
++        &server,
++        "read a bounded CSV in Python and chart it in Bun",
++        &code,
++        |config| {
++            config.code_mode.omd_kernels = true;
++            config.features.enable(Feature::CodeModeHost).unwrap();
++            config.code_mode.disable_in_process_fallback = true;
++            config
++                .set_legacy_sandbox_policy(
++                    codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
++                        writable_roots: Vec::new(),
++                        network_access: false,
++                        exclude_tmpdir_env_var: false,
++                        exclude_slash_tmp: false,
++                    },
++                )
++                .unwrap();
++        },
++    )
++    .await?;
++    let items = custom_tool_output_items(&second_mock.single_request(), "call-1");
++    let result: Value = serde_json::from_str(text_item(&items, 1))?;
++    assert_eq!(result["python"]["output"], "[2, 4, 3]\n");
++    assert_eq!(result["bun"]["ok"], true);
++    assert_eq!(
++        result["bun"]["output"]
++            .as_str()
++            .unwrap()
++            .matches("<rect")
++            .count(),
++        3
++    );
++
++    Ok(())
++}
++
+ #[tokio::test]
+ async fn code_mode_exec_holds_captured_result_during_elicitation() -> Result<()> {
+     let server = responses::start_mock_server().await;
 diff --git a/codex-rs/exec-server/src/process_sandbox.rs b/codex-rs/exec-server/src/process_sandbox.rs
 index ada35f7..aa0b841 100644
 --- a/codex-rs/exec-server/src/process_sandbox.rs
@@ -12932,6 +14647,19 @@ index 0000000..1327528
 +        assert!(prompt.contains(required));
 +    }
 +}
+diff --git a/codex-rs/features/src/feature_configs.rs b/codex-rs/features/src/feature_configs.rs
+index b3c5a4b..ae55b22 100644
+--- a/codex-rs/features/src/feature_configs.rs
++++ b/codex-rs/features/src/feature_configs.rs
+@@ -39,6 +39,8 @@ pub struct CodeModeConfigToml {
+     /// from the nested code-mode tool surface.
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub direct_only_tool_namespaces: Option<Vec<String>>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub omd_kernels: Option<bool>,
+ }
+ 
+ impl FeatureConfig for CodeModeConfigToml {
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
 index b02a3c0..eeb01cb 100644
 --- a/codex-rs/login/src/auth/default_client.rs

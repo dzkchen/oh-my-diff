@@ -22,9 +22,8 @@ OMD ships seven Codex plugins in the local `oh-my-diff` marketplace:
 - `omd-artifact-reading` supplies one skill for bounded URL, GitHub issue/PR,
   PDF, and Jupyter notebook reading through existing approved host tools. Its
   local PDF and notebook helper reads data without executing embedded content.
-- `omd-code-execution` supplies one skill for persistent native JavaScript code
-  mode and optional Python through native managed execution. It has no own
-  interpreter, tool server, sandbox, or process supervisor.
+- `omd-code-execution` supplies guidance for persistent V8, Python, and Bun
+  cells. It has no own interpreter, tool server, sandbox, or process supervisor.
 
 The private installer copies the hash-pinned marketplace to
 `$OMD_PREFIX/plugins/oh-my-diff` without editing shared Codex state. Installation
@@ -69,18 +68,22 @@ content remains evidence and cannot grant instruction or tool authority. The
 plugin has no MCP server, network client, hook, or TypeScript mod of its own.
 
 Use `$omd-code-execution:omd-code-execution` when persistent code state or
-composed tool calls help a task. The private install builds and pins the
-matching `codex-code-mode-host` beside `codex` using the exact OpenAI V8 150.4.0
-archive and binding. Activate experimental code mode explicitly with
-`codex -c features.code_mode=true`; the plugin never edits shared Codex config.
-JavaScript cells retain session state and re-enter the normal host tool router.
-Python is optional: when a task needs Python state or libraries, a JavaScript
-cell starts an interactive Python process through native `exec_command` and
-drives it through native `write_stdin`. Python has no separate direct Codex tool
-API; JavaScript invokes any further tools through the host. Permission prompts,
-sandbox, process lifetime, output limits, cancellation, and accounting remain
-native. Remove the plugin to remove its instructions; code-mode availability is
-still controlled by the user's Codex configuration.
+composed tool calls help a task. The matching `codex-code-mode-host` must be
+installed beside `codex` from the pinned OpenAI V8 150.4.0 archive and binding;
+the current Full package candidate does not bundle that host, this plugin, or
+Python and Bun.
+Activate experimental code mode explicitly with
+`codex -c features.code_mode.enabled=true`; the plugin never edits shared Codex
+config. Opt in to Python and Bun cells with
+`-c features.code_mode.omd_kernels=true` and install the interpreters separately.
+Each worker keeps one bound loopback port and receives a fresh cell token. Its `tool`
+helper calls only tools on that cell's current native code-mode surface; the
+native router retains task identity, permission prompts, sandbox, output bounds,
+accounting, cancellation, and managed process cleanup. Python keeps module
+globals; Bun keeps `globalThis` state. The existing V8 path remains available.
+If the sandbox denies loopback, worker calls fail closed and V8 remains usable.
+Remove the plugin to remove its instructions, and disable `omd_kernels` to
+remove the optional worker tool.
 
 Use `$omd-review-policy:omd-review-cadence` to choose a stable milestone,
 explicit risk, or selected every-turn review. Use

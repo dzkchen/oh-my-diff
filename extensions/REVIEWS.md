@@ -1,6 +1,6 @@
 # Extension review register
 
-Review date: September 24, 2026. These are source and functional reviews of
+Review date: September 25, 2026. These are source and functional reviews of
 release candidates on Codex 0.155.1 and 0.156.1 / OMD 0.1.0. A September 23 local package
 smoke covered the current Codex 0.156.1 pin, the mod API, and staged plugin
 installation and removal; it did not rerun each task-value gate. These reviews
@@ -33,7 +33,7 @@ supported release package yet.
 
 | Development entry | Reason it stays out of the reviewed candidate index |
 | --- | --- |
-| `omd-code-execution` | Full private install and composed task value are not established |
+| `omd-code-execution` | Pinned Python and Bun workers pass local native bridge, one-cell composition, sandbox, disable, and cleanup checks; Full profile installation and real-task value are not established |
 | `omd_theme` and `omd_focus_flow` | Separate opt-in latency keep gates failed; neither enters the active default |
 | `task_scope` | Internal `.8` author exercise works offline, but per-step callback cost and real task value are unresolved |
 | `session_anchor` | Internal checkpoint/compaction exercise works offline, but independent long-session benefit is unresolved |

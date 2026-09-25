@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "as_of": "2026-09-22",
+  "as_of": "2026-09-25",
   "packages": [
     {
       "id": "omd-code-execution",
       "extension_type": "plugin",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-code-execution",
-      "reason": "Full private install and composed task value are still unverified",
-      "review": "extensions/REVIEWS.md"
+      "reason": "Native Python and Bun worker acceptance passed; Full profile installation, composed real-task value, and public support remain unverified",
+      "review": ".docs/audits/code-execution-workers-20260925.md"
     },
     {
       "id": "omd_theme",
