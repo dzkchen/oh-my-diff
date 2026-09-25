@@ -1,21 +1,35 @@
 {
   "schema": 1,
+  "as_of": "2026-09-25",
   "status": "local_integration_candidate_unqualified",
-  "upstream_commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+  "development_pin": "rust-v0.156.1",
+  "upstream_commit": "b412ff32c417f855c2b2d1581b77058eed87c84b",
   "mod_api": "0.1.0-experimental.8",
   "no_omd_baseline": "upstream_direct",
   "candidate_manager": "scripts/lean_profiles.py",
-  "candidate_lock": "runtime/lean-candidate.lock.json",
+  "candidate_lock": "runtime/lean-release.lock.json",
+  "candidate_lock_status": "last_local_package_snapshot; source hashes for mods/api.d.ts, runtime/patches/manifest.json and upstream.lock.json now differ, so a fresh exact package lock and artifact check are owed in Phase 11",
+  "historical_candidate_lock": "runtime/lean-candidate.lock.json",
   "installation_profiles": {
     "modding_platform_only": {
       "host_mode": "platform",
+      "shared_platform_tools": ["omd-mod", "typed author SDK and CLI", "omd-package"],
       "first_party_installed": [],
       "first_party_active": [],
-      "qualification": "public mod host and real-model user-mod task pass; pinned release profile install, direct switch, disable, store-preserving removal and exact-API checks pass; independent author and public distribution remain open"
+      "user_selected_mods": "available after explicit install, trust and enable",
+      "qualification": "prior 0.156.1 local release-profile install and real-model user-mod task passed; current-source package rebuild, same-session controls, upgrade, independent author, newcomer and public distribution remain open"
     },
     "full_omd": {
-      "first_party_default_candidate": ["omd_workspace"],
-      "installed_inactive_mod_candidates": ["omd_coordination", "omd_recovery"],
+      "host_mode": "platform",
+      "first_party_installed_mod_candidates": [
+        "omd_claude_cli",
+        "omd_coordination",
+        "omd_lsp_sync",
+        "omd_recovery",
+        "omd_typed_tasks",
+        "omd_workspace"
+      ],
+      "first_party_default_active_candidate": ["omd_workspace"],
       "staged_inactive_plugin_sources": [
         "omd-guidance-hooks",
         "omd-review-policy",
@@ -24,18 +38,47 @@
         "omd-lsp-adapters",
         "omd-artifact-reading"
       ],
-      "qualification": "pinned release Full profile stages three mods, six curated plugin sources and inert graph/health/LSP binaries; direct switch, per-mod disable and store-preserving attach pass; direct/Full real-model functional task passes; controlled native completion, three independent mod value, default benefit and responsiveness remain unqualified"
+      "inert_optional_tool_binaries": ["omd-graph", "omd-health", "omd-lsp"],
+      "qualification": "prior 0.156.1 six-mod install and package checks passed; current-source package rebuild, three distinct useful live mods, default benefit and responsiveness, completed named-capability collection, same-session controls and Phase 12 support remain open"
     }
   },
-  "on_demand_candidates": {
-    "browser_bundle": "supported_opt_in_candidate",
-    "application_bridges": "supported_opt_in_candidate",
-    "repository_graph_health": "supported_opt_in_candidate",
-    "lsp_adapters": "supported_opt_in_candidate",
-    "artifact_reading": "supported_opt_in_candidate",
-    "code_execution": "deferred_pending_full_private_install_and_task_value"
+  "named_capabilities": {
+    "locally_implemented_not_release_qualified": [
+      "claude_cli_subscription_mod",
+      "persistent_python_bun_tool_bridge",
+      "lsp_synchronization_mod",
+      "python_debugger_opt_in",
+      "typed_subagent_tasks_mod"
+    ],
+    "phase_11_delivery_open": [
+      "mid_stream_reactive_rules_mod",
+      "advisor_review_mod",
+      "content_hash_anchored_edits",
+      "github_virtual_reads",
+      "agent_curated_memory",
+      "session_review_command",
+      "selection_copy_mod"
+    ],
+    "python_debugger_profile_state": "local optional plugin and mod; absent from both base installation profiles",
+    "code_execution_profile_state": "development only; absent from both base installation profiles"
   },
-  "activation_rule": "installation must preserve explicit user selection; only a qualified, documented low-overhead Full OMD default may be enabled by its chosen profile",
-  "current_private_installer_exception": "private_lean_v1.py still injects browser MCP when its private OMD selection is activated; the new lean candidate profile path does not install or configure browser MCP",
-  "qualification_evidence": ".docs/audits/lean-platform-integration-20260923.md"
+  "on_demand_candidates": {
+    "browser_bundle": "reviewed_opt_in_candidate_not_base_installed",
+    "application_bridges": "staged_plugin_source_only_in_full",
+    "repository_graph_health": "staged_plugin_source_and_inert_native_binaries_in_full",
+    "lsp_adapters": "staged_plugin_source_and_inert_native_binary_in_full",
+    "artifact_reading": "staged_plugin_source_only_in_full",
+    "python_debugger": "local_optional_package_not_in_either_profile",
+    "code_execution": "development_only_pending_full_install_and_task_value"
+  },
+  "development_only": [
+    "omd_task_tools",
+    "omd_session_anchor",
+    "omd_verification_gate",
+    "theme_and_focus_prototypes",
+    "author_exercise_mods"
+  ],
+  "activation_rule": "installation preserves explicit user selection; only the provisional omd_workspace Full default is enabled on fresh install, and it remains unqualified",
+  "private_installer_exception": "private_lean_v1.py has separate historical browser MCP activation behavior; the current lean package profiles omit browser assets and configuration",
+  "scope_and_dependency_map": ".docs/audits/current-release-scope-map-20260925.md"
 }
