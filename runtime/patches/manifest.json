@@ -4,12 +4,12 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/controlled-contributor-0.156.1.patch",
-    "sha256": "2ece27888afadb39c784cb15c95f40799365b7d1224d8af86da083dc57cce300"
+    "sha256": "8500210605b98609ece63f09b47e222474c71b27df3db78be78e6fd65217db9b"
   },
   "files": {
     "codex-rs/Cargo.lock": {
       "before": "d722f05fc760bcd1f5749ec452452d81058458b788df3b765b80500d757eba4a",
-      "after": "9927cc953a4ce84034d65f1629037c97f20fd7e8318489467ff31074bcc0c3c3"
+      "after": "a53c2eb34f10595300da0f0c4cbb6fddf6a5e30b54ddea4f7ba7abd8221c6994"
     },
     "codex-rs/Cargo.toml": {
       "before": "2bfb4efd6f6e863d99f7c97e2d49cd43b40f925e720e2b0768b114826c8a3342",
@@ -233,7 +233,7 @@
     },
     "codex-rs/ext/omd/Cargo.toml": {
       "before": null,
-      "after": "a127658f9722bc9dfe866507028138c11e24c65edc1e7edbed51cb3ef44e325e"
+      "after": "5bacd06b30daacff740969f26da98ceca4b0c4907c3521addb349c1ac1ed37c9"
     },
     "codex-rs/ext/omd/src/accounting.rs": {
       "before": null,
@@ -257,7 +257,7 @@
     },
     "codex-rs/ext/omd/src/managed_process.rs": {
       "before": null,
-      "after": "5e75c8940b7dbbf38ec03323e484b6e0b395f88df2414ece5361b076bc049052"
+      "after": "51b8ac3a2f74adde8a14664a8eab4ba04a05294d603afeea8cf7d8ad4797250e"
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,

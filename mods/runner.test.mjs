@@ -217,6 +217,102 @@ test('LSP mod reports an absent server and leaves the write event recoverable', 
   const broken = run('export default api => { api.on("workspace_write", () => { throw new Error("broken") }); }', { capabilities: ['workspace'], event: 'workspace_write', payload });
   assert.match(broken.error, /broken/);
 });
+test('optional debugger mod keeps DAP control and inspection on managed process calls', () => {
+  const source = readFileSync(new URL('../plugins/optional/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
+  const capabilities = ['tools', 'process', 'state', 'lifecycle'];
+  const calls = [];
+  const server = call => {
+    calls.push(call);
+    if (call.operation === 'process.which') return { found: [{ name: 'python3', path: '/usr/bin/python3', sha256: 'adapter-hash' }] };
+    if (call.operation === 'process.start') return { session: 'debug', running: true };
+    if (call.operation === 'process.status') return { session: 'debug', running: true, idle_ms: 0 };
+    if (call.operation === 'process.stop') return { stopped: true };
+    if (call.operation === 'process.exchange') {
+      const request = call.arguments.send?.[0];
+      if (!request) return { session: 'debug', running: true, messages: [] };
+      const body = request.command === 'setBreakpoints' ? { breakpoints: [{ verified: true, line: 4 }] }
+        : request.command === 'stackTrace' ? { stackFrames: [{ id: 7, name: 'main', source: { path: '/tmp/project/bug.py' }, line: 4, column: 1 }], totalFrames: 1 }
+          : request.command === 'scopes' ? { scopes: [{ name: 'Locals', variablesReference: 4, expensive: false }] }
+            : request.command === 'variables' ? { variables: [{ name: 'denominator', value: '0', type: 'int', variablesReference: 0 }] }
+              : request.command === 'evaluate' ? { result: '0', type: 'int', variablesReference: 0 } : {};
+      const events = request.command === 'launch' ? [{ type: 'event', event: 'initialized' }]
+        : request.command === 'configurationDone' || request.command === 'next' ? [{ type: 'event', event: 'stopped', body: { threadId: 3, reason: 'breakpoint' } }] : [];
+      return { session: 'debug', running: true, messages: [{ type: 'response', request_seq: request.seq, success: true, body }, ...events] };
+    }
+    throw new Error(`unexpected ${call.operation}`);
+  };
+  const replay = (name, payload, state = null) => {
+    const receipts = [];
+    for (let index = 0; index < 20; index++) {
+      const output = run(source, { capabilities, event: 'tool', name, payload, state, receipts, hook_budget_ms: 500 });
+      assert.equal(output.error, undefined, output.error);
+      if (!output.host_call) return output;
+      receipts.push({ call: output.host_call, value: server(output.host_call) });
+    }
+    assert.fail('debugger mod did not finish');
+  };
+  const opened = replay('open', { adapter: 'debugpy' });
+  assert.equal(opened.value.status, 'initialized');
+  const started = replay('start', { mode: 'launch', program: '/tmp/project/bug.py' }, opened.state);
+  assert.equal(started.state.ready, true);
+  const breakpoint = replay('breakpoints', { source: '/tmp/project/bug.py', lines: [4] }, started.state);
+  assert.equal(breakpoint.value.result.breakpoints[0].verified, true);
+  const configured = replay('configure', {}, breakpoint.state);
+  assert.equal(configured.state.phase, 'stopped');
+  const frames = replay('inspect', { command: 'stackTrace' }, configured.state);
+  assert.equal(frames.value.result.frames[0].line, 4);
+  const scopes = replay('inspect', { command: 'scopes', frame_id: 7 }, frames.state);
+  assert.equal(scopes.value.result.scopes[0].variablesReference, 4);
+  const variables = replay('inspect', { command: 'variables', variables_reference: 4 }, scopes.state);
+  assert.equal(variables.value.result.variables[0].name, 'denominator');
+  const evaluated = replay('inspect', { command: 'evaluate', frame_id: 7, expression: 'denominator' }, variables.state);
+  assert.equal(evaluated.value.result.result, '0');
+  const stepped = replay('control', { command: 'next' }, evaluated.state);
+  assert.equal(stepped.state.phase, 'stopped');
+  const detached = replay('detach', {}, stepped.state);
+  assert.equal(detached.state.running, false);
+  assert.equal(calls.find(call => call.operation === 'process.start').arguments.transport, 'stdio_dap');
+  assert.equal(calls.at(-1).operation, 'process.stop');
+  assert.equal(calls.some(call => call.operation === 'process.exchange' && call.arguments.send?.[0]?.command === 'attach'), false);
+  assert.deepEqual(run(source, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'lldb' } }).value, { error: 'invalid_adapter' });
+  assert.deepEqual(replay('start', { mode: 'attach', process_id: 42 }, opened.state).value, { error: 'invalid_mode' });
+});
+test('optional debugger mod tears down a refused asynchronous launch without returning adapter text', () => {
+  const source = readFileSync(new URL('../plugins/optional/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
+  const capabilities = ['tools', 'process', 'state', 'lifecycle'];
+  const initial = { adapter: 'debugpy', executable: '/usr/bin/python3', running: true, ready: false, mode: null, phase: 'initialized', next_seq: 2, launch_seq: null, thread_id: null, reason: '' };
+  const sent = run(source, { capabilities, event: 'tool', name: 'start', payload: { mode: 'launch', program: '/repo/bug.py' }, state: initial,
+    receipts: [{ call: { operation: 'process.exchange', arguments: { session: 'debug', send: [{ seq: 2, type: 'request', command: 'launch', arguments: { program: '/repo/bug.py', python: '/usr/bin/python3', args: [], stopOnEntry: true, justMyCode: false, redirectOutput: false } }], wait_ms: 0 } }, value: { session: 'debug', running: true, messages: [] } }] });
+  assert.equal(sent.state.launch_seq, 2);
+  assert.equal(sent.state.phase, 'configuring');
+  const response = { type: 'response', request_seq: 2, command: 'launch', success: false, message: 'TOP_SECRET' };
+  const first = run(source, { capabilities, event: 'tool', name: 'status', payload: {}, state: sent.state });
+  assert.deepEqual(first.host_call, { operation: 'process.exchange', arguments: { session: 'debug', send: [], wait_ms: 250 } });
+  const second = run(source, { capabilities, event: 'tool', name: 'status', payload: {}, state: sent.state, receipts: [{ call: first.host_call, value: { session: 'debug', running: true, messages: [response] } }] });
+  assert.deepEqual(second.host_call, { operation: 'process.stop', arguments: { session: 'debug' } });
+  const stopped = run(source, { capabilities, event: 'tool', name: 'status', payload: {}, state: sent.state, receipts: [
+    { call: first.host_call, value: { session: 'debug', running: true, messages: [response] } },
+    { call: second.host_call, value: { stopped: true } },
+  ] });
+  assert.equal(stopped.state.running, false);
+  assert.equal(stopped.value.reason, 'adapter_launch_refused');
+  assert.equal(JSON.stringify(stopped).includes('TOP_SECRET'), false);
+  const receipts = [];
+  let reopened;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    reopened = run(source, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'debugpy' }, state: stopped.state, receipts });
+    if (!reopened.host_call) break;
+    const call = reopened.host_call;
+    const value = call.operation === 'process.which' ? { found: [{ name: 'python3', path: '/usr/bin/python3', sha256: 'adapter-hash' }] }
+      : call.operation === 'process.start' ? { session: 'debug', running: true }
+        : { session: 'debug', running: true, messages: [{ type: 'response', request_seq: 1, command: 'initialize', success: true, body: {} }] };
+    receipts.push({ call, value });
+  }
+  assert.equal(reopened.value.status, 'initialized');
+  assert.equal(reopened.state.running, true);
+  assert.equal(reopened.state.reason, '');
+  assert.deepEqual(receipts.map(receipt => receipt.call.operation), ['process.which', 'process.start', 'process.exchange']);
+});
 test('workspace layout accepts bare toggles and dialog select values', () => {
   const source = readFileSync(new URL('./first-party/omd_workspace/index.ts', import.meta.url), 'utf8');
   const layout = (payload, state = null) => run(source, { capabilities: ['terminal', 'commands', 'lifecycle', 'state'], event: 'command', name: 'layout', payload, state });

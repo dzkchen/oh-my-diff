@@ -159,7 +159,7 @@ export interface HostOperations {
   'workspace.transaction': { arguments: { expected: Record<string, string | null>; writes: Record<string, string>; renames?: { old: string; new: string }[] }; result: { files: Record<string, string | null> } };
   'workspace.request_rename': { arguments: { old: string; new: string }; result: { status: 'renamed'; files: Record<string, string | null> } | { status: 'fallback'; reason: string } };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
-  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[] }; result: { session: string; running: true } };
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; transport?: 'stdio' | 'unix_dap' | 'stdio_dap' }; result: { session: string; running: true } };
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };

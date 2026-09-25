@@ -1,0 +1,20 @@
+{
+  "name": "oh-my-diff-optional",
+  "interface": {
+    "displayName": "Oh My Diff Optional"
+  },
+  "plugins": [
+    {
+      "name": "omd-debugger",
+      "source": {
+        "source": "local",
+        "path": "./omd-debugger"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

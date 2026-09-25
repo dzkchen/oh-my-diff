@@ -191,6 +191,19 @@ expected unavailable operation, so a mod can report fallback without treating
 server absence as a callback failure. Both `call` and `tryCall` remain subject
 to the same declared capability and host permission checks.
 
+`process.start` accepts `transport: "stdio"` by default. Its DAP transports
+are `"stdio_dap"` for `lldb-dap` or `python3 -m debugpy.adapter`, and
+`"unix_dap"` for `dlv dap`. The host creates Delve's private Unix socket,
+frames DAP messages, and allows local loopback binding required by debug
+adapters while keeping external network access restricted. It owns process
+group termination and socket removal. It starts adapters with a cleared host
+environment and an owner-only scratch directory. The opt-in debugger package
+in `plugins/optional/omd-debugger` exposes **Python launch only**; LLDB,
+Delve, and attach remain unqualified transport experiments. Its mod requires
+separate review, trust, and enablement. Plugin installation does not activate
+the mod or install Python or debugpy. The local on-demand marketplace is not
+part of either release installation profile.
+
 ## Diagnostics and source maps
 
 The engine transforms TypeScript with an inline source map and runs Node with
