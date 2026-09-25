@@ -16,6 +16,11 @@ impl ModHostCall {
             "agents.spawn" | "agents.message" | "agents.cancel" | "agents.result"
             | "agents.wait" | "agents.list" => Ok("agents"),
             "workspace.integrate" => Ok("execution"),
+            "workspace.read" | "workspace.transaction" | "workspace.request_rename" => {
+                Ok("workspace")
+            }
+            "process.which" | "process.start" | "process.exchange" | "process.status"
+            | "process.stop" => Ok("process"),
             "review.run" | "review.complete" => Ok("review"),
             "recovery.escalate" | "delegation.contribute" => Ok("recovery"),
             "tools.exec" => Ok("execution"),

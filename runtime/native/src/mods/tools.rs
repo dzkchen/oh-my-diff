@@ -4,9 +4,11 @@ struct Tool {
     lead: Arc<Lead>,
     agents: Arc<agents::Agents>,
     services: Arc<services::Services>,
+    processes: Arc<crate::managed_process::ManagedProcesses>,
     views: Arc<view::Views>,
     owner: Arc<Host>,
     runtime: Arc<Mutex<ModHost>>,
+    pre_rename_runtime: Arc<Mutex<ModHost>>,
     id: String,
     generation: u64,
     definition: ModTool,
@@ -89,9 +91,11 @@ impl Mods {
                     lead: lead.clone(),
                     agents: self.agents.clone(),
                     services: self.services.clone(),
+                    processes: self.processes.clone(),
                     views: self.views.clone(),
                     owner: self.owner.clone(),
                     runtime: self.runtime.clone(),
+                    pre_rename_runtime: self.input_runtime.clone(),
                     id,
                     generation,
                     definition,
@@ -202,6 +206,8 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                 let value = operations::dispatch(
                     &self.agents,
                     &self.services,
+                    &self.processes,
+                    &self.pre_rename_runtime,
                     &lead,
                     &self.id,
                     generation,
@@ -223,6 +229,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                         .finish(&self.owner, &self.id, &tool_name, &label, "failed");
                     self.agents.cleanup_owned(&self.id, generation).await;
                     self.services.cleanup_owned(&self.id, generation).await;
+                    self.processes.cleanup_owned(&self.id, generation);
                     return Err(FunctionCallError::RespondToModel(error));
                 }
             };

@@ -1,5 +1,5 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services';
+export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services' | 'workspace' | 'process';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -155,6 +155,14 @@ export interface HostOperations {
   'agents.wait': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
   'agents.list': { arguments: null; result: { handle: string; finished: boolean; consumed: boolean }[] };
   'workspace.integrate': { arguments: { handle: string }; result: { status: 'integrated'; candidate_sha256: string; changed_paths: string[]; evidence: Json } };
+  'workspace.read': { arguments: { paths: string[] }; result: { files: Record<string, { text: string; sha256: string } | null> } };
+  'workspace.transaction': { arguments: { expected: Record<string, string | null>; writes: Record<string, string>; renames?: { old: string; new: string }[] }; result: { files: Record<string, string | null> } };
+  'workspace.request_rename': { arguments: { old: string; new: string }; result: { status: 'renamed'; files: Record<string, string | null> } | { status: 'fallback'; reason: string } };
+  'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[] }; result: { session: string; running: true } };
+  'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
+  'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
+  'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
   'review.run': { arguments: ReviewRequest; result: Json };
   'review.complete': { arguments: CompletionRequest; result: Json };
   'delegation.contribute': { arguments: ContributionRequest; result: Json };
@@ -185,6 +193,8 @@ export interface Events {
   idle: { input: Json; output: void };
   stop: { input: Json; output: void };
   tool_result: { input: Json; output: void };
+  workspace_write: { input: { repository: string; call_id: string; tool: string; outcome: string; changes: { path: string; before: string | null; after: string | null }[]; status: 'observed' | 'unavailable'; reason?: string | null }; output: void };
+  workspace_pre_rename: { input: { repository: string; old: string; new: string; expected: Record<string, string | null> }; output: { status: 'ready'; expected: Record<string, string | null>; writes: Record<string, string> } | { status: 'fallback'; reason: string } | void };
   turn_start: { input: { turn_id: string }; output: void };
   turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: string }; output: void };
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
@@ -203,7 +213,10 @@ export interface ModAPI {
   readonly version: '0.1.0-experimental.8';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
-  readonly host: { call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'] };
+  readonly host: {
+    call<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): HostOperations[K]['result'];
+    tryCall<K extends keyof HostOperations>(operation: K, arguments_: HostOperations[K]['arguments']): { ok: true; value: HostOperations[K]['result'] } | { ok: false; error: string };
+  };
   readonly services: { call<T extends Json = Json>(name: string, method: string, input?: Json): T };
   on<K extends keyof Events>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   middleware<K extends 'model_request' | 'response_stream' | 'prompt' | 'session' | 'agent' | 'tool_call' | 'tool_result' | 'host_operation'>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;

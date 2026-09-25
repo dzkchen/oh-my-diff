@@ -32,6 +32,8 @@ fn recovery_selection(host: &Host, id: &str, value: Value) -> Result<PolicySelec
 pub(super) async fn dispatch(
     agents: &agents::Agents,
     services: &services::Services,
+    processes: &Arc<crate::managed_process::ManagedProcesses>,
+    pre_rename_runtime: &Arc<Mutex<ModHost>>,
     lead: &Lead,
     id: &str,
     generation: u64,
@@ -47,6 +49,83 @@ pub(super) async fn dispatch(
         return services.call(lead, id, generation, request).await;
     }
     match request.operation.as_str() {
+        "workspace.read" | "workspace.transaction" | "workspace.request_rename" | "process.which" | "process.start"
+        | "process.exchange" | "process.status" | "process.stop" => {
+            let manager = host.manager.upgrade().ok_or("native_thread_manager_stopped")?;
+            let config = manager
+                .get_thread(lead.thread)
+                .await
+                .map_err(|e| e.to_string())?
+                .config()
+                .await;
+            let environment = call.environments.as_slice();
+            if environment.len() != 1
+                || environment[0].environment_id != "local"
+                || environment[0].cwd != config.cwd
+                || config.cwd.as_path() != host.manifest.repository
+            {
+                return Err("workspace_operation_requires_local_repository".into());
+            }
+            let context = environment[0].file_system_sandbox_context.clone();
+            let mut roots = context
+                .workspace_roots
+                .iter()
+                .map(codex_utils_path_uri::PathUri::to_abs_path)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            if roots.is_empty() {
+                roots.push(config.cwd.clone());
+            }
+            let configured = config
+                .permissions
+                .permission_profile()
+                .clone()
+                .materialize_project_roots_with_workspace_roots(&roots);
+            let actual = context
+                .permissions
+                .clone()
+                .materialize_project_roots_with_workspace_roots(&roots);
+            let effective = execution::intersect(&configured, &actual, config.cwd.as_path())?;
+            let authority = crate::workspace_operations::WorkspaceAuthority {
+                repository: host.manifest.repository.clone(),
+                policy: effective.file_system_sandbox_policy(),
+                context,
+            };
+            host.authorize()?;
+            if request.operation == "workspace.request_rename" {
+                if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    return Err("another controlled operation is active".into());
+                }
+                let _operation = OperationGuard(&host.operation);
+                let runtime = pre_rename_runtime.clone();
+                let processes = processes.clone();
+                let task = host.task.clone();
+                return tokio::task::spawn_blocking(move || {
+                    let mut runtime = runtime.lock().map_err(|_| "pre_rename_runtime_poisoned")?;
+                    authority.request_rename(request.arguments, &mut runtime, &processes, generation, || task.check_active().is_ok())
+                }).await.map_err(|error| error.to_string())?;
+            }
+            if request.operation.starts_with("process.") {
+                return processes.call(
+                    id,
+                    generation,
+                    &authority.repository,
+                    &authority.policy,
+                    &request.operation,
+                    request.arguments,
+                    || host.task.check_active().is_ok(),
+                );
+            }
+            if request.operation == "workspace.transaction" {
+                if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    return Err("another controlled operation is active".into());
+                }
+                let _operation = OperationGuard(&host.operation);
+                authority.call(&request.operation, request.arguments, || host.task.check_active().is_ok())
+            } else {
+                authority.call(&request.operation, request.arguments, || host.task.check_active().is_ok())
+            }
+        }
         "pi.discover" => {
             let root = host.manifest.mod_pi_user.as_ref().ok_or("pi_resource_roots_not_host_approved")?;
             let mut catalog = codex_omd::ModStore::discover_pi(root, &host.manifest.repository).map_err(|e| e.to_string())?;

@@ -1,7 +1,9 @@
 mod accounting;
 mod execution;
+mod managed_process;
 mod mods;
 mod platform_mods;
+mod workspace_operations;
 
 #[cfg(test)]
 #[path = "review_tests.rs"]

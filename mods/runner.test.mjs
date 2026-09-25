@@ -116,6 +116,107 @@ test('typed middleware and services register without ambient authority', () => {
   assert.equal(service.value, 'hello');
   assert.match(run(source, { capabilities: ['middleware', 'commands'], event: 'inspect' }).error, /capability_denied: services/);
 });
+test('independent workspace mod uses public read and transaction calls', () => {
+  const source = readFileSync(new URL('./examples/workspace/index.ts', import.meta.url), 'utf8');
+  const capabilities = ['workspace', 'tools', 'state'];
+  const payload = { old_path: 'src/old.ts', new_path: 'src/new.ts', rewrites: { 'src/index.ts': "export * from './new';\n" } };
+  const first = run(source, { capabilities, event: 'tool', name: 'move', payload });
+  assert.deepEqual(first.host_call, { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } });
+  const read = { files: {
+    'src/old.ts': { text: 'export const value = 1;\n', sha256: 'old-sha' },
+    'src/new.ts': null,
+    'src/index.ts': { text: "export * from './old';\n", sha256: 'index-sha' },
+  } };
+  const receipts = [{ call: first.host_call, value: read }];
+  const second = run(source, { capabilities, event: 'tool', name: 'move', payload, receipts });
+  assert.deepEqual(second.host_call, { operation: 'workspace.transaction', arguments: {
+    expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' },
+    writes: payload.rewrites, renames: [{ old: 'src/old.ts', new: 'src/new.ts' }],
+  } });
+  const result = { files: { 'src/old.ts': null, 'src/new.ts': 'old-sha', 'src/index.ts': 'updated-sha' } };
+  const final = run(source, { capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
+  assert.deepEqual(final.value, result);
+  const observed = run(source, { capabilities, event: 'workspace_write', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
+  assert.equal(observed.state.last_write.status, 'observed');
+  const renameEvent = { repository: '/tmp/project', old: 'src/old.ts', new: 'src/new.ts', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null } };
+  const proposed = run(source, { capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
+  assert.deepEqual(proposed.value, { status: 'ready', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' }, writes: { 'src/index.ts': "export * from './new';\n" } });
+  const requested = run(source, { capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
+  assert.deepEqual(requested.host_call, { operation: 'workspace.request_rename', arguments: { old: 'src/old.ts', new: 'src/new.ts' } });
+  assert.match(run(source, { capabilities: ['tools', 'state'] }).error, /capability_denied: workspace/);
+});
+test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
+  const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
+  const capabilities = ['lifecycle', 'process', 'state', 'tools', 'workspace'];
+  const repository = '/tmp/project';
+  const files = {
+    'pkg/old.py': { text: 'value = 1\n', sha256: 'old-hash' },
+    'pkg/new.py': null,
+    'pkg/__init__.py': { text: 'from .old import value as alias\n', sha256: 'barrel-hash' },
+    'pkg/use.py': { text: 'from pkg.old import value as local\n', sha256: 'alias-hash' },
+  };
+  const uri = path => `file://${repository}/${path}`;
+  let running = false;
+  let rename = null;
+  const server = call => {
+    switch (call.operation) {
+      case 'process.which': return { found: [{ name: 'pylsp', path: '/bin/pylsp', sha256: 'server-hash' }] };
+      case 'process.start': running = true; return { session: 'python', running: true };
+      case 'process.status': return { session: 'python', running, idle_ms: 0 };
+      case 'process.stop': running = false; return { stopped: true };
+      case 'workspace.read': return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
+      case 'process.exchange': {
+        const request = call.arguments.send?.find(message => message.method === 'initialize' || message.method === 'workspace/willRenameFiles');
+        if (!request) {
+          const opened = call.arguments.send?.find(message => message.method === 'textDocument/didOpen');
+          return { session: 'python', running: true, messages: opened ? [{ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: uri('pkg/old.py'), version: 1, diagnostics: [{ message: 'example' }] } }] : [] };
+        }
+        const result = request.method === 'initialize' ? { capabilities: { workspace: { fileOperations: { willRename: { filters: [] } } } } } : rename;
+        return { session: 'python', running: true, messages: [{ jsonrpc: '2.0', id: request.id, result }] };
+      }
+      default: throw new Error(`unexpected operation ${call.operation}`);
+    }
+  };
+  const replay = (event, payload, state = null) => {
+    const receipts = [];
+    for (let index = 0; index < 24; index++) {
+      const output = run(source, { capabilities, event, payload, state, receipts, hook_budget_ms: 500 });
+      assert.equal(output.error, undefined, output.error);
+      if (!output.host_call) return output;
+      receipts.push({ call: output.host_call, value: server(output.host_call) });
+    }
+    assert.fail('mod did not finish');
+  };
+  const write = replay('workspace_write', { repository, call_id: 'write-1', tool: 'apply_patch', outcome: 'success', status: 'observed', changes: [{ path: 'pkg/old.py', before: null, after: 'old-hash' }] });
+  assert.equal(write.state.status, 'synced');
+  assert.equal(write.state.documents['pkg/old.py'].version, 1);
+  assert.equal(write.state.diagnostics['pkg/old.py'].count, 1);
+  rename = { documentChanges: [
+    { textDocument: { uri: uri('pkg/__init__.py'), version: null }, edits: [{ range: { start: { line: 0, character: 6 }, end: { line: 0, character: 9 } }, newText: 'new' }] },
+    { textDocument: { uri: uri('pkg/use.py'), version: null }, edits: [{ range: { start: { line: 0, character: 9 }, end: { line: 0, character: 12 } }, newText: 'new' }] },
+  ] };
+  const requested = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
+  assert.deepEqual(requested.value, { status: 'ready', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null, 'pkg/__init__.py': 'barrel-hash', 'pkg/use.py': 'alias-hash' }, writes: { 'pkg/__init__.py': 'from .new import value as alias\n', 'pkg/use.py': 'from pkg.new import value as local\n' } });
+  rename.documentChanges[0].textDocument.version = 9;
+  const stale = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
+  assert.deepEqual(stale.value, { status: 'fallback', reason: 'server_rename_document_stale' });
+  const idle = replay('idle', {}, requested.state);
+  assert.equal(idle.state.status, 'idle');
+  assert.equal(running, false);
+});
+test('LSP mod reports an absent server and leaves the write event recoverable', () => {
+  const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
+  const capabilities = ['lifecycle', 'process', 'state', 'tools', 'workspace'];
+  const payload = { repository: '/tmp/project', call_id: 'write-1', tool: 'apply_patch', outcome: 'success', status: 'observed', changes: [{ path: 'sample.py', before: null, after: 'sha' }] };
+  const first = run(source, { capabilities, event: 'workspace_write', payload });
+  assert.deepEqual(first.host_call, { operation: 'process.which', arguments: { names: ['pylsp'] } });
+  const absent = run(source, { capabilities, event: 'workspace_write', payload, receipts: [{ call: first.host_call, value: { found: [] } }] });
+  assert.equal(absent.error, undefined);
+  assert.equal(absent.state.status, 'fallback');
+  assert.equal(absent.state.reason, 'python_server_absent');
+  const broken = run('export default api => { api.on("workspace_write", () => { throw new Error("broken") }); }', { capabilities: ['workspace'], event: 'workspace_write', payload });
+  assert.match(broken.error, /broken/);
+});
 test('workspace layout accepts bare toggles and dialog select values', () => {
   const source = readFileSync(new URL('./first-party/omd_workspace/index.ts', import.meta.url), 'utf8');
   const layout = (payload, state = null) => run(source, { capabilities: ['terminal', 'commands', 'lifecycle', 'state'], event: 'command', name: 'layout', payload, state });

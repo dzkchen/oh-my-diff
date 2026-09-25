@@ -138,6 +138,59 @@ diagnostic evidence and may need operator inspection; external concurrent
 writers are not locked. Cancellation, mod disable, and turn end retire owned
 handles and clean their worktrees. Direct mode never loads this mod.
 
+## Workspace reads, transactions, and write observation
+
+The experimental `workspace` capability grants `workspace.read`,
+`workspace.transaction`, `workspace.request_rename`, and the `workspace_write`
+and `workspace_pre_rename` events. The host accepts only
+the current canonical local repository and checks the effective read and write
+permissions for every path. Reads return UTF-8 text and SHA256 for at most 128
+repository-relative paths and 4 MiB. A transaction requires an exact
+`expected` SHA256 or `null` for every affected path, plus bounded `writes` and
+optional `{old,new}` renames. It rejects stale files, symlinks, `.git` paths,
+overlapping moves, and changes outside the declared scope. Files are replaced
+atomically one at a time, with a checked rollback after cancellation or a
+failed multi-file operation; an external writer that changes a touched path
+during rollback causes a visible conflict that needs inspection. This is not
+a repository-wide filesystem transaction or a replacement for user approval.
+
+`workspace.request_rename` captures the source and absent destination, invokes
+selected `workspace_pre_rename` subscribers before the move, and accepts one
+`{status:"ready",expected,writes}` proposal. No proposal, an unsupported
+operation, or an unavailable server yields `{status:"fallback",reason}`.
+Conflicting proposals fail visibly. The host checks all expected hashes and
+effective write permissions, then applies the companion writes and move in one
+checked transaction. A subscriber can read additional companion files before
+returning its proposal. The [independent workspace example](examples/workspace)
+demonstrates this path without using a language server.
+
+`workspace_write` is delivered after an OMD tool call changes a source file,
+with the tool call ID, path, and before/after hashes. Only a selected mod that
+subscribes to the event triggers its index scan. The scan excludes `.git`,
+`.omd`, `.docs`, package and Python caches, `target`, `node_modules`, `.venv`,
+`venv`, `build`, and `dist`, and is
+bounded to 20,000 files and 128 MiB. A failed scan reports `unavailable` rather
+than claiming write coverage; more than 128 changed paths or 16 KiB of path
+names also reports `unavailable`. The independent example also shows a direct
+transaction for a mod tool. A change outside the thread's effective read
+scope reports `unavailable` without exposing its path or hash.
+
+The experimental `process` capability grants `process.which`, `process.start`,
+`process.exchange`, `process.status`, and `process.stop`. The host resolves an
+installed executable and its hash, verifies that identity at launch, and runs
+it in a read-only repository sandbox with restricted network access and a
+private scratch directory. The framed JSON exchange has bounded message size,
+wait, output, and session count. Sessions belong to one mod and generation;
+disable, reload, cancellation, and thread stop clean them up. A process cannot
+write the repository through this API. The first-party `omd_lsp_sync` mod owns
+the Python server choice and language protocol; it is installed inactive with
+Full OMD and can also be installed explicitly in a platform-only store. It
+never installs a language server. Absent or unsupported servers report fallback.
+`api.host.tryCall` returns `{ok:true,value}` or `{ok:false,error}` for an
+expected unavailable operation, so a mod can report fallback without treating
+server absence as a callback failure. Both `call` and `tryCall` remain subject
+to the same declared capability and host permission checks.
+
 ## Diagnostics and source maps
 
 The engine transforms TypeScript with an inline source map and runs Node with

@@ -157,7 +157,7 @@ impl Drop for Child {
     }
 }
 
-fn intersect(
+pub(super) fn intersect(
     parent: &PermissionProfile,
     requested: &PermissionProfile,
     cwd: &Path,

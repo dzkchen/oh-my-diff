@@ -45,8 +45,10 @@ struct Mods {
     input_runtime: Arc<Mutex<ModHost>>,
     agents: Arc<agents::Agents>,
     services: Arc<services::Services>,
+    processes: Arc<crate::managed_process::ManagedProcesses>,
     views: Arc<view::Views>,
     turn: Mutex<Option<TurnRecord>>,
+    workspace_before: Mutex<BTreeMap<String, Result<codex_omd::WorkspaceIndex, String>>>,
 }
 
 fn preview(text: &str) -> String {
@@ -151,8 +153,10 @@ pub(super) fn install(
         runtime,
         input_runtime: Arc::new(Mutex::new(input_runtime)),
         services: Arc::new(services::Services::default()),
+        processes: Arc::new(crate::managed_process::ManagedProcesses::default()),
         views,
         turn: Mutex::new(None),
+        workspace_before: Mutex::new(BTreeMap::new()),
     });
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
@@ -187,6 +191,7 @@ impl Mods {
         for (id, generation) in failed {
             self.agents.cleanup_owned(&id, generation).await;
             self.services.cleanup_owned(&id, generation).await;
+            self.processes.cleanup_owned(&id, generation);
         }
     }
 
@@ -211,7 +216,24 @@ impl Mods {
             std::sync::mpsc::SyncSender<std::io::Result<Value>>,
         )>(1);
         let generation = self.runtime.lock().ok().map(|runtime| runtime.generation());
+        if let Some(generation) = generation {
+            self.processes.cleanup_stale(generation);
+        }
         let allow_provider = matches!(event, "start" | "resume" | "turn_start");
+        let allow_workspace = matches!(
+            event,
+            "workspace_write" | "workspace_pre_rename" | "turn_start"
+        );
+        let allow_process = matches!(
+            event,
+            "start"
+                | "resume"
+                | "turn_start"
+                | "workspace_write"
+                | "workspace_pre_rename"
+                | "idle"
+                | "stop"
+        );
         let job = tokio::task::spawn_blocking(move || {
             let Ok(mut runtime) = runtime.lock() else {
                 return Vec::new();
@@ -224,11 +246,13 @@ impl Mods {
                 || !cancelled.load(std::sync::atomic::Ordering::Acquire),
                 "native workflow enforcement",
                 |id, request| {
-                    if !allow_provider
-                        || !matches!(
+                    if !((allow_provider
+                        && matches!(
                             request.operation.as_str(),
                             "providers.register" | "routes.list"
-                        )
+                        ))
+                        || (allow_workspace && request.operation == "workspace.read")
+                        || (allow_process && request.operation.starts_with("process.")))
                     {
                         return Err(std::io::Error::other(
                             "lifecycle_host_operation_unavailable",
@@ -324,6 +348,23 @@ impl Mods {
                     json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
                 }))),
                 (None, _) if request.operation == "routes.list" => Ok(json!([])),
+                (Some(lead), Some(generation)) if request.operation == "workspace.read" || request.operation.starts_with("process.") => {
+                    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await;
+                    match authority {
+                        Ok(authority) => {
+                            let processes = self.processes.clone();
+                            let lead = lead.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if request.operation == "workspace.read" {
+                                    authority.call(&request.operation, request.arguments, || lead.host.task.check_active().is_ok())
+                                } else {
+                                    processes.call(&id, generation, &authority.repository, &authority.policy, &request.operation, request.arguments, || lead.host.task.check_active().is_ok())
+                                }
+                            }).await.map_err(|error| error.to_string()).and_then(|result| result).map_err(std::io::Error::other)
+                        }
+                        Err(error) => Err(std::io::Error::other(error)),
+                    }
+                },
                 (Some(lead), Some(generation)) => self
                     .services
                     .call(lead, &id, generation, request)
@@ -364,6 +405,7 @@ impl TurnLifecycleContributor for Mods {
             if lead_thread(input.thread_store) {
                 self.agents.cleanup().await;
                 self.services.cleanup().await;
+                self.processes.cleanup();
                 if let Some(turn) = self.take_turn() {
                     self.event("turn_end", json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}))
                         .await;
@@ -576,14 +618,21 @@ impl ThreadLifecycleContributor<Config> for Mods {
         Box::pin(async move {
             if lead_thread(input.thread_store) {
                 self.event("session", json!({"phase":"idle","thread_id":thread_id(input.thread_store),"cause":format!("{:?}", input.cause)})).await;
-                self.event("idle", json!({"cause": format!("{:?}", input.cause)}))
-                    .await;
+                self.event_with_lead(
+                    "idle",
+                    json!({"cause": format!("{:?}", input.cause)}),
+                    input.thread_store.get::<Lead>(),
+                )
+                .await;
             }
         })
     }
     fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             if lead_thread(input.thread_store) {
+                if let Ok(mut before) = self.workspace_before.lock() {
+                    before.clear();
+                }
                 self.agents.cleanup().await;
                 self.services.cleanup().await;
                 self.event(
@@ -591,13 +640,38 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     json!({"phase":"stop","thread_id":thread_id(input.thread_store)}),
                 )
                 .await;
-                self.event("stop", Value::Null).await;
+                self.event_with_lead("stop", Value::Null, input.thread_store.get::<Lead>())
+                    .await;
+                self.processes.cleanup();
             }
         })
     }
 }
 
 impl ToolLifecycleContributor for Mods {
+    fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            if !lead_thread(input.thread_store)
+                || !self
+                    .runtime
+                    .lock()
+                    .is_ok_and(|runtime| runtime.has_event("workspace_write"))
+            {
+                return;
+            }
+            let repository = self.owner.manifest.repository.clone();
+            let snapshot = tokio::task::spawn_blocking(move || {
+                codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+            if let Ok(mut before) = self.workspace_before.lock() {
+                before.insert(input.call_id.to_owned(), snapshot);
+            }
+        })
+    }
+
     fn intercept_tool<'a>(
         &'a self,
         input: ToolStartInput<'a>,
@@ -691,6 +765,87 @@ impl ToolLifecycleContributor for Mods {
                     "outcome": format!("{:?}", input.outcome)}),
                 )
                 .await;
+                let before = self
+                    .workspace_before
+                    .lock()
+                    .ok()
+                    .and_then(|mut snapshots| snapshots.remove(input.call_id));
+                if let Some(before) = before {
+                    let repository = self.owner.manifest.repository.clone();
+                    let after = tokio::task::spawn_blocking(move || {
+                        codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
+                            .map_err(|error| error.to_string())
+                    })
+                    .await
+                    .unwrap_or_else(|error| Err(error.to_string()));
+                    let (status, changes, reason) = match (before, after) {
+                        (Ok(before), Ok(after)) => {
+                            let changes = before.changed(&after);
+                            if changes.len() > 128
+                                || changes
+                                    .iter()
+                                    .map(|change| change.path.len())
+                                    .sum::<usize>()
+                                    > 16_000
+                            {
+                                (
+                                    "unavailable",
+                                    Vec::new(),
+                                    Some("workspace_change_batch_limit".to_owned()),
+                                )
+                            } else {
+                                ("observed", changes, None)
+                            }
+                        }
+                        (Err(error), _) | (_, Err(error)) => {
+                            ("unavailable", Vec::new(), Some(error))
+                        }
+                    };
+                    let (status, changes, reason) = if status == "observed" && !changes.is_empty() {
+                        match input.thread_store.get::<Lead>() {
+                            Some(lead) => {
+                                match crate::workspace_operations::WorkspaceAuthority::for_lead(
+                                    &lead,
+                                )
+                                .await
+                                {
+                                    Ok(authority) => match authority.visible_changes(changes) {
+                                        Ok(changes) => (status, changes, reason),
+                                        Err(error) => ("unavailable", Vec::new(), Some(error)),
+                                    },
+                                    Err(_) => (
+                                        "unavailable",
+                                        Vec::new(),
+                                        Some("workspace_change_scope_unavailable".to_owned()),
+                                    ),
+                                }
+                            }
+                            None => (
+                                "unavailable",
+                                Vec::new(),
+                                Some("workspace_change_scope_unavailable".to_owned()),
+                            ),
+                        }
+                    } else {
+                        (status, changes, reason)
+                    };
+                    if status == "unavailable" || !changes.is_empty() {
+                        self.event_with_lead(
+                            "workspace_write",
+                            json!({
+                                "repository":self.owner.manifest.repository,
+                                "call_id":input.call_id,
+                                "tool":input.tool_name.to_string(),
+                                "outcome":format!("{:?}", input.outcome),
+                                "changes":changes,
+                                "status":status,
+                                "reason":reason,
+                            }),
+                            input.thread_store.get::<Lead>(),
+                        )
+                        .await;
+                    }
+                }
             }
         })
     }

@@ -1,8 +1,12 @@
+use rustix::fs::AtFlags;
 use rustix::fs::Mode;
 use rustix::fs::OFlags;
+use rustix::fs::RenameFlags;
 use rustix::fs::mkdirat;
 use rustix::fs::open;
 use rustix::fs::openat;
+use rustix::fs::renameat_with;
+use rustix::fs::unlinkat;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -13,6 +17,7 @@ use std::fs;
 use std::io::Read;
 use std::io::Write;
 use std::io::{self};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -29,8 +34,347 @@ pub struct Snapshot {
     pub files: BTreeMap<String, File>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRename {
+    pub old: String,
+    pub new: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceTransaction {
+    pub expected: BTreeMap<String, Option<String>>,
+    #[serde(default)]
+    pub writes: BTreeMap<String, String>,
+    #[serde(default)]
+    pub renames: Vec<WorkspaceRename>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkspaceTransactionResult {
+    pub files: BTreeMap<String, Option<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkspaceIndex {
+    pub files: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkspaceChange {
+    pub path: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
 fn invalid(message: &str) -> io::Error {
     io::Error::other(message)
+}
+
+fn content_hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn read_version(
+    root: &Path,
+    name: &str,
+    max_bytes: usize,
+) -> io::Result<Option<(Vec<u8>, fs::Permissions)>> {
+    safe_path(root, name)?;
+    let directory = open_directory(root)?;
+    match open_source(&directory, name) {
+        Ok(mut input) => {
+            let metadata = input.metadata()?;
+            if !metadata.is_file() {
+                return Err(invalid("workspace path is not a regular file"));
+            }
+            if metadata.len() > max_bytes as u64 {
+                return Err(invalid("workspace file exceeds limit"));
+            }
+            let mut bytes = Vec::new();
+            Read::take(&mut input, max_bytes as u64 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > max_bytes {
+                return Err(invalid("workspace file exceeds limit"));
+            }
+            let after = input.metadata()?;
+            if !same_file(&metadata, &after)? {
+                return Err(invalid("workspace file changed during read"));
+            }
+            Ok(Some((bytes, metadata.permissions())))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn write_version(
+    root: &Path,
+    name: &str,
+    bytes: &[u8],
+    permissions: &fs::Permissions,
+) -> io::Result<()> {
+    safe_path(root, name)?;
+    let (parent, target) = open_parent(root, name)?;
+    let temporary = format!(
+        ".{}.omd-transaction-{}-{}",
+        target.to_string_lossy(),
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(io::Error::other)?
+            .as_nanos(),
+    );
+    let mut output = fs::File::from(openat(
+        &parent,
+        temporary.as_str(),
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(0o600),
+    )?);
+    let result = (|| {
+        output.write_all(bytes)?;
+        output.set_permissions(permissions.clone())?;
+        output.sync_all()?;
+        rustix::fs::renameat(&parent, temporary.as_str(), &parent, &target)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = unlinkat(&parent, temporary.as_str(), AtFlags::empty());
+    }
+    result
+}
+
+impl WorkspaceTransaction {
+    pub fn apply(
+        &self,
+        repository: &Path,
+        active: impl Fn() -> bool,
+    ) -> io::Result<WorkspaceTransactionResult> {
+        if !repository.is_absolute() || repository.canonicalize()? != repository {
+            return Err(invalid("repository must be canonical"));
+        }
+        let mut affected = self.writes.keys().cloned().collect::<BTreeSet<_>>();
+        let mut rename_sources = BTreeSet::new();
+        let mut rename_destinations = BTreeSet::new();
+        for rename in &self.renames {
+            if rename.old == rename.new
+                || !rename_sources.insert(rename.old.clone())
+                || !rename_destinations.insert(rename.new.clone())
+            {
+                return Err(invalid("duplicate or overlapping rename"));
+            }
+            affected.insert(rename.old.clone());
+            affected.insert(rename.new.clone());
+        }
+        if affected.is_empty()
+            || affected.len() > 128
+            || affected.len() != self.expected.len()
+            || affected
+                .iter()
+                .any(|name| !self.expected.contains_key(name))
+            || self.writes.values().map(String::len).sum::<usize>() > 4 * 1024 * 1024
+            || rename_sources
+                .iter()
+                .any(|name| rename_destinations.contains(name))
+            || rename_destinations
+                .iter()
+                .any(|name| self.writes.contains_key(name))
+        {
+            return Err(invalid("transaction scope or size invalid"));
+        }
+        let mut before = BTreeMap::new();
+        let mut observed_bytes = 0_usize;
+        for name in &affected {
+            if !active() {
+                return Err(invalid("transaction cancelled"));
+            }
+            let entry = read_version(repository, name, 4 * 1024 * 1024)?;
+            observed_bytes =
+                observed_bytes.saturating_add(entry.as_ref().map_or(0, |(bytes, _)| bytes.len()));
+            if observed_bytes > 4 * 1024 * 1024 {
+                return Err(invalid("transaction source bytes exceed limit"));
+            }
+            let hash = entry.as_ref().map(|(bytes, _)| content_hash(bytes));
+            if self.expected.get(name) != Some(&hash) {
+                return Err(invalid(&format!("stale expected version for {name}")));
+            }
+            before.insert(name.clone(), entry);
+        }
+        for rename in &self.renames {
+            if before.get(&rename.old).is_none_or(Option::is_none)
+                || before.get(&rename.new).is_some_and(Option::is_some)
+            {
+                return Err(invalid(
+                    "rename source must exist and destination must be absent",
+                ));
+            }
+        }
+        let mut applied = BTreeMap::new();
+        let result = (|| -> io::Result<()> {
+            for (name, text) in &self.writes {
+                if !active() {
+                    return Err(invalid("transaction cancelled"));
+                }
+                let current = read_version(repository, name, 4 * 1024 * 1024)?;
+                if current.as_ref().map(|(bytes, _)| content_hash(bytes)) != self.expected[name] {
+                    return Err(invalid("workspace changed before write"));
+                }
+                let permissions = current
+                    .as_ref()
+                    .map(|(_, permissions)| permissions.clone())
+                    .unwrap_or_else(|| fs::Permissions::from_mode(0o644));
+                write_version(repository, name, text.as_bytes(), &permissions)?;
+                applied.insert(name.clone(), Some(content_hash(text.as_bytes())));
+            }
+            for rename in &self.renames {
+                if !active() {
+                    return Err(invalid("transaction cancelled"));
+                }
+                safe_path(repository, &rename.old)?;
+                safe_path(repository, &rename.new)?;
+                let (old_parent, old_name) = open_parent(repository, &rename.old)?;
+                let (new_parent, new_name) = open_parent(repository, &rename.new)?;
+                let expected_old = applied
+                    .get(&rename.old)
+                    .cloned()
+                    .unwrap_or_else(|| self.expected[&rename.old].clone());
+                if read_version(repository, &rename.old, 4 * 1024 * 1024)?
+                    .as_ref()
+                    .map(|(bytes, _)| content_hash(bytes))
+                    != expected_old
+                    || read_version(repository, &rename.new, 4 * 1024 * 1024)?.is_some()
+                {
+                    return Err(invalid("workspace changed before rename"));
+                }
+                renameat_with(
+                    &old_parent,
+                    &old_name,
+                    &new_parent,
+                    &new_name,
+                    RenameFlags::NOREPLACE,
+                )?;
+                applied.insert(rename.old.clone(), None);
+                applied.insert(rename.new.clone(), expected_old);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            for (name, expected_after) in &applied {
+                let current = read_version(repository, name, 4 * 1024 * 1024)?
+                    .as_ref()
+                    .map(|(bytes, _)| content_hash(bytes));
+                if &current != expected_after {
+                    return Err(invalid(&format!(
+                        "transaction failed: {error}; rollback conflict at {name}"
+                    )));
+                }
+            }
+            for name in applied.keys() {
+                match &before[name] {
+                    None => {
+                        safe_path(repository, name)?;
+                        let (parent, target) = open_parent(repository, name)?;
+                        if read_version(repository, name, 4 * 1024 * 1024)?.is_some() {
+                            unlinkat(&parent, &target, AtFlags::empty())?;
+                        }
+                    }
+                    Some((bytes, permissions)) => {
+                        write_version(repository, name, bytes, permissions)?;
+                    }
+                }
+            }
+            return Err(error);
+        }
+        let mut files = BTreeMap::new();
+        for name in &affected {
+            files.insert(
+                name.clone(),
+                read_version(repository, name, 4 * 1024 * 1024)?
+                    .as_ref()
+                    .map(|(bytes, _)| content_hash(bytes)),
+            );
+        }
+        Ok(WorkspaceTransactionResult { files })
+    }
+}
+
+impl WorkspaceIndex {
+    pub fn capture(repository: &Path, max_files: usize, max_bytes: usize) -> io::Result<Self> {
+        if !repository.is_absolute() || repository.canonicalize()? != repository {
+            return Err(invalid("repository must be canonical"));
+        }
+        let mut stack = vec![repository.to_path_buf()];
+        let mut files = BTreeMap::new();
+        let mut bytes = 0_usize;
+        while let Some(directory) = stack.pop() {
+            for entry in fs::read_dir(directory)? {
+                let entry = entry?;
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path)?;
+                if metadata.file_type().is_symlink() {
+                    continue;
+                }
+                if metadata.is_dir() {
+                    if !matches!(
+                        entry.file_name().to_str(),
+                        Some(
+                            ".git"
+                                | ".omd"
+                                | ".docs"
+                                | ".pnpm-store"
+                                | ".pytest_cache"
+                                | ".ruff_cache"
+                                | ".mypy_cache"
+                                | ".tox"
+                                | ".gradle"
+                                | "__pycache__"
+                                | "target"
+                                | "node_modules"
+                                | ".venv"
+                                | "venv"
+                                | "build"
+                                | "dist"
+                        )
+                    ) {
+                        stack.push(path);
+                    }
+                } else if metadata.is_file() {
+                    bytes = bytes.saturating_add(metadata.len() as usize);
+                    if files.len() >= max_files || bytes > max_bytes {
+                        return Err(invalid("workspace index exceeds bounds"));
+                    }
+                    let name = path
+                        .strip_prefix(repository)
+                        .map_err(|_| invalid("workspace path escaped repository"))?
+                        .to_str()
+                        .ok_or_else(|| invalid("non-UTF8 workspace path"))?
+                        .to_owned();
+                    let (content, _) = read_version(repository, &name, max_bytes)?
+                        .ok_or_else(|| invalid("workspace file disappeared during index"))?;
+                    files.insert(name, content_hash(&content));
+                }
+            }
+        }
+        Ok(Self { files })
+    }
+
+    pub fn changed(&self, after: &Self) -> Vec<WorkspaceChange> {
+        self.files
+            .keys()
+            .chain(after.files.keys())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|path| {
+                let before_hash = self.files.get(path).cloned();
+                let after_hash = after.files.get(path).cloned();
+                (before_hash != after_hash).then(|| WorkspaceChange {
+                    path: path.clone(),
+                    before: before_hash,
+                    after: after_hash,
+                })
+            })
+            .collect()
+    }
 }
 
 fn safe_path(root: &Path, name: &str) -> io::Result<PathBuf> {
@@ -61,6 +405,10 @@ fn safe_path(root: &Path, name: &str) -> io::Result<PathBuf> {
     Ok(resolved)
 }
 
+pub fn workspace_path(root: &Path, name: &str) -> io::Result<PathBuf> {
+    safe_path(root, name)
+}
+
 fn open_directory(path: &Path) -> io::Result<fs::File> {
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     let mut directory = fs::File::from(open("/", flags, Mode::empty())?);
@@ -70,6 +418,23 @@ fn open_directory(path: &Path) -> io::Result<fs::File> {
         }
     }
     Ok(directory)
+}
+
+fn open_parent(root: &Path, name: &str) -> io::Result<(fs::File, std::ffi::OsString)> {
+    let mut directory = open_directory(root)?;
+    let mut parts = Path::new(name).components().peekable();
+    while let Some(Component::Normal(part)) = parts.next() {
+        if parts.peek().is_none() {
+            return Ok((directory, part.to_os_string()));
+        }
+        directory = fs::File::from(openat(
+            &directory,
+            part,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?);
+    }
+    Err(invalid("workspace parent missing"))
 }
 
 fn open_source(root: &fs::File, name: &str) -> io::Result<fs::File> {
@@ -419,4 +784,174 @@ pub fn cleanup_owned_directory(parent: &Path, directory: &Path) -> io::Result<()
         return Err(invalid("cleanup target is not a direct owned directory"));
     }
     fs::remove_dir_all(directory)
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn transaction_renames_and_updates_exact_scope() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("old.ts"), "export const value = 1;\n").unwrap();
+        fs::write(root.join("barrel.ts"), "export * from './old';\n").unwrap();
+        let transaction = WorkspaceTransaction {
+            expected: BTreeMap::from([
+                (
+                    "old.ts".into(),
+                    Some(content_hash(b"export const value = 1;\n")),
+                ),
+                ("new.ts".into(), None),
+                (
+                    "barrel.ts".into(),
+                    Some(content_hash(b"export * from './old';\n")),
+                ),
+            ]),
+            writes: BTreeMap::from([("barrel.ts".into(), "export * from './new';\n".into())]),
+            renames: vec![WorkspaceRename {
+                old: "old.ts".into(),
+                new: "new.ts".into(),
+            }],
+        };
+        let result = transaction.apply(&root, || true).unwrap();
+        assert!(!root.join("old.ts").exists());
+        assert_eq!(
+            fs::read_to_string(root.join("new.ts")).unwrap(),
+            "export const value = 1;\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("barrel.ts")).unwrap(),
+            "export * from './new';\n"
+        );
+        assert_eq!(result.files["old.ts"], None);
+        assert_eq!(result.files["new.ts"], transaction.expected["old.ts"]);
+    }
+
+    #[test]
+    fn transaction_rejects_stale_versions_without_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("file.py"), "changed\n").unwrap();
+        let transaction = WorkspaceTransaction {
+            expected: BTreeMap::from([("file.py".into(), Some(content_hash(b"old\n")))]),
+            writes: BTreeMap::from([("file.py".into(), "new\n".into())]),
+            renames: Vec::new(),
+        };
+        assert!(
+            transaction
+                .apply(&root, || true)
+                .unwrap_err()
+                .to_string()
+                .contains("stale")
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("file.py")).unwrap(),
+            "changed\n"
+        );
+    }
+
+    #[test]
+    fn transaction_rolls_back_after_cancellation() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("a.py"), "a\n").unwrap();
+        fs::write(root.join("b.py"), "b\n").unwrap();
+        let transaction = WorkspaceTransaction {
+            expected: BTreeMap::from([
+                ("a.py".into(), Some(content_hash(b"a\n"))),
+                ("b.py".into(), Some(content_hash(b"b\n"))),
+            ]),
+            writes: BTreeMap::from([
+                ("a.py".into(), "new a\n".into()),
+                ("b.py".into(), "new b\n".into()),
+            ]),
+            renames: Vec::new(),
+        };
+        let calls = Cell::new(0);
+        assert!(
+            transaction
+                .apply(&root, || {
+                    calls.set(calls.get() + 1);
+                    calls.get() < 4
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled")
+        );
+        assert_eq!(fs::read_to_string(root.join("a.py")).unwrap(), "a\n");
+        assert_eq!(fs::read_to_string(root.join("b.py")).unwrap(), "b\n");
+    }
+
+    #[test]
+    fn transaction_rejects_symlinks_and_git_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("outside"), "safe").unwrap();
+        std::os::unix::fs::symlink(root.join("outside"), root.join("link")).unwrap();
+        for name in ["link", ".git/config"] {
+            let transaction = WorkspaceTransaction {
+                expected: BTreeMap::from([(name.into(), None)]),
+                writes: BTreeMap::from([(name.into(), "bad".into())]),
+                renames: Vec::new(),
+            };
+            assert!(transaction.apply(&root, || true).is_err());
+        }
+        assert_eq!(fs::read_to_string(root.join("outside")).unwrap(), "safe");
+    }
+
+    #[test]
+    fn transaction_rejects_oversized_source_without_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let original = vec![b'x'; 4 * 1024 * 1024 + 1];
+        fs::write(root.join("large.py"), &original).unwrap();
+        let transaction = WorkspaceTransaction {
+            expected: BTreeMap::from([("large.py".into(), Some(content_hash(&original)))]),
+            writes: BTreeMap::from([("large.py".into(), "small\n".into())]),
+            renames: Vec::new(),
+        };
+        assert!(
+            transaction
+                .apply(&root, || true)
+                .unwrap_err()
+                .to_string()
+                .contains("limit")
+        );
+        assert_eq!(fs::read(root.join("large.py")).unwrap(), original);
+    }
+
+    #[test]
+    fn workspace_index_detects_write_create_and_delete() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("modified.py"), "old").unwrap();
+        fs::write(root.join("removed.py"), "gone").unwrap();
+        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        fs::write(root.join("modified.py"), "new").unwrap();
+        fs::remove_file(root.join("removed.py")).unwrap();
+        fs::write(root.join("created.py"), "added").unwrap();
+        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        assert_eq!(
+            before.changed(&after),
+            vec![
+                WorkspaceChange {
+                    path: "created.py".into(),
+                    before: None,
+                    after: Some(content_hash(b"added")),
+                },
+                WorkspaceChange {
+                    path: "modified.py".into(),
+                    before: Some(content_hash(b"old")),
+                    after: Some(content_hash(b"new")),
+                },
+                WorkspaceChange {
+                    path: "removed.py".into(),
+                    before: Some(content_hash(b"gone")),
+                    after: None,
+                },
+            ]
+        );
+    }
 }

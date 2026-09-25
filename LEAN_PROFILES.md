@@ -59,14 +59,23 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 Codex with `OMD_MODE=platform`. User-selected, trusted mods can run without the
 controlled OMD task policy. For `--profile full`, use the same command with
 `--omd-graph`, `--omd-health`, and `--omd-lsp` pointing to matching patched
-executables. Full installs five current first-party candidate mods. Only
+executables. Full installs six current first-party candidate mods. Only
 `omd_workspace` is enabled in a fresh Full store. Claude, coordination,
-recovery, and typed tasks are installed but disabled. Six curated plugin source packages are available in
+LSP synchronization, recovery, and typed tasks are installed but disabled. Six curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
 started. Full includes inert `omd-graph`, `omd-health`, and `omd-lsp` launchers
 for the matching opt-in plugins. The deferred code-execution plugin, browser,
 bridge service, external language servers, code-mode host, and sidecars are
 absent from the installed base profile.
+
+Enable the installed synchronization mod explicitly with
+`/path/to/omd-bin/omd-package mod enable omd_lsp_sync`. It currently claims
+Python files with an installed `pylsp`; other languages and absent servers
+report fallback. It discovers the executable without installing it, starts it
+on demand, and sends document changes after observed OMD writes. Requested
+file renames use the mod's pre-rename handler and the host's exact transaction
+service. Platform-only users can install the same mod explicitly with
+`omd-mod` and grant its declared capabilities.
 
 Inspect and switch the effective profile:
 

@@ -92,6 +92,14 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "agents.wait",
     "agents.list",
     "workspace.integrate",
+    "workspace.read",
+    "workspace.transaction",
+    "workspace.request_rename",
+    "process.which",
+    "process.start",
+    "process.exchange",
+    "process.status",
+    "process.stop",
     "review.run",
     "review.complete",
     "delegation.contribute",
@@ -136,6 +144,8 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "workflow",
     "middleware",
     "services",
+    "workspace",
+    "process",
 ];
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -152,6 +162,8 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("stop", "lifecycle"),
     ("resume", "lifecycle"),
     ("tool_result", "lifecycle"),
+    ("workspace_write", "workspace"),
+    ("workspace_pre_rename", "workspace"),
     ("turn_start", "lifecycle"),
     ("turn_end", "lifecycle"),
     ("compaction_start", "lifecycle"),
@@ -378,13 +390,62 @@ fn quoted_calls(source: &str, marker: &str) -> Result<Vec<String>> {
     Ok(values)
 }
 
+fn outside_literals(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut visible = bytes.to_vec();
+    let mut index = 0;
+    while index < bytes.len() {
+        let quote = bytes[index];
+        if matches!(quote, b'\'' | b'"' | b'`') {
+            visible[index] = b' ';
+            index += 1;
+            while index < bytes.len() {
+                let byte = bytes[index];
+                visible[index] = b' ';
+                index += 1;
+                if byte == b'\\' && index < bytes.len() {
+                    visible[index] = b' ';
+                    index += 1;
+                } else if byte == quote {
+                    break;
+                }
+            }
+        } else if quote == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            while index < bytes.len() && bytes[index] != b'\n' {
+                visible[index] = b' ';
+                index += 1;
+            }
+        } else if quote == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            visible[index] = b' ';
+            index += 1;
+            while index < bytes.len() {
+                let end = bytes[index] == b'*' && bytes.get(index + 1) == Some(&b'/');
+                visible[index] = b' ';
+                index += 1;
+                if end {
+                    visible[index] = b' ';
+                    index += 1;
+                    break;
+                }
+            }
+        } else {
+            index += 1;
+        }
+    }
+    String::from_utf8(visible).unwrap_or_default()
+}
+
 fn source_use(
     source: &str,
     package: &ModPackage,
     registrations: &Registrations,
 ) -> Result<(ModSourceUse, Vec<String>, Vec<String>)> {
-    let operations = quoted_calls(source, "host.call(")?;
+    let mut operations = quoted_calls(source, "host.call(")?;
+    operations.extend(quoted_calls(source, "host.tryCall(")?);
+    operations.sort();
+    operations.dedup();
     let services = quoted_calls(source, "services.call(")?;
+    let visible = outside_literals(source);
     let mut environment = Vec::new();
     for (name, needles) in [
         ("crypto", &["crypto.", "crypto["][..]),
@@ -396,7 +457,13 @@ fn source_use(
         ),
         ("dom", &["document.", "window."][..]),
     ] {
-        if needles.iter().any(|needle| source.contains(needle)) {
+        if needles.iter().any(|needle| {
+            if name == "filesystem" {
+                source.contains(needle)
+            } else {
+                visible.contains(needle)
+            }
+        }) {
             environment.push(name.to_owned());
         }
     }
@@ -2155,6 +2222,16 @@ impl ModHost {
             })
             .map(|(id, _)| id.clone())
             .collect()
+    }
+
+    pub fn has_event(&self, event: &str) -> bool {
+        self.active().any(|(_, loaded)| {
+            loaded
+                .registrations
+                .events
+                .iter()
+                .any(|registered| registered == event)
+        })
     }
 
     pub fn event_guarded(

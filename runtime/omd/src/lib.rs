@@ -213,10 +213,16 @@ pub use review::ReviewSubmission;
 pub use review::UnifiedReview;
 pub use workspace::File;
 pub use workspace::Snapshot;
+pub use workspace::WorkspaceChange;
+pub use workspace::WorkspaceIndex;
+pub use workspace::WorkspaceRename;
+pub use workspace::WorkspaceTransaction;
+pub use workspace::WorkspaceTransactionResult;
 pub use workspace::capture_tracked;
 pub use workspace::cleanup_owned_directory;
 pub use workspace::create_worktree;
 pub use workspace::tracked_paths;
+pub use workspace::workspace_path;
 
 pub use mods::CODEX_HOST_RELEASE;
 pub use mods::INSTALLED_CONTRACT_TYPES_VERSION;

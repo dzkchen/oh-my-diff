@@ -16,6 +16,7 @@ codex-omd = { path = "../../omd" }
 codex-protocol = { workspace = true }
 codex-tools = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
+codex-utils-pty = { workspace = true }
 codex-utils-path-uri = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -23,6 +24,7 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "process", "time", "sync"] }
 sha2 = { workspace = true }
 codex-file-system = { workspace = true }
+codex-sandboxing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

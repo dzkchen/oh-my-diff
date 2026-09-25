@@ -876,6 +876,46 @@
         "node:typed middleware and services register without ambient authority"
       ],
       "replace_note": null
+    },
+    {
+      "id": "tool.workspace_transaction",
+      "group": "tool",
+      "decision": "Repository read, observed tool writes, pre-rename proposals, and exact multi-file transactions",
+      "observe": "workspace_write reports changed paths and before/after hashes after an OMD tool call when a selected mod subscribes; workspace_pre_rename receives the exact source and destination before a requested move",
+      "alter": "workspace.request_rename asks subscribers for a bounded plan; workspace.transaction applies scoped text writes and a file move after exact SHA256 comparison",
+      "replace": null,
+      "timing": "read and transaction inside a mod tool callback, pre-rename before the move, write observation after the host tool finishes",
+      "ownership": "host: local repository binding, effective read/write permission, path containment, version comparison, cancellation, atomic per-file replacement and rollback; mod: optional policy and edit planning",
+      "limits": "128 paths and 4 MiB per transaction; the write observer scans up to 20,000 files and 128 MiB only while selected, and reports unavailable scans or change batches beyond 128 paths or 16 KiB of path names rather than claiming coverage",
+      "native": "ordinary tools write files without a public TypeScript mod transaction or change event",
+      "covers": {
+        "capabilities": ["workspace"],
+        "events": ["workspace_write", "workspace_pre_rename"],
+        "replacements": [],
+        "operations": ["workspace.read", "workspace.transaction", "workspace.request_rename"]
+      },
+      "evidence": ["node:independent workspace mod uses public read and transaction calls", "node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"],
+      "replace_note": null
+    },
+    {
+      "id": "tool.managed_process",
+      "group": "tool",
+      "decision": "Mod-owned bounded framed local process session",
+      "observe": "process.which reports installed executable paths and hashes; process.status reports an owned session",
+      "alter": "process.start, process.exchange, and process.stop control framed JSON messages for an approved mod",
+      "replace": null,
+      "timing": "inside an approved mod callback; cleanup on disable, reload, cancellation, or thread stop",
+      "ownership": "host: executable identity, read-only sandbox, restricted network, process and message limits, ownership and cleanup; mod: server selection and protocol messages",
+      "limits": "at most eight sessions, five per mod, 4 MiB messages, bounded waits and output; processes cannot write the repository directly",
+      "native": "native tools may launch processes under their own configured task permission boundary",
+      "covers": {
+        "capabilities": ["process"],
+        "events": [],
+        "replacements": [],
+        "operations": ["process.which", "process.start", "process.exchange", "process.status", "process.stop"]
+      },
+      "evidence": ["node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"],
+      "replace_note": null
     }
   ],
   "composition": [

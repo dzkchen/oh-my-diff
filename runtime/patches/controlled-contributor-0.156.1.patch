@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index cc9ad06..a543029 100644
+index cc9ad06..632823d 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2249,6 +2249,7 @@ dependencies = [
@@ -10,7 +10,7 @@ index cc9ad06..a543029 100644
   "codex-otel",
   "codex-plugin",
   "codex-prompts",
-@@ -4231,6 +4232,44 @@ dependencies = [
+@@ -4231,6 +4232,46 @@ dependencies = [
   "wiremock",
  ]
  
@@ -41,9 +41,11 @@ index cc9ad06..a543029 100644
 + "codex-model-provider",
 + "codex-omd",
 + "codex-protocol",
++ "codex-sandboxing",
 + "codex-tools",
 + "codex-utils-absolute-path",
 + "codex-utils-path-uri",
++ "codex-utils-pty",
 + "http 1.4.0",
 + "serde",
 + "serde_json",
@@ -55,7 +57,7 @@ index cc9ad06..a543029 100644
  [[package]]
  name = "codex-otel"
  version = "0.156.1"
-@@ -4839,6 +4878,7 @@ dependencies = [
+@@ -4839,6 +4880,7 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -3324,10 +3326,10 @@ index 0000000..6c44c5e
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 0000000..5fcab10
+index 0000000..de7582d
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,30 @@
 +[package]
 +name = "codex-omd-extension"
 +version = "0.156.1"
@@ -3346,6 +3348,7 @@ index 0000000..5fcab10
 +codex-protocol = { workspace = true }
 +codex-tools = { workspace = true }
 +codex-utils-absolute-path = { workspace = true }
++codex-utils-pty = { workspace = true }
 +codex-utils-path-uri = { workspace = true }
 +http = { workspace = true }
 +serde = { workspace = true, features = ["derive"] }
@@ -3353,6 +3356,7 @@ index 0000000..5fcab10
 +tokio = { workspace = true, features = ["io-util", "process", "time", "sync"] }
 +sha2 = { workspace = true }
 +codex-file-system = { workspace = true }
++codex-sandboxing = { workspace = true }
 +
 +[dev-dependencies]
 +tempfile = { workspace = true }
@@ -4358,7 +4362,7 @@ index 0000000..98e46c9
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..3918f90
+index 0000000..753b4f3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
 @@ -0,0 +1,2514 @@
@@ -4521,7 +4525,7 @@ index 0000000..3918f90
 +    }
 +}
 +
-+fn intersect(
++pub(super) fn intersect(
 +    parent: &PermissionProfile,
 +    requested: &PermissionProfile,
 +    cwd: &Path,
@@ -7044,14 +7048,16 @@ index 0000000..fdb1436
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..0bf9bae
+index 0000000..b1dcbb4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,3931 @@
+@@ -0,0 +1,3933 @@
 +mod accounting;
 +mod execution;
++mod managed_process;
 +mod mods;
 +mod platform_mods;
++mod workspace_operations;
 +
 +#[cfg(test)]
 +#[path = "review_tests.rs"]
@@ -10979,12 +10985,625 @@ index 0000000..0bf9bae
 +        assert!(!directory.path().join("large.json").exists());
 +    }
 +}
+diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
+new file mode 100644
+index 0000000..c042ed2
+--- /dev/null
++++ b/codex-rs/ext/omd/src/managed_process.rs
+@@ -0,0 +1,607 @@
++use codex_protocol::permissions::FileSystemAccessMode;
++use codex_protocol::permissions::FileSystemPath;
++use codex_protocol::permissions::FileSystemSandboxEntry;
++use codex_protocol::permissions::FileSystemSandboxKind;
++use codex_protocol::permissions::FileSystemSandboxPolicy;
++use codex_protocol::permissions::NetworkSandboxPolicy;
++use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
++use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
++use codex_sandboxing::seatbelt::create_seatbelt_command_args;
++use codex_utils_absolute_path::AbsolutePathBuf;
++use codex_utils_pty::process_group::kill_process_group;
++use serde::Deserialize;
++use serde_json::Value;
++use serde_json::json;
++use std::collections::BTreeMap;
++use std::fs;
++use std::io;
++use std::io::BufRead;
++use std::io::BufReader;
++use std::io::Write;
++use std::os::unix::process::CommandExt;
++use std::path::Path;
++use std::path::PathBuf;
++use std::process::Child;
++use std::process::ChildStdin;
++use std::process::Command;
++use std::process::Stdio;
++use std::sync::Mutex;
++use std::sync::mpsc;
++use std::time::Duration;
++use std::time::Instant;
++
++type Key = (String, u64, String);
++
++#[derive(Default)]
++pub(super) struct ManagedProcesses {
++    records: Mutex<BTreeMap<Key, ManagedProcess>>,
++}
++
++struct ManagedProcess {
++    child: Child,
++    sender: mpsc::SyncSender<(Vec<Value>, mpsc::SyncSender<Result<(), String>>)>,
++    receiver: mpsc::Receiver<io::Result<Value>>,
++    scratch: PathBuf,
++    last_used: Instant,
++}
++
++impl Drop for ManagedProcess {
++    fn drop(&mut self) {
++        if self.child.try_wait().ok().flatten().is_none() {
++            let _ = kill_process_group(self.child.id());
++            let _ = self.child.kill();
++        }
++        let _ = self.child.wait();
++        let _ = fs::remove_dir_all(&self.scratch);
++    }
++}
++
++fn read_message(reader: &mut impl BufRead) -> io::Result<Value> {
++    let mut length = None;
++    let mut headers = 0_usize;
++    loop {
++        let mut line = String::new();
++        if reader.read_line(&mut line)? == 0 {
++            return Err(io::Error::new(
++                io::ErrorKind::UnexpectedEof,
++                "process stopped",
++            ));
++        }
++        headers += line.len();
++        if headers > 8192 {
++            return Err(io::Error::other("process headers exceed limit"));
++        }
++        if line == "\r\n" || line == "\n" {
++            break;
++        }
++        if let Some(value) = line
++            .split_once(':')
++            .filter(|(name, _)| name.eq_ignore_ascii_case("Content-Length"))
++            .map(|(_, value)| value.trim())
++        {
++            length = Some(value.parse::<usize>().map_err(io::Error::other)?);
++        }
++    }
++    let length = length
++        .filter(|value| *value <= 4 * 1024 * 1024)
++        .ok_or_else(|| io::Error::other("process message length invalid"))?;
++    let mut bytes = vec![0_u8; length];
++    reader.read_exact(&mut bytes)?;
++    serde_json::from_slice(&bytes).map_err(io::Error::other)
++}
++
++fn send_message(stdin: &mut ChildStdin, message: &Value) -> Result<(), String> {
++    let bytes = serde_json::to_vec(message).map_err(|error| error.to_string())?;
++    if bytes.len() > 4 * 1024 * 1024 || !message.is_object() {
++        return Err("process_message_invalid_or_too_large".into());
++    }
++    write!(stdin, "Content-Length: {}\r\n\r\n", bytes.len()).map_err(|error| error.to_string())?;
++    stdin.write_all(&bytes).map_err(|error| error.to_string())?;
++    stdin.flush().map_err(|error| error.to_string())
++}
++
++fn read_policy(
++    policy: &FileSystemSandboxPolicy,
++    scratch: &Path,
++) -> Result<FileSystemSandboxPolicy, String> {
++    if policy.kind == FileSystemSandboxKind::ExternalSandbox {
++        return Err("managed_process_requires_native_sandbox".into());
++    }
++    let mut result = if policy.kind == FileSystemSandboxKind::Unrestricted {
++        FileSystemSandboxPolicy::read_only()
++    } else {
++        FileSystemSandboxPolicy::restricted(
++            policy
++                .entries
++                .iter()
++                .cloned()
++                .map(|mut entry| {
++                    if entry.access == FileSystemAccessMode::Write {
++                        entry.access = FileSystemAccessMode::Read;
++                    }
++                    entry
++                })
++                .collect(),
++        )
++    };
++    let path =
++        AbsolutePathBuf::from_absolute_path_checked(scratch).map_err(|error| error.to_string())?;
++    result.entries.push(FileSystemSandboxEntry::new(
++        FileSystemPath::Path { path: path.into() },
++        FileSystemAccessMode::Write,
++    ));
++    Ok(result)
++}
++
++fn program(name: &str, repository: &Path) -> Option<PathBuf> {
++    if name.is_empty()
++        || name.len() > 64
++        || !name
++            .bytes()
++            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
++    {
++        return None;
++    }
++    std::env::split_paths(&std::env::var_os("PATH")?).find_map(|directory| {
++        let candidate = directory.join(name).canonicalize().ok()?;
++        (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
++    })
++}
++
++impl ManagedProcesses {
++    pub fn cleanup_stale(&self, generation: u64) {
++        if let Ok(mut records) = self.records.lock() {
++            records.retain(|(_, current, _), _| *current == generation);
++        }
++    }
++
++    pub fn cleanup_owned(&self, id: &str, generation: u64) {
++        if let Ok(mut records) = self.records.lock() {
++            records.retain(|(owner, current, _), _| owner != id || *current != generation);
++        }
++    }
++
++    pub fn cleanup(&self) {
++        if let Ok(mut records) = self.records.lock() {
++            records.clear();
++        }
++    }
++
++    pub fn call(
++        &self,
++        id: &str,
++        generation: u64,
++        repository: &Path,
++        policy: &FileSystemSandboxPolicy,
++        operation: &str,
++        arguments: Value,
++        active: impl Fn() -> bool,
++    ) -> Result<Value, String> {
++        if !active()
++            || !repository.is_absolute()
++            || repository
++                .canonicalize()
++                .map_err(|error| error.to_string())?
++                != repository
++        {
++            return Err("managed_process_inactive_or_repository_invalid".into());
++        }
++        match operation {
++            "process.which" => {
++                #[derive(Deserialize)]
++                #[serde(deny_unknown_fields)]
++                struct Input {
++                    names: Vec<String>,
++                }
++                let input: Input =
++                    serde_json::from_value(arguments).map_err(|error| error.to_string())?;
++                if input.names.is_empty() || input.names.len() > 8 {
++                    return Err("process_candidate_limit".into());
++                }
++                let found = input
++                    .names
++                    .iter()
++                    .filter_map(|name| {
++                        let path = program(name, repository)?;
++                        let metadata = fs::metadata(&path).ok()?;
++                        if metadata.len() > 128 * 1024 * 1024 {
++                            return None;
++                        }
++                        let sha256 = crate::execution::hash(&fs::read(&path).ok()?);
++                        Some(json!({"name":name,"path":path,"sha256":sha256}))
++                    })
++                    .collect::<Vec<_>>();
++                Ok(json!({"found":found}))
++            }
++            "process.start" => {
++                #[derive(Deserialize)]
++                #[serde(deny_unknown_fields)]
++                struct Input {
++                    session: String,
++                    name: String,
++                    path: PathBuf,
++                    sha256: String,
++                    #[serde(default)]
++                    arguments: Vec<String>,
++                }
++                let input: Input =
++                    serde_json::from_value(arguments).map_err(|error| error.to_string())?;
++                if input.session.is_empty()
++                    || input.session.len() > 64
++                    || !input
++                        .session
++                        .bytes()
++                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
++                    || input.arguments.len() > 16
++                    || input.arguments.iter().map(String::len).sum::<usize>() > 4096
++                    || program(&input.name, repository).as_ref() != Some(&input.path)
++                    || input
++                        .path
++                        .canonicalize()
++                        .map_err(|error| error.to_string())?
++                        != input.path
++                {
++                    return Err("process_program_or_arguments_invalid".into());
++                }
++                let metadata = fs::metadata(&input.path).map_err(|error| error.to_string())?;
++                if !metadata.is_file()
++                    || metadata.len() > 128 * 1024 * 1024
++                    || crate::execution::hash(
++                        &fs::read(&input.path).map_err(|error| error.to_string())?,
++                    ) != input.sha256
++                {
++                    return Err("process_executable_changed".into());
++                }
++                let key = (id.to_owned(), generation, input.session.clone());
++                let mut records = self
++                    .records
++                    .lock()
++                    .map_err(|_| "process_records_poisoned")?;
++                if records.contains_key(&key)
++                    || records.len() >= 8
++                    || records.keys().filter(|(owner, _, _)| owner == id).count() >= 5
++                {
++                    return Err("process_session_limit_or_duplicate".into());
++                }
++                let scratch = std::env::temp_dir().join(format!(
++                    "omd-process-{}-{}",
++                    std::process::id(),
++                    std::time::SystemTime::now()
++                        .duration_since(std::time::UNIX_EPOCH)
++                        .map_err(|error| error.to_string())?
++                        .as_nanos(),
++                ));
++                fs::create_dir(&scratch).map_err(|error| error.to_string())?;
++                let launched = (|| {
++                    let scope = read_policy(policy, &scratch)?;
++                    let mut command = vec![input.path.to_string_lossy().into_owned()];
++                    command.extend(input.arguments);
++                    let argv = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
++                        command,
++                        file_system_sandbox_policy: &scope,
++                        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
++                        sandbox_policy_cwd: repository,
++                        enforce_managed_network: false,
++                        managed_network: None,
++                        environment_id: None,
++                        network: None,
++                        extra_allow_unix_sockets: &[],
++                    })?;
++                    let mut command = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE);
++                    let mut child = command
++                        .args(argv)
++                        .current_dir(repository)
++                        .env_clear()
++                        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
++                        .env("HOME", &scratch)
++                        .env("TMPDIR", &scratch)
++                        .env("XDG_CACHE_HOME", &scratch)
++                        .env("PYTHONDONTWRITEBYTECODE", "1")
++                        .stdin(Stdio::piped())
++                        .stdout(Stdio::piped())
++                        .stderr(Stdio::null())
++                        .process_group(0)
++                        .spawn()
++                        .map_err(|error| error.to_string())?;
++                    let stdin = child.stdin.take().ok_or("process_stdin_missing")?;
++                    let stdout = child.stdout.take().ok_or("process_stdout_missing")?;
++                    let (writer_sender, writer_receiver) =
++                        mpsc::sync_channel::<(Vec<Value>, mpsc::SyncSender<Result<(), String>>)>(1);
++                    std::thread::spawn(move || {
++                        let mut stdin = stdin;
++                        while let Ok((messages, reply)) = writer_receiver.recv() {
++                            let result = messages
++                                .iter()
++                                .try_for_each(|message| send_message(&mut stdin, message));
++                            let failed = result.is_err();
++                            let _ = reply.send(result);
++                            if failed {
++                                break;
++                            }
++                        }
++                    });
++                    let (sender, receiver) = mpsc::sync_channel(128);
++                    std::thread::spawn(move || {
++                        let mut reader = BufReader::new(stdout);
++                        loop {
++                            let result = read_message(&mut reader);
++                            let terminal = result.is_err();
++                            if sender.send(result).is_err() || terminal {
++                                break;
++                            }
++                        }
++                    });
++                    Ok::<_, String>(ManagedProcess {
++                        child,
++                        sender: writer_sender,
++                        receiver,
++                        scratch: scratch.clone(),
++                        last_used: Instant::now(),
++                    })
++                })();
++                match launched {
++                    Ok(process) => {
++                        records.insert(key, process);
++                        Ok(json!({"session":input.session,"running":true}))
++                    }
++                    Err(error) => {
++                        let _ = fs::remove_dir_all(scratch);
++                        Err(error)
++                    }
++                }
++            }
++            "process.exchange" | "process.status" | "process.stop" => {
++                #[derive(Deserialize)]
++                #[serde(deny_unknown_fields)]
++                struct Input {
++                    session: String,
++                    #[serde(default)]
++                    send: Vec<Value>,
++                    #[serde(default)]
++                    wait_ms: u64,
++                }
++                let input: Input =
++                    serde_json::from_value(arguments).map_err(|error| error.to_string())?;
++                let key = (id.to_owned(), generation, input.session.clone());
++                let mut records = self
++                    .records
++                    .lock()
++                    .map_err(|_| "process_records_poisoned")?;
++                if operation == "process.stop" {
++                    return Ok(json!({"stopped":records.remove(&key).is_some()}));
++                }
++                let process = records.get_mut(&key).ok_or("process_session_unavailable")?;
++                if process
++                    .child
++                    .try_wait()
++                    .map_err(|error| error.to_string())?
++                    .is_some()
++                {
++                    records.remove(&key);
++                    return Err("process_stopped".into());
++                }
++                if operation == "process.status" {
++                    return Ok(
++                        json!({"session":input.session,"running":true,"idle_ms":process.last_used.elapsed().as_millis()}),
++                    );
++                }
++                if input.send.len() > 32 || input.wait_ms > 10_000 {
++                    return Err("process_exchange_limit".into());
++                }
++                if !input.send.is_empty() {
++                    let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
++                    process
++                        .sender
++                        .send((input.send, reply_sender))
++                        .map_err(|_| "process_writer_stopped")?;
++                    let write_deadline = Instant::now() + Duration::from_secs(10);
++                    loop {
++                        if !active() {
++                            records.remove(&key);
++                            return Err("process_cancelled".into());
++                        }
++                        match reply_receiver.recv_timeout(Duration::from_millis(50)) {
++                            Ok(Ok(())) => break,
++                            Ok(Err(error)) => {
++                                records.remove(&key);
++                                return Err(error);
++                            }
++                            Err(mpsc::RecvTimeoutError::Disconnected) => {
++                                records.remove(&key);
++                                return Err("process_writer_stopped".into());
++                            }
++                            Err(mpsc::RecvTimeoutError::Timeout)
++                                if Instant::now() >= write_deadline =>
++                            {
++                                records.remove(&key);
++                                return Err("process_write_timeout".into());
++                            }
++                            Err(mpsc::RecvTimeoutError::Timeout) => (),
++                        }
++                    }
++                }
++                process.last_used = Instant::now();
++                let deadline = Instant::now() + Duration::from_millis(input.wait_ms);
++                let mut messages = Vec::new();
++                let mut bytes = 0_usize;
++                loop {
++                    if !active() {
++                        records.remove(&key);
++                        return Err("process_cancelled".into());
++                    }
++                    let next = if messages.is_empty() && input.wait_ms > 0 {
++                        process.receiver.recv_timeout(
++                            deadline
++                                .saturating_duration_since(Instant::now())
++                                .min(Duration::from_millis(50)),
++                        )
++                    } else {
++                        process.receiver.try_recv().map_err(|error| match error {
++                            mpsc::TryRecvError::Empty => mpsc::RecvTimeoutError::Timeout,
++                            mpsc::TryRecvError::Disconnected => {
++                                mpsc::RecvTimeoutError::Disconnected
++                            }
++                        })
++                    };
++                    match next {
++                        Ok(Ok(message)) => {
++                            bytes = bytes.saturating_add(
++                                serde_json::to_vec(&message)
++                                    .map_err(|error| error.to_string())?
++                                    .len(),
++                            );
++                            if bytes > 4 * 1024 * 1024 || messages.len() >= 64 {
++                                return Err("process_exchange_output_limit".into());
++                            }
++                            messages.push(message);
++                        }
++                        Ok(Err(error)) => {
++                            records.remove(&key);
++                            return Err(error.to_string());
++                        }
++                        Err(mpsc::RecvTimeoutError::Disconnected) => {
++                            records.remove(&key);
++                            return Err("process_stopped".into());
++                        }
++                        Err(mpsc::RecvTimeoutError::Timeout)
++                            if !messages.is_empty() || Instant::now() >= deadline =>
++                        {
++                            break;
++                        }
++                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
++                    }
++                }
++                Ok(json!({"session":input.session,"messages":messages,"running":true}))
++            }
++            _ => Err("unsupported_process_operation".into()),
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn framed_process_is_owned_bounded_and_stopped() {
++        let directory = tempfile::tempdir().unwrap();
++        let repository = directory.path().canonicalize().unwrap();
++        let processes = ManagedProcesses::default();
++        let policy = FileSystemSandboxPolicy::read_only();
++        let found = processes
++            .call(
++                "fixture",
++                1,
++                &repository,
++                &policy,
++                "process.which",
++                json!({"names":["cat"]}),
++                || true,
++            )
++            .unwrap();
++        let cat = found["found"].as_array().unwrap().first().unwrap();
++        let started = processes
++            .call(
++                "fixture",
++                1,
++                &repository,
++                &policy,
++                "process.start",
++                json!({"session":"framed","name":"cat","path":cat["path"],"sha256":cat["sha256"]}),
++                || true,
++            )
++            .unwrap();
++        assert_eq!(started["running"], true);
++        let answer = processes
++            .call("fixture", 1, &repository, &policy, "process.exchange", json!({"session":"framed","send":[{"jsonrpc":"2.0","id":7,"method":"hello"}],"wait_ms":1000}), || true)
++            .unwrap();
++        assert_eq!(answer["messages"][0]["method"], "hello");
++        assert_eq!(
++            processes
++                .call(
++                    "other",
++                    1,
++                    &repository,
++                    &policy,
++                    "process.status",
++                    json!({"session":"framed"}),
++                    || true
++                )
++                .unwrap_err(),
++            "process_session_unavailable"
++        );
++        assert_eq!(
++            processes
++                .call(
++                    "fixture",
++                    1,
++                    &repository,
++                    &policy,
++                    "process.stop",
++                    json!({"session":"framed"}),
++                    || true
++                )
++                .unwrap()["stopped"],
++            true
++        );
++    }
++
++    #[test]
++    fn blocked_process_write_observes_cancellation() {
++        let directory = tempfile::tempdir().unwrap();
++        let repository = directory.path().canonicalize().unwrap();
++        let processes = ManagedProcesses::default();
++        let policy = FileSystemSandboxPolicy::read_only();
++        let found = processes
++            .call(
++                "fixture",
++                1,
++                &repository,
++                &policy,
++                "process.which",
++                json!({"names":["sleep"]}),
++                || true,
++            )
++            .unwrap();
++        let sleep = found["found"].as_array().unwrap().first().unwrap();
++        processes
++            .call(
++                "fixture",
++                1,
++                &repository,
++                &policy,
++                "process.start",
++                json!({"session":"blocked","name":"sleep","path":sleep["path"],"sha256":sleep["sha256"],"arguments":["20"]}),
++                || true,
++            )
++            .unwrap();
++        let started = Instant::now();
++        let error = processes
++            .call(
++                "fixture",
++                1,
++                &repository,
++                &policy,
++                "process.exchange",
++                json!({"session":"blocked","send":[{"data":"x".repeat(256 * 1024)}],"wait_ms":0}),
++                || started.elapsed() < Duration::from_millis(100),
++            )
++            .unwrap_err();
++        assert_eq!(error, "process_cancelled");
++        assert!(started.elapsed() < Duration::from_secs(2));
++        assert_eq!(
++            processes
++                .call(
++                    "fixture",
++                    1,
++                    &repository,
++                    &policy,
++                    "process.status",
++                    json!({"session":"blocked"}),
++                    || true,
++                )
++                .unwrap_err(),
++            "process_session_unavailable"
++        );
++    }
++}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000..325d264
+index 0000000..7fee93b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,705 @@
+@@ -0,0 +1,860 @@
 +mod agents;
 +mod operations;
 +mod policy;
@@ -11032,8 +11651,10 @@ index 0000000..325d264
 +    input_runtime: Arc<Mutex<ModHost>>,
 +    agents: Arc<agents::Agents>,
 +    services: Arc<services::Services>,
++    processes: Arc<crate::managed_process::ManagedProcesses>,
 +    views: Arc<view::Views>,
 +    turn: Mutex<Option<TurnRecord>>,
++    workspace_before: Mutex<BTreeMap<String, Result<codex_omd::WorkspaceIndex, String>>>,
 +}
 +
 +fn preview(text: &str) -> String {
@@ -11138,8 +11759,10 @@ index 0000000..325d264
 +        runtime,
 +        input_runtime: Arc::new(Mutex::new(input_runtime)),
 +        services: Arc::new(services::Services::default()),
++        processes: Arc::new(crate::managed_process::ManagedProcesses::default()),
 +        views,
 +        turn: Mutex::new(None),
++        workspace_before: Mutex::new(BTreeMap::new()),
 +    });
 +    registry.config_contributor(extension.clone());
 +    registry.prompt_contributor(extension.clone());
@@ -11174,6 +11797,7 @@ index 0000000..325d264
 +        for (id, generation) in failed {
 +            self.agents.cleanup_owned(&id, generation).await;
 +            self.services.cleanup_owned(&id, generation).await;
++            self.processes.cleanup_owned(&id, generation);
 +        }
 +    }
 +
@@ -11198,7 +11822,24 @@ index 0000000..325d264
 +            std::sync::mpsc::SyncSender<std::io::Result<Value>>,
 +        )>(1);
 +        let generation = self.runtime.lock().ok().map(|runtime| runtime.generation());
++        if let Some(generation) = generation {
++            self.processes.cleanup_stale(generation);
++        }
 +        let allow_provider = matches!(event, "start" | "resume" | "turn_start");
++        let allow_workspace = matches!(
++            event,
++            "workspace_write" | "workspace_pre_rename" | "turn_start"
++        );
++        let allow_process = matches!(
++            event,
++            "start"
++                | "resume"
++                | "turn_start"
++                | "workspace_write"
++                | "workspace_pre_rename"
++                | "idle"
++                | "stop"
++        );
 +        let job = tokio::task::spawn_blocking(move || {
 +            let Ok(mut runtime) = runtime.lock() else {
 +                return Vec::new();
@@ -11211,11 +11852,13 @@ index 0000000..325d264
 +                || !cancelled.load(std::sync::atomic::Ordering::Acquire),
 +                "native workflow enforcement",
 +                |id, request| {
-+                    if !allow_provider
-+                        || !matches!(
++                    if !((allow_provider
++                        && matches!(
 +                            request.operation.as_str(),
 +                            "providers.register" | "routes.list"
-+                        )
++                        ))
++                        || (allow_workspace && request.operation == "workspace.read")
++                        || (allow_process && request.operation.starts_with("process.")))
 +                    {
 +                        return Err(std::io::Error::other(
 +                            "lifecycle_host_operation_unavailable",
@@ -11311,6 +11954,23 @@ index 0000000..325d264
 +                    json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
 +                }))),
 +                (None, _) if request.operation == "routes.list" => Ok(json!([])),
++                (Some(lead), Some(generation)) if request.operation == "workspace.read" || request.operation.starts_with("process.") => {
++                    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await;
++                    match authority {
++                        Ok(authority) => {
++                            let processes = self.processes.clone();
++                            let lead = lead.clone();
++                            tokio::task::spawn_blocking(move || {
++                                if request.operation == "workspace.read" {
++                                    authority.call(&request.operation, request.arguments, || lead.host.task.check_active().is_ok())
++                                } else {
++                                    processes.call(&id, generation, &authority.repository, &authority.policy, &request.operation, request.arguments, || lead.host.task.check_active().is_ok())
++                                }
++                            }).await.map_err(|error| error.to_string()).and_then(|result| result).map_err(std::io::Error::other)
++                        }
++                        Err(error) => Err(std::io::Error::other(error)),
++                    }
++                },
 +                (Some(lead), Some(generation)) => self
 +                    .services
 +                    .call(lead, &id, generation, request)
@@ -11351,6 +12011,7 @@ index 0000000..325d264
 +            if lead_thread(input.thread_store) {
 +                self.agents.cleanup().await;
 +                self.services.cleanup().await;
++                self.processes.cleanup();
 +                if let Some(turn) = self.take_turn() {
 +                    self.event("turn_end", json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}))
 +                        .await;
@@ -11563,14 +12224,21 @@ index 0000000..325d264
 +        Box::pin(async move {
 +            if lead_thread(input.thread_store) {
 +                self.event("session", json!({"phase":"idle","thread_id":thread_id(input.thread_store),"cause":format!("{:?}", input.cause)})).await;
-+                self.event("idle", json!({"cause": format!("{:?}", input.cause)}))
-+                    .await;
++                self.event_with_lead(
++                    "idle",
++                    json!({"cause": format!("{:?}", input.cause)}),
++                    input.thread_store.get::<Lead>(),
++                )
++                .await;
 +            }
 +        })
 +    }
 +    fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
 +            if lead_thread(input.thread_store) {
++                if let Ok(mut before) = self.workspace_before.lock() {
++                    before.clear();
++                }
 +                self.agents.cleanup().await;
 +                self.services.cleanup().await;
 +                self.event(
@@ -11578,13 +12246,38 @@ index 0000000..325d264
 +                    json!({"phase":"stop","thread_id":thread_id(input.thread_store)}),
 +                )
 +                .await;
-+                self.event("stop", Value::Null).await;
++                self.event_with_lead("stop", Value::Null, input.thread_store.get::<Lead>())
++                    .await;
++                self.processes.cleanup();
 +            }
 +        })
 +    }
 +}
 +
 +impl ToolLifecycleContributor for Mods {
++    fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
++        Box::pin(async move {
++            if !lead_thread(input.thread_store)
++                || !self
++                    .runtime
++                    .lock()
++                    .is_ok_and(|runtime| runtime.has_event("workspace_write"))
++            {
++                return;
++            }
++            let repository = self.owner.manifest.repository.clone();
++            let snapshot = tokio::task::spawn_blocking(move || {
++                codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
++                    .map_err(|error| error.to_string())
++            })
++            .await
++            .unwrap_or_else(|error| Err(error.to_string()));
++            if let Ok(mut before) = self.workspace_before.lock() {
++                before.insert(input.call_id.to_owned(), snapshot);
++            }
++        })
++    }
++
 +    fn intercept_tool<'a>(
 +        &'a self,
 +        input: ToolStartInput<'a>,
@@ -11678,6 +12371,87 @@ index 0000000..325d264
 +                    "outcome": format!("{:?}", input.outcome)}),
 +                )
 +                .await;
++                let before = self
++                    .workspace_before
++                    .lock()
++                    .ok()
++                    .and_then(|mut snapshots| snapshots.remove(input.call_id));
++                if let Some(before) = before {
++                    let repository = self.owner.manifest.repository.clone();
++                    let after = tokio::task::spawn_blocking(move || {
++                        codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
++                            .map_err(|error| error.to_string())
++                    })
++                    .await
++                    .unwrap_or_else(|error| Err(error.to_string()));
++                    let (status, changes, reason) = match (before, after) {
++                        (Ok(before), Ok(after)) => {
++                            let changes = before.changed(&after);
++                            if changes.len() > 128
++                                || changes
++                                    .iter()
++                                    .map(|change| change.path.len())
++                                    .sum::<usize>()
++                                    > 16_000
++                            {
++                                (
++                                    "unavailable",
++                                    Vec::new(),
++                                    Some("workspace_change_batch_limit".to_owned()),
++                                )
++                            } else {
++                                ("observed", changes, None)
++                            }
++                        }
++                        (Err(error), _) | (_, Err(error)) => {
++                            ("unavailable", Vec::new(), Some(error))
++                        }
++                    };
++                    let (status, changes, reason) = if status == "observed" && !changes.is_empty() {
++                        match input.thread_store.get::<Lead>() {
++                            Some(lead) => {
++                                match crate::workspace_operations::WorkspaceAuthority::for_lead(
++                                    &lead,
++                                )
++                                .await
++                                {
++                                    Ok(authority) => match authority.visible_changes(changes) {
++                                        Ok(changes) => (status, changes, reason),
++                                        Err(error) => ("unavailable", Vec::new(), Some(error)),
++                                    },
++                                    Err(_) => (
++                                        "unavailable",
++                                        Vec::new(),
++                                        Some("workspace_change_scope_unavailable".to_owned()),
++                                    ),
++                                }
++                            }
++                            None => (
++                                "unavailable",
++                                Vec::new(),
++                                Some("workspace_change_scope_unavailable".to_owned()),
++                            ),
++                        }
++                    } else {
++                        (status, changes, reason)
++                    };
++                    if status == "unavailable" || !changes.is_empty() {
++                        self.event_with_lead(
++                            "workspace_write",
++                            json!({
++                                "repository":self.owner.manifest.repository,
++                                "call_id":input.call_id,
++                                "tool":input.tool_name.to_string(),
++                                "outcome":format!("{:?}", input.outcome),
++                                "changes":changes,
++                                "status":status,
++                                "reason":reason,
++                            }),
++                            input.thread_store.get::<Lead>(),
++                        )
++                        .await;
++                    }
++                }
 +            }
 +        })
 +    }
@@ -12557,10 +13331,10 @@ index 0000000..4b99729
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000..4f8a4cd
+index 0000000..4b60c4e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,233 @@
 +use super::*;
 +use codex_omd::ModHostCall;
 +use std::path::Path;
@@ -12595,6 +13369,8 @@ index 0000000..4f8a4cd
 +pub(super) async fn dispatch(
 +    agents: &agents::Agents,
 +    services: &services::Services,
++    processes: &Arc<crate::managed_process::ManagedProcesses>,
++    pre_rename_runtime: &Arc<Mutex<ModHost>>,
 +    lead: &Lead,
 +    id: &str,
 +    generation: u64,
@@ -12610,6 +13386,83 @@ index 0000000..4f8a4cd
 +        return services.call(lead, id, generation, request).await;
 +    }
 +    match request.operation.as_str() {
++        "workspace.read" | "workspace.transaction" | "workspace.request_rename" | "process.which" | "process.start"
++        | "process.exchange" | "process.status" | "process.stop" => {
++            let manager = host.manager.upgrade().ok_or("native_thread_manager_stopped")?;
++            let config = manager
++                .get_thread(lead.thread)
++                .await
++                .map_err(|e| e.to_string())?
++                .config()
++                .await;
++            let environment = call.environments.as_slice();
++            if environment.len() != 1
++                || environment[0].environment_id != "local"
++                || environment[0].cwd != config.cwd
++                || config.cwd.as_path() != host.manifest.repository
++            {
++                return Err("workspace_operation_requires_local_repository".into());
++            }
++            let context = environment[0].file_system_sandbox_context.clone();
++            let mut roots = context
++                .workspace_roots
++                .iter()
++                .map(codex_utils_path_uri::PathUri::to_abs_path)
++                .collect::<Result<Vec<_>, _>>()
++                .map_err(|e| e.to_string())?;
++            if roots.is_empty() {
++                roots.push(config.cwd.clone());
++            }
++            let configured = config
++                .permissions
++                .permission_profile()
++                .clone()
++                .materialize_project_roots_with_workspace_roots(&roots);
++            let actual = context
++                .permissions
++                .clone()
++                .materialize_project_roots_with_workspace_roots(&roots);
++            let effective = execution::intersect(&configured, &actual, config.cwd.as_path())?;
++            let authority = crate::workspace_operations::WorkspaceAuthority {
++                repository: host.manifest.repository.clone(),
++                policy: effective.file_system_sandbox_policy(),
++                context,
++            };
++            host.authorize()?;
++            if request.operation == "workspace.request_rename" {
++                if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
++                    return Err("another controlled operation is active".into());
++                }
++                let _operation = OperationGuard(&host.operation);
++                let runtime = pre_rename_runtime.clone();
++                let processes = processes.clone();
++                let task = host.task.clone();
++                return tokio::task::spawn_blocking(move || {
++                    let mut runtime = runtime.lock().map_err(|_| "pre_rename_runtime_poisoned")?;
++                    authority.request_rename(request.arguments, &mut runtime, &processes, generation, || task.check_active().is_ok())
++                }).await.map_err(|error| error.to_string())?;
++            }
++            if request.operation.starts_with("process.") {
++                return processes.call(
++                    id,
++                    generation,
++                    &authority.repository,
++                    &authority.policy,
++                    &request.operation,
++                    request.arguments,
++                    || host.task.check_active().is_ok(),
++                );
++            }
++            if request.operation == "workspace.transaction" {
++                if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
++                    return Err("another controlled operation is active".into());
++                }
++                let _operation = OperationGuard(&host.operation);
++                authority.call(&request.operation, request.arguments, || host.task.check_active().is_ok())
++            } else {
++                authority.call(&request.operation, request.arguments, || host.task.check_active().is_ok())
++            }
++        }
 +        "pi.discover" => {
 +            let root = host.manifest.mod_pi_user.as_ref().ok_or("pi_resource_roots_not_host_approved")?;
 +            let mut catalog = codex_omd::ModStore::discover_pi(root, &host.manifest.repository).map_err(|e| e.to_string())?;
@@ -13515,19 +14368,21 @@ index 0000000..87ad4a4
 +}
 diff --git a/codex-rs/ext/omd/src/mods/tools.rs b/codex-rs/ext/omd/src/mods/tools.rs
 new file mode 100644
-index 0000000..bfcdb38
+index 0000000..bfde472
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/tools.rs
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,245 @@
 +use super::*;
 +
 +struct Tool {
 +    lead: Arc<Lead>,
 +    agents: Arc<agents::Agents>,
 +    services: Arc<services::Services>,
++    processes: Arc<crate::managed_process::ManagedProcesses>,
 +    views: Arc<view::Views>,
 +    owner: Arc<Host>,
 +    runtime: Arc<Mutex<ModHost>>,
++    pre_rename_runtime: Arc<Mutex<ModHost>>,
 +    id: String,
 +    generation: u64,
 +    definition: ModTool,
@@ -13610,9 +14465,11 @@ index 0000000..bfcdb38
 +                    lead: lead.clone(),
 +                    agents: self.agents.clone(),
 +                    services: self.services.clone(),
++                    processes: self.processes.clone(),
 +                    views: self.views.clone(),
 +                    owner: self.owner.clone(),
 +                    runtime: self.runtime.clone(),
++                    pre_rename_runtime: self.input_runtime.clone(),
 +                    id,
 +                    generation,
 +                    definition,
@@ -13723,6 +14580,8 @@ index 0000000..bfcdb38
 +                let value = operations::dispatch(
 +                    &self.agents,
 +                    &self.services,
++                    &self.processes,
++                    &self.pre_rename_runtime,
 +                    &lead,
 +                    &self.id,
 +                    generation,
@@ -13744,6 +14603,7 @@ index 0000000..bfcdb38
 +                        .finish(&self.owner, &self.id, &tool_name, &label, "failed");
 +                    self.agents.cleanup_owned(&self.id, generation).await;
 +                    self.services.cleanup_owned(&self.id, generation).await;
++                    self.processes.cleanup_owned(&self.id, generation);
 +                    return Err(FunctionCallError::RespondToModel(error));
 +                }
 +            };
@@ -13896,10 +14756,10 @@ index 0000000..bdda517
 +}
 diff --git a/codex-rs/ext/omd/src/platform_mods.rs b/codex-rs/ext/omd/src/platform_mods.rs
 new file mode 100644
-index 0000000..79f58a3
+index 0000000..4eb193c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/platform_mods.rs
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,772 @@
 +use super::*;
 +use codex_omd::ModHost;
 +use codex_omd::ModInputDecision;
@@ -13918,12 +14778,17 @@ index 0000000..79f58a3
 +
 +struct PlatformMods {
 +    root: PathBuf,
++    repository: PathBuf,
 +    runtime: Arc<Mutex<ModHost>>,
 +    input_runtime: Arc<Mutex<ModHost>>,
 +    epoch: u64,
 +    revision: AtomicU64,
 +    turn: Mutex<Option<TurnRecord>>,
++    workspace_before: Mutex<BTreeMap<String, Result<codex_omd::WorkspaceIndex, String>>>,
 +}
++
++struct PlatformPermission(PermissionProfile);
++struct PlatformProcesses(Arc<crate::managed_process::ManagedProcesses>);
 +
 +struct TurnRecord {
 +    id: String,
@@ -13932,6 +14797,9 @@ index 0000000..79f58a3
 +
 +struct PlatformTool {
 +    runtime: Arc<Mutex<ModHost>>,
++    pre_rename_runtime: Arc<Mutex<ModHost>>,
++    repository: PathBuf,
++    processes: Arc<crate::managed_process::ManagedProcesses>,
 +    id: String,
 +    generation: u64,
 +    definition: ModTool,
@@ -13954,7 +14822,7 @@ index 0000000..79f58a3
 +    let repository = std::env::current_dir()
 +        .and_then(|path| path.canonicalize())
 +        .map_err(|error| error.to_string())?;
-+    if !root.is_absolute() || canonical != root || root.starts_with(repository) {
++    if !root.is_absolute() || canonical != root || root.starts_with(&repository) {
 +        return Err("platform mod store must be canonical and outside the repository".into());
 +    }
 +    let validator = |schema: &Value| {
@@ -13968,6 +14836,7 @@ index 0000000..79f58a3
 +        ModHost::open_validated(root.clone(), validator).map_err(|error| error.to_string())?;
 +    let extension = Arc::new(PlatformMods {
 +        root,
++        repository,
 +        runtime: Arc::new(Mutex::new(runtime)),
 +        input_runtime: Arc::new(Mutex::new(input_runtime)),
 +        epoch: std::time::SystemTime::now()
@@ -13976,6 +14845,7 @@ index 0000000..79f58a3
 +            .unwrap_or_default(),
 +        revision: AtomicU64::new(0),
 +        turn: Mutex::new(None),
++        workspace_before: Mutex::new(BTreeMap::new()),
 +    });
 +    registry.config_contributor(extension.clone());
 +    registry.prompt_contributor(extension.clone());
@@ -13988,8 +14858,19 @@ index 0000000..79f58a3
 +
 +impl PlatformMods {
 +    async fn event(&self, name: &'static str, payload: Value) -> Vec<PromptFragment> {
++        self.event_with_profile(name, payload, None, None).await
++    }
++
++    async fn event_with_profile(
++        &self,
++        name: &'static str,
++        payload: Value,
++        profile: Option<PermissionProfile>,
++        processes: Option<Arc<crate::managed_process::ManagedProcesses>>,
++    ) -> Vec<PromptFragment> {
 +        let runtime = self.runtime.clone();
 +        let root = self.root.clone();
++        let repository = self.repository.clone();
 +        let cancelled = Arc::new(AtomicBool::new(false));
 +        let _cancellation = Cancellation(cancelled.clone());
 +        let epoch = self.epoch;
@@ -13998,16 +14879,57 @@ index 0000000..79f58a3
 +            let Ok(mut runtime) = runtime.lock() else {
 +                return Vec::new();
 +            };
++            let generation = runtime.generation();
++            if let Some(processes) = &processes {
++                processes.cleanup_stale(generation);
++            }
 +            let fragments = mods::event_fragments(
 +                &mut runtime,
 +                name,
 +                payload,
 +                || !cancelled.load(Ordering::Acquire),
 +                "native permissions",
-+                |_, _| {
-+                    Err(std::io::Error::other(
-+                        "host_operation_unavailable: requires a native task",
-+                    ))
++                |id, request| {
++                    let allowed = (matches!(name, "workspace_write" | "turn_start")
++                        && request.operation == "workspace.read")
++                        || (matches!(
++                            name,
++                            "start" | "resume" | "turn_start" | "workspace_write" | "idle" | "stop"
++                        ) && request.operation.starts_with("process."));
++                    if !allowed {
++                        return Err(std::io::Error::other(
++                            "host_operation_unavailable: requires a native task",
++                        ));
++                    }
++                    let profile = profile.as_ref().ok_or_else(|| {
++                        std::io::Error::other("platform_permission_profile_unavailable")
++                    })?;
++                    let authority = crate::workspace_operations::WorkspaceAuthority::for_platform(
++                        &repository,
++                        profile.clone(),
++                    )
++                    .map_err(std::io::Error::other)?;
++                    let result = if request.operation == "workspace.read" {
++                        authority.call(&request.operation, request.arguments, || {
++                            !cancelled.load(Ordering::Acquire)
++                        })
++                    } else {
++                        processes
++                            .as_ref()
++                            .ok_or_else(|| {
++                                std::io::Error::other("platform_process_scope_unavailable")
++                            })?
++                            .call(
++                                id,
++                                generation,
++                                &authority.repository,
++                                &authority.policy,
++                                &request.operation,
++                                request.arguments,
++                                || !cancelled.load(Ordering::Acquire),
++                            )
++                    };
++                    result.map_err(std::io::Error::other)
 +                },
 +            );
 +            let terminal =
@@ -14027,7 +14949,19 @@ index 0000000..79f58a3
 +            {
 +                let _ = persist_atomic(&root, "mod-view.json", &bytes);
 +            }
-+            if let Ok(bytes) = serde_json::to_vec(&runtime.status()) {
++            let status = runtime.status();
++            for id in status["mods"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .filter(|item| item["error"].is_string())
++                .filter_map(|item| item["id"].as_str())
++            {
++                if let Some(processes) = &processes {
++                    processes.cleanup_owned(id, generation);
++                }
++            }
++            if let Ok(bytes) = serde_json::to_vec(&status) {
 +                let _ = persist_atomic(&root, "mod-status.json", &bytes);
 +            }
 +            fragments
@@ -14086,24 +15020,80 @@ index 0000000..79f58a3
 +}
 +
 +impl ThreadLifecycleContributor<Config> for PlatformMods {
-+    fn on_thread_start<'a>(&'a self, _: ThreadStartInput<'a, Config>) -> ExtensionFuture<'a, ()> {
++    fn on_thread_start<'a>(
++        &'a self,
++        input: ThreadStartInput<'a, Config>,
++    ) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
++            let profile = input.config.permissions.effective_permission_profile();
++            input
++                .thread_store
++                .insert(PlatformPermission(profile.clone()));
++            let processes = Arc::new(crate::managed_process::ManagedProcesses::default());
++            input
++                .thread_store
++                .insert(PlatformProcesses(processes.clone()));
 +            self.event("session", json!({"phase":"start"})).await;
-+            self.event("start", Value::Null).await;
++            self.event_with_profile("start", Value::Null, Some(profile), Some(processes))
++                .await;
 +        })
 +    }
 +    fn on_thread_resume<'a>(
 +        &'a self,
-+        _: codex_extension_api::ThreadResumeInput<'a>,
++        input: codex_extension_api::ThreadResumeInput<'a>,
 +    ) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
 +            self.event("session", json!({"phase":"resume"})).await;
-+            self.event("resume", Value::Null).await;
++            self.event_with_profile(
++                "resume",
++                Value::Null,
++                input
++                    .thread_store
++                    .get::<PlatformPermission>()
++                    .map(|value| value.0.clone()),
++                input
++                    .thread_store
++                    .get::<PlatformProcesses>()
++                    .map(|value| value.0.clone()),
++            )
++            .await;
 +        })
 +    }
-+    fn on_thread_stop<'a>(&'a self, _: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
++    fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            self.event("stop", Value::Null).await;
++            self.event_with_profile(
++                "idle",
++                json!({"cause":format!("{:?}", input.cause)}),
++                input
++                    .thread_store
++                    .get::<PlatformPermission>()
++                    .map(|value| value.0.clone()),
++                input
++                    .thread_store
++                    .get::<PlatformProcesses>()
++                    .map(|value| value.0.clone()),
++            )
++            .await;
++        })
++    }
++    fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
++        Box::pin(async move {
++            self.event_with_profile(
++                "stop",
++                Value::Null,
++                input
++                    .thread_store
++                    .get::<PlatformPermission>()
++                    .map(|value| value.0.clone()),
++                input
++                    .thread_store
++                    .get::<PlatformProcesses>()
++                    .map(|value| value.0.clone()),
++            )
++            .await;
++            if let Some(processes) = input.thread_store.get::<PlatformProcesses>() {
++                processes.0.cleanup();
++            }
 +        })
 +    }
 +}
@@ -14214,8 +15204,19 @@ index 0000000..79f58a3
 +                    error: None,
 +                });
 +            }
-+            self.event("turn_start", json!({"turn_id":input.turn_id}))
-+                .await;
++            self.event_with_profile(
++                "turn_start",
++                json!({"turn_id":input.turn_id}),
++                input
++                    .thread_store
++                    .get::<PlatformPermission>()
++                    .map(|value| value.0.clone()),
++                input
++                    .thread_store
++                    .get::<PlatformProcesses>()
++                    .map(|value| value.0.clone()),
++            )
++            .await;
 +        })
 +    }
 +    fn on_turn_stop<'a>(
@@ -14223,6 +15224,9 @@ index 0000000..79f58a3
 +        _: codex_extension_api::TurnStopInput<'a>,
 +    ) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
++            if let Ok(mut before) = self.workspace_before.lock() {
++                before.clear();
++            }
 +            let turn = self.turn.lock().ok().and_then(|mut turn| turn.take());
 +            let payload = match turn {
 +                Some(TurnRecord {
@@ -14238,6 +15242,28 @@ index 0000000..79f58a3
 +}
 +
 +impl ToolLifecycleContributor for PlatformMods {
++    fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
++        Box::pin(async move {
++            if !self
++                .runtime
++                .lock()
++                .is_ok_and(|runtime| runtime.has_event("workspace_write"))
++            {
++                return;
++            }
++            let repository = self.repository.clone();
++            let snapshot = tokio::task::spawn_blocking(move || {
++                codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
++                    .map_err(|error| error.to_string())
++            })
++            .await
++            .unwrap_or_else(|error| Err(error.to_string()));
++            if let Ok(mut before) = self.workspace_before.lock() {
++                before.insert(input.call_id.to_owned(), snapshot);
++            }
++        })
++    }
++
 +    fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
 +        Box::pin(async move {
 +            self.event(
@@ -14245,6 +15271,91 @@ index 0000000..79f58a3
 +                json!({"call_id":input.call_id,"tool":input.tool_name.to_string(),"outcome":format!("{:?}",input.outcome)}),
 +            )
 +            .await;
++            let before = self
++                .workspace_before
++                .lock()
++                .ok()
++                .and_then(|mut snapshots| snapshots.remove(input.call_id));
++            if let Some(before) = before {
++                let repository = self.repository.clone();
++                let after = tokio::task::spawn_blocking(move || {
++                    codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
++                        .map_err(|error| error.to_string())
++                })
++                .await
++                .unwrap_or_else(|error| Err(error.to_string()));
++                let (status, changes, reason) = match (before, after) {
++                    (Ok(before), Ok(after)) => {
++                        let changes = before.changed(&after);
++                        if changes.len() > 128
++                            || changes
++                                .iter()
++                                .map(|change| change.path.len())
++                                .sum::<usize>()
++                                > 16_000
++                        {
++                            (
++                                "unavailable",
++                                Vec::new(),
++                                Some("workspace_change_batch_limit".to_owned()),
++                            )
++                        } else {
++                            ("observed", changes, None)
++                        }
++                    }
++                    (Err(error), _) | (_, Err(error)) => ("unavailable", Vec::new(), Some(error)),
++                };
++                let (status, changes, reason) = if status == "observed" && !changes.is_empty() {
++                    match input.thread_store.get::<PlatformPermission>() {
++                        Some(profile) => {
++                            match crate::workspace_operations::WorkspaceAuthority::for_platform(
++                                &self.repository,
++                                profile.0.clone(),
++                            ) {
++                                Ok(authority) => match authority.visible_changes(changes) {
++                                    Ok(changes) => (status, changes, reason),
++                                    Err(error) => ("unavailable", Vec::new(), Some(error)),
++                                },
++                                Err(_) => (
++                                    "unavailable",
++                                    Vec::new(),
++                                    Some("workspace_change_scope_unavailable".to_owned()),
++                                ),
++                            }
++                        }
++                        None => (
++                            "unavailable",
++                            Vec::new(),
++                            Some("workspace_change_scope_unavailable".to_owned()),
++                        ),
++                    }
++                } else {
++                    (status, changes, reason)
++                };
++                if status == "unavailable" || !changes.is_empty() {
++                    self.event_with_profile(
++                        "workspace_write",
++                        json!({
++                            "repository":self.repository,
++                            "call_id":input.call_id,
++                            "tool":input.tool_name.to_string(),
++                            "outcome":format!("{:?}", input.outcome),
++                            "changes":changes,
++                            "status":status,
++                            "reason":reason,
++                        }),
++                        input
++                            .thread_store
++                            .get::<PlatformPermission>()
++                            .map(|value| value.0.clone()),
++                        input
++                            .thread_store
++                            .get::<PlatformProcesses>()
++                            .map(|value| value.0.clone()),
++                    )
++                    .await;
++                }
++            }
 +        })
 +    }
 +}
@@ -14253,24 +15364,30 @@ index 0000000..79f58a3
 +    fn tools(
 +        &self,
 +        _: &ExtensionData,
-+        _: &ExtensionData,
++        thread_store: &ExtensionData,
 +    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
 +        let Ok(runtime) = self.runtime.lock() else {
 +            return Vec::new();
 +        };
-+        self.tool_executors(runtime.tools())
++        let Some(processes) = thread_store.get::<PlatformProcesses>() else {
++            return Vec::new();
++        };
++        self.tool_executors(runtime.tools(), processes.0.clone())
 +    }
 +    fn tools_for_step(
 +        &self,
 +        _: &ExtensionData,
-+        _: &ExtensionData,
++        thread_store: &ExtensionData,
 +        _: &ExtensionData,
 +    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
 +        let Ok(mut runtime) = self.runtime.lock() else {
 +            return Vec::new();
 +        };
 +        let tools = runtime.tools_for_step(None, Value::Null, || true);
-+        self.tool_executors(tools)
++        let Some(processes) = thread_store.get::<PlatformProcesses>() else {
++            return Vec::new();
++        };
++        self.tool_executors(tools, processes.0.clone())
 +    }
 +}
 +
@@ -14278,6 +15395,7 @@ index 0000000..79f58a3
 +    fn tool_executors(
 +        &self,
 +        tools: Vec<(String, u64, ModTool)>,
++        processes: Arc<crate::managed_process::ManagedProcesses>,
 +    ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
 +        tools
 +            .into_iter()
@@ -14286,6 +15404,9 @@ index 0000000..79f58a3
 +                    codex_extension_api::parse_tool_input_schema(&definition.parameters).ok()?;
 +                Some(Arc::new(PlatformTool {
 +                    runtime: self.runtime.clone(),
++                    pre_rename_runtime: self.input_runtime.clone(),
++                    repository: self.repository.clone(),
++                    processes: processes.clone(),
 +                    id,
 +                    generation,
 +                    definition,
@@ -14321,7 +15442,21 @@ index 0000000..79f58a3
 +        Box::pin(async move {
 +            let payload: Value = serde_json::from_str(call.function_arguments()?)
 +                .map_err(|error| FunctionCallError::RespondToModel(error.to_string()))?;
++            let environment = call.environments.as_slice();
++            let authority = (environment.len() == 1
++                && environment[0].environment_id == "local"
++                && environment[0].cwd.as_path() == self.repository.as_path())
++            .then(|| {
++                let context = environment[0].file_system_sandbox_context.clone();
++                crate::workspace_operations::WorkspaceAuthority {
++                    repository: self.repository.clone(),
++                    policy: context.permissions.file_system_sandbox_policy(),
++                    context,
++                }
++            });
 +            let runtime = self.runtime.clone();
++            let pre_rename_runtime = self.pre_rename_runtime.clone();
++            let processes = self.processes.clone();
 +            let id = self.id.clone();
 +            let name = self.definition.name.clone();
 +            let generation = self.generation;
@@ -14338,10 +15473,55 @@ index 0000000..79f58a3
 +                    &name,
 +                    payload,
 +                    || !cancelled.load(Ordering::Acquire),
-+                    |_| {
-+                        Err(std::io::Error::other(
-+                            "controlled_task_operation_unavailable_in_platform_mode",
-+                        ))
++                    |request| {
++                        if matches!(
++                            request.operation.as_str(),
++                            "workspace.read"
++                                | "workspace.transaction"
++                                | "workspace.request_rename"
++                                | "process.which"
++                                | "process.start"
++                                | "process.exchange"
++                                | "process.status"
++                                | "process.stop"
++                        ) {
++                            let authority = authority.as_ref().ok_or_else(|| {
++                                std::io::Error::other(
++                                    "workspace_operation_requires_local_repository",
++                                )
++                            })?;
++                            let result = if request.operation == "workspace.request_rename" {
++                                let mut runtime = pre_rename_runtime.lock().map_err(|_| {
++                                    std::io::Error::other("pre_rename_runtime_poisoned")
++                                })?;
++                                authority.request_rename(
++                                    request.arguments,
++                                    &mut runtime,
++                                    &processes,
++                                    generation,
++                                    || !cancelled.load(Ordering::Acquire),
++                                )
++                            } else if request.operation.starts_with("process.") {
++                                processes.call(
++                                    &id,
++                                    generation,
++                                    &authority.repository,
++                                    &authority.policy,
++                                    &request.operation,
++                                    request.arguments,
++                                    || !cancelled.load(Ordering::Acquire),
++                                )
++                            } else {
++                                authority.call(&request.operation, request.arguments, || {
++                                    !cancelled.load(Ordering::Acquire)
++                                })
++                            };
++                            result.map_err(std::io::Error::other)
++                        } else {
++                            Err(std::io::Error::other(
++                                "controlled_task_operation_unavailable_in_platform_mode",
++                            ))
++                        }
 +                    },
 +                )
 +            })
@@ -14645,6 +15825,468 @@ index 0000000..1327528
 +        "unavailable evidence",
 +    ] {
 +        assert!(prompt.contains(required));
++    }
++}
+diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
+new file mode 100644
+index 0000000..a9f297d
+--- /dev/null
++++ b/codex-rs/ext/omd/src/workspace_operations.rs
+@@ -0,0 +1,456 @@
++use codex_file_system::FileSystemSandboxContext;
++use codex_protocol::models::PermissionProfile;
++use codex_protocol::permissions::FileSystemSandboxPolicy;
++use codex_protocol::permissions::FileSystemSandboxPolicyContext;
++use codex_protocol::permissions::ReadDenyMatcher;
++use codex_utils_absolute_path::AbsolutePathBuf;
++use codex_utils_path_uri::PathUri;
++use serde::Deserialize;
++use serde_json::Value;
++use serde_json::json;
++use std::collections::BTreeSet;
++use std::path::PathBuf;
++
++pub(super) struct WorkspaceAuthority {
++    pub repository: PathBuf,
++    pub policy: FileSystemSandboxPolicy,
++    pub context: FileSystemSandboxContext,
++}
++
++impl WorkspaceAuthority {
++    pub fn for_platform(
++        repository: &std::path::Path,
++        profile: PermissionProfile,
++    ) -> Result<Self, String> {
++        let absolute = AbsolutePathBuf::from_absolute_path_checked(repository)
++            .map_err(|error| error.to_string())?;
++        let profile =
++            profile.materialize_project_roots_with_workspace_roots(std::slice::from_ref(&absolute));
++        let context = FileSystemSandboxContext::from_permission_profile(
++            profile.clone(),
++            PathUri::from_abs_path(&absolute),
++        );
++        Ok(Self {
++            repository: repository.to_path_buf(),
++            policy: profile.file_system_sandbox_policy(),
++            context,
++        })
++    }
++
++    pub fn visible_changes(
++        &self,
++        changes: Vec<codex_omd::WorkspaceChange>,
++    ) -> Result<Vec<codex_omd::WorkspaceChange>, String> {
++        for change in &changes {
++            if self
++                .paths(std::slice::from_ref(&change.path), false)
++                .is_err()
++            {
++                return Err("workspace_change_scope_unavailable".into());
++            }
++        }
++        Ok(changes)
++    }
++
++    pub fn rename_input(
++        &self,
++        old: &str,
++        new: &str,
++        active: impl Fn() -> bool,
++    ) -> Result<Value, String> {
++        self.paths(&[old.to_owned(), new.to_owned()], true)?;
++        let read = self.call("workspace.read", json!({"paths":[old,new]}), active)?;
++        let source = read["files"][old]["sha256"]
++            .as_str()
++            .ok_or("rename_source_missing")?;
++        if !read["files"][new].is_null() {
++            return Err("rename_destination_exists".into());
++        }
++        let mut expected = serde_json::Map::new();
++        expected.insert(old.to_owned(), Value::String(source.to_owned()));
++        expected.insert(new.to_owned(), Value::Null);
++        Ok(json!({"repository":self.repository,"old":old,"new":new,"expected":expected}))
++    }
++
++    pub fn apply_rename_plan(
++        &self,
++        input: &Value,
++        plan: Value,
++        active: impl Fn() -> bool,
++    ) -> Result<Value, String> {
++        #[derive(Deserialize)]
++        #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
++        enum Plan {
++            Ready {
++                expected: std::collections::BTreeMap<String, Option<String>>,
++                writes: std::collections::BTreeMap<String, String>,
++            },
++            Fallback {
++                reason: String,
++            },
++        }
++        let plan: Plan = serde_json::from_value(plan).map_err(|error| error.to_string())?;
++        let Plan::Ready { expected, writes } = plan else {
++            let Plan::Fallback { reason } = plan else {
++                unreachable!()
++            };
++            return Ok(
++                json!({"status":"fallback","reason":reason.chars().take(512).collect::<String>()}),
++            );
++        };
++        let old = input["old"].as_str().ok_or("rename_old_missing")?;
++        let new = input["new"].as_str().ok_or("rename_new_missing")?;
++        if expected
++            .get(old)
++            .and_then(Option::as_ref)
++            .map(String::as_str)
++            != input["expected"][old].as_str()
++            || expected.get(new) != Some(&None)
++        {
++            return Err("rename_plan_stale_or_unscoped".into());
++        }
++        let result = self.call(
++            "workspace.transaction",
++            json!({"expected":expected,"writes":writes,"renames":[{"old":old,"new":new}]}),
++            active,
++        )?;
++        Ok(json!({"status":"renamed","files":result["files"]}))
++    }
++
++    pub fn request_rename(
++        &self,
++        arguments: Value,
++        runtime: &mut codex_omd::ModHost,
++        processes: &crate::managed_process::ManagedProcesses,
++        generation: u64,
++        active: impl Fn() -> bool,
++    ) -> Result<Value, String> {
++        #[derive(Deserialize)]
++        #[serde(deny_unknown_fields)]
++        struct Input {
++            old: String,
++            new: String,
++        }
++        let request: Input =
++            serde_json::from_value(arguments).map_err(|error| error.to_string())?;
++        let payload = self.rename_input(&request.old, &request.new, &active)?;
++        if !runtime.has_event("workspace_pre_rename") {
++            return Ok(json!({"status":"fallback","reason":"no_pre_rename_handler"}));
++        }
++        let proposals = runtime.event_guarded_with(
++            "workspace_pre_rename",
++            payload.clone(),
++            &active,
++            |id, call| {
++                let result = match call.operation.as_str() {
++                    "workspace.read" => self.call(&call.operation, call.arguments, &active),
++                    operation if operation.starts_with("process.") => processes.call(
++                        id,
++                        generation,
++                        &self.repository,
++                        &self.policy,
++                        operation,
++                        call.arguments,
++                        &active,
++                    ),
++                    _ => Err("pre_rename_operation_unavailable".into()),
++                };
++                result.map_err(std::io::Error::other)
++            },
++        );
++        let mut ready = Vec::new();
++        let mut fallback = "server_rename_unavailable".to_owned();
++        for (_, proposal) in proposals {
++            match proposal {
++                Ok(value) if value["status"] == "ready" => ready.push(value),
++                Ok(value) if value["status"] == "fallback" => {
++                    fallback = value["reason"]
++                        .as_str()
++                        .unwrap_or("server_rename_unavailable")
++                        .chars()
++                        .take(512)
++                        .collect();
++                }
++                Ok(value) if value.is_null() => (),
++                Ok(_) => return Err("invalid_pre_rename_result".into()),
++                Err(error) => return Err(format!("pre_rename_handler_failed: {error}")),
++            }
++        }
++        match ready.len() {
++            0 => Ok(json!({"status":"fallback","reason":fallback})),
++            1 => self.apply_rename_plan(&payload, ready.remove(0), active),
++            _ => Err("pre_rename_handler_conflict".into()),
++        }
++    }
++
++    pub async fn for_lead(lead: &crate::Lead) -> Result<Self, String> {
++        let host = &lead.host;
++        host.task
++            .check_active()
++            .map_err(|error| error.to_string())?;
++        host.authorize()?;
++        let manager = host
++            .manager
++            .upgrade()
++            .ok_or("native_thread_manager_stopped")?;
++        let config = manager
++            .get_thread(lead.thread)
++            .await
++            .map_err(|error| error.to_string())?
++            .config()
++            .await;
++        if config.cwd.as_path() != host.manifest.repository {
++            return Err("workspace_operation_requires_local_repository".into());
++        }
++        let profile = config
++            .permissions
++            .effective_permission_profile()
++            .materialize_project_roots_with_workspace_roots(std::slice::from_ref(&config.cwd));
++        let context = FileSystemSandboxContext::from_permission_profile(
++            profile.clone(),
++            PathUri::from_abs_path(&config.cwd),
++        );
++        Ok(Self {
++            repository: host.manifest.repository.clone(),
++            policy: profile.file_system_sandbox_policy(),
++            context,
++        })
++    }
++
++    fn paths(&self, names: &[String], write: bool) -> Result<Vec<PathBuf>, String> {
++        if names.is_empty()
++            || names.len() > 128
++            || names.iter().collect::<BTreeSet<_>>().len() != names.len()
++        {
++            return Err("workspace_path_scope_invalid".into());
++        }
++        let context = FileSystemSandboxPolicyContext {
++            cwd: &self.context.cwd,
++            workspace_roots: &self.context.workspace_roots,
++            user_home_dir: self.context.user_home_dir.as_ref(),
++            temporary_directories: self.context.temporary_directories.as_deref(),
++        };
++        let deny_read = ReadDenyMatcher::try_new_with_context(&self.policy, &context)?;
++        let mut paths = Vec::with_capacity(names.len());
++        for name in names {
++            let path =
++                codex_omd::workspace_path(&self.repository, name).map_err(|e| e.to_string())?;
++            let absolute =
++                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
++            let uri = PathUri::from_abs_path(&absolute);
++            let readable = self.policy.can_read_path(&uri, &context)
++                && !deny_read
++                    .as_ref()
++                    .is_some_and(|matcher| matcher.is_read_denied_uri(&uri, &context));
++            if !readable || write && !self.policy.can_write_path(&uri, &context) {
++                return Err(if write {
++                    "workspace_write_permission_denied"
++                } else {
++                    "workspace_read_permission_denied"
++                }
++                .into());
++            }
++            paths.push(path);
++        }
++        Ok(paths)
++    }
++
++    pub fn call(
++        &self,
++        operation: &str,
++        arguments: Value,
++        active: impl Fn() -> bool,
++    ) -> Result<Value, String> {
++        if !active() {
++            return Err("workspace_operation_cancelled".into());
++        }
++        match operation {
++            "workspace.read" => {
++                #[derive(Deserialize)]
++                #[serde(deny_unknown_fields)]
++                struct Input {
++                    paths: Vec<String>,
++                }
++                let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
++                self.paths(&input.paths, false)?;
++                let selected = input.paths.into_iter().collect::<BTreeSet<_>>();
++                let snapshot =
++                    codex_omd::Snapshot::capture(&self.repository, &selected, 4 * 1024 * 1024)
++                        .map_err(|e| e.to_string())?;
++                let mut files = serde_json::Map::new();
++                for name in selected {
++                    let value = match snapshot.files.get(&name) {
++                        Some(file) => json!({
++                            "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
++                            "sha256": crate::execution::hash(&file.bytes),
++                        }),
++                        None => Value::Null,
++                    };
++                    files.insert(name, value);
++                }
++                Ok(json!({"files": files}))
++            }
++            "workspace.transaction" => {
++                let transaction: codex_omd::WorkspaceTransaction =
++                    serde_json::from_value(arguments).map_err(|e| e.to_string())?;
++                self.paths(
++                    &transaction.expected.keys().cloned().collect::<Vec<_>>(),
++                    true,
++                )?;
++                let result = transaction
++                    .apply(&self.repository, active)
++                    .map_err(|e| e.to_string())?;
++                serde_json::to_value(result).map_err(|e| e.to_string())
++            }
++            _ => Err("unsupported_workspace_operation".into()),
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use codex_protocol::models::PermissionProfile;
++    use codex_protocol::permissions::FileSystemAccessMode;
++    use codex_protocol::permissions::FileSystemPath;
++    use codex_protocol::permissions::FileSystemSandboxEntry;
++    use codex_protocol::permissions::NetworkSandboxPolicy;
++
++    fn authority(repository: PathBuf, access: FileSystemAccessMode) -> WorkspaceAuthority {
++        let absolute = AbsolutePathBuf::from_absolute_path_checked(&repository).unwrap();
++        let cwd = PathUri::from_abs_path(&absolute);
++        let policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry::new(
++            FileSystemPath::Path { path: cwd.clone() },
++            access,
++        )]);
++        let profile =
++            PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
++        let context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
++        WorkspaceAuthority {
++            repository,
++            policy,
++            context,
++        }
++    }
++
++    #[test]
++    fn workspace_read_and_transaction_obey_effective_permissions() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        std::fs::write(root.join("a.py"), "old\n").unwrap();
++        let read_only = authority(root.clone(), FileSystemAccessMode::Read);
++        let read = read_only
++            .call("workspace.read", json!({"paths":["a.py"]}), || true)
++            .unwrap();
++        let sha = read["files"]["a.py"]["sha256"].as_str().unwrap();
++        assert_eq!(read["files"]["a.py"]["text"], "old\n");
++        let edit = json!({"expected":{"a.py":sha},"writes":{"a.py":"new\n"}});
++        assert!(
++            read_only
++                .call("workspace.transaction", edit.clone(), || true)
++                .unwrap_err()
++                .contains("permission_denied")
++        );
++        assert_eq!(std::fs::read_to_string(root.join("a.py")).unwrap(), "old\n");
++        let writable = authority(root.clone(), FileSystemAccessMode::Write);
++        let result = writable
++            .call("workspace.transaction", edit, || true)
++            .unwrap();
++        assert_eq!(result["files"]["a.py"], crate::execution::hash(b"new\n"));
++        assert_eq!(std::fs::read_to_string(root.join("a.py")).unwrap(), "new\n");
++    }
++
++    #[test]
++    fn workspace_paths_reject_escape_and_metadata() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        let authority = authority(root, FileSystemAccessMode::Write);
++        for path in ["../outside", ".git/config"] {
++            assert!(
++                authority
++                    .call("workspace.read", json!({"paths":[path]}), || true)
++                    .is_err()
++            );
++        }
++    }
++
++    #[test]
++    fn write_observation_hides_denied_paths() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        let root_uri =
++            PathUri::from_abs_path(&AbsolutePathBuf::from_absolute_path_checked(&root).unwrap());
++        let secret_uri = PathUri::from_abs_path(
++            &AbsolutePathBuf::from_absolute_path_checked(root.join("secret.py")).unwrap(),
++        );
++        let policy = FileSystemSandboxPolicy::restricted(vec![
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Path { path: root_uri },
++                FileSystemAccessMode::Read,
++            ),
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Path { path: secret_uri },
++                FileSystemAccessMode::Deny,
++            ),
++        ]);
++        let profile =
++            PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
++        let authority = WorkspaceAuthority::for_platform(&root, profile).unwrap();
++        let change = |path: &str| codex_omd::WorkspaceChange {
++            path: path.to_owned(),
++            before: None,
++            after: Some("sha".into()),
++        };
++        assert_eq!(
++            authority
++                .visible_changes(vec![change("public.py")])
++                .unwrap()
++                .len(),
++            1
++        );
++        assert_eq!(
++            authority
++                .visible_changes(vec![change("secret.py")])
++                .unwrap_err(),
++            "workspace_change_scope_unavailable"
++        );
++    }
++
++    #[test]
++    fn pre_rename_plan_applies_companion_write_and_move() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        std::fs::write(root.join("old.ts"), "export const value = 1;\n").unwrap();
++        std::fs::write(root.join("index.ts"), "export * from './old';\n").unwrap();
++        let authority = authority(root.clone(), FileSystemAccessMode::Write);
++        let input = authority.rename_input("old.ts", "new.ts", || true).unwrap();
++        let index = authority
++            .call("workspace.read", json!({"paths":["index.ts"]}), || true)
++            .unwrap();
++        let result = authority
++            .apply_rename_plan(
++                &input,
++                json!({
++                    "status":"ready",
++                    "expected":{
++                        "old.ts":input["expected"]["old.ts"],
++                        "new.ts":null,
++                        "index.ts":index["files"]["index.ts"]["sha256"]
++                    },
++                    "writes":{"index.ts":"export * from './new';\n"}
++                }),
++                || true,
++            )
++            .unwrap();
++        assert_eq!(result["status"], "renamed");
++        assert!(!root.join("old.ts").exists());
++        assert_eq!(
++            std::fs::read_to_string(root.join("new.ts")).unwrap(),
++            "export const value = 1;\n"
++        );
++        assert_eq!(
++            std::fs::read_to_string(root.join("index.ts")).unwrap(),
++            "export * from './new';\n"
++        );
 +    }
 +}
 diff --git a/codex-rs/features/src/feature_configs.rs b/codex-rs/features/src/feature_configs.rs
@@ -26434,10 +28076,10 @@ index 0000000..1b27bbc
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..f83e8f5
+index 0000000..77f1e9f
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,283 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
@@ -26653,10 +28295,16 @@ index 0000000..f83e8f5
 +pub use review::UnifiedReview;
 +pub use workspace::File;
 +pub use workspace::Snapshot;
++pub use workspace::WorkspaceChange;
++pub use workspace::WorkspaceIndex;
++pub use workspace::WorkspaceRename;
++pub use workspace::WorkspaceTransaction;
++pub use workspace::WorkspaceTransactionResult;
 +pub use workspace::capture_tracked;
 +pub use workspace::cleanup_owned_directory;
 +pub use workspace::create_worktree;
 +pub use workspace::tracked_paths;
++pub use workspace::workspace_path;
 +
 +pub use mods::CODEX_HOST_RELEASE;
 +pub use mods::INSTALLED_CONTRACT_TYPES_VERSION;
@@ -29578,10 +31226,10 @@ index 0000000..87789a3
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000..f9c367b
+index 0000000..44e283e
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,2519 @@
+@@ -0,0 +1,2596 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -29676,6 +31324,14 @@ index 0000000..f9c367b
 +    "agents.wait",
 +    "agents.list",
 +    "workspace.integrate",
++    "workspace.read",
++    "workspace.transaction",
++    "workspace.request_rename",
++    "process.which",
++    "process.start",
++    "process.exchange",
++    "process.status",
++    "process.stop",
 +    "review.run",
 +    "review.complete",
 +    "delegation.contribute",
@@ -29720,6 +31376,8 @@ index 0000000..f9c367b
 +    "workflow",
 +    "middleware",
 +    "services",
++    "workspace",
++    "process",
 +];
 +pub const MOD_EVENTS: &[(&str, &str)] = &[
 +    ("context", "context"),
@@ -29736,6 +31394,8 @@ index 0000000..f9c367b
 +    ("stop", "lifecycle"),
 +    ("resume", "lifecycle"),
 +    ("tool_result", "lifecycle"),
++    ("workspace_write", "workspace"),
++    ("workspace_pre_rename", "workspace"),
 +    ("turn_start", "lifecycle"),
 +    ("turn_end", "lifecycle"),
 +    ("compaction_start", "lifecycle"),
@@ -29962,13 +31622,62 @@ index 0000000..f9c367b
 +    Ok(values)
 +}
 +
++fn outside_literals(source: &str) -> String {
++    let bytes = source.as_bytes();
++    let mut visible = bytes.to_vec();
++    let mut index = 0;
++    while index < bytes.len() {
++        let quote = bytes[index];
++        if matches!(quote, b'\'' | b'"' | b'`') {
++            visible[index] = b' ';
++            index += 1;
++            while index < bytes.len() {
++                let byte = bytes[index];
++                visible[index] = b' ';
++                index += 1;
++                if byte == b'\\' && index < bytes.len() {
++                    visible[index] = b' ';
++                    index += 1;
++                } else if byte == quote {
++                    break;
++                }
++            }
++        } else if quote == b'/' && bytes.get(index + 1) == Some(&b'/') {
++            while index < bytes.len() && bytes[index] != b'\n' {
++                visible[index] = b' ';
++                index += 1;
++            }
++        } else if quote == b'/' && bytes.get(index + 1) == Some(&b'*') {
++            visible[index] = b' ';
++            index += 1;
++            while index < bytes.len() {
++                let end = bytes[index] == b'*' && bytes.get(index + 1) == Some(&b'/');
++                visible[index] = b' ';
++                index += 1;
++                if end {
++                    visible[index] = b' ';
++                    index += 1;
++                    break;
++                }
++            }
++        } else {
++            index += 1;
++        }
++    }
++    String::from_utf8(visible).unwrap_or_default()
++}
++
 +fn source_use(
 +    source: &str,
 +    package: &ModPackage,
 +    registrations: &Registrations,
 +) -> Result<(ModSourceUse, Vec<String>, Vec<String>)> {
-+    let operations = quoted_calls(source, "host.call(")?;
++    let mut operations = quoted_calls(source, "host.call(")?;
++    operations.extend(quoted_calls(source, "host.tryCall(")?);
++    operations.sort();
++    operations.dedup();
 +    let services = quoted_calls(source, "services.call(")?;
++    let visible = outside_literals(source);
 +    let mut environment = Vec::new();
 +    for (name, needles) in [
 +        ("crypto", &["crypto.", "crypto["][..]),
@@ -29980,7 +31689,13 @@ index 0000000..f9c367b
 +        ),
 +        ("dom", &["document.", "window."][..]),
 +    ] {
-+        if needles.iter().any(|needle| source.contains(needle)) {
++        if needles.iter().any(|needle| {
++            if name == "filesystem" {
++                source.contains(needle)
++            } else {
++                visible.contains(needle)
++            }
++        }) {
 +            environment.push(name.to_owned());
 +        }
 +    }
@@ -31741,6 +33456,16 @@ index 0000000..f9c367b
 +            .collect()
 +    }
 +
++    pub fn has_event(&self, event: &str) -> bool {
++        self.active().any(|(_, loaded)| {
++            loaded
++                .registrations
++                .events
++                .iter()
++                .any(|registered| registered == event)
++        })
++    }
++
 +    pub fn event_guarded(
 +        &mut self,
 +        event: &str,
@@ -32590,10 +34315,10 @@ index 0000000..dee9f11
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000..6b975d4
+index 0000000..96a489d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,133 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -32612,6 +34337,11 @@ index 0000000..6b975d4
 +            "agents.spawn" | "agents.message" | "agents.cancel" | "agents.result"
 +            | "agents.wait" | "agents.list" => Ok("agents"),
 +            "workspace.integrate" => Ok("execution"),
++            "workspace.read" | "workspace.transaction" | "workspace.request_rename" => {
++                Ok("workspace")
++            }
++            "process.which" | "process.start" | "process.exchange" | "process.status"
++            | "process.stop" => Ok("process"),
 +            "review.run" | "review.complete" => Ok("review"),
 +            "recovery.escalate" | "delegation.contribute" => Ok("recovery"),
 +            "tools.exec" => Ok("execution"),
@@ -34909,10 +36639,10 @@ index 0000000..4f51961
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 0000000..df03093
+index 0000000..71d9115
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,240 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule } from 'node:vm';
 +
@@ -34961,7 +36691,7 @@ index 0000000..df03093
 +  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
 +  return value;
 +}
-+function hostCall(operation, arguments_ = null) {
++function hostTryCall(operation, arguments_ = null) {
 +  if (activating) throw new Error('host_call_during_registration');
 +  if (pending) throw new Error('concurrent_host_call');
 +  const call = structuredCloneFallback({ operation, arguments: arguments_ });
@@ -34970,11 +36700,16 @@ index 0000000..df03093
 +  if (index < receipts.length) {
 +    const receipt = receipts[index];
 +    if (JSON.stringify(canonical(receipt.call)) !== JSON.stringify(canonical(call))) throw new Error('host_call_replay_diverged');
-+    if (receipt.error) throw new Error(receipt.error);
-+    return structuredCloneFallback(receipt.value);
++    if (receipt.error) return { ok: false, error: receipt.error };
++    return { ok: true, value: structuredCloneFallback(receipt.value) };
 +  }
 +  pending = call;
 +  throw suspension;
++}
++function hostCall(operation, arguments_ = null) {
++  const result = hostTryCall(operation, arguments_);
++  if (!result.ok) throw new Error(result.error);
++  return result.value;
 +}
 +function structuredCloneFallback(value) { return JSON.parse(JSON.stringify(value)); }
 +function requireCapability(name) {
@@ -34988,12 +36723,12 @@ index 0000000..df03093
 +const api = Object.freeze({
 +  version: request.api,
 +  fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
-+  host: Object.freeze({ call: hostCall }),
++  host: Object.freeze({ call: hostCall, tryCall: hostTryCall }),
 +  services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
 +  settings: Object.freeze(structuredCloneFallback(request.settings)),
 +  on(event, handler) {
 +    const capability = { context: 'context', tool_before: 'interception', tool_exposure: 'tools', routing: 'routing', worker_context: 'context', terminal: 'terminal', compaction: 'compaction', migrate: 'state', input: 'input', start: 'lifecycle', idle: 'lifecycle',
-+      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow',
++      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', workspace_write: 'workspace', workspace_pre_rename: 'workspace', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow',
 +      model_request: 'middleware', response_stream: 'middleware', prompt: 'middleware', session: 'middleware', agent: 'middleware', tool_call: 'middleware', host_operation: 'middleware' }[event];
 +    if (!capability) throw new Error('unsupported_event: ' + event);
 +    requireCapability(capability);
@@ -37626,15 +39361,19 @@ index 0000000..ac10203
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000..74978b9
+index 0000000..f32699e
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,957 @@
++use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
++use rustix::fs::RenameFlags;
 +use rustix::fs::mkdirat;
 +use rustix::fs::open;
 +use rustix::fs::openat;
++use rustix::fs::renameat_with;
++use rustix::fs::unlinkat;
 +use serde::Deserialize;
 +use serde::Serialize;
 +use sha2::Digest;
@@ -37645,6 +39384,7 @@ index 0000000..74978b9
 +use std::io::Read;
 +use std::io::Write;
 +use std::io::{self};
++use std::os::unix::fs::PermissionsExt;
 +use std::path::Component;
 +use std::path::Path;
 +use std::path::PathBuf;
@@ -37661,8 +39401,347 @@ index 0000000..74978b9
 +    pub files: BTreeMap<String, File>,
 +}
 +
++#[derive(Clone, Debug, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct WorkspaceRename {
++    pub old: String,
++    pub new: String,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct WorkspaceTransaction {
++    pub expected: BTreeMap<String, Option<String>>,
++    #[serde(default)]
++    pub writes: BTreeMap<String, String>,
++    #[serde(default)]
++    pub renames: Vec<WorkspaceRename>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize)]
++pub struct WorkspaceTransactionResult {
++    pub files: BTreeMap<String, Option<String>>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
++pub struct WorkspaceIndex {
++    pub files: BTreeMap<String, String>,
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
++pub struct WorkspaceChange {
++    pub path: String,
++    pub before: Option<String>,
++    pub after: Option<String>,
++}
++
 +fn invalid(message: &str) -> io::Error {
 +    io::Error::other(message)
++}
++
++fn content_hash(bytes: &[u8]) -> String {
++    format!("{:x}", Sha256::digest(bytes))
++}
++
++fn read_version(
++    root: &Path,
++    name: &str,
++    max_bytes: usize,
++) -> io::Result<Option<(Vec<u8>, fs::Permissions)>> {
++    safe_path(root, name)?;
++    let directory = open_directory(root)?;
++    match open_source(&directory, name) {
++        Ok(mut input) => {
++            let metadata = input.metadata()?;
++            if !metadata.is_file() {
++                return Err(invalid("workspace path is not a regular file"));
++            }
++            if metadata.len() > max_bytes as u64 {
++                return Err(invalid("workspace file exceeds limit"));
++            }
++            let mut bytes = Vec::new();
++            Read::take(&mut input, max_bytes as u64 + 1).read_to_end(&mut bytes)?;
++            if bytes.len() > max_bytes {
++                return Err(invalid("workspace file exceeds limit"));
++            }
++            let after = input.metadata()?;
++            if !same_file(&metadata, &after)? {
++                return Err(invalid("workspace file changed during read"));
++            }
++            Ok(Some((bytes, metadata.permissions())))
++        }
++        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
++        Err(error) => Err(error),
++    }
++}
++
++fn write_version(
++    root: &Path,
++    name: &str,
++    bytes: &[u8],
++    permissions: &fs::Permissions,
++) -> io::Result<()> {
++    safe_path(root, name)?;
++    let (parent, target) = open_parent(root, name)?;
++    let temporary = format!(
++        ".{}.omd-transaction-{}-{}",
++        target.to_string_lossy(),
++        std::process::id(),
++        std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map_err(io::Error::other)?
++            .as_nanos(),
++    );
++    let mut output = fs::File::from(openat(
++        &parent,
++        temporary.as_str(),
++        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
++        Mode::from_raw_mode(0o600),
++    )?);
++    let result = (|| {
++        output.write_all(bytes)?;
++        output.set_permissions(permissions.clone())?;
++        output.sync_all()?;
++        rustix::fs::renameat(&parent, temporary.as_str(), &parent, &target)?;
++        Ok(())
++    })();
++    if result.is_err() {
++        let _ = unlinkat(&parent, temporary.as_str(), AtFlags::empty());
++    }
++    result
++}
++
++impl WorkspaceTransaction {
++    pub fn apply(
++        &self,
++        repository: &Path,
++        active: impl Fn() -> bool,
++    ) -> io::Result<WorkspaceTransactionResult> {
++        if !repository.is_absolute() || repository.canonicalize()? != repository {
++            return Err(invalid("repository must be canonical"));
++        }
++        let mut affected = self.writes.keys().cloned().collect::<BTreeSet<_>>();
++        let mut rename_sources = BTreeSet::new();
++        let mut rename_destinations = BTreeSet::new();
++        for rename in &self.renames {
++            if rename.old == rename.new
++                || !rename_sources.insert(rename.old.clone())
++                || !rename_destinations.insert(rename.new.clone())
++            {
++                return Err(invalid("duplicate or overlapping rename"));
++            }
++            affected.insert(rename.old.clone());
++            affected.insert(rename.new.clone());
++        }
++        if affected.is_empty()
++            || affected.len() > 128
++            || affected.len() != self.expected.len()
++            || affected
++                .iter()
++                .any(|name| !self.expected.contains_key(name))
++            || self.writes.values().map(String::len).sum::<usize>() > 4 * 1024 * 1024
++            || rename_sources
++                .iter()
++                .any(|name| rename_destinations.contains(name))
++            || rename_destinations
++                .iter()
++                .any(|name| self.writes.contains_key(name))
++        {
++            return Err(invalid("transaction scope or size invalid"));
++        }
++        let mut before = BTreeMap::new();
++        let mut observed_bytes = 0_usize;
++        for name in &affected {
++            if !active() {
++                return Err(invalid("transaction cancelled"));
++            }
++            let entry = read_version(repository, name, 4 * 1024 * 1024)?;
++            observed_bytes =
++                observed_bytes.saturating_add(entry.as_ref().map_or(0, |(bytes, _)| bytes.len()));
++            if observed_bytes > 4 * 1024 * 1024 {
++                return Err(invalid("transaction source bytes exceed limit"));
++            }
++            let hash = entry.as_ref().map(|(bytes, _)| content_hash(bytes));
++            if self.expected.get(name) != Some(&hash) {
++                return Err(invalid(&format!("stale expected version for {name}")));
++            }
++            before.insert(name.clone(), entry);
++        }
++        for rename in &self.renames {
++            if before.get(&rename.old).is_none_or(Option::is_none)
++                || before.get(&rename.new).is_some_and(Option::is_some)
++            {
++                return Err(invalid(
++                    "rename source must exist and destination must be absent",
++                ));
++            }
++        }
++        let mut applied = BTreeMap::new();
++        let result = (|| -> io::Result<()> {
++            for (name, text) in &self.writes {
++                if !active() {
++                    return Err(invalid("transaction cancelled"));
++                }
++                let current = read_version(repository, name, 4 * 1024 * 1024)?;
++                if current.as_ref().map(|(bytes, _)| content_hash(bytes)) != self.expected[name] {
++                    return Err(invalid("workspace changed before write"));
++                }
++                let permissions = current
++                    .as_ref()
++                    .map(|(_, permissions)| permissions.clone())
++                    .unwrap_or_else(|| fs::Permissions::from_mode(0o644));
++                write_version(repository, name, text.as_bytes(), &permissions)?;
++                applied.insert(name.clone(), Some(content_hash(text.as_bytes())));
++            }
++            for rename in &self.renames {
++                if !active() {
++                    return Err(invalid("transaction cancelled"));
++                }
++                safe_path(repository, &rename.old)?;
++                safe_path(repository, &rename.new)?;
++                let (old_parent, old_name) = open_parent(repository, &rename.old)?;
++                let (new_parent, new_name) = open_parent(repository, &rename.new)?;
++                let expected_old = applied
++                    .get(&rename.old)
++                    .cloned()
++                    .unwrap_or_else(|| self.expected[&rename.old].clone());
++                if read_version(repository, &rename.old, 4 * 1024 * 1024)?
++                    .as_ref()
++                    .map(|(bytes, _)| content_hash(bytes))
++                    != expected_old
++                    || read_version(repository, &rename.new, 4 * 1024 * 1024)?.is_some()
++                {
++                    return Err(invalid("workspace changed before rename"));
++                }
++                renameat_with(
++                    &old_parent,
++                    &old_name,
++                    &new_parent,
++                    &new_name,
++                    RenameFlags::NOREPLACE,
++                )?;
++                applied.insert(rename.old.clone(), None);
++                applied.insert(rename.new.clone(), expected_old);
++            }
++            Ok(())
++        })();
++        if let Err(error) = result {
++            for (name, expected_after) in &applied {
++                let current = read_version(repository, name, 4 * 1024 * 1024)?
++                    .as_ref()
++                    .map(|(bytes, _)| content_hash(bytes));
++                if &current != expected_after {
++                    return Err(invalid(&format!(
++                        "transaction failed: {error}; rollback conflict at {name}"
++                    )));
++                }
++            }
++            for name in applied.keys() {
++                match &before[name] {
++                    None => {
++                        safe_path(repository, name)?;
++                        let (parent, target) = open_parent(repository, name)?;
++                        if read_version(repository, name, 4 * 1024 * 1024)?.is_some() {
++                            unlinkat(&parent, &target, AtFlags::empty())?;
++                        }
++                    }
++                    Some((bytes, permissions)) => {
++                        write_version(repository, name, bytes, permissions)?;
++                    }
++                }
++            }
++            return Err(error);
++        }
++        let mut files = BTreeMap::new();
++        for name in &affected {
++            files.insert(
++                name.clone(),
++                read_version(repository, name, 4 * 1024 * 1024)?
++                    .as_ref()
++                    .map(|(bytes, _)| content_hash(bytes)),
++            );
++        }
++        Ok(WorkspaceTransactionResult { files })
++    }
++}
++
++impl WorkspaceIndex {
++    pub fn capture(repository: &Path, max_files: usize, max_bytes: usize) -> io::Result<Self> {
++        if !repository.is_absolute() || repository.canonicalize()? != repository {
++            return Err(invalid("repository must be canonical"));
++        }
++        let mut stack = vec![repository.to_path_buf()];
++        let mut files = BTreeMap::new();
++        let mut bytes = 0_usize;
++        while let Some(directory) = stack.pop() {
++            for entry in fs::read_dir(directory)? {
++                let entry = entry?;
++                let path = entry.path();
++                let metadata = fs::symlink_metadata(&path)?;
++                if metadata.file_type().is_symlink() {
++                    continue;
++                }
++                if metadata.is_dir() {
++                    if !matches!(
++                        entry.file_name().to_str(),
++                        Some(
++                            ".git"
++                                | ".omd"
++                                | ".docs"
++                                | ".pnpm-store"
++                                | ".pytest_cache"
++                                | ".ruff_cache"
++                                | ".mypy_cache"
++                                | ".tox"
++                                | ".gradle"
++                                | "__pycache__"
++                                | "target"
++                                | "node_modules"
++                                | ".venv"
++                                | "venv"
++                                | "build"
++                                | "dist"
++                        )
++                    ) {
++                        stack.push(path);
++                    }
++                } else if metadata.is_file() {
++                    bytes = bytes.saturating_add(metadata.len() as usize);
++                    if files.len() >= max_files || bytes > max_bytes {
++                        return Err(invalid("workspace index exceeds bounds"));
++                    }
++                    let name = path
++                        .strip_prefix(repository)
++                        .map_err(|_| invalid("workspace path escaped repository"))?
++                        .to_str()
++                        .ok_or_else(|| invalid("non-UTF8 workspace path"))?
++                        .to_owned();
++                    let (content, _) = read_version(repository, &name, max_bytes)?
++                        .ok_or_else(|| invalid("workspace file disappeared during index"))?;
++                    files.insert(name, content_hash(&content));
++                }
++            }
++        }
++        Ok(Self { files })
++    }
++
++    pub fn changed(&self, after: &Self) -> Vec<WorkspaceChange> {
++        self.files
++            .keys()
++            .chain(after.files.keys())
++            .collect::<BTreeSet<_>>()
++            .into_iter()
++            .filter_map(|path| {
++                let before_hash = self.files.get(path).cloned();
++                let after_hash = after.files.get(path).cloned();
++                (before_hash != after_hash).then(|| WorkspaceChange {
++                    path: path.clone(),
++                    before: before_hash,
++                    after: after_hash,
++                })
++            })
++            .collect()
++    }
 +}
 +
 +fn safe_path(root: &Path, name: &str) -> io::Result<PathBuf> {
@@ -37693,6 +39772,10 @@ index 0000000..74978b9
 +    Ok(resolved)
 +}
 +
++pub fn workspace_path(root: &Path, name: &str) -> io::Result<PathBuf> {
++    safe_path(root, name)
++}
++
 +fn open_directory(path: &Path) -> io::Result<fs::File> {
 +    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
 +    let mut directory = fs::File::from(open("/", flags, Mode::empty())?);
@@ -37702,6 +39785,23 @@ index 0000000..74978b9
 +        }
 +    }
 +    Ok(directory)
++}
++
++fn open_parent(root: &Path, name: &str) -> io::Result<(fs::File, std::ffi::OsString)> {
++    let mut directory = open_directory(root)?;
++    let mut parts = Path::new(name).components().peekable();
++    while let Some(Component::Normal(part)) = parts.next() {
++        if parts.peek().is_none() {
++            return Ok((directory, part.to_os_string()));
++        }
++        directory = fs::File::from(openat(
++            &directory,
++            part,
++            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
++            Mode::empty(),
++        )?);
++    }
++    Err(invalid("workspace parent missing"))
 +}
 +
 +fn open_source(root: &fs::File, name: &str) -> io::Result<fs::File> {
@@ -38051,6 +40151,176 @@ index 0000000..74978b9
 +        return Err(invalid("cleanup target is not a direct owned directory"));
 +    }
 +    fs::remove_dir_all(directory)
++}
++
++#[cfg(test)]
++mod transaction_tests {
++    use super::*;
++    use std::cell::Cell;
++
++    #[test]
++    fn transaction_renames_and_updates_exact_scope() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        fs::write(root.join("old.ts"), "export const value = 1;\n").unwrap();
++        fs::write(root.join("barrel.ts"), "export * from './old';\n").unwrap();
++        let transaction = WorkspaceTransaction {
++            expected: BTreeMap::from([
++                (
++                    "old.ts".into(),
++                    Some(content_hash(b"export const value = 1;\n")),
++                ),
++                ("new.ts".into(), None),
++                (
++                    "barrel.ts".into(),
++                    Some(content_hash(b"export * from './old';\n")),
++                ),
++            ]),
++            writes: BTreeMap::from([("barrel.ts".into(), "export * from './new';\n".into())]),
++            renames: vec![WorkspaceRename {
++                old: "old.ts".into(),
++                new: "new.ts".into(),
++            }],
++        };
++        let result = transaction.apply(&root, || true).unwrap();
++        assert!(!root.join("old.ts").exists());
++        assert_eq!(
++            fs::read_to_string(root.join("new.ts")).unwrap(),
++            "export const value = 1;\n"
++        );
++        assert_eq!(
++            fs::read_to_string(root.join("barrel.ts")).unwrap(),
++            "export * from './new';\n"
++        );
++        assert_eq!(result.files["old.ts"], None);
++        assert_eq!(result.files["new.ts"], transaction.expected["old.ts"]);
++    }
++
++    #[test]
++    fn transaction_rejects_stale_versions_without_writing() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        fs::write(root.join("file.py"), "changed\n").unwrap();
++        let transaction = WorkspaceTransaction {
++            expected: BTreeMap::from([("file.py".into(), Some(content_hash(b"old\n")))]),
++            writes: BTreeMap::from([("file.py".into(), "new\n".into())]),
++            renames: Vec::new(),
++        };
++        assert!(
++            transaction
++                .apply(&root, || true)
++                .unwrap_err()
++                .to_string()
++                .contains("stale")
++        );
++        assert_eq!(
++            fs::read_to_string(root.join("file.py")).unwrap(),
++            "changed\n"
++        );
++    }
++
++    #[test]
++    fn transaction_rolls_back_after_cancellation() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        fs::write(root.join("a.py"), "a\n").unwrap();
++        fs::write(root.join("b.py"), "b\n").unwrap();
++        let transaction = WorkspaceTransaction {
++            expected: BTreeMap::from([
++                ("a.py".into(), Some(content_hash(b"a\n"))),
++                ("b.py".into(), Some(content_hash(b"b\n"))),
++            ]),
++            writes: BTreeMap::from([
++                ("a.py".into(), "new a\n".into()),
++                ("b.py".into(), "new b\n".into()),
++            ]),
++            renames: Vec::new(),
++        };
++        let calls = Cell::new(0);
++        assert!(
++            transaction
++                .apply(&root, || {
++                    calls.set(calls.get() + 1);
++                    calls.get() < 4
++                })
++                .unwrap_err()
++                .to_string()
++                .contains("cancelled")
++        );
++        assert_eq!(fs::read_to_string(root.join("a.py")).unwrap(), "a\n");
++        assert_eq!(fs::read_to_string(root.join("b.py")).unwrap(), "b\n");
++    }
++
++    #[test]
++    fn transaction_rejects_symlinks_and_git_metadata() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        fs::write(root.join("outside"), "safe").unwrap();
++        std::os::unix::fs::symlink(root.join("outside"), root.join("link")).unwrap();
++        for name in ["link", ".git/config"] {
++            let transaction = WorkspaceTransaction {
++                expected: BTreeMap::from([(name.into(), None)]),
++                writes: BTreeMap::from([(name.into(), "bad".into())]),
++                renames: Vec::new(),
++            };
++            assert!(transaction.apply(&root, || true).is_err());
++        }
++        assert_eq!(fs::read_to_string(root.join("outside")).unwrap(), "safe");
++    }
++
++    #[test]
++    fn transaction_rejects_oversized_source_without_writing() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        let original = vec![b'x'; 4 * 1024 * 1024 + 1];
++        fs::write(root.join("large.py"), &original).unwrap();
++        let transaction = WorkspaceTransaction {
++            expected: BTreeMap::from([("large.py".into(), Some(content_hash(&original)))]),
++            writes: BTreeMap::from([("large.py".into(), "small\n".into())]),
++            renames: Vec::new(),
++        };
++        assert!(
++            transaction
++                .apply(&root, || true)
++                .unwrap_err()
++                .to_string()
++                .contains("limit")
++        );
++        assert_eq!(fs::read(root.join("large.py")).unwrap(), original);
++    }
++
++    #[test]
++    fn workspace_index_detects_write_create_and_delete() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        fs::write(root.join("modified.py"), "old").unwrap();
++        fs::write(root.join("removed.py"), "gone").unwrap();
++        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
++        fs::write(root.join("modified.py"), "new").unwrap();
++        fs::remove_file(root.join("removed.py")).unwrap();
++        fs::write(root.join("created.py"), "added").unwrap();
++        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
++        assert_eq!(
++            before.changed(&after),
++            vec![
++                WorkspaceChange {
++                    path: "created.py".into(),
++                    before: None,
++                    after: Some(content_hash(b"added")),
++                },
++                WorkspaceChange {
++                    path: "modified.py".into(),
++                    before: Some(content_hash(b"old")),
++                    after: Some(content_hash(b"new")),
++                },
++                WorkspaceChange {
++                    path: "removed.py".into(),
++                    before: Some(content_hash(b"gone")),
++                    after: None,
++                },
++            ]
++        );
++    }
 +}
 diff --git a/codex-rs/omd/tests/admission.rs b/codex-rs/omd/tests/admission.rs
 new file mode 100644

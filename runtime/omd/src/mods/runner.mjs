@@ -46,7 +46,7 @@ function canonical(value) {
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
   return value;
 }
-function hostCall(operation, arguments_ = null) {
+function hostTryCall(operation, arguments_ = null) {
   if (activating) throw new Error('host_call_during_registration');
   if (pending) throw new Error('concurrent_host_call');
   const call = structuredCloneFallback({ operation, arguments: arguments_ });
@@ -55,11 +55,16 @@ function hostCall(operation, arguments_ = null) {
   if (index < receipts.length) {
     const receipt = receipts[index];
     if (JSON.stringify(canonical(receipt.call)) !== JSON.stringify(canonical(call))) throw new Error('host_call_replay_diverged');
-    if (receipt.error) throw new Error(receipt.error);
-    return structuredCloneFallback(receipt.value);
+    if (receipt.error) return { ok: false, error: receipt.error };
+    return { ok: true, value: structuredCloneFallback(receipt.value) };
   }
   pending = call;
   throw suspension;
+}
+function hostCall(operation, arguments_ = null) {
+  const result = hostTryCall(operation, arguments_);
+  if (!result.ok) throw new Error(result.error);
+  return result.value;
 }
 function structuredCloneFallback(value) { return JSON.parse(JSON.stringify(value)); }
 function requireCapability(name) {
@@ -73,12 +78,12 @@ function unique(map, name, handler) {
 const api = Object.freeze({
   version: request.api,
   fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
-  host: Object.freeze({ call: hostCall }),
+  host: Object.freeze({ call: hostCall, tryCall: hostTryCall }),
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
   on(event, handler) {
     const capability = { context: 'context', tool_before: 'interception', tool_exposure: 'tools', routing: 'routing', worker_context: 'context', terminal: 'terminal', compaction: 'compaction', migrate: 'state', input: 'input', start: 'lifecycle', idle: 'lifecycle',
-      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow',
+      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', workspace_write: 'workspace', workspace_pre_rename: 'workspace', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow',
       model_request: 'middleware', response_stream: 'middleware', prompt: 'middleware', session: 'middleware', agent: 'middleware', tool_call: 'middleware', host_operation: 'middleware' }[event];
     if (!capability) throw new Error('unsupported_event: ' + event);
     requireCapability(capability);
