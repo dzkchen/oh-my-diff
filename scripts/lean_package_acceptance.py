@@ -67,10 +67,12 @@ def run(archive, sha256, upstream, output):
                            ("browser", "bridge", "mcp", "sidecar", "code-mode"))
             if profile == "platform":
                 assert status["installed_tools"] == [] and status["plugin_bundle"] is None
-                assert not any(item["installed"] for item in status["packages"])
+                assert [item["id"] for item in status["packages"] if item["installed"]] == ["omd_logo"]
+                assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_logo"]
             else:
                 assert set(status["installed_tools"]) == {"omd-graph", "omd-health", "omd-lsp"}
-                assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_workspace"]
+                assert len([item for item in status["packages"] if item["installed"]]) == 10
+                assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_model_picker", "omd_workspace"]
                 assert len(status["plugin_bundle"]["plugins"]) == 6
                 disabled = call([bin_dir / "omd-package", "mod", "disable", "omd_workspace"], environment)
                 assert not next(item for item in disabled["packages"]

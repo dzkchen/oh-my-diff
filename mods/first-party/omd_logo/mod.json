@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "id": "omd_logo",
+  "version": "0.1.0-preview.1",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party"
+  },
+  "capabilities": [
+    "terminal"
+  ],
+  "compatibility": {
+    "required_features": ["terminal_identity_v1", "terminal_render_sites_v1", "terminal_rich_line_v1"]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "icons": {
+        "type": "string",
+        "enum": ["unicode", "ascii"],
+        "default": "unicode"
+      }
+    },
+    "additionalProperties": false
+  }
+}

@@ -916,6 +916,95 @@
       },
       "evidence": ["node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"],
       "replace_note": null
+    },
+    {
+      "id": "terminal.identity_and_rich_presentation",
+      "group": "terminal",
+      "decision": "Launch identity, styled header lines, width-bounded boxes and settings-picker layout",
+      "observe": "the read-only `identity` on the terminal input: installed Codex version, install profile, effective mode and installed, enabled and active mod counts",
+      "alter": "a `line` of styled spans, `box` width bounds, and `theme.picker` layout and brand",
+      "replace": null,
+      "timing": "every terminal redraw on the alternate screen, including Codex's owned fullscreen transcript",
+      "ownership": "host: identity values, width fitting, header height, picker rows, labels, warnings, keys and persistence; mod: presentation choice",
+      "limits": "12 spans and 256 characters per line; widths 1-500; brand 24 characters; only native-marked model and reasoning pickers; approvals, permissions, trust, elicitation and update prompts are never restyled; no identity or picker in upstream-style direct mode",
+      "native": "native plugins cannot draw terminal presentation",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "rust:rich_lines_width_bounds_picker_theme_and_selection_policy_are_bounded",
+        "rust:terminal_identity_reports_profile_mode_and_mod_counts",
+        "patch:width_bounded_boxes_and_styled_lines_follow_the_header_width",
+        "patch:owned_fullscreen_draws_mod_header_and_sidebar_beside_the_transcript",
+        "patch:compact_picker_keeps_native_rows_warnings_and_hints"
+      ],
+      "replace_note": "presentation fields in the terminal view or patch"
+    },
+    {
+      "id": "terminal.selection_policy",
+      "group": "terminal",
+      "decision": "Copy-on-highlight policy for released mouse selections",
+      "observe": "`selection` events with source, character and line counts, copied flag and reason; never the selected text",
+      "alter": "one `selection` policy: copy on release, sources and minimum characters",
+      "replace": null,
+      "timing": "each released drag in the transcript, composer or transcript pager",
+      "ownership": "host: selection, the single fail-closed clipboard write, feedback and keyboard copy keys; mod: policy and status",
+      "limits": "one policy per view; minimum 1-10,000 characters; without a valid policy the existing enabled and platform release copy remains; direct mode never copies on release",
+      "native": "native plugins cannot change terminal selection",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "selection"
+        ],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "rust:rich_lines_width_bounds_picker_theme_and_selection_policy_are_bounded",
+        "patch:selection_policy_gates_the_native_release_copy"
+      ],
+      "replace_note": "policy field in the terminal view or patch"
+    },
+    {
+      "id": "tool.git_operations",
+      "group": "tool",
+      "decision": "Repository status, history, diffs and user-invoked source-control changes",
+      "observe": "`git.status`, `git.log`, `git.diff` and `git.branches` with per-path and staged fingerprints",
+      "alter": "`git.stage`, `git.unstage`, `git.commit`, `git.discard` and `git.switch` against a fingerprint the mod previously read",
+      "replace": null,
+      "timing": "reads in lifecycle events and mod commands; writes only in user-invoked mod commands",
+      "ownership": "host: fixed argument lists, repository and path containment, permissions, freshness, backups, timeouts and output limits; mod: presentation, selection, previews and confirmation flow",
+      "limits": "enabled and platform modes only; refused when the session cannot write the workspace; stale fingerprints fail; discard backs up first and refuses conflicts; switch never forces; 500 entries, 50 commits, 64 KiB diffs, 100 branches",
+      "native": "native plugins use Codex's own shell and approval flow",
+      "covers": {
+        "capabilities": [
+          "git"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "git.status",
+          "git.log",
+          "git.diff",
+          "git.branches",
+          "git.stage",
+          "git.unstage",
+          "git.commit",
+          "git.discard",
+          "git.switch"
+        ]
+      },
+      "evidence": [
+        "rust:git_operations_require_the_git_capability_and_a_host_route",
+        "patch:stage_and_unstage_reject_stale_previews",
+        "patch:discard_backs_up_tracked_and_untracked_files_first",
+        "patch:switch_requires_a_known_branch_and_fresh_state",
+        "patch:git_host_routes_reads_and_gates_writes_on_permission"
+      ],
+      "replace_note": null
     }
   ],
   "composition": [

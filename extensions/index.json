@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "as_of": "2026-09-24",
+  "as_of": "2026-09-25",
   "release_pin": {
-    "codex": "0.156.1",
+    "codex": "0.157.0",
     "omd": "0.1.0",
     "mod_api": "0.1.0-experimental.8",
     "node": "24.18.0"
@@ -92,6 +92,78 @@
       "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
+        "OMD 0.1.0",
+        "mod API 0.1.0-experimental.8",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_logo",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Oh My Diff terminal logo and launch status in both profiles",
+      "source": "mods/first-party/omd_logo",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.157.0",
+        "OMD 0.1.0",
+        "mod API 0.1.0-experimental.8",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_model_picker",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Compact Full OMD /model and reasoning picker presentation",
+      "source": "mods/first-party/omd_model_picker",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_picker_theme_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.157.0",
+        "OMD 0.1.0",
+        "mod API 0.1.0-experimental.8",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_selection_copy",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "User-selectable copy-on-highlight policy with release status",
+      "source": "mods/first-party/omd_selection_copy",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_selection_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.157.0",
+        "OMD 0.1.0",
+        "mod API 0.1.0-experimental.8",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_git",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in left Git sidebar with commit graph, changed files and confirmed actions",
+      "source": "mods/first-party/omd_git",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.1.0-experimental.8; git_operations_v1, terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.157.0",
         "OMD 0.1.0",
         "mod API 0.1.0-experimental.8",
         "Node 24.18.0"

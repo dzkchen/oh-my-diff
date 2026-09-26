@@ -60,7 +60,8 @@ def run(artifact_dir, upstream, output):
         platform = command("platform", "install", "--profile", "platform", "--binary", artifact_dir / "codex",
                            "--manager", artifact_dir / "omd-mod", "--author-archive", artifact_dir / "mod-api.tgz",
                            "--node", node, "--store", platform_store)
-        assert platform["host_mode"] == "platform" and not any(item["installed"] for item in platform["packages"])
+        assert platform["host_mode"] == "platform"
+        assert [item["id"] for item in platform["packages"] if item["loaded_by_profile"]] == ["omd_logo"]
         assert platform["installed_tools"] == [] and platform["plugin_bundle"] is None
         assert call([base / "platform-bin/omd-package", "status"], env)["profile"] == "platform"
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
@@ -107,7 +108,7 @@ def run(artifact_dir, upstream, output):
         command("platform", "activate", "platform")
         assert call([base / "platform-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert platform_store.is_dir()
-        observations["platform"] = {"empty_first_party": True, "user_mod_tool": offline["steps"][0]["value"],
+        observations["platform"] = {"logo_only_first_party": True, "user_mod_tool": offline["steps"][0]["value"],
                                     "disable": True, "broken_mod_recovery": True,
                                     "direct_switch": True, "store_preserved": True}
 
@@ -120,7 +121,7 @@ def run(artifact_dir, upstream, output):
         full = command("full", *install)
         assert call([base / "full-bin/omd-package", "status"], env)["profile"] == "full"
         active = [item["id"] for item in full["packages"] if item["loaded_by_profile"]]
-        assert active == ["omd_workspace"]
+        assert active == ["omd_logo", "omd_model_picker", "omd_workspace"]
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
                    for item in full["packages"])
         assert set(full["installed_tools"]) == set(TOOLS)
@@ -203,7 +204,7 @@ def run(artifact_dir, upstream, output):
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
-        assert not any(item["loaded_by_profile"] for item in attached["packages"])
+        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_model_picker"]
         enabled = command("full", "mod", "enable", "omd_workspace")
         assert next(item for item in enabled["packages"] if item["id"] == "omd_workspace")["loaded_by_profile"]
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)

@@ -59,6 +59,38 @@ fn preview(text: &str) -> String {
     shown
 }
 
+pub(crate) fn terminal_identity(runtime: &ModHost, mode: &str) -> Value {
+    runtime.identity(
+        env!("CARGO_PKG_VERSION"),
+        std::env::var("OMD_INSTALL_PROFILE").ok().as_deref(),
+        mode,
+    )
+}
+
+pub(crate) fn lifecycle_git(
+    allowed: bool,
+    repository: &std::path::Path,
+    protected: &[std::path::PathBuf],
+    request: codex_omd::ModHostCall,
+    active: &dyn Fn() -> bool,
+) -> std::io::Result<Value> {
+    if !allowed {
+        return Err(std::io::Error::other(
+            "host_operation_unavailable: git reads run in lifecycle events and commands",
+        ));
+    }
+    let access = codex_omd::git::GitAccess {
+        repository,
+        protected,
+        backups: None,
+        write: Err("git_write_requires_user_command"),
+        command: None,
+        writable: &|_| false,
+    };
+    codex_omd::git::call(&access, &request.operation, request.arguments, active)
+        .map_err(std::io::Error::other)
+}
+
 pub(super) fn event_fragments(
     runtime: &mut ModHost,
     event: &str,
@@ -220,6 +252,12 @@ impl Mods {
             self.processes.cleanup_stale(generation);
         }
         let allow_provider = matches!(event, "start" | "resume" | "turn_start");
+        let allow_git = matches!(
+            event,
+            "start" | "resume" | "turn_start" | "turn_end" | "workspace_write" | "idle"
+        );
+        let git_repository = owner.manifest.repository.clone();
+        let git_protected = crate::execution::protected_paths(&owner.manifest);
         let allow_workspace = matches!(
             event,
             "workspace_write" | "workspace_pre_rename" | "turn_start"
@@ -246,6 +284,15 @@ impl Mods {
                 || !cancelled.load(std::sync::atomic::Ordering::Acquire),
                 "native workflow enforcement",
                 |id, request| {
+                    if request.operation.starts_with("git.") {
+                        return lifecycle_git(
+                            allow_git,
+                            &git_repository,
+                            &git_protected,
+                            request,
+                            &|| !cancelled.load(std::sync::atomic::Ordering::Acquire),
+                        );
+                    }
                     if !((allow_provider
                         && matches!(
                             request.operation.as_str(),
@@ -267,8 +314,8 @@ impl Mods {
                         .map_err(|_| std::io::Error::other("native_host_stopped"))?
                 },
             );
-            let terminal_input =
-                json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten()});
+            let terminal_input = json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten(),
+                "identity":terminal_identity(&runtime, "enabled")});
             let mut terminal = runtime.terminal_view(terminal_input.clone(), || {
                 !cancelled.load(std::sync::atomic::Ordering::Acquire)
             });

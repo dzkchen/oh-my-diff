@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/openai/codex.git",
-  "tag": "rust-v0.156.1",
-  "tag_object": "81e8e29b2956dfe9b092c63953a9ed282781e77c",
-  "commit": "b412ff32c417f855c2b2d1581b77058eed87c84b",
+  "tag": "rust-v0.157.0",
+  "tag_object": "ac21625ddf7f9dd5f34b2802212cf20295fdff95",
+  "commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d",
   "rust_toolchain": "1.95.0",
   "rust_components": [
     "clippy",
@@ -10,15 +10,15 @@
     "rust-src"
   ],
   "verified_target": "aarch64-apple-darwin",
-  "cargo_lock_sha256": "a3f317c9b011d62e0df281f90a22ac27f470620e6c5edd522882e82793efe1ed",
-  "normalized_cargo_lock_sha256": "d722f05fc760bcd1f5749ec452452d81058458b788df3b765b80500d757eba4a",
+  "cargo_lock_sha256": "72efa81ed947d07ed4fbb3e10b094715ff00626126d758aaed56733c97887e5f",
+  "normalized_cargo_lock_sha256": "0ca2e7967026f5cb617a295909d8e0765ce115dd690a065d2055322908416967",
   "normalized_workspace_packages": 155,
-  "lock_normalization": "155 source-less workspace package versions: 0.0.0 -> 0.156.1; external dependencies unchanged",
+  "lock_normalization": "155 source-less workspace package versions: 0.0.0 -> 0.157.0; external dependencies unchanged",
   "runtime_patches": [
     {
-      "path": "runtime/patches/controlled-contributor-0.156.1.patch",
-      "sha256": "8500210605b98609ece63f09b47e222474c71b27df3db78be78e6fd65217db9b"
+      "path": "runtime/patches/controlled-contributor-0.157.0.patch",
+      "sha256": "70b861676b9a811a6bba5ec4c847c4cb54f49434c2f564a4545a5bf18de8815a"
     }
   ],
-  "compatibility_evidence": ".docs/audits/release-candidate-upstream-freshness-20260923.md"
+  "compatibility_evidence": ".docs/audits/upstream-pin-advance-20260925.md"
 }

@@ -18,10 +18,15 @@ pub use view::ModDensity;
 pub use view::ModIcons;
 pub use view::ModKeyAction;
 pub use view::ModPanel;
+pub use view::ModPicker;
+pub use view::ModPickerLayout;
 pub use view::ModRenderSite;
 pub use view::ModSelectOption;
+pub use view::ModSelectionPolicy;
+pub use view::ModSelectionSource;
 pub use view::ModSidebarSide;
 pub use view::ModSiteMode;
+pub use view::ModSpan;
 pub use view::ModTheme;
 pub use view::ModThemePatch;
 pub use view::ModTone;
@@ -59,7 +64,7 @@ pub use package_manager::ModPackageSource;
 pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 
-pub const CODEX_HOST_RELEASE: &str = "0.156.1";
+pub const CODEX_HOST_RELEASE: &str = "0.157.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.1.0-experimental.8";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
@@ -76,7 +81,12 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "source_use_v1",
     "state_migration_v1",
     "terminal_components_v1",
+    "terminal_identity_v1",
+    "terminal_picker_theme_v1",
     "terminal_render_sites_v1",
+    "terminal_rich_line_v1",
+    "terminal_selection_v1",
+    "git_operations_v1",
     "transactional_reload_v1",
     "task_tool_exposure_v1",
 ];
@@ -114,6 +124,15 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "sidecars.stop",
     "workflow.status",
     "workflow.restrict",
+    "git.status",
+    "git.log",
+    "git.diff",
+    "git.branches",
+    "git.stage",
+    "git.unstage",
+    "git.commit",
+    "git.discard",
+    "git.switch",
 ];
 pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
     ("0.1.0-experimental.4", "deprecated", "2027-03-20"),
@@ -146,6 +165,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "services",
     "workspace",
     "process",
+    "git",
 ];
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -156,6 +176,7 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("routing", "routing"),
     ("worker_context", "context"),
     ("terminal", "terminal"),
+    ("selection", "terminal"),
     ("compaction", "compaction"),
     ("start", "lifecycle"),
     ("idle", "lifecycle"),
@@ -1177,6 +1198,7 @@ pub struct ModHost {
     node: PathBuf,
     generation: u64,
     configuration_sha256: String,
+    selections: (usize, usize),
     loaded: BTreeMap<String, Loaded>,
     order: Vec<String>,
     rejected: Vec<ModRejection>,
@@ -1198,6 +1220,7 @@ impl ModHost {
             node: PathBuf::new(),
             generation: 0,
             configuration_sha256: String::new(),
+            selections: (0, 0),
             loaded: BTreeMap::new(),
             order: Vec::new(),
             rejected: Vec::new(),
@@ -1289,6 +1312,21 @@ impl ModHost {
         Self::resolve_conflicts(&mut next, initial)?;
         Self::resolve_services(&mut next, initial)?;
         let order = Self::resolve_dependencies(&mut next, initial)?;
+        self.selections = (
+            config
+                .mods
+                .iter()
+                .map(|m| &m.path)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            config
+                .mods
+                .iter()
+                .filter(|m| m.enabled)
+                .map(|m| &m.path)
+                .collect::<BTreeSet<_>>()
+                .len(),
+        );
         self.node = config.node;
         self.loaded = next;
         self.order = order;
@@ -2482,6 +2520,22 @@ impl ModHost {
         self.loaded
             .get(id)
             .is_some_and(|m| m.error.is_none() && m.registrations.events.iter().any(|e| e == event))
+    }
+
+    /// Read-only launch identity for `Events.terminal.input.identity`.
+    pub fn identity(
+        &self,
+        codex_version: &str,
+        install_profile: Option<&str>,
+        mode: &str,
+    ) -> Value {
+        let install_profile = match install_profile {
+            Some(profile @ ("full" | "platform_only" | "private")) => profile,
+            Some(_) => "unknown",
+            None => "unreported",
+        };
+        json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
+            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count()}})
     }
 
     pub fn generation(&self) -> u64 {

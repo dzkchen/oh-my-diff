@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.1.0-experimental.8` on OMD `0.1.0` and Codex `0.156.1`. The package's
+`0.1.0-experimental.8` on OMD `0.1.0` and Codex `0.157.0`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. A store also generates
 `active-host.d.ts` and `installed-contracts.d.ts`; those files identify the
 running host and the exact service contracts available to consumers.
@@ -203,6 +203,75 @@ Delve, and attach remain unqualified transport experiments. Its mod requires
 separate review, trust, and enablement. Plugin installation does not activate
 the mod or install Python or debugpy. The local on-demand marketplace is not
 part of either release installation profile.
+
+## Terminal identity, rich lines, picker and selection
+
+Terminal views are drawn on Codex's alternate screen, including its default
+fullscreen transcript; inline `--no-alt-screen` sessions keep only status
+segments and commands. The `terminal` input carries a read-only `identity`
+(`terminal_identity_v1`): `codex_version` from the installed build,
+`install_profile` (`full`, `platform_only`, `private`, `unknown` or
+`unreported`), effective `mode` (`enabled` or `platform`), and installed,
+enabled and active mod counts. Upstream-style direct mode loads no mods.
+
+`terminal_rich_line_v1` adds a one-row `line` component with up to 12 styled
+`spans` (`text`, `tone`, `bold`; 256 characters in total), whose `label` is
+the accessible text, and optional `min_width`/`max_width` (1–500 columns) on
+`box`. Native draws a bounded box only when the site's inner width fits, and
+header height counts only drawn boxes. Header rows are never spaced by the
+comfortable density.
+
+`terminal_picker_theme_v1` adds `theme.picker = {layout, brand?}`. `compact`
+restyles only the native model and reasoning pickers; native keeps rows,
+labels, warnings, keys, digit shortcuts, session actions and persistence, and
+never restyles approval, permission, trust, elicitation or update prompts. A
+missing, disabled or broken mod leaves the native picker.
+
+`terminal_selection_v1` adds a view or patch `selection` policy
+`{copy_on_release, sources, min_chars}` for released mouse drags in the
+transcript, composer and transcript pager; one mod may set it. Native performs
+the single fail-closed clipboard write. Without a valid policy, the existing
+enabled/platform release copy stays. Subscribers to the observe-only
+`selection` event receive `{source, chars, lines, copied, reason?}` after each
+release, never the selected text; `reason` is `policy_off`, `too_short`,
+`clipboard_unavailable` or `clipboard_failed`. Keyboard selection keeps native
+copy keys.
+
+## Git operations
+
+The experimental `git` capability (`git_operations_v1`) grants `git.status`,
+`git.log`, `git.diff`, `git.branches`, `git.stage`, `git.unstage`,
+`git.commit`, `git.discard` and `git.switch` for the session repository in
+enabled and platform modes. The host runs fixed `git` argument lists with
+literal pathspecs, no pager, prompt, editor, external diff, text conversion or
+filesystem monitor, a 10 s timeout (120 s for commit hooks), and bounded
+output (500 status entries, 50 commits, 64 KiB diff, 100 branches). Paths must
+be repository-relative, outside `.git` and host-protected OMD stores.
+
+Reads run from lifecycle events and mod commands. Writes run only from
+user-invoked mod commands and are refused when the session cannot write the
+workspace. Writes require launching from the repository root and permission
+for Git metadata as well as the affected files. Codex protects `.git` by default;
+enabling the mod does not grant write access to it. A user-selected permission
+profile must explicitly allow the repository's Git metadata before mutations
+can run. Linked worktrees also require access to their shared Git directory.
+Stage and unstage check every selected descendant; commits check staged paths
+and rename sources; branch switches conservatively check both tracked trees.
+Untracked directories are listed as individual files. Incomplete path listings
+fail closed. User-command Git subprocesses, including hooks and filters, use
+Codex's macOS filesystem sandbox with networking disabled and protected OMD
+paths kept unwritable. Timeout or cancellation terminates the process group,
+including ordinary hook descendants. Every write takes a `fingerprint` returned by a read: stage,
+unstage and discard compare the named paths (HEAD, porcelain record and
+worktree size and modification time); commit compares the staged set; switch
+compares the whole status. A mismatch fails with `stale_git_state`. Discard
+restores only unstaged tracked changes and untracked files, refuses conflicts
+and staged-only paths, and first copies each file (untracked files are moved)
+to a timestamped backup in OMD state outside the repository (the platform mod
+store or the enabled-mode evidence directory). Switch uses plain `git switch`,
+so Git refuses to overwrite local changes; it never forces. Commit hooks run
+as for a normal `git commit`. The first-party `omd_git` mod owns the sidebar,
+previews and confirmations.
 
 ## Diagnostics and source maps
 

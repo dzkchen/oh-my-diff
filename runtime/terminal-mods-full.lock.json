@@ -1,0 +1,72 @@
+{
+  "mod_api": "0.1.0-experimental.8",
+  "packages": {
+    "omd_git": {
+      "capabilities": [
+        "commands",
+        "git",
+        "lifecycle",
+        "state",
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "082db87e480ad160b439103ca285c7af9dcb760033451743ac776d0a715a07fd",
+        "mod.json": "da629222ab98d5cb7e8a88c61c21d036157cd2753c2c9082e9834eab07287d73",
+        "mod.test.json": "41771ae08a3540f0e25e85414aa8e034b01086f557bb1305d9c127f3e1bf48d7"
+      },
+      "id": "omd_git",
+      "package_sha256": "bc3b3fb498fa1466e356d203b799c37dd38c13d0f2a72028ae545b86e001ab59",
+      "source": "mods/first-party/omd_git",
+      "version": "0.1.0-preview.1"
+    },
+    "omd_logo": {
+      "capabilities": [
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "d492ab8fe2e55e67299c423b4a3d345237d380db26e690c0eccb3539b16948f3",
+        "mod.json": "87e1e11bec455ad9a2e341dbd7fe757517fdf44ed7186bf438280f16ec53ab7d",
+        "mod.test.json": "18a4b417314c296e6f22cef5420eba6f1896468a6022586b8f68507b2a9f94e3"
+      },
+      "id": "omd_logo",
+      "package_sha256": "213862f9fc151cf01b00dcf85655849c0e911b0b291d2eb2bc102019d9e4ab47",
+      "source": "mods/first-party/omd_logo",
+      "version": "0.1.0-preview.1"
+    },
+    "omd_model_picker": {
+      "capabilities": [
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "977d486c50d4a899dea70345fd1099e4a26cca0d4916919f648edc159d6f7712",
+        "mod.json": "68e7dfc3086442209414a74acc59ef938863551e3df6d5be34614fc109b314ab",
+        "mod.test.json": "6fc5ab6c11e33217fa23623abd4f1f10be73a2c75cf6f5ae500a74b1c0955d01"
+      },
+      "id": "omd_model_picker",
+      "package_sha256": "537f44174cec23268917f97a797dbeae61d9543554c198a831024982eef6612e",
+      "source": "mods/first-party/omd_model_picker",
+      "version": "0.1.0-preview.1"
+    },
+    "omd_selection_copy": {
+      "capabilities": [
+        "commands",
+        "state",
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "8295acd10d46f6948a3584c54e39b76ea8cf1f52d65c617e129ce832dfed1f61",
+        "mod.json": "1f9411aa582e5862988d211cc07b7248a957e41956c00ecc8507b798f813a0bf",
+        "mod.test.json": "16f463f5186fe9e9dbf479cda3eb7411e2e12bed1ad459eb201faf91f9176d49"
+      },
+      "id": "omd_selection_copy",
+      "package_sha256": "d47c58f195f12931da5b9592f3923832678ff96da9a87c1428f1a15a9fabbf7b",
+      "source": "mods/first-party/omd_selection_copy",
+      "version": "0.1.0-preview.1"
+    }
+  },
+  "schema": 1
+}

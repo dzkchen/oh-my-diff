@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": {
+        "event": "start",
+        "checkpoint": null
+      },
+      "expect": [
+        {
+          "mod": "omd_model_picker",
+          "value": {
+            "theme": {
+              "picker": {
+                "brand": "oh my diff",
+                "layout": "compact"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

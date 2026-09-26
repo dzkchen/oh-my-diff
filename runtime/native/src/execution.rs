@@ -818,7 +818,7 @@ pub async fn review_current(
     if parent.cwd.as_path() != manifest.repository
         || call.environments.len() != 1
         || call.environments[0].environment_id != "local"
-        || call.environments[0].cwd != parent.cwd
+        || call.environments[0].cwd != PathUri::from_abs_path(&parent.cwd)
     {
         return Err("changed or remote parent environment is not admitted".into());
     }
@@ -1155,7 +1155,7 @@ pub async fn complete_current(
     if parent.cwd.as_path() != manifest.repository
         || call.environments.len() != 1
         || call.environments[0].environment_id != "local"
-        || call.environments[0].cwd != parent.cwd
+        || call.environments[0].cwd != PathUri::from_abs_path(&parent.cwd)
     {
         return Err("changed or remote parent environment is not admitted".into());
     }
@@ -1520,7 +1520,7 @@ pub async fn contribute(
     if parent.cwd.as_path() != manifest.repository
         || call.environments.len() != 1
         || call.environments[0].environment_id != "local"
-        || call.environments[0].cwd != parent.cwd
+        || call.environments[0].cwd != PathUri::from_abs_path(&parent.cwd)
     {
         return Err("changed or remote parent environment is not admitted".into());
     }
@@ -2216,7 +2216,7 @@ pub async fn escalate(
     if parent.cwd.as_path() != manifest.repository
         || call.environments.len() != 1
         || call.environments[0].environment_id != "local"
-        || call.environments[0].cwd != parent.cwd
+        || call.environments[0].cwd != PathUri::from_abs_path(&parent.cwd)
     {
         return Err("changed or remote parent environment is not admitted".into());
     }

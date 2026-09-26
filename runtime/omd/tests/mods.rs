@@ -2465,3 +2465,149 @@ fn offline_status_retains_conflicts_without_running_paid_work() {
             .all(|error| error.contains("replacement_conflict"))
     );
 }
+
+#[test]
+fn rich_lines_width_bounds_picker_theme_and_selection_policy_are_bounded() {
+    let valid = json!({"theme":{"picker":{"layout":"compact","brand":"oh my diff"}},"selection":{"copy_on_release":true,"sources":["transcript","pager"],"min_chars":3},
+        "sites":{"header":{"components":[{"type":"box","id":"wide","label":"Wide","min_width":60,"max_width":500,"children":[
+            {"type":"line","id":"mark","label":"Mark","spans":[{"text":"+ ","tone":"success"},{"text":"oh my diff","bold":true}]}]}]}}});
+    let view = codex_omd::ModView::parse(valid.clone()).unwrap();
+    assert_eq!(
+        view.theme
+            .picker
+            .as_ref()
+            .and_then(|picker| picker.brand.as_deref()),
+        Some("oh my diff")
+    );
+    assert!(view.selection.as_ref().is_some_and(|policy| {
+        policy.copies(codex_omd::ModSelectionSource::Pager, 3)
+            && !policy.copies(codex_omd::ModSelectionSource::Composer, 3)
+            && !policy.copies(codex_omd::ModSelectionSource::Transcript, 2)
+    }));
+    let spans = (0..13)
+        .map(|index| json!({"text": format!("{index}")}))
+        .collect::<Vec<_>>();
+    for invalid in [
+        json!({"theme":{"picker":{"layout":"compact","brand":"a brand name that is too long"}}}),
+        json!({"theme":{"picker":{"layout":"sideways"}}}),
+        json!({"selection":{"min_chars":0}}),
+        json!({"selection":{"min_chars":10001}}),
+        json!({"selection":{"sources":["composer","composer"]}}),
+        json!({"sites":{"header":{"components":[{"type":"box","id":"b","label":"B","min_width":70,"max_width":60}]}}}),
+        json!({"sites":{"header":{"components":[{"type":"box","id":"b","label":"B","min_width":0}]}}}),
+        json!({"sites":{"header":{"components":[{"type":"line","id":"l","label":"L","spans":spans}]}}}),
+        json!({"sites":{"header":{"components":[{"type":"line","id":"l","label":"L","spans":[{"text":"x".repeat(257)}]}]}}}),
+        json!({"sites":{"header":{"components":[{"type":"line","id":"l","label":"L","spans":[]}]}}}),
+        json!({"sites":{"header":{"components":[{"type":"line","id":"l","label":"L","spans":[{"text":"\u{1b}[31m"}]}]}}}),
+    ] {
+        assert!(
+            codex_omd::ModView::parse(invalid.clone()).is_err(),
+            "{invalid}"
+        );
+    }
+    let mut view = codex_omd::ModView::default();
+    let mut sites = std::collections::BTreeSet::new();
+    let mut completed_tools = false;
+    codex_omd::ModViewPatch::parse(json!({"selection":{"copy_on_release":false}}))
+        .unwrap()
+        .apply(&mut view, &mut sites, &mut completed_tools)
+        .unwrap();
+    let conflict = codex_omd::ModViewPatch::parse(json!({"selection":{"min_chars":2}}))
+        .unwrap()
+        .apply(&mut view, &mut sites, &mut completed_tools)
+        .unwrap_err();
+    assert!(conflict.to_string().contains("terminal_selection_conflict"));
+    assert_eq!(
+        view.selection.map(|policy| policy.copy_on_release),
+        Some(false)
+    );
+}
+
+#[test]
+fn terminal_identity_reports_profile_mode_and_mod_counts() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let active = package(
+        &root,
+        "active",
+        "export default api => api.on('terminal', input => ({status:[String(input.identity?.mods?.active)]}))",
+        &["terminal"],
+    );
+    trust(&store, &active, &["terminal"]);
+    let disabled = package(&root, "disabled", "export default () => {}", &["terminal"]);
+    trust(&store, &disabled, &["terminal"]);
+    contended(|| store.enable(&disabled, false));
+    let mut runtime = host(&temp);
+    let identity = runtime.identity("0.157.0", Some("platform_only"), "platform");
+    assert_eq!(
+        identity,
+        json!({"codex_version":"0.157.0","install_profile":"platform_only","mode":"platform",
+        "mods":{"installed":2,"enabled":1,"active":1}})
+    );
+    assert_eq!(
+        runtime.identity("0.157.0", Some("arbitrary"), "enabled")["install_profile"],
+        "unknown"
+    );
+    assert_eq!(
+        runtime.identity("0.157.0", None, "enabled")["install_profile"],
+        "unreported"
+    );
+    let terminal = runtime.terminal_view(
+        json!({"event":"start","checkpoint":null,"identity":identity}),
+        || true,
+    );
+    assert_eq!(terminal.view.status, vec!["1"]);
+}
+
+#[test]
+fn git_operations_require_the_git_capability_and_a_host_route() {
+    let source =
+        "export default api => api.command('probe', () => api.host.tryCall('git.status', null))";
+    let (temp, _store, _path) = fixture(source, &["commands"]);
+    let mut runtime = host(&temp);
+    let denied = runtime
+        .invoke_with(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "probe",
+            Value::Null,
+            || true,
+            |_| Ok(json!({})),
+        )
+        .unwrap_err();
+    assert!(
+        denied
+            .to_string()
+            .contains("undeclared_operation_use: git.status"),
+        "{denied}"
+    );
+    let (temp, _store, _path) = fixture(source, &["commands", "git"]);
+    let mut runtime = host(&temp);
+    let routed = runtime
+        .invoke_with(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "probe",
+            Value::Null,
+            || true,
+            |call| {
+                assert_eq!(call.operation, "git.status");
+                Ok(json!({"entries": []}))
+            },
+        )
+        .unwrap();
+    assert_eq!(routed, json!({"ok": true, "value": {"entries": []}}));
+    let unrouted = runtime
+        .invoke(
+            "fixture",
+            runtime.generation(),
+            "command",
+            "probe",
+            Value::Null,
+        )
+        .unwrap();
+    assert_eq!(unrouted["ok"], false);
+}

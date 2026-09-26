@@ -3,7 +3,7 @@
 A frozen private preview of three first-party TypeScript mods on the Codex
 0.155.1 OMD host, Apple Silicon macOS and Node 24.18.0. Run the installation
 commands below from the matching frozen source checkout described in
-[PRIVATE_BUILD.md](../PRIVATE_BUILD.md). The current development pin is 0.156.1;
+[PRIVATE_BUILD.md](../PRIVATE_BUILD.md). The current development pin is 0.157.0;
 the selected Full OMD release package set is still unqualified. You can read,
 edit and reload the frozen preview mods without rebuilding Codex.
 

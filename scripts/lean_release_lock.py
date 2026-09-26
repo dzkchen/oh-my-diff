@@ -10,11 +10,13 @@ try:
     from scripts import claude_lock
     from scripts import typed_tasks_lock
     from scripts import lsp_sync_lock
+    from scripts import terminal_mods_lock
 except ModuleNotFoundError:
     import private_lean_v1 as private
     import claude_lock
     import typed_tasks_lock
     import lsp_sync_lock
+    import terminal_mods_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +38,9 @@ SOURCES = (
     "runtime/typed-tasks-full.lock.json",
     "scripts/lsp_sync_lock.py",
     "runtime/lsp-sync-full.lock.json",
-) + claude_lock.SOURCES + typed_tasks_lock.SOURCES + lsp_sync_lock.SOURCES
+    "scripts/terminal_mods_lock.py",
+    "runtime/terminal-mods-full.lock.json",
+) + claude_lock.SOURCES + typed_tasks_lock.SOURCES + lsp_sync_lock.SOURCES + terminal_mods_lock.SOURCES
 
 
 def selected_plugins(index, package_mode):
@@ -86,6 +90,9 @@ def build(artifact_dir, package_mode=False):
     claude = claude_lock.load()
     typed = typed_tasks_lock.load()
     lsp = lsp_sync_lock.load()
+    terminal = terminal_mods_lock.load()
+    if not package_mode and terminal != terminal_mods_lock.build():
+        raise ValueError("terminal mod Full lock differs from pinned sources")
     if not package_mode and claude != claude_lock.build():
         raise ValueError("Claude Full lock differs from pinned sources")
     if not package_mode and typed != typed_tasks_lock.build():
@@ -136,10 +143,10 @@ def build(artifact_dir, package_mode=False):
         "source_sha256": {name: private.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
         "profiles": {
-            "platform": {"first_party_installed": [], "first_party_default_active": [],
+            "platform": {"first_party_installed": ["omd_logo"], "first_party_default_active": ["omd_logo"],
                          "plugin_sources": [], "optional_tool_binaries": []},
-            "full": {"first_party_installed": sorted((*preview["packages"], claude["package"]["id"], typed["package"]["id"], lsp["package"]["id"])),
-                     "first_party_default_active": ["omd_workspace"],
+            "full": {"first_party_installed": sorted((*preview["packages"], claude["package"]["id"], typed["package"]["id"], lsp["package"]["id"], *terminal["packages"])),
+                     "first_party_default_active": ["omd_logo", "omd_model_picker", "omd_workspace"],
                      "plugin_sources": selected,
                      "optional_tool_binaries": ["omd-graph", "omd-health", "omd-lsp"]},
         },

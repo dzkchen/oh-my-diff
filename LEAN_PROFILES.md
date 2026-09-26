@@ -1,13 +1,13 @@
 # Local lean candidate profiles
 
-These are local Apple Silicon candidate profiles for the active Codex `0.156.1`
+These are local Apple Silicon candidate profiles for the active Codex `0.157.0`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `omd-mod`, `omd-graph`, `omd-health`, and `omd-lsp` executables from
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
 SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
 and copy that archive to `/path/to/release/mod-api.tgz`. Use Node `24.18.0` from
 `mise which node`. The platform profile installs the host, mod manager, author
-SDK/CLI, and a local package-control command. It does not change
+SDK/CLI, a local package-control command, and the `omd_logo` presentation mod. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
 The historical `0.155.1` candidate and private build remain frozen. Verify the
 current six package artifacts with
@@ -55,13 +55,17 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
   --node "$NODE_PATH" --store /path/to/omd-mod-store
 ```
 
-`--profile platform` creates an empty first-party store and launches patched
-Codex with `OMD_MODE=platform`. User-selected, trusted mods can run without the
-controlled OMD task policy. For `--profile full`, use the same command with
+`--profile platform` creates a store holding only the `omd_logo` presentation
+mod, enabled, and launches patched Codex with `OMD_MODE=platform`.
+User-selected, trusted mods can run without the controlled OMD task policy.
+For `--profile full`, use the same command with
 `--omd-graph`, `--omd-health`, and `--omd-lsp` pointing to matching patched
-executables. Full installs six current first-party candidate mods. Only
-`omd_workspace` is enabled in a fresh Full store. Claude, coordination,
-LSP synchronization, recovery, and typed tasks are installed but disabled. Six curated plugin source packages are available in
+executables. Full installs ten current first-party candidate mods. A fresh
+Full store enables `omd_workspace`, `omd_logo`, and `omd_model_picker`.
+Claude, coordination, Git sidebar, LSP synchronization, recovery,
+selection-copy, and typed tasks are installed but disabled. Attaching an
+existing store (`--attach-store`, used by installer updates) keeps its
+selections and adds newly bundled first-party packages disabled. Six curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
 started. Full includes inert `omd-graph`, `omd-health`, and `omd-lsp` launchers
 for the matching opt-in plugins. The deferred code-execution plugin, browser,
@@ -94,6 +98,17 @@ and mod state. To disable a broken first-party Full mod:
 ```sh
 /path/to/omd-bin/omd-package mod disable omd_workspace
 ```
+
+Enable the Git sidebar or selection-copy policy with
+`/path/to/omd-bin/omd-package mod enable omd_git` or `... mod enable
+omd_selection_copy`. `mod disable omd_logo` removes the logo in either profile;
+the native `>_ OpenAI Codex | Oh My Diffed (vVERSION)` welcome line remains.
+
+Git mutations also need an explicit permission-profile grant for the repository's
+Git metadata and affected files. Codex's default `.git` protection is respected;
+enabling `omd_git` alone does not authorize writes. Run from the repository root.
+Git hooks and filters keep the session's filesystem restrictions and have no
+network access through this local Git interface.
 
 Full OMD can explicitly select the controlled task contract with
 `activate controlled --manifest /path/to/task-manifest.json`. That manifest must

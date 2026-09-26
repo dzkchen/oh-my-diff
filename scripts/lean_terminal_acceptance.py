@@ -101,6 +101,7 @@ def run(artifact_dir, upstream, output):
             'model = "gpt-5.6-sol"\nmodel_provider = "omd_local_probe"\n'
             f'model_catalog_json = {json.dumps(str(home / "models.json"))}\n'
             'check_for_update_on_startup = false\n'
+            '[features]\ndaemon_auto_start = false\n'
             '[model_providers.omd_local_probe]\nname = "Local inactive probe"\n'
             'base_url = "http://127.0.0.1:9/v1"\nwire_api = "responses"\n'
             'requires_openai_auth = false\n'

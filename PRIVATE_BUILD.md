@@ -4,7 +4,7 @@ This is the minimum maintainer path for the frozen Codex `0.155.1` Oh My Diff
 private foundation. Run these commands from a clean checkout of source commit
 `eb5eeed5189550f4107e9c8efa609aefab221bc1`, which retains the matching
 `0.155.1` active pin and source hashes. The current development worktree has
-advanced to `0.156.1`; its patch builds locally, but it has no new frozen
+advanced to `0.157.0`; its patch builds locally, but it has no new frozen
 private installer or public package. This guide's frozen path is supported only
 on Apple Silicon macOS and is not a prebuilt package or a public release.
 

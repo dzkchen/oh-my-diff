@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "id": "omd_model_picker",
+  "version": "0.1.0-preview.1",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party"
+  },
+  "capabilities": [
+    "terminal"
+  ],
+  "compatibility": {
+    "required_features": ["terminal_picker_theme_v1"]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "layout": {
+        "type": "string",
+        "enum": ["compact", "native"],
+        "default": "compact"
+      },
+      "brand": {
+        "type": "string",
+        "default": "oh my diff"
+      }
+    },
+    "additionalProperties": false
+  }
+}

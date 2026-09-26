@@ -36,6 +36,8 @@ pub struct ModView {
     pub message_template: Option<String>,
     #[serde(default)]
     pub tool_template: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<ModSelectionPolicy>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -65,6 +67,49 @@ pub struct ModViewPatch {
     pub message_template: Option<String>,
     #[serde(default)]
     pub tool_template: Option<String>,
+    #[serde(default)]
+    pub selection: Option<ModSelectionPolicy>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ModSelectionSource {
+    Transcript,
+    Composer,
+    Pager,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModSelectionPolicy {
+    #[serde(default = "copy_on_release_default")]
+    pub copy_on_release: bool,
+    #[serde(default)]
+    pub sources: Vec<ModSelectionSource>,
+    #[serde(default = "min_chars_default")]
+    pub min_chars: u32,
+}
+
+fn copy_on_release_default() -> bool {
+    true
+}
+
+fn min_chars_default() -> u32 {
+    1
+}
+
+impl ModSelectionPolicy {
+    fn valid(&self) -> bool {
+        (1..=10_000).contains(&self.min_chars)
+            && self.sources.len() <= 3
+            && self.sources.iter().collect::<BTreeSet<_>>().len() == self.sources.len()
+    }
+
+    pub fn copies(&self, source: ModSelectionSource, chars: usize) -> bool {
+        self.copy_on_release
+            && (self.sources.is_empty() || self.sources.contains(&source))
+            && chars >= self.min_chars as usize
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -109,6 +154,15 @@ pub enum ModComponent {
         title: Option<String>,
         #[serde(default)]
         children: Vec<ModComponent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_width: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_width: Option<u16>,
+    },
+    Line {
+        id: String,
+        label: String,
+        spans: Vec<ModSpan>,
     },
     Text {
         id: String,
@@ -171,6 +225,31 @@ pub enum ModComponent {
         children: Vec<ModComponent>,
     },
     Slot,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModSpan {
+    pub text: String,
+    #[serde(default)]
+    pub tone: ModTone,
+    #[serde(default)]
+    pub bold: bool,
+}
+
+impl ModComponent {
+    pub fn fits(&self, width: u16) -> bool {
+        match self {
+            Self::Box {
+                min_width,
+                max_width,
+                ..
+            } => {
+                min_width.is_none_or(|min| width >= min) && max_width.is_none_or(|max| width <= max)
+            }
+            _ => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -306,6 +385,33 @@ pub struct ModTheme {
     pub density: ModDensity,
     #[serde(default)]
     pub icons: ModIcons,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picker: Option<ModPicker>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModPickerLayout {
+    #[default]
+    Native,
+    Compact,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModPicker {
+    #[serde(default)]
+    pub layout: ModPickerLayout,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brand: Option<String>,
+}
+
+impl ModPicker {
+    fn valid(&self) -> bool {
+        self.brand.as_ref().is_none_or(|brand| {
+            !brand.is_empty() && brand.chars().count() <= 24 && visible(brand, 96)
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -335,6 +441,8 @@ pub struct ModThemePatch {
     pub density: Option<ModDensity>,
     #[serde(default)]
     pub icons: Option<ModIcons>,
+    #[serde(default)]
+    pub picker: Option<ModPicker>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -547,8 +655,32 @@ impl ModComponent {
                 label,
                 title,
                 children: nested,
+                min_width,
+                max_width,
+            } => {
+                let bound =
+                    |width: &Option<u16>| width.is_none_or(|width| (1..=500).contains(&width));
+                identified(id, label, ids)
+                    && title.as_ref().is_none_or(|title| visible(title, 128))
+                    && bound(min_width)
+                    && bound(max_width)
+                    && min_width
+                        .zip(*max_width)
+                        .is_none_or(|(min, max)| min <= max)
+                    && children(nested, count, ids, slots)
             }
-            | Self::Pane {
+            Self::Line { id, label, spans } => {
+                identified(id, label, ids)
+                    && !spans.is_empty()
+                    && spans.len() <= 12
+                    && spans.iter().all(|span| visible(&span.text, 1024))
+                    && spans
+                        .iter()
+                        .map(|span| span.text.chars().count())
+                        .sum::<usize>()
+                        <= 256
+            }
+            Self::Pane {
                 id,
                 label,
                 title,
@@ -707,6 +839,7 @@ fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
             }
         }
         ModComponent::Text { id, .. }
+        | ModComponent::Line { id, .. }
         | ModComponent::Button { id, .. }
         | ModComponent::Input { id, .. }
         | ModComponent::Select { id, .. }
@@ -744,11 +877,15 @@ fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<
                 label,
                 title,
                 children,
+                min_width,
+                max_width,
             } => vec![ModComponent::Box {
                 id,
                 label,
                 title,
                 children: replace_slot(children, current),
+                min_width,
+                max_width,
             }],
             ModComponent::Pane {
                 id,
@@ -808,6 +945,9 @@ impl ModThemePatch {
         if let Some(icons) = self.icons {
             target.icons = icons;
         }
+        if self.picker.is_some() {
+            target.picker = self.picker;
+        }
     }
 }
 
@@ -828,6 +968,15 @@ impl ModViewPatch {
                 .syntax
                 .as_ref()
                 .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
+            || patch
+                .theme
+                .picker
+                .as_ref()
+                .is_some_and(|picker| !picker.valid())
+            || patch
+                .selection
+                .as_ref()
+                .is_some_and(|policy| !policy.valid())
             || serde_json::to_vec(&patch)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_patch"));
@@ -917,6 +1066,12 @@ impl ModViewPatch {
             *completed_tools_owner = true;
             target.completed_tools = mode;
         }
+        if let Some(selection) = self.selection {
+            if target.selection.is_some() {
+                return Err(failure("terminal_selection_conflict"));
+            }
+            target.selection = Some(selection);
+        }
         if let Some(template) = self.message_template {
             target.message_template = Some(match target.message_template.take() {
                 Some(current) => template.replace("{text}", &current),
@@ -958,6 +1113,15 @@ impl ModView {
                 .syntax
                 .as_ref()
                 .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
+            || view
+                .theme
+                .picker
+                .as_ref()
+                .is_some_and(|picker| !picker.valid())
+            || view
+                .selection
+                .as_ref()
+                .is_some_and(|policy| !policy.valid())
             || serde_json::to_vec(&view)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_view"));

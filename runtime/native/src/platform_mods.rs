@@ -128,6 +128,23 @@ impl PlatformMods {
                 || !cancelled.load(Ordering::Acquire),
                 "native permissions",
                 |id, request| {
+                    if request.operation.starts_with("git.") {
+                        return mods::lifecycle_git(
+                            matches!(
+                                name,
+                                "start"
+                                    | "resume"
+                                    | "turn_start"
+                                    | "turn_end"
+                                    | "workspace_write"
+                                    | "idle"
+                            ),
+                            &repository,
+                            std::slice::from_ref(&root),
+                            request,
+                            &|| !cancelled.load(Ordering::Acquire),
+                        );
+                    }
                     let allowed = (matches!(name, "workspace_write" | "turn_start")
                         && request.operation == "workspace.read")
                         || (matches!(
@@ -170,15 +187,17 @@ impl PlatformMods {
                     result.map_err(std::io::Error::other)
                 },
             );
+            let input =
+                json!({"event":name,"identity":mods::terminal_identity(&runtime, "platform")});
             let terminal =
-                runtime.terminal_view(json!({"event":name}), || !cancelled.load(Ordering::Acquire));
+                runtime.terminal_view(input.clone(), || !cancelled.load(Ordering::Acquire));
             let snapshot = codex_omd::ModViewSnapshot {
                 epoch,
                 revision,
                 view: terminal.view,
                 owner: terminal.owner,
                 contributors: terminal.contributors,
-                input: json!({"event":name}),
+                input,
                 diagnostics: terminal.diagnostics,
                 ..Default::default()
             };
@@ -683,7 +702,10 @@ impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
             let environment = call.environments.as_slice();
             let authority = (environment.len() == 1
                 && environment[0].environment_id == "local"
-                && environment[0].cwd.as_path() == self.repository.as_path())
+                && environment[0]
+                    .cwd
+                    .to_abs_path()
+                    .is_ok_and(|cwd| cwd.as_path() == self.repository.as_path()))
             .then(|| {
                 let context = environment[0].file_system_sandbox_context.clone();
                 crate::workspace_operations::WorkspaceAuthority {

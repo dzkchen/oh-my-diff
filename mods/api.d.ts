@@ -1,5 +1,5 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services' | 'workspace' | 'process';
+export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services' | 'workspace' | 'process' | 'git';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -51,8 +51,10 @@ export type TerminalTone = 'normal' | 'accent' | 'success' | 'attention' | 'fail
 export interface TerminalCommandAction { command: string; args?: string }
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string };
 export interface TerminalSelectOption { value: string; label: string }
+export interface TerminalSpan { text: string; tone?: TerminalTone; bold?: boolean }
 export type TerminalComponent =
-  | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[] }
+  | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number }
+  | { type: 'line'; id: string; label: string; spans: TerminalSpan[] }
   | { type: 'text'; id: string; label: string; text: string; tone?: TerminalTone }
   | { type: 'button'; id: string; label: string; text: string; action: TerminalComponentAction }
   | { type: 'input'; id: string; label: string; value?: string; placeholder?: string; action: TerminalCommandAction }
@@ -77,6 +79,16 @@ export interface TerminalTheme {
   border?: 'plain' | 'rounded' | 'double';
   density?: 'compact' | 'comfortable';
   icons?: 'unicode' | 'ascii';
+  picker?: { layout: 'native' | 'compact'; brand?: string };
+}
+export type TerminalSelectionSource = 'transcript' | 'composer' | 'pager';
+export interface TerminalSelectionPolicy { copy_on_release?: boolean; sources?: TerminalSelectionSource[]; min_chars?: number }
+export interface TerminalSelectionEvent { source: TerminalSelectionSource; chars: number; lines: number; copied: boolean; reason?: 'policy_off' | 'too_short' | 'clipboard_unavailable' | 'clipboard_failed' }
+export interface TerminalIdentity {
+  codex_version: string;
+  install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported';
+  mode: 'enabled' | 'platform';
+  mods: { installed: number; enabled: number; active: number };
 }
 export interface TerminalView {
   title?: string;
@@ -94,6 +106,7 @@ export interface TerminalView {
   completed_tools?: 'normal' | 'compact';
   message_template?: string;
   tool_template?: string;
+  selection?: TerminalSelectionPolicy;
 }
 export interface TerminalPatch {
   title?: string;
@@ -108,7 +121,12 @@ export interface TerminalPatch {
   completed_tools?: 'normal' | 'compact';
   message_template?: string;
   tool_template?: string;
+  selection?: TerminalSelectionPolicy;
 }
+export interface GitHead { oid: string | null; branch: string | null; detached: boolean; upstream: string | null; ahead: number; behind: number }
+export interface GitEntry { path: string; orig_path: string | null; index: string; worktree: string; conflicted: boolean; fingerprint: string }
+export interface GitStatus { head: GitHead; entries: GitEntry[]; truncated: boolean; fingerprint: string | null; staged_fingerprint: string }
+export interface GitCommit { oid: string; parents: string[]; refs: string; subject: string }
 export type CommandResult = Json | { display?: string; insert?: string; submit?: string };
 export type CompactionDecision = number | { threshold?: number; prompt?: string } | null;
 export type InputDecision = null | { text: string } | { deny: string };
@@ -177,6 +195,15 @@ export interface HostOperations {
   'sidecars.stop': { arguments: { id: string }; result: Json };
   'workflow.status': { arguments: null; result: Json };
   'workflow.restrict': { arguments: { operations: RestrictableOperation[]; reason: string }; result: Json };
+  'git.status': { arguments: null | { paths: string[] }; result: GitStatus };
+  'git.log': { arguments: null | { limit?: number }; result: { commits: GitCommit[]; truncated: boolean } };
+  'git.diff': { arguments: { path: string; staged?: boolean }; result: { text: string; binary: boolean; truncated: boolean; fingerprint: string } };
+  'git.branches': { arguments: null; result: { current: string | null; local: string[]; truncated: boolean } };
+  'git.stage': { arguments: { paths: string[]; fingerprint: string }; result: { fingerprint: string; staged_fingerprint: string } };
+  'git.unstage': { arguments: { paths: string[]; fingerprint: string }; result: { fingerprint: string; staged_fingerprint: string } };
+  'git.commit': { arguments: { message: string; fingerprint: string }; result: { oid: string; staged_fingerprint: string } };
+  'git.discard': { arguments: { paths: string[]; fingerprint: string }; result: { backup: string; fingerprint: string } };
+  'git.switch': { arguments: { branch: string; fingerprint: string }; result: { head: GitHead; fingerprint: string | null } };
 }
 export interface Events {
   context: { input: Context; output: ContextResult | null };
@@ -187,7 +214,8 @@ export interface Events {
   input: { input: { text: string; attachments: number }; output: InputDecision };
   tool_before: { input: { tool: string; arguments: Json; call_id: string }; output: { deny: string } | { arguments: Json; tool?: string } | null };
   tool_exposure: { input: { thread_id: string | null; checkpoint: Json; available: string[] }; output: { enable: string[] } };
-  terminal: { input: { event: string; checkpoint: Json }; output: TerminalView | TerminalPatch | null };
+  terminal: { input: { event: string; checkpoint: Json; identity?: TerminalIdentity }; output: TerminalView | TerminalPatch | null };
+  selection: { input: TerminalSelectionEvent; output: void };
   start: { input: Json; output: void };
   resume: { input: Json; output: void };
   idle: { input: Json; output: void };

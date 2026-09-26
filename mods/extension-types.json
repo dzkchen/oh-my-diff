@@ -209,6 +209,38 @@
       "extension_type": "mod",
       "role": "conformance_fixture",
       "why_mod": "Exercises bounded live compaction and checkpoint-derived context across reload."
+    },
+    {
+      "path": "mods/first-party/omd_logo",
+      "id": "omd_logo",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Draws the Oh My Diff wordmark and launch status into the terminal header from the read-only launch identity."
+    },
+    {
+      "path": "mods/first-party/omd_model_picker",
+      "id": "omd_model_picker",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence."
+    },
+    {
+      "path": "mods/first-party/omd_selection_copy",
+      "id": "omd_selection_copy",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Sets the live copy-on-highlight policy and reports each release result in the terminal status."
+    },
+    {
+      "path": "mods/first-party/omd_git",
+      "id": "omd_git",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations."
     }
   ],
   "synthetic_fixtures": [

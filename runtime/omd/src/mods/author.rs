@@ -368,6 +368,7 @@ fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'
             | ModComponent::Pane { id, children, .. }
             | ModComponent::Dialog { id, children, .. } => (Some(id.as_str()), children.as_slice()),
             ModComponent::Text { id, .. }
+            | ModComponent::Line { id, .. }
             | ModComponent::Button { id, .. }
             | ModComponent::Input { id, .. }
             | ModComponent::Select { id, .. }

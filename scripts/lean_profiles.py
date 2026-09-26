@@ -18,24 +18,29 @@ try:
     from scripts import claude_lock
     from scripts import typed_tasks_lock
     from scripts import lsp_sync_lock
+    from scripts import terminal_mods_lock
 except ModuleNotFoundError:
     import private_lean_v1 as private
     import claude_lock
     import typed_tasks_lock
     import lsp_sync_lock
+    import terminal_mods_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
-DEFAULT_ACTIVE = ("omd_workspace",)
-PACKAGES = ("omd_claude_cli", "omd_coordination", "omd_lsp_sync", "omd_recovery", "omd_typed_tasks", "omd_workspace")
+DEFAULT_ACTIVE = ("omd_logo", "omd_model_picker", "omd_workspace")
+PACKAGES = ("omd_claude_cli", "omd_coordination", "omd_git", "omd_logo", "omd_lsp_sync", "omd_model_picker",
+            "omd_recovery", "omd_selection_copy", "omd_typed_tasks", "omd_workspace")
+PLATFORM_PACKAGES = ("omd_logo",)
 TOOL_NAMES = ("omd-graph", "omd-health", "omd-lsp")
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/private_lean_v1.py",
                     "scripts/claude_lock.py",
                     "runtime/claude-full.lock.json",
                     "scripts/typed_tasks_lock.py", "runtime/typed-tasks-full.lock.json",
                     "scripts/lsp_sync_lock.py", "runtime/lsp-sync-full.lock.json",
+                    "scripts/terminal_mods_lock.py", "runtime/terminal-mods-full.lock.json",
                     "scripts/preview_lock.py", "scripts/browser_bundle.py",
                     "runtime/preview-v1.lock.json", "LEAN_PROFILES.md")
 
@@ -51,9 +56,15 @@ def package_sources(preview):
     claude = claude_lock.load()
     typed = typed_tasks_lock.load()
     lsp = lsp_sync_lock.load()
-    if any(package.get('mod_api') != preview['mod_api'] for package in (claude, typed, lsp)):
+    terminal = terminal_mods_lock.load()
+    if any(package.get('mod_api') != preview['mod_api'] for package in (claude, typed, lsp, terminal)):
         raise ValueError('Full mod API disagrees with pinned preview')
-    return {**preview['packages'], claude['package']['id']: claude['package'], typed['package']['id']: typed['package'], lsp['package']['id']: lsp['package']}
+    return {**preview['packages'], claude['package']['id']: claude['package'], typed['package']['id']: typed['package'],
+            lsp['package']['id']: lsp['package'], **terminal['packages']}
+
+
+def profile_packages(profile):
+    return PACKAGES if profile == "full" else PLATFORM_PACKAGES
 
 
 def paths(prefix, bin_dir, store):
@@ -219,7 +230,7 @@ def status(prefix, bin_dir):
     active = {item["id"]: item for item in host["mods"]}
     locked = package_sources(private.preview_lock())
     packages = []
-    for identifier in PACKAGES:
+    for identifier in profile_packages(record["profile"]):
         source = store / "sources" / identifier
         current = source.is_dir() and all(
             (source / name).is_file() and private.digest(source / name) == locked[identifier]["files"][name]
@@ -241,7 +252,7 @@ def status(prefix, bin_dir):
             "author": record["author"],
             "package_control": str(bin_dir / "omd-package"),
             "installed_tools": sorted(record.get("tools", {})),
-            "other_active_mods": [item for item in host["mods"] if item["id"] not in PACKAGES],
+            "other_active_mods": [item for item in host["mods"] if item["id"] not in profile_packages(record["profile"])],
             "installer_configured_optional_services": [], "shared_state": record["shared_state"]}
 
 
@@ -273,8 +284,8 @@ def activate(prefix, bin_dir, selection, controlled_manifest=None):
 
 def select_mod(prefix, bin_dir, identifier, enabled):
     record = load(prefix)
-    if record["profile"] != "full" or identifier not in record["packages"]:
-        raise ValueError("only installed Full OMD candidate mods can be selected here")
+    if identifier not in record["packages"]:
+        raise ValueError("only installed first-party candidate mods can be selected here")
     _, manager = check(record, bin_dir)
     source = Path(record["store"]) / "sources" / identifier
     invoke(manager, "enable" if enabled else "disable", record["store"], source)
@@ -310,6 +321,8 @@ def install(args):
         raise ValueError('typed task Full lock differs from pinned sources')
     if lsp_sync_lock.load() != lsp_sync_lock.build():
         raise ValueError('LSP synchronization Full lock differs from pinned sources')
+    if terminal_mods_lock.load() != terminal_mods_lock.build():
+        raise ValueError('terminal mod Full lock differs from pinned sources')
     packages = package_sources(locked)
     candidate = candidate_lock(upstream_lock, patch_lock, locked)
     if tuple(sorted(packages)) != PACKAGES:
@@ -335,15 +348,15 @@ def install(args):
     fallback_id = private.binary_identity(fallback)
     if fallback_id["version"] != binary["version"]:
         raise ValueError("upstream fallback version does not match the candidate")
-    if args.attach_store and args.profile == "full":
-        for identifier in PACKAGES:
+    if args.attach_store:
+        for identifier in profile_packages(args.profile):
             target = store / "sources" / identifier
             package = packages[identifier]
-            if not target.is_dir() or any(
+            if target.is_dir() and any(
                 not (target / name).is_file() or private.digest(target / name) != package["files"][name]
                 for name in package["files"]
             ):
-                raise ValueError(f"existing store lacks the exact Full OMD candidate package: {identifier}")
+                raise ValueError(f"existing store has a different first-party candidate package: {identifier}")
     bin_dir.mkdir(parents=True, exist_ok=True)
     prefix.mkdir(parents=True)
     made_store = False
@@ -390,25 +403,26 @@ def install(args):
                 target = artifacts / name
                 shutil.copy2(source, target)
                 tools[name] = {"installed_path": str(target), "sha256": private.digest(target)}
-            sources = store / "sources"
-            sources.mkdir(exist_ok=True)
-            for identifier in PACKAGES:
-                package = packages[identifier]
-                target = sources / identifier
-                if not args.attach_store:
-                    target.mkdir()
-                    for name in package["files"]:
-                        shutil.copy2(ROOT / package["source"] / name, target / name)
-                inspected = invoke(installed_manager, "inspect", target)
-                if inspected["sha256"] != package["package_sha256"]:
-                    raise ValueError(f"package digest mismatch: {identifier}")
-                if not args.attach_store:
-                    invoke(installed_manager, "trust", store, target, inspected["sha256"],
-                           ",".join(package["capabilities"]))
-                    if identifier in DEFAULT_ACTIVE:
-                        invoke(installed_manager, "enable", store, target)
-                installed[identifier] = {"version": package["version"], "sha256": inspected["sha256"]}
             plugin_bundle = copy_curated_plugins(prefix / "bundles/oh-my-diff")
+        sources = store / "sources"
+        sources.mkdir(exist_ok=True)
+        for identifier in profile_packages(args.profile):
+            package = packages[identifier]
+            target = sources / identifier
+            added = not target.is_dir()
+            if added:
+                target.mkdir()
+                for name in package["files"]:
+                    shutil.copy2(ROOT / package["source"] / name, target / name)
+            inspected = invoke(installed_manager, "inspect", target)
+            if inspected["sha256"] != package["package_sha256"]:
+                raise ValueError(f"package digest mismatch: {identifier}")
+            if added:
+                invoke(installed_manager, "trust", store, target, inspected["sha256"],
+                       ",".join(package["capabilities"]))
+                if identifier in DEFAULT_ACTIVE and not args.attach_store:
+                    invoke(installed_manager, "enable", store, target)
+            installed[identifier] = {"version": package["version"], "sha256": inspected["sha256"]}
         home, sqlite = private.state_roots()
         record = {"schema": SCHEMA, "product": PRODUCT,
                   "installed_at": datetime.now(timezone.utc).isoformat(),

@@ -61,7 +61,7 @@ pub(super) async fn dispatch(
             let environment = call.environments.as_slice();
             if environment.len() != 1
                 || environment[0].environment_id != "local"
-                || environment[0].cwd != config.cwd
+                || environment[0].cwd != codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)
                 || config.cwd.as_path() != host.manifest.repository
             {
                 return Err("workspace_operation_requires_local_repository".into());

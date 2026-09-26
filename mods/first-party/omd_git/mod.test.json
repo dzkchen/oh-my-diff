@@ -1,0 +1,757 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "git.status": [
+      {
+        "head": {
+          "oid": "7b3c282eb0000000000000000000000000000000",
+          "branch": "main",
+          "detached": false,
+          "upstream": "origin/main",
+          "ahead": 1,
+          "behind": 0
+        },
+        "entries": [
+          {
+            "path": "install.sh",
+            "orig_path": null,
+            "index": " ",
+            "worktree": "M",
+            "conflicted": false,
+            "fingerprint": "1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "path": "runtime/omd/src/mode.rs",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          {
+            "path": "tests/new.py",
+            "orig_path": null,
+            "index": "?",
+            "worktree": "?",
+            "conflicted": false,
+            "fingerprint": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          {
+            "path": "b.rs",
+            "orig_path": "a.rs",
+            "index": "R",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          {
+            "path": "mods/README.md",
+            "orig_path": null,
+            "index": "U",
+            "worktree": "U",
+            "conflicted": true,
+            "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ],
+        "truncated": false,
+        "fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "staged_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      {
+        "head": {
+          "oid": "7b3c282eb0000000000000000000000000000000",
+          "branch": "main",
+          "detached": false,
+          "upstream": "origin/main",
+          "ahead": 1,
+          "behind": 0
+        },
+        "entries": [
+          {
+            "path": "install.sh",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          {
+            "path": "runtime/omd/src/mode.rs",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          {
+            "path": "tests/new.py",
+            "orig_path": null,
+            "index": "?",
+            "worktree": "?",
+            "conflicted": false,
+            "fingerprint": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          {
+            "path": "b.rs",
+            "orig_path": "a.rs",
+            "index": "R",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          {
+            "path": "mods/README.md",
+            "orig_path": null,
+            "index": "U",
+            "worktree": "U",
+            "conflicted": true,
+            "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ],
+        "truncated": false,
+        "fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "staged_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      {
+        "head": {
+          "oid": "7b3c282eb0000000000000000000000000000000",
+          "branch": "main",
+          "detached": false,
+          "upstream": "origin/main",
+          "ahead": 1,
+          "behind": 0
+        },
+        "entries": [
+          {
+            "path": "install.sh",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          {
+            "path": "runtime/omd/src/mode.rs",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          {
+            "path": "tests/new.py",
+            "orig_path": null,
+            "index": "?",
+            "worktree": "?",
+            "conflicted": false,
+            "fingerprint": "3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          {
+            "path": "b.rs",
+            "orig_path": "a.rs",
+            "index": "R",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          {
+            "path": "mods/README.md",
+            "orig_path": null,
+            "index": "U",
+            "worktree": "U",
+            "conflicted": true,
+            "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ],
+        "truncated": false,
+        "fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "staged_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      {
+        "head": {
+          "oid": "7b3c282eb0000000000000000000000000000000",
+          "branch": "main",
+          "detached": false,
+          "upstream": "origin/main",
+          "ahead": 1,
+          "behind": 0
+        },
+        "entries": [
+          {
+            "path": "install.sh",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          {
+            "path": "runtime/omd/src/mode.rs",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          {
+            "path": "b.rs",
+            "orig_path": "a.rs",
+            "index": "R",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          {
+            "path": "mods/README.md",
+            "orig_path": null,
+            "index": "U",
+            "worktree": "U",
+            "conflicted": true,
+            "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ],
+        "truncated": false,
+        "fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "staged_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      {
+        "head": {
+          "oid": "7b3c282eb0000000000000000000000000000000",
+          "branch": "main",
+          "detached": false,
+          "upstream": "origin/main",
+          "ahead": 1,
+          "behind": 0
+        },
+        "entries": [
+          {
+            "path": "install.sh",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "6666666666666666666666666666666666666666666666666666666666666666"
+          },
+          {
+            "path": "runtime/omd/src/mode.rs",
+            "orig_path": null,
+            "index": "M",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "2222222222222222222222222222222222222222222222222222222222222222"
+          },
+          {
+            "path": "b.rs",
+            "orig_path": "a.rs",
+            "index": "R",
+            "worktree": " ",
+            "conflicted": false,
+            "fingerprint": "4444444444444444444444444444444444444444444444444444444444444444"
+          },
+          {
+            "path": "mods/README.md",
+            "orig_path": null,
+            "index": "U",
+            "worktree": "U",
+            "conflicted": true,
+            "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ],
+        "truncated": false,
+        "fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "staged_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      {
+        "head": {
+          "oid": "7b3c282eb0000000000000000000000000000000",
+          "branch": "main",
+          "detached": false,
+          "upstream": "origin/main",
+          "ahead": 1,
+          "behind": 0
+        },
+        "entries": [
+          {
+            "path": "mods/README.md",
+            "orig_path": null,
+            "index": "U",
+            "worktree": "U",
+            "conflicted": true,
+            "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ],
+        "truncated": false,
+        "fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "staged_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      {
+        "head": {
+          "oid": "7b3c282eb0000000000000000000000000000000",
+          "branch": "main",
+          "detached": false,
+          "upstream": "origin/main",
+          "ahead": 1,
+          "behind": 0
+        },
+        "entries": [
+          {
+            "path": "mods/README.md",
+            "orig_path": null,
+            "index": "U",
+            "worktree": "U",
+            "conflicted": true,
+            "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ],
+        "truncated": false,
+        "fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "staged_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      {
+        "error": "not_a_git_repository"
+      }
+    ],
+    "git.log": [
+      {
+        "commits": [
+          {
+            "oid": "7b3c282eb0000000000000000000000000000000",
+            "parents": [
+              "0c8217bbc0000000000000000000000000000000"
+            ],
+            "refs": "HEAD -> main",
+            "subject": "reconciliation follow-ups"
+          },
+          {
+            "oid": "0c8217bbc0000000000000000000000000000000",
+            "parents": [
+              "f771f39510000000000000000000000000000000",
+              "aaaaaaaaa0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "merge embedded modes"
+          },
+          {
+            "oid": "f771f39510000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "test helper rename"
+          },
+          {
+            "oid": "aaaaaaaaa0000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "side branch"
+          }
+        ],
+        "truncated": true
+      },
+      {
+        "commits": [
+          {
+            "oid": "7b3c282eb0000000000000000000000000000000",
+            "parents": [
+              "0c8217bbc0000000000000000000000000000000"
+            ],
+            "refs": "HEAD -> main",
+            "subject": "reconciliation follow-ups"
+          },
+          {
+            "oid": "0c8217bbc0000000000000000000000000000000",
+            "parents": [
+              "f771f39510000000000000000000000000000000",
+              "aaaaaaaaa0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "merge embedded modes"
+          },
+          {
+            "oid": "f771f39510000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "test helper rename"
+          },
+          {
+            "oid": "aaaaaaaaa0000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "side branch"
+          }
+        ],
+        "truncated": true
+      },
+      {
+        "commits": [
+          {
+            "oid": "7b3c282eb0000000000000000000000000000000",
+            "parents": [
+              "0c8217bbc0000000000000000000000000000000"
+            ],
+            "refs": "HEAD -> main",
+            "subject": "reconciliation follow-ups"
+          },
+          {
+            "oid": "0c8217bbc0000000000000000000000000000000",
+            "parents": [
+              "f771f39510000000000000000000000000000000",
+              "aaaaaaaaa0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "merge embedded modes"
+          },
+          {
+            "oid": "f771f39510000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "test helper rename"
+          },
+          {
+            "oid": "aaaaaaaaa0000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "side branch"
+          }
+        ],
+        "truncated": true
+      },
+      {
+        "commits": [
+          {
+            "oid": "7b3c282eb0000000000000000000000000000000",
+            "parents": [
+              "0c8217bbc0000000000000000000000000000000"
+            ],
+            "refs": "HEAD -> main",
+            "subject": "reconciliation follow-ups"
+          },
+          {
+            "oid": "0c8217bbc0000000000000000000000000000000",
+            "parents": [
+              "f771f39510000000000000000000000000000000",
+              "aaaaaaaaa0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "merge embedded modes"
+          },
+          {
+            "oid": "f771f39510000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "test helper rename"
+          },
+          {
+            "oid": "aaaaaaaaa0000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "side branch"
+          }
+        ],
+        "truncated": true
+      },
+      {
+        "commits": [
+          {
+            "oid": "7b3c282eb0000000000000000000000000000000",
+            "parents": [
+              "0c8217bbc0000000000000000000000000000000"
+            ],
+            "refs": "HEAD -> main",
+            "subject": "reconciliation follow-ups"
+          },
+          {
+            "oid": "0c8217bbc0000000000000000000000000000000",
+            "parents": [
+              "f771f39510000000000000000000000000000000",
+              "aaaaaaaaa0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "merge embedded modes"
+          },
+          {
+            "oid": "f771f39510000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "test helper rename"
+          },
+          {
+            "oid": "aaaaaaaaa0000000000000000000000000000000",
+            "parents": [
+              "8755636ba0000000000000000000000000000000"
+            ],
+            "refs": "",
+            "subject": "side branch"
+          }
+        ],
+        "truncated": true
+      }
+    ],
+    "git.branches": [
+      {
+        "current": "main",
+        "local": [
+          "feature",
+          "main"
+        ],
+        "truncated": false
+      },
+      {
+        "current": "main",
+        "local": [
+          "feature",
+          "main"
+        ],
+        "truncated": false
+      },
+      {
+        "current": "main",
+        "local": [
+          "feature",
+          "main"
+        ],
+        "truncated": false
+      },
+      {
+        "current": "main",
+        "local": [
+          "feature",
+          "main"
+        ],
+        "truncated": false
+      },
+      {
+        "current": "main",
+        "local": [
+          "feature",
+          "main"
+        ],
+        "truncated": false
+      }
+    ],
+    "git.stage": [
+      {
+        "fingerprint": "6666666666666666666666666666666666666666666666666666666666666666",
+        "staged_fingerprint": "7777777777777777777777777777777777777777777777777777777777777777"
+      },
+      {
+        "error": "stale_git_state: refresh and review the change again"
+      }
+    ],
+    "git.diff": [
+      {
+        "text": "diff --git a/tests/new.py b/tests/new.py\n+++ b/tests/new.py\n+print('hello')\n",
+        "binary": false,
+        "truncated": false,
+        "fingerprint": "8888888888888888888888888888888888888888888888888888888888888888"
+      }
+    ],
+    "git.discard": [
+      {
+        "backup": "/tmp/omd-store/git-backups/1",
+        "fingerprint": "9999999999999999999999999999999999999999999999999999999999999999"
+      }
+    ],
+    "git.commit": [
+      {
+        "oid": "1234567890abcdef1234567890abcdef12345678",
+        "staged_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "type": "event",
+      "event": "start",
+      "payload": null,
+      "expect": [
+        {
+          "mod": "omd_git",
+          "value": null
+        }
+      ]
+    },
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": {
+        "event": "start",
+        "checkpoint": null
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "file",
+      "payload": "install.sh",
+      "expect": null
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "stage",
+      "payload": "",
+      "expect": {
+        "display": "staged install.sh"
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "stage",
+      "payload": "",
+      "expect": {
+        "display": "Changed since it was shown; review the refreshed state and retry."
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "file",
+      "payload": "tests/new.py",
+      "expect": null
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "discard",
+      "payload": "",
+      "expect": null
+    },
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": {
+        "event": "idle",
+        "checkpoint": null
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "confirm",
+      "payload": "",
+      "expect": {
+        "display": "discarded tests/new.py; backup at /tmp/omd-store/git-backups/1"
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "commit",
+      "payload": "",
+      "expect": {
+        "display": "type a commit message first"
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "message",
+      "payload": "update the installer pin",
+      "expect": {
+        "display": "commit message saved"
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "commit",
+      "payload": "",
+      "expect": null
+    },
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": {
+        "event": "idle",
+        "checkpoint": null
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "confirm",
+      "payload": "",
+      "expect": {
+        "display": "committed 1234567"
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "branch",
+      "payload": "feature",
+      "expect": null
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "switch",
+      "payload": "",
+      "expect": null
+    },
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": {
+        "event": "idle",
+        "checkpoint": null
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "cancel",
+      "payload": "",
+      "expect": null
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_git",
+      "event": "command",
+      "name": "status",
+      "payload": "",
+      "expect": {
+        "display": "Git: not_a_git_repository"
+      }
+    },
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": {
+        "event": "idle",
+        "checkpoint": null
+      }
+    }
+  ]
+}

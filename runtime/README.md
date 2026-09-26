@@ -1,7 +1,7 @@
 # Controlled Contributor experiment
 
 This experimental patch links the completed Oh My Diff controls into pinned
-Codex `rust-v0.156.1`. The custom binary has an explicit upstream-style direct
+Codex `rust-v0.157.0`. The custom binary has an explicit upstream-style direct
 mode that returns before registering any Oh My Diff task hook:
 
 ```sh
@@ -24,6 +24,13 @@ fails closed. Disabling Oh My Diff changes behavior inside the custom binary;
 restoring upstream means selecting or reinstalling the retained upstream
 executable and is a separate operation.
 
+Interactive enabled and platform sessions keep the app server embedded. They
+skip Codex's automatic shared background server and implicit reuse of an
+existing one, and say so at startup, because that server runs the stock managed
+Codex package without Oh My Diff hooks. An invalid mode is treated the same way.
+Upstream-style direct mode keeps upstream background-server behavior; an
+explicit `--remote` endpoint or `--agents-overview` still uses the named server.
+
 The patched TUI session header reads the compiled Codex package version and
 shows `>_ OpenAI Codex | Oh My Diffed (vVERSION)`. The existing `codex` command,
 `--version`, noninteractive output, and retained upstream executable keep their
@@ -34,6 +41,15 @@ install profile separately from the effective `OMD_MODE`. A Full OMD profile
 means packages are installed, not that its optional extensions are active.
 The retained upstream launcher clears the profile marker. This presentation
 does not add startup processes or model context.
+
+In enabled and platform modes, mod header, sidebar and dialog sites draw on the
+alternate screen, including Codex's default owned fullscreen transcript, beside
+the transcript and composer; inline sessions show only mod status segments.
+Terminal mods receive a read-only launch `identity` (installed Codex version,
+install profile, effective mode and mod counts), can set the compact
+model/reasoning picker layout and a copy-on-highlight policy, and a mod granted
+the `git` capability can read repository status and make user-invoked,
+fingerprint-checked Git changes. See [`mods/REFERENCE.md`](../mods/REFERENCE.md).
 
 Enabled manifests may select each foundation capability explicitly through the
 required boolean fields in `capabilities`: `delegation`, `escalation`,
@@ -423,10 +439,11 @@ each archive before removing it from live state, preserves worker-ID reuse
 protection, and exposes only active/unconsumed workers plus an archive count in
 the checkpoint.
 
-Interactive TTY use is app-like fullscreen by default. The main transcript and
-composer remain in the alternate screen, with terminal state restored around
-external programs, suspension, caught panics, and exit. Keep inline behavior
-with `codex --no-alt-screen` or:
+Interactive TTY use follows Codex's fullscreen transcript, on by default since
+Codex 0.157.0 and controlled by `tui.fullscreen_transcript`. Codex owns the
+alternate screen, mouse capture, selection, search, and terminal restoration
+around external programs, suspension, caught panics, and exit. Keep inline
+behavior with `codex --no-alt-screen` or:
 
 ```toml
 [tui]
@@ -438,9 +455,12 @@ Contributor status. `/omd` opens the on-demand inspector for worker/archive,
 allowance/exposure, permission/approval, renderer, mouse, evidence, and current
 authorization state; its confirmed revoke action durably blocks future
 Contributor requests. Ctrl+T transcript view supports `/` or Ctrl+F search and
-`n`/`N` navigation. In fullscreen, left click positions the caret and drag
-selection copies on release through Codex's existing clipboard strategies.
-Set `OMD_TUI_MOUSE=off` for terminal-native selection. The composer displays
+`n`/`N` navigation. In fullscreen, mouse input goes to Codex's transcript and
+composer: scrolling, click-to-position, drag selection, Shift-click extension,
+and right-click or copy-key copying. In enabled and platform modes, releasing a
+drag selection also copies it once through Codex's existing clipboard path, and
+mod UI regions receive their clicks first. `OMD_TUI_MOUSE=off` removes these
+additions; upstream-style direct mode never adds them. The composer displays
 `===`, `->`, and `<=` as width-preserving `≡`, `→`, and `≤` while keeping literal
 ASCII for editing, copying, and submission. Set `OMD_TUI_ASCII=1`, or use a
 non-Unicode locale, for literal rendering.

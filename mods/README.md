@@ -1,6 +1,6 @@
 # TypeScript mods
 
-API `0.1.0-experimental.8` runs on the pinned Codex 0.156.1 OMD 0.1.0 host,
+API `0.1.0-experimental.8` runs on the pinned Codex 0.157.0 OMD 0.1.0 host,
 Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
 packages. The API remains experimental; this delivery does not freeze the API or
 complete independent preview feedback.
@@ -192,6 +192,19 @@ in [the candidate audit](../.docs/audits/additional-first-party-live-mods-202609
 They are not part of the private preview or a supported release bundle; install
 and enable them only through exact source trust while their task-value and
 overhead gates remain open.
+
+Four terminal packages ship with the installation profiles through the public
+API described in [the reference](REFERENCE.md#terminal-identity-rich-lines-picker-and-selection):
+[`omd_logo`](first-party/omd_logo/index.ts) draws the Oh My Diff wordmark and
+launch status from the read-only identity and is active in both profiles;
+[`omd_model_picker`](first-party/omd_model_picker/index.ts) selects the compact
+native `/model` and reasoning layout and is active in Full OMD;
+[`omd_selection_copy`](first-party/omd_selection_copy/index.ts) sets the
+copy-on-highlight policy and shows its last result; and
+[`omd_git`](first-party/omd_git/index.ts) adds a left Git sidebar with a commit
+graph, changed files, diffs, stage, unstage, confirmed commit, discard and
+branch switch over the [`git` operations](REFERENCE.md#git-operations). The last
+two are installed inactive in Full OMD; enable them explicitly.
 
 `omd_typed_tasks` is a separately installed, inactive Full OMD candidate. It
 uses the public task tool and host operations to run up to four typed siblings,

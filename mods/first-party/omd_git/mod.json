@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "omd_git",
+  "version": "0.1.0-preview.1",
+  "api": "0.1.0-experimental.8",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party"
+  },
+  "capabilities": [
+    "commands",
+    "git",
+    "lifecycle",
+    "state",
+    "terminal"
+  ],
+  "compatibility": {
+    "required_features": ["git_operations_v1", "terminal_components_v1", "terminal_render_sites_v1"]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "side": {
+        "type": "string",
+        "enum": ["left", "right"],
+        "default": "left"
+      },
+      "width": {
+        "type": "number",
+        "default": 40
+      },
+      "icons": {
+        "type": "string",
+        "enum": ["unicode", "ascii"],
+        "default": "unicode"
+      },
+      "commits": {
+        "type": "number",
+        "default": 6
+      }
+    },
+    "additionalProperties": false
+  }
+}

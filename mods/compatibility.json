@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "as_of": "2026-09-23",
+  "as_of": "2026-09-26",
   "host": {
-    "codex": "0.156.1",
+    "codex": "0.157.0",
     "omd": "0.1.0",
     "stability": "experimental",
     "current_api": "0.1.0-experimental.8",
@@ -21,7 +21,12 @@
       "source_use_v1",
       "state_migration_v1",
       "terminal_components_v1",
+      "terminal_identity_v1",
+      "terminal_picker_theme_v1",
       "terminal_render_sites_v1",
+      "terminal_rich_line_v1",
+      "terminal_selection_v1",
+      "git_operations_v1",
       "transactional_reload_v1",
       "task_tool_exposure_v1"
     ]

@@ -1,6 +1,6 @@
 # Mod compatibility
 
-This is the supported compatibility contract as of September 23, 2026. The
+This is the supported compatibility contract as of September 25, 2026. The
 machine-readable source is [compatibility.json](compatibility.json), checked
 against the Rust host by `python3 scripts/mod_compatibility.py`.
 
@@ -8,11 +8,11 @@ against the Rust host by `python3 scripts/mod_compatibility.py`.
 
 | Codex | OMD host | Package schema | Mod API | API label | Service imports | Generated installed-contract types | Support through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.156.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.4 | deprecated | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
-| 0.156.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.5 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
-| 0.156.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.6 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
-| 0.156.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.7 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
-| 0.156.1 | 0.1.0, experimental | 1 | 0.1.0-experimental.8 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.4 | deprecated | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.5 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.6 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.7 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.8 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 
 The current authoring API is `.8`. `.4` remains executable but is deprecated;
 `.5` through `.7` are older experimental APIs. `.7` adds bounded terminal components,
@@ -30,8 +30,9 @@ Host features in this release are `author_tooling_v1`,
 `author_offline_runner_v1`, `author_diagnostics_v1`,
 `installed_contract_types_v1`, `service_contracts_v1`, `source_use_v1`,
 `package_manager_v1`, `state_migration_v1`, `terminal_components_v1`,
-`terminal_render_sites_v1`, `transactional_reload_v1`, and
-`task_tool_exposure_v1`. A package may omit
+`terminal_identity_v1`, `terminal_picker_theme_v1`, `terminal_render_sites_v1`,
+`terminal_rich_line_v1`, `terminal_selection_v1`, `git_operations_v1`,
+`transactional_reload_v1`, and `task_tool_exposure_v1`. A package may omit
 compatibility metadata and rely on its supported API row, or declare `compatibility.releases`,
 `required_features`, and `optional_features`. A missing required feature or an
 excluded host release rejects the package before activation and tells the user
