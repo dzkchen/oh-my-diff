@@ -7,6 +7,37 @@ use codex_omd::WorkerLimits;
 use serde_json::json;
 use std::path::Path;
 
+fn rates() -> Rates {
+    Rates {
+        input_microusd_per_million: 100000,
+        cached_microusd_per_million: 2000,
+        cache_write_microusd_per_million: None,
+        output_microusd_per_million: 200000,
+        reservation_microusd: 10000,
+        max_output_tokens: 128,
+        input_token_ceiling: 5000,
+        included_subscription: false,
+        external_subscription: false,
+    }
+}
+
+fn account(task: &Arc<Task>, root: &Path, owner: &str) -> Account {
+    Account {
+        task: task.clone(),
+        owner: owner.into(),
+        model: "fixture-model".into(),
+        provider: "fixture".into(),
+        url: "http://localhost/responses".into(),
+        max_request_bytes: 2048,
+        rates: Some(rates()),
+        repository_identity: "fixture".into(),
+        cost_capture: root.join("evidence").join("task-cost.json"),
+        route: Some("worker".into()),
+        lead_routes: Vec::new(),
+        worker_authorization: None,
+    }
+}
+
 fn setup() -> (
     tempfile::TempDir,
     Accounts,
@@ -21,7 +52,7 @@ fn setup() -> (
                 requests: 3,
                 exposure_microusd: 20000,
                 seconds: 30,
-                concurrent_workers: 1,
+                concurrent_workers: 2,
                 max_depth: 2,
                 max_reassessments: 1,
             },
@@ -29,46 +60,12 @@ fn setup() -> (
         )
         .unwrap(),
     );
-    let authorization = root.path().join("grant.json");
-    std::fs::write(&authorization, serde_json::to_vec(&json!({"schema": 1, "split": "development", "data_authorized": true, "revocable": true, "repositories": ["fixture"]})).unwrap()).unwrap();
     let accounts = Accounts::default();
-    accounts.0.lock().unwrap().insert(
-        "child".into(),
-        Account {
-            task: task.clone(),
-            owner: "worker".into(),
-            model: "muse-spark-1.3-contributor".into(),
-            provider: "meta".into(),
-            url: "http://localhost/responses".into(),
-            max_request_bytes: 2048,
-            rates: Rates {
-                input_microusd_per_million: 100000,
-                cached_microusd_per_million: 2000,
-                cache_write_microusd_per_million: None,
-                output_microusd_per_million: 200000,
-                reservation_microusd: 10000,
-                max_output_tokens: 128,
-                input_token_ceiling: 5000,
-                included_subscription: false,
-                external_subscription: false,
-            },
-            authorization_sha256: crate::execution::hash(&std::fs::read(&authorization).unwrap()),
-            authorization,
-            repository_identity: "fixture".into(),
-            revocation: root.path().join("evidence").join(REVOCATION_FILE),
-            cost_capture: root.path().join("evidence").join("task-cost.json"),
-            preset: "worker".into(),
-            worker_authorization: None,
-            authorized_presets: vec![RequestPreset {
-                name: "worker".into(),
-                model: "muse-spark-1.3-contributor".into(),
-                provider: "meta".into(),
-                reasoning: "high".into(),
-                url: "http://localhost/responses".into(),
-                accounting_provider: "meta".into(),
-            }],
-        },
-    );
+    accounts
+        .0
+        .lock()
+        .unwrap()
+        .insert("child".into(), account(&task, root.path(), "worker"));
     task.start_worker(
         "worker".into(),
         "lead".into(),
@@ -80,12 +77,14 @@ fn setup() -> (
         },
     )
     .unwrap();
+    task.authorize_worker_route("worker", "fixture", "fixture-model")
+        .unwrap();
     let mut request = Request::new(http::Method::POST, "http://localhost/responses".into());
     request
         .headers
         .insert("thread-id", "child".parse().unwrap());
     let body = EncodedJsonBody::encode(
-        &json!({"model": "muse-spark-1.3-contributor", "reasoning":{"effort":"high"}, "stream": true, "max_output_tokens": 128}),
+        &json!({"model": "fixture-model", "reasoning":{"effort":"high"}, "stream": true, "max_output_tokens": 128}),
     )
     .unwrap();
     (root, accounts, task, request, body)
@@ -94,7 +93,7 @@ fn setup() -> (
 #[test]
 fn host_tool_schema_fields_are_not_mistaken_for_nontext_input() {
     let (_root, accounts, _task, mut request, _body) = setup();
-    let base = json!({"model":"muse-spark-1.3-contributor","reasoning":{"effort":"high"},
+    let base = json!({"model":"fixture-model","reasoning":{"effort":"high"},
         "stream":true,"max_output_tokens":128,
         "tools":[{"type":"function","name":"inspect","parameters":{"type":"object",
             "properties":{"image_url":{"type":"string"}}}}],
@@ -143,52 +142,43 @@ fn install_middleware(accounts: &Accounts, root: &Path, source: &str) {
     )));
 }
 
-#[test]
-fn middleware_routes_main_and_subagent_requests_and_only_transforms_text() {
-    let (root, accounts, task, mut request, body) = setup();
-    let source = "export default api => { api.middleware('model_request', event => ({preset:event.scope.kind==='subagent'?'astra':'worker'})); api.middleware('response_stream', event => event.protected?null:{text:String(event.text).toUpperCase()}); }";
-    install_middleware(&accounts, root.path(), source);
-    let astra = RequestPreset {
-        name: "astra".into(),
-        model: "muse-spark-1.3-contributor".into(),
-        provider: "meta".into(),
+fn fast_route() -> RequestRoute {
+    RequestRoute {
+        name: "fast".into(),
+        model: "fixture-fast".into(),
+        provider: "fixture".into(),
         reasoning: "xhigh".into(),
-        url: "http://localhost/astra".into(),
-        accounting_provider: "meta".into(),
-    };
-    let mut main = accounts.0.lock().unwrap().get("child").unwrap().clone();
-    main.owner = "lead".into();
-    main.authorized_presets.push(astra.clone());
-    accounts
-        .0
-        .lock()
-        .unwrap()
-        .get_mut("child")
-        .unwrap()
-        .authorized_presets
-        .push(astra);
+        rates: rates(),
+    }
+}
 
+#[test]
+fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
+    let (root, accounts, task, mut request, body) = setup();
+    let source = "export default api => { api.middleware('model_request', event => ({route:'fast'})); api.middleware('response_stream', event => event.protected?null:{text:String(event.text).toUpperCase()}); }";
+    install_middleware(&accounts, root.path(), source);
+    let mut prepared = Some(body.clone());
+    assert!(accounts.prepare(&mut request, &mut prepared).is_err());
+
+    let mut lead = account(&task, root.path(), "lead");
+    lead.route = Some("main".into());
+    lead.lead_routes = vec![fast_route()];
+    accounts.0.lock().unwrap().insert("main".into(), lead);
+    task.authorize_route("fixture", "fixture-model").unwrap();
+    task.authorize_route("fixture", "fixture-fast").unwrap();
+    request
+        .headers
+        .insert("thread-id", "main".parse().unwrap());
     let mut prepared = Some(body.clone());
     accounts.prepare(&mut request, &mut prepared).unwrap();
     let routed: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
-    assert_eq!(routed["model"], "muse-spark-1.3-contributor");
+    assert_eq!(routed["model"], "fixture-fast");
     assert_eq!(routed["reasoning"]["effort"], "xhigh");
-
-    let mut main_request = request.clone();
-    main_request
-        .headers
-        .insert("thread-id", "main".parse().unwrap());
-    accounts.0.lock().unwrap().insert("main".into(), main);
-    let mut main_body = Some(body.clone());
-    accounts.prepare(&mut main_request, &mut main_body).unwrap();
-    let unchanged: Value = serde_json::from_slice(main_body.as_ref().unwrap().as_bytes()).unwrap();
-    assert_eq!(unchanged["model"], "muse-spark-1.3-contributor");
 
     let mut attempt = accounts
         .before_send(&mut request, prepared.as_ref())
         .unwrap()
         .unwrap();
-    assert_eq!(request.url, "http://localhost/astra");
     let mut delta = json!({"type":"response.output_text.delta","delta":"hello"});
     attempt.observe(&mut delta, true).unwrap();
     assert_eq!(delta["delta"], "HELLO");
@@ -196,11 +186,46 @@ fn middleware_routes_main_and_subagent_requests_and_only_transforms_text() {
         json!({"input_tokens":100,"input_tokens_details":{"cached_tokens":50},"output_tokens":10});
     let mut completed = json!({"type":"response.completed","response":{"usage":usage}});
     attempt.observe(&mut completed, true).unwrap();
-    assert_eq!(completed["response"]["usage"], usage);
     drop(attempt);
-    assert_eq!(task.attempts().unwrap()[0].raw_usage, Some(usage));
+    let recorded = task.attempts().unwrap().remove(0);
+    assert_eq!(recorded.model, "fixture-fast");
+    assert_eq!(recorded.raw_usage, Some(usage));
     let log = std::fs::read_to_string(root.path().join("evidence/mod-middleware.jsonl")).unwrap();
-    assert!(log.contains("subagent") && log.contains("main") && log.contains("raw_usage"));
+    assert!(log.contains("fast") && log.contains("raw_usage"));
+}
+
+#[test]
+fn observe_only_accounts_record_usage_without_admission() {
+    let (root, accounts, task, mut request, _body) = setup();
+    let mut lead = account(&task, root.path(), "lead");
+    lead.rates = None;
+    lead.route = None;
+    accounts.0.lock().unwrap().insert("main".into(), lead);
+    request
+        .headers
+        .insert("thread-id", "main".parse().unwrap());
+    assert!(!accounts.requires_observation(Some("main")));
+    assert!(accounts.requires_observation(Some("child")));
+    let body = EncodedJsonBody::encode(&json!({"model":"any-model","stream":true,
+        "tools":[{"type":"web_search"}]}))
+    .unwrap();
+    let mut prepared = Some(body.clone());
+    accounts.prepare(&mut request, &mut prepared).unwrap();
+    assert_eq!(prepared.unwrap().as_bytes(), body.as_bytes());
+    let mut attempt = accounts
+        .before_send(&mut request, Some(&body))
+        .unwrap()
+        .unwrap();
+    assert!(!request.headers.contains_key("x-omd-request-id"));
+    let usage = json!({"input_tokens":7,"output_tokens":3});
+    let mut completed = json!({"type":"response.completed","response":{"usage":usage}});
+    attempt.observe(&mut completed, true).unwrap();
+    drop(attempt);
+    assert!(task.attempts().unwrap().is_empty());
+    let capture = task.cost_capture().unwrap();
+    assert_eq!(capture.observed.len(), 1);
+    assert_eq!(capture.observed[0].model, "any-model");
+    assert_eq!(capture.observed[0].raw_usage, Some(usage));
 }
 
 #[test]
@@ -247,8 +272,8 @@ fn dropping_or_unpriced_usage_keeps_the_full_reservation() {
 }
 
 #[test]
-fn authorization_is_rechecked_and_route_model_identity_cannot_drift() {
-    let (root, accounts, task, mut request, body) = setup();
+fn route_url_and_model_identity_cannot_drift() {
+    let (_root, accounts, task, mut request, body) = setup();
     request.url.push_str("/elsewhere");
     let admitted = accounts
         .before_send(&mut request, Some(&body))
@@ -257,34 +282,11 @@ fn authorization_is_rechecked_and_route_model_identity_cannot_drift() {
     assert_eq!(request.url, "http://localhost/responses");
     drop(admitted);
     let wrong = EncodedJsonBody::encode(
-        &json!({"model": "muse-spark-1.3", "stream": true, "max_output_tokens": 128}),
+        &json!({"model": "fixture-other", "stream": true, "max_output_tokens": 128}),
     )
     .unwrap();
     assert!(accounts.before_send(&mut request, Some(&wrong)).is_err());
-    std::fs::write(
-        root.path().join("grant.json"),
-        "{\"data_authorized\":false}",
-    )
-    .unwrap();
-    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
     assert_eq!(task.attempts().unwrap().len(), 1);
-}
-
-#[test]
-fn durable_revocation_marker_blocks_future_contributor_dispatch() {
-    let (root, accounts, task, mut request, body) = setup();
-    std::fs::write(
-        root.path().join("evidence").join(REVOCATION_FILE),
-        serde_json::to_vec(&json!({
-            "schema": 1,
-            "revoked": true,
-            "source": "Oh My Diff inspector"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
-    assert!(task.attempts().unwrap().is_empty());
 }
 
 #[test]
@@ -318,6 +320,8 @@ fn paid_preparation_caps_output_and_rejects_unbounded_or_underreserved_requests(
         .get_mut("child")
         .unwrap()
         .rates
+        .as_mut()
+        .unwrap()
         .reservation_microusd = 1;
     assert!(
         accounts
@@ -434,23 +438,27 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
         SUBSCRIPTION_RESPONSES_URL,
         true
     ));
+    task.start_worker(
+        "subscriber".into(),
+        "lead".into(),
+        1,
+        WorkerLimits {
+            requests: 2,
+            exposure_microusd: 0,
+            seconds: 20,
+        },
+    )
+    .unwrap();
     {
         let mut state = accounts.0.lock().unwrap();
         let account = state.get_mut("child").unwrap();
-        account.model = "fixture-model".into();
+        account.owner = "subscriber".into();
         account.provider = "openai".into();
         account.url = SUBSCRIPTION_RESPONSES_URL.into();
-        account.rates.included_subscription = true;
-        account.rates.reservation_microusd = 0;
+        let rates = account.rates.as_mut().unwrap();
+        rates.included_subscription = true;
+        rates.reservation_microusd = 0;
         account.worker_authorization = Some((path.clone(), sha.clone()));
-        account.authorized_presets = vec![RequestPreset {
-            name: "worker".into(),
-            model: account.model.clone(),
-            provider: account.provider.clone(),
-            reasoning: "high".into(),
-            url: account.url.clone(),
-            accounting_provider: account.provider.clone(),
-        }];
     }
     let body = EncodedJsonBody::encode(
         &json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true}),
@@ -464,10 +472,10 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
         task.authorize_worker_route("absent", "openai", "fixture-model")
             .is_err()
     );
-    task.authorize_worker_route("worker", "openai", "fixture-model")
+    task.authorize_worker_route("subscriber", "openai", "fixture-model")
         .unwrap();
     assert!(
-        task.authorize_worker_route("worker", "openai", "other-model")
+        task.authorize_worker_route("subscriber", "openai", "other-model")
             .is_err()
     );
     assert!(task.admit("lead", "openai", "fixture-model", 0).is_err());
@@ -512,4 +520,27 @@ fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
     assert_eq!(record.settled_microusd, Some(0));
     std::fs::remove_file(path).unwrap();
     assert!(accounts.before_send(&mut request, Some(&body)).is_err());
+}
+
+#[test]
+fn stream_control_stops_only_at_output_boundaries_and_carries_the_retry() {
+    let (root, accounts, _task, mut request, body) = setup();
+    let source = "export default api => { api.middleware('response_stream', event => event.boundary && /forbidden/.test(event.text ?? '') ? {stop:{reason:'rule'},retry:{inject:'Avoid the forbidden word.'}} : null); }";
+    install_middleware(&accounts, root.path(), source);
+    let mut attempt = accounts
+        .before_send(&mut request, Some(&body))
+        .unwrap()
+        .unwrap();
+    let mut delta = json!({"type":"response.output_text.delta","delta":"forbidden"});
+    attempt.observe(&mut delta, true).unwrap();
+    let mut done = json!({"type":"response.output_item.done","item":{"type":"message",
+        "content":[{"type":"output_text","text":"forbidden"}]}});
+    let error = attempt.observe(&mut done, true).unwrap_err();
+    let message = match error {
+        TransportError::Build(message) => message,
+        other => panic!("unexpected error {other:?}"),
+    };
+    let control = codex_api::request_observer::stream_control(&message).unwrap();
+    assert_eq!(control["reason"], "rule");
+    assert_eq!(control["retry"]["inject"], "Avoid the forbidden word.");
 }

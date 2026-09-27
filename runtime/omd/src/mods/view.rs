@@ -38,6 +38,8 @@ pub struct ModView {
     pub tool_template: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<ModSelectionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -69,6 +71,8 @@ pub struct ModViewPatch {
     pub tool_template: Option<String>,
     #[serde(default)]
     pub selection: Option<ModSelectionPolicy>,
+    #[serde(default)]
+    pub placeholder: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -224,7 +228,26 @@ pub enum ModComponent {
         #[serde(default)]
         children: Vec<ModComponent>,
     },
+    List {
+        id: String,
+        label: String,
+        rows: Vec<ModListRow>,
+        #[serde(default)]
+        selected: Option<String>,
+        #[serde(default)]
+        height: Option<u16>,
+        action: ModCommandAction,
+    },
     Slot,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModListRow {
+    pub value: String,
+    pub label: String,
+    #[serde(default)]
+    pub spans: Vec<ModSpan>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -264,6 +287,7 @@ pub struct ModSelectOption {
 pub enum ModComponentAction {
     Command(ModCommandAction),
     Copy { copy: String, label: String },
+    Insert { insert: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -387,6 +411,8 @@ pub struct ModTheme {
     pub icons: ModIcons,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picker: Option<ModPicker>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub glyphs: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -443,6 +469,20 @@ pub struct ModThemePatch {
     pub icons: Option<ModIcons>,
     #[serde(default)]
     pub picker: Option<ModPicker>,
+    #[serde(default)]
+    pub glyphs: BTreeMap<String, String>,
+}
+
+pub const MOD_GLYPH_LIMIT: usize = 16;
+
+pub fn valid_glyphs(glyphs: &BTreeMap<String, String>) -> bool {
+    glyphs.len() <= MOD_GLYPH_LIMIT
+        && glyphs.iter().all(|(source, display)| {
+            (2..=4).contains(&source.len())
+                && source.bytes().all(|byte| byte.is_ascii_graphic())
+                && display.chars().count() == source.chars().count()
+                && !display.chars().any(char::is_control)
+        })
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -616,6 +656,7 @@ impl ModComponentAction {
                     && !label.is_empty()
                     && visible(label, 128)
             }
+            Self::Insert { insert } => !insert.is_empty() && multiline(insert, 4096),
         }
     }
 }
@@ -755,6 +796,31 @@ impl ModComponent {
                     })
                     && action.valid()
             }
+            Self::List {
+                id,
+                label,
+                rows,
+                selected,
+                height,
+                action,
+            } => {
+                let values = rows.iter().map(|row| row.value.as_str()).collect::<BTreeSet<_>>();
+                identified(id, label, ids)
+                    && rows.len() <= 200
+                    && values.len() == rows.len()
+                    && selected.as_ref().is_none_or(|value| values.contains(value.as_str()))
+                    && height.is_none_or(|height| (1..=40).contains(&height))
+                    && rows.iter().all(|row| {
+                        !row.value.is_empty()
+                            && visible(&row.value, 256)
+                            && !row.label.is_empty()
+                            && visible(&row.label, 256)
+                            && row.spans.len() <= 12
+                            && row.spans.iter().all(|span| visible(&span.text, 256))
+                            && row.spans.iter().map(|span| span.text.chars().count()).sum::<usize>() <= 256
+                    })
+                    && action.valid()
+            }
             Self::Slot => {
                 *slots += 1;
                 *slots <= 1
@@ -844,7 +910,8 @@ fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
         | ModComponent::Input { id, .. }
         | ModComponent::Select { id, .. }
         | ModComponent::Markdown { id, .. }
-        | ModComponent::Code { id, .. } => {
+        | ModComponent::Code { id, .. }
+        | ModComponent::List { id, .. } => {
             ids.insert(id.clone());
         }
         ModComponent::Slot => {}
@@ -948,6 +1015,7 @@ impl ModThemePatch {
         if self.picker.is_some() {
             target.picker = self.picker;
         }
+        target.glyphs.extend(self.glyphs);
     }
 }
 
@@ -977,6 +1045,11 @@ impl ModViewPatch {
                 .selection
                 .as_ref()
                 .is_some_and(|policy| !policy.valid())
+            || patch
+                .placeholder
+                .as_ref()
+                .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80))
+            || !valid_glyphs(&patch.theme.glyphs)
             || serde_json::to_vec(&patch)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_patch"));
@@ -1058,6 +1131,14 @@ impl ModViewPatch {
         if target.status.len() > 4 {
             return Err(failure("terminal_status_limit"));
         }
+        if self
+            .theme
+            .glyphs
+            .keys()
+            .any(|glyph| target.theme.glyphs.contains_key(glyph))
+        {
+            return Err(failure("terminal_glyph_conflict"));
+        }
         self.theme.apply(&mut target.theme);
         if let Some(mode) = self.completed_tools {
             if *completed_tools_owner {
@@ -1072,6 +1153,13 @@ impl ModViewPatch {
             }
             target.selection = Some(selection);
         }
+        if let Some(placeholder) = self.placeholder {
+            if target.placeholder.is_some() {
+                return Err(failure("terminal_placeholder_conflict"));
+            }
+            target.placeholder = Some(placeholder);
+        }
+
         if let Some(template) = self.message_template {
             target.message_template = Some(match target.message_template.take() {
                 Some(current) => template.replace("{text}", &current),
@@ -1122,6 +1210,11 @@ impl ModView {
                 .selection
                 .as_ref()
                 .is_some_and(|policy| !policy.valid())
+            || view
+                .placeholder
+                .as_ref()
+                .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80))
+            || !valid_glyphs(&view.theme.glyphs)
             || serde_json::to_vec(&view)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_view"));

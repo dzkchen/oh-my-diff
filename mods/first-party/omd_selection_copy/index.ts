@@ -1,4 +1,4 @@
-import type { Json, ModAPI, TerminalSelectionEvent, TerminalSelectionPolicy, TerminalSelectionSource } from '../../api.d.ts';
+import type { Json, ModAPI, TerminalSelectionEvent, TerminalSelectionPolicy, TerminalSelectionSource } from '../../api-0.1.d.ts';
 
 type Saved = { copy: boolean | null; sources: TerminalSelectionSource[] | null; min: number | null; last: string | null; detail: string | null };
 

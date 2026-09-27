@@ -1,4 +1,4 @@
-import type { ModAPI } from '../../api.d.ts';
+import type { ModAPI } from '../../api-0.1.d.ts';
 
 export default function activate(api: ModAPI) {
   const layout = api.settings.layout === 'native' ? 'native' : 'compact';

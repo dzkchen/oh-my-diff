@@ -1,4 +1,4 @@
-import type { Json, ModAPI, TerminalView } from '@oh-my-diff/mod-api';
+import type { Json, ModAPI, TerminalView } from '@oh-my-diff/mod-api/0.1';
 
 const VERSION = '2.0.0';
 

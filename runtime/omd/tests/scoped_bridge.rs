@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[test]
+#[ignore = "worker presets were retired in Batch 2.5; Batch 2.55 moves the scoped-data example onto configured routes"]
 fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();

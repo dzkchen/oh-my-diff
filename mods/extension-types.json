@@ -291,6 +291,14 @@
       "why_mod": "Uses only a public tool export and a granted generic service request; no live engine replacement."
     },
     {
+      "path": "mods/examples/release_check",
+      "id": "release_check",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "author_example",
+      "why_mod": "An independent author package that uses only the 0.2 host primitives: a contract document, receipts, sandboxed commands, workspace listing, durable store and evidence, stream control, built-in controls and a list replacement."
+    },
+    {
       "id": "omd_advisor",
       "version": "0.1.0-preview.1",
       "path": "mods/first-party/omd_advisor",

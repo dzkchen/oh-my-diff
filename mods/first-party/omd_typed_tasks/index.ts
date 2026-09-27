@@ -1,4 +1,4 @@
-import type { AgentResult, Json, ModAPI } from '../../api.d.ts';
+import type { AgentResult, Json, ModAPI } from '../../api-0.1.d.ts';
 
 type Shape = { type: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean'; properties?: Record<string, Shape>; required?: string[]; items?: Shape; enum?: Json[]; additionalProperties?: boolean; maxLength?: number; maxItems?: number };
 type TaskType = { role: string; route: string; tools: 'read_search' | 'workspace_edit'; result_schema: Shape };

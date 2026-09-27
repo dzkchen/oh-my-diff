@@ -80,7 +80,7 @@ impl ModStore {
         if selection.enabled
             || hash != selection.sha256
             || selection.capabilities != package.capabilities
-            || !package.capabilities.iter().any(|c| c == "state")
+            || !package.capabilities.iter().any(|c| c == state_capability(&package.api))
         {
             return Err(failure(
                 "migration_requires_disabled_trusted_state_capability",
@@ -102,6 +102,7 @@ impl ModStore {
             package,
             source,
             selection: selection.clone(),
+            adapter: None,
             state: previous["value"].clone(),
             registrations: Registrations::default(),
             source_use: ModSourceUse::default(),
@@ -166,7 +167,7 @@ impl ModStore {
             || !package
                 .capabilities
                 .iter()
-                .any(|capability| capability == "state")
+                .any(|capability| capability == state_capability(&package.api))
         {
             return Err(failure(
                 "rollback_requires_disabled_trusted_state_capability",

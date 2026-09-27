@@ -30,16 +30,6 @@ pub(crate) struct Grant {
     read_hashes: BTreeMap<PathBuf, String>,
 }
 
-impl Grant {
-    pub(crate) fn covers(&self, candidate: &Route) -> bool {
-        self.route.as_ref().is_some_and(|route| {
-            route.provider == candidate.provider
-                && route.model == candidate.model
-                && route.responses_url == candidate.responses_url
-        })
-    }
-}
-
 #[derive(Default)]
 pub(super) struct Services {
     records: tokio::sync::Mutex<BTreeMap<String, Service>>,
@@ -96,9 +86,19 @@ impl Services {
         }
     }
 
-    pub(super) async fn cleanup(&self) {
-        let records = std::mem::take(&mut *self.records.lock().await);
-        for (_, service) in records {
+    pub(super) async fn cleanup_session(&self, session: &Session) {
+        let owned = {
+            let mut records = self.records.lock().await;
+            let keys = records
+                .iter()
+                .filter(|(_, service)| Arc::ptr_eq(&service.task, &session.task))
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|key| records.remove(&key))
+                .collect::<Vec<_>>()
+        };
+        for service in owned {
             service.stop().await;
         }
     }
@@ -175,9 +175,7 @@ impl Services {
             return Err("service_already_registered".into());
         }
         let host = &lead.host;
-        let grant = host
-            .manifest
-            .mod_services
+        let grant = host.config.services
             .iter()
             .find(|g| g.id == selection.id && g.mod_id == mod_id)
             .cloned()
@@ -213,7 +211,7 @@ impl Services {
                 return Err("service_source_changed".into());
             }
         }
-        if grant.program.starts_with(&host.manifest.repository)
+        if grant.program.starts_with(&host.repository)
             || grant.program.canonicalize().map_err(|e| e.to_string())? != grant.program
         {
             return Err("service_executable_must_be_canonical_and_outside_repository".into());
@@ -240,7 +238,7 @@ impl Services {
         if grant.read_paths.len() > 16 {
             return Err("service_read_path_limit".into());
         }
-        let mut reads = host.manifest.toolchain_reads.clone();
+        let mut reads = host.config.toolchain_reads.clone();
         reads.push(grant.program.clone());
         let supervisor = std::env::current_exe()
             .map_err(|e| e.to_string())?
@@ -248,9 +246,10 @@ impl Services {
             .map_err(|e| e.to_string())?;
         reads.push(supervisor.clone());
         reads.extend(grant.read_paths.iter().cloned());
-        let mut denied = execution::protected_paths(&host.manifest)
+        let mut denied = host
+            .protected_paths()
             .into_iter()
-            .filter(|path| Some(path) != host.manifest.mods.as_ref())
+            .filter(|path| *path != host.root)
             .collect::<Vec<_>>();
         let mut parent = (*parent).clone();
         let inherited = execution::intersect(
@@ -262,11 +261,7 @@ impl Services {
                 .clone(),
             parent.cwd.as_path(),
         )?;
-        let source = host
-            .manifest
-            .mods
-            .as_ref()
-            .map(|store| store.join("sources").join(mod_id));
+        let source = Some(host.root.join("sources").join(mod_id));
         for entry in inherited.file_system_sandbox_policy().entries {
             if entry.access != FileSystemAccessMode::Deny {
                 continue;
@@ -276,7 +271,7 @@ impl Services {
             };
             let path = path.to_path_buf();
             if path == Path::new("/")
-                || host.manifest.mods.as_ref() == Some(&path)
+                || host.root == path
                 || (source.as_ref() == Some(&path) && grant.read_paths.contains(&path))
             {
                 continue;
@@ -294,7 +289,7 @@ impl Services {
             .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(scope))
             .map_err(|e| e.to_string())?;
         let mut config =
-            execution::isolated(&parent, &host.manifest.repository, &reads, &denied, false)?;
+            execution::isolated(&parent, &host.repository, &reads, &denied, false)?;
         if grant.network {
             let service_profile = config.permissions.effective_permission_profile();
             let profile = codex_protocol::models::PermissionProfile::from_runtime_permissions(
@@ -319,12 +314,10 @@ impl Services {
             {
                 return Err("invalid_secret_environment_key".into());
             }
-            let path = host
-                .manifest
-                .mod_secret_refs
+            let path = host.config.secret_refs
                 .get(reference)
                 .ok_or("unknown_secret_reference")?;
-            if path.starts_with(&host.manifest.repository)
+            if path.starts_with(&host.repository)
                 || !path.is_absolute()
                 || std::fs::symlink_metadata(path)
                     .map_err(|_| "secret_reference_unavailable")?
@@ -364,12 +357,12 @@ impl Services {
                 grant.id,
                 manager.reserve_thread_id()
             );
-            host.task
+            lead.session.task
                 .start_worker(
                     worker.clone(),
                     lead.owner.clone(),
                     lead.depth.saturating_add(1),
-                    host.manifest.worker_limits.clone(),
+                    host.config.worker_limits.clone(),
                 )
                 .map_err(|e| e.to_string())?;
             struct RequestGuard {
@@ -382,7 +375,7 @@ impl Services {
                 }
             }
             let _guard = RequestGuard {
-                task: host.task.clone(),
+                task: lead.session.task.clone(),
                 worker,
             };
             let mut argv = vec![grant.program.to_string_lossy().into_owned()];
@@ -392,8 +385,7 @@ impl Services {
             if argv.len() > 128 || argv.iter().map(String::len).sum::<usize>() > 24576 {
                 return Err("service_argument_limit".into());
             }
-            let timeout = host
-                .task
+            let timeout = lead.session.task
                 .remaining()
                 .map_err(|e| e.to_string())?
                 .0
@@ -409,7 +401,7 @@ impl Services {
             let output = tokio::time::timeout(timeout, request_output(&config, supervised))
                 .await
                 .map_err(|_| "service_request_deadline")??;
-            host.task.check_active().map_err(|e| e.to_string())?;
+            lead.session.task.check_active().map_err(|e| e.to_string())?;
             if output["exit_code"] != 0 {
                 return Err("service_request_failed".into());
             }
@@ -454,27 +446,27 @@ impl Services {
             })
             .transpose()?;
         let worker = format!("sidecar-{}-{}", grant.id, manager.reserve_thread_id());
-        host.task
+        lead.session.task
             .start_worker(
                 worker.clone(),
                 lead.owner.clone(),
                 lead.depth.saturating_add(1),
-                host.manifest.worker_limits.clone(),
+                host.config.worker_limits.clone(),
             )
             .map_err(|e| e.to_string())?;
         let mut argv = vec![grant.program.to_string_lossy().into_owned()];
         argv.extend(grant.arguments);
         if argv.len() > 128 || argv.iter().map(String::len).sum::<usize>() > 8192 {
-            let _ = host.task.finish_worker(&worker);
+            let _ = lead.session.task.finish_worker(&worker);
             return Err("service_argument_limit".into());
         }
-        let owner = host.clone();
-        let timeout = host
-            .task
+        let task = lead.session.task.clone();
+        let output_bytes = host.config.snapshot_bytes;
+        let timeout = lead.session.task
             .remaining()
             .map_err(|e| e.to_string())?
             .0
-            .min(Duration::from_secs(host.manifest.worker_limits.seconds));
+            .min(Duration::from_secs(host.config.worker_limits.seconds));
         let mut supervised = vec![
             supervisor.to_string_lossy().into_owned(),
             "--omd-managed-service-v1".into(),
@@ -484,7 +476,7 @@ impl Services {
         supervised.extend(argv);
         let job = tokio::spawn(async move {
             let result =
-                tokio::time::timeout(timeout, execution::command(&owner, &config, supervised))
+                tokio::time::timeout(timeout, execution::command(&task, output_bytes, &config, supervised))
                     .await
                     .map_err(|_| "sidecar_deadline".to_string())??;
             Ok(json!({"exit_code":result["exit_code"],"timed_out":result["timed_out"]}))
@@ -497,7 +489,7 @@ impl Services {
                 // A provider becomes routable only after its readiness handshake succeeds.
                 route: None,
                 job: Some(job),
-                task: host.task.clone(),
+                task: lead.session.task.clone(),
                 worker: worker.clone(),
             },
         );
@@ -506,7 +498,7 @@ impl Services {
         if let (Some(port), Some(route)) = (port, grant.route) {
             let ready = tokio::time::timeout(Duration::from_secs(3), async {
                 loop {
-                    host.task.check_active().map_err(|e| e.to_string())?;
+                    lead.session.task.check_active().map_err(|e| e.to_string())?;
                     if self
                         .records
                         .lock()

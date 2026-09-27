@@ -1,10 +1,189 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.1.0-experimental.9` on OMD `0.1.0` and Codex `0.157.0`. The package's
-[`api.d.ts`](api.d.ts) is the complete typed surface. A store also generates
-`active-host.d.ts` and `installed-contracts.d.ts`; those files identify the
-running host and the exact service contracts available to consumers.
+`0.2.0-experimental.1` on OMD `0.1.0` and Codex `0.157.0`. The package's
+[`api.d.ts`](api.d.ts) is the complete typed surface. Packages that still declare
+an `0.1.0-experimental.*` API import the transitional
+`@oh-my-diff/mod-api/0.1` surface ([`api-0.1.d.ts`](api-0.1.d.ts)); the sections
+after [API 0.2 host primitives](#api-02-host-primitives) describe that earlier
+surface and are retired with it. A store also generates `active-host.d.ts` and
+`installed-contracts.d.ts`; those files identify the running host and the exact
+service contracts available to consumers.
+
+## API 0.2 host primitives
+
+The host is feature-agnostic: every operation, event and capability below is
+available to any trusted mod on equal terms, and none of them names a product
+feature. `OMD_MODE=omd` runs the mod host in the default session;
+`OMD_MODE=upstream_direct` (or no `OMD_MODE`) runs pinned upstream behavior
+without mods. `OMD_MODE=platform`, `OMD_MODE=enabled` and
+`OMD_CONTROLLED_MANIFEST` are rejected with a message naming `OMD_MODE=omd`.
+The [`release_check` example](examples/release_check) is an independent
+author package that uses only this surface.
+
+### Capabilities
+
+Capabilities name authority classes. A call or registration outside the
+package's trusted capabilities fails with `capability_denied: NAME` before any
+native work.
+
+| Capability | Grants |
+| --- | --- |
+| `exec` | `exec.run`, `process.*`, `sidecars.*` |
+| `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, the `workspace_change` event |
+| `fs.write` | `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
+| `network` | `exec.run` and `process.start` with `network: "loopback"` |
+| `model` | `routes.list`, `providers.*`, the `routing` event |
+| `agents` | `agents.*`, `task.status`, `workspace.integrate` |
+| `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
+| `sessions` | `sessions.list`, `sessions.read`, turn evidence on `turn_end` |
+| `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
+| `builtins` | `api.builtins` |
+| `terminal` | `terminal`, `list`, `selection` and `selection_result` events |
+| `context`, `tools`, `commands`, `lifecycle`, `input`, `interception`, `compaction`, `middleware`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
+
+A manifest may list up to 16 `exec_environment` names that `exec.run` passes
+through from the host environment; `PATH`, `HOME`, `TMPDIR`, shell, loader and
+interpreter variables and the `DYLD_`, `LD_`, `OMD_`, `CODEX_`, `SSH_`, `GPG_`
+and `GIT_CONFIG` prefixes are refused.
+
+### One-shot commands: `exec.run`
+
+`{program, sha256?, argv?, cwd?, env?, stdin?, timeout_ms?, max_output_bytes?,
+write?, network?}` runs one program in the session's effective sandbox. A bare
+program name resolves on `PATH` outside the repository; an absolute path must
+be canonical and outside the repository; `sha256` pins the resolved file. `cwd`
+is repository-relative. The environment starts empty except `PATH`, a private
+`HOME`/`TMPDIR`, `TERM=dumb`, locale variables, the declared `exec_environment`
+names and `env` entries limited to those names. The default timeout is 10 s and
+the ceiling 120 s; stdout and stderr keep at most 1 MiB each and report
+truncation; at most 4 runs per repository are concurrent. Without `write` the
+repository is read-only; with `network: "loopback"` only local binding is
+allowed. Cancellation kills the process group and returns `exec_cancelled`.
+The result is `{exit_code, signal, stdout, stderr, stdout_truncated,
+stderr_truncated, timed_out, duration_ms, program: {path, sha256}}`.
+
+### Workspace: list, stat, preconditions, backups and changes
+
+`workspace.list {path?, recursive?, include_ignored?, max_entries?}` returns at
+most 20,000 readable entries, skipping `.git`, `.omd` and paths the session
+cannot read. `workspace.stat {paths, hash?}` returns `{kind, size, mtime_ms,
+sha256?}` or `null`. Every `workspace.transaction` path needs an `expected`
+fingerprint: a SHA-256, `{size, mtime_ms}` or `null` for absent; it accepts
+`writes`, `deletes`, `renames` and `backup: true`, which stores the prior bytes
+outside the repository and returns a `ResourceRef`. `workspace.backup
+{expected}` and `workspace.restore {backup, expected}` save and restore up to
+256 files (64 MiB) under the same preconditions. Transactions and restores are
+exclusive per session. `workspace_change {repository, source, call_id, changes,
+status, reason}` is delivered after a tool call changes readable files; the
+host scans only while a mod subscribes, is bounded to 20,000 files and
+128 MiB, and reports `unavailable` instead of partial coverage.
+
+### Durable data: `store.*` and evidence
+
+`store.get/put/delete/list/export/reset` operate on a per-mod namespace with
+`repository` (default) or `user` scope. `put` and `delete` require the current
+`expected_revision` (`null` to create); a stale revision fails. Keys are at
+most 256 bytes, values 256 KiB, a scope 16 MiB and 4,096 keys; `list` pages
+256 keys. Every record carries host-attested provenance `{mod, source_sha256,
+thread_id, origin, at}`. `reset` needs the current generation. `evidence.write
+{media_type, content, label?}` stores content-addressed evidence and returns a
+`ResourceRef`; `evidence.read` reads it back in bounded pages.
+
+### Routes
+
+Routes are configuration, not names in the API. `<OMD_MOD_STORE>/host.json`
+lists `routes` with `name, provider, model, reasoning_effort, responses_url,
+rates, roles (lead|worker), tools, mods, grant`. `routes.list` returns the
+routes visible to the calling mod with `billing` and `available`. The
+`routing` replacement returns `{route}` to choose a configured lead route at
+thread start; `model_request` middleware returns `{route}` to switch a request
+among the lead routes on the same provider; `agents.spawn.route` names a worker
+route or a registered provider. Worker routes require a grant file whose hash,
+repository, provider, model and URL are rechecked on every request.
+
+### Ledger
+
+Every lead and native sub-agent request is observed and recorded in the
+session ledger (`task.status`, the `ledger` field of `context` and `terminal`
+events). Limits are enforced only on mod-initiated agents, and on the lead
+when its model matches a configured lead route with rates.
+
+### Stream control
+
+A `response_stream` middleware may return `{stop: {reason}}` or `{stop:
+{reason}, retry: {inject}}` only for an event with `boundary: true` (a
+completed output item). The host stops that response, drops the unfinished
+item, optionally adds `inject` as lower-priority developer context and retries
+under the same turn, at most twice per sampling request. Older APIs and
+non-boundary events cannot stop a stream.
+
+### Built-in controls
+
+`api.builtins({commands: {hide}, modes: {disable}})`, registered during
+activation, hides slash commands and disables collaboration modes from the next
+idle boundary until the mod is disabled, unloaded or fails. `/omd`, `/quit`,
+`/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode
+cannot be removed. A turn that requests a disabled mode runs in the default mode
+and reports why, including for app-server and exec clients.
+
+### Contracts and receipts
+
+`api.contract(document)` registers a versioned schema-2 contract document:
+`{schema: 2, id, version, description, assurance, gates: {complete?,
+integrate?}, restrict?}`. A requirement names a receipt kind, a producer (`any`,
+`lead` or `separate_agent`), bindings (`candidate`, `acceptance`) and whether
+blocking findings are allowed. Users select a contract with `omd-contract select
+STORE REPOSITORY ID@VERSION`; `omd-contract require` records a project floor in
+`.omd/contract-selection.json`. Selections pin the document digest, so a mod
+that changes a registered document makes the selection unavailable instead of
+silently weakening it; a weaker selection needs the confirmation printed by
+`omd-contract plan`. With no selection nothing is gated. `receipts.submit`
+records a receipt with a host-attested producer (`agent` must be a completed
+agent handle owned by the caller). `task.complete {candidate_sha256}` checks
+the current workspace against the `complete` gate and returns `completed` or
+`refused` with the missing requirements; `workspace.integrate` checks the
+`integrate` gate against the agent's candidate (`candidate_sha256` from
+`agents.result`). An unavailable selection fails closed. `contract.restrict`
+only narrows operations for the rest of the session.
+
+### Agents
+
+`agents.spawn {role, route, prompt, workspace?, tools?, evidence?}` starts a
+read-only or isolated-worktree agent on a worker route under the session's
+worker limits; `evidence` delivers a stored evidence reference to the agent.
+`agents.message`, `agents.wait` (at most 30 s), `agents.result`,
+`agents.cancel` and `agents.list` address only the caller's handles. Agents
+live until cancelled, the mod is disabled or fails, or the session stops.
+
+### Framed processes
+
+`process.start` takes `framing: "content-length"` (default) or `"ndjson"` and
+`network: "none"` or `"loopback"`; the protocol-named transports are removed.
+
+### Terminal lists, selection, insert, placeholder and glyphs
+
+`api.replace('list', event)` renders built-in pickers as components; the host
+keeps keyboard handling and the chosen action. `api.replace('selection',
+event)` returns `{copy: true}` to copy a transcript, composer or pager
+selection; `selection_result` reports the outcome. Components accept an
+`{insert}` action. A terminal view may set `placeholder` and
+`theme.glyphs` (2–4 printable ASCII characters mapped to the same number of
+characters; width-changing mappings are ignored).
+
+### Code-mode kernels
+
+Kernels are configuration: `[[features.code_mode.kernels]]` entries with
+`name`, `command`, absolute `driver` and `driver_sha256` register kernels for
+the `kernel` code-mode tool. The driver hash is checked before each worker
+starts; with no entries the tool reports that no kernel is configured.
+
+### Adapters
+
+A library package can declare `adapter_module: {entry, aliases}`; a dependent
+package with `adapter: "<package id>"` is wrapped by that module before
+activation and may import its aliases. The adapted package keeps only its own
+capabilities.
 
 ## Author commands
 

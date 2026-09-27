@@ -50,8 +50,10 @@ def sources():
         "plugin": json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text()),
         "api": api,
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
-        "capabilities": set(re.findall(r'"([a-z_]+)"', constant("MOD_CAPABILITIES"))),
-        "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))),
+        "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES")))
+        | set(re.findall(r'"([a-z_.]+)"', constant("LEGACY_MOD_CAPABILITIES"))),
+        "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS")))
+        | set(re.findall(r'"([a-z_.]+)"', constant("LEGACY_MOD_HOST_OPERATIONS"))),
         "features": re.findall(r'"([a-z0-9_]+)"', constant("MOD_HOST_FEATURES")),
         "apis": [
             api if row == "MOD_API_VERSION" else row.strip('"')

@@ -27,31 +27,38 @@ class ContractTests(unittest.TestCase):
         )
 
     def test_first_party_mods_use_only_the_published_api(self):
-        capabilities = mod_conformance.host_sets()[1]["capabilities"]
-        interface = re.search(r"export interface ModAPI \{(.*?)\n\}", (ROOT / "mods/api.d.ts").read_text(), re.S)
-        published = set(re.findall(r"^  (?:readonly )?(\w+)[(<:]", interface.group(1), re.M))
+        host = mod_conformance.HOST.read_text()
+        legacy = set(re.findall(r'"([a-z_.]+)"', re.search(r"LEGACY_MOD_CAPABILITIES: &\[&str\] = &\[(.*?)\];", host, re.S).group(1)))
+        surfaces = {
+            "api.d.ts": mod_conformance.host_sets()[1]["capabilities"],
+            "api-0.1.d.ts": legacy,
+        }
+        published = {}
+        for name in surfaces:
+            interface = re.search(r"export interface ModAPI \{(.*?)\n\}", (ROOT / "mods" / name).read_text(), re.S)
+            published[name] = set(re.findall(r"^  (?:readonly )?(\w+)[(<:]", interface.group(1), re.M))
         rust = "\n".join(
             path.read_text()
             for path in list((ROOT / "runtime").rglob("*.rs")) + [ROOT / "runtime/omd/src/mods/runner.mjs"]
         )
-        packages = sorted((ROOT / "mods/first-party").iterdir())
+        packages = sorted(path for path in (ROOT / "mods/first-party").iterdir() if path.is_dir())
         self.assertTrue(packages)
         for package in packages:
             manifest = json.loads((package / "mod.json").read_text())
             source = (package / "index.ts").read_text()
+            surface = "api-0.1.d.ts" if manifest["api"].startswith("0.1.") else "api.d.ts"
             with self.subTest(mod=manifest["id"]):
-                self.assertLessEqual(set(manifest["capabilities"]), capabilities)
+                self.assertLessEqual(set(manifest["capabilities"]), surfaces[surface])
                 self.assertIn(manifest["api"], {row["version"] for row in mod_compatibility.host_contract()["apis"]})
                 self.assertEqual(
-                    re.findall(r"from '([^']+)'", source), ["../../api.d.ts"] * source.count("from '")
+                    re.findall(r"from '([^']+)'", source), [f"../../{surface}"] * source.count("from '")
                 )
                 self.assertNotRegex(source, r"\b__omd\w*")
                 self.assertNotIn("globalThis", source)
                 body = "\n".join(line for line in source.splitlines() if not line.startswith("import "))
                 for symbol in set(re.findall(r"\bapi\.(\w+)", body)):
-                    self.assertIn(symbol, published)
+                    self.assertIn(symbol, published[surface])
                 self.assertNotIn(manifest["id"], rust, "a first-party mod is named in host source")
-
 
 if __name__ == "__main__":
     unittest.main()

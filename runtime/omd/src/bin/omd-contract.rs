@@ -1,14 +1,8 @@
-use codex_omd::AssuranceLabel;
-use codex_omd::ContractCatalog;
-use codex_omd::ContractChoice;
-use codex_omd::SelectionFile;
-use codex_omd::SelectionSource;
-use codex_omd::WorkflowContract;
-use codex_omd::collect_selections;
-use codex_omd::confirmation_token;
-use codex_omd::read_selection;
-use codex_omd::resolve_selection;
-use codex_omd::write_selection;
+use codex_omd::ContractDocument;
+use codex_omd::ContractResolution;
+use codex_omd::ContractSelection;
+use codex_omd::ModHost;
+use codex_omd::PolicyOwner;
 use serde_json::Value;
 use serde_json::json;
 use std::io;
@@ -17,204 +11,181 @@ use std::path::PathBuf;
 
 fn usage() -> io::Error {
     io::Error::other(
-        "usage: omd-contract list | status USER_SELECTION PROJECT_SELECTION [ID@VERSION] | plan USER_SELECTION PROJECT_SELECTION ID@VERSION | select USER_SELECTION ID@VERSION [CONFIRMATION] | require PROJECT_SELECTION ASSURANCE | clear SELECTION",
+        "usage: omd-contract list STORE | status STORE REPOSITORY | plan STORE REPOSITORY ID@VERSION | select STORE REPOSITORY ID@VERSION [CONFIRMATION] | require STORE REPOSITORY ID@VERSION | clear STORE REPOSITORY user|project",
     )
 }
 
-fn optional(path: &str) -> Option<PathBuf> {
-    (!path.is_empty() && path != "-").then(|| PathBuf::from(path))
+fn documents(store: &Path) -> io::Result<Vec<(ContractDocument, PolicyOwner)>> {
+    let root = store.canonicalize()?;
+    Ok(ModHost::open(root)?.contract_documents())
 }
 
-fn assurance(value: &str) -> io::Result<AssuranceLabel> {
-    serde_json::from_value(json!(value)).map_err(|_| {
-        io::Error::other(
-            "expected unreviewed, self_reviewed, independently_reviewed, or independently_verified",
-        )
-    })
+fn user_path(store: &Path) -> io::Result<PathBuf> {
+    let config = store.join("host.json");
+    let configured = match std::fs::read(&config) {
+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)?["contract"]["user"]
+            .as_str()
+            .map(PathBuf::from),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    Ok(configured.unwrap_or_else(|| store.join(codex_omd::USER_CONTRACT_SELECTION)))
 }
 
-fn resolve(
-    user: Option<&Path>,
-    project: Option<&Path>,
-    task: Option<&ContractChoice>,
-) -> io::Result<Value> {
-    let catalog = ContractCatalog::bundled();
-    let selections = collect_selections(&catalog, None, user, project, task)?;
-    let confirmation = selections.confirmation.clone();
-    match resolve_selection(selections.offers, selections.floor) {
-        Ok(resolution) => {
-            let satisfied =
-                !resolution.requires_confirmation || resolution.confirmation_token == confirmation;
-            Ok(json!({
-                "schema": 1,
-                "effective": resolution.effective.contract.summary()?,
-                "requirements": resolution.effective.contract.requirements,
-                "source": resolution.effective.source,
-                "owner": resolution.effective.owner,
-                "precedence": resolution.considered,
-                "floor": resolution.floor,
-                "weakens_default": resolution.weakens_default,
-                "requires_confirmation": resolution.requires_confirmation,
-                "confirmation_recorded": satisfied,
-                "activates": satisfied,
-                "note": if satisfied {
-                    "this contract activates for the next task"
-                } else {
-                    "recorded selection is weaker than the bundled default and is not confirmed; the prior contract is retained"
-                },
-            }))
+fn project_path(repository: &Path) -> PathBuf {
+    repository.join(codex_omd::PROJECT_CONTRACT_SELECTION)
+}
+
+fn read(path: &Path) -> io::Result<Option<ContractSelection>> {
+    ContractSelection::read(path).map_err(io::Error::other)
+}
+
+fn summary(document: &ContractDocument, owner: &PolicyOwner) -> Value {
+    json!({"key": document.key(), "description": document.description, "assurance": document.assurance,
+        "gates": document.gates, "restrict": document.restrict, "digest": document.digest(), "owner": owner})
+}
+
+fn effective(
+    documents: &[(ContractDocument, PolicyOwner)],
+    store: &Path,
+    repository: &Path,
+) -> io::Result<ContractResolution> {
+    let user = read(&user_path(store)?)?;
+    let project = read(&project_path(repository))?;
+    Ok(codex_omd::resolve_contract(
+        documents,
+        user.as_ref(),
+        project.as_ref(),
+    ))
+}
+
+fn describe(resolution: &ContractResolution) -> Value {
+    match resolution {
+        ContractResolution::None => {
+            json!({"status": "none", "note": "no contract is selected; completion and integration are not gated"})
         }
-        Err(conflict) => Ok(json!({
-            "schema": 1,
-            "activates": false,
-            "conflict": conflict.to_string(),
-            "retained": WorkflowContract::bundled_default().summary()?,
-            "note": "resolve the conflict explicitly; no contract is selected and nothing is downgraded",
-        })),
+        ContractResolution::Active {
+            document,
+            owner,
+            source,
+            overrode,
+        } => json!({"status": "active", "contract": summary(document, owner), "source": source,
+            "overrode": overrode}),
+        ContractResolution::Unavailable(error) => json!({"status": "unavailable", "error": error,
+            "note": "completion and integration fail closed until the selection is fixed"}),
     }
 }
 
-fn plan(user: Option<&Path>, project: Option<&Path>, choice: &ContractChoice) -> io::Result<Value> {
-    let catalog = ContractCatalog::bundled();
-    let (next, owner) = catalog.get(choice)?;
-    let current = collect_selections(&catalog, None, user, project, None)
-        .and_then(|selections| resolve_selection(selections.offers, selections.floor))
-        .map(|resolution| resolution.effective.contract)
-        .unwrap_or_else(|_| WorkflowContract::bundled_default());
-    let before = current.summary()?;
-    let after = next.summary()?;
-    let weakens = after.assurance < before.assurance;
-    Ok(json!({
-        "schema": 1,
-        "before": before,
-        "before_requirements": current.requirements,
-        "after": after,
-        "after_requirements": next.requirements,
-        "owner": owner,
+fn find(
+    documents: &[(ContractDocument, PolicyOwner)],
+    key: &str,
+) -> io::Result<(ContractDocument, PolicyOwner)> {
+    documents
+        .iter()
+        .find(|(document, _)| document.key() == key)
+        .cloned()
+        .ok_or_else(|| io::Error::other(format!("no active mod registers contract {key}")))
+}
+
+fn current(resolution: &ContractResolution) -> Option<&ContractDocument> {
+    match resolution {
+        ContractResolution::Active { document, .. } => Some(document),
+        _ => None,
+    }
+}
+
+fn plan(store: &Path, repository: &Path, key: &str) -> io::Result<Value> {
+    let documents = documents(store)?;
+    let (next, owner) = find(&documents, key)?;
+    let resolution = effective(&documents, store, repository)?;
+    let before = current(&resolution);
+    let weakens = before.is_some_and(|before| next.weaker_than(before));
+    Ok(json!({"schema": 2, "before": describe(&resolution), "after": summary(&next, &owner),
         "weakens": weakens,
-        "changes": changes(&current, &next),
-        "confirmation": weakens.then(|| confirmation_token(&before, &after)),
+        "confirmation": weakens.then(|| codex_omd::contract_confirmation(before, &next)),
         "note": if weakens {
             "this selection reduces assurance; pass the confirmation to omd-contract select"
         } else {
             "this selection does not reduce assurance"
-        },
-    }))
-}
-
-fn changes(before: &WorkflowContract, after: &WorkflowContract) -> Vec<String> {
-    let (old, new) = (before.requirements, after.requirements);
-    let mut changes = Vec::new();
-    for (label, was, now) in [
-        ("delegation", old.delegation, new.delegation),
-        ("child agents", old.child_agents, new.child_agents),
-        ("opposite-lead calls", old.opposite_lead, new.opposite_lead),
-        ("escalation", old.escalation, new.escalation),
-        ("checkpoints", old.checkpoints, new.checkpoints),
-        (
-            "milestone review",
-            old.milestone_review,
-            new.milestone_review,
-        ),
-    ] {
-        if was != now {
-            changes.push(format!(
-                "{label}: {} -> {}",
-                if was { "allowed" } else { "denied" },
-                if now { "allowed" } else { "denied" }
-            ));
-        }
-    }
-    if old.final_review != new.final_review {
-        changes.push(format!(
-            "final review: {:?} -> {:?}",
-            old.final_review, new.final_review
-        ));
-    }
-    if old.completion != new.completion {
-        changes.push(format!(
-            "completion: {:?} -> {:?}",
-            old.completion, new.completion
-        ));
-    }
-    if before.assurance() != after.assurance() {
-        changes.push(format!(
-            "assurance: {} -> {}",
-            before.assurance().label(),
-            after.assurance().label()
-        ));
-    }
-    changes
+        }}))
 }
 
 fn run(args: &[String]) -> io::Result<Value> {
     match args {
-        [command] if command == "list" => ContractCatalog::bundled().list(),
-        [command, user, project] if command == "status" => resolve(
-            optional(user).as_deref(),
-            optional(project).as_deref(),
-            None,
-        ),
-        [command, user, project, choice] if command == "status" => resolve(
-            optional(user).as_deref(),
-            optional(project).as_deref(),
-            Some(&ContractChoice::parse(choice)?),
-        ),
-        [command, user, project, choice] if command == "plan" => plan(
-            optional(user).as_deref(),
-            optional(project).as_deref(),
-            &ContractChoice::parse(choice)?,
-        ),
-        [command, user, choice] | [command, user, choice, _] if command == "select" => {
-            let confirmation = match args {
-                [_, _, _, token] => Some(token.clone()),
-                _ => None,
-            };
-            let path = PathBuf::from(user);
-            let choice = ContractChoice::parse(choice)?;
-            let catalog = ContractCatalog::bundled();
-            let (next, _) = catalog.get(&choice)?;
-            let existing = path
-                .exists()
-                .then(|| read_selection(&path, SelectionSource::UserDefault))
-                .transpose()?;
-            let selection = SelectionFile {
-                schema: 1,
-                contract: Some(choice.clone()),
-                minimum_assurance: None,
-                confirmation: confirmation.clone(),
-            };
-            write_selection(&path, &selection, SelectionSource::UserDefault)?;
-            Ok(json!({
-                "schema": 1,
-                "selected": next.summary()?,
-                "previous": existing.map(|(file, _)| file.contract).unwrap_or_default(),
-                "path": path,
-                "confirmation_recorded": confirmation.is_some(),
-                "note": "selection applies to the next task; run omd-contract status to see whether it activates",
-            }))
+        [command, store] if command == "list" => {
+            let documents = documents(Path::new(store))?;
+            Ok(json!({"schema": 2, "contracts": documents
+                .iter()
+                .map(|(document, owner)| summary(document, owner))
+                .collect::<Vec<_>>()}))
         }
-        [command, project, minimum] if command == "require" => {
-            let path = PathBuf::from(project);
-            let selection = SelectionFile {
-                schema: 1,
-                contract: None,
-                minimum_assurance: Some(assurance(minimum)?),
-                confirmation: None,
-            };
-            write_selection(&path, &selection, SelectionSource::ProjectRecommendation)?;
-            Ok(json!({
-                "schema": 1,
-                "minimum_assurance": selection.minimum_assurance,
-                "path": path,
-                "note": "a weaker selection now conflicts visibly and fails closed",
-            }))
+        [command, store, repository] if command == "status" => {
+            let (store, repository) = (Path::new(store), Path::new(repository));
+            let documents = documents(store)?;
+            let mut value = describe(&effective(&documents, store, repository)?);
+            value["schema"] = json!(2);
+            value["user_selection"] = json!(user_path(store)?);
+            value["project_selection"] = json!(project_path(repository));
+            Ok(value)
         }
-        [command, path] if command == "clear" => {
-            std::fs::remove_file(path)?;
-            Ok(
-                json!({"schema": 1, "cleared": path, "note": "the bundled default applies unless another selection remains"}),
-            )
+        [command, store, repository, key] if command == "plan" => {
+            plan(Path::new(store), Path::new(repository), key)
+        }
+        [command, store, repository, key] | [command, store, repository, key, _]
+            if command == "select" =>
+        {
+            let confirmation = args.get(4).cloned();
+            let (store, repository) = (Path::new(store), Path::new(repository));
+            let documents = documents(store)?;
+            let (next, owner) = find(&documents, key)?;
+            let resolution = effective(&documents, store, repository)?;
+            let before = current(&resolution);
+            if before.is_some_and(|before| next.weaker_than(before))
+                && confirmation.as_deref()
+                    != Some(codex_omd::contract_confirmation(before, &next).as_str())
+            {
+                return Err(io::Error::other(
+                    "this selection reduces assurance; run omd-contract plan and pass its confirmation",
+                ));
+            }
+            let path = user_path(store)?;
+            ContractSelection {
+                schema: 2,
+                contract: Some(next.key()),
+                contract_digest: Some(next.digest()),
+                confirmation,
+                ..ContractSelection::default()
+            }
+            .write(&path)?;
+            Ok(json!({"schema": 2, "selected": summary(&next, &owner), "path": path,
+                "note": "the selection applies to the next session"}))
+        }
+        [command, store, repository, key] if command == "require" => {
+            let documents = documents(Path::new(store))?;
+            let (floor, owner) = find(&documents, key)?;
+            let path = project_path(Path::new(repository));
+            let mut selection = read(&path)?.unwrap_or(ContractSelection {
+                schema: 2,
+                ..ContractSelection::default()
+            });
+            selection.floor = Some(floor.key());
+            selection.floor_digest = Some(floor.digest());
+            selection.write(&path)?;
+            Ok(json!({"schema": 2, "floor": summary(&floor, &owner), "path": path,
+                "note": "weaker selections now resolve to this floor"}))
+        }
+        [command, store, repository, scope] if command == "clear" => {
+            let path = match scope.as_str() {
+                "user" => user_path(Path::new(store))?,
+                "project" => project_path(Path::new(repository)),
+                _ => return Err(usage()),
+            };
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+            Ok(json!({"schema": 2, "cleared": path}))
         }
         _ => Err(usage()),
     }

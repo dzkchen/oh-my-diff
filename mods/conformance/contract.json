@@ -1,22 +1,22 @@
 {
   "schema": 1,
-  "api": "0.1.0-experimental.9",
+  "api": "0.2.0-experimental.1",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {
       "id": "coordination.lead_route",
       "group": "coordination",
-      "decision": "Lead model, provider and reasoning preset",
-      "observe": "`routes.list` returns the host-configured presets",
-      "alter": "no partial edit; a preset is selected whole",
+      "decision": "Lead model, provider and reasoning route",
+      "observe": "`routes.list` returns the routes configured in `host.json` that the mod may see",
+      "alter": "no partial edit; a configured route is selected whole",
       "replace": "routing",
-      "timing": "thread creation and resume, before the first request of the session",
-      "ownership": "mod: fixed/task-entry choice; host: the preset table, exact task-entry match and native admission",
-      "limits": "only host-configured presets; an unauthorized name or task-entry mismatch retains the native fallback; arbitrary models, endpoints or credentials are never reachable",
-      "native": "native plugins and hooks cannot change model, provider or reasoning effort at all",
+      "timing": "thread creation, and per request through `model_request` among lead routes on the same provider",
+      "ownership": "mod: which configured route; host: the route table, grants, billing and admission",
+      "limits": "only configured routes; an unknown or unauthorized name keeps the configured model; arbitrary models, endpoints or credentials are never reachable",
+      "native": "native plugins and hooks cannot change model, provider or reasoning effort",
       "covers": {
         "capabilities": [
-          "routing"
+          "model"
         ],
         "events": [
           "routing"
@@ -30,58 +30,24 @@
       },
       "evidence": [
         "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose",
-        "fixture:routing/success",
-        "fixture:conformance/success"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "coordination.worker_context",
-      "group": "coordination",
-      "decision": "Delegated worker context policy",
-      "observe": "the configured modes and active native fallback",
-      "alter": "select one complete configured policy",
-      "replace": "worker_context",
-      "timing": "thread creation, resume and each turn-boundary reload",
-      "ownership": "mod: focused-brief, shared-packet or parent-history choice; host: configuration and context assembly",
-      "limits": "only configured bounded policies; invalid, unavailable or broken decisions retain the native fallback; instruction priority, permissions and accounting remain native",
-      "native": "native plugins and hooks can add context but cannot select the bounded delegated-worker context policy",
-      "covers": {
-        "capabilities": [
-          "context"
-        ],
-        "events": [
-          "worker_context"
-        ],
-        "replacements": [
-          "worker_context"
-        ],
-        "operations": []
-      },
-      "evidence": [
-        "rust:worker_context_is_exclusive_typed_and_failure_isolated",
-        "fixture:coordination-focused/success",
-        "fixture:coordination-shared/success",
-        "fixture:coordination-parent/success"
-      ],
-      "replace_note": null
+        "patch:middleware_switches_only_configured_lead_routes_and_transforms_text",
+        "patch:host_config_defaults_are_bounded_and_route_free"
+      ]
     },
     {
       "id": "coordination.agents",
       "group": "coordination",
-      "decision": "Worker agents and isolated integration: spawn, message, cancel, wait, validate, consume, integrate",
-      "observe": "`agents.list`, `agents.result`, and the `agent_end` event",
-      "alter": "role, host-authorized route, prompt and read-only or isolated-worktree surface of each spawn; decide when a validated result is consumed and an edit candidate is integrated",
+      "decision": "Mod-initiated agents and isolated integration",
+      "observe": "`agents.list`, `agents.result`, `agents.wait` and `task.status` report the caller's agents and the session ledger",
+      "alter": "`agents.message` steers a running agent; `agents.cancel` stops it",
       "replace": null,
-      "timing": "inside a native tool callback, within the current task",
-      "ownership": "mod: typed task and result policy; host: worker threads, snapshots, checks, review, conflict-safe integration, permissions, deadlines and the shared allowance",
-      "limits": "private handles owned by the spawning mod and generation; writable workers only receive a native isolated worktree; validation precedes consumption; integration requires a completed consumed worker, exact candidate checks and selected-contract review; recursion, cleanup and accounting stay native; handles die with the turn",
-      "native": "native plugins cannot spawn or steer agents; `subagent_start`/`subagent_stop` hooks only observe",
+      "timing": "any tool, command or lifecycle callback with a live session",
+      "ownership": "mod: role, prompt, route, tool ceiling and when to integrate; host: sandbox, worktree, worker limits, accounting and the integrate gate",
+      "limits": "worker routes need a current grant; at most 16 records; a writable agent works only in an isolated worktree; integration refuses stale parents, changed candidates and an unmet `integrate` contract gate",
+      "native": "native subagents cannot be spawned, limited or integrated by a plugin or hook",
       "covers": {
         "capabilities": [
-          "agents",
-          "execution",
-          "task"
+          "agents"
         ],
         "events": [
           "agent_end"
@@ -94,173 +60,63 @@
           "agents.result",
           "agents.wait",
           "agents.list",
-          "checkpoint.read",
+          "task.status",
           "workspace.integrate"
         ]
       },
       "evidence": [
-        "fixture:full/success",
-        "fixture:cancel/success",
-        "rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks"
-      ],
-      "replace_note": null
+        "rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks",
+        "rust:integration_candidate_preserves_unrelated_edits_and_rejects_conflicts",
+        "rust:worker_route_grants_are_exact_nontransferable_and_share_allowances"
+      ]
     },
     {
-      "id": "coordination.delegation",
+      "id": "coordination.contracts",
       "group": "coordination",
-      "decision": "Delegated contribution: brief and evidence selection",
-      "observe": "the request the model made",
-      "alter": "brief text and selected evidence before dispatch",
-      "replace": "tool_before",
-      "timing": "pre-dispatch, inside the replacing mod tool",
-      "ownership": "host: worker context assembly, review, integration and the recorded result",
-      "limits": "cannot widen evidence beyond what the host exposes, forge a contribution result, or bypass the native reviewed path",
-      "native": "`pre_tool_use` can block a tool or rewrite its JSON input, but cannot route it to another implementation",
-      "covers": {
-        "capabilities": [
-          "recovery"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "delegation.contribute"
-        ]
-      },
-      "evidence": [
-        "fixture:conformance/success",
-        "fixture:preview/success",
-        "fixture:preview-denied/direct"
-      ],
-      "replace_note": "redirects `omd_contribute` to a mod tool"
-    },
-    {
-      "id": "coordination.review",
-      "group": "coordination",
-      "decision": "Review cadence and final review invocation",
-      "observe": "the active contract requirements",
-      "alter": "when review runs and on which candidate",
-      "replace": "tool_before",
-      "timing": "inside a native tool callback during the task",
-      "ownership": "host: reviewer route, the candidate-bound findings ledger, shared limits and acceptance",
-      "limits": "no implicit downgrade of the selected contract; evidence and findings stay native; a stale candidate digest fails closed",
-      "native": "no native hook can run or replace a review",
-      "covers": {
-        "capabilities": [
-          "review"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "review.run",
-          "review.complete"
-        ]
-      },
-      "evidence": [
-        "fixture:policy/completion"
-      ],
-      "replace_note": "redirects `omd_complete`"
-    },
-    {
-      "id": "coordination.recovery",
-      "group": "coordination",
-      "decision": "Escalation choice after a preserved failure",
-      "observe": "preserved failure evidence through the checkpoint",
-      "alter": "failure classification, eligible-tool decision and advisory route while forwarding the summary and cited call IDs",
-      "replace": "tool_before",
-      "timing": "inside a native tool callback during the task",
-      "ownership": "host: exact failure evidence, class validation, permissions, bounded attempts, advice dispatch, return control and the retained evidence",
-      "limits": "advice only; the mod cannot forge evidence, move worker lifecycle into TypeScript, widen permissions or exceed native attempt bounds",
-      "native": "no native hook participates in recovery",
-      "covers": {
-        "capabilities": [
-          "recovery"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "recovery.escalate"
-        ]
-      },
-      "evidence": [
-        "fixture:recovery/escalation",
-        "fixture:recovery-denied/escalation",
-        "fixture:recovery-broken/escalation"
-      ],
-      "replace_note": "redirects `omd_escalate`"
-    },
-    {
-      "id": "coordination.outage_recovery",
-      "group": "coordination",
-      "decision": "Contributor-outage reassessment and opposite-lead fallback choice",
-      "observe": "the delegation request and configured outage policy",
-      "alter": "choose bounded opposite-lead fallback or pause after the host detects equivalent failures",
-      "replace": "tool_before",
-      "timing": "before reviewed delegation; the host reassesses only after its equivalent-failure threshold",
-      "ownership": "host: attempts, equivalent-failure detection, snapshots, allowance, original-route review, conflict-safe integration, interruption, cleanup and resume",
-      "limits": "the mod cannot declare an outage, choose an unconfigured route, bypass review, reset allowance or integrate a stale candidate",
-      "native": "no native hook can replace the fallback choice while preserving the reviewed contribution lifecycle",
-      "covers": {
-        "capabilities": [
-          "recovery"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "delegation.contribute"
-        ]
-      },
-      "evidence": [
-        "fixture:recovery/outage-fallback",
-        "fixture:recovery-pause/outage-fallback",
-        "fixture:recovery/outage-drift"
-      ],
-      "replace_note": "redirects `omd_contribute` to the recovery-aware delegation tool"
-    },
-    {
-      "id": "coordination.workflow_contract",
-      "group": "coordination",
-      "decision": "Workflow contract: registration, restriction and observation",
-      "observe": "`workflow.status` reports the active contract and its provenance; the `workflow` event",
-      "alter": "`workflow.restrict` removes authority for the task",
+      "decision": "Completion and integration contract",
+      "observe": "`contract.status` returns the selected document, provenance, receipts and restrictions",
+      "alter": "`contract.restrict` only narrows operations; `receipts.submit` adds host-attested receipts",
       "replace": null,
-      "timing": "registration at activation; restriction inside a task; selection stays native",
-      "ownership": "host: contract selection, enforcement, the assurance floor and durable evidence",
-      "limits": "restrictions only remove authority; a registration cannot shadow, weaken or select a host contract; two mods claiming one contract ID both fail closed",
-      "native": "native plugins have no workflow contract concept",
+      "timing": "selection at session start; gates at `task.complete` and `workspace.integrate`",
+      "ownership": "mod: registers documents and submits receipts; user: selects the document; host: digest pinning, project floor, producer attestation and the gate",
+      "limits": "no selection means no gate; an unavailable or changed selection fails closed; a weaker selection needs an exact confirmation; mods cannot select or weaken a contract",
+      "native": "native plugins and hooks have no completion gate",
       "covers": {
         "capabilities": [
-          "workflow"
+          "contracts"
         ],
         "events": [
-          "workflow"
+          "contract"
         ],
         "replacements": [],
         "operations": [
-          "workflow.status",
-          "workflow.restrict"
+          "receipts.submit",
+          "task.complete",
+          "contract.status",
+          "contract.restrict"
         ]
       },
       "evidence": [
-        "rust:a_workflow_mod_registers_a_contract_it_cannot_select_or_weaken",
-        "rust:a_registered_contract_may_not_redefine_a_bundled_contract_or_skip_its_capability",
-        "rust:two_mods_may_not_own_the_same_workflow_contract"
-      ],
-      "replace_note": "exclusive contract registration per contract ID, not a replacement point"
+        "rust:contract_documents_gate_on_bound_receipts_and_detect_weaker_selections",
+        "rust:contract_selection_pins_digests_applies_the_project_floor_and_fails_closed",
+        "patch:no_selection_means_no_gate_and_restrictions_are_enforced",
+        "patch:active_contracts_require_bound_receipts_and_unavailable_contracts_fail_closed"
+      ]
     },
     {
       "id": "coordination.providers",
       "group": "coordination",
-      "decision": "Provider adapter route registration",
-      "observe": "registration status",
-      "alter": "register or unregister an explicitly host-approved local service route",
+      "decision": "Local model providers",
+      "observe": "`routes.list` shows the provider route once ready",
+      "alter": "none",
       "replace": null,
-      "timing": "within the owning mod, generation and task",
-      "ownership": "host: the approved executable, its hashes, rates, credentials and the Responses transport",
-      "limits": "only pre-approved service IDs; no arbitrary endpoints, credentials or wire protocols; the route dies with the task",
-      "native": "native plugins cannot add provider routes at runtime",
+      "timing": "start, resume and turn start",
+      "ownership": "mod: registers a granted local provider; host: the grant, loopback address, readiness handshake and accounting",
+      "limits": "only a provider granted in `host.json` for that mod; loopback only; unregistered on disable or failure",
+      "native": "native plugins can add MCP servers but not model providers",
       "covers": {
         "capabilities": [
-          "providers"
+          "model"
         ],
         "events": [],
         "replacements": [],
@@ -270,34 +126,90 @@
         ]
       },
       "evidence": [
-        "fixture:provider/success"
-      ],
-      "replace_note": null
+        "rust:lifecycle_route_registration_resumes_across_two_host_calls"
+      ]
     },
     {
-      "id": "coordination.task_status",
+      "id": "coordination.ledger",
       "group": "coordination",
-      "decision": "Task status and effective settings observation",
-      "observe": "`task.status` returns the effective settings, allowance and task state",
-      "alter": "not alterable",
+      "decision": "Request ledger",
+      "observe": "`task.status` and the `ledger` field of `context` and `terminal` events",
+      "alter": "none",
       "replace": null,
-      "timing": "inside a native tool callback",
-      "ownership": "host: all reported state",
-      "limits": "read-only; secrets, credentials and store digests are never included",
-      "native": "hooks receive only their own event payload",
+      "timing": "every request",
+      "ownership": "host: observes every lead and native sub-agent request; enforces limits on mod agents and on a lead whose model matches a configured lead route with rates",
+      "limits": "observation never blocks an unenforced request; enforced requests are admitted, reserved and settled",
+      "native": "native hooks cannot see requests or usage",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:observe_only_accounts_record_usage_without_admission",
+        "rust:concurrent_admissions_cannot_oversubscribe_the_shared_limit"
+      ]
+    },
+    {
+      "id": "kernel.request_stream_middleware",
+      "group": "coordination",
+      "decision": "Request, stream and session middleware",
+      "observe": "`model_request`, `response_stream`, `prompt`, `session`, `agent`, `tool_call` and `host_operation` middleware observe in order",
+      "alter": "`response_stream` may rewrite unprotected text or stop at an output boundary with an optional retry instruction; `model_request` may pick a configured route",
+      "replace": null,
+      "timing": "per request and per streamed event",
+      "ownership": "mod: the transformation; host: protected fields, boundaries, retry limit and provenance",
+      "limits": "protected fields are observe-only; stop only at a completed output item; at most two retries per sampling request; older APIs cannot stop",
+      "native": "native hooks cannot see or change the model stream",
       "covers": {
         "capabilities": [
-          "task"
+          "middleware"
+        ],
+        "events": [
+          "model_request",
+          "response_stream",
+          "prompt",
+          "session",
+          "agent",
+          "tool_call",
+          "host_operation"
+        ],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "rust:request_and_stream_middleware_preserve_authority_and_provenance",
+        "rust:stream_control_is_bounded_to_output_boundaries_and_current_api",
+        "patch:stream_control_stops_only_at_output_boundaries_and_carries_the_retry",
+        "node:typed middleware and services register without ambient authority"
+      ]
+    },
+    {
+      "id": "kernel.inter_mod_services",
+      "group": "coordination",
+      "decision": "Host-routed namespaced and versioned service contracts between mods",
+      "observe": "installed contract types and status name provider, consumer, exact version, method, scope and generation",
+      "alter": "a consumer supplies only the declared bounded JSON input and receives a schema-kind-checked result",
+      "replace": null,
+      "timing": "providers, consumers, versions, collisions and dependency order resolve before activation; calls run through the host during a callback",
+      "ownership": "host: provider lookup, capability separation, input/output bounds, generation ownership, call provenance and unload cleanup",
+      "limits": "no shared globals, state, secrets, filesystem, network, process authority or inherited grants; optional absence is catchable while required absence, incompatibility, cycles and collisions fail before activation",
+      "native": "no equivalent typed inter-plugin service contract in configured Codex hooks",
+      "covers": {
+        "capabilities": [
+          "services"
         ],
         "events": [],
         "replacements": [],
         "operations": [
-          "task.status"
+          "mods.service"
         ]
       },
       "evidence": [
-        "fixture:full/success",
-        "fixture:opaque/direct"
+        "rust:typed_services_are_host_routed_versioned_and_generate_installed_types",
+        "rust:missing_incompatible_optional_cyclic_and_colliding_services_fail_independently",
+        "node:typed middleware and services register without ambient authority"
       ],
       "replace_note": null
     },
@@ -326,8 +238,7 @@
       },
       "evidence": [
         "rust:mod_context_is_bounded_and_callback_failure_is_isolated",
-        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose",
-        "fixture:conformance/success"
+        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose"
       ],
       "replace_note": "the exclusive assembler; observer fragments are dropped with a visible notice"
     },
@@ -355,9 +266,7 @@
         "operations": []
       },
       "evidence": [
-        "rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny",
-        "fixture:lifecycle/success",
-        "fixture:deny/success"
+        "rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny"
       ],
       "replace_note": "exclusive rewrite"
     },
@@ -387,62 +296,7 @@
         "operations": []
       },
       "evidence": [
-        "fixture:lifecycle/success"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "context.checkpoint",
-      "group": "context_recovery",
-      "decision": "Durable task checkpoint: read and evidence-backed update",
-      "observe": "`checkpoint.read` and the checkpoint passed to context and terminal events",
-      "alter": "`checkpoint.update` appends evidence-backed progress",
-      "replace": null,
-      "timing": "inside a native tool callback",
-      "ownership": "host: validation, workspace integrity, version markers and completed-evidence retention",
-      "limits": "cannot discard completed evidence, rewrite history or record a stale candidate digest",
-      "native": "no native hook can read or write task state",
-      "covers": {
-        "capabilities": [
-          "task"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "checkpoint.read",
-          "checkpoint.update"
-        ]
-      },
-      "evidence": [
-        "fixture:full/success"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "context.state",
-      "group": "context_recovery",
-      "decision": "Per-mod durable state and explicit migration",
-      "observe": "`state.get` refreshed on every invocation",
-      "alter": "`state.set` with compare-and-set on write",
-      "replace": null,
-      "timing": "any callback; migration only through the disabled-package manager command",
-      "ownership": "host: the store, the lock, atomic writes, the backup and scope separation",
-      "limits": "64 KiB; a lost race reports `state_conflict`; no writes during activation; user and project scopes never share a state file",
-      "native": "native hooks are stateless between runs",
-      "covers": {
-        "capabilities": [
-          "state"
-        ],
-        "events": [
-          "migrate"
-        ],
-        "replacements": [],
-        "operations": []
-      },
-      "evidence": [
-        "rust:mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates",
-        "rust:migration_is_explicit_bounded_and_preserves_previous_state",
-        "rust:project_scope_takes_precedence_over_user_scope_without_sharing_state"
+        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose"
       ],
       "replace_note": null
     },
@@ -474,40 +328,73 @@
         "operations": []
       },
       "evidence": [
-        "rust:command_descriptions_tool_labels_and_lifecycle_events_register",
-        "fixture:lifecycle/success",
-        "fixture:conformance/success"
+        "rust:command_descriptions_tool_labels_and_lifecycle_events_register"
       ],
       "replace_note": null
     },
     {
-      "id": "context.pi_resources",
+      "id": "context.store",
       "group": "context_recovery",
-      "decision": "Pi skill and prompt discovery and expansion",
-      "observe": "`pi.discover` lists eligible resources with diagnostics",
-      "alter": "`pi.expand` renders a named prompt with arguments",
+      "decision": "Durable per-mod data and evidence",
+      "observe": "`store.get`, `store.list` and `evidence.read` read the caller's namespace",
+      "alter": "`store.put`/`store.delete` with the current revision; `store.reset` with the current generation; `evidence.write` stores content-addressed evidence",
       "replace": null,
-      "timing": "inside a native tool callback",
-      "ownership": "host: the eligible directories, ignore rules, symlink rejection and protected-resource omission",
-      "limits": "protected or symlinked resources are refused and reported, never silently omitted",
-      "native": "native plugins ship skills and prompts but expose no discovery API to code",
+      "timing": "any callback; `migrate` on a state-version change",
+      "ownership": "mod: keys and values; host: namespaces, revisions, provenance, bounds and export",
+      "limits": "256-byte keys, 256 KiB values, 16 MiB and 4,096 keys per scope; stale revisions fail; no cross-mod reads",
+      "native": "native hooks hold no state between invocations",
       "covers": {
         "capabilities": [
-          "pi_resources"
+          "store"
+        ],
+        "events": [
+          "migrate"
+        ],
+        "replacements": [],
+        "operations": [
+          "store.get",
+          "store.put",
+          "store.delete",
+          "store.list",
+          "store.export",
+          "store.reset",
+          "evidence.write",
+          "evidence.read"
+        ]
+      },
+      "evidence": [
+        "rust:store_is_namespaced_compare_and_set_with_host_attested_provenance",
+        "rust:mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates",
+        "rust:migration_is_explicit_bounded_and_preserves_previous_state"
+      ]
+    },
+    {
+      "id": "shared.session_index",
+      "group": "context_recovery",
+      "decision": "Session history and turn evidence",
+      "observe": "`sessions.list` and `sessions.read` page visible records; `turn_end` carries turn evidence to subscribers",
+      "alter": "none",
+      "replace": null,
+      "timing": "any callback; turn evidence at turn end",
+      "ownership": "host: repository scope, opt-outs, redaction and bounds",
+      "limits": "visible user and assistant text only; hidden content, other repositories and opted-out sessions are excluded",
+      "native": "native hooks see only the current payload",
+      "covers": {
+        "capabilities": [
+          "sessions"
         ],
         "events": [],
         "replacements": [],
         "operations": [
-          "pi.discover",
-          "pi.expand"
+          "sessions.list",
+          "sessions.read"
         ]
       },
       "evidence": [
-        "rust:pi_nested_skills_honor_ignore_rules_and_frontmatter",
-        "rust:pi_prompt_expansion_matches_pi_0_74_oracle",
-        "fixture:opaque/direct"
-      ],
-      "replace_note": null
+        "rust:repository_scope_opt_out_and_hidden_content_are_enforced",
+        "rust:projection_contains_visible_messages_and_references_only",
+        "rust:compaction_segments_preserve_original_visible_records_and_bounds"
+      ]
     },
     {
       "id": "tool.registration",
@@ -530,8 +417,7 @@
       },
       "evidence": [
         "rust:native_schema_validation_applies_to_reload_before_activation",
-        "rust:tool_progress_is_forwarded_once_across_host_call_replay",
-        "fixture:counter/success"
+        "rust:tool_progress_is_forwarded_once_across_host_call_replay"
       ],
       "replace_note": null
     },
@@ -585,9 +471,7 @@
         "operations": []
       },
       "evidence": [
-        "rust:exclusive_replacement_conflicts_fail_before_activation",
-        "fixture:opaque/direct",
-        "fixture:conformance/success"
+        "rust:exclusive_replacement_conflicts_fail_before_activation"
       ],
       "replace_note": null
     },
@@ -618,62 +502,6 @@
       "replace_note": null
     },
     {
-      "id": "tool.execution",
-      "group": "tool",
-      "decision": "Bounded native command execution",
-      "observe": "exit code and bounded output",
-      "alter": "the argument vector",
-      "replace": null,
-      "timing": "inside a native tool callback",
-      "ownership": "host: the sandbox, permission profile, deadlines and accounting",
-      "limits": "the same sandbox and permission profile as any native exec; the mod store and host secrets stay denied",
-      "native": "hooks run their own commands outside the agent sandbox contract",
-      "covers": {
-        "capabilities": [
-          "execution"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "tools.exec"
-        ]
-      },
-      "evidence": [
-        "fixture:full/success",
-        "fixture:opaque/direct"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "tool.sidecars",
-      "group": "tool",
-      "decision": "Approved local service lifecycle",
-      "observe": "`sidecars.status`",
-      "alter": "start and stop an approved service ID",
-      "replace": null,
-      "timing": "within the owning mod, generation and task",
-      "ownership": "host: the executable hash, sandbox intersection, process group, secrets and cleanup",
-      "limits": "opaque secret references only; process-group cancellation and bounded task lifetime; unapproved IDs are refused",
-      "native": "native plugins declare MCP servers but have no in-task service lifecycle",
-      "covers": {
-        "capabilities": [
-          "sidecars"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "sidecars.start",
-          "sidecars.stop",
-          "sidecars.status"
-        ]
-      },
-      "evidence": [
-        "fixture:full/success",
-        "fixture:failure/success"
-      ],
-      "replace_note": null
-    },
-    {
       "id": "tool.progress",
       "group": "tool",
       "decision": "Streamed progress and the transcript activity line",
@@ -692,10 +520,204 @@
       },
       "evidence": [
         "rust:tool_progress_is_forwarded_once_across_host_call_replay",
-        "fixture:conformance/success",
         "terminal:activity_line"
       ],
       "replace_note": null
+    },
+    {
+      "id": "shared.virtual_read",
+      "group": "tool",
+      "decision": "Versioned reads supplied by extensions",
+      "observe": "Public API .9 operation results and owner-scoped events",
+      "alter": "Extension-owned selection and interpretation within host grants",
+      "replace": null,
+      "timing": "Inside the documented callback or explicitly dispatched plugin command",
+      "ownership": "The extension parses its namespace and retrieves content; the host routes the common read tool, binds provider source and provenance, and prevents remote resources from impersonating local files.",
+      "limits": "Reserved and colliding schemes fail closed; 16 KiB pages; continuation requires exact revision; handlers can only read workspace files or invoke a granted service.",
+      "native": "Pinned Codex does not expose this OMD public extension contract",
+      "covers": {
+        "capabilities": [
+          "virtual_reads"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:common_read_keeps_local_and_virtual_authority_separate",
+        "patch:independent_provider_revision_and_disabled_recovery"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "tool.exec",
+      "group": "tool",
+      "decision": "One-shot sandboxed commands",
+      "observe": "the result reports exit status, bounded output, timing and the program hash",
+      "alter": "`sha256` pins the program; `write` and `network` widen only with `fs.write` and `network`",
+      "replace": null,
+      "timing": "any tool, command or lifecycle callback",
+      "ownership": "mod: program and arguments; host: resolution, sandbox, environment, limits and cancellation",
+      "limits": "10 s default and 120 s ceiling; 1 MiB per stream; 4 concurrent runs; declared environment names only; read-only repository without `write`",
+      "native": "native hooks run commands outside the session sandbox",
+      "covers": {
+        "capabilities": [
+          "exec",
+          "network"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "exec.run"
+        ]
+      },
+      "evidence": [
+        "rust:exec_run_bounds_program_environment_output_time_and_authority",
+        "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters"
+      ]
+    },
+    {
+      "id": "tool.workspace",
+      "group": "tool",
+      "decision": "Workspace reads, listings, preconditioned writes and changes",
+      "observe": "`workspace.read`, `workspace.list`, `workspace.stat` and `workspace_change` within the session's read scope",
+      "alter": "`workspace.transaction`, `workspace.backup`, `workspace.restore` and `workspace.request_rename` with exact preconditions",
+      "replace": null,
+      "timing": "tools; lifecycle events; `workspace_pre_rename` during a requested rename",
+      "ownership": "mod: paths and contents; host: permissions, preconditions, atomic replacement, backups and change scans",
+      "limits": "stale fingerprints fail; `.git` and symlinks are refused; transactions and restores are exclusive per session; scans are bounded and report `unavailable` instead of partial coverage",
+      "native": "native hooks can rewrite a tool's input but not perform checked multi-file writes",
+      "covers": {
+        "capabilities": [
+          "fs.read",
+          "fs.write"
+        ],
+        "events": [
+          "workspace_change",
+          "workspace_pre_rename"
+        ],
+        "replacements": [],
+        "operations": [
+          "workspace.read",
+          "workspace.list",
+          "workspace.stat",
+          "workspace.transaction",
+          "workspace.backup",
+          "workspace.restore",
+          "workspace.request_rename"
+        ]
+      },
+      "evidence": [
+        "rust:workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions",
+        "patch:workspace_read_and_transaction_obey_effective_permissions",
+        "patch:write_observation_hides_denied_paths",
+        "patch:pre_rename_plan_applies_companion_write_and_move"
+      ]
+    },
+    {
+      "id": "tool.managed_process",
+      "group": "tool",
+      "decision": "Long-lived framed processes",
+      "observe": "`process.status` reports liveness and idle time",
+      "alter": "`process.exchange` sends and receives framed messages",
+      "replace": null,
+      "timing": "tools and lifecycle events",
+      "ownership": "mod: program and protocol; host: program identity, sandbox, framing, bounds and cleanup",
+      "limits": "content-length or NDJSON framing; loopback only with `network`; sessions end with the mod generation, disable or thread stop",
+      "native": "native MCP servers are fixed at startup and not owned by a mod",
+      "covers": {
+        "capabilities": [
+          "exec"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "process.which",
+          "process.start",
+          "process.exchange",
+          "process.status",
+          "process.stop"
+        ]
+      },
+      "evidence": [
+        "patch:framed_process_is_owned_bounded_and_stopped",
+        "patch:blocked_process_write_observes_cancellation"
+      ]
+    },
+    {
+      "id": "tool.sidecars",
+      "group": "tool",
+      "decision": "Granted sidecars and service requests",
+      "observe": "`sidecars.status` reports liveness",
+      "alter": "`sidecars.invoke` sends one bounded request",
+      "replace": null,
+      "timing": "tools and lifecycle events",
+      "ownership": "mod: when to start and call; host: the grant, program hash, secrets, sandbox and cleanup",
+      "limits": "only services granted in `host.json` for that mod; responses are untrusted and bounded; secrets never appear in responses",
+      "native": "native plugins can start MCP servers but not supervised, hash-pinned sidecars",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "sidecars.start",
+          "sidecars.stop",
+          "sidecars.status",
+          "sidecars.invoke"
+        ]
+      },
+      "evidence": [
+        "rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks"
+      ]
+    },
+    {
+      "id": "tool.builtins",
+      "group": "tool",
+      "decision": "Built-in commands and collaboration modes",
+      "observe": "the registry snapshot lists hidden commands and disabled modes",
+      "alter": "`api.builtins` hides commands and disables modes",
+      "replace": null,
+      "timing": "registered at activation; applied at the next idle boundary; restored on disable, unload or failure",
+      "ownership": "mod: which built-ins; host: protected recovery commands and the default mode",
+      "limits": "`/omd`, `/quit`, `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode cannot be removed; a disabled mode is clamped to default at turn start with a warning",
+      "native": "native plugins cannot remove built-in commands or modes",
+      "covers": {
+        "capabilities": [
+          "builtins"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "rust:builtin_controls_protect_recovery_commands",
+        "rust:registration_primitives_need_their_capability_and_withdraw_on_disable_or_with_no_mods",
+        "patch:disabled_collaboration_modes_clamp_to_default_at_turn_start",
+        "patch:builtin_controls_hide_commands_and_disable_modes_but_never_recovery"
+      ]
+    },
+    {
+      "id": "tool.kernels_and_adapters",
+      "group": "tool",
+      "decision": "Code-mode kernels and package adapters",
+      "observe": "the `kernel` tool lists configured kernels",
+      "alter": "configuration adds kernels; an adapter package wraps a dependent package before activation",
+      "replace": null,
+      "timing": "worker start; package activation",
+      "ownership": "user: kernel configuration; adapter author: the wrapper; host: driver hashes and capability containment",
+      "limits": "a changed driver refuses to start; an adapted package keeps only its own capabilities",
+      "native": "native plugins cannot add execution kernels or API adapters",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:kernel_command_requires_an_unchanged_bounded_driver",
+        "patch:disabled_kernel_does_not_start_a_worker",
+        "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters"
+      ]
     },
     {
       "id": "terminal.view",
@@ -723,9 +745,7 @@
       "evidence": [
         "patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer",
         "rust:terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only",
-        "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest",
-        "fixture:conformance/success",
-        "fixture:conformance-conflict/success"
+        "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
       ],
       "replace_note": null
     },
@@ -822,131 +842,7 @@
       },
       "evidence": [
         "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
-        "patch:focus_flow_compacts_only_successful_agent_output",
-        "fixture:full/success"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "kernel.request_stream_middleware",
-      "group": "coordination",
-      "decision": "Typed middleware at request, stream, prompt, session, agent, tool and approved-operation boundaries",
-      "observe": "field policy metadata marks request identity, scope, raw stream digest, opaque reasoning, raw usage, lifecycle identity, tool outcomes and host-operation receipts observe-only",
-      "alter": "each admitted request may select one complete authorized preset; bounded output-text deltas may be transformed in deterministic order with original/effective hashes and fallback provenance",
-      "replace": null,
-      "timing": "before each main-thread or subagent request, on each Responses stream item, and at the named native lifecycle boundary",
-      "ownership": "host: preset admission, raw response parsing, reasoning, usage, permission and tool outcomes, accounting, cancellation, transcript/evidence records and workflow enforcement",
-      "limits": "no arbitrary model/provider/reasoning tuple, endpoint, usage rewrite, reasoning rewrite, tool-result fabrication, completion action or assurance receipt; each hook has a declared wall-time budget and cancellation check; the mod runtime is single-threaded and never re-entrant: hooks wait up to 2 s for another hook, while a mod-spawned agent's request or a response stream made during a non-hook callback proceeds without hooks and records `middleware_skipped`",
-      "native": "upstream hooks expose selected lifecycle and tool boundaries but not this request/stream preset and provenance contract",
-      "covers": {
-        "capabilities": [
-          "middleware"
-        ],
-        "events": [
-          "model_request",
-          "response_stream",
-          "prompt",
-          "session",
-          "agent",
-          "tool_call",
-          "host_operation"
-        ],
-        "replacements": [],
-        "operations": []
-      },
-      "evidence": [
-        "rust:request_and_stream_middleware_preserve_authority_and_provenance",
-        "node:typed middleware and services register without ambient authority"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "kernel.inter_mod_services",
-      "group": "coordination",
-      "decision": "Host-routed namespaced and versioned service contracts between mods",
-      "observe": "installed contract types and status name provider, consumer, exact version, method, scope and generation",
-      "alter": "a consumer supplies only the declared bounded JSON input and receives a schema-kind-checked result",
-      "replace": null,
-      "timing": "providers, consumers, versions, collisions and dependency order resolve before activation; calls run through the host during a callback",
-      "ownership": "host: provider lookup, capability separation, input/output bounds, generation ownership, call provenance and unload cleanup",
-      "limits": "no shared globals, state, secrets, filesystem, network, process authority or inherited grants; optional absence is catchable while required absence, incompatibility, cycles and collisions fail before activation",
-      "native": "no equivalent typed inter-plugin service contract in configured Codex hooks",
-      "covers": {
-        "capabilities": [
-          "services"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "mods.service"
-        ]
-      },
-      "evidence": [
-        "rust:typed_services_are_host_routed_versioned_and_generate_installed_types",
-        "rust:missing_incompatible_optional_cyclic_and_colliding_services_fail_independently",
-        "node:typed middleware and services register without ambient authority"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "tool.workspace_transaction",
-      "group": "tool",
-      "decision": "Repository read, observed tool writes, pre-rename proposals, and exact multi-file transactions",
-      "observe": "workspace_write reports changed paths and before/after hashes after an OMD tool call when a selected mod subscribes; workspace_pre_rename receives the exact source and destination before a requested move",
-      "alter": "workspace.request_rename asks subscribers for a bounded plan; workspace.transaction applies scoped text writes and a file move after exact SHA256 comparison",
-      "replace": null,
-      "timing": "read and transaction inside a mod tool callback, pre-rename before the move, write observation after the host tool finishes",
-      "ownership": "host: local repository binding, effective read/write permission, path containment, version comparison, cancellation, atomic per-file replacement and rollback; mod: optional policy and edit planning",
-      "limits": "128 paths and 4 MiB per transaction; the write observer scans up to 20,000 files and 128 MiB only while selected, and reports unavailable scans or change batches beyond 128 paths or 16 KiB of path names rather than claiming coverage",
-      "native": "ordinary tools write files without a public TypeScript mod transaction or change event",
-      "covers": {
-        "capabilities": [
-          "workspace"
-        ],
-        "events": [
-          "workspace_write",
-          "workspace_pre_rename"
-        ],
-        "replacements": [],
-        "operations": [
-          "workspace.read",
-          "workspace.transaction",
-          "workspace.request_rename"
-        ]
-      },
-      "evidence": [
-        "node:independent workspace mod uses public read and transaction calls",
-        "node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "tool.managed_process",
-      "group": "tool",
-      "decision": "Mod-owned bounded framed local process session",
-      "observe": "process.which reports installed executable paths and hashes; process.status reports an owned session",
-      "alter": "process.start, process.exchange, and process.stop control framed JSON messages for an approved mod",
-      "replace": null,
-      "timing": "inside an approved mod callback; cleanup on disable, reload, cancellation, or thread stop",
-      "ownership": "host: executable identity, read-only sandbox, restricted network, process and message limits, ownership and cleanup; mod: server selection and protocol messages",
-      "limits": "at most eight sessions, five per mod, 4 MiB messages, bounded waits and output, and the callback's 128 KiB receipt budget for exchanged messages; processes cannot write the repository directly",
-      "native": "native tools may launch processes under their own configured task permission boundary",
-      "covers": {
-        "capabilities": [
-          "process"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "process.which",
-          "process.start",
-          "process.exchange",
-          "process.status",
-          "process.stop"
-        ]
-      },
-      "evidence": [
-        "node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"
+        "patch:focus_flow_compacts_only_successful_agent_output"
       ],
       "replace_note": null
     },
@@ -977,272 +873,37 @@
       "replace_note": "presentation fields in the terminal view or patch"
     },
     {
-      "id": "terminal.selection_policy",
+      "id": "terminal.lists_and_selection",
       "group": "terminal",
-      "decision": "Copy-on-highlight policy for released mouse selections",
-      "observe": "`selection` events with source, character and line counts, copied flag and reason; never the selected text",
-      "alter": "one `selection` policy: copy on release, sources and minimum characters",
-      "replace": null,
-      "timing": "each released drag in the transcript, composer or transcript pager",
-      "ownership": "host: selection, the single fail-closed clipboard write, feedback and keyboard copy keys; mod: policy and status",
-      "limits": "one policy per view; minimum 1-10,000 characters; without a valid policy the existing enabled and platform release copy remains; direct mode never copies on release",
-      "native": "native plugins cannot change terminal selection",
+      "decision": "Built-in lists, selection copy, insert, placeholder and glyphs",
+      "observe": "`selection_result` reports the copy outcome",
+      "alter": "components may `{insert}` text; a view may set `placeholder` and width-preserving `theme.glyphs`",
+      "replace": "list, selection",
+      "timing": "on render; on a completed terminal selection",
+      "ownership": "mod: rows, spans and the copy decision; host: keyboard handling, the chosen action, clipboard and width checks",
+      "limits": "search input keeps native rendering; width-changing glyphs are ignored; one owner per replacement point",
+      "native": "native plugins cannot restyle built-in pickers or selection copy",
       "covers": {
-        "capabilities": [],
+        "capabilities": [
+          "terminal"
+        ],
         "events": [
+          "list",
+          "selection",
+          "selection_result"
+        ],
+        "replacements": [
+          "list",
           "selection"
         ],
-        "replacements": [],
         "operations": []
       },
       "evidence": [
-        "rust:rich_lines_width_bounds_picker_theme_and_selection_policy_are_bounded",
+        "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters",
+        "patch:list_rows_follow_the_selected_value_and_glyphs_and_placeholder_stay_bounded",
         "patch:selection_policy_gates_the_native_release_copy"
       ],
-      "replace_note": "policy field in the terminal view or patch"
-    },
-    {
-      "id": "tool.git_operations",
-      "group": "tool",
-      "decision": "Repository status, history, diffs and user-invoked source-control changes",
-      "observe": "`git.status`, `git.log`, `git.diff`, `git.branches` and `git.switch_preview` with per-path, staged and switch fingerprints",
-      "alter": "`git.stage`, `git.unstage`, `git.commit`, `git.discard` and `git.switch` against a fingerprint the mod previously read",
-      "replace": null,
-      "timing": "reads in lifecycle events and mod commands; writes only in user-invoked mod commands",
-      "ownership": "host: fixed argument lists, repository and path containment, permissions, freshness, backups, timeouts and output limits; mod: presentation, selection, previews and confirmation flow",
-      "limits": "enabled and platform modes only; refused when the session cannot write the workspace; stale fingerprints fail; discard backs up first and refuses conflicts; switch never forces or overwrites ignored files; 500 entries, 50 commits, 64 KiB diffs, 100 branches",
-      "native": "native plugins use Codex's own shell and approval flow",
-      "covers": {
-        "capabilities": [
-          "git"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "git.status",
-          "git.log",
-          "git.diff",
-          "git.branches",
-          "git.switch_preview",
-          "git.stage",
-          "git.unstage",
-          "git.commit",
-          "git.discard",
-          "git.switch"
-        ]
-      },
-      "evidence": [
-        "rust:git_operations_require_the_git_capability_and_a_host_route",
-        "patch:stage_and_unstage_reject_stale_previews",
-        "patch:discard_backs_up_tracked_and_untracked_files_first",
-        "patch:switch_requires_a_known_branch_and_fresh_state",
-        "patch:git_host_routes_reads_and_gates_writes_on_permission"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "shared.completed_turn",
-      "group": "coordination",
-      "decision": "Bounded completed-turn evidence and independent typed review",
-      "observe": "Public API .9 operation results and owner-scoped events",
-      "alter": "Extension-owned selection and interpretation within host grants",
-      "replace": null,
-      "timing": "Inside the documented callback or explicitly dispatched plugin command",
-      "ownership": "An extension chooses cadence, prompt, findings and presentation; the host binds visible evidence, exact candidate and owned worker result to the shared allowance and ledger.",
-      "limits": "Selected completed-turn subscribers only; 16 KiB evidence pages; advice lives in a bounded advisory lane that expires with the candidate and never consumes enforced review budget; explicit policy is required for enforced blockers; resets and stale candidates fail closed.",
-      "native": "Pinned Codex does not expose this OMD public extension contract",
-      "covers": {
-        "capabilities": [
-          "turn_evidence"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "evidence.read",
-          "review.request",
-          "review.result",
-          "review.wait",
-          "review.submit",
-          "review.cancel"
-        ]
-      },
-      "evidence": [
-        "fixture:shared-review/success",
-        "fixture:shared-review-denied/success",
-        "fixture:shared-disabled/success",
-        "patch:projection_contains_visible_messages_and_references_only",
-        "fixture:shared-review-compaction/success",
-        "patch:compaction_segments_preserve_original_visible_records_and_bounds"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "shared.worker_presets",
-      "group": "coordination",
-      "decision": "Explicit worker presets and billing authorization",
-      "observe": "Public API .9 operation results and owner-scoped events",
-      "alter": "Extension-owned selection and interpretation within host grants",
-      "replace": null,
-      "timing": "Inside the documented callback or explicitly dispatched plugin command",
-      "ownership": "The extension selects a named preset; the host binds its exact route to that worker, checks its read/search ceiling and revalidates separate subscription or paid-key authorization before every request.",
-      "limits": "No automatic paid fallback; model access and real value are unqualified; unpriced hosted search is denied.",
-      "native": "Pinned Codex does not expose this OMD public extension contract",
-      "covers": {
-        "capabilities": [],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "workers.presets"
-        ]
-      },
-      "evidence": [
-        "patch:paid_preset_grants_bind_repository_route_and_current_bytes",
-        "patch:subscription_worker_requests_recheck_grants_and_reject_paid_fallback",
-        "patch:worker_route_grants_are_exact_nontransferable_and_share_allowances",
-        "fixture:research-subscription-denied/success"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "shared.virtual_read",
-      "group": "tool",
-      "decision": "Versioned reads supplied by extensions",
-      "observe": "Public API .9 operation results and owner-scoped events",
-      "alter": "Extension-owned selection and interpretation within host grants",
-      "replace": null,
-      "timing": "Inside the documented callback or explicitly dispatched plugin command",
-      "ownership": "The extension parses its namespace and retrieves content; the host routes the common read tool, binds provider source and provenance, and prevents remote resources from impersonating local files.",
-      "limits": "Reserved and colliding schemes fail closed; 16 KiB pages; continuation requires exact revision; handlers can only read workspace files or invoke a granted service.",
-      "native": "Pinned Codex does not expose this OMD public extension contract",
-      "covers": {
-        "capabilities": [
-          "virtual_reads"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": []
-      },
-      "evidence": [
-        "patch:common_read_keeps_local_and_virtual_authority_separate",
-        "patch:independent_provider_revision_and_disabled_recovery"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "shared.scoped_knowledge",
-      "group": "context_recovery",
-      "decision": "Scoped facts, proposed lessons and frozen context",
-      "observe": "Public API .9 operation results and owner-scoped events",
-      "alter": "Extension-owned selection and interpretation within host grants",
-      "replace": null,
-      "timing": "Inside the documented callback or explicitly dispatched plugin command",
-      "ownership": "Extensions choose what to retain, propose and recall; the host owns repository isolation, source checks, approved-lesson reuse, concurrency, removal and bounded immutable snapshots.",
-      "limits": "Current permissions are checked again on reuse; resources bind source hash, thread and persisted selection revision; native user confirmation gates approval and destructive changes.",
-      "native": "Pinned Codex does not expose this OMD public extension contract",
-      "covers": {
-        "capabilities": [
-          "knowledge_read",
-          "knowledge_write"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "knowledge.inspect",
-          "knowledge.retain",
-          "knowledge.propose",
-          "knowledge.approve",
-          "knowledge.remove",
-          "knowledge.reset",
-          "knowledge.snapshot",
-          "context.freeze",
-          "context.deliver"
-        ]
-      },
-      "evidence": [
-        "patch:frozen_knowledge_keeps_selection_and_revokes_deleted_or_changed_facts",
-        "patch:source_denial_secret_exclusion_cold_mode_and_cancellation",
-        "patch:independent_component_uses_scoped_data_context_and_cli_dispatch",
-        "fixture:shared-context/success"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "shared.session_index",
-      "group": "context_recovery",
-      "decision": "Read-only repository-scoped session index",
-      "observe": "Public API .9 operation results and owner-scoped events",
-      "alter": "Extension-owned selection and interpretation within host grants",
-      "replace": null,
-      "timing": "Inside the documented callback or explicitly dispatched plugin command",
-      "ownership": "Extensions choose sessions and classify visible records; the host validates repository, current opt-out, transcript identity and stable page revisions and excludes hidden or tool-body content.",
-      "limits": "100-row list; 16 KiB pages; fixed scan and invocation bounds; duplicate identities, unknown opt-out state and concurrent source changes fail closed.",
-      "native": "Pinned Codex does not expose this OMD public extension contract",
-      "covers": {
-        "capabilities": [
-          "sessions_read"
-        ],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "sessions.list",
-          "sessions.read"
-        ]
-      },
-      "evidence": [
-        "patch:repository_scope_opt_out_and_hidden_content_are_enforced",
-        "patch:later_metadata_and_state_database_opt_out_override_earlier_records",
-        "patch:inherited_child_prefix_is_excluded_even_with_matching_turn_context"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "shared.service_request",
-      "group": "tool",
-      "decision": "Bounded requests to explicitly granted helpers",
-      "observe": "Public API .9 operation results and owner-scoped events",
-      "alter": "Extension-owned selection and interpretation within host grants",
-      "replace": null,
-      "timing": "Inside the documented callback or explicitly dispatched plugin command",
-      "ownership": "The extension helper owns transport and response interpretation; the host pins executable and sources, supplies explicit secrets/network grants, enforces read-only scope and supervises process cleanup.",
-      "limits": "16 KiB input, 32 KiB output and 30-second deadline; changed source, missing grant, known secret output and cancellation fail closed.",
-      "native": "Pinned Codex does not expose this OMD public extension contract",
-      "covers": {
-        "capabilities": [],
-        "events": [],
-        "replacements": [],
-        "operations": [
-          "sidecars.invoke"
-        ]
-      },
-      "evidence": [
-        "fixture:shared-service/success",
-        "fixture:shared-service-denied/success",
-        "fixture:shared-service-changed/success",
-        "fixture:shared-service-timeout/success"
-      ],
-      "replace_note": null
-    },
-    {
-      "id": "shared.plugin_dispatch",
-      "group": "tool",
-      "decision": "Generic plugin component and standalone command exports",
-      "observe": "Public API .9 operation results and owner-scoped events",
-      "alter": "Extension-owned selection and interpretation within host grants",
-      "replace": null,
-      "timing": "Inside the documented callback or explicitly dispatched plugin command",
-      "ownership": "An ordinary hash-verified public-API component supplies command behavior; the host dispatches exactly one enabled CLI alias with an explicit repository and bounded read/data operations.",
-      "limits": "No model requests, process execution or workspace mutation in standalone dispatch; no implicit install, trust or enable; source containment and collisions are checked.",
-      "native": "Pinned Codex does not expose this OMD public extension contract",
-      "covers": {
-        "capabilities": [],
-        "events": [],
-        "replacements": [],
-        "operations": []
-      },
-      "evidence": [
-        "patch:independent_component_uses_scoped_data_context_and_cli_dispatch"
-      ],
-      "replace_note": null
+      "replace_note": "exclusive"
     }
   ],
   "composition": [
@@ -1250,8 +911,7 @@
       "id": "order",
       "rule": "Activation and dispatch order is deterministic: declared dependencies first, then mod ID ascending. The same order is used for every event, tool listing, command listing and contract listing, and is published in `omd-mod status` as `order`.",
       "evidence": [
-        "rust:composition_order_is_declared_dependencies_first_then_mod_id",
-        "fixture:conformance/success"
+        "rust:composition_order_is_declared_dependencies_first_then_mod_id"
       ]
     },
     {
@@ -1259,8 +919,7 @@
       "rule": "`api.on` is middleware: observers compose, may veto (`deny`), contribute additive context, and on the current API contribute bounded terminal patches. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing` or `compaction` decision without replacement fails visibly; older terminal observers also remain observe-only. A context replacer drops observer fragments with a notice naming both sides.",
       "evidence": [
         "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose",
-        "rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny",
-        "fixture:conformance/success"
+        "rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny"
       ]
     },
     {
@@ -1275,9 +934,7 @@
       "id": "conflict_before_activation",
       "rule": "Contested exclusive claims \u2014 a replacement point, a workflow contract ID or a namespaced tool name \u2014 are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.",
       "evidence": [
-        "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest",
-        "rust:two_mods_may_not_own_the_same_workflow_contract",
-        "fixture:conformance-conflict/success"
+        "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
       ]
     },
     {
@@ -1293,9 +950,7 @@
       "rule": "Discovery reports project packages shadowing user packages by ID. Trust and activation stay explicit and per path: each selection records its scope, a project-scoped selection takes precedence over a user-scoped one with the same ID, the shadowed selection is recorded and not activated, and the two scopes never share mod state. Two selections of one ID in the same scope both fail closed.",
       "evidence": [
         "rust:project_scope_takes_precedence_over_user_scope_without_sharing_state",
-        "rust:two_selections_of_one_id_in_the_same_scope_both_fail_closed",
-        "rust:pi_and_native_discovery_preserve_project_precedence_without_trust",
-        "fixture:conformance-conflict/success"
+        "rust:two_selections_of_one_id_in_the_same_scope_both_fail_closed"
       ]
     },
     {
@@ -1303,8 +958,6 @@
       "rule": "A mod that throws while activating, loses a capability, or is rejected by the store is disabled alone with a source-located error. Every other mod keeps running, its owned agents and services are cleaned up, and a healthy mod keeps its terminal view with the error panel inserted above it. The failure is reported to the user through that panel, `omd-mod status` and the persisted `mod-status.json`; a failure inside a callback is additionally reported to the model for that turn.",
       "evidence": [
         "rust:a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error",
-        "fixture:conformance/success",
-        "fixture:preview-denied/direct",
         "terminal:mod_error_did_not_stop_the_host"
       ]
     },
@@ -1324,7 +977,6 @@
       "evidence": [
         "rust:mod_cancellation_discards_state_and_explicit_reload_recovers",
         "rust:mod_pending_callback_has_a_host_deadline",
-        "fixture:cancel/success",
         "terminal:cancelled_turn_recorded"
       ]
     },
@@ -1333,7 +985,6 @@
       "rule": "Mod tool progress streams into the live panel during the call and leaves one labelled activity line when it completes; replayed host calls never duplicate an update.",
       "evidence": [
         "rust:tool_progress_is_forwarded_once_across_host_call_replay",
-        "fixture:conformance/success",
         "terminal:activity_line"
       ]
     },
@@ -1351,8 +1002,7 @@
       "id": "first_party_parity",
       "rule": "First-party mods use the published API only. `omd_coordination`, `omd_workspace`, and `omd_recovery` declare ordinary capabilities, carry no private symbol and no per-mod Rust patch, and run under the same package and conformance rules as outside packages.",
       "evidence": [
-        "python:test_first_party_mods_use_only_the_published_api",
-        "fixture:conformance/success"
+        "python:test_first_party_mods_use_only_the_published_api"
       ]
     }
   ],

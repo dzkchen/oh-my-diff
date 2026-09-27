@@ -1,4 +1,4 @@
-import type { ModAPI, ServiceContract } from '@oh-my-diff/mod-api';
+import type { ModAPI, ServiceContract } from '@oh-my-diff/mod-api/0.1';
 
 const contract: ServiceContract = {
   name: 'example.formatter',

@@ -12,18 +12,26 @@ pub(super) struct Cursor {
     usage_start: Value,
 }
 
-pub(super) async fn begin(mods: &Mods, lead: Option<Arc<Lead>>) -> Option<Cursor> {
-    let (owners, generation) = {
-        let runtime = mods.runtime.lock().ok()?;
-        (
-            runtime.subscribers_with_capability("turn_end", "turn_evidence"),
-            runtime.generation(),
-        )
-    };
+fn subscribers(runtime: &ModHost) -> Vec<String> {
+    let mut owners = runtime.subscribers_with_capability("turn_end", "sessions");
+    owners.extend(runtime.subscribers_with_capability("turn_end", "turn_evidence"));
+    owners.sort();
+    owners.dedup();
+    owners
+}
+
+pub(super) async fn begin(core: &Core, lead: &Lead) -> Option<Cursor> {
+    let runtime = core.runtime.clone();
+    let (owners, generation) = tokio::task::spawn_blocking(move || {
+        let runtime = runtime.lock().ok()?;
+        Some((subscribers(&runtime), runtime.generation()))
+    })
+    .await
+    .ok()
+    .flatten()?;
     if owners.is_empty() {
         return None;
     }
-    let lead = lead?;
     let thread = lead
         .host
         .manager
@@ -41,17 +49,20 @@ pub(super) async fn begin(mods: &Mods, lead: Option<Arc<Lead>>) -> Option<Cursor
         generation,
         owners,
         tools: Vec::new(),
-        usage_start: json!(lead.host.task.cost_capture().ok()),
+        usage_start: json!(lead.session.task.cost_capture().ok()),
     })
 }
 
-pub(super) async fn compact(mods: &Mods, lead: &Lead, before: bool) -> Result<(), String> {
-    if !mods
-        .turn
+pub(super) async fn compact(
+    lead: &Lead,
+    turns: &Mutex<BTreeMap<String, TurnRecord>>,
+    before: bool,
+) -> Result<(), String> {
+    let key = lead.thread.to_string();
+    if turns
         .lock()
         .map_err(|_| "turn_record_poisoned")?
-        .as_ref()
-        .is_some_and(|turn| turn.evidence.is_some())
+        .get(&key).is_none_or(|turn| turn.evidence.is_none())
     {
         return Ok(());
     }
@@ -64,8 +75,8 @@ pub(super) async fn compact(mods: &Mods, lead: &Lead, before: bool) -> Result<()
         .await
         .map_err(|error| error.to_string())?;
     let history = thread.conversation_history_snapshot().await;
-    let mut turn = mods.turn.lock().map_err(|_| "turn_record_poisoned")?;
-    let Some(turn) = turn.as_mut() else {
+    let mut turns = turns.lock().map_err(|_| "turn_record_poisoned")?;
+    let Some(turn) = turns.get_mut(&key) else {
         return Ok(());
     };
     let Some(cursor) = turn.evidence.as_mut() else {
@@ -104,20 +115,27 @@ pub(super) async fn compact(mods: &Mods, lead: &Lead, before: bool) -> Result<()
 }
 
 pub(super) async fn finish(
-    mods: &Mods,
+    core: &Core,
     lead: &Lead,
     cursor: &Cursor,
     turn: &str,
     outcome: &str,
 ) -> Result<BTreeMap<String, Value>, String> {
-    lead.host.authorize()?;
-    let (owners, generation) = {
-        let runtime = mods.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-        (
-            runtime.subscribers_with_capability("turn_end", "turn_evidence"),
+    let runtime = core.runtime.clone();
+    let (owners, generation, sources) = tokio::task::spawn_blocking(move || {
+        let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+        Ok::<_, String>((
+            subscribers(&runtime),
             runtime.generation(),
-        )
-    };
+            runtime
+                .owners()
+                .into_iter()
+                .map(|(id, owner)| (id, owner.sha256))
+                .collect::<BTreeMap<_, _>>(),
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     if generation != cursor.generation {
         return Err("evidence_generation_changed".into());
     }
@@ -157,32 +175,26 @@ pub(super) async fn finish(
     packet["outcome"] = json!(outcome);
     packet["tool_outcomes"] = json!(cursor.tools);
     packet["tool_outcomes_truncated"] = json!(cursor.tools.len() >= 128);
-    packet["usage"] = lead.host.evidence(&format!("turn-usage-{}.json",crate::execution::hash(format!("{}:{turn}",lead.thread).as_bytes())),&json!({"scope":"task","before":cursor.usage_start,"after":lead.host.task.cost_capture().ok()}))?;
-    let root = lead
-        .host
-        .manifest
-        .mods
-        .clone()
-        .ok_or("mod_store_unavailable")?;
+    packet["usage"] = lead.session.evidence(
+        &format!(
+            "turn-usage-{}.json",
+            crate::execution::hash(format!("{}:{turn}", lead.thread).as_bytes())
+        ),
+        &json!({"scope":"session","before":cursor.usage_start,"after":lead.session.task.cost_capture().ok()}),
+    )?;
+    let root = lead.host.root.clone();
     let mut results = BTreeMap::new();
     for owner in owners
         .into_iter()
         .filter(|owner| cursor.owners.contains(owner))
     {
-        lead.host.task.check_active().map_err(|e| e.to_string())?;
-        let source = mods
-            .runtime
-            .lock()
-            .map_err(|_| "mod_runtime_poisoned")?
-            .owners()
-            .into_iter()
-            .find(|(id, _)| id == &owner)
-            .ok_or("evidence_owner_unavailable")?
-            .1
-            .sha256;
+        let source = sources
+            .get(&owner)
+            .cloned()
+            .ok_or("evidence_owner_unavailable")?;
         let data = codex_omd::scoped_data::ScopedDataHost::new(
             root.clone(),
-            lead.host.manifest.repository.clone(),
+            lead.host.repository.clone(),
             None,
             None,
             owner.clone(),

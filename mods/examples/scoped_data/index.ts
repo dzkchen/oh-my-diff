@@ -1,4 +1,4 @@
-import type { ModAPI, ResourceRef } from '@oh-my-diff/mod-api';
+import type { ModAPI, ResourceRef } from '@oh-my-diff/mod-api/0.1';
 
 export default function activate(api: ModAPI) {
   api.tool({ name: 'worker', description: 'Exercise a worker with explicitly frozen fixture context.', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {

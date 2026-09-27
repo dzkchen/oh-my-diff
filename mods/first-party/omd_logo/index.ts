@@ -1,4 +1,4 @@
-import type { ModAPI, TerminalComponent, TerminalIdentity, TerminalPatch, TerminalTone } from '../../api.d.ts';
+import type { ModAPI, TerminalComponent, TerminalIdentity, TerminalPatch, TerminalTone } from '../../api-0.1.d.ts';
 
 const MARK = ['╭─╮ ╭╮╭╮ ┌─╮', '│ │ │╰╯│ │ │', '╰─╯ ╵  ╵ └─╯'];
 const MARK_ASCII = ['.-. |\\/| |-.', '| | |  | | |', "'-' |  | |-'"];

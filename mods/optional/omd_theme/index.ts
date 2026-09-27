@@ -1,4 +1,4 @@
-import type { ModAPI, TerminalPatch, TerminalTheme } from '../../api.d.ts';
+import type { ModAPI, TerminalPatch, TerminalTheme } from '../../api-0.1.d.ts';
 
 const palettes: Record<string, { foreground: number; background: number; theme: TerminalTheme }> = {
   midnight: {

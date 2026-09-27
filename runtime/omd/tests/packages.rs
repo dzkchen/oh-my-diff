@@ -1,4 +1,5 @@
-use codex_omd::MOD_API_VERSION;
+
+const LEGACY_API: &str = "0.1.0-experimental.9";
 use codex_omd::ModInstallRequest;
 use codex_omd::ModPackageGrant;
 use codex_omd::ModPackageSource;
@@ -26,7 +27,7 @@ fn mod_package(
             "schema":1,
             "id":id,
             "version":version,
-            "api":MOD_API_VERSION,
+            "api":LEGACY_API,
             "entrypoint":"main.ts",
             "state_version":1,
             "license":"Apache-2.0",

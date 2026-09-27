@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "as_of": "2026-09-26",
+  "as_of": "2026-09-27",
   "release": {
     "codex": "0.157.0",
     "omd": "0.1.0",
-    "mod_api": "0.1.0-experimental.9",
+    "mod_api": "0.2.0-experimental.1",
     "package_schema": 1,
     "upstream_tag": "rust-v0.157.0",
     "upstream_commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d",
@@ -40,9 +40,18 @@
         "scoped_data_v1",
         "plugin_dispatch_v1",
         "turn_evidence_v1",
-        "accounted_review_v1",
         "service_requests_v1",
-        "worker_presets_v1"
+        "exec_v1",
+        "workspace_fs_v1",
+        "store_v1",
+        "routes_v1",
+        "stream_control_v1",
+        "builtins_v1",
+        "contracts_v2",
+        "framed_process_v1",
+        "kernels_v1",
+        "terminal_lists_v1",
+        "adapters_v1"
       ],
       "status": "supported",
       "fixtures": [
@@ -58,14 +67,15 @@
       "area": "host",
       "name": "Public TypeScript mod API",
       "owner": "OMD mod host (runtime/omd/src/mods.rs)",
-      "version": "0.1.0-experimental.9",
+      "version": "0.2.0-experimental.1",
       "supported_versions": [
         "0.1.0-experimental.4",
         "0.1.0-experimental.5",
         "0.1.0-experimental.6",
         "0.1.0-experimental.7",
         "0.1.0-experimental.8",
-        "0.1.0-experimental.9"
+        "0.1.0-experimental.9",
+        "0.2.0-experimental.1"
       ],
       "status": "supported",
       "fixtures": [
@@ -790,12 +800,11 @@
       "boundaries": [
         "upstream_plugin_coexistence"
       ],
-      "result": "The optional plugin exposes three separately selected skills, validates structured subagent output only when selected, and projects exact successful PostToolUse events into the native reactive guard; plain workers and unmatched tools remain unchanged while missing hook events retain native fallback.",
+      "result": "The optional plugin exposes three separately selected skills and validates structured subagent output only when selected. The native reactive-guard marker projection was removed with the controlled host on 2026-09-27; the hooks run again in the default OMD session in Batch 2.55.",
       "evidence": [
         "python:test_lead_success_writes_exact_hook_marker",
         "python:test_plain_worker_mode_does_not_validate_report",
-        "python:test_incomplete_structured_report_blocks_completion",
-        "rust:native/src/lib.rs::exact_lead_and_worker_markers_are_accepted"
+        "python:test_incomplete_structured_report_blocks_completion"
       ]
     },
     {

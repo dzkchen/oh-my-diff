@@ -30,7 +30,8 @@ if (Number.isSafeInteger(request.virtual_time_ms)) {
 const handlers = new Map();
 const tools = new Map();
 const commands = new Map();
-const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [] };
+const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [] };
+const surface = request.surface;
 registrations.services = [];
 registrations.virtual_reads = [];
 const serviceHandlers = new Map();
@@ -84,30 +85,34 @@ const api = Object.freeze({
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
   on(event, handler) {
-    const capability = { context: 'context', tool_before: 'interception', tool_exposure: 'tools', routing: 'routing', worker_context: 'context', terminal: 'terminal', selection: 'terminal', compaction: 'compaction', migrate: 'state', input: 'input', start: 'lifecycle', idle: 'lifecycle',
-      stop: 'lifecycle', resume: 'lifecycle', tool_result: 'lifecycle', workspace_write: 'workspace', workspace_pre_rename: 'workspace', turn_start: 'lifecycle', turn_end: 'lifecycle', compaction_start: 'lifecycle', compaction_end: 'lifecycle', agent_end: 'lifecycle', workflow: 'workflow',
-      model_request: 'middleware', response_stream: 'middleware', prompt: 'middleware', session: 'middleware', agent: 'middleware', tool_call: 'middleware', host_operation: 'middleware' }[event];
+    const capability = Object.hasOwn(surface.events, event) ? surface.events[event] : undefined;
     if (!capability) throw new Error('unsupported_event: ' + event);
     requireCapability(capability);
     unique(handlers, event, handler);
     registrations.events.push(event);
   },
   middleware(event, handler) {
-    if (!['model_request','response_stream','prompt','session','agent','tool_call','tool_result','host_operation'].includes(event)) throw new Error('unsupported_middleware_event: ' + event);
+    if (!surface.middleware.includes(event)) throw new Error('unsupported_middleware_event: ' + event);
     requireCapability('middleware');
     unique(handlers, event, handler);
     registrations.events.push(event);
   },
   replace(point, handler) {
-    if (!['tool_before','routing','worker_context','terminal','compaction','context','input'].includes(point)) throw new Error('unsupported_replacement_point: ' + point);
+    if (!surface.replacements.includes(point)) throw new Error('unsupported_replacement_point: ' + point);
     api.on(point, handler);
     registrations.replacements.push(point);
   },
   contract(definition) {
-    requireCapability('workflow');
+    requireCapability(surface.contracts);
     if (!activating) throw new Error('contract_registration_outside_activation');
     if (registrations.contracts.some(entry => entry.id === definition?.id)) throw new Error('conflict: ' + definition?.id);
     registrations.contracts.push(structuredCloneFallback(definition));
+  },
+  builtins(controls) {
+    requireCapability('builtins');
+    if (!activating) throw new Error('builtins_registration_outside_activation');
+    if (registrations.builtins.length) throw new Error('conflict: builtins');
+    registrations.builtins.push(structuredCloneFallback(controls ?? {}));
   },
   provide(contract, handlers) {
     requireCapability('services');
@@ -145,8 +150,8 @@ const api = Object.freeze({
     updates.push(text);
   },
   state: Object.freeze({
-    get() { requireCapability('state'); return structuredCloneFallback(state); },
-    set(value) { requireCapability('state'); state = structuredCloneFallback(value); },
+    get() { requireCapability(surface.state); return structuredCloneFallback(state); },
+    set(value) { requireCapability(surface.state); state = structuredCloneFallback(value); },
   }),
   unsupported(operation) { throw new Error('unsupported_operation: ' + operation); },
 });
@@ -197,7 +202,26 @@ try {
   await setup.evaluate({ timeout: request.hook_budget_ms });
   const source = stripTypeScriptTypes(request.source, { mode: 'transform', sourceMap: true, sourceUrl: request.filename });
   const mod = new SourceTextModule(source, { context, identifier: request.filename });
+  const adapter = request.surface?.adapter;
+  let adapt = null;
+  const aliases = new Map();
+  if (adapter) {
+    const adapterSource = stripTypeScriptTypes(adapter.source, { mode: 'transform', sourceMap: true, sourceUrl: adapter.filename });
+    const adapterModule = new SourceTextModule(adapterSource, { context, identifier: adapter.filename });
+    await adapterModule.link(() => { throw new Error('unsupported_import: adapter modules are self-contained'); });
+    await adapterModule.evaluate({ timeout: request.hook_budget_ms });
+    adapt = adapterModule.namespace.default;
+    if (typeof adapt !== 'function') throw new Error('adapter_default_export_required');
+    for (const [specifier, module] of Object.entries(adapter.aliases ?? {})) {
+      const aliasSource = module.filename.endsWith('.ts') ? stripTypeScriptTypes(module.source, { mode: 'transform', sourceMap: true, sourceUrl: module.filename }) : module.source;
+      const aliased = new SourceTextModule(aliasSource, { context, identifier: module.filename });
+      await aliased.link(() => { throw new Error('unsupported_import: adapter aliases are self-contained'); });
+      aliases.set(specifier, aliased);
+    }
+  }
+  context.__adapt = adapt;
   await mod.link(async specifier => {
+    if (aliases.has(specifier)) return aliases.get(specifier);
     if (request.adapter === 'pi-0.74-tools-commands-v1' && specifier === 'typebox') {
       const types = new SourceTextModule(`
         const optional = new WeakSet();
@@ -223,7 +247,8 @@ try {
   const dispatch = new SourceTextModule(`
     const { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, request } = globalThis.__omd;
     if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
-    await globalThis.__activate(request.adapter === "pi-0.74-tools-commands-v1" ? globalThis.__omd.pi : api);
+    const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : request.adapter === "pi-0.74-tools-commands-v1" ? globalThis.__omd.pi : api;
+    await globalThis.__activate(activation);
     globalThis.__omd.ready();
     let value = null;
     try {

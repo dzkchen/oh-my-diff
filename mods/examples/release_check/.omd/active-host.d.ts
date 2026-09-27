@@ -1,0 +1,9 @@
+export type ActiveHostRelease = '0.1.0';
+export type ActiveCodexRelease = '0.157.0';
+export type ActiveModApi = '0.2.0-experimental.1';
+export type ActivePackageSchema = 1;
+export type ActiveStateStorageSchema = 1;
+export type ActiveCapability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal' | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins';
+export type ActiveEvent = 'context' | 'migrate' | 'tool_before' | 'tool_exposure' | 'input' | 'routing' | 'terminal' | 'list' | 'selection' | 'selection_result' | 'compaction' | 'start' | 'idle' | 'stop' | 'resume' | 'tool_result' | 'workspace_change' | 'workspace_pre_rename' | 'turn_start' | 'turn_end' | 'compaction_start' | 'compaction_end' | 'agent_end' | 'contract' | 'model_request' | 'response_stream' | 'prompt' | 'session' | 'agent' | 'tool_call' | 'host_operation';
+export type ActiveReplacementPoint = 'tool_before' | 'routing' | 'terminal' | 'compaction' | 'context' | 'input' | 'list' | 'selection';
+export type ActiveHostOperation = 'exec.run' | 'workspace.read' | 'workspace.list' | 'workspace.stat' | 'workspace.transaction' | 'workspace.backup' | 'workspace.restore' | 'workspace.request_rename' | 'workspace.integrate' | 'store.get' | 'store.put' | 'store.delete' | 'store.list' | 'store.export' | 'store.reset' | 'evidence.write' | 'evidence.read' | 'sessions.list' | 'sessions.read' | 'routes.list' | 'task.status' | 'task.complete' | 'receipts.submit' | 'contract.status' | 'contract.restrict' | 'agents.spawn' | 'agents.message' | 'agents.cancel' | 'agents.result' | 'agents.wait' | 'agents.list' | 'process.which' | 'process.start' | 'process.exchange' | 'process.status' | 'process.stop' | 'providers.register' | 'providers.unregister' | 'sidecars.invoke' | 'sidecars.start' | 'sidecars.status' | 'sidecars.stop';

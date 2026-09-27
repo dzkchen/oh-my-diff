@@ -6,6 +6,7 @@ use super::digest;
 use super::failure;
 use super::identifier;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use serde_json::json;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -32,6 +33,13 @@ pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
 }
 
 pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
+    let (package, source, hash, _) = package_with_assets(path)?;
+    Ok((package, source, hash))
+}
+
+pub(super) fn package_with_assets(
+    path: &Path,
+) -> Result<(ModPackage, String, String, BTreeMap<String, String>)> {
     if !path.is_absolute() || path.canonicalize()? != path {
         return Err(failure("canonical_package_path_required"));
     }
@@ -52,16 +60,22 @@ pub(super) fn package(path: &Path) -> Result<(ModPackage, String, String)> {
         bytes.push(0);
         bytes.extend_from_slice(&read(&path.join(script), 65_536)?);
     }
+    let mut assets = BTreeMap::new();
     for asset in &package.assets {
+        let content = read(&path.join(asset), 65_536)?;
         bytes.push(0);
         bytes.extend_from_slice(asset.as_bytes());
         bytes.push(0);
-        bytes.extend_from_slice(&read(&path.join(asset), 65_536)?);
+        bytes.extend_from_slice(&content);
+        if let Ok(text) = String::from_utf8(content) {
+            assets.insert(asset.clone(), text);
+        }
     }
     Ok((
         package,
         String::from_utf8(source).map_err(failure)?,
         digest(&bytes),
+        assets,
     ))
 }
 

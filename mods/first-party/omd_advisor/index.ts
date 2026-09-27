@@ -1,4 +1,4 @@
-import type { Json, ModAPI, ResourceRef } from '../../api.d.ts';
+import type { Json, ModAPI, ResourceRef } from '../../api-0.1.d.ts';
 
 type Finding = { fingerprint: string; key: string; severity: 'advice' | 'warning' | 'blocking'; summary: string; paths: string[] };
 type Receipt = { reference: ResourceRef; turn: string; thread: string; candidate: string; handle: string; brief: string; findings: Finding[]; status: string; reason: string; ledger: Json; present: boolean };

@@ -1,6 +1,6 @@
 {
   "name": "@oh-my-diff/mod-api",
-  "version": "0.1.0-experimental.9",
+  "version": "0.2.0-experimental.1",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@11.14.0",
@@ -12,6 +12,9 @@
   "exports": {
     ".": {
       "types": "./api.d.ts"
+    },
+    "./0.1": {
+      "types": "./api-0.1.d.ts"
     }
   },
   "bin": {
@@ -19,6 +22,7 @@
   },
   "files": [
     "api.d.ts",
+    "api-0.1.d.ts",
     "author",
     "examples/coordination",
     "examples/kernel",
@@ -34,7 +38,8 @@
     "examples/virtual_reader",
     "examples/scoped_data",
     "examples/review_probe",
-    "examples/service_request"
+    "examples/service_request",
+    "examples/release_check"
   ],
   "scripts": {
     "test": "node --test runner.test.mjs",

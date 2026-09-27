@@ -51,7 +51,7 @@ impl Views {
         };
         change(&mut state);
         state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
-        let _ = owner.persist_runtime_file("mod-view.json", &state.snapshot);
+        let _ = owner.persist_json("mod-view.json", &state.snapshot);
     }
 
     pub(super) fn base(&self, owner: &Host, terminal: ModTerminalView, input: Value) {

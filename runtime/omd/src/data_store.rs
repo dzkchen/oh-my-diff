@@ -1,0 +1,301 @@
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
+use serde_json::json;
+use std::collections::BTreeMap;
+use std::fs;
+use std::io;
+use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::path::PathBuf;
+
+pub const KEY_BYTES: usize = 256;
+pub const VALUE_BYTES: usize = 256 * 1024;
+pub const SCOPE_BYTES: usize = 16 * 1024 * 1024;
+pub const KEY_LIMIT: usize = 4096;
+const LIST_LIMIT: usize = 256;
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    UserCommand,
+    Tool,
+    Event,
+    Cli,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StoreProvenance {
+    pub r#mod: String,
+    pub source_sha256: String,
+    pub thread_id: Option<String>,
+    pub origin: Origin,
+    pub at: u128,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Entry {
+    value: Value,
+    revision: u64,
+    provenance: StoreProvenance,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Document {
+    schema: u32,
+    generation: u64,
+    next_revision: u64,
+    entries: BTreeMap<String, Entry>,
+}
+
+pub struct DataStore<'a> {
+    pub root: &'a Path,
+    pub repository_key: &'a str,
+    pub owner: &'a str,
+    pub provenance: StoreProvenance,
+}
+
+fn failure(message: impl ToString) -> io::Error {
+    io::Error::other(message.to_string())
+}
+
+fn key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= KEY_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b'\\')
+}
+
+fn now() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or_default()
+}
+
+impl DataStore<'_> {
+    fn directory(&self, scope: &str) -> io::Result<PathBuf> {
+        let scope_key = match scope {
+            "repository" => self.repository_key,
+            "user" => "user",
+            _ => return Err(failure("store_scope_invalid")),
+        };
+        if !crate::resource_data::token(self.owner)
+            || !(scope_key == "user"
+                || scope_key.len() == 64 && scope_key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            || self.root.canonicalize()? != self.root
+        {
+            return Err(failure("store_root_invalid"));
+        }
+        let mut path = self.root.to_path_buf();
+        for component in ["data", scope_key, self.owner] {
+            path.push(component);
+            match fs::DirBuilder::new().mode(0o700).create(&path) {
+                Ok(()) => (),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+                Err(error) => return Err(error),
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(failure("store_directory_invalid"));
+            }
+        }
+        Ok(path)
+    }
+
+    fn with_document<T>(
+        &self,
+        scope: &str,
+        write: bool,
+        change: impl FnOnce(&mut Document) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let directory = self.directory(scope)?;
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(directory.join(".store.lock"))?;
+        lock.lock()?;
+        let path = directory.join("store.json");
+        let mut document = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() && metadata.len() <= (SCOPE_BYTES * 2) as u64 => {
+                serde_json::from_slice::<Document>(&fs::read(&path)?)?
+            }
+            Ok(_) => return Err(failure("store_document_invalid")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Document {
+                schema: 1,
+                generation: 1,
+                next_revision: 1,
+                entries: BTreeMap::new(),
+            },
+            Err(error) => return Err(error),
+        };
+        if document.schema != 1 {
+            return Err(failure("store_schema_unsupported"));
+        }
+        let value = change(&mut document)?;
+        if write {
+            let bytes = serde_json::to_vec(&document)?;
+            if bytes.len() > SCOPE_BYTES || document.entries.len() > KEY_LIMIT {
+                return Err(failure("store_quota"));
+            }
+            let temporary = directory.join(format!(".store.json.{}", std::process::id()));
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&temporary)?;
+            let written = file.write_all(&bytes).and_then(|()| file.sync_all());
+            if let Err(error) = written.and_then(|()| fs::rename(&temporary, &path)) {
+                let _ = fs::remove_file(&temporary);
+                return Err(error);
+            }
+        }
+        Ok(value)
+    }
+
+    pub fn call(&self, operation: &str, arguments: Value) -> io::Result<Value> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            #[serde(default)]
+            key: Option<String>,
+            #[serde(default)]
+            value: Option<Value>,
+            #[serde(default)]
+            expected_revision: Option<u64>,
+            #[serde(default)]
+            expected_generation: Option<u64>,
+            #[serde(default)]
+            prefix: Option<String>,
+            #[serde(default)]
+            cursor: Option<String>,
+            #[serde(default)]
+            limit: Option<usize>,
+            #[serde(default = "repository_scope")]
+            scope: String,
+        }
+        fn repository_scope() -> String {
+            "repository".into()
+        }
+        let revision_supplied = arguments
+            .as_object()
+            .is_some_and(|object| object.contains_key("expected_revision"));
+        let input: Input = serde_json::from_value(arguments)?;
+        let checked_key = || {
+            input
+                .key
+                .as_deref()
+                .filter(|value| key(value))
+                .ok_or_else(|| failure("store_key_invalid"))
+        };
+        match operation {
+            "store.get" => {
+                let name = checked_key()?.to_owned();
+                self.with_document(&input.scope, false, |document| {
+                    Ok(document.entries.get(&name).map_or(Value::Null, |entry| {
+                        json!({"value": entry.value, "revision": entry.revision, "provenance": entry.provenance})
+                    }))
+                })
+            }
+            "store.put" => {
+                let name = checked_key()?.to_owned();
+                let value = input.value.clone().ok_or_else(|| failure("store_value_required"))?;
+                if serde_json::to_vec(&value)?.len() > VALUE_BYTES {
+                    return Err(failure("store_value_limit"));
+                }
+                if !revision_supplied {
+                    return Err(failure("store_expected_revision_required"));
+                }
+                let expected = input.expected_revision;
+                let provenance = StoreProvenance {
+                    at: now(),
+                    ..self.provenance.clone()
+                };
+                self.with_document(&input.scope, true, |document| {
+                    let current = document.entries.get(&name).map(|entry| entry.revision);
+                    if current != expected {
+                        return Err(failure(format!(
+                            "store_revision_conflict: current {}",
+                            current.map_or("absent".to_owned(), |value| value.to_string())
+                        )));
+                    }
+                    let revision = document.next_revision;
+                    document.next_revision += 1;
+                    document.entries.insert(
+                        name,
+                        Entry {
+                            value,
+                            revision,
+                            provenance,
+                        },
+                    );
+                    Ok(json!({"revision": revision}))
+                })
+            }
+            "store.delete" => {
+                let name = checked_key()?.to_owned();
+                let expected = input
+                    .expected_revision
+                    .ok_or_else(|| failure("store_expected_revision_required"))?;
+                self.with_document(&input.scope, true, |document| {
+                    match document.entries.get(&name) {
+                        Some(entry) if entry.revision == expected => {
+                            document.entries.remove(&name);
+                            Ok(json!({"deleted": true}))
+                        }
+                        Some(_) => Err(failure("store_revision_conflict")),
+                        None => Ok(json!({"deleted": false})),
+                    }
+                })
+            }
+            "store.list" => {
+                let prefix = input.prefix.clone().unwrap_or_default();
+                let limit = input.limit.unwrap_or(LIST_LIMIT).clamp(1, LIST_LIMIT);
+                self.with_document(&input.scope, false, |document| {
+                    let keys = document
+                        .entries
+                        .iter()
+                        .filter(|(name, _)| name.starts_with(&prefix))
+                        .filter(|(name, _)| input.cursor.as_ref().is_none_or(|cursor| *name > cursor))
+                        .take(limit + 1)
+                        .map(|(name, entry)| {
+                            Ok(json!({"key": name, "revision": entry.revision,
+                                "bytes": serde_json::to_vec(&entry.value)?.len(), "provenance": entry.provenance}))
+                        })
+                        .collect::<io::Result<Vec<_>>>()?;
+                    let cursor = (keys.len() > limit).then(|| keys[limit - 1]["key"].clone());
+                    Ok(json!({"keys": &keys[..keys.len().min(limit)], "cursor": cursor.unwrap_or(Value::Null),
+                        "generation": document.generation}))
+                })
+            }
+            "store.export" => self.with_document(&input.scope, false, |document| {
+                Ok(json!({"schema": 1, "owner": self.owner, "scope": input.scope,
+                    "generation": document.generation, "entries": document.entries}))
+            }),
+            "store.reset" => {
+                let expected = input
+                    .expected_generation
+                    .ok_or_else(|| failure("store_expected_generation_required"))?;
+                self.with_document(&input.scope, true, |document| {
+                    if document.generation != expected {
+                        return Err(failure("store_generation_conflict"));
+                    }
+                    document.entries.clear();
+                    document.generation += 1;
+                    Ok(json!({"generation": document.generation}))
+                })
+            }
+            _ => Err(failure(format!("unsupported_host_operation: {operation}"))),
+        }
+    }
+}

@@ -48,6 +48,7 @@ contains only the packages labeled `bundled` below.
 | `example_scoped_data@1.0.0` | `mod` | `mods/examples/scoped_data` | Demonstrates scoped fact selection and frozen live context reuse, plus commands through the same public bridge. |
 | `example_review_probe@1.0.0` | `hook` | `mods/examples/review_probe` | Owns a bounded completed-turn procedure and result interpretation through the shared accounted review interface. |
 | `example_service_request@1.0.0` | `plugin` | `mods/examples/service_request` | Uses only a public tool export and a granted generic service request; no live engine replacement. |
+| `release_check@1.0.0` | `mod` | `mods/examples/release_check` | An independent author package that uses only the 0.2 host primitives: a contract document, receipts, sandboxed commands, workspace listing, durable store and evidence, stream control, built-in controls and a list replacement. |
 
 ## Conformance fixtures
 

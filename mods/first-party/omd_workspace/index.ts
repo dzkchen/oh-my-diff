@@ -1,4 +1,4 @@
-import type { Json, ModAPI, TerminalComponent, TerminalRenderSite, TerminalView } from '../../api.d.ts';
+import type { Json, ModAPI, TerminalComponent, TerminalRenderSite, TerminalView } from '../../api-0.1.d.ts';
 
 type Density = 'full' | 'compact';
 type Side = 'left' | 'right';

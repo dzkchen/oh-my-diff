@@ -10,7 +10,7 @@ CONTRACT = ROOT / "mods/conformance/contract.json"
 COVERAGE = ROOT / "mods/COVERAGE.md"
 HOST = ROOT / "runtime/omd/src/mods.rs"
 BRIDGE = ROOT / "runtime/omd/src/mods/bridge.rs"
-RUST_TESTS = ROOT / "runtime/omd/tests/mods.rs"
+RUST_TESTS = ROOT / "runtime/omd/tests"
 PATCH = ROOT / json.loads((ROOT / "upstream.lock.json").read_text())["runtime_patches"][0]["path"]
 RUNNER_TESTS = ROOT / "mods/runner.test.mjs"
 TERMINAL_FIXTURE = ROOT / "benchmarks/mod_terminal_fixture.py"
@@ -38,11 +38,13 @@ def host_sets():
             raise ValueError(f"{name} not found in {HOST}")
         return body.group(1)
 
-    capabilities = re.findall(r'"([a-z_]+)"', constant("MOD_CAPABILITIES"))
-    events = re.findall(r'\("([a-z_]+)", "[a-z_]+"\)', constant("MOD_EVENTS"))
+    capabilities = re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))
+    events = re.findall(r'\("([a-z_]+)", "[a-z_.]+"\)', constant("MOD_EVENTS"))
     replacements = re.findall(r'"([a-z_]+)"', constant("MOD_REPLACEMENT_POINTS"))
-    capability_match = re.search(r"match self\.operation\.as_str\(\) \{(.*?)\n            _ =>", BRIDGE.read_text(), re.S)
-    operations = re.findall(r'"([a-z_]+\.[a-z_]+)"', capability_match.group(1))
+    capability_match = re.search(r"match operation \{(.*?)\n            _ if", BRIDGE.read_text(), re.S)
+    operations = re.findall(r'"([a-z_]+\.[a-z_]+)"', constant("MOD_HOST_OPERATIONS"))
+    arms = re.findall(r'"([a-z_]+\.[a-z_]+)"\s*(?=\||=>)', capability_match.group(1))
+    operations += [name for name in arms if name not in operations]
     version = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', source).group(1)
     return version, {
         "capabilities": set(capabilities),
@@ -63,7 +65,7 @@ def fixture_profiles():
 def resolve(reference, profiles, scenarios):
     kind, _, name = reference.partition(":")
     if kind == "rust":
-        return f"fn {name}(" in RUST_TESTS.read_text()
+        return any(f"fn {name}(" in path.read_text() for path in RUST_TESTS.glob("*.rs"))
     if kind == "patch":
         return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", PATCH.read_text(), re.M) is not None
     if kind == "node":
@@ -193,7 +195,7 @@ def render(contract):
     out += [
         "## Conformance evidence",
         "",
-        "`rust:` `runtime/omd/tests/mods.rs` · `patch:` patched native/TUI tests ·",
+        "`rust:` `runtime/omd/tests/*.rs` · `patch:` patched native/TUI tests ·",
         "`node:` `mods/runner.test.mjs` · `python:` `tests/` · `fixture:` profile/scenario of",
         "`benchmarks.controlled_fixture` · `terminal:` check of `benchmarks.mod_terminal_fixture`.",
         "Each reference is resolved by `scripts/mod_conformance.py`.",

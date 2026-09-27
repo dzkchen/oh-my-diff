@@ -22,6 +22,25 @@ pub trait ResponseObserver: Send + Sync {
         request: &mut Request,
         body: Option<&EncodedJsonBody>,
     ) -> Result<Option<Box<dyn ResponseAttempt>>, TransportError>;
+    fn requires_observation(&self, thread: Option<&str>) -> bool {
+        let _ = thread;
+        true
+    }
+}
+
+pub const STREAM_CONTROL: &str = "stream_control:";
+
+pub fn stream_control_error(control: &serde_json::Value) -> TransportError {
+    TransportError::Build(format!("{STREAM_CONTROL}{control}"))
+}
+
+pub fn stream_control(message: &str) -> Option<serde_json::Value> {
+    let start = message.find(STREAM_CONTROL)? + STREAM_CONTROL.len();
+    serde_json::Deserializer::from_str(&message[start..])
+        .into_iter::<serde_json::Value>()
+        .next()?
+        .ok()
+        .filter(serde_json::Value::is_object)
 }
 
 static OBSERVER: OnceLock<Arc<dyn ResponseObserver>> = OnceLock::new();
@@ -53,12 +72,18 @@ pub(crate) fn admit(
     }
 }
 
-pub(crate) fn reject_unobserved_transport() -> Result<(), crate::error::ApiError> {
-    if OBSERVER.get().is_some() {
+pub(crate) fn reject_unobserved_transport(
+    headers: Option<&http::HeaderMap>,
+) -> Result<(), crate::error::ApiError> {
+    let thread = headers
+        .and_then(|headers| headers.get("thread-id"))
+        .and_then(|value| value.to_str().ok());
+    if OBSERVER
+        .get()
+        .is_some_and(|observer| observer.requires_observation(thread))
+    {
         return Err(crate::error::ApiError::InvalidRequest {
-            message:
-                "local controlled-delegation policy requires observed HTTP Responses transport"
-                    .into(),
+            message: "local OMD request policy requires observed HTTP Responses transport".into(),
         });
     }
     Ok(())

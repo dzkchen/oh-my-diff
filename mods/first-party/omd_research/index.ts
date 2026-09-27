@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../api.d.ts';
+import type { Json, ModAPI } from '../../api-0.1.d.ts';
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= max;

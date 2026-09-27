@@ -1,0 +1,784 @@
+use crate::data_store::DataStore;
+use crate::data_store::Origin;
+use crate::data_store::StoreProvenance;
+use crate::workspace::Fingerprint;
+use crate::workspace::WorkspaceTransaction;
+use serde::Deserialize;
+use serde_json::Value;
+use serde_json::json;
+use sha2::Digest;
+use sha2::Sha256;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::fs;
+use std::io::Read;
+use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
+
+pub const RESERVED_EXEC_ENVIRONMENT: &[&str] = &[
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "SHELL",
+    "USER",
+    "LOGNAME",
+    "PWD",
+    "OLDPWD",
+    "IFS",
+    "ENV",
+    "BASH_ENV",
+    "NODE_OPTIONS",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "RUBYOPT",
+    "PERL5OPT",
+];
+pub const RESERVED_EXEC_PREFIXES: &[&str] =
+    &["DYLD_", "LD_", "OMD_", "CODEX_", "SSH_", "GPG_", "GIT_CONFIG"];
+pub const EXEC_DEFAULT_TIMEOUT_MS: u64 = 10_000;
+pub const EXEC_MAX_TIMEOUT_MS: u64 = 120_000;
+pub const EXEC_OUTPUT_BYTES: usize = 1024 * 1024;
+pub const EXEC_CONCURRENCY: usize = 4;
+const LIST_LIMIT: usize = 20_000;
+const BACKUP_LIMIT: usize = 256;
+const BACKUP_BYTES: u64 = 64 * 1024 * 1024;
+const LIST_EXCLUDED: &[&str] = &[".git", ".omd"];
+
+static RUNNING: Mutex<BTreeMap<String, usize>> = Mutex::new(BTreeMap::new());
+
+pub struct ExecAccess<'a> {
+    pub write: bool,
+    pub loopback: bool,
+    pub scratch: &'a Path,
+}
+
+pub trait Authority {
+    fn repository(&self) -> &Path;
+    fn readable(&self, path: &Path) -> bool;
+    fn writable(&self, path: &Path) -> bool;
+    fn command(&self, argv: Vec<String>, access: &ExecAccess<'_>) -> Result<Command, String>;
+}
+
+pub struct Caller<'a> {
+    pub id: &'a str,
+    pub source_sha256: &'a str,
+    pub capabilities: &'a [String],
+    pub exec_environment: &'a [String],
+    pub origin: Origin,
+    pub thread: Option<&'a str>,
+}
+
+pub struct Host<'a> {
+    pub authority: &'a dyn Authority,
+    pub data_root: &'a Path,
+    pub active: &'a dyn Fn() -> bool,
+}
+
+pub fn served(operation: &str) -> bool {
+    matches!(
+        operation,
+        "exec.run"
+            | "workspace.read"
+            | "workspace.list"
+            | "workspace.stat"
+            | "workspace.transaction"
+            | "workspace.backup"
+            | "workspace.restore"
+            | "store.get"
+            | "store.put"
+            | "store.delete"
+            | "store.list"
+            | "store.export"
+            | "store.reset"
+    )
+}
+
+pub fn repository_key(repository: &Path) -> String {
+    format!("{:x}", Sha256::digest(repository.as_os_str().as_encoded_bytes()))
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn unhex(text: &str) -> Result<Vec<u8>, String> {
+    if !text.len().is_multiple_of(2) {
+        return Err("backup_record_invalid".into());
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&text[index..index + 2], 16).map_err(|_| "backup_record_invalid".into()))
+        .collect()
+}
+
+fn now_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or_default()
+}
+
+fn relative(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 4096
+        && !name.starts_with('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
+        && name
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != ".." && !part.eq_ignore_ascii_case(".git"))
+}
+
+struct Running(String);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if let Ok(mut running) = RUNNING.lock()
+            && let Some(count) = running.get_mut(&self.0)
+        {
+            *count = count.saturating_sub(1);
+        }
+    }
+}
+
+struct Child(std::process::Child);
+
+impl Drop for Child {
+    fn drop(&mut self) {
+        if let Some(pid) = rustix::process::Pid::from_raw(self.0.id() as i32) {
+            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+        }
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
+    let path = Path::new(name);
+    if path.is_absolute() {
+        let canonical = path.canonicalize().ok()?;
+        return (canonical == path && canonical.is_file() && !canonical.starts_with(repository))
+            .then_some(canonical);
+    }
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return None;
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?).find_map(|directory| {
+        let candidate = directory.join(name).canonicalize().ok()?;
+        (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
+    })
+}
+
+fn program_hash(path: &Path) -> Result<String, String> {
+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    if metadata.len() > 128 * 1024 * 1024 {
+        return Err("exec_program_too_large".into());
+    }
+    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut chunk = vec![0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut chunk).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&chunk[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+impl Host<'_> {
+    fn repository(&self) -> &Path {
+        self.authority.repository()
+    }
+
+    fn checked_paths(&self, names: &[String], write: bool) -> Result<Vec<PathBuf>, String> {
+        if names.is_empty()
+            || names.len() > 128
+            || names.iter().collect::<BTreeSet<_>>().len() != names.len()
+        {
+            return Err("workspace_path_scope_invalid".into());
+        }
+        names
+            .iter()
+            .map(|name| {
+                let path = crate::workspace_path(self.repository(), name).map_err(|error| error.to_string())?;
+                if !self.authority.readable(&path) {
+                    return Err("workspace_read_permission_denied".into());
+                }
+                if write && !self.authority.writable(&path) {
+                    return Err("workspace_write_permission_denied".into());
+                }
+                Ok(path)
+            })
+            .collect()
+    }
+
+    pub fn call(&self, caller: &Caller<'_>, operation: &str, arguments: Value) -> Result<Value, String> {
+        if !(self.active)() {
+            return Err("host_operation_cancelled".into());
+        }
+        match operation {
+            "exec.run" => self.exec(caller, arguments),
+            "workspace.read" => self.read(arguments),
+            "workspace.list" => self.list(arguments),
+            "workspace.stat" => self.stat(arguments),
+            "workspace.transaction" => self.transaction(caller, arguments),
+            "workspace.backup" => self.backup(caller, arguments),
+            "workspace.restore" => self.restore(caller, arguments),
+            operation if operation.starts_with("store.") => {
+                let key = repository_key(self.repository());
+                DataStore {
+                    root: self.data_root,
+                    repository_key: &key,
+                    owner: caller.id,
+                    provenance: StoreProvenance {
+                        r#mod: caller.id.to_owned(),
+                        source_sha256: caller.source_sha256.to_owned(),
+                        thread_id: caller.thread.map(str::to_owned),
+                        origin: caller.origin,
+                        at: 0,
+                    },
+                }
+                .call(operation, arguments)
+                .map_err(|error| error.to_string())
+            }
+            _ => Err(format!("unsupported_host_operation: {operation}")),
+        }
+    }
+
+    fn exec(&self, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            program: String,
+            #[serde(default)]
+            sha256: Option<String>,
+            #[serde(default)]
+            argv: Vec<String>,
+            #[serde(default)]
+            cwd: Option<String>,
+            #[serde(default)]
+            env: BTreeMap<String, String>,
+            #[serde(default)]
+            stdin: Option<String>,
+            #[serde(default)]
+            timeout_ms: Option<u64>,
+            #[serde(default)]
+            max_output_bytes: Option<usize>,
+            #[serde(default)]
+            write: bool,
+            #[serde(default)]
+            network: Option<String>,
+        }
+        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let granted = |capability: &str| caller.capabilities.iter().any(|cap| cap == capability);
+        let loopback = match input.network.as_deref() {
+            None | Some("none") => false,
+            Some("loopback") if granted("network") => true,
+            Some("loopback") => return Err("capability_denied: network".into()),
+            Some(_) => return Err("exec_network_invalid".into()),
+        };
+        if input.write && !granted("fs.write") {
+            return Err("capability_denied: fs.write".into());
+        }
+        if input.argv.len() > 128
+            || input.argv.iter().map(String::len).sum::<usize>() > 8192
+            || input.argv.iter().any(|arg| arg.contains('\0'))
+            || input.stdin.as_ref().is_some_and(|stdin| stdin.len() > 64 * 1024)
+            || input.env.len() > 16
+            || input.env.values().map(String::len).sum::<usize>() > 16 * 1024
+            || input.env.values().any(|value| value.contains('\0'))
+            || input.env.keys().any(|name| !caller.exec_environment.contains(name))
+        {
+            return Err("exec_arguments_invalid".into());
+        }
+        let timeout = Duration::from_millis(
+            input
+                .timeout_ms
+                .unwrap_or(EXEC_DEFAULT_TIMEOUT_MS)
+                .clamp(1, EXEC_MAX_TIMEOUT_MS),
+        );
+        let limit = input
+            .max_output_bytes
+            .unwrap_or(EXEC_OUTPUT_BYTES)
+            .clamp(1, EXEC_OUTPUT_BYTES);
+        let repository = self.repository().to_path_buf();
+        let program = resolve_program(&input.program, &repository).ok_or("exec_program_unavailable")?;
+        let digest = program_hash(&program)?;
+        if input.sha256.as_ref().is_some_and(|expected| *expected != digest) {
+            return Err("exec_program_changed".into());
+        }
+        let cwd = match input.cwd.as_deref() {
+            None | Some("") | Some(".") => repository.clone(),
+            Some(name) if relative(name) => self.checked_paths(&[name.to_owned()], false)?.remove(0),
+            Some(_) => return Err("exec_cwd_invalid".into()),
+        };
+        if !cwd.is_dir() || !self.authority.readable(&cwd) || input.write && !self.authority.writable(&cwd) {
+            return Err("exec_cwd_unavailable".into());
+        }
+        let _running = {
+            let mut running = RUNNING.lock().map_err(|_| "exec_accounting_poisoned")?;
+            let count = running.entry(caller.id.to_owned()).or_default();
+            if *count >= EXEC_CONCURRENCY {
+                return Err("exec_concurrency_limit".into());
+            }
+            *count += 1;
+            Running(caller.id.to_owned())
+        };
+        let scratch = std::env::temp_dir().join(format!(
+            "omd-exec-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&scratch)
+            .map_err(|error| error.to_string())?;
+        let scratch = Scratch(scratch.canonicalize().map_err(|error| error.to_string())?);
+        let mut argv = vec![program.to_string_lossy().into_owned()];
+        argv.extend(input.argv);
+        let mut command = self.authority.command(
+            argv,
+            &ExecAccess {
+                write: input.write,
+                loopback,
+                scratch: &scratch.0,
+            },
+        )?;
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        command
+            .current_dir(&cwd)
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", &scratch.0)
+            .env("TMPDIR", &scratch.0)
+            .env("TERM", "dumb")
+            .stdin(if input.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for name in ["LANG", "LC_ALL", "LC_CTYPE"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        for name in caller.exec_environment {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        command.envs(&input.env);
+        let started = Instant::now();
+        let mut child = Child(command.spawn().map_err(|error| format!("exec_spawn_failed: {error}"))?);
+        if let (Some(bytes), Some(mut pipe)) = (input.stdin.as_ref(), child.0.stdin.take()) {
+            let bytes = bytes.clone().into_bytes();
+            std::thread::spawn(move || {
+                let _ = pipe.write_all(&bytes);
+            });
+        }
+        let bounded = |pipe: Option<Box<dyn Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut kept = Vec::new();
+                let mut truncated = false;
+                if let Some(mut pipe) = pipe {
+                    let mut chunk = [0_u8; 8192];
+                    while let Ok(read) = pipe.read(&mut chunk) {
+                        if read == 0 {
+                            break;
+                        }
+                        let room = limit.saturating_sub(kept.len());
+                        kept.extend_from_slice(&chunk[..read.min(room)]);
+                        truncated |= read > room;
+                    }
+                }
+                (kept, truncated)
+            })
+        };
+        let stdout = bounded(child.0.stdout.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
+        let stderr = bounded(child.0.stderr.take().map(|pipe| Box::new(pipe) as Box<dyn Read + Send>));
+        let mut timed_out = false;
+        let status = loop {
+            if let Some(status) = child.0.try_wait().map_err(|error| error.to_string())? {
+                break Some(status);
+            }
+            if !(self.active)() {
+                drop(child);
+                return Err("exec_cancelled".into());
+            }
+            if started.elapsed() >= timeout {
+                timed_out = true;
+                if let Some(pid) = rustix::process::Pid::from_raw(child.0.id() as i32) {
+                    let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+                }
+                let _ = child.0.kill();
+                let _ = child.0.wait();
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        if let Some(pid) = rustix::process::Pid::from_raw(child.0.id() as i32) {
+            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+        }
+        let (stdout, stdout_truncated) = stdout.join().map_err(|_| "exec_output_failed")?;
+        let (stderr, stderr_truncated) = stderr.join().map_err(|_| "exec_output_failed")?;
+        let signal = status.and_then(|status| {
+            use std::os::unix::process::ExitStatusExt;
+            status.signal().map(|signal| signal.to_string())
+        });
+        Ok(json!({
+            "exit_code": status.and_then(|status| status.code()),
+            "signal": signal,
+            "stdout": String::from_utf8_lossy(&stdout),
+            "stderr": String::from_utf8_lossy(&stderr),
+            "stdout_truncated": stdout_truncated,
+            "stderr_truncated": stderr_truncated,
+            "timed_out": timed_out,
+            "duration_ms": started.elapsed().as_millis() as u64,
+            "program": {"path": program, "sha256": digest},
+        }))
+    }
+
+    fn read(&self, arguments: Value) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            paths: Vec<String>,
+        }
+        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        self.checked_paths(&input.paths, false)?;
+        let selected = input.paths.into_iter().collect::<BTreeSet<_>>();
+        let snapshot = crate::Snapshot::capture(self.repository(), &selected, 4 * 1024 * 1024)
+            .map_err(|error| error.to_string())?;
+        let mut files = serde_json::Map::new();
+        for name in selected {
+            let value = match snapshot.files.get(&name) {
+                Some(file) => json!({
+                    "text": String::from_utf8(file.bytes.clone()).map_err(|_| "workspace_text_not_utf8")?,
+                    "sha256": sha256(&file.bytes),
+                }),
+                None => Value::Null,
+            };
+            files.insert(name, value);
+        }
+        Ok(json!({"files": files}))
+    }
+
+    fn file_stat(path: &Path, hash: bool) -> Result<Value, String> {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
+            Err(error) => return Err(error.to_string()),
+        };
+        let kind = if metadata.file_type().is_symlink() {
+            "symlink"
+        } else if metadata.is_dir() {
+            "dir"
+        } else if metadata.is_file() {
+            "file"
+        } else {
+            return Ok(Value::Null);
+        };
+        let mtime_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |elapsed| elapsed.as_millis() as u64);
+        let mut value = json!({"kind": kind, "size": metadata.len(), "mtime_ms": mtime_ms});
+        if hash && kind == "file" && metadata.len() <= 64 * 1024 * 1024 {
+            let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+            value["sha256"] = json!(sha256(&bytes));
+        }
+        Ok(value)
+    }
+
+    fn stat(&self, arguments: Value) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            paths: Vec<String>,
+            #[serde(default)]
+            hash: bool,
+        }
+        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let paths = self.checked_paths(&input.paths, false)?;
+        let mut files = serde_json::Map::new();
+        for (name, path) in input.paths.iter().zip(paths) {
+            files.insert(name.clone(), Self::file_stat(&path, input.hash)?);
+        }
+        Ok(json!({"files": files}))
+    }
+
+    fn list(&self, arguments: Value) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            #[serde(default)]
+            path: Option<String>,
+            #[serde(default)]
+            recursive: bool,
+            #[serde(default)]
+            include_ignored: bool,
+            #[serde(default)]
+            max_entries: Option<usize>,
+        }
+        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let limit = input.max_entries.unwrap_or(LIST_LIMIT).clamp(1, LIST_LIMIT);
+        let repository = self.repository().to_path_buf();
+        let base = match input.path.as_deref() {
+            None | Some("") | Some(".") => repository.clone(),
+            Some(name) if relative(name) => self.checked_paths(&[name.to_owned()], false)?.remove(0),
+            Some(_) => return Err("workspace_path_scope_invalid".into()),
+        };
+        if !base.is_dir() {
+            return Err("workspace_list_requires_directory".into());
+        }
+        let walker = ignore::WalkBuilder::new(&base)
+            .hidden(false)
+            .git_ignore(!input.include_ignored)
+            .git_global(false)
+            .git_exclude(!input.include_ignored)
+            .ignore(!input.include_ignored)
+            .parents(!input.include_ignored)
+            .require_git(false)
+            .follow_links(false)
+            .max_depth((!input.recursive).then_some(1))
+            .filter_entry(|entry| {
+                !(entry.depth() > 0
+                    && entry.file_type().is_some_and(|kind| kind.is_dir())
+                    && LIST_EXCLUDED.contains(&entry.file_name().to_string_lossy().as_ref()))
+            })
+            .build();
+        let mut entries = Vec::new();
+        let mut truncated = false;
+        for entry in walker {
+            if !(self.active)() {
+                return Err("host_operation_cancelled".into());
+            }
+            let Ok(entry) = entry else { continue };
+            if entry.depth() == 0 {
+                continue;
+            }
+            let path = entry.path();
+            let Some(name) = path
+                .strip_prefix(&repository)
+                .ok()
+                .and_then(Path::to_str)
+                .filter(|name| relative(name))
+            else {
+                continue;
+            };
+            if !self.authority.readable(path) {
+                continue;
+            }
+            if entries.len() == limit {
+                truncated = true;
+                break;
+            }
+            let mut value = Self::file_stat(path, false)?;
+            if value.is_null() {
+                continue;
+            }
+            value["path"] = json!(name);
+            entries.push(value);
+        }
+        entries.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
+        Ok(json!({"entries": entries, "truncated": truncated}))
+    }
+
+    fn backup_directory(&self, caller: &Caller<'_>) -> Result<PathBuf, String> {
+        if !crate::resource_data::token(caller.id) || self.data_root.canonicalize().ok().as_deref() != Some(self.data_root) {
+            return Err("backup_root_invalid".into());
+        }
+        let mut path = self.data_root.to_path_buf();
+        for component in ["backups", &repository_key(self.repository()), caller.id] {
+            path.push(component);
+            match fs::DirBuilder::new().mode(0o700).create(&path) {
+                Ok(()) => (),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(error) => return Err(error.to_string()),
+            }
+            let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err("backup_directory_invalid".into());
+            }
+        }
+        Ok(path)
+    }
+
+    fn save_backup(
+        &self,
+        caller: &Caller<'_>,
+        files: &BTreeMap<String, Option<Vec<u8>>>,
+    ) -> std::io::Result<Value> {
+        let directory = self.backup_directory(caller).map_err(std::io::Error::other)?;
+        let record = json!({
+            "schema": 1,
+            "owner": caller.id,
+            "repository": repository_key(self.repository()),
+            "created_ms": now_ms() as u64,
+            "files": files.iter().map(|(name, bytes)| (name.clone(), bytes.as_ref().map_or(Value::Null, |bytes| json!(hex(bytes))))).collect::<serde_json::Map<_, _>>(),
+        });
+        let bytes = serde_json::to_vec(&record)?;
+        let digest = sha256(&bytes);
+        let mut count = 0;
+        let mut total = 0;
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            count += 1;
+            total += entry.metadata()?.len();
+        }
+        if count >= BACKUP_LIMIT || total + bytes.len() as u64 > BACKUP_BYTES {
+            return Err(std::io::Error::other("backup_quota"));
+        }
+        let path = directory.join(format!("{digest}.json"));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(&bytes)?;
+                file.sync_all()?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(error) => return Err(error),
+        }
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        Ok(json!({"reference": digest, "sha256": digest}))
+    }
+
+    fn transaction(&self, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
+        let transaction: WorkspaceTransaction =
+            serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        self.checked_paths(&transaction.expected.keys().cloned().collect::<Vec<_>>(), true)?;
+        let sink = |files: &BTreeMap<String, Option<Vec<u8>>>| self.save_backup(caller, files);
+        let result = transaction
+            .apply_with_backup(self.repository(), || (self.active)(), Some(&sink))
+            .map_err(|error| error.to_string())?;
+        Ok(json!({"files": result.files, "backup": result.backup}))
+    }
+
+    fn backup(&self, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            expected: BTreeMap<String, Option<Fingerprint>>,
+        }
+        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let names = input.expected.keys().cloned().collect::<Vec<_>>();
+        self.checked_paths(&names, false)?;
+        let selected = names.iter().cloned().collect::<BTreeSet<_>>();
+        let snapshot = crate::Snapshot::capture(self.repository(), &selected, 4 * 1024 * 1024)
+            .map_err(|error| error.to_string())?;
+        let mut files = BTreeMap::new();
+        for (name, expected) in &input.expected {
+            let current = snapshot.files.get(name).map(|file| file.bytes.clone());
+            let stat = Self::file_stat(&crate::workspace_path(self.repository(), name).map_err(|error| error.to_string())?, false)?;
+            let matches = match (expected, &current) {
+                (None, None) => true,
+                (Some(Fingerprint::Hash(hash)), Some(bytes)) => *hash == sha256(bytes),
+                (Some(Fingerprint::Stat { size, mtime_ms }), Some(_)) => {
+                    stat["size"] == json!(size) && stat["mtime_ms"] == json!(mtime_ms)
+                }
+                _ => false,
+            };
+            if !matches {
+                return Err(format!("stale expected version for {name}"));
+            }
+            files.insert(name.clone(), current);
+        }
+        let backup = self.save_backup(caller, &files).map_err(|error| error.to_string())?;
+        Ok(json!({"backup": backup}))
+    }
+
+    fn restore(&self, caller: &Caller<'_>, arguments: Value) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            backup: crate::resource_data::ResourceRef,
+            expected: BTreeMap<String, Option<Fingerprint>>,
+        }
+        let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        if input.backup.reference != input.backup.sha256
+            || input.backup.sha256.len() != 64
+            || !input.backup.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("backup_reference_invalid".into());
+        }
+        let path = self
+            .backup_directory(caller)?
+            .join(format!("{}.json", input.backup.sha256));
+        let bytes = fs::read(&path).map_err(|_| "backup_unavailable")?;
+        if sha256(&bytes) != input.backup.sha256 {
+            return Err("backup_integrity_failed".into());
+        }
+        let record: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        if record["owner"] != caller.id || record["repository"] != repository_key(self.repository()) {
+            return Err("backup_scope_mismatch".into());
+        }
+        let files = record["files"].as_object().ok_or("backup_record_invalid")?;
+        if files.keys().collect::<BTreeSet<_>>() != input.expected.keys().collect::<BTreeSet<_>>() {
+            return Err("restore_expected_must_cover_backup".into());
+        }
+        let mut transaction = WorkspaceTransaction {
+            expected: input.expected.clone(),
+            ..Default::default()
+        };
+        for (name, content) in files {
+            match content.as_str() {
+                Some(text) => {
+                    transaction.byte_writes.insert(name.clone(), unhex(text)?);
+                }
+                None if input.expected.get(name).is_some_and(Option::is_some) => {
+                    transaction.deletes.push(name.clone());
+                }
+                None => {
+                    transaction.expected.remove(name);
+                }
+            }
+        }
+        if transaction.expected.is_empty() {
+            return Ok(json!({"files": {}}));
+        }
+        self.checked_paths(&transaction.expected.keys().cloned().collect::<Vec<_>>(), true)?;
+        let result = transaction
+            .apply(self.repository(), || (self.active)())
+            .map_err(|error| error.to_string())?;
+        Ok(json!({"files": result.files}))
+    }
+}

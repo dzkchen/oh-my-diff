@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../api.d.ts';
+import type { Json, ModAPI } from '../../api-0.1.d.ts';
 
 function strings(checkpoint: Json, key: string): string[] {
   if (checkpoint === null || typeof checkpoint !== 'object' || Array.isArray(checkpoint)) return [];

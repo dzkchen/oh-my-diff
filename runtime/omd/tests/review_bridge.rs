@@ -5,6 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 #[test]
+#[ignore = "the native review lane was retired in Batch 2.5; Batch 2.55 rewrites review_probe over agents.spawn and receipts.submit"]
 fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();

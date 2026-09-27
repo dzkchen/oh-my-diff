@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '@oh-my-diff/mod-api';
+import type { Json, ModAPI } from '@oh-my-diff/mod-api/0.1';
 
 function entries(checkpoint: Json, key: string): string[] {
   if (checkpoint === null || typeof checkpoint !== 'object' || Array.isArray(checkpoint)) return [];

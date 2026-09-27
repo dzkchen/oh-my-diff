@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::io::BufRead;
+use std::io::Read;
 use std::io::BufReader;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -57,6 +58,49 @@ impl Drop for ManagedProcess {
         let _ = self.child.wait();
         let _ = fs::remove_dir_all(&self.scratch);
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Framing {
+    ContentLength,
+    Ndjson,
+}
+
+fn read_framed(reader: &mut impl BufRead, framing: Framing) -> io::Result<Value> {
+    if framing == Framing::ContentLength {
+        return read_message(reader);
+    }
+    let mut line = Vec::new();
+    loop {
+        let read = reader
+            .by_ref()
+            .take(4 * 1024 * 1024 + 1)
+            .read_until(b'\n', &mut line)?;
+        if read == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "process stopped"));
+        }
+        if line.len() > 4 * 1024 * 1024 {
+            return Err(io::Error::other("process message length invalid"));
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
+            line.clear();
+            continue;
+        }
+        return serde_json::from_slice(&line).map_err(io::Error::other);
+    }
+}
+
+fn send_framed(stdin: &mut impl Write, message: &Value, framing: Framing) -> Result<(), String> {
+    if framing == Framing::ContentLength {
+        return send_message(stdin, message);
+    }
+    let mut bytes = serde_json::to_vec(message).map_err(|error| error.to_string())?;
+    if bytes.len() > 4 * 1024 * 1024 || !message.is_object() {
+        return Err("process_message_invalid_or_too_large".into());
+    }
+    bytes.push(b'\n');
+    stdin.write_all(&bytes).map_err(|error| error.to_string())?;
+    stdin.flush().map_err(|error| error.to_string())
 }
 
 fn read_message(reader: &mut impl BufRead) -> io::Result<Value> {
@@ -103,7 +147,7 @@ fn send_message(stdin: &mut impl Write, message: &Value) -> Result<(), String> {
     stdin.flush().map_err(|error| error.to_string())
 }
 
-fn read_policy(
+pub(crate) fn read_policy(
     policy: &FileSystemSandboxPolicy,
     scratch: &Path,
 ) -> Result<FileSystemSandboxPolicy, String> {
@@ -247,6 +291,10 @@ impl ManagedProcesses {
                     arguments: Vec<String>,
                     #[serde(default)]
                     transport: Option<String>,
+                    #[serde(default)]
+                    framing: Option<String>,
+                    #[serde(default)]
+                    network: Option<String>,
                 }
                 let input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
@@ -262,6 +310,10 @@ impl ManagedProcesses {
                         input.transport.as_deref(),
                         None | Some("stdio") | Some("stdio_dap")
                     )
+                    || input.transport.is_some()
+                        && (input.framing.is_some() || input.network.is_some())
+                    || !matches!(input.framing.as_deref(), None | Some("content-length") | Some("ndjson"))
+                    || !matches!(input.network.as_deref(), None | Some("none") | Some("loopback"))
                     || (input.transport.as_deref() == Some("stdio_dap")
                         && (input.name != "python3"
                             || input.arguments != ["-m", "debugpy.adapter"]))
@@ -314,7 +366,13 @@ impl ManagedProcesses {
                 )?;
                 let launched = (|| {
                     let scope = read_policy(policy, &scratch)?;
-                    let stdio_dap = input.transport.as_deref() == Some("stdio_dap");
+                    let stdio_dap = input.transport.as_deref() == Some("stdio_dap")
+                        || input.network.as_deref() == Some("loopback");
+                    let framing = if input.framing.as_deref() == Some("ndjson") {
+                        Framing::Ndjson
+                    } else {
+                        Framing::ContentLength
+                    };
                     let mut command = vec![input.path.to_string_lossy().into_owned()];
                     command.extend(input.arguments);
                     let loopback = stdio_dap.then(|| ManagedNetworkSandboxContext {
@@ -368,7 +426,7 @@ impl ManagedProcesses {
                         while let Ok((messages, reply)) = writer_receiver.recv() {
                             let result = messages
                                 .iter()
-                                .try_for_each(|message| send_message(&mut stdin, message));
+                                .try_for_each(|message| send_framed(&mut stdin, message, framing));
                             let failed = result.is_err();
                             let _ = reply.send(result);
                             if failed {
@@ -380,7 +438,7 @@ impl ManagedProcesses {
                     std::thread::spawn(move || {
                         let mut reader = BufReader::new(stdout);
                         loop {
-                            let result = read_message(&mut reader);
+                            let result = read_framed(&mut reader, framing);
                             let terminal = result.is_err();
                             if sender.send(result).is_err() || terminal {
                                 break;

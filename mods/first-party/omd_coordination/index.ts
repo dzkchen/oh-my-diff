@@ -1,4 +1,4 @@
-import type { ContributionRequest, Json, ModAPI, ServiceContract } from '../../api.d.ts';
+import type { ContributionRequest, Json, ModAPI, ServiceContract } from '../../api-0.1.d.ts';
 
 type ContextPolicy = 'focused_brief' | 'shared_task_packet' | 'parent_history';
 type LeadPolicy = 'sol' | 'astra' | 'task_entry';

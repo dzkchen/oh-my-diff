@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "as_of": "2026-09-26",
+  "as_of": "2026-09-27",
   "host": {
     "codex": "0.157.0",
     "omd": "0.1.0",
     "stability": "experimental",
-    "current_api": "0.1.0-experimental.9",
+    "current_api": "0.2.0-experimental.1",
     "package_schemas": [
       1
     ],
@@ -33,9 +33,18 @@
       "scoped_data_v1",
       "plugin_dispatch_v1",
       "turn_evidence_v1",
-      "accounted_review_v1",
       "service_requests_v1",
-      "worker_presets_v1"
+      "exec_v1",
+      "workspace_fs_v1",
+      "store_v1",
+      "routes_v1",
+      "stream_control_v1",
+      "builtins_v1",
+      "contracts_v2",
+      "framed_process_v1",
+      "kernels_v1",
+      "terminal_lists_v1",
+      "adapters_v1"
     ]
   },
   "apis": [
@@ -71,6 +80,12 @@
     },
     {
       "version": "0.1.0-experimental.9",
+      "stability": "experimental",
+      "support_until": "2027-03-20",
+      "service_imports": "exact or compatible caret range"
+    },
+    {
+      "version": "0.2.0-experimental.1",
       "stability": "experimental",
       "support_until": "2027-03-20",
       "service_imports": "exact or compatible caret range"

@@ -1,4 +1,4 @@
-import type { ContributionRequest, EscalationRequest, FailureClass, Json, ModAPI, RecoveryAction } from '../../api.d.ts';
+import type { ContributionRequest, EscalationRequest, FailureClass, Json, ModAPI, RecoveryAction } from '../../api-0.1.d.ts';
 
 type RecoveryTool = 'direct' | 'delegation' | 'advisory';
 

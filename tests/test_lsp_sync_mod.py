@@ -7,6 +7,7 @@ import sys
 import shutil
 import subprocess
 import tempfile
+import re
 import time
 import unittest
 
@@ -15,6 +16,20 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNNER = (ROOT / "runtime/omd/src/mods/runner.mjs").read_text()
 SOURCE = (ROOT / "mods/first-party/omd_lsp_sync/index.ts").read_text()
 CAPABILITIES = ["lifecycle", "process", "state", "tools", "workspace"]
+HOST = (ROOT / "runtime/omd/src/mods.rs").read_text()
+
+
+def table(name):
+    return re.search(rf"pub const {name}: &\[[^\]]*\] = &\[(.*?)\];", HOST, re.S).group(1)
+
+
+LEGACY_SURFACE = {
+    "events": dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', table("LEGACY_MOD_EVENTS"))),
+    "replacements": re.findall(r'"([a-z_]+)"', table("LEGACY_MOD_REPLACEMENT_POINTS")),
+    "middleware": re.findall(r'"([a-z_]+)"', table("MOD_MIDDLEWARE_EVENTS")),
+    "state": "state",
+    "contracts": "workflow",
+}
 
 
 def digest(data):
@@ -109,7 +124,7 @@ def run(node, event, payload, state, host):
     for _ in range(36):
         request = {"source": SOURCE, "filename": "omd_lsp_sync/index.ts", "capabilities": CAPABILITIES,
                    "state": state, "settings": {}, "event": event, "payload": payload, "receipts": receipts,
-                   "hook_budget_ms": 1000}
+                   "hook_budget_ms": 1000, "surface": LEGACY_SURFACE}
         result = subprocess.run([node, "--no-warnings", "--experimental-vm-modules", "--input-type=module",
                                  "--eval", RUNNER], input=json.dumps(request), text=True, capture_output=True,
                                 timeout=8, check=True)

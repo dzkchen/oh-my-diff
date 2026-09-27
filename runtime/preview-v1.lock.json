@@ -2,7 +2,7 @@
   "guide": {
     "path": "mods/PREVIEW.md"
   },
-  "mod_api": "0.1.0-experimental.9",
+  "mod_api": "0.2.0-experimental.1",
   "node": "24.18.0",
   "packages": {
     "omd_coordination": {
@@ -21,10 +21,10 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "d93be59c2612038b8d023beb086ba484435e33aaa4f24e85c994661ea5f81b17",
+        "index.ts": "15dab4e41af6402f56869261944026898b1373200dc0ee80c975e211640b3c77",
         "mod.json": "709bcf629095d4a4880dcf40281b250c78c8c02d222200a96c7e93ce14a910ed"
       },
-      "package_sha256": "b1dabf207b3719109148accf4c15c6a4022343c3b76f7c66f66a9fba795bf340",
+      "package_sha256": "c79afbabfe6f2c157798900255a84d8393577900bdcac59a88600cc3c121c18c",
       "source": "mods/first-party/omd_coordination",
       "version": "0.1.0-preview.4"
     },
@@ -41,10 +41,10 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "ecfb410a4e766f4171951dc9b85f7ebb4b95c68d2cfd5dc2089932c845beb9a0",
+        "index.ts": "01fe0166877ebbf0f96c638f7833dd14e37071de1c75cf1edfdc3c14d1e80d00",
         "mod.json": "beb3ea66c97940f0ff80edd5fbf6511980183dd8e2e4ae9361cf59d991a7da62"
       },
-      "package_sha256": "306dc67afa4d25d707add109684860b60f71ca63fda6458178b46a959e10ceab",
+      "package_sha256": "22c5f4373518abcdb584a184917f38dba4ba9746bdddfce33cbaba13d3eb08dc",
       "source": "mods/first-party/omd_recovery",
       "version": "0.1.0-preview.2"
     },
@@ -58,10 +58,10 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "3fd7f1b17f111d8a77fb770e63ce45434fa4d3ed4075edc1e3e74c7ddfa38542",
+        "index.ts": "a9fb5f9ada26799b0a6e2c5d1dd7e084e1394069dae48b7e2658a10083fb311b",
         "mod.json": "85b84ccf8ea0b912a63f9499fab80345a40f277a73052cd89e67aa8c76a000e3"
       },
-      "package_sha256": "f3be85f19c3e04b34579a0390aefca73764c6d1011136dde0035d95d72d46cb1",
+      "package_sha256": "e27d5a9c057c6e22c0bd249559bfb661c113e02cc52d73b8b1a6cc333cb35c6e",
       "source": "mods/first-party/omd_workspace",
       "version": "0.2.0-preview.2"
     }
@@ -70,6 +70,6 @@
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "d1620d182fff4c1cd522fbd8c610ab0c668eb6fe1eca3f9ab8a6ef52496d26c7"
+    "sha256": "1f2b26fabec9c6f549bde4d15735dccfd8a6d3c05c09d44bc16d6e8f193b0109"
   }
 }

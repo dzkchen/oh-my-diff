@@ -21,6 +21,7 @@ pub fn operation(name: &str) -> bool {
     matches!(
         name,
         "evidence.read"
+            | "evidence.write"
             | "sessions.list"
             | "sessions.read"
             | "knowledge.inspect"
@@ -98,9 +99,12 @@ impl ScopedDataHost {
             operation: name.into(),
             arguments: Value::Null,
         }
-        .capability()?;
+        .capabilities_any();
         if configuration.revision != self.binding.generation
-            || !selection.capabilities.iter().any(|cap| cap == required)
+            || !selection
+                .capabilities
+                .iter()
+                .any(|cap| required.contains(&cap.as_str()))
             || name.starts_with("context.")
                 && !selection.capabilities.iter().any(|cap| cap == "context")
         {
@@ -115,12 +119,44 @@ impl ScopedDataHost {
                 max_bytes: Option<usize>,
             }
             let input: Input = serde_json::from_value(arguments)?;
-            return self.resources().page(
-                &input.reference,
-                "turn",
-                input.cursor.unwrap_or(0),
-                input.max_bytes.unwrap_or(crate::resource_data::PAGE_BYTES),
-            );
+            let mut last = io::Error::other("resource_unavailable");
+            for kind in ["turn", "evidence"] {
+                match self.resources().page(
+                    &input.reference,
+                    kind,
+                    input.cursor.unwrap_or(0),
+                    input.max_bytes.unwrap_or(crate::resource_data::PAGE_BYTES),
+                ) {
+                    Ok(page) => return Ok(page),
+                    Err(error) => last = error,
+                }
+            }
+            return Err(last);
+        }
+        if name == "evidence.write" {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                media_type: String,
+                content: Value,
+                #[serde(default)]
+                label: Option<String>,
+            }
+            let input: Input = serde_json::from_value(arguments)?;
+            if !matches!(input.media_type.as_str(), "application/json" | "text/plain")
+                || input.media_type == "text/plain" && !input.content.is_string()
+                || input
+                    .label
+                    .as_deref()
+                    .is_some_and(|label| label.is_empty() || label.len() > 128 || label.chars().any(char::is_control))
+            {
+                return Err(io::Error::other("evidence_record_invalid"));
+            }
+            let reference = self.resources().save(
+                "evidence",
+                json!({"media_type": input.media_type, "label": input.label, "content": input.content}),
+            )?;
+            return Ok(serde_json::to_value(reference)?);
         }
         if name.starts_with("sessions.") {
             let root = self

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "workspace.list": [{"result": {"entries": [{"path": "src/lib.rs", "kind": "file", "size": 10, "mtime_ms": 1}], "truncated": false}}],
+    "exec.run": [{"result": {"exit_code": 0, "signal": null, "stdout": "", "stderr": "", "stdout_truncated": false, "stderr_truncated": false, "timed_out": false, "duration_ms": 3, "program": {"path": "/bin/sh", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}}}],
+    "evidence.write": [{"result": {"reference": "e1", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"}}],
+    "store.get": [{"result": null}],
+    "store.put": [{"result": {"revision": 1}}],
+    "receipts.submit": [{"result": {"kind": "checks"}}],
+    "task.complete": [{"result": {"status": "completed", "receipts": []}}],
+    "routes.list": [{"result": [{"name": "fast", "model": "m", "provider": "p", "reasoning": "low", "roles": ["lead"], "billing": "included_subscription", "tools": [], "available": true}]}]
+  },
+  "steps": [
+    {"type": "invoke", "mod": "release_check", "event": "tool", "name": "check", "payload": {"candidate_sha256": "2222222222222222222222222222222222222222222222222222222222222222"}, "expect": {"status": "completed", "receipts": []}},
+    {"type": "invoke", "mod": "release_check", "event": "command", "name": "routes", "payload": null, "expect": {"display": "fast"}},
+    {"type": "event", "event": "response_stream", "payload": {"kind": "response.output_item.done", "raw_sha256": "x", "raw_usage": null, "opaque_reasoning": false, "protected": false, "text": "done TODO", "boundary": true, "attempt": 1}, "expect": [{"mod": "release_check", "value": {"stop": {"reason": "unfinished marker"}, "retry": {"inject": "Remove TODO markers before finishing."}}}]}
+  ]
+}

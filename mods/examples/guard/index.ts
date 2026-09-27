@@ -1,4 +1,4 @@
-import type { ModAPI } from '@oh-my-diff/mod-api';
+import type { ModAPI } from '@oh-my-diff/mod-api/0.1';
 export default function activate(api: ModAPI) {
   api.replace('input', ({ text }) => {
     if (/(?:sk|ghp)_[A-Za-z0-9]{16,}/.test(text)) return { deny: 'the prompt appears to contain a credential' };

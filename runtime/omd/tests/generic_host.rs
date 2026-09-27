@@ -1,0 +1,689 @@
+use codex_omd::BuiltinControls;
+use codex_omd::ContractDocument;
+use codex_omd::ContractResolution;
+use codex_omd::ContractSelection;
+use codex_omd::PolicyOwner;
+use codex_omd::contract_confirmation;
+use codex_omd::resolve_contract;
+use codex_omd::Gate;
+use codex_omd::MOD_API_VERSION;
+use codex_omd::ModHost;
+use codex_omd::ModStore;
+use codex_omd::Receipt;
+use codex_omd::data_store::Origin;
+use codex_omd::host::Authority;
+use codex_omd::host::Caller;
+use codex_omd::host::ExecAccess;
+use codex_omd::host::Host;
+use serde_json::Value;
+use serde_json::json;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use tempfile::TempDir;
+
+struct TestAuthority {
+    repository: PathBuf,
+    read_denied: Vec<PathBuf>,
+    write_denied: Vec<PathBuf>,
+    sandboxed: std::cell::RefCell<Vec<(bool, bool)>>,
+}
+
+impl Authority for TestAuthority {
+    fn repository(&self) -> &Path {
+        &self.repository
+    }
+
+    fn readable(&self, path: &Path) -> bool {
+        !self.read_denied.iter().any(|denied| path.starts_with(denied))
+    }
+
+    fn writable(&self, path: &Path) -> bool {
+        self.readable(path) && !self.write_denied.iter().any(|denied| path.starts_with(denied))
+    }
+
+    fn command(&self, argv: Vec<String>, access: &ExecAccess<'_>) -> Result<Command, String> {
+        self.sandboxed.borrow_mut().push((access.write, access.loopback));
+        let mut command = Command::new(&argv[0]);
+        command.args(&argv[1..]);
+        Ok(command)
+    }
+}
+
+fn setup() -> (TempDir, PathBuf, PathBuf, TestAuthority) {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repository = root.join("repo");
+    let data = root.join("data");
+    std::fs::create_dir_all(repository.join("src")).unwrap();
+    std::fs::create_dir_all(repository.join(".git")).unwrap();
+    std::fs::create_dir(&data).unwrap();
+    std::fs::write(repository.join("src/lib.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(repository.join("README.md"), "readme\n").unwrap();
+    std::fs::write(repository.join(".gitignore"), "ignored.txt\n").unwrap();
+    std::fs::write(repository.join("ignored.txt"), "ignored\n").unwrap();
+    std::fs::write(repository.join(".git/config"), "[core]\n").unwrap();
+    let authority = TestAuthority {
+        repository: repository.clone(),
+        read_denied: vec![repository.join("secret")],
+        write_denied: vec![repository.join("locked")],
+        sandboxed: Default::default(),
+    };
+    (temp, repository, data, authority)
+}
+
+fn caller<'a>(capabilities: &'a [String], environment: &'a [String], origin: Origin) -> Caller<'a> {
+    Caller {
+        id: "fixture",
+        source_sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+        capabilities,
+        exec_environment: environment,
+        origin,
+        thread: Some("thread-1"),
+    }
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| value.to_string()).collect()
+}
+
+#[test]
+fn exec_run_bounds_program_environment_output_time_and_authority() {
+    let (_temp, repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+    };
+    let capabilities = strings(&["exec"]);
+    let environment = strings(&["OMD_EXEC_FIXTURE_NAME"]);
+    let reader = caller(&capabilities, &environment, Origin::Tool);
+    assert_eq!(
+        host.call(&reader, "exec.run", json!({"program":"sh","env":{"FIXTURE_ENV":"x"}})).unwrap_err(),
+        "exec_arguments_invalid"
+    );
+    let environment = strings(&["FIXTURE_ENV"]);
+    let reader = caller(&capabilities, &environment, Origin::Tool);
+    let result = host
+        .call(
+            &reader,
+            "exec.run",
+            json!({"program":"sh","argv":["-c","printf \"$FIXTURE_ENV|%s|$HOME\" \"$(pwd -P)\"; printf err >&2"],
+                "cwd":"src","env":{"FIXTURE_ENV":"value"}}),
+        )
+        .unwrap();
+    let stdout = result["stdout"].as_str().unwrap();
+    assert!(stdout.starts_with(&format!("value|{}|", repository.join("src").display())), "{stdout}");
+    assert!(!stdout.ends_with(&repository.display().to_string()));
+    assert_eq!(result["stderr"], "err");
+    assert_eq!(result["exit_code"], 0);
+    assert_eq!(result["timed_out"], false);
+    assert_eq!(result["program"]["sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(authority.sandboxed.borrow().last(), Some(&(false, false)));
+
+    let denied = host
+        .call(&reader, "exec.run", json!({"program":"sh","argv":["-c","true"],"env":{"PATH":"/tmp"}}))
+        .unwrap_err();
+    assert_eq!(denied, "exec_arguments_invalid");
+    assert_eq!(
+        host.call(&reader, "exec.run", json!({"program":"sh","write":true})).unwrap_err(),
+        "capability_denied: fs.write"
+    );
+    assert_eq!(
+        host.call(&reader, "exec.run", json!({"program":"sh","network":"loopback"})).unwrap_err(),
+        "capability_denied: network"
+    );
+    assert_eq!(
+        host.call(&reader, "exec.run", json!({"program":"sh","cwd":"../"})).unwrap_err(),
+        "exec_cwd_invalid"
+    );
+    assert_eq!(
+        host.call(&reader, "exec.run", json!({"program":"sh","sha256":"0".repeat(64)})).unwrap_err(),
+        "exec_program_changed"
+    );
+    assert_eq!(
+        host.call(&reader, "exec.run", json!({"program":"../sh"})).unwrap_err(),
+        "exec_program_unavailable"
+    );
+    let truncated = host
+        .call(&reader, "exec.run", json!({"program":"sh","argv":["-c","printf 0123456789"],"max_output_bytes":4}))
+        .unwrap();
+    assert_eq!(truncated["stdout"], "0123");
+    assert_eq!(truncated["stdout_truncated"], true);
+    let slow = host
+        .call(&reader, "exec.run", json!({"program":"sh","argv":["-c","sleep 5"],"timeout_ms":100}))
+        .unwrap();
+    assert_eq!(slow["timed_out"], true);
+    assert!(slow["duration_ms"].as_u64().unwrap() < 4000);
+
+    let writer_capabilities = strings(&["exec", "fs.write", "network"]);
+    let writer = caller(&writer_capabilities, &[], Origin::UserCommand);
+    let written = host
+        .call(&writer, "exec.run", json!({"program":"sh","argv":["-c","printf x > out.txt"],"write":true,"network":"loopback"}))
+        .unwrap();
+    assert_eq!(written["exit_code"], 0);
+    assert_eq!(std::fs::read_to_string(repository.join("out.txt")).unwrap(), "x");
+    assert_eq!(authority.sandboxed.borrow().last(), Some(&(true, true)));
+    std::fs::create_dir(repository.join("locked")).unwrap();
+    assert_eq!(
+        host.call(&writer, "exec.run", json!({"program":"sh","cwd":"locked","write":true})).unwrap_err(),
+        "exec_cwd_unavailable"
+    );
+
+    let cancelled = std::cell::Cell::new(0);
+    let active = || {
+        cancelled.set(cancelled.get() + 1);
+        cancelled.get() < 20
+    };
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+    };
+    let started = std::time::Instant::now();
+    assert_eq!(
+        host.call(&reader, "exec.run", json!({"program":"sh","argv":["-c","sleep 5"]})).unwrap_err(),
+        "exec_cancelled"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+}
+
+#[test]
+fn workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions() {
+    let (_temp, repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+    };
+    std::fs::create_dir(repository.join("secret")).unwrap();
+    std::fs::write(repository.join("secret/key"), "k").unwrap();
+    let capabilities = strings(&["fs.read", "fs.write"]);
+    let reader = caller(&capabilities, &[], Origin::Tool);
+    let listed = host.call(&reader, "workspace.list", json!({"recursive":true})).unwrap();
+    let paths = listed["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["path"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"src/lib.rs".to_owned()));
+    assert!(paths.contains(&"README.md".to_owned()));
+    assert!(!paths.iter().any(|path| path.starts_with(".git/") || path == ".git"));
+    assert!(!paths.contains(&"ignored.txt".to_owned()));
+    assert!(!paths.iter().any(|path| path.starts_with("secret")));
+    let all = host
+        .call(&reader, "workspace.list", json!({"include_ignored":true}))
+        .unwrap();
+    assert!(all["entries"].as_array().unwrap().iter().any(|entry| entry["path"] == "ignored.txt"));
+    let limited = host.call(&reader, "workspace.list", json!({"recursive":true,"max_entries":1})).unwrap();
+    assert_eq!(limited["truncated"], true);
+
+    let stat = host
+        .call(&reader, "workspace.stat", json!({"paths":["README.md","missing.md","src"],"hash":true}))
+        .unwrap();
+    assert_eq!(stat["files"]["README.md"]["kind"], "file");
+    assert_eq!(stat["files"]["README.md"]["size"], 7);
+    assert_eq!(stat["files"]["README.md"]["sha256"].as_str().unwrap().len(), 64);
+    assert!(stat["files"]["missing.md"].is_null());
+    assert_eq!(stat["files"]["src"]["kind"], "dir");
+    assert_eq!(
+        host.call(&reader, "workspace.stat", json!({"paths":["secret/key"]})).unwrap_err(),
+        "workspace_read_permission_denied"
+    );
+
+    let readme = stat["files"]["README.md"].clone();
+    let fingerprint = json!({"size": readme["size"], "mtime_ms": readme["mtime_ms"]});
+    let backup = host
+        .call(&reader, "workspace.backup", json!({"expected":{"README.md":fingerprint,"new.md":null}}))
+        .unwrap()["backup"]
+        .clone();
+    let changed = host
+        .call(
+            &reader,
+            "workspace.transaction",
+            json!({"expected":{"README.md":readme["sha256"],"new.md":null},
+                "writes":{"new.md":"new\n"},"deletes":["README.md"],"backup":true}),
+        )
+        .unwrap();
+    assert!(!repository.join("README.md").exists());
+    assert_eq!(changed["backup"]["sha256"].as_str().unwrap().len(), 64);
+    let new_hash = changed["files"]["new.md"].clone();
+    let stale = host
+        .call(&reader, "workspace.restore", json!({"backup":backup,"expected":{"README.md":null,"new.md":"0".repeat(64)}}))
+        .unwrap_err();
+    assert!(stale.contains("stale"), "{stale}");
+    host.call(&reader, "workspace.restore", json!({"backup":backup,"expected":{"README.md":null,"new.md":new_hash}}))
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(repository.join("README.md")).unwrap(), "readme\n");
+    assert!(!repository.join("new.md").exists());
+    let other_capabilities = strings(&["fs.write"]);
+    let other = Caller {
+        id: "other",
+        ..caller(&other_capabilities, &[], Origin::Tool)
+    };
+    assert_eq!(
+        host.call(&other, "workspace.restore", json!({"backup":backup,"expected":{"README.md":null,"new.md":null}})).unwrap_err(),
+        "backup_unavailable"
+    );
+    std::fs::create_dir(repository.join("locked")).unwrap();
+    assert_eq!(
+        host.call(&reader, "workspace.transaction", json!({"expected":{"locked/a":null},"writes":{"locked/a":"x"}})).unwrap_err(),
+        "workspace_write_permission_denied"
+    );
+}
+
+#[test]
+fn store_is_namespaced_compare_and_set_with_host_attested_provenance() {
+    let (_temp, _repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+    };
+    let capabilities = strings(&["store"]);
+    let tool = caller(&capabilities, &[], Origin::Tool);
+    let command = caller(&capabilities, &[], Origin::UserCommand);
+    assert!(host.call(&tool, "store.get", json!({"key":"lesson/1"})).unwrap().is_null());
+    assert_eq!(
+        host.call(&tool, "store.put", json!({"key":"lesson/1","value":{"text":"x"}})).unwrap_err(),
+        "store_expected_revision_required"
+    );
+    let first = host
+        .call(&tool, "store.put", json!({"key":"lesson/1","value":{"text":"x"},"expected_revision":null}))
+        .unwrap();
+    let revision = first["revision"].as_u64().unwrap();
+    assert!(host
+        .call(&tool, "store.put", json!({"key":"lesson/1","value":1,"expected_revision":null}))
+        .unwrap_err()
+        .starts_with("store_revision_conflict"));
+    let promoted = host
+        .call(&command, "store.put", json!({"key":"lesson/1","value":{"text":"x","promoted":true},"expected_revision":revision}))
+        .unwrap();
+    let read = host.call(&tool, "store.get", json!({"key":"lesson/1"})).unwrap();
+    assert_eq!(read["revision"], promoted["revision"]);
+    assert_eq!(read["provenance"]["origin"], "user_command");
+    assert_eq!(read["provenance"]["mod"], "fixture");
+    assert_eq!(read["provenance"]["thread_id"], "thread-1");
+    for index in 0..3 {
+        host.call(&tool, "store.put", json!({"key":format!("note/{index}"),"value":index,"expected_revision":null}))
+            .unwrap();
+    }
+    let page = host.call(&tool, "store.list", json!({"prefix":"note/","limit":2})).unwrap();
+    assert_eq!(page["keys"].as_array().unwrap().len(), 2);
+    let rest = host
+        .call(&tool, "store.list", json!({"prefix":"note/","cursor":page["cursor"]}))
+        .unwrap();
+    assert_eq!(rest["keys"][0]["key"], "note/2");
+    assert!(rest["cursor"].is_null());
+    host.call(&tool, "store.put", json!({"key":"pref","value":true,"expected_revision":null,"scope":"user"}))
+        .unwrap();
+    assert!(host.call(&tool, "store.get", json!({"key":"pref"})).unwrap().is_null());
+    let other = Caller {
+        id: "other",
+        ..caller(&capabilities, &[], Origin::Tool)
+    };
+    assert!(host.call(&other, "store.get", json!({"key":"lesson/1"})).unwrap().is_null());
+    let exported = host.call(&tool, "store.export", json!({})).unwrap();
+    assert_eq!(exported["entries"].as_object().unwrap().len(), 4);
+    assert_eq!(
+        host.call(&tool, "store.reset", json!({"expected_generation":9})).unwrap_err(),
+        "store_generation_conflict"
+    );
+    let generation = page["generation"].as_u64().unwrap();
+    assert_eq!(
+        host.call(&tool, "store.reset", json!({"expected_generation":generation})).unwrap()["generation"],
+        generation + 1
+    );
+    assert!(host.call(&tool, "store.get", json!({"key":"lesson/1"})).unwrap().is_null());
+    assert!(host.call(&tool, "store.get", json!({"key":"pref","scope":"user"})).unwrap().is_object());
+    assert_eq!(
+        host.call(&tool, "store.put", json!({"key":"big","value":"x".repeat(300_000),"expected_revision":null})).unwrap_err(),
+        "store_value_limit"
+    );
+    assert_eq!(
+        host.call(&tool, "store.get", json!({"key":"bad\\key"})).unwrap_err(),
+        "store_key_invalid"
+    );
+}
+
+#[test]
+fn contract_documents_gate_on_bound_receipts_and_detect_weaker_selections() {
+    let strict = ContractDocument::parse(&json!({
+        "schema":2,"id":"reviewed","version":1,"description":"Separate review before completion",
+        "assurance":"independently_reviewed",
+        "gates":{"complete":[{"receipt":"review","producer":"separate_agent","bind":["candidate"]},
+                             {"receipt":"checks","bind":["candidate","acceptance"]}],
+                 "integrate":[{"receipt":"checks","bind":["candidate"]}]},
+        "restrict":["agents.spawn"]}))
+    .unwrap();
+    let solo = ContractDocument::parse(&json!({
+        "schema":2,"id":"solo","version":1,"description":"Self review","assurance":"self_reviewed",
+        "gates":{"complete":[{"receipt":"review","producer":"lead","bind":["candidate"]}]}}))
+    .unwrap();
+    assert!(solo.weaker_than(&strict));
+    assert!(!strict.weaker_than(&solo) || strict.restrict != solo.restrict);
+    assert!(!strict.weaker_than(&strict));
+    for invalid in [
+        json!({"schema":1,"id":"x","version":1,"description":"d","assurance":"a"}),
+        json!({"schema":2,"id":"X","version":1,"description":"d","assurance":"a"}),
+        json!({"schema":2,"id":"x","version":1,"description":"d","assurance":"a","restrict":["git.status"]}),
+        json!({"schema":2,"id":"x","version":1,"description":"d","assurance":"a","gates":{"complete":[{"receipt":"a"},{"receipt":"a"}]}}),
+    ] {
+        assert!(ContractDocument::parse(&invalid).is_err(), "{invalid}");
+    }
+    let candidate = "a".repeat(64);
+    let acceptance = "b".repeat(64);
+    let receipt = |kind: &str, producer: &str, handle: Option<&str>, blocking: bool| -> Receipt {
+        serde_json::from_value(json!({
+            "kind":kind,"candidate_sha256":candidate,"acceptance_sha256":acceptance,"outcome":"pass",
+            "evidence":{"reference":"c".repeat(64),"sha256":"c".repeat(64)},
+            "producer":{"kind":producer,"handle":handle},
+            "findings": if blocking { json!([{"fingerprint":"f","severity":"blocking","summary":"s"}]) } else { json!([]) },
+            "submitted_by":"fixture","at":1}))
+        .unwrap()
+    };
+    let missing = strict.missing(Gate::Complete, &[], &candidate, Some(&acceptance));
+    assert_eq!(missing.len(), 2);
+    let lead_review = receipt("review", "lead", None, false);
+    let checks = receipt("checks", "lead", None, false);
+    assert_eq!(strict.missing(Gate::Complete, &[lead_review, checks.clone()], &candidate, Some(&acceptance))[0].receipt, "review");
+    let blocked = receipt("review", "agent", Some("h1"), true);
+    assert_eq!(strict.missing(Gate::Complete, &[blocked, checks.clone()], &candidate, Some(&acceptance)).len(), 1);
+    let clean = receipt("review", "agent", Some("h1"), false);
+    assert!(clean.validate().is_ok());
+    assert!(strict.missing(Gate::Complete, &[clean.clone(), checks.clone()], &candidate, Some(&acceptance)).is_empty());
+    assert_eq!(strict.missing(Gate::Complete, &[clean, checks], &"d".repeat(64), Some(&acceptance)).len(), 2);
+}
+
+#[test]
+fn contract_selection_pins_digests_applies_the_project_floor_and_fails_closed() {
+    let document = |id: &str, gates: Value| {
+        ContractDocument::parse(&json!({"schema":2,"id":id,"version":1,"description":"d",
+            "assurance":"a","gates":gates}))
+        .unwrap()
+    };
+    let strict = document("strict", json!({"complete":[{"receipt":"review","producer":"separate_agent"}]}));
+    let solo = document("solo", json!({"complete":[{"receipt":"review","producer":"lead"}]}));
+    let documents = vec![
+        (strict.clone(), PolicyOwner::bundled()),
+        (solo.clone(), PolicyOwner::bundled()),
+    ];
+    let pick = |key: &str, digest: Option<String>| ContractSelection {
+        schema: 2,
+        contract: Some(key.into()),
+        contract_digest: digest,
+        ..ContractSelection::default()
+    };
+    let floor = ContractSelection {
+        schema: 2,
+        floor: Some("strict@1".into()),
+        floor_digest: Some(strict.digest()),
+        ..ContractSelection::default()
+    };
+    assert_eq!(resolve_contract(&documents, None, None), ContractResolution::None);
+    let solo_pick = pick("solo@1", Some(solo.digest()));
+    match resolve_contract(&documents, Some(&solo_pick), None) {
+        ContractResolution::Active { document, source, .. } => {
+            assert_eq!((document.key(), source), ("solo@1".to_owned(), "user"));
+        }
+        other => panic!("{other:?}"),
+    }
+    match resolve_contract(&documents, Some(&solo_pick), Some(&floor)) {
+        ContractResolution::Active { document, source, overrode, .. } => {
+            assert_eq!(document.key(), "strict@1");
+            assert_eq!(source, "project_floor");
+            assert_eq!(overrode.as_deref(), Some("solo@1"));
+        }
+        other => panic!("{other:?}"),
+    }
+    let changed = pick("solo@1", Some("0".repeat(64)));
+    assert!(matches!(
+        resolve_contract(&documents, Some(&changed), None),
+        ContractResolution::Unavailable(_)
+    ));
+    assert!(matches!(
+        resolve_contract(&documents, Some(&pick("missing@1", None)), None),
+        ContractResolution::Unavailable(_)
+    ));
+    let before = contract_confirmation(Some(&strict), &solo);
+    assert_eq!(before.len(), 16);
+    assert_ne!(before, contract_confirmation(None, &solo));
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join(".omd/contract-selection.json");
+    floor.write(&path).unwrap();
+    assert_eq!(ContractSelection::read(&path).unwrap(), Some(floor));
+    std::fs::write(&path, br#"{"schema":2,"contract":"Bad Key"}"#).unwrap();
+    assert!(ContractSelection::read(&path).is_err());
+    std::fs::write(&path, br#"{"schema":1,"contract":"solo@1"}"#).unwrap();
+    assert!(ContractSelection::read(&path).is_err());
+}
+
+#[test]
+fn builtin_controls_protect_recovery_commands() {
+    assert!(BuiltinControls::parse(&json!({"commands":{"hide":["plan"]},"modes":{"disable":["plan"]}})).is_ok());
+    for invalid in [
+        json!({"commands":{"hide":["omd"]}}),
+        json!({"modes":{"disable":["default"]}}),
+        json!({"commands":{"hide":["Plan"]}}),
+        json!({"other":true}),
+    ] {
+        assert!(BuiltinControls::parse(&invalid).is_err(), "{invalid}");
+    }
+}
+
+fn node() -> PathBuf {
+    PathBuf::from(std::env::var_os("OMD_TEST_NODE").expect("set OMD_TEST_NODE to Node 24.18.0"))
+}
+
+fn package(root: &Path, id: &str, manifest: Value, source: &str, files: &[(&str, &str)]) -> PathBuf {
+    let path = root.join(id);
+    std::fs::create_dir(&path).unwrap();
+    let mut manifest = manifest;
+    manifest["schema"] = json!(1);
+    manifest["id"] = json!(id);
+    manifest["version"] = json!("1.0.0");
+    manifest["api"] = json!(MOD_API_VERSION);
+    manifest["state_version"] = json!(1);
+    std::fs::write(path.join("mod.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::write(path.join("index.ts"), source).unwrap();
+    for (name, content) in files {
+        std::fs::write(path.join(name), content).unwrap();
+    }
+    path
+}
+
+fn trust(store: &ModStore, path: &Path) {
+    let inspected = ModStore::inspect_package(path).unwrap();
+    let manifest: Value = serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+    let granted = manifest["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    for _ in 0..200 {
+        match store.trust(path.to_path_buf(), inspected["sha256"].as_str().unwrap(), granted.clone(), "user") {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            result => {
+                result.unwrap();
+                break;
+            }
+        }
+    }
+    store.enable(path, true).unwrap();
+}
+
+fn error_of(host: &ModHost, id: &str) -> String {
+    let status = host.status();
+    status["mods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == id)
+        .and_then(|item| item["error"].as_str())
+        .map(str::to_owned)
+        .or_else(|| {
+            status["rejected"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["path"].as_str().is_some_and(|path| path.ends_with(id)))
+                .and_then(|item| item["reason"].as_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let modern = package(
+        &root,
+        "modern",
+        json!({"capabilities":["commands","store","exec","builtins","contracts","terminal"],"exec_environment":["FIXTURE_ENV"]}),
+        "export default api => { api.builtins({commands:{hide:['plan']},modes:{disable:['plan']}}); \
+         api.contract({schema:2,id:'fixture',version:1,description:'Fixture gate',assurance:'checked',gates:{complete:[{receipt:'checks',bind:['candidate']}]}}); \
+         api.replace('list', event => [{type:'list',id:'rows',label:'Rows',rows:event.items.map((item, index) => ({value:String(index),label:item.label})),action:{command:'modern:pick'}}]); \
+         api.replace('selection', event => event.chars >= 3 ? {copy:true} : null); \
+         api.command('run', () => { api.state.set({ran:true}); const out = api.host.call('exec.run', {program:'sh', argv:['-c','true']}); return api.host.call('store.put', {key:'k', value:out.exit_code, expected_revision:null}); }); }",
+        &[],
+    );
+    trust(&store, &modern);
+    let legacy_names = package(
+        &root,
+        "legacy_names",
+        json!({"capabilities":["state","commands"]}),
+        "export default api => api.command('x', () => api.state.get())",
+        &[],
+    );
+    assert!(ModStore::inspect_package(&legacy_names).unwrap_err().to_string().contains("capability"));
+    let old_event = package(
+        &root,
+        "old_event",
+        json!({"capabilities":["lifecycle"]}),
+        "export default api => api.on('worker_context', () => null)",
+        &[],
+    );
+    trust(&store, &old_event);
+    let adapter = package(
+        &root,
+        "adapter",
+        json!({"capabilities":[],"assets":["adapt.ts","shim.mjs"],"adapter_module":{"entry":"adapt.ts","aliases":{"shim":"shim.mjs"}}}),
+        "export default () => {}",
+        &[("adapt.ts", "export default api => ({ register(name: string, value: number) { api.command(name, () => value); } });"),
+          ("shim.mjs", "export const answer = 42;")],
+    );
+    trust(&store, &adapter);
+    let adapted = package(
+        &root,
+        "adapted",
+        json!({"capabilities":["commands"],"adapter":"adapter","dependencies":[{"id":"adapter","version":"^1.0.0"}]}),
+        "import { answer } from 'shim'; export default host => host.register('answer', answer);",
+        &[],
+    );
+    trust(&store, &adapted);
+    let mut runtime = ModHost::open(root.join("store")).unwrap();
+    assert!(error_of(&runtime, "old_event").contains("unsupported_event"), "{}", error_of(&runtime, "old_event"));
+    assert_eq!(error_of(&runtime, "modern"), "");
+    assert_eq!(error_of(&runtime, "adapted"), "");
+    assert_eq!(
+        runtime.invoke("adapted", runtime.generation(), "command", "answer", Value::Null).unwrap(),
+        json!(42)
+    );
+    let controls = runtime.builtin_controls();
+    assert_eq!(controls.len(), 1);
+    assert_eq!(controls[0].1.commands.hide, vec!["plan"]);
+    let documents = runtime.contract_documents();
+    assert_eq!(documents[0].0.key(), "fixture@1");
+    let listed = runtime
+        .list_view(json!({"view_id":"model","title":"Model","subtitle":null,"width":80,"items":[{"label":"a","description":null,"current":true,"disabled":false,"order":0}],"selected":0}), || true)
+        .unwrap();
+    assert_eq!(listed.0, "modern");
+    assert!(runtime.selection_decision(json!({"source":"transcript","chars":5,"lines":1}), || true).unwrap());
+    assert!(!runtime.selection_decision(json!({"source":"transcript","chars":1,"lines":1}), || true).unwrap());
+    let mut calls = Vec::new();
+    let result = runtime
+        .invoke_with("modern", runtime.generation(), "command", "run", Value::Null, || true, |call| {
+            calls.push(call.operation.clone());
+            Ok(if call.operation == "exec.run" { json!({"exit_code":0}) } else { json!({"revision":1}) })
+        })
+        .unwrap();
+    assert_eq!(result, json!({"revision":1}));
+    assert_eq!(calls, vec!["exec.run", "store.put"]);
+    let grants = runtime.grants("modern").unwrap();
+    assert_eq!(grants.exec_environment, vec!["FIXTURE_ENV"]);
+    assert!(grants.capabilities.contains(&"exec".to_owned()));
+    let stream = runtime
+        .response_stream(json!({"kind":"response.output_item.done","raw_sha256":"x","raw_usage":null,"opaque_reasoning":false,"protected":false,"text":"x","boundary":true,"attempt":0}), || true)
+        .unwrap();
+    assert!(stream["control"].is_null());
+}
+
+#[test]
+fn stream_control_is_bounded_to_output_boundaries_and_current_api() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let guard = package(
+        &root,
+        "guard",
+        json!({"capabilities":["middleware"]}),
+        "export default api => api.middleware('response_stream', event => event.text?.includes('forbidden') ? {stop:{reason:'rule'}, retry:{inject:'Avoid the forbidden pattern.'}} : null)",
+        &[],
+    );
+    trust(&store, &guard);
+    let mut runtime = ModHost::open(root.join("store")).unwrap();
+    let event = |boundary: bool, text: &str| {
+        json!({"kind":"response.output_item.done","raw_sha256":"x","raw_usage":null,"opaque_reasoning":false,
+            "protected":false,"text":text,"boundary":boundary,"attempt":0})
+    };
+    let stopped = runtime.response_stream(event(true, "a forbidden word"), || true).unwrap();
+    assert_eq!(stopped["control"]["reason"], "rule");
+    assert_eq!(stopped["control"]["retry"]["inject"], "Avoid the forbidden pattern.");
+    assert_eq!(stopped["control"]["origin"], "guard");
+    let passed = runtime.response_stream(event(true, "fine"), || true).unwrap();
+    assert!(passed["control"].is_null());
+    let mid = runtime.response_stream(event(false, "forbidden"), || true).unwrap();
+    assert!(mid["control"].is_null());
+    assert_eq!(mid["fallback"][0]["error"], "stream_control_requires_output_boundary");
+}
+
+#[test]
+fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with_no_mods() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let empty = ModHost::open(root.join("store")).unwrap();
+    assert!(empty.builtin_controls().is_empty());
+    assert!(empty.contract_documents().is_empty());
+    assert!(!empty.has_event("response_stream"));
+    assert!(!empty.has_event("workspace_change"));
+    let registering = "export default api => { api.builtins({modes:{disable:['plan']}}); \
+         api.contract({schema:2,id:'gate',version:1,description:'Gate',assurance:'checked',gates:{integrate:[{receipt:'checks'}]}}); }";
+    let undeclared = package(&root, "undeclared", json!({"capabilities":["commands"]}), registering, &[]);
+    trust(&store, &undeclared);
+    let declared = package(
+        &root,
+        "declared",
+        json!({"capabilities":["builtins","contracts"]}),
+        registering,
+        &[],
+    );
+    trust(&store, &declared);
+    let runtime = ModHost::open(root.join("store")).unwrap();
+    assert!(error_of(&runtime, "undeclared").contains("capability_denied"), "{}", error_of(&runtime, "undeclared"));
+    assert_eq!(runtime.builtin_controls().len(), 1);
+    assert_eq!(runtime.contract_documents().len(), 1);
+    store.enable(&declared, false).unwrap();
+    let reloaded = ModHost::open(root.join("store")).unwrap();
+    assert!(reloaded.builtin_controls().is_empty());
+    assert!(reloaded.contract_documents().is_empty());
+}

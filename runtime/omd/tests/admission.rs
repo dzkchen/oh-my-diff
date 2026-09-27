@@ -30,12 +30,13 @@ fn limits() -> Limits {
 fn granted_subscription_route_records_usage_without_a_settled_cash_charge() {
     let directory = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), directory.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     assert!(
         task.admit_with_billing("lead", "vendor", "model-a", 20, true)
             .is_err()
     );
-    assert!(task.authorize_external_route("openai", "model-a").is_err());
-    task.authorize_external_route("vendor", "model-a").unwrap();
+    assert!(task.authorize_route("", "model-a").is_err());
+    task.authorize_route("vendor", "model-a").unwrap();
     assert!(
         task.admit_with_billing("lead", "vendor", "model-b", 20, true)
             .is_err()
@@ -64,6 +65,7 @@ fn worker() -> WorkerLimits {
 fn worker_route_grants_are_exact_nontransferable_and_share_allowances() {
     let directory = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), directory.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     task.start_worker("one".into(), "lead".into(), 1, worker())
         .unwrap();
     task.start_worker("two".into(), "lead".into(), 1, worker())
@@ -165,6 +167,7 @@ fn live_call_and_failure_caches_fail_closed_at_their_ceiling() {
         live('a', Vec::new()),
     )
     .unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     for value in 0..256u64 {
         task.observe_call(&format!("{value:064x}"), &"a".repeat(64), false)
             .unwrap();
@@ -211,6 +214,7 @@ fn live_call_and_failure_caches_fail_closed_at_their_ceiling() {
 fn equivalent_failure_fingerprint_cache_is_bounded() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     for value in 0..128 {
         assert!(
             !task
@@ -225,37 +229,10 @@ fn equivalent_failure_fingerprint_cache_is_bounded() {
 }
 
 #[test]
-fn contributor_requires_current_authorization_and_exact_identity() {
-    let dir = tempfile::tempdir().unwrap();
-    let task = Task::create(limits(), dir.path().join("task")).unwrap();
-    task.start_worker("worker".into(), "lead".into(), 1, worker())
-        .unwrap();
-    assert!(
-        task.admit("worker", "meta", "muse-spark-1.3-contributor", 10)
-            .is_err()
-    );
-    task.set_contributor_authorization(true, "host-consent")
-        .unwrap();
-    assert!(task.admit("worker", "meta", "muse-spark-1.3", 10).is_err());
-    assert!(
-        task.admit("lead", "meta", "muse-spark-1.3-contributor", 10)
-            .is_err()
-    );
-    task.admit("worker", "meta", "muse-spark-1.3-contributor", 10)
-        .unwrap();
-    task.set_contributor_authorization(false, "host-revocation")
-        .unwrap();
-    assert!(
-        task.admit("worker", "meta", "muse-spark-1.3-contributor", 10)
-            .is_err()
-    );
-    assert_eq!(task.attempts().unwrap().len(), 1);
-}
-
-#[test]
 fn unknown_usage_remains_reserved_after_worker_exit() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     task.start_worker("first".into(), "lead".into(), 1, worker())
         .unwrap();
     task.admit("first", "openai", "gpt-5.6-sol", 60).unwrap();
@@ -283,6 +260,7 @@ fn unknown_usage_remains_reserved_after_worker_exit() {
 fn settlement_releases_only_proven_unused_exposure_and_never_request_count() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     task.start_worker("worker".into(), "lead".into(), 1, worker())
         .unwrap();
     let admission = task.admit("worker", "openai", "gpt-5.6-sol", 60).unwrap();
@@ -304,6 +282,7 @@ fn settlement_releases_only_proven_unused_exposure_and_never_request_count() {
 fn concurrent_admissions_cannot_oversubscribe_the_shared_limit() {
     let dir = tempfile::tempdir().unwrap();
     let task = Arc::new(Task::create(limits(), dir.path().join("task")).unwrap());
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let threads: Vec<_> = (0..20)
         .map(|_| {
             let task = task.clone();
@@ -323,6 +302,7 @@ fn concurrent_admissions_cannot_oversubscribe_the_shared_limit() {
 fn usage_exceeding_reservation_stops_all_new_requests() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let request = task.admit("lead", "openai", "gpt-5.6-sol", 20).unwrap();
     task.dispatch(&request, || Ok(())).unwrap();
     assert!(
@@ -337,7 +317,9 @@ fn usage_exceeding_reservation_stops_all_new_requests() {
 fn foreign_admission_and_evidence_reuse_are_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let first = Task::create(limits(), dir.path().join("first")).unwrap();
+    first.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let second = Task::create(limits(), dir.path().join("second")).unwrap();
+    second.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let request = first.admit("lead", "openai", "gpt-5.6-sol", 20).unwrap();
     second.admit("lead", "openai", "gpt-5.6-sol", 20).unwrap();
     assert!(second.settle(&request, json!({}), 0).is_err());
@@ -349,6 +331,7 @@ fn evidence_write_failure_stops_admission_without_sending_a_request() {
     let dir = tempfile::tempdir().unwrap();
     let evidence = dir.path().join("task");
     let task = Task::create(limits(), evidence.clone()).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     std::fs::write(evidence.join("00000002.json"), "preexisting").unwrap();
     assert!(task.admit("lead", "openai", "gpt-5.6-sol", 20).is_err());
     assert!(task.admit("lead", "openai", "gpt-5.6-sol", 20).is_err());
@@ -363,6 +346,7 @@ fn evidence_write_failure_stops_admission_without_sending_a_request() {
 fn failure_keeps_exposure_and_survives_later_usage_reconciliation() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let request = task.admit("lead", "openai", "gpt-5.6-sol", 60).unwrap();
     task.fail(&request, "connection_lost").unwrap();
     assert_eq!(task.remaining().unwrap().2, 40);
@@ -385,16 +369,15 @@ fn failure_keeps_exposure_and_survives_later_usage_reconciliation() {
 fn revoked_or_stopped_reservations_cannot_dispatch_and_dispatch_is_one_shot() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     task.start_worker("worker".into(), "lead".into(), 1, worker())
         .unwrap();
-    task.set_contributor_authorization(true, "grant").unwrap();
-    let request = task
-        .admit("worker", "meta", "muse-spark-1.3-contributor", 10)
+    task.authorize_worker_route("worker", "vendor", "worker-model")
         .unwrap();
-    task.set_contributor_authorization(false, "revoked")
-        .unwrap();
+    let request = task.admit("worker", "vendor", "worker-model", 10).unwrap();
+    task.finish_worker("worker").unwrap();
     assert!(
-        task.dispatch::<()>(&request, || panic!("revoked request dispatched"))
+        task.dispatch::<()>(&request, || panic!("stopped worker request dispatched"))
             .is_err()
     );
     let request = task.admit("lead", "openai", "gpt-5.6-sol", 10).unwrap();
@@ -416,6 +399,7 @@ fn dispatch_callback_can_reenter_without_overwriting_completed_usage() {
     let dir = tempfile::tempdir().unwrap();
     let evidence = dir.path().join("task");
     let task = Task::create(limits(), evidence.clone()).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let request = task.admit("lead", "openai", "gpt-5.6-sol", 60).unwrap();
     assert!(
         task.dispatch::<()>(&request, || {
@@ -436,6 +420,7 @@ fn dispatch_callback_can_reenter_without_overwriting_completed_usage() {
 fn unpriced_raw_usage_is_retained_without_refunding_exposure() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let admission = task.admit("lead", "openai", "gpt-5.6-sol", 60).unwrap();
     task.dispatch(&admission, || Ok(())).unwrap();
     let usage = json!({"input_tokens": 12, "provider_specific_cache": 3});
@@ -454,6 +439,7 @@ fn classified_failures_are_preserved_and_escalation_is_bounded() {
     let dir = tempfile::tempdir().unwrap();
     let evidence = dir.path().join("task");
     let task = Task::create(limits(), evidence.clone()).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     for class in [
         FailureClass::Environment,
         FailureClass::Edit,
@@ -482,6 +468,7 @@ fn classified_failures_are_preserved_and_escalation_is_bounded() {
 fn failure_and_escalation_validation_fail_closed() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     assert!(
         task.record_failure(FailureClass::Edit, String::new(), vec![json!({})])
             .is_err()
@@ -505,6 +492,7 @@ fn failure_and_escalation_validation_fail_closed() {
 fn recursion_requires_an_active_parent_and_shared_depth_capacity() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     assert!(
         task.start_worker("orphan".into(), "missing".into(), 2, worker())
             .is_err()
@@ -526,6 +514,7 @@ fn recursion_requires_an_active_parent_and_shared_depth_capacity() {
 fn equivalent_failures_force_one_bounded_changed_action() {
     let dir = tempfile::tempdir().unwrap();
     let task = Task::create(limits(), dir.path().join("task")).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     assert!(
         !task
             .observe_equivalent_failure("provider-outage", 2, "fresh retry")
@@ -546,6 +535,7 @@ fn explicit_resume_preserves_allowance_and_uncertain_requests() {
     let dir = tempfile::tempdir().unwrap();
     let evidence = dir.path().join("task");
     let task = Task::create(limits(), evidence.clone()).unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let request = task.admit("lead", "openai", "gpt-5.6-sol", 30).unwrap();
     task.dispatch(&request, || Ok(())).unwrap();
     task.pause("client_loss", task.uncertain_requests().unwrap())
@@ -553,6 +543,7 @@ fn explicit_resume_preserves_allowance_and_uncertain_requests() {
     drop(task);
     assert!(Task::open(limits(), evidence.clone(), None).is_err());
     let resumed = Task::open(limits(), evidence, Some("user requested resume")).unwrap();
+    resumed.authorize_route("openai", "gpt-5.6-sol").unwrap();
     assert_eq!(resumed.remaining().unwrap().1, 2);
     assert_eq!(resumed.remaining().unwrap().2, 70);
     assert_eq!(resumed.uncertain_requests().unwrap(), vec![1]);
@@ -570,6 +561,7 @@ fn compact_checkpoint_preserves_contract_progress_versions_and_allowance() {
         live('a', Vec::new()),
     )
     .unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let request = task.admit("lead", "openai", "gpt-5.6-sol", 30).unwrap();
     task.dispatch(&request, || Ok(())).unwrap();
     task.settle(&request, json!({"input_tokens": 1}), 10)
@@ -610,6 +602,7 @@ fn terminal_worker_detail_is_archived_and_live_checkpoint_stays_compact() {
         live('a', Vec::new()),
     )
     .unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     task.start_worker("first".into(), "lead".into(), 1, worker())
         .unwrap();
     task.start_worker("second".into(), "lead".into(), 1, worker())
@@ -679,6 +672,7 @@ fn terminal_worker_detail_is_archived_and_live_checkpoint_stays_compact() {
         live('a', Vec::new()),
     )
     .unwrap();
+    resumed.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let resumed_checkpoint = resumed.checkpoint().unwrap().unwrap();
     assert!(resumed_checkpoint.workers.is_empty());
     assert_eq!(resumed_checkpoint.archived_workers, 3);
@@ -704,6 +698,7 @@ fn unchanged_calls_reassess_then_pause_but_waits_remain_bounded_by_task_time() {
         live('a', Vec::new()),
     )
     .unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let signature = "1".repeat(64);
     let result = "2".repeat(64);
     assert_eq!(
@@ -735,6 +730,7 @@ fn a_checkpoint_revision_resets_unchanged_call_detection() {
         live('a', Vec::new()),
     )
     .unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let signature = "3".repeat(64);
     let result = "4".repeat(64);
     assert_eq!(
@@ -776,6 +772,7 @@ fn restart_reconciles_workspace_processes_and_preserves_terminal_semantics() {
         live('a', vec![prior_process.clone()]),
     )
     .unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let signature = "7".repeat(64);
     let result = "8".repeat(64);
     assert_eq!(
@@ -796,6 +793,7 @@ fn restart_reconciles_workspace_processes_and_preserves_terminal_semantics() {
         live('f', vec![stopped_process.clone()]),
     )
     .unwrap();
+    resumed.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let checkpoint = resumed.checkpoint().unwrap().unwrap();
     let reconciliation = checkpoint.reconciliation.unwrap();
     assert!(reconciliation.changed_workspace);
@@ -828,6 +826,7 @@ fn direct_completion_does_not_require_checkpoint_acceptance() {
         live('a', Vec::new()),
     )
     .unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
 
     task.complete_direct("direct single-agent completion")
         .unwrap();
@@ -849,6 +848,7 @@ fn discarded_worker_result_replays_without_claiming_consumption() {
         live('a', Vec::new()),
     )
     .unwrap();
+    task.authorize_route("openai", "gpt-5.6-sol").unwrap();
     task.start_worker("unused".into(), "lead".into(), 1, worker())
         .unwrap();
     assert!(task.discard_worker_result("unused").is_err());
@@ -867,6 +867,7 @@ fn discarded_worker_result_replays_without_claiming_consumption() {
         live('a', Vec::new()),
     )
     .unwrap();
+    resumed.authorize_route("openai", "gpt-5.6-sol").unwrap();
     let checkpoint = resumed.checkpoint().unwrap().unwrap();
     assert!(checkpoint.workers.is_empty());
     assert_eq!(checkpoint.archived_workers, 1);

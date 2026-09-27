@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '@oh-my-diff/mod-api';
+import type { Json, ModAPI } from '@oh-my-diff/mod-api/0.1';
 
 type Checkpoint = { remaining_work?: Json };
 

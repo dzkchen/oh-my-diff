@@ -1,4 +1,5 @@
 use codex_omd::MOD_API_VERSION;
+const LEGACY_API: &str = "0.1.0-experimental.9";
 use codex_omd::MOD_HOST_FEATURES;
 use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
 use codex_omd::MOD_STATE_STORAGE_SCHEMA_VERSION;
@@ -27,7 +28,7 @@ fn packaged(
     let path = root.join(directory);
     std::fs::create_dir(&path).unwrap();
     let mut manifest = json!({"schema":1,"id":id,"version":"1.0.0",
-        "api":MOD_API_VERSION,"state_version":1,"capabilities":capabilities});
+        "api":LEGACY_API,"state_version":1,"capabilities":capabilities});
     if !requires.is_empty() {
         manifest["requires"] = json!(requires);
     }
@@ -50,7 +51,7 @@ fn service_package(
     let path = root.join(id);
     std::fs::create_dir(&path).unwrap();
     let manifest = json!({"schema":1,"id":id,"version":"1.0.0",
-        "api":MOD_API_VERSION,"state_version":1,"capabilities":capabilities,
+        "api":LEGACY_API,"state_version":1,"capabilities":capabilities,
         "services":services});
     std::fs::write(
         path.join("mod.json"),
@@ -1398,7 +1399,7 @@ fn task_scoped_tool_decisions_cannot_select_another_mod_and_old_api_stays_compat
     let old_manifest = old.join("mod.json");
     let body = std::fs::read_to_string(&old_manifest)
         .unwrap()
-        .replace(MOD_API_VERSION, "0.1.0-experimental.7");
+        .replace(LEGACY_API, "0.1.0-experimental.7");
     std::fs::write(old_manifest, body).unwrap();
     for path in [&first, &second, &old] {
         trust(&store, path, &["tools"]);

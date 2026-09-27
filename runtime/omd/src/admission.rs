@@ -67,6 +67,8 @@ fn is_false(value: &bool) -> bool {
 pub struct TaskCostCapture {
     pub schema: u32,
     pub attempts: Vec<Attempt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observed: Vec<Attempt>,
     pub settled_task_charge_microusd: u64,
     #[serde(default)]
     pub subscription_list_equivalent_microusd: u64,
@@ -188,8 +190,10 @@ struct State {
     contract: Option<TaskContract>,
     checkpoint: Option<TaskCheckpoint>,
     calls: BTreeMap<String, CallRecord>,
+    observed: Vec<Attempt>,
 }
 
+const MAX_OBSERVED_REQUESTS: usize = 10_000;
 const MAX_TASK_REQUESTS: u32 = 10_000;
 const MAX_LIVE_WORKERS: usize = 128;
 const MAX_TOTAL_WORKERS: usize = 1_024;
@@ -293,6 +297,7 @@ impl Task {
                 contract: contract.clone(),
                 checkpoint: None,
                 calls: BTreeMap::new(),
+                observed: Vec::new(),
             }),
             external_routes: Mutex::new(BTreeSet::new()),
             worker_routes: Mutex::new(BTreeMap::new()),
@@ -392,6 +397,7 @@ impl Task {
             contract: None,
             checkpoint: None,
             calls: BTreeMap::new(),
+            observed: Vec::new(),
         };
         let mut created_unix_millis = None;
         for entry in records {
@@ -1442,18 +1448,16 @@ impl Task {
         Ok(())
     }
 
-    pub fn authorize_external_route(&self, provider: &str, model: &str) -> io::Result<()> {
+    pub fn authorize_route(&self, provider: &str, model: &str) -> io::Result<()> {
         if provider.is_empty()
             || provider.len() > 64
             || !provider
                 .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || model.is_empty()
             || model.len() > 128
-            || provider == "openai"
-            || provider == "meta"
         {
-            return Err(denied("invalid external provider route"));
+            return Err(denied("invalid provider route"));
         }
         self.external_routes
             .lock()
@@ -1479,12 +1483,11 @@ impl Task {
                 .workers
                 .get(owner)
                 .is_some_and(|worker| worker.status == WorkerStatus::Active)
-            || provider == "meta"
             || provider.is_empty()
             || provider.len() > 64
             || !provider
                 .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || model.is_empty()
             || model.len() > 128
         {
@@ -1527,28 +1530,19 @@ impl Task {
         if state.status != TaskStatus::Active || self.expired() {
             return Err(denied("task stopped or expired"));
         }
-        let allowed = match (provider, model) {
-            ("openai", "gpt-5.6-sol" | "gpt-6-astra") => true,
-            ("meta", "muse-spark-1.3-contributor") => {
-                state.contributor_authorized && owner != "lead"
-            }
-            _ => {
-                self.worker_routes
-                    .lock()
-                    .map_err(|_| denied("worker route lock poisoned"))?
-                    .get(owner)
-                    .is_some_and(|route| route == &(provider.to_owned(), model.to_owned()))
-                    || self
-                        .external_routes
-                        .lock()
-                        .map_err(|_| denied("external route lock poisoned"))?
-                        .contains(&(provider.to_owned(), model.to_owned()))
-            }
-        };
+        let allowed = self
+            .worker_routes
+            .lock()
+            .map_err(|_| denied("worker route lock poisoned"))?
+            .get(owner)
+            .is_some_and(|route| route == &(provider.to_owned(), model.to_owned()))
+            || self
+                .external_routes
+                .lock()
+                .map_err(|_| denied("external route lock poisoned"))?
+                .contains(&(provider.to_owned(), model.to_owned()));
         if !allowed {
-            return Err(denied(
-                "provider/model or Contributor data authorization denied",
-            ));
+            return Err(denied("provider/model route is not authorized"));
         }
         if external_subscription
             && !self
@@ -1633,7 +1627,6 @@ impl Task {
         if state.status != TaskStatus::Active
             || self.expired()
             || attempt.status != "unknown"
-            || (attempt.provider == "meta" && !state.contributor_authorized)
         {
             return Err(denied(
                 "request dispatch stopped, expired, revoked or already consumed",
@@ -2029,6 +2022,41 @@ impl Task {
             .collect())
     }
 
+    pub fn observe(
+        &self,
+        owner: &str,
+        provider: &str,
+        model: &str,
+        raw_usage: Option<Value>,
+        status: &str,
+    ) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if state.observed.len() >= MAX_OBSERVED_REQUESTS {
+            return Ok(());
+        }
+        let attempt = Attempt {
+            request: u32::try_from(state.observed.len() + 1).unwrap_or(u32::MAX),
+            owner: owner.chars().take(128).collect(),
+            provider: provider.chars().take(64).collect(),
+            model: model.chars().take(128).collect(),
+            reserved_microusd: 0,
+            status: format!("observed_{}", status.chars().take(32).collect::<String>()),
+            failure_reason: None,
+            raw_usage,
+            settled_microusd: None,
+            external_subscription: false,
+        };
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "request_observed", "attempt": attempt}),
+        )?;
+        state.observed.push(attempt);
+        Ok(())
+    }
+
     pub fn stop(&self) -> io::Result<()> {
         let mut state = self
             .state
@@ -2177,6 +2205,7 @@ impl Task {
         Ok(TaskCostCapture {
             schema: 1,
             attempts,
+            observed: state.observed.clone(),
             settled_task_charge_microusd,
             subscription_list_equivalent_microusd,
             retained_exposure_upper_bound_microusd,

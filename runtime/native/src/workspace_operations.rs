@@ -1,5 +1,4 @@
 use codex_file_system::FileSystemSandboxContext;
-use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSandboxPolicyContext;
 use codex_protocol::permissions::ReadDenyMatcher;
@@ -21,14 +20,8 @@ pub(super) struct WorkspaceAuthority {
 
 pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
     let authority = WorkspaceAuthority::for_lead(lead).await?;
-    let approved = lead
-        .host
-        .manifest
-        .approved_untracked
-        .iter()
-        .cloned()
-        .collect();
-    let limit = lead.host.manifest.snapshot_bytes;
+    let approved = lead.host.config.approved_untracked.iter().cloned().collect();
+    let limit = lead.host.config.snapshot_bytes;
     tokio::task::spawn_blocking(move || {
         let snapshot = codex_omd::capture_tracked(&authority.repository, &approved, limit)
             .map_err(|error| error.to_string())?;
@@ -62,7 +55,7 @@ impl WorkspaceAuthority {
         if environment.len() != 1
             || environment[0].environment_id != "local"
             || environment[0].cwd != codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)
-            || config.cwd.as_path() != host.manifest.repository
+            || config.cwd.as_path() != host.repository
         {
             return Err("workspace_operation_requires_local_repository".into());
         }
@@ -95,7 +88,7 @@ impl WorkspaceAuthority {
         let mut context = context;
         context.permissions = effective.clone();
         Ok(Self {
-            repository: host.manifest.repository.clone(),
+            repository: host.repository.clone(),
             policy: effective.file_system_sandbox_policy(),
             context,
             session_root: Some(config.codex_home.join("sessions").to_path_buf()),
@@ -104,15 +97,42 @@ impl WorkspaceAuthority {
     }
 
     pub fn readable(&self, path: &std::path::Path) -> bool {
-        path.strip_prefix(&self.repository)
-            .ok()
-            .and_then(std::path::Path::to_str)
-            .is_some_and(|name| self.paths(&[name.to_owned()], false).is_ok())
+        self.access(path, false)
     }
 
+    pub fn writable(&self, path: &std::path::Path) -> bool {
+        self.access(path, true)
+    }
+
+    fn access(&self, path: &std::path::Path, write: bool) -> bool {
+        let Some(name) = path
+            .strip_prefix(&self.repository)
+            .ok()
+            .and_then(std::path::Path::to_str)
+        else {
+            return false;
+        };
+        if !name.is_empty() {
+            return self.paths(&[name.to_owned()], write).is_ok();
+        }
+        let Ok(absolute) = AbsolutePathBuf::from_absolute_path_checked(&self.repository) else {
+            return false;
+        };
+        let context = FileSystemSandboxPolicyContext {
+            cwd: &self.context.cwd,
+            workspace_roots: &self.context.workspace_roots,
+            user_home_dir: self.context.user_home_dir.as_ref(),
+            temporary_directories: self.context.temporary_directories.as_deref(),
+        };
+        let uri = PathUri::from_abs_path(&absolute);
+        self.policy.can_read_path(&uri, &context)
+            && (!write || self.policy.can_write_path(&uri, &context))
+    }
+
+    #[cfg(test)]
     pub fn for_platform(
         repository: &std::path::Path,
-        profile: PermissionProfile,
+        profile: codex_protocol::models::PermissionProfile,
     ) -> Result<Self, String> {
         let absolute = AbsolutePathBuf::from_absolute_path_checked(repository)
             .map_err(|error| error.to_string())?;
@@ -238,6 +258,14 @@ impl WorkspaceAuthority {
             |id, call| {
                 let result = match call.operation.as_str() {
                     "workspace.read" => self.call(&call.operation, call.arguments, &active),
+                    "process.start"
+                        if call
+                            .arguments
+                            .as_object()
+                            .is_some_and(|fields| fields.contains_key("network")) =>
+                    {
+                        Err("pre_rename_operation_unavailable".into())
+                    }
                     operation if operation.starts_with("process.") => processes.call(
                         id,
                         generation,
@@ -279,10 +307,6 @@ impl WorkspaceAuthority {
 
     pub async fn for_lead(lead: &crate::Lead) -> Result<Self, String> {
         let host = &lead.host;
-        host.task
-            .check_active()
-            .map_err(|error| error.to_string())?;
-        host.authorize()?;
         let manager = host
             .manager
             .upgrade()
@@ -293,7 +317,7 @@ impl WorkspaceAuthority {
             .map_err(|error| error.to_string())?
             .config()
             .await;
-        if config.cwd.as_path() != host.manifest.repository {
+        if config.cwd.as_path() != host.repository {
             return Err("workspace_operation_requires_local_repository".into());
         }
         let current = lead
@@ -312,7 +336,7 @@ impl WorkspaceAuthority {
             PathUri::from_abs_path(&config.cwd),
         );
         Ok(Self {
-            repository: host.manifest.repository.clone(),
+            repository: host.repository.clone(),
             session_root: Some(config.codex_home.join("sessions").to_path_buf()),
             session_database: Some(config.sqlite.state_db_path()),
             policy: profile.file_system_sandbox_policy(),

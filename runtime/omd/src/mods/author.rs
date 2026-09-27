@@ -21,7 +21,9 @@ impl OfflineHost {
             .as_object()
             .ok_or_else(|| failure("offline_host_operations_must_be_an_object"))?;
         for (operation, values) in operations {
-            if !MOD_HOST_OPERATIONS.contains(&operation.as_str()) {
+            if !MOD_HOST_OPERATIONS.contains(&operation.as_str())
+                && !LEGACY_MOD_HOST_OPERATIONS.contains(&operation.as_str())
+            {
                 return Err(failure(format!(
                     "offline_unknown_host_operation: {operation}"
                 )));
@@ -373,7 +375,8 @@ fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'
             | ModComponent::Input { id, .. }
             | ModComponent::Select { id, .. }
             | ModComponent::Markdown { id, .. }
-            | ModComponent::Code { id, .. } => (Some(id.as_str()), &[][..]),
+            | ModComponent::Code { id, .. }
+            | ModComponent::List { id, .. } => (Some(id.as_str()), &[][..]),
             ModComponent::Slot => (None, &[][..]),
         };
         if component_id == Some(id) {
@@ -418,6 +421,20 @@ fn terminal_component_action(view: &ModView, id: &str, value: Option<&str>) -> R
             let selected = value.unwrap_or(current);
             if !options.iter().any(|option| option.value == selected) {
                 return Err(failure("offline_terminal_select_value_not_mounted"));
+            }
+            command(action, Some(selected))
+        }
+        ModComponent::List {
+            action,
+            rows,
+            selected: current,
+            ..
+        } => {
+            let selected = value
+                .or(current.as_deref())
+                .ok_or_else(|| failure("offline_terminal_list_value_required"))?;
+            if !rows.iter().any(|row| row.value == selected) {
+                return Err(failure("offline_terminal_list_value_not_mounted"));
             }
             command(action, Some(selected))
         }

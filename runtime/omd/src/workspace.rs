@@ -41,19 +41,68 @@ pub struct WorkspaceRename {
     pub new: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceTransaction {
-    pub expected: BTreeMap<String, Option<String>>,
+    pub expected: BTreeMap<String, Option<Fingerprint>>,
     #[serde(default)]
     pub writes: BTreeMap<String, String>,
     #[serde(default)]
+    pub deletes: Vec<String>,
+    #[serde(default)]
     pub renames: Vec<WorkspaceRename>,
+    #[serde(default)]
+    pub backup: bool,
+    #[serde(skip)]
+    pub byte_writes: BTreeMap<String, Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Fingerprint {
+    Hash(String),
+    Stat { size: u64, mtime_ms: u64 },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorkspaceTransactionResult {
     pub files: BTreeMap<String, Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup: Option<serde_json::Value>,
+}
+
+pub type BackupSink<'a> = dyn Fn(&BTreeMap<String, Option<Vec<u8>>>) -> io::Result<serde_json::Value> + 'a;
+
+fn fingerprint_matches(
+    expected: &Option<Fingerprint>,
+    entry: &Option<(Vec<u8>, fs::Permissions)>,
+    metadata: Option<(u64, u64)>,
+) -> bool {
+    match (expected, entry) {
+        (None, None) => true,
+        (Some(Fingerprint::Hash(hash)), Some((bytes, _))) => *hash == content_hash(bytes),
+        (Some(Fingerprint::Stat { size, mtime_ms }), Some(_)) => {
+            metadata == Some((*size, *mtime_ms))
+        }
+        _ => false,
+    }
+}
+
+fn stat_fingerprint(root: &Path, name: &str) -> io::Result<Option<(u64, u64)>> {
+    let path = safe_path(root, name)?;
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => Ok(Some((
+            metadata.len(),
+            metadata
+                .modified()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_millis() as u64,
+        ))),
+        Ok(_) => Err(invalid("workspace path is not a regular file")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -150,10 +199,36 @@ impl WorkspaceTransaction {
         repository: &Path,
         active: impl Fn() -> bool,
     ) -> io::Result<WorkspaceTransactionResult> {
+        self.apply_with_backup(repository, active, None)
+    }
+
+    pub fn apply_with_backup(
+        &self,
+        repository: &Path,
+        active: impl Fn() -> bool,
+        backup: Option<&BackupSink<'_>>,
+    ) -> io::Result<WorkspaceTransactionResult> {
         if !repository.is_absolute() || repository.canonicalize()? != repository {
             return Err(invalid("repository must be canonical"));
         }
-        let mut affected = self.writes.keys().cloned().collect::<BTreeSet<_>>();
+        if self.backup && backup.is_none() {
+            return Err(invalid("transaction backup unavailable"));
+        }
+        let writes = self
+            .writes
+            .iter()
+            .map(|(name, text)| (name.clone(), text.as_bytes().to_vec()))
+            .chain(self.byte_writes.clone())
+            .collect::<BTreeMap<_, _>>();
+        if writes.len() != self.writes.len() + self.byte_writes.len() {
+            return Err(invalid("duplicate write"));
+        }
+        let deletes = self.deletes.iter().cloned().collect::<BTreeSet<_>>();
+        if deletes.len() != self.deletes.len() || deletes.iter().any(|name| writes.contains_key(name)) {
+            return Err(invalid("duplicate or overlapping delete"));
+        }
+        let mut affected = writes.keys().cloned().collect::<BTreeSet<_>>();
+        affected.extend(deletes.iter().cloned());
         let mut rename_sources = BTreeSet::new();
         let mut rename_destinations = BTreeSet::new();
         for rename in &self.renames {
@@ -172,13 +247,13 @@ impl WorkspaceTransaction {
             || affected
                 .iter()
                 .any(|name| !self.expected.contains_key(name))
-            || self.writes.values().map(String::len).sum::<usize>() > 4 * 1024 * 1024
+            || writes.values().map(Vec::len).sum::<usize>() > 4 * 1024 * 1024
             || rename_sources
                 .iter()
-                .any(|name| rename_destinations.contains(name))
+                .any(|name| rename_destinations.contains(name) || deletes.contains(name))
             || rename_destinations
                 .iter()
-                .any(|name| self.writes.contains_key(name))
+                .any(|name| writes.contains_key(name) || deletes.contains(name))
         {
             return Err(invalid("transaction scope or size invalid"));
         }
@@ -194,12 +269,37 @@ impl WorkspaceTransaction {
             if observed_bytes > 4 * 1024 * 1024 {
                 return Err(invalid("transaction source bytes exceed limit"));
             }
-            let hash = entry.as_ref().map(|(bytes, _)| content_hash(bytes));
-            if self.expected.get(name) != Some(&hash) {
+            let expected = self.expected.get(name).cloned().flatten();
+            if !fingerprint_matches(&expected, &entry, stat_fingerprint(repository, name)?) {
                 return Err(invalid(&format!("stale expected version for {name}")));
             }
             before.insert(name.clone(), entry);
         }
+        for name in &deletes {
+            if before.get(name).is_none_or(Option::is_none) {
+                return Err(invalid("delete target must exist"));
+            }
+        }
+        let backup = match backup.filter(|_| self.backup) {
+            Some(sink) => Some(sink(
+                &before
+                    .iter()
+                    .map(|(name, entry)| (name.clone(), entry.as_ref().map(|(bytes, _)| bytes.clone())))
+                    .collect(),
+            )?),
+            None => None,
+        };
+        let current_hash = |name: &str| -> io::Result<Option<String>> {
+            Ok(read_version(repository, name, 4 * 1024 * 1024)?
+                .as_ref()
+                .map(|(bytes, _)| content_hash(bytes)))
+        };
+        let before_hash = |name: &str| {
+            before
+                .get(name)
+                .and_then(Option::as_ref)
+                .map(|(bytes, _)| content_hash(bytes))
+        };
         for rename in &self.renames {
             if before.get(&rename.old).is_none_or(Option::is_none)
                 || before.get(&rename.new).is_some_and(Option::is_some)
@@ -211,20 +311,31 @@ impl WorkspaceTransaction {
         }
         let mut applied = BTreeMap::new();
         let result = (|| -> io::Result<()> {
-            for (name, text) in &self.writes {
+            for (name, bytes) in &writes {
                 if !active() {
                     return Err(invalid("transaction cancelled"));
                 }
                 let current = read_version(repository, name, 4 * 1024 * 1024)?;
-                if current.as_ref().map(|(bytes, _)| content_hash(bytes)) != self.expected[name] {
+                if current.as_ref().map(|(bytes, _)| content_hash(bytes)) != before_hash(name) {
                     return Err(invalid("workspace changed before write"));
                 }
                 let permissions = current
                     .as_ref()
                     .map(|(_, permissions)| permissions.clone())
                     .unwrap_or_else(|| fs::Permissions::from_mode(0o644));
-                write_version(repository, name, text.as_bytes(), &permissions)?;
-                applied.insert(name.clone(), Some(content_hash(text.as_bytes())));
+                write_version(repository, name, bytes, &permissions)?;
+                applied.insert(name.clone(), Some(content_hash(bytes)));
+            }
+            for name in &deletes {
+                if !active() {
+                    return Err(invalid("transaction cancelled"));
+                }
+                if current_hash(name)? != before_hash(name) {
+                    return Err(invalid("workspace changed before delete"));
+                }
+                let (parent, target) = open_parent(repository, name)?;
+                unlinkat(&parent, &target, AtFlags::empty())?;
+                applied.insert(name.clone(), None);
             }
             for rename in &self.renames {
                 if !active() {
@@ -237,7 +348,7 @@ impl WorkspaceTransaction {
                 let expected_old = applied
                     .get(&rename.old)
                     .cloned()
-                    .unwrap_or_else(|| self.expected[&rename.old].clone());
+                    .unwrap_or_else(|| before_hash(&rename.old));
                 if read_version(repository, &rename.old, 4 * 1024 * 1024)?
                     .as_ref()
                     .map(|(bytes, _)| content_hash(bytes))
@@ -294,7 +405,7 @@ impl WorkspaceTransaction {
                     .map(|(bytes, _)| content_hash(bytes)),
             );
         }
-        Ok(WorkspaceTransactionResult { files })
+        Ok(WorkspaceTransactionResult { files, backup })
     }
 }
 
@@ -805,12 +916,12 @@ mod transaction_tests {
             expected: BTreeMap::from([
                 (
                     "old.ts".into(),
-                    Some(content_hash(b"export const value = 1;\n")),
+                    Some(Fingerprint::Hash(content_hash(b"export const value = 1;\n"))),
                 ),
                 ("new.ts".into(), None),
                 (
                     "barrel.ts".into(),
-                    Some(content_hash(b"export * from './old';\n")),
+                    Some(Fingerprint::Hash(content_hash(b"export * from './old';\n"))),
                 ),
             ]),
             writes: BTreeMap::from([("barrel.ts".into(), "export * from './new';\n".into())]),
@@ -818,6 +929,7 @@ mod transaction_tests {
                 old: "old.ts".into(),
                 new: "new.ts".into(),
             }],
+            ..Default::default()
         };
         let result = transaction.apply(&root, || true).unwrap();
         assert!(!root.join("old.ts").exists());
@@ -830,7 +942,10 @@ mod transaction_tests {
             "export * from './new';\n"
         );
         assert_eq!(result.files["old.ts"], None);
-        assert_eq!(result.files["new.ts"], transaction.expected["old.ts"]);
+        assert_eq!(
+            result.files["new.ts"],
+            Some(content_hash(b"export const value = 1;\n"))
+        );
     }
 
     #[test]
@@ -839,9 +954,10 @@ mod transaction_tests {
         let root = directory.path().canonicalize().unwrap();
         fs::write(root.join("file.py"), "changed\n").unwrap();
         let transaction = WorkspaceTransaction {
-            expected: BTreeMap::from([("file.py".into(), Some(content_hash(b"old\n")))]),
+            expected: BTreeMap::from([("file.py".into(), Some(Fingerprint::Hash(content_hash(b"old\n"))))]),
             writes: BTreeMap::from([("file.py".into(), "new\n".into())]),
             renames: Vec::new(),
+            ..Default::default()
         };
         assert!(
             transaction
@@ -864,14 +980,15 @@ mod transaction_tests {
         fs::write(root.join("b.py"), "b\n").unwrap();
         let transaction = WorkspaceTransaction {
             expected: BTreeMap::from([
-                ("a.py".into(), Some(content_hash(b"a\n"))),
-                ("b.py".into(), Some(content_hash(b"b\n"))),
+                ("a.py".into(), Some(Fingerprint::Hash(content_hash(b"a\n")))),
+                ("b.py".into(), Some(Fingerprint::Hash(content_hash(b"b\n")))),
             ]),
             writes: BTreeMap::from([
                 ("a.py".into(), "new a\n".into()),
                 ("b.py".into(), "new b\n".into()),
             ]),
             renames: Vec::new(),
+            ..Default::default()
         };
         let calls = Cell::new(0);
         assert!(
@@ -899,6 +1016,7 @@ mod transaction_tests {
                 expected: BTreeMap::from([(name.into(), None)]),
                 writes: BTreeMap::from([(name.into(), "bad".into())]),
                 renames: Vec::new(),
+                ..Default::default()
             };
             assert!(transaction.apply(&root, || true).is_err());
         }
@@ -912,9 +1030,10 @@ mod transaction_tests {
         let original = vec![b'x'; 4 * 1024 * 1024 + 1];
         fs::write(root.join("large.py"), &original).unwrap();
         let transaction = WorkspaceTransaction {
-            expected: BTreeMap::from([("large.py".into(), Some(content_hash(&original)))]),
+            expected: BTreeMap::from([("large.py".into(), Some(Fingerprint::Hash(content_hash(&original))))]),
             writes: BTreeMap::from([("large.py".into(), "small\n".into())]),
             renames: Vec::new(),
+            ..Default::default()
         };
         assert!(
             transaction
@@ -924,6 +1043,50 @@ mod transaction_tests {
                 .contains("limit")
         );
         assert_eq!(fs::read(root.join("large.py")).unwrap(), original);
+    }
+
+    #[test]
+    fn transaction_deletes_with_stat_precondition_and_backup() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("keep.txt"), "keep\n").unwrap();
+        fs::write(root.join("drop.txt"), "drop\n").unwrap();
+        let (size, mtime_ms) = stat_fingerprint(&root, "drop.txt").unwrap().unwrap();
+        let saved = std::cell::RefCell::new(BTreeMap::new());
+        let sink = |files: &BTreeMap<String, Option<Vec<u8>>>| {
+            *saved.borrow_mut() = files.clone();
+            Ok(serde_json::json!({"backup": "ok"}))
+        };
+        let transaction = WorkspaceTransaction {
+            expected: BTreeMap::from([
+                ("drop.txt".into(), Some(Fingerprint::Stat { size, mtime_ms })),
+                ("keep.txt".into(), Some(Fingerprint::Hash(content_hash(b"keep\n")))),
+            ]),
+            writes: BTreeMap::from([("keep.txt".into(), "kept\n".into())]),
+            deletes: vec!["drop.txt".into()],
+            backup: true,
+            ..Default::default()
+        };
+        let result = transaction.apply_with_backup(&root, || true, Some(&sink)).unwrap();
+        assert!(!root.join("drop.txt").exists());
+        assert_eq!(fs::read_to_string(root.join("keep.txt")).unwrap(), "kept\n");
+        assert_eq!(result.files["drop.txt"], None);
+        assert_eq!(result.backup, Some(serde_json::json!({"backup": "ok"})));
+        assert_eq!(saved.borrow()["drop.txt"], Some(b"drop\n".to_vec()));
+        let stale = WorkspaceTransaction {
+            expected: BTreeMap::from([("keep.txt".into(), Some(Fingerprint::Stat { size: 1, mtime_ms: 1 }))]),
+            deletes: vec!["keep.txt".into()],
+            ..Default::default()
+        };
+        assert!(stale.apply(&root, || true).unwrap_err().to_string().contains("stale"));
+        let missing_sink = WorkspaceTransaction {
+            expected: BTreeMap::from([("keep.txt".into(), Some(Fingerprint::Hash(content_hash(b"kept\n"))))]),
+            deletes: vec!["keep.txt".into()],
+            backup: true,
+            ..Default::default()
+        };
+        assert!(missing_sink.apply(&root, || true).is_err());
+        assert!(root.join("keep.txt").exists());
     }
 
     #[test]

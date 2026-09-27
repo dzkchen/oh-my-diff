@@ -1,4 +1,5 @@
 use codex_omd::MOD_API_VERSION;
+const LEGACY_API: &str = "0.1.0-experimental.9";
 use codex_omd::ModHost;
 use codex_omd::ModStore;
 use codex_omd::OMD_HOST_RELEASE;
@@ -33,7 +34,7 @@ fn written(root: &Path, id: &str, source: &str, capabilities: &[&str], extra: Va
         std::fs::create_dir(&path).unwrap();
     }
     let mut manifest = json!({"schema":1,"id":id,"version":"1.0.0",
-        "api":MOD_API_VERSION,"state_version":1,"capabilities":capabilities});
+        "api":LEGACY_API,"state_version":1,"capabilities":capabilities});
     for (key, value) in extra.as_object().into_iter().flatten() {
         manifest[key] = value.clone();
     }
@@ -510,7 +511,7 @@ fn mixed_api_mods_share_one_host_and_upgrade_independently() {
     );
     assert_eq!(
         stability(&runtime, "current"),
-        (MOD_API_VERSION.to_string(), "experimental".to_string())
+        (LEGACY_API.to_string(), "experimental".to_string())
     );
     let generation = runtime.generation();
     for id in ["legacy", "middle"] {

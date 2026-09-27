@@ -10,7 +10,48 @@ pub struct ModHostCall {
 }
 
 impl ModHostCall {
-    pub fn capability(&self) -> Result<&'static str> {
+    pub fn capability(&self, api: &str) -> Result<&'static str> {
+        if legacy_api(api) {
+            return self.legacy_capability();
+        }
+        let operation = self.operation.as_str();
+        match operation {
+            "exec.run" => Ok("exec"),
+            "workspace.read" | "workspace.list" | "workspace.stat" => Ok("fs.read"),
+            "workspace.transaction" | "workspace.backup" | "workspace.restore"
+            | "workspace.request_rename" => Ok("fs.write"),
+            "store.get" | "store.put" | "store.delete" | "store.list" | "store.export"
+            | "store.reset" | "evidence.write" | "evidence.read" => Ok("store"),
+            "sessions.list" | "sessions.read" => Ok("sessions"),
+            "routes.list" | "providers.register" | "providers.unregister" => Ok("model"),
+            "task.status" | "workspace.integrate" => Ok("agents"),
+            "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict" => {
+                Ok("contracts")
+            }
+            "mods.service" => Ok("services"),
+            _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
+                Ok("agents")
+            }
+            _ if (operation.starts_with("process.") || operation.starts_with("sidecars."))
+                && MOD_HOST_OPERATIONS.contains(&operation) =>
+            {
+                Ok("exec")
+            }
+            _ => Err(failure(format!(
+                "unsupported_host_operation: {}",
+                self.operation
+            ))),
+        }
+    }
+
+    pub fn capabilities_any(&self) -> Vec<&'static str> {
+        [self.legacy_capability(), self.capability(MOD_API_VERSION)]
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect()
+    }
+
+    fn legacy_capability(&self) -> Result<&'static str> {
         match self.operation.as_str() {
             "evidence.read" => Ok("turn_evidence"),
             "sessions.list" | "sessions.read" => Ok("sessions_read"),
@@ -78,6 +119,14 @@ pub(super) fn run(
             "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
         let mut request = request;
         request["field_policies"] = ModHost::field_policies();
+        request["surface"] = json!({
+            "events": events_for(&loaded.package.api).iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
+            "replacements": replacements_for(&loaded.package.api),
+            "middleware": MOD_MIDDLEWARE_EVENTS,
+            "state": state_capability(&loaded.package.api),
+            "contracts": contract_capability(&loaded.package.api),
+            "adapter": loaded.adapter,
+        });
         request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
         let started = Instant::now();
         let budget = Duration::from_millis(loaded.package.hook_budget_ms);
@@ -124,7 +173,7 @@ pub(super) fn run(
         if expected.len() >= 32 {
             return Err(failure("host_call_limit"));
         }
-        let capability = call.capability()?;
+        let capability = call.capability(&loaded.package.api)?;
         if call.operation.starts_with("context.")
             && !loaded
                 .package

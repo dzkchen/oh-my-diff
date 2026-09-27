@@ -13,7 +13,7 @@ pub(super) fn validate_registrations(
 ) -> Result<()> {
     if readers.len() > 8
         || !readers.is_empty()
-            && (package.api != MOD_API_VERSION
+            && (api_rank(&package.api) < 9
                 || !package
                     .capabilities
                     .iter()

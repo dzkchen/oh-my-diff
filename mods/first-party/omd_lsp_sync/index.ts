@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../api.d.ts';
+import type { Json, ModAPI } from '../../api-0.1.d.ts';
 
 type Document = { sha256: string; version: number };
 type Diagnostic = { count: number; version: number | null };

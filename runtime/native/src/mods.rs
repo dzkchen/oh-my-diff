@@ -1,8 +1,6 @@
 mod agents;
 mod evidence;
 mod operations;
-mod policy;
-pub(crate) mod presets;
 pub(crate) mod services;
 mod tools;
 mod view;
@@ -15,10 +13,49 @@ use codex_extension_api::TurnLifecycleContributor;
 use codex_extension_api::TurnStartInput;
 use codex_extension_api::UserInputDecision;
 use codex_extension_api::UserInputInterceptInput;
+use codex_omd::ModGrants;
 use codex_omd::ModHost;
+use codex_omd::ModHostCall;
 use codex_omd::ModInputDecision;
 use codex_omd::ModTool;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::models::PermissionProfileSnapshot;
+use codex_protocol::permissions::FileSystemAccessMode;
+use codex_protocol::permissions::FileSystemPath;
+use codex_protocol::permissions::FileSystemSandboxEntry;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+
+pub(crate) use operations::DataScope;
+
+type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
+type Facts = BTreeMap<String, (String, Option<ModGrants>)>;
+
+struct HostRequest {
+    caller: String,
+    source: String,
+    grants: Option<ModGrants>,
+    request: ModHostCall,
+    reply: Reply,
+}
+
+pub(crate) fn read_only_sandbox_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "shell"
+            | "shell_command"
+            | "exec_command"
+            | "write_stdin"
+            | "web"
+            | "web_search"
+            | "read"
+            | "grep_files"
+            | "list_dir"
+    )
+}
 
 fn lead_thread(thread: &ExtensionData) -> bool {
     thread
@@ -36,22 +73,75 @@ fn thread_id(thread: &ExtensionData) -> Option<String> {
     thread.get::<Lead>().map(|lead| lead.thread.to_string())
 }
 
+fn facts(runtime: &ModHost) -> Facts {
+    runtime
+        .owners()
+        .into_iter()
+        .map(|(id, owner)| {
+            let grants = runtime.grants(&id);
+            (id, (owner.sha256, grants))
+        })
+        .collect()
+}
+
+fn forward(
+    requests: &tokio::sync::mpsc::Sender<HostRequest>,
+    facts: &Facts,
+    caller: &str,
+    request: ModHostCall,
+    active: &dyn Fn() -> bool,
+) -> std::io::Result<Value> {
+    let (reply, receiver) = std::sync::mpsc::sync_channel(1);
+    let (source, grants) = facts.get(caller).cloned().unwrap_or_default();
+    requests
+        .blocking_send(HostRequest {
+            caller: caller.to_owned(),
+            source,
+            grants,
+            request,
+            reply,
+        })
+        .map_err(|_| std::io::Error::other("native_host_stopped"))?;
+    loop {
+        if !active() {
+            return Err(std::io::Error::other("callback_cancelled"));
+        }
+        match receiver.recv_timeout(std::time::Duration::from_millis(20)) {
+            Ok(value) => return value,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => (),
+            Err(error) => return Err(std::io::Error::other(error)),
+        }
+    }
+}
+
 struct TurnRecord {
     turn_id: String,
     error: Option<String>,
     evidence: Option<evidence::Cursor>,
 }
 
-struct Mods {
-    owner: Arc<Host>,
+pub(super) struct Core {
+    host: Arc<Host>,
     runtime: Arc<Mutex<ModHost>>,
     input_runtime: Arc<Mutex<ModHost>>,
-    agents: Arc<agents::Agents>,
-    services: Arc<services::Services>,
-    processes: Arc<crate::managed_process::ManagedProcesses>,
+    agents: agents::Agents,
+    services: services::Services,
     views: Arc<view::Views>,
-    turn: Mutex<Option<TurnRecord>>,
+}
+
+struct Mods {
+    core: Arc<Core>,
+    turns: Mutex<BTreeMap<String, TurnRecord>>,
+    sessions: Mutex<BTreeMap<String, std::sync::Weak<Session>>>,
     workspace_before: Mutex<BTreeMap<String, Result<codex_omd::WorkspaceIndex, String>>>,
+}
+
+impl std::ops::Deref for Mods {
+    type Target = Core;
+
+    fn deref(&self) -> &Core {
+        &self.core
+    }
 }
 
 fn preview(text: &str) -> String {
@@ -62,11 +152,11 @@ fn preview(text: &str) -> String {
     shown
 }
 
-pub(crate) fn terminal_identity(runtime: &ModHost, mode: &str) -> Value {
+pub(crate) fn terminal_identity(runtime: &ModHost) -> Value {
     runtime.identity(
         env!("CARGO_PKG_VERSION"),
         std::env::var("OMD_INSTALL_PROFILE").ok().as_deref(),
-        mode,
+        "omd",
     )
 }
 
@@ -134,25 +224,6 @@ pub(crate) fn lifecycle_git(
         .map_err(std::io::Error::other)
 }
 
-pub(super) fn event_fragments(
-    runtime: &mut ModHost,
-    event: &str,
-    payload: Value,
-    active: impl Fn() -> bool,
-    authority: &str,
-    host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
-) -> Vec<PromptFragment> {
-    event_fragments_scoped(
-        runtime,
-        event,
-        payload,
-        BTreeMap::new(),
-        active,
-        authority,
-        host,
-    )
-}
-
 fn event_fragments_scoped(
     runtime: &mut ModHost,
     event: &str,
@@ -172,11 +243,10 @@ fn event_fragments_scoped(
         event,
         |id| {
             let mut value = payload.clone();
-            if let Some(fields) = private.get(id).and_then(Value::as_object) {
-                if let Some(object) = value.as_object_mut() {
+            if let Some(fields) = private.get(id).and_then(Value::as_object)
+                && let Some(object) = value.as_object_mut() {
                     object.extend(fields.clone());
                 }
-            }
             value
         },
         active,
@@ -232,38 +302,32 @@ fn event_fragments_scoped(
 
 pub(super) fn install(
     registry: &mut ExtensionRegistryBuilder<Config>,
-    owner: Arc<Host>,
+    host: Arc<Host>,
 ) -> Result<(), String> {
-    let Some(root) = &owner.manifest.mods else {
-        return Ok(());
-    };
-    if root.starts_with(&owner.manifest.repository) || !root.is_absolute() {
-        return Err("mod trust/state store must be outside the repository".into());
-    }
     let validator = |schema: &Value| {
         codex_extension_api::parse_tool_input_schema(schema)
             .map(|_| ())
             .map_err(std::io::Error::other)
     };
-    let runtime = ModHost::open_validated(root.clone(), validator).map_err(|e| e.to_string())?;
+    let runtime =
+        ModHost::open_validated(host.root.clone(), validator).map_err(|e| e.to_string())?;
     let input_runtime =
-        ModHost::open_validated(root.clone(), validator).map_err(|e| e.to_string())?;
+        ModHost::open_validated(host.root.clone(), validator).map_err(|e| e.to_string())?;
     let runtime = Arc::new(Mutex::new(runtime));
-    owner.accounts.install_mod_runtime(runtime.clone());
+    host.accounts.install_mod_runtime(runtime.clone());
     let views = Arc::new(view::Views::new());
+    let input_runtime = Arc::new(Mutex::new(input_runtime));
     let extension = Arc::new(Mods {
-        agents: Arc::new(agents::Agents::new(
-            runtime.clone(),
-            views.clone(),
-            owner.clone(),
-        )),
-        owner,
-        runtime,
-        input_runtime: Arc::new(Mutex::new(input_runtime)),
-        services: Arc::new(services::Services::default()),
-        processes: Arc::new(crate::managed_process::ManagedProcesses::default()),
-        views,
-        turn: Mutex::new(None),
+        core: Arc::new_cyclic(|core| Core {
+            agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
+            host,
+            runtime,
+            input_runtime,
+            services: services::Services::default(),
+            views,
+        }),
+        turns: Mutex::new(BTreeMap::new()),
+        sessions: Mutex::new(BTreeMap::new()),
         workspace_before: Mutex::new(BTreeMap::new()),
     });
     registry.config_contributor(extension.clone());
@@ -275,8 +339,78 @@ pub(super) fn install(
     Ok(())
 }
 
-impl Mods {
-    async fn cleanup_failed(&self) {
+fn publish(runtime: &mut ModHost, host: &Host, views: &view::Views, event: &str, ledger: Value, active: impl Fn() -> bool) {
+    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime)});
+    let mut terminal = runtime.terminal_view(input.clone(), active);
+    let status = runtime.status();
+    let mut errors = status["mods"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            item["error"]
+                .as_str()
+                .map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))
+        })
+        .collect::<Vec<_>>();
+    errors.extend(
+        status["rejected"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item["reason"]
+                    .as_str()
+                    .filter(|reason| !reason.starts_with("shadowed_"))
+                    .map(|reason| {
+                        format!(
+                            "{}: {reason}",
+                            item["id"]
+                                .as_str()
+                                .or(item["path"].as_str())
+                                .unwrap_or("selection")
+                        )
+                    })
+            }),
+    );
+    if let Some(error) = status["reload_error"].as_str() {
+        errors.push(format!("Reload: {error}"));
+    }
+    if !errors.is_empty() {
+        if terminal.owner.is_none() {
+            terminal.view = codex_omd::ModView {
+                title: Some("Mod recovery".into()),
+                ..Default::default()
+            };
+        }
+        terminal.view.panels.insert(
+            0,
+            codex_omd::ModPanel {
+                title: "Mod errors".into(),
+                lines: errors
+                    .into_iter()
+                    .take(16)
+                    .map(|error| {
+                        error
+                            .chars()
+                            .filter(|c| !c.is_control())
+                            .take(180)
+                            .collect()
+                    })
+                    .collect(),
+            },
+        );
+    }
+    views.base(host, terminal, input);
+    let _ = host.persist_json("mod-status.json", &status);
+    let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
+    if codex_omd::BuiltinSnapshot::read(&host.root) != builtins {
+        let _ = host.persist_json(codex_omd::BUILTINS_SNAPSHOT, &builtins);
+    }
+}
+
+impl Core {
+    async fn cleanup_failed(&self, lead: Option<&Lead>) {
         let runtime = self.runtime.clone();
         let failed = tokio::task::spawn_blocking(move || {
             let Ok(runtime) = runtime.lock() else {
@@ -299,20 +433,13 @@ impl Mods {
         for (id, generation) in failed {
             self.agents.cleanup_owned(&id, generation).await;
             self.services.cleanup_owned(&id, generation).await;
-            self.processes.cleanup_owned(&id, generation);
+            if let Some(lead) = lead {
+                lead.session.processes.cleanup_owned(&id, generation);
+            }
         }
     }
 
-    async fn event(&self, event: &'static str, payload: Value) -> Vec<PromptFragment> {
-        self.event_with_lead(event, payload, None).await
-    }
-
-    async fn event_with_lead(
-        &self,
-        event: &'static str,
-        payload: Value,
-        lead: Option<Arc<Lead>>,
-    ) -> Vec<PromptFragment> {
+    async fn event(&self, event: &'static str, payload: Value, lead: Option<&Lead>) -> Vec<PromptFragment> {
         self.event_with_private(event, payload, lead, BTreeMap::new())
             .await
     }
@@ -321,268 +448,298 @@ impl Mods {
         &self,
         event: &'static str,
         payload: Value,
-        lead: Option<Arc<Lead>>,
+        lead: Option<&Lead>,
         private: BTreeMap<String, Value>,
     ) -> Vec<PromptFragment> {
         let runtime = self.runtime.clone();
-        let owner = self.owner.clone();
+        let host = self.host.clone();
         let views = self.views.clone();
-        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
         let _cancellation = Cancellation(cancelled.clone());
-        let (requests, mut receiver) = tokio::sync::mpsc::channel::<(
-            String,
-            String,
-            codex_omd::ModHostCall,
-            std::sync::mpsc::SyncSender<std::io::Result<Value>>,
-        )>(1);
+        let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
         let generation = self.runtime.lock().ok().map(|runtime| runtime.generation());
-        if let Some(generation) = generation {
-            self.processes.cleanup_stale(generation);
+        if let (Some(lead), Some(generation)) = (lead, generation) {
+            lead.session.processes.cleanup_stale(generation);
         }
-        let allow_provider = matches!(event, "start" | "resume" | "turn_start");
-        let allow_git = matches!(
-            event,
-            "start" | "resume" | "turn_start" | "turn_end" | "workspace_write" | "idle"
-        );
-        let allow_workspace = matches!(
-            event,
-            "workspace_write" | "workspace_pre_rename" | "turn_start"
-        );
-        let allow_process = matches!(
-            event,
-            "start"
-                | "resume"
-                | "turn_start"
-                | "workspace_write"
-                | "workspace_pre_rename"
-                | "idle"
-                | "stop"
-        );
-        let git_cancelled = cancelled.clone();
+        let ledger = lead.map(Lead::ledger).unwrap_or(Value::Null);
+        let flag = cancelled.clone();
         let job = tokio::task::spawn_blocking(move || {
             let Ok(mut runtime) = runtime.lock() else {
                 return Vec::new();
             };
-
-            let sources: BTreeMap<_, _> = runtime
-                .owners()
-                .into_iter()
-                .map(|(id, owner)| (id, owner.sha256))
-                .collect();
+            let facts = facts(&runtime);
             let mut fragments = event_fragments_scoped(
                 &mut runtime,
                 event,
                 payload,
                 private,
-                || !cancelled.load(std::sync::atomic::Ordering::Acquire),
-                "native workflow enforcement",
+                || !flag.load(Ordering::Acquire),
+                "native permissions",
                 |id, request| {
-                    if request.operation.starts_with("git.") && !allow_git {
-                        return Err(std::io::Error::other(
-                            "host_operation_unavailable: git reads run in lifecycle events and commands",
-                        ));
+                    if !operations::event_allows(event, &request.operation) {
+                        return Err(std::io::Error::other(format!(
+                            "host_operation_unavailable: {} is not available during {event}",
+                            request.operation
+                        )));
                     }
-                    if !((matches!(event, "turn_end" | "idle")
-                        && matches!(
-                            request.operation.as_str(),
-                            "review.request"
-                                | "review.result"
-                                | "review.wait"
-                                | "review.submit"
-                                | "review.cancel"
-                        ))
-                        || (allow_provider
-                            && matches!(
-                                request.operation.as_str(),
-                                "providers.register" | "routes.list" | "workers.presets"
-                            ))
-                        || (allow_workspace && request.operation == "workspace.read")
-                        || (allow_process && request.operation.starts_with("process."))
-                        || request.operation.starts_with("git.")
-                        || (matches!(
-                            event,
-                            "context" | "turn_start" | "turn_end" | "idle" | "stop"
-                        ) && codex_omd::scoped_data::operation(&request.operation)))
-                    {
-                        return Err(std::io::Error::other(
-                            "lifecycle_host_operation_unavailable",
-                        ));
-                    }
-                    let (sender, reply) = std::sync::mpsc::sync_channel(1);
-                    requests
-                        .blocking_send((
-                            id.to_owned(),
-                            sources.get(id).cloned().unwrap_or_default(),
-                            request,
-                            sender,
-                        ))
-                        .map_err(|_| std::io::Error::other("native_host_stopped"))?;
-                    reply
-                        .recv()
-                        .map_err(|_| std::io::Error::other("native_host_stopped"))?
+                    forward(&requests, &facts, id, request, &|| !flag.load(Ordering::Acquire))
                 },
             );
-            let terminal_input = json!({"event":event,"checkpoint":owner.task.checkpoint().ok().flatten(),
-                "identity":terminal_identity(&runtime, "enabled")});
-            let mut terminal = runtime.terminal_view(terminal_input.clone(), || {
-                !cancelled.load(std::sync::atomic::Ordering::Acquire)
+            publish(&mut runtime, &host, &views, event, ledger, || {
+                !flag.load(Ordering::Acquire)
             });
-            let status = runtime.status();
-            let mut errors = status["mods"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|item| {
-                    item["error"]
-                        .as_str()
-                        .map(|error| format!("{}: {error}", item["id"].as_str().unwrap_or("mod")))
-                })
-                .collect::<Vec<_>>();
-            errors.extend(
-                status["rejected"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|item| {
-                        item["reason"]
-                            .as_str()
-                            .filter(|reason| !reason.starts_with("shadowed_"))
-                            .map(|reason| {
-                                format!(
-                                    "{}: {reason}",
-                                    item["id"]
-                                        .as_str()
-                                        .or(item["path"].as_str())
-                                        .unwrap_or("selection")
-                                )
-                            })
-                    }),
-            );
-            if let Some(error) = status["reload_error"].as_str() {
-                errors.push(format!("Reload: {error}"));
-            }
-            if !errors.is_empty() {
-                if terminal.owner.is_none() {
-                    terminal.view = codex_omd::ModView {
-                        title: Some("Mod recovery".into()),
-                        ..Default::default()
-                    };
-                }
-                terminal.view.panels.insert(
-                    0,
-                    codex_omd::ModPanel {
-                        title: "Mod errors".into(),
-                        lines: errors
-                            .into_iter()
-                            .take(16)
-                            .map(|error| {
-                                error
-                                    .chars()
-                                    .filter(|c| !c.is_control())
-                                    .take(180)
-                                    .collect()
-                            })
-                            .collect(),
-                    },
-                );
-            }
-            views.base(&owner, terminal, terminal_input);
-            if let Some(error) = status["reload_error"].as_str() {
+            if let Some(error) = runtime.status()["reload_error"].as_str() {
                 fragments.push(PromptFragment::developer_capability(
                     format!("Mod reload failed; previous eligible mods retained: {error}"),
                     ContentItemKind("oh_my_diff.mod_error".into()),
                 ));
             }
-            let _ = owner.persist_runtime_file("mod-status.json", &status);
             fragments
         });
-        let data = operations::DataScope::default();
-        while let Some((id, source, request, reply)) = receiver.recv().await {
-            let value = match (&lead, generation) {
-                (Some(lead), Some(generation)) if matches!(request.operation.as_str(),"review.request"|"review.result"|"review.wait"|"review.submit"|"review.cancel") => self.agents.call(&self.services,lead,&id,generation,&source,request).await.map_err(std::io::Error::other),
-                (Some(lead), Some(_)) if codex_omd::scoped_data::operation(&request.operation) => {
-                    match crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await {
-                        Ok(authority) => data.call(lead, authority, &id, &source, request).await,
-                        Err(error) => Err(error),
-                    }.map_err(std::io::Error::other)
-                },
-                (Some(lead), _) if request.operation == "workers.presets" => Ok(presets::list(&lead.host,&id)),
-                (Some(lead), _) if request.operation == "routes.list" => Ok(json!([LeadName::Sol, LeadName::Astra].map(|name| {
-                    let route = lead.host.route(name);
-                    json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
-                }))),
-                (None, _) if request.operation == "routes.list" => Ok(json!([])),
-                (Some(lead), _) if request.operation.starts_with("git.") => {
-                    match crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await {
-                        Ok(authority) => {
-                            let repository = self.owner.manifest.repository.clone();
-                            let protected = crate::execution::protected_paths(&self.owner.manifest);
-                            let cancelled = git_cancelled.clone();
-                            tokio::task::spawn_blocking(move || {
-                                lifecycle_git(true, &repository, &protected, &authority.policy, request, &|| {
-                                    !cancelled.load(std::sync::atomic::Ordering::Acquire)
-                                })
-                            })
-                            .await
-                            .map_err(std::io::Error::other)
-                            .and_then(|result| result)
-                        }
-                        Err(error) => Err(std::io::Error::other(error)),
-                    }
-                },
-                (Some(lead), Some(generation)) if request.operation == "workspace.read" || request.operation.starts_with("process.") => {
-                    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await;
-                    match authority {
-                        Ok(authority) => {
-                            let processes = self.processes.clone();
-                            let lead = lead.clone();
-                            tokio::task::spawn_blocking(move || {
-                                if request.operation == "workspace.read" {
-                                    authority.call(&request.operation, request.arguments, || lead.host.task.check_active().is_ok())
-                                } else {
-                                    processes.call(&id, generation, &authority.repository, &authority.policy, &request.operation, request.arguments, || lead.host.task.check_active().is_ok())
-                                }
-                            }).await.map_err(|error| error.to_string()).and_then(|result| result).map_err(std::io::Error::other)
-                        }
-                        Err(error) => Err(std::io::Error::other(error)),
-                    }
-                },
-                (Some(lead), Some(generation)) => self
-                    .services
-                    .call(lead, &id, generation, request)
+        while let Some(call) = receiver.recv().await {
+            let value = match (lead, generation) {
+                (Some(lead), Some(generation)) => {
+                    operations::dispatch(
+                        self,
+                        lead,
+                        operations::Caller {
+                            id: &call.caller,
+                            source: &call.source,
+                            grants: call.grants,
+                            generation,
+                            origin: codex_omd::data_store::Origin::Event,
+                        },
+                        None,
+                        call.request,
+                        &cancelled,
+                    )
                     .await
-                    .map_err(std::io::Error::other),
-                _ => Err(std::io::Error::other("lifecycle_host_operation_unavailable")),
+                }
+                _ => Err("host_operation_unavailable: no session".into()),
             };
-            let _ = reply.send(value);
+            let _ = call.reply.send(value.map_err(std::io::Error::other));
         }
         let fragments = job.await.unwrap_or_default();
-        self.cleanup_failed().await;
+        self.cleanup_failed(lead).await;
         fragments
     }
 }
 
 impl Mods {
-    fn take_turn(&self) -> Option<TurnRecord> {
-        self.turn.lock().ok().and_then(|mut turn| turn.take())
+    fn take_turn(&self, thread: &ThreadId) -> Option<TurnRecord> {
+        self.turns
+            .lock()
+            .ok()
+            .and_then(|mut turns| turns.remove(&thread.to_string()))
     }
 
     async fn compaction(&self, event: &'static str, input: CompactionLifecycleInput<'_>) {
-        if lead_thread(input.thread_store) {
-            if let Some(lead) = input.thread_store.get::<Lead>() {
-                if let Err(error) =
-                    evidence::compact(self, &lead, event == "compaction_start").await
+        if !lead_thread(input.thread_store) {
+            return;
+        }
+        let lead = input.thread_store.get::<Lead>();
+        if let Some(lead) = &lead
+            && let Err(error) =
+                evidence::compact(lead, &self.turns, event == "compaction_start").await
+        {
+            self.views
+                .diagnostic(&self.host, "turn_evidence", Some(error));
+        }
+        self.event(
+            event,
+            json!({"turn_id":input.turn_id,"trigger":input.trigger}),
+            lead.as_deref(),
+        )
+        .await;
+    }
+
+    fn compaction_decision(&self, runtime: &mut ModHost, config: &mut Config) -> Result<(), String> {
+        let compaction = runtime.event(
+            "compaction",
+            json!({"token_limit":config.model_auto_compact_token_limit,"context_window":config.model_context_window}),
+        );
+        let mut selected: Option<(String, Option<String>)> = None;
+        for (id, result) in compaction {
+            let value = result.map_err(|e| format!("mod_compaction_failed: {id}: {e}"))?;
+            if value.is_null() {
+                continue;
+            }
+            if selected.is_some() {
+                return Err("mod_compaction_conflict".into());
+            }
+            let (limit, prompt) = match &value {
+                Value::Number(_) => (
+                    Some(value.as_i64().ok_or("invalid_compaction_limit")?),
+                    None,
+                ),
+                Value::Object(object)
+                    if !object.is_empty()
+                        && object
+                            .keys()
+                            .all(|key| key == "threshold" || key == "prompt") =>
                 {
-                    self.views
-                        .diagnostic(&self.owner, "turn_evidence", Some(error));
+                    let limit = object
+                        .get("threshold")
+                        .map(|limit| limit.as_i64().ok_or("invalid_compaction_limit"))
+                        .transpose()?;
+                    let prompt = object
+                        .get("prompt")
+                        .map(|prompt| {
+                            prompt
+                                .as_str()
+                                .filter(|prompt| {
+                                    !prompt.trim().is_empty()
+                                        && prompt.len() <= 16_384
+                                        && !prompt
+                                            .chars()
+                                            .any(|c| c.is_control() && c != '\n' && c != '\t')
+                                })
+                                .map(str::to_owned)
+                                .ok_or("invalid_compaction_prompt")
+                        })
+                        .transpose()?;
+                    (limit, prompt)
+                }
+                _ => return Err("invalid_compaction_decision".into()),
+            };
+            if let Some(limit) = limit {
+                let ceiling = config
+                    .model_auto_compact_token_limit
+                    .or(config.model_context_window)
+                    .unwrap_or(1_000_000);
+                if !(256..=ceiling).contains(&limit) {
+                    return Err("compaction_limit_outside_host_bounds".into());
+                }
+                config.model_auto_compact_token_limit = Some(limit);
+            }
+            selected = Some((id, prompt));
+        }
+        let key = "compaction_prompt";
+        match selected {
+            Some((id, Some(prompt))) => {
+                let remote = codex_model_provider::create_model_provider(
+                    config.model_provider.clone(),
+                    None,
+                )
+                .capabilities()
+                .remote_compaction;
+                if remote == codex_model_provider::RemoteCompactionSupport::Unsupported {
+                    config.compact_prompt = Some(prompt);
+                    self.views.diagnostic(&self.host, key, None);
+                } else {
+                    self.views.diagnostic(
+                        &self.host,
+                        key,
+                        Some(format!(
+                            "{id}: compaction_prompt_unsupported_for_remote_compaction on provider {}; native remote compaction unchanged",
+                            config.model_provider_id
+                        )),
+                    );
                 }
             }
-            self.event(
-                event,
-                json!({"turn_id":input.turn_id,"trigger":input.trigger}),
-            )
-            .await;
+            _ => self.views.diagnostic(&self.host, key, None),
         }
+        Ok(())
+    }
+
+    fn routing_decision(&self, runtime: &mut ModHost, config: &mut Config) -> Result<(), String> {
+        let routes = self
+            .host
+            .config
+            .routes
+            .iter()
+            .filter(|route| route.roles.contains(&config::RouteRole::Lead))
+            .map(|route| operations::route_info(&self.host, route))
+            .collect::<Vec<_>>();
+        if routes.is_empty() {
+            return Ok(());
+        }
+        let values = runtime.event(
+            "routing",
+            json!({"routes":routes,"model":config.model,"provider":config.model_provider_id,
+                "reasoning":config.model_reasoning_effort}),
+        );
+        let mut selected: Option<String> = None;
+        let mut diagnostic = None;
+        for (id, result) in values {
+            let value = match result {
+                Ok(value) if value.is_null() => continue,
+                Ok(value) => value,
+                Err(error) => {
+                    diagnostic = Some(format!("mod_routing_failed: {id}: {error}; configured model retained"));
+                    continue;
+                }
+            };
+            if selected.is_some() {
+                diagnostic = Some("mod_routing_conflict; configured model retained".into());
+                selected = None;
+                break;
+            }
+            match value.get("route").and_then(Value::as_str) {
+                Some(name) if value.as_object().is_some_and(|object| object.len() == 1)
+                    && self.host.config.route(name, config::RouteRole::Lead, Some(&id)).is_some() =>
+                {
+                    selected = Some(name.to_owned());
+                }
+                _ => diagnostic = Some(format!("mod_route_not_configured: {id}; configured model retained")),
+            }
+        }
+        if let Some(route) = selected.and_then(|name| self.host.config.route(&name, config::RouteRole::Lead, None)) {
+            config.model = Some(route.model.clone());
+            config.model_provider_id = route.provider.clone();
+            config.model_provider = config
+                .model_providers
+                .get(&route.provider)
+                .cloned()
+                .ok_or("configured_provider_missing")?;
+            config.model_reasoning_effort = Some(route.reasoning_effort.clone());
+        }
+        self.views.diagnostic(&self.host, "routing", diagnostic);
+        Ok(())
+    }
+}
+
+impl codex_extension_api::ConfigContributor<Config> for Mods {
+    fn prepare_thread_config(&self, config: &mut Config) -> Result<(), String> {
+        let profile = config.permissions.effective_permission_profile();
+        if matches!(profile, PermissionProfile::External { .. }) {
+            return Err("mods_require_native_sandbox_for_host_owned_files".into());
+        }
+        let mut denies = Vec::new();
+        for path in self.host.protected_paths() {
+            if path.canonicalize().map_err(|_| "protected_path_unavailable")? != path
+                || path.starts_with(&self.host.repository)
+            {
+                return Err("protected_mod_path_must_be_canonical_and_external".into());
+            }
+            let path = AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
+            denies.push(FileSystemSandboxEntry::new(
+                FileSystemPath::Path { path: path.into() },
+                FileSystemAccessMode::Deny,
+            ));
+        }
+        let mut filesystem = profile.file_system_sandbox_policy();
+        filesystem.preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
+        let protected = PermissionProfile::from_runtime_permissions(
+            &filesystem,
+            profile.network_sandbox_policy(),
+        );
+        config
+            .permissions
+            .shell_environment_policy
+            .r#set
+            .insert("OMD_NARROW_SANDBOX".into(), "1".into());
+        config
+            .permissions
+            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(protected))
+            .map_err(|e| e.to_string())?;
+        let mut runtime = match self.runtime.try_lock() {
+            Ok(runtime) => runtime,
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
+        };
+        self.compaction_decision(&mut runtime, config)?;
+        self.routing_decision(&mut runtime, config)
     }
 }
 
@@ -592,72 +749,90 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnAbortInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if lead_thread(input.thread_store) {
-                self.agents.cleanup().await;
-                self.services.cleanup().await;
-                self.processes.cleanup();
-                if let Some(turn) = self.take_turn() {
-                    self.event_with_lead("turn_end", json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}), input.thread_store.get::<Lead>())
-                        .await;
-                }
+            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
+                return;
+            };
+            lead.session.processes.cleanup();
+            if let Some(turn) = self.take_turn(&lead.thread) {
+                self.event(
+                    "turn_end",
+                    json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}),
+                    Some(&*lead),
+                )
+                .await;
             }
         })
     }
+
     fn on_turn_error<'a>(
         &'a self,
         input: codex_extension_api::TurnErrorInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if lead_thread(input.thread_store)
-                && let Ok(mut turn) = self.turn.lock()
-                && let Some(turn) = turn.as_mut()
+            if let Some(thread) = thread_id(input.thread_store)
+                && lead_thread(input.thread_store)
+                && let Ok(mut turns) = self.turns.lock()
+                && let Some(turn) = turns.get_mut(&thread)
             {
                 turn.error = Some(format!("{:?}", input.error));
             }
         })
     }
+
     fn on_turn_stop<'a>(
         &'a self,
         input: codex_extension_api::TurnStopInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if lead_thread(input.thread_store) {
-                self.agents.cleanup().await;
-                self.services.cleanup().await;
-                if let Some(turn) = self.take_turn() {
-                    let payload = match turn.error {
-                        Some(error) => {
-                            json!({"turn_id":turn.turn_id,"outcome":"error","error":error})
-                        }
-                        None => json!({"turn_id":turn.turn_id,"outcome":"completed"}),
-                    };
-                    let lead = input.thread_store.get::<Lead>();
-                    let private = if let (Some(cursor), Some(lead)) = (&turn.evidence, &lead) {
-                        match evidence::finish(
-                            self,
-                            lead,
-                            cursor,
-                            &turn.turn_id,
-                            payload["outcome"].as_str().unwrap_or("error"),
-                        )
-                        .await
-                        {
-                            Ok(value) => value,
-                            Err(error) => {
-                                self.views
-                                    .diagnostic(&self.owner, "turn_evidence", Some(error));
-                                BTreeMap::new()
-                            }
-                        }
-                    } else {
+            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
+                return;
+            };
+            let Some(turn) = self.take_turn(&lead.thread) else {
+                return;
+            };
+            let payload = match turn.error {
+                Some(error) => json!({"turn_id":turn.turn_id,"outcome":"error","error":error}),
+                None => json!({"turn_id":turn.turn_id,"outcome":"completed"}),
+            };
+            let private = match &turn.evidence {
+                Some(cursor) => match evidence::finish(
+                    &self.core,
+                    &lead,
+                    cursor,
+                    &turn.turn_id,
+                    payload["outcome"].as_str().unwrap_or("error"),
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.views
+                            .diagnostic(&self.host, "turn_evidence", Some(error));
                         BTreeMap::new()
-                    };
-                    self.event_with_private("turn_end", payload, lead, private)
-                        .await;
-                }
-            }
+                    }
+                },
+                None => BTreeMap::new(),
+            };
+            self.event_with_private("turn_end", payload, Some(&*lead), private)
+                .await;
         })
     }
+
+    fn disabled_collaboration_modes(&self) -> Vec<String> {
+        match self.runtime.try_lock() {
+            Ok(runtime) => runtime
+                .builtin_controls()
+                .into_iter()
+                .flat_map(|(_, controls)| controls.modes.disable)
+                .collect(),
+            Err(_) => codex_omd::BuiltinSnapshot::read(&self.host.root)
+                .disabled_modes
+                .into_values()
+                .flatten()
+                .collect(),
+        }
+    }
+
     fn intercept_user_input<'a>(
         &'a self,
         input: UserInputInterceptInput<'a>,
@@ -670,7 +845,7 @@ impl TurnLifecycleContributor for Mods {
             let payload = json!({"text":input.text,"attachments":input.attachments});
             let prompt = json!({"thread_id":thread_id(input.thread_store),"turn_id":Value::Null,
                 "original":input.text,"effective":input.text,"provenance":[]});
-            let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let unavailable = || UserInputDecision::Deny {
                 notice: "Mod input hook unavailable; the prompt was not sent.".into(),
@@ -681,11 +856,11 @@ impl TurnLifecycleContributor for Mods {
                 };
                 runtime.turn_boundary();
                 let _ = runtime.event_guarded("prompt", prompt, || {
-                    !cancelled.load(std::sync::atomic::Ordering::Acquire)
+                    !cancelled.load(Ordering::Acquire)
                 });
                 let mut rewrite: Option<(String, String)> = None;
                 for (id, result) in runtime.event_guarded("input", payload, || {
-                    !cancelled.load(std::sync::atomic::Ordering::Acquire)
+                    !cancelled.load(Ordering::Acquire)
                 }) {
                     match result.and_then(|value| ModInputDecision::parse(&value)) {
                         Err(error) => {
@@ -721,12 +896,14 @@ impl TurnLifecycleContributor for Mods {
             .unwrap_or_else(|_| unavailable())
         })
     }
+
     fn on_compaction_start<'a>(
         &'a self,
         input: CompactionLifecycleInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(self.compaction("compaction_start", input))
     }
+
     fn on_compaction_end<'a>(
         &'a self,
         input: CompactionLifecycleInput<'a>,
@@ -736,36 +913,29 @@ impl TurnLifecycleContributor for Mods {
 
     fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if !lead_thread(input.thread_store) {
+            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
                 return;
-            }
-            self.agents.cleanup_except_reviews().await;
-            self.services.cleanup().await;
+            };
             let runtime = self.runtime.clone();
-            let owner = self.owner.clone();
-            let views = self.views.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 if let Ok(mut runtime) = runtime.lock() {
                     runtime.turn_boundary();
-                    let diagnostic = policy::refresh_worker_context(&mut runtime, &owner);
-                    views.diagnostic(&owner, "coordination_policy", diagnostic);
                 }
             })
             .await;
-            let evidence = evidence::begin(self, input.thread_store.get::<Lead>()).await;
-            if let Ok(mut turn) = self.turn.lock() {
-                *turn = Some(TurnRecord {
-                    turn_id: input.turn_id.to_owned(),
-                    error: None,
-                    evidence,
-                });
+            let evidence = evidence::begin(&self.core, &lead).await;
+            if let Ok(mut turns) = self.turns.lock() {
+                turns.insert(
+                    lead.thread.to_string(),
+                    TurnRecord {
+                        turn_id: input.turn_id.to_owned(),
+                        error: None,
+                        evidence,
+                    },
+                );
             }
-            self.event_with_lead(
-                "turn_start",
-                json!({"turn_id":input.turn_id}),
-                input.thread_store.get::<Lead>(),
-            )
-            .await;
+            self.event("turn_start", json!({"turn_id":input.turn_id}), Some(&*lead))
+                .await;
         })
     }
 }
@@ -776,22 +946,20 @@ impl ContextContributor for Mods {
         input: TurnContextContributionInput<'a>,
     ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
         Box::pin(async move {
-            if !lead_thread(input.thread_store) {
+            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
                 return Vec::new();
-            }
-            if let (Some(lead), Some(profile)) =
-                (input.thread_store.get::<Lead>(), input.permission_profile)
-            {
+            };
+            if let Some(profile) = input.permission_profile {
                 let Ok(mut current) = lead.permission_profile.lock() else {
                     return Vec::new();
                 };
                 *current = profile.clone();
             }
-            self.event_with_lead(
+            self.event(
                 "context",
                 json!({"thread_id": input.thread_id.to_string(), "turn_id": input.turn_id,
-                "checkpoint": self.owner.task.checkpoint().ok().flatten()}),
-                input.thread_store.get::<Lead>(),
+                    "ledger": lead.ledger()}),
+                Some(&*lead),
             )
             .await
         })
@@ -804,69 +972,179 @@ impl ThreadLifecycleContributor<Config> for Mods {
         input: ThreadStartInput<'a, Config>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if lead_thread(input.thread_store) {
+            let Ok(thread) = ThreadId::from_string(input.thread_store.level_id()) else {
+                return;
+            };
+            if input.config.cwd.as_path() != self.host.repository {
+                self.views.diagnostic(
+                    &self.host,
+                    "session",
+                    Some(format!(
+                        "Mods are inactive for thread {thread}: its working directory is not the launch repository"
+                    )),
+                );
+                return;
+            }
+            if self
+                .host
+                .accounts
+                .0
+                .lock()
+                .map_or(true, |accounts| accounts.contains_key(&thread.to_string()))
+            {
+                return;
+            }
+            let parent = match input.session_source {
+                SessionSource::SubAgent(SubAgentSource::ThreadSpawn { parent_thread_id, .. }) => {
+                    Some(*parent_thread_id)
+                }
+                _ => None,
+            };
+            let parent_session = parent.and_then(|parent| {
+                self.sessions
+                    .lock()
+                    .ok()?
+                    .get(&parent.to_string())
+                    .and_then(std::sync::Weak::upgrade)
+            });
+            let Some((owner, depth)) = thread_owner(&input, thread, parent_session.is_some()) else {
+                return;
+            };
+            let session = match parent_session {
+                Some(session) => session,
+                None => match self.host.open_session(thread) {
+                    Ok(session) => session,
+                    Err(error) => {
+                        self.views.diagnostic(
+                            &self.host,
+                            "session",
+                            Some(format!("OMD session unavailable: {error}")),
+                        );
+                        return;
+                    }
+                },
+            };
+            let route = (owner == "lead")
+                .then(|| self.host.lead_route(input.config))
+                .flatten();
+            if let Err(error) =
+                self.host
+                    .enroll(thread, &session, &owner, route, Some(input.config))
+            {
+                self.views.diagnostic(
+                    &self.host,
+                    "session",
+                    Some(format!("OMD ledger enrollment failed: {error}")),
+                );
+                return;
+            }
+            if owner == "lead" {
+                let runtime = self.runtime.clone();
+                let documents = tokio::task::spawn_blocking(move || {
+                    runtime
+                        .lock()
+                        .map(|runtime| runtime.contract_documents())
+                        .unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
+                let resolved = contract::SessionContract::resolve(&self.host, &documents);
+                if let Ok(mut current) = session.contract.lock() {
+                    *current = resolved;
+                }
+                let _ = session.persist_contract();
+            }
+            if let Ok(mut sessions) = self.sessions.lock() {
+                sessions.retain(|_, session| session.strong_count() > 0);
+                sessions.insert(thread.to_string(), Arc::downgrade(&session));
+            }
+            input.thread_store.insert(Lead {
+                permission_profile: Arc::new(std::sync::Mutex::new(
+                    input.config.permissions.effective_permission_profile(),
+                )),
+                host: self.host.clone(),
+                session,
+                thread,
+                owner: owner.clone(),
+                depth,
+            });
+            if owner == "lead" {
                 self.event(
                     "session",
-                    json!({"phase":"start","thread_id":thread_id(input.thread_store)}),
+                    json!({"phase":"start","thread_id":thread.to_string()}),
+                    None,
                 )
                 .await;
             }
         })
     }
+
     fn on_thread_ready<'a>(
         &'a self,
         input: ThreadReadyInput<'a, Config>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if lead_thread(input.thread_store) {
-                self.event_with_lead("start", Value::Null, input.thread_store.get::<Lead>())
-                    .await;
+            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
+                self.event("start", Value::Null, Some(&*lead)).await;
             }
         })
     }
+
     fn on_thread_resume<'a>(&'a self, input: ThreadResumeInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if lead_thread(input.thread_store) {
+            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
                 self.event(
                     "session",
-                    json!({"phase":"resume","thread_id":thread_id(input.thread_store)}),
+                    json!({"phase":"resume","thread_id":lead.thread.to_string()}),
+                    None,
                 )
                 .await;
-                self.event_with_lead("resume", Value::Null, input.thread_store.get::<Lead>())
-                    .await;
+                self.event("resume", Value::Null, Some(&*lead)).await;
             }
         })
     }
+
     fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if lead_thread(input.thread_store) {
-                self.event("session", json!({"phase":"idle","thread_id":thread_id(input.thread_store),"cause":format!("{:?}", input.cause)})).await;
-                self.event_with_lead(
+            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
+                self.event(
+                    "session",
+                    json!({"phase":"idle","thread_id":lead.thread.to_string(),"cause":format!("{:?}", input.cause)}),
+                    None,
+                )
+                .await;
+                self.event(
                     "idle",
                     json!({"cause": format!("{:?}", input.cause)}),
-                    input.thread_store.get::<Lead>(),
+                    Some(&*lead),
                 )
                 .await;
             }
         })
     }
+
     fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if lead_thread(input.thread_store) {
-                if let Ok(mut before) = self.workspace_before.lock() {
-                    before.clear();
-                }
-                self.agents.cleanup().await;
-                self.services.cleanup().await;
-                self.event(
-                    "session",
-                    json!({"phase":"stop","thread_id":thread_id(input.thread_store)}),
-                )
-                .await;
-                self.event_with_lead("stop", Value::Null, input.thread_store.get::<Lead>())
-                    .await;
-                self.processes.cleanup();
+            let Some(lead) = input.thread_store.get::<Lead>() else {
+                return;
+            };
+            if let Ok(mut accounts) = self.host.accounts.0.lock() {
+                accounts.remove(&lead.thread.to_string());
             }
+            if lead.owner != "lead" {
+                return;
+            }
+            self.agents.cleanup_session(&lead.session).await;
+            self.services.cleanup_session(&lead.session).await;
+            self.event(
+                "session",
+                json!({"phase":"stop","thread_id":lead.thread.to_string()}),
+                None,
+            )
+            .await;
+            self.event("stop", Value::Null, Some(&*lead)).await;
+            lead.session.processes.cleanup();
+            let _ = lead.session.persist_cost_capture();
         })
     }
 }
@@ -874,15 +1152,21 @@ impl ThreadLifecycleContributor<Config> for Mods {
 impl ToolLifecycleContributor for Mods {
     fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
-            if !lead_thread(input.thread_store)
-                || !self
-                    .runtime
-                    .lock()
-                    .is_ok_and(|runtime| runtime.has_event("workspace_write"))
-            {
+            if input.thread_store.get::<Lead>().is_none() {
                 return;
             }
-            let repository = self.owner.manifest.repository.clone();
+            let runtime = self.runtime.clone();
+            let observed = tokio::task::spawn_blocking(move || {
+                runtime.lock().is_ok_and(|runtime| {
+                    runtime.has_event("workspace_write") || runtime.has_event("workspace_change")
+                })
+            })
+            .await
+            .unwrap_or(false);
+            if !observed {
+                return;
+            }
+            let repository = self.host.repository.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
                 codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
                     .map_err(|error| error.to_string())
@@ -911,7 +1195,7 @@ impl ToolLifecycleContributor for Mods {
             let arguments: Value = serde_json::from_str(arguments).map_err(|e| e.to_string())?;
             let payload = json!({"tool":input.tool_name.to_string(),"arguments":arguments,"call_id":input.call_id});
             let runtime = self.runtime.clone();
-            let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let result = tokio::task::spawn_blocking(move || {
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
@@ -919,11 +1203,11 @@ impl ToolLifecycleContributor for Mods {
                     "tool_call",
                     json!({"tool":original_tool.to_string(),"arguments":payload["arguments"],
                         "call_id":payload["call_id"],"agent_id":scope_agent_id}),
-                    || !cancelled.load(std::sync::atomic::Ordering::Acquire),
+                    || !cancelled.load(Ordering::Acquire),
                 );
                 let mut replacement = None;
                 for (id, result) in runtime.event_guarded("tool_before", payload, || {
-                    !cancelled.load(std::sync::atomic::Ordering::Acquire)
+                    !cancelled.load(Ordering::Acquire)
                 }) {
                     let value =
                         result.map_err(|e| format!("mod_interception_failed: {id}: {e}"))?;
@@ -973,118 +1257,102 @@ impl ToolLifecycleContributor for Mods {
             })
             .await
             .map_err(|e| e.to_string())?;
-            self.cleanup_failed().await;
+            self.cleanup_failed(input.thread_store.get::<Lead>().as_deref())
+                .await;
             result
         })
     }
 
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
-            if lead_thread(input.thread_store)
-                && let Ok(mut turn) = self.turn.lock()
-                && let Some(cursor) = turn.as_mut().and_then(|turn| turn.evidence.as_mut())
+            let Some(lead) = input.thread_store.get::<Lead>() else {
+                return;
+            };
+            if lead.owner == "lead"
+                && let Ok(mut turns) = self.turns.lock()
+                && let Some(cursor) = turns
+                    .get_mut(&lead.thread.to_string())
+                    .and_then(|turn| turn.evidence.as_mut())
                 && cursor.tools.len() < 128
             {
                 cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":format!("{:?}",input.outcome)}));
             }
-            if input.thread_store.get::<Lead>().is_some() {
-                self.event(
-                    "tool_result",
-                    json!({"call_id": input.call_id,
-                    "agent_id":agent_id(input.thread_store),"tool": input.tool_name.to_string(),
-                    "outcome": format!("{:?}", input.outcome)}),
-                )
-                .await;
-                let before = self
-                    .workspace_before
-                    .lock()
-                    .ok()
-                    .and_then(|mut snapshots| snapshots.remove(input.call_id));
-                if let Some(before) = before {
-                    let repository = self.owner.manifest.repository.clone();
-                    let after = tokio::task::spawn_blocking(move || {
-                        codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
-                            .map_err(|error| error.to_string())
-                    })
-                    .await
-                    .unwrap_or_else(|error| Err(error.to_string()));
-                    let (status, changes, reason) = match (before, after) {
-                        (Ok(before), Ok(after)) => {
-                            let changes = before.changed(&after);
-                            if changes.len() > 128
-                                || changes
-                                    .iter()
-                                    .map(|change| change.path.len())
-                                    .sum::<usize>()
-                                    > 16_000
-                            {
-                                (
-                                    "unavailable",
-                                    Vec::new(),
-                                    Some("workspace_change_batch_limit".to_owned()),
-                                )
-                            } else {
-                                ("observed", changes, None)
-                            }
-                        }
-                        (Err(error), _) | (_, Err(error)) => {
-                            ("unavailable", Vec::new(), Some(error))
-                        }
-                    };
-                    let (status, changes, reason) = if status == "observed" && !changes.is_empty() {
-                        match input.thread_store.get::<Lead>() {
-                            Some(lead) => {
-                                match crate::workspace_operations::WorkspaceAuthority::for_lead(
-                                    &lead,
-                                )
-                                .await
-                                {
-                                    Ok(authority) => match authority.visible_changes(changes) {
-                                        Ok(changes) => (status, changes, reason),
-                                        Err(error) => ("unavailable", Vec::new(), Some(error)),
-                                    },
-                                    Err(_) => (
-                                        "unavailable",
-                                        Vec::new(),
-                                        Some("workspace_change_scope_unavailable".to_owned()),
-                                    ),
-                                }
-                            }
-                            None => (
-                                "unavailable",
-                                Vec::new(),
-                                Some("workspace_change_scope_unavailable".to_owned()),
-                            ),
-                        }
+            let event_lead = (lead.owner == "lead").then_some(&*lead);
+            self.event(
+                "tool_result",
+                json!({"call_id": input.call_id, "agent_id":agent_id(input.thread_store),
+                    "tool": input.tool_name.to_string(), "outcome": format!("{:?}", input.outcome)}),
+                event_lead,
+            )
+            .await;
+            let before = self
+                .workspace_before
+                .lock()
+                .ok()
+                .and_then(|mut snapshots| snapshots.remove(input.call_id));
+            let Some(before) = before else {
+                return;
+            };
+            let repository = self.host.repository.clone();
+            let after = tokio::task::spawn_blocking(move || {
+                codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+            let (status, changes, reason) = match (before, after) {
+                (Ok(before), Ok(after)) => {
+                    let changes = before.changed(&after);
+                    if changes.len() > 128
+                        || changes.iter().map(|change| change.path.len()).sum::<usize>() > 16_000
+                    {
+                        ("unavailable", Vec::new(), Some("workspace_change_batch_limit".to_owned()))
                     } else {
-                        (status, changes, reason)
-                    };
-                    if status == "unavailable" || !changes.is_empty() {
-                        self.event_with_lead(
-                            "workspace_write",
-                            json!({
-                                "repository":self.owner.manifest.repository,
-                                "call_id":input.call_id,
-                                "tool":input.tool_name.to_string(),
-                                "outcome":format!("{:?}", input.outcome),
-                                "changes":changes,
-                                "status":status,
-                                "reason":reason,
-                            }),
-                            input.thread_store.get::<Lead>(),
-                        )
-                        .await;
+                        ("observed", changes, None)
                     }
                 }
+                (Err(error), _) | (_, Err(error)) => ("unavailable", Vec::new(), Some(error)),
+            };
+            let (status, changes, reason) = if status == "observed" && !changes.is_empty() {
+                match crate::workspace_operations::WorkspaceAuthority::for_lead(&lead).await {
+                    Ok(authority) => match authority.visible_changes(changes) {
+                        Ok(changes) => (status, changes, reason),
+                        Err(error) => ("unavailable", Vec::new(), Some(error)),
+                    },
+                    Err(_) => (
+                        "unavailable",
+                        Vec::new(),
+                        Some("workspace_change_scope_unavailable".to_owned()),
+                    ),
+                }
+            } else {
+                (status, changes, reason)
+            };
+            if status == "unavailable" || !changes.is_empty() {
+                self.event(
+                    "workspace_change",
+                    json!({"repository":self.host.repository,"source":"tool","call_id":input.call_id,
+                        "changes":changes,"status":status,"reason":reason}),
+                    event_lead,
+                )
+                .await;
+                self.event(
+                    "workspace_write",
+                    json!({"repository":self.host.repository,"call_id":input.call_id,
+                        "tool":input.tool_name.to_string(),"outcome":format!("{:?}", input.outcome),
+                        "changes":changes,"status":status,"reason":reason}),
+                    event_lead,
+                )
+                .await;
             }
         })
     }
 }
 
-struct Cancellation(Arc<std::sync::atomic::AtomicBool>);
+struct Cancellation(Arc<AtomicBool>);
 
 impl Drop for Cancellation {
     fn drop(&mut self) {
-        self.0.store(true, std::sync::atomic::Ordering::Release);
+        self.0.store(true, Ordering::Release);
     }
 }

@@ -1,4 +1,4 @@
-import type { ModAPI, ModelRequestEvent } from '../../api.d.ts';
+import type { ModAPI, ModelRequestEvent } from '../../api-0.1.d.ts';
 
 const provider = 'omd_claude_cli';
 const service = 'claude_cli';

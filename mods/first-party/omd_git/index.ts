@@ -1,4 +1,4 @@
-import type { GitCommit, GitEntry, GitHead, GitStatus, Json, ModAPI, TerminalComponent, TerminalPatch, TerminalRenderSite, TerminalTone } from '../../api.d.ts';
+import type { GitCommit, GitEntry, GitHead, GitStatus, Json, ModAPI, TerminalComponent, TerminalPatch, TerminalRenderSite, TerminalTone } from '../../api-0.1.d.ts';
 
 type Entry = { p: string; o: string | null; x: string; y: string; c: boolean; f: string };
 type Row = { g: string; o: string; s: string };
