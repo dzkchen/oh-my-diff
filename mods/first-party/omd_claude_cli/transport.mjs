@@ -166,13 +166,15 @@ export class Relay {
               response.write(chunk);
             } catch {
               this.failure = 'invalid_upstream_stream';
-              incoming.destroy();
+              incoming.destroy(new Error('invalid_upstream_stream'));
             }
           });
           incoming.on('end', () => { response.end(); resolve(); });
           incoming.on('error', reject);
+          incoming.on('close', () => { if (!incoming.complete) reject(new Error('upstream_closed')); });
         });
         this.sockets.add(upstream);
+        upstream.on('timeout', () => upstream.destroy(new Error('upstream_timeout')));
         upstream.on('error', reject);
         upstream.end(payload);
       });
@@ -208,9 +210,9 @@ function cancelChild(child) {
 
 export async function runClaude(request, model, claude, signal, onEvent,
                                 upstream = 'https://api.anthropic.com', home = process.env.HOME,
-                                username = process.env.USER) {
+                                username = process.env.USER, translated = null) {
   if (signal.aborted) throw new Error('claude_request_cancelled');
-  const translated = translateRequest(request, model);
+  translated ??= translateRequest(request, model);
   const root = await mkdtemp('/private/tmp/omd-claude-');
   const relay = new Relay(upstream, onEvent);
   let child;
@@ -315,7 +317,8 @@ async function serve(port, model, claude, home, username) {
     if (request.method !== 'POST' || request.url !== '/v1/responses') { response.writeHead(404).end(); return; }
     if (request.headers.authorization !== `Bearer ${localToken}`) { response.writeHead(401).end(); return; }
     let payload;
-    try { payload = JSON.parse(await bodyOf(request, 8 * 1024 * 1024)); translateRequest(payload, model); }
+    let translated;
+    try { payload = JSON.parse(await bodyOf(request, 8 * 1024 * 1024)); translated = translateRequest(payload, model); }
     catch { response.writeHead(400).end('invalid_claude_request'); return; }
     const controller = new AbortController();
     active.add(controller);
@@ -324,10 +327,11 @@ async function serve(port, model, claude, home, username) {
     try {
       const send = event => response.write(`data: ${JSON.stringify(event)}\n\n`);
       const events = await runClaude(payload, model, claude, controller.signal, send,
-        undefined, home, username);
+        undefined, home, username, translated);
       for (const event of events) response.write(`data: ${JSON.stringify(event)}\n\n`);
-    } catch {
-      if (!response.destroyed) response.write('data: {"type":"response.failed"}\n\n');
+    } catch (error) {
+      const code = String(error?.message ?? 'claude_transport_failed').replace(/[^\w:.-]/g, '_').slice(0, 200);
+      if (!response.destroyed) response.write(`data: ${JSON.stringify({ type: 'response.failed', response: { error: { code, message: code } } })}\n\n`);
     } finally {
       active.delete(controller);
       response.end();

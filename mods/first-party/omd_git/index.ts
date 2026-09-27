@@ -34,9 +34,15 @@ export default function activate(api: ModAPI) {
     return total + (code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4);
   }, 0);
   const fit = (value: string, limit: number) => {
-    let result = value;
-    while (bytes(result) > limit) result = `${[...result].slice(0, -2).join('')}${glyph.more}`;
-    return result;
+    if (bytes(value) <= limit) return value;
+    let result = '';
+    let used = bytes(glyph.more);
+    for (const char of value) {
+      used += bytes(char);
+      if (used > limit) break;
+      result += char;
+    }
+    return `${result}${glyph.more}`;
   };
 
   const saved = (): Saved => {
@@ -285,6 +291,7 @@ export default function activate(api: ModAPI) {
       if (!state.message.trim()) return { display: 'type a commit message first' };
       const status = api.host.tryCall('git.status', null);
       if (!status.ok) return fail(state, status.error);
+      if (status.value.truncated) return { display: 'too many changes to preview a commit safely' };
       const staged = status.value.entries.filter(entry => !entry.conflicted && entry.index !== ' ' && entry.index !== '?');
       if (!staged.length) return { display: 'nothing is staged' };
       const lines = [`message: ${trim(state.message.split('\n')[0], 60)}`, '', ...staged.slice(0, 10).map(entry => `  ${describe(compact(entry))}`), ...(staged.length > 10 ? [`  ${glyph.more} ${staged.length - 10} more`] : [])];
@@ -306,19 +313,21 @@ export default function activate(api: ModAPI) {
       const state = saved();
       const target = state.branch ?? state.branches.find(name => name !== state.head?.branch);
       if (!target) return { display: 'no other local branch' };
-      const status = api.host.tryCall('git.status', null);
-      if (!status.ok) return fail(state, status.error);
-      if (!status.value.fingerprint) return { display: 'too many changes to preview a branch switch safely' };
-      const changed = status.value.entries;
+      const preview = api.host.tryCall('git.switch_preview', { branch: target });
+      if (!preview.ok) return fail(state, preview.error);
+      const { changes, fingerprint } = preview.value;
+      if (!fingerprint) return { display: 'too many changes to preview a branch switch safely' };
+      const count = changes.length + (preview.value.truncated ? 1 : 0);
+      const local = preview.value.local_changes;
       const lines = [
-        `HEAD ${status.value.head.oid?.slice(0, 7) ?? 'no commit'} ${glyph.more} ${changed.length} changed ${changed.length === 1 ? 'file stays' : 'files stay'} in the worktree`,
+        `${preview.value.from?.slice(0, 7) ?? 'no commit'} ${glyph.arrow} ${preview.value.to.slice(0, 7)}  ${preview.value.truncated ? `${changes.length}+` : changes.length} ${count === 1 ? 'file changes' : 'files change'}`,
         '',
-        ...changed.slice(0, 8).map(entry => `  ${describe(compact(entry))}`),
-        ...(changed.length > 8 ? [`  ${glyph.more} ${changed.length - 8} more`] : []),
+        ...changes.slice(0, 8).map(change => `  ${change.status} ${trim(change.path, text - 4)}`),
+        ...(count > 8 ? [`  ${glyph.more} ${preview.value.truncated ? 'more' : `${changes.length - 8} more`}`] : []),
         '',
-        'Git refuses if these files would be overwritten.',
+        local ? `${local} local ${local === 1 ? 'change stays' : 'changes stay'}; Git refuses to overwrite them or ignored files.` : 'Git refuses to overwrite ignored files.',
       ];
-      save({ ...state, notice: null, branch: target, preview: { kind: 'switch', paths: changed.map(entry => entry.path).slice(0, 64), fingerprint: status.value.fingerprint, lines, target } });
+      save({ ...state, notice: null, branch: target, preview: { kind: 'switch', paths: changes.map(change => change.path).slice(0, 64), fingerprint, lines, target } });
       return null;
     },
     confirm: () => {

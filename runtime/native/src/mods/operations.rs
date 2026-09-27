@@ -100,15 +100,12 @@ pub(super) async fn dispatch(
                 }).await.map_err(|error| error.to_string())?;
             }
             if request.operation.starts_with("process.") {
-                return processes.call(
-                    id,
-                    generation,
-                    &authority.repository,
-                    &authority.policy,
-                    &request.operation,
-                    request.arguments,
-                    || host.task.check_active().is_ok(),
-                );
+                let processes = processes.clone();
+                let task = host.task.clone();
+                let id = id.to_owned();
+                return tokio::task::spawn_blocking(move || {
+                    processes.call(&id, generation, &authority.repository, &authority.policy, &request.operation, request.arguments, || task.check_active().is_ok())
+                }).await.map_err(|error| error.to_string())?;
             }
             if request.operation == "workspace.transaction" {
                 if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {

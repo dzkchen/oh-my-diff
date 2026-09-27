@@ -70,10 +70,49 @@ pub(crate) fn terminal_identity(runtime: &ModHost, mode: &str) -> Value {
     )
 }
 
+pub(crate) fn git_command(
+    policy: codex_protocol::permissions::FileSystemSandboxPolicy,
+    cwd: std::path::PathBuf,
+    protected: Vec<std::path::PathBuf>,
+) -> impl Fn(Vec<String>) -> Result<std::process::Command, String> {
+    move |argv| {
+        #[cfg(target_os = "macos")]
+        {
+            use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
+            use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
+            use codex_sandboxing::seatbelt::create_seatbelt_command_args;
+            let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+                command: argv,
+                file_system_sandbox_policy: &policy,
+                network_sandbox_policy:
+                    codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
+                sandbox_policy_cwd: &cwd,
+                enforce_managed_network: false,
+                managed_network: None,
+                environment_id: None,
+                network: None,
+                extra_allow_unix_sockets: &[],
+            })?;
+            codex_omd::git::sandboxed(
+                std::path::Path::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE),
+                args,
+                &protected,
+                &cwd,
+            )
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (&policy, &cwd, &protected, argv);
+            Err("git_sandbox_unavailable".to_owned())
+        }
+    }
+}
+
 pub(crate) fn lifecycle_git(
     allowed: bool,
     repository: &std::path::Path,
     protected: &[std::path::PathBuf],
+    policy: &codex_protocol::permissions::FileSystemSandboxPolicy,
     request: codex_omd::ModHostCall,
     active: &dyn Fn() -> bool,
 ) -> std::io::Result<Value> {
@@ -82,12 +121,13 @@ pub(crate) fn lifecycle_git(
             "host_operation_unavailable: git reads run in lifecycle events and commands",
         ));
     }
+    let command = git_command(policy.clone(), repository.to_path_buf(), protected.to_vec());
     let access = codex_omd::git::GitAccess {
         repository,
         protected,
         backups: None,
         write: Err("git_write_requires_user_command"),
-        command: None,
+        command: &command,
         writable: &|_| false,
     };
     codex_omd::git::call(&access, &request.operation, request.arguments, active)
@@ -304,8 +344,6 @@ impl Mods {
             event,
             "start" | "resume" | "turn_start" | "turn_end" | "workspace_write" | "idle"
         );
-        let git_repository = owner.manifest.repository.clone();
-        let git_protected = crate::execution::protected_paths(&owner.manifest);
         let allow_workspace = matches!(
             event,
             "workspace_write" | "workspace_pre_rename" | "turn_start"
@@ -320,6 +358,7 @@ impl Mods {
                 | "idle"
                 | "stop"
         );
+        let git_cancelled = cancelled.clone();
         let job = tokio::task::spawn_blocking(move || {
             let Ok(mut runtime) = runtime.lock() else {
                 return Vec::new();
@@ -338,14 +377,10 @@ impl Mods {
                 || !cancelled.load(std::sync::atomic::Ordering::Acquire),
                 "native workflow enforcement",
                 |id, request| {
-                    if request.operation.starts_with("git.") {
-                        return lifecycle_git(
-                            allow_git,
-                            &git_repository,
-                            &git_protected,
-                            request,
-                            &|| !cancelled.load(std::sync::atomic::Ordering::Acquire),
-                        );
+                    if request.operation.starts_with("git.") && !allow_git {
+                        return Err(std::io::Error::other(
+                            "host_operation_unavailable: git reads run in lifecycle events and commands",
+                        ));
                     }
                     if !((matches!(event, "turn_end" | "idle")
                         && matches!(
@@ -363,6 +398,7 @@ impl Mods {
                             ))
                         || (allow_workspace && request.operation == "workspace.read")
                         || (allow_process && request.operation.starts_with("process."))
+                        || request.operation.starts_with("git.")
                         || (matches!(
                             event,
                             "context" | "turn_start" | "turn_end" | "idle" | "stop"
@@ -481,6 +517,24 @@ impl Mods {
                     json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
                 }))),
                 (None, _) if request.operation == "routes.list" => Ok(json!([])),
+                (Some(lead), _) if request.operation.starts_with("git.") => {
+                    match crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await {
+                        Ok(authority) => {
+                            let repository = self.owner.manifest.repository.clone();
+                            let protected = crate::execution::protected_paths(&self.owner.manifest);
+                            let cancelled = git_cancelled.clone();
+                            tokio::task::spawn_blocking(move || {
+                                lifecycle_git(true, &repository, &protected, &authority.policy, request, &|| {
+                                    !cancelled.load(std::sync::atomic::Ordering::Acquire)
+                                })
+                            })
+                            .await
+                            .map_err(std::io::Error::other)
+                            .and_then(|result| result)
+                        }
+                        Err(error) => Err(std::io::Error::other(error)),
+                    }
+                },
                 (Some(lead), Some(generation)) if request.operation == "workspace.read" || request.operation.starts_with("process.") => {
                     let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await;
                     match authority {
@@ -521,8 +575,11 @@ impl Mods {
     async fn compaction(&self, event: &'static str, input: CompactionLifecycleInput<'_>) {
         if lead_thread(input.thread_store) {
             if let Some(lead) = input.thread_store.get::<Lead>() {
-                if let Err(error) = evidence::compact(self, &lead, event == "compaction_start").await {
-                    self.views.diagnostic(&self.owner, "turn_evidence", Some(error));
+                if let Err(error) =
+                    evidence::compact(self, &lead, event == "compaction_start").await
+                {
+                    self.views
+                        .diagnostic(&self.owner, "turn_evidence", Some(error));
                 }
             }
             self.event(
@@ -545,7 +602,7 @@ impl TurnLifecycleContributor for Mods {
                 self.services.cleanup().await;
                 self.processes.cleanup();
                 if let Some(turn) = self.take_turn() {
-                    self.event("turn_end", json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}))
+                    self.event_with_lead("turn_end", json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}), input.thread_store.get::<Lead>())
                         .await;
                 }
             }
@@ -727,8 +784,12 @@ impl ContextContributor for Mods {
             if !lead_thread(input.thread_store) {
                 return Vec::new();
             }
-            if let (Some(lead), Some(profile)) = (input.thread_store.get::<Lead>(), input.permission_profile) {
-                let Ok(mut current) = lead.permission_profile.lock() else { return Vec::new(); };
+            if let (Some(lead), Some(profile)) =
+                (input.thread_store.get::<Lead>(), input.permission_profile)
+            {
+                let Ok(mut current) = lead.permission_profile.lock() else {
+                    return Vec::new();
+                };
                 *current = profile.clone();
             }
             self.event_with_lead(

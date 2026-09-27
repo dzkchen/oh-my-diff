@@ -285,29 +285,6 @@
         "staged_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
       },
       {
-        "head": {
-          "oid": "7b3c282eb0000000000000000000000000000000",
-          "branch": "main",
-          "detached": false,
-          "upstream": "origin/main",
-          "ahead": 1,
-          "behind": 0
-        },
-        "entries": [
-          {
-            "path": "mods/README.md",
-            "orig_path": null,
-            "index": "U",
-            "worktree": "U",
-            "conflicted": true,
-            "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"
-          }
-        ],
-        "truncated": false,
-        "fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        "staged_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-      },
-      {
         "error": "not_a_git_repository"
       }
     ],
@@ -543,6 +520,26 @@
           "main"
         ],
         "truncated": false
+      }
+    ],
+    "git.switch_preview": [
+      {
+        "branch": "feature",
+        "from": "7b3c282eb0000000000000000000000000000000",
+        "to": "9c1d2e3f40000000000000000000000000000000",
+        "changes": [
+          {
+            "path": "install.sh",
+            "status": "M"
+          },
+          {
+            "path": "runtime/omd/src/switch.rs",
+            "status": "A"
+          }
+        ],
+        "truncated": false,
+        "local_changes": 1,
+        "fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
       }
     ],
     "git.stage": [

@@ -97,10 +97,18 @@ export function translateRequest(request: Row, selectedModel: string): Row {
   }
   const system: string[] = [];
   const frames: Row[] = [];
+  const late: Row[] = [];
+  const attach = () => {
+    const last = frames.at(-1);
+    if (late.length && last?.type === 'user') last.message.content.push(...late.splice(0));
+  };
   for (const message of messages) {
     if (message.role === 'system' || message.role === 'developer') {
-      if (frames.length) throw new Error('late_system_message');
-      system.push(message.content);
+      if (!frames.length) system.push(message.content);
+      else if (message.content) {
+        late.push({ type: 'text', text: `<${message.role}_message>\n${message.content}\n</${message.role}_message>` });
+        attach();
+      }
       continue;
     }
     const blocks: Row[] = [];
@@ -117,6 +125,7 @@ export function translateRequest(request: Row, selectedModel: string): Row {
     const role = message.role === 'tool' ? 'user' : message.role;
     if (role === 'user' && frames.at(-1)?.type === 'user') frames.at(-1)!.message.content.push(...blocks);
     else frames.push({ type: role, message: { role, content: blocks } });
+    attach();
   }
   if (!frames.length || frames.at(-1)!.type !== 'user' || !frames.at(-1)!.message.content.length) {
     throw new Error('invalid_claude_history');
@@ -193,9 +202,7 @@ export default function activate(api: ModAPI): void {
     if (event.effective.provider !== provider) return null;
     const matching = event.authorized_presets.find(preset => preset.provider === provider && preset.model === model);
     if (!matching) throw new Error('claude_route_not_host_authorized');
-    if (event.effective.provider !== provider || event.effective.model !== model) {
-      throw new Error('claude_route_conflicts_with_active_request');
-    }
+    if (event.effective.model !== model) throw new Error('claude_route_conflicts_with_active_request');
     return { preset: matching.name };
   });
 }

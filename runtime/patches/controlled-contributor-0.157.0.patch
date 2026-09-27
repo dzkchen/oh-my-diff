@@ -1367,10 +1367,10 @@ index e451981..49744e5 100644
              .await
 diff --git a/b/codex-rs/core/src/tools/code_mode/kernel_bun.mjs b/codex-rs/core/src/tools/code_mode/kernel_bun.mjs
 new file mode 100644
-index 0000000..81d17d2
+index 0000000..0795107
 --- /dev/null
 +++ b/codex-rs/core/src/tools/code_mode/kernel_bun.mjs
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,75 @@
 +import net from "node:net";
 +import readline from "node:readline";
 +import { AsyncLocalStorage } from "node:async_hooks";
@@ -1378,6 +1378,7 @@ index 0000000..81d17d2
 +const bridgeContext = new AsyncLocalStorage();
 +let bridgeFailed = false;
 +let output = [];
++let outputBytes = 0;
 +
 +globalThis.tool = async (name, args = {}) => {
 +  const bridge = bridgeContext.getStore();
@@ -1387,11 +1388,13 @@ index 0000000..81d17d2
 +  return await new Promise((resolve, reject) => {
 +    const connection = net.createConnection({ host: "127.0.0.1", port: bridge.port });
 +    let response = "";
-+    connection.setTimeout(30000, () => connection.destroy(new Error("tool bridge timeout")));
++    let reachable = false;
++    connection.setTimeout(120000, () => { reachable = true; connection.destroy(new Error("tool bridge timeout")); });
 +    connection.on("connect", () => connection.write(payload));
 +    connection.on("data", (data) => {
 +      response += data.toString();
 +      if (Buffer.byteLength(response) > 262144) {
++        reachable = true;
 +        connection.destroy(new Error("tool response limit exceeded"));
 +      } else if (response.includes("\n")) {
 +        connection.end();
@@ -1404,19 +1407,22 @@ index 0000000..81d17d2
 +        }
 +      }
 +    });
-+    connection.on("error", (error) => { bridgeFailed = true; reject(error); });
++    connection.on("error", (error) => { if (!reachable) bridgeFailed = true; reject(error); });
 +    connection.on("end", () => { if (!response.includes("\n")) { bridgeFailed = true; reject(new Error("tool bridge disconnected")); } });
 +  });
 +};
 +
 +const capture = (...values) => {
 +  const text = values.map((value) => typeof value === "string" ? value : JSON.stringify(value)).join(" ");
-+  if (Buffer.byteLength(output.join("")) + Buffer.byteLength(text) > 65536) throw new Error("kernel output limit exceeded");
++  const size = Buffer.byteLength(text) + 1;
++  if (outputBytes + size > 65536) throw new Error("kernel output limit exceeded");
++  outputBytes += size;
 +  output.push(text + "\n");
 +};
 +
 +for await (const line of readline.createInterface({ input: process.stdin })) {
 +  output = [];
++  outputBytes = 0;
 +  bridgeFailed = false;
 +  let response;
 +  let bridge;
@@ -1442,10 +1448,10 @@ index 0000000..81d17d2
 +}
 diff --git a/b/codex-rs/core/src/tools/code_mode/kernel_python.py b/codex-rs/core/src/tools/code_mode/kernel_python.py
 new file mode 100644
-index 0000000..49a6341
+index 0000000..2630ef8
 --- /dev/null
 +++ b/codex-rs/core/src/tools/code_mode/kernel_python.py
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,82 @@
 +import contextlib
 +import contextvars
 +import io
@@ -1483,20 +1489,24 @@ index 0000000..49a6341
 +        raise ValueError("tool request limit exceeded")
 +    try:
 +        with socket.create_connection(("127.0.0.1", bridge[0]), timeout=5) as connection:
-+            connection.settimeout(30)
++            connection.settimeout(120)
 +            connection.sendall(payload)
 +            result = bytearray()
 +            while not result.endswith(b"\n"):
 +                chunk = connection.recv(8192)
 +                if not chunk:
-+                    raise OSError("tool bridge disconnected")
++                    raise ConnectionError("tool bridge disconnected")
 +                result.extend(chunk)
 +                if len(result) > 262144:
 +                    raise ValueError("tool response limit exceeded")
 +        response = json.loads(result)
-+    except (OSError, ValueError) as error:
++    except (socket.timeout, TimeoutError) as error:
++        raise RuntimeError("tool bridge timeout") from error
++    except OSError as error:
 +        bridge_failed = True
 +        raise RuntimeError(f"tool bridge disconnected: {error}") from error
++    except ValueError as error:
++        raise RuntimeError(f"invalid tool bridge response: {error}") from error
 +    if not response.get("ok"):
 +        raise RuntimeError(response.get("error", "tool call failed"))
 +    return response["result"]
@@ -1526,10 +1536,10 @@ index 0000000..49a6341
 +    sys.stdout.flush()
 diff --git a/b/codex-rs/core/src/tools/code_mode/kernels.rs b/codex-rs/core/src/tools/code_mode/kernels.rs
 new file mode 100644
-index 0000000..ae9d35d
+index 0000000..b862d86
 --- /dev/null
 +++ b/codex-rs/core/src/tools/code_mode/kernels.rs
-@@ -0,0 +1,847 @@
+@@ -0,0 +1,907 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1628,8 +1638,11 @@ index 0000000..ae9d35d
 +    }
 +}
 +
++type WorkerSlot = Arc<Mutex<Option<WorkerState>>>;
++
 +pub(super) struct KernelManager {
-+    workers: Mutex<HashMap<Language, WorkerState>>,
++    workers: std::sync::Mutex<HashMap<Language, WorkerSlot>>,
++    live: std::sync::Mutex<HashMap<Language, i32>>,
 +    active: AtomicBool,
 +}
 +
@@ -1637,12 +1650,14 @@ index 0000000..ae9d35d
 +    process_id: i32,
 +    listener: Arc<TcpListener>,
 +    port: u16,
++    scope: String,
 +}
 +
 +impl KernelManager {
 +    pub(super) fn new() -> Self {
 +        Self {
-+            workers: Mutex::new(HashMap::new()),
++            workers: std::sync::Mutex::new(HashMap::new()),
++            live: std::sync::Mutex::new(HashMap::new()),
 +            active: AtomicBool::new(false),
 +        }
 +    }
@@ -1651,6 +1666,29 @@ index 0000000..ae9d35d
 +        self.active.load(Ordering::Acquire)
 +    }
 +
++    fn track(&self, language: Language, process_id: Option<i32>) {
++        if let Ok(mut live) = self.live.lock() {
++            match process_id {
++                Some(process_id) => live.insert(language, process_id),
++                None => live.remove(&language),
++            };
++            self.active.store(!live.is_empty(), Ordering::Release);
++        }
++    }
++
++    async fn retire(&self, session: &Arc<Session>, language: Language, worker: WorkerState) {
++        self.track(language, None);
++        session
++            .services
++            .unified_exec_manager
++            .terminate_process(worker.process_id)
++            .await;
++    }
++
++    #[expect(
++        clippy::await_holding_invalid_type,
++        reason = "one cell at a time per language worker"
++    )]
 +    pub(super) async fn run(
 +        &self,
 +        session: Arc<Session>,
@@ -1676,8 +1714,28 @@ index 0000000..ae9d35d
 +            return Err("managed process tools are unavailable in this cell".into());
 +        }
 +        let cell_cancel = cancellation.child_token();
-+        let mut workers = self.workers.lock().await;
-+        let (process_id, listener, port) = if let Some(worker) = workers.get(&language) {
++        let slot = Arc::clone(
++            self.workers
++                .lock()
++                .map_err(|_| "kernel workers poisoned")?
++                .entry(language)
++                .or_default(),
++        );
++        let mut worker = slot.lock().await;
++        let environment = step_context
++            .environments
++            .primary()
++            .ok_or("kernel workers require a turn environment")?;
++        let cwd = environment
++            .cwd()
++            .to_abs_path()
++            .map_err(|error| error.to_string())?;
++        let scope = serde_json::to_string(&(cwd.as_path(), environment.permission_profile()))
++            .map_err(|error| error.to_string())?;
++        if let Some(stale) = worker.take_if(|worker| worker.scope != scope) {
++            self.retire(&session, language, stale).await;
++        }
++        let (process_id, listener, port) = if let Some(worker) = worker.as_ref() {
 +            (worker.process_id, Arc::clone(&worker.listener), worker.port)
 +        } else {
 +            let listener = Arc::new(
@@ -1697,7 +1755,7 @@ index 0000000..ae9d35d
 +                "exec_command",
 +                json!({
 +                    "cmd": language.command(),
-+                    "workdir": step_context.turn.config.cwd.as_path().to_string_lossy(),
++                    "workdir": cwd.as_path().to_string_lossy(),
 +                    "tty": true,
 +                    "yield_time_ms": 1000,
 +                    "max_output_tokens": 256
@@ -1716,15 +1774,13 @@ index 0000000..ae9d35d
 +                        result["output"]
 +                    )
 +                })?;
-+            workers.insert(
-+                language,
-+                WorkerState {
-+                    process_id,
-+                    listener: Arc::clone(&listener),
-+                    port,
-+                },
-+            );
-+            self.active.store(true, Ordering::Release);
++            *worker = Some(WorkerState {
++                process_id,
++                listener: Arc::clone(&listener),
++                port,
++                scope,
++            });
++            self.track(language, Some(process_id));
 +            (process_id, listener, port)
 +        };
 +
@@ -1756,7 +1812,7 @@ index 0000000..ae9d35d
 +                        "session_id": process_id,
 +                        "chars": chars,
 +                        "yield_time_ms": if chars.is_empty() { 5000 } else { 1000 },
-+                        "max_output_tokens": 4096
++                        "max_output_tokens": MAX_BRIDGE_RESPONSE_BYTES
 +                    }),
 +                    cell_cancel.clone(),
 +                    None,
@@ -1782,16 +1838,11 @@ index 0000000..ae9d35d
 +        cell_cancel.cancel();
 +        bridge_cancel.cancel();
 +        bridge.abort();
-+        if result.as_ref().map_or(true, |worker| worker.bridge_failed)
-+            || cancellation.is_cancelled()
++        if (result.as_ref().map_or(true, |worker| worker.bridge_failed)
++            || cancellation.is_cancelled())
++            && let Some(failed) = worker.take()
 +        {
-+            workers.remove(&language);
-+            self.active.store(!workers.is_empty(), Ordering::Release);
-+            session
-+                .services
-+                .unified_exec_manager
-+                .terminate_process(process_id)
-+                .await;
++            self.retire(&session, language, failed).await;
 +        }
 +        let result = result?;
 +        Ok(
@@ -1800,15 +1851,26 @@ index 0000000..ae9d35d
 +    }
 +
 +    pub(super) async fn shutdown(&self, session: &Arc<Session>) {
-+        let mut workers = self.workers.lock().await;
-+        for (_, worker) in workers.drain() {
++        if let Ok(mut workers) = self.workers.lock() {
++            workers.clear();
++        }
++        let live = self
++            .live
++            .lock()
++            .map(|mut live| {
++                live.drain()
++                    .map(|(_, process_id)| process_id)
++                    .collect::<Vec<_>>()
++            })
++            .unwrap_or_default();
++        self.active.store(false, Ordering::Release);
++        for process_id in live {
 +            session
 +                .services
 +                .unified_exec_manager
-+                .terminate_process(worker.process_id)
++                .terminate_process(process_id)
 +                .await;
 +        }
-+        self.active.store(false, Ordering::Release);
 +    }
 +}
 +
@@ -1825,6 +1887,7 @@ index 0000000..ae9d35d
 +        .map_err(|error| format!("invalid kernel result: {error}"))
 +}
 +
++#[expect(clippy::too_many_arguments)]
 +async fn native_call(
 +    session: Arc<Session>,
 +    step_context: Arc<StepContext>,
@@ -1855,6 +1918,7 @@ index 0000000..ae9d35d
 +    future.await.map_err(|error| error.to_string())
 +}
 +
++#[expect(clippy::too_many_arguments)]
 +async fn serve_bridge(
 +    listener: Arc<TcpListener>,
 +    token: String,
@@ -1900,6 +1964,7 @@ index 0000000..ae9d35d
 +    }
 +}
 +
++#[expect(clippy::too_many_arguments)]
 +async fn handle_connection(
 +    socket: TcpStream,
 +    token: String,
@@ -1949,14 +2014,15 @@ index 0000000..ae9d35d
 +        Ok(value) => json!({"ok": true, "result": value}),
 +        Err(error) => json!({"ok": false, "error": error}),
 +    };
-+    if let Ok(mut payload) = serde_json::to_vec(&message) {
-+        if payload.len() <= MAX_BRIDGE_RESPONSE_BYTES {
-+            payload.push(b'\n');
-+            let _ = socket.write_all(&payload).await;
-+        }
-+    }
++    let mut payload = serde_json::to_vec(&message)
++        .ok()
++        .filter(|payload| payload.len() < MAX_BRIDGE_RESPONSE_BYTES)
++        .unwrap_or_else(|| br#"{"ok":false,"error":"tool response limit exceeded"}"#.to_vec());
++    payload.push(b'\n');
++    let _ = socket.write_all(&payload).await;
 +}
 +
++#[expect(clippy::too_many_arguments)]
 +async fn dispatch_bridge(
 +    bytes: &[u8],
 +    token: &str,
@@ -2000,15 +2066,15 @@ index 0000000..ae9d35d
 +    if request.token != token {
 +        return Err("bridge authentication failed".into());
 +    }
-+    if count.fetch_add(1, Ordering::AcqRel) >= MAX_BRIDGE_CALLS {
-+        return Err("kernel nested tool call limit exceeded".into());
-+    }
 +    let definition = enabled_tools
 +        .iter()
 +        .find(|tool| tool.name == request.name)
 +        .ok_or("tool was not enabled for this cell")?;
 +    if matches!(definition.name.as_str(), "omd_kernel" | "exec" | "wait") {
 +        return Err("recursive kernel and code-mode calls are forbidden".into());
++    }
++    if count.fetch_add(1, Ordering::AcqRel) >= MAX_BRIDGE_CALLS {
++        return Err("kernel nested tool call limit exceeded".into());
 +    }
 +    Ok((definition.clone(), request.arguments))
 +}
@@ -2104,6 +2170,10 @@ index 0000000..ae9d35d
 +                .unwrap_err()
 +                .contains("limit")
 +        );
++        let unknown = br#"{"token":"secret","name":"missing","arguments":{}}"#;
++        let fresh = AtomicUsize::new(0);
++        assert!(authorize_bridge_request(unknown, "secret", &tools, &fresh).is_err());
++        assert_eq!(fresh.load(Ordering::Acquire), 0);
 +        let extra = br#"{"token":"secret","name":"read_file","arguments":{},"ignore":"this"}"#;
 +        assert!(
 +            authorize_bridge_request(extra, "secret", &tools, &AtomicUsize::new(0))
@@ -2372,7 +2442,7 @@ index 0000000..ae9d35d
 +            )
 +            .await;
 +        assert!(interrupted.is_err());
-+        assert!(!manager.workers.lock().await.contains_key(&Language::Python));
++        assert!(!manager.live.lock().unwrap().contains_key(&Language::Python));
 +        manager.shutdown(&session).await;
 +        assert!(!manager.has_workers());
 +    }
@@ -4708,10 +4778,10 @@ new file mode 100644
 +}
 diff --git a/b/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..0b2ec39
+index 0000000..8651ae2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,2514 @@
+@@ -0,0 +1,2517 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -4964,10 +5034,6 @@ index 0000000..0b2ec39
 +        "/bin",
 +        "/usr/sbin",
 +        "/sbin",
-+        "/System",
-+        "/usr/lib",
-+        "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
-+        "/System/Volumes/Preboot/Cryptexes/OS/usr/lib",
 +        "/Library/Developer/CommandLineTools/usr",
 +    ]
 +    .into_iter()
@@ -6531,16 +6597,13 @@ index 0000000..0b2ec39
 +    host.task
 +        .consume_worker_result(&selected_role)
 +        .map_err(error)?;
-+    let tracked = codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)?;
-+    let mut current_paths = tracked.clone();
-+    current_paths.extend(base.files.keys().chain(candidate.files.keys()).cloned());
-+    let current = Snapshot::capture(
-+        &manifest.repository,
-+        &current_paths,
-+        manifest.snapshot_bytes,
-+    )
-+    .map_err(error)?;
-+    let merged = base.merge_candidate(&candidate, &current).map_err(error)?;
++    let state = ParentState::capture(
++        manifest,
++        base.files.keys().chain(candidate.files.keys()).cloned(),
++    )?;
++    let merged = base
++        .merge_candidate(&candidate, &state.current)
++        .map_err(error)?;
 +    let candidate_hash = merged.hash().map_err(error)?;
 +    let candidate_ref = host.evidence(
 +        "candidate.json",
@@ -6548,37 +6611,13 @@ index 0000000..0b2ec39
 +    )?;
 +    let candidate_marker =
 +        evidence_marker("integration-candidate", &candidate_hash, &candidate_ref)?;
-+    let check_root = codex_omd::create_worktree(
-+        &merged,
-+        &manifest.scratch.join("checks"),
-+        manifest.snapshot_bytes,
-+    )
-+    .map_err(error)?;
-+    std::fs::create_dir_all(check_root.join(".omd-tmp")).map_err(error)?;
-+    let check_config = isolated(
-+        &parent,
-+        &check_root,
-+        &manifest.toolchain_reads,
-+        &denied,
-+        true,
-+    )?;
-+    let checks = command(host, &check_config, manifest.check_command.clone()).await?;
++    let checks = check_candidate(host, &parent, &merged, &manifest.scratch, &denied).await?;
 +    let check_ref = host.evidence(
 +        "checks.json",
 +        &json!({"candidate_sha256": candidate_hash, "result": checks}),
 +    )?;
-+    if checks["exit_code"] != 0 || checks["timed_out"] != false {
++    if !passed(&checks) {
 +        return Err("candidate checks failed".into());
-+    }
-+    if Snapshot::capture(
-+        &check_root,
-+        &merged.files.keys().cloned().collect(),
-+        manifest.snapshot_bytes,
-+    )
-+    .map_err(error)?
-+        != merged
-+    {
-+        return Err("checks modified the candidate".into());
 +    }
 +    let check_marker = evidence_marker("final-executable-checks", &candidate_hash, &check_ref)?;
 +    let (review_cycle_number, prior_findings, repair_recorded) = {
@@ -6715,105 +6754,10 @@ index 0000000..0b2ec39
 +    if !review_cycle.final_approved {
 +        return Err("separate-model review left unresolved findings on the exact candidate".into());
 +    }
-+    if codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)? != tracked
-+        || Snapshot::capture(
-+            &manifest.repository,
-+            &current_paths,
-+            manifest.snapshot_bytes,
-+        )
-+        .map_err(error)?
-+            != current
-+    {
-+        return Err("parent changed after candidate checks/review; integration refused".into());
-+    }
-+    let delta = manifest.scratch.join("delta");
-+    std::fs::create_dir(&delta).map_err(error)?;
-+    current
-+        .write_new(&delta.join("a"), manifest.snapshot_bytes)
-+        .map_err(error)?;
-+    merged
-+        .write_new(&delta.join("b"), manifest.snapshot_bytes)
-+        .map_err(error)?;
-+    let diff_config = isolated(&parent, &delta, &[], &denied, true)?;
-+    let diff = command(
-+        host,
-+        &diff_config,
-+        vec![
-+            "/Library/Developer/CommandLineTools/usr/bin/git".into(),
-+            "-c".into(),
-+            "core.fsmonitor=false".into(),
-+            "diff".into(),
-+            "--no-index".into(),
-+            "--binary".into(),
-+            "--no-ext-diff".into(),
-+            "--no-textconv".into(),
-+            "--".into(),
-+            "a".into(),
-+            "b".into(),
-+        ],
-+    )
-+    .await?;
-+    if diff["exit_code"] != 1 || diff["stdout_truncated"] != false {
-+        return Err("candidate diff failed".into());
-+    }
-+    let patch = diff["stdout"]
-+        .as_str()
-+        .ok_or("candidate diff missing")?
-+        .lines()
-+        .map(|line| {
-+            if line.starts_with("diff --git ")
-+                || line.starts_with("--- ")
-+                || line.starts_with("+++ ")
-+                || line.starts_with("Binary files ")
-+            {
-+                line.replace("a/a/", "a/").replace("b/b/", "b/")
-+            } else {
-+                line.into()
-+            }
-+        })
-+        .collect::<Vec<_>>()
-+        .join("\n")
-+        + "\n";
-+    let patch_path = manifest.scratch.join("reviewed.patch");
-+    std::fs::write(&patch_path, &patch).map_err(error)?;
-+    host.authorize()?;
-+    host.task.check_active().map_err(error)?;
-+    let integration_config = isolated(&parent, &manifest.repository, &[], &denied, true)?;
-+    if codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)? != tracked
-+        || Snapshot::capture(
-+            &manifest.repository,
-+            &current_paths,
-+            manifest.snapshot_bytes,
-+        )
-+        .map_err(error)?
-+            != current
-+    {
-+        return Err("parent changed immediately before apply; integration refused".into());
-+    }
-+    let applied = command(
-+        host,
-+        &integration_config,
-+        vec![
-+            "/Library/Developer/CommandLineTools/usr/bin/git".into(),
-+            "-c".into(),
-+            "core.fsmonitor=false".into(),
-+            "apply".into(),
-+            "--binary".into(),
-+            patch_path.display().to_string(),
-+        ],
-+    )
-+    .await?;
++    let applied =
++        apply_candidate(host, &parent, &denied, &manifest.scratch, &state, &merged).await?;
 +    let integration_ref = host.evidence("integration.json", &applied)?;
-+    if applied["exit_code"] != 0
-+        || codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)? != tracked
-+        || Snapshot::capture(
-+            &manifest.repository,
-+            &current_paths,
-+            manifest.snapshot_bytes,
-+        )
-+        .map_err(error)?
-+            != merged
-+    {
++    if applied["exit_code"] != 0 || !state.matches(manifest, &merged)? {
 +        return Err("integration did not finish at the reviewed version; changes may already be applied alongside a concurrent edit; inspect retained integration evidence".into());
 +    }
 +    codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
@@ -7113,6 +7057,135 @@ index 0000000..0b2ec39
 +        .collect())
 +}
 +
++pub(super) struct ParentState {
++    untracked: BTreeSet<String>,
++    tracked: BTreeSet<String>,
++    paths: BTreeSet<String>,
++    pub(super) current: Snapshot,
++}
++
++impl ParentState {
++    pub(super) fn capture(
++        manifest: &Manifest,
++        candidate_paths: impl IntoIterator<Item = String>,
++    ) -> Result<Self, String> {
++        let untracked = manifest.approved_untracked.iter().cloned().collect();
++        let tracked = codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)?;
++        let mut paths = tracked.clone();
++        paths.extend(candidate_paths);
++        let current = Snapshot::capture(&manifest.repository, &paths, manifest.snapshot_bytes)
++            .map_err(error)?;
++        Ok(Self {
++            untracked,
++            tracked,
++            paths,
++            current,
++        })
++    }
++
++    pub(super) fn matches(&self, manifest: &Manifest, expected: &Snapshot) -> Result<bool, String> {
++        Ok(
++            codex_omd::tracked_paths(&manifest.repository, &self.untracked).map_err(error)?
++                == self.tracked
++                && Snapshot::capture(&manifest.repository, &self.paths, manifest.snapshot_bytes)
++                    .map_err(error)?
++                    == *expected,
++        )
++    }
++}
++
++pub(super) fn passed(check: &Value) -> bool {
++    check["exit_code"] == 0 && check["timed_out"] == false
++}
++
++pub(super) async fn check_candidate(
++    host: &Host,
++    parent: &Config,
++    candidate: &Snapshot,
++    directory: &Path,
++    denied: &[PathBuf],
++) -> Result<Value, String> {
++    let bytes = host.manifest.snapshot_bytes;
++    let root =
++        codex_omd::create_worktree(candidate, &directory.join("checks"), bytes).map_err(error)?;
++    std::fs::create_dir_all(root.join(".omd-tmp")).map_err(error)?;
++    let config = isolated(parent, &root, &host.manifest.toolchain_reads, denied, true)?;
++    let checks = command(host, &config, host.manifest.check_command.clone()).await?;
++    if passed(&checks)
++        && Snapshot::capture(&root, &candidate.files.keys().cloned().collect(), bytes)
++            .map_err(error)?
++            != *candidate
++    {
++        return Err("checks modified the candidate".into());
++    }
++    Ok(checks)
++}
++
++pub(super) async fn apply_candidate(
++    host: &Host,
++    parent: &Config,
++    denied: &[PathBuf],
++    directory: &Path,
++    state: &ParentState,
++    candidate: &Snapshot,
++) -> Result<Value, String> {
++    let manifest = &host.manifest;
++    if !state.matches(manifest, &state.current)? {
++        return Err("parent changed after candidate checks/review; integration refused".into());
++    }
++    let delta = directory.join("delta");
++    std::fs::create_dir(&delta).map_err(error)?;
++    state
++        .current
++        .write_new(&delta.join("a"), manifest.snapshot_bytes)
++        .map_err(error)?;
++    candidate
++        .write_new(&delta.join("b"), manifest.snapshot_bytes)
++        .map_err(error)?;
++    let git = |args: &[&str]| {
++        [
++            "/Library/Developer/CommandLineTools/usr/bin/git",
++            "-c",
++            "core.fsmonitor=false",
++        ]
++        .iter()
++        .chain(args)
++        .map(|arg| (*arg).to_owned())
++        .collect::<Vec<String>>()
++    };
++    let diff = command(
++        host,
++        &isolated(parent, &delta, &[], denied, true)?,
++        git(&[
++            "diff",
++            "--no-index",
++            "--binary",
++            "--no-ext-diff",
++            "--no-textconv",
++            "--output=candidate.patch",
++            "--",
++            "a",
++            "b",
++        ]),
++    )
++    .await?;
++    let patch = delta.join("candidate.patch");
++    if diff["exit_code"] != 1 || !patch.is_file() {
++        return Err("candidate diff failed".into());
++    }
++    host.authorize()?;
++    host.task.check_active().map_err(error)?;
++    if !state.matches(manifest, &state.current)? {
++        return Err("parent changed immediately before apply; integration refused".into());
++    }
++    command(
++        host,
++        &isolated(parent, &manifest.repository, &[], denied, true)?,
++        git(&["apply", "-p2", "--binary", &patch.display().to_string()]),
++    )
++    .await
++}
++
 +pub(super) async fn review_isolated_candidate(
 +    lead: &Lead,
 +    parent: &Config,
@@ -7394,9 +7467,10 @@ index 0000000..fdb1436
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
+index 0000000..46fd96e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,3996 @@
+@@ -0,0 +1,3957 @@
 +mod accounting;
 +mod execution;
 +mod managed_process;
@@ -9174,6 +9248,27 @@ new file mode 100644
 +}
 +
 +impl Host {
++    fn route_provider(&self, route: &Route) -> String {
++        if route.model == "muse-spark-1.3-contributor" {
++            "meta"
++        } else if self
++            .manifest
++            .mod_worker_presets
++            .iter()
++            .any(|preset| preset.covers(route))
++            || self
++                .manifest
++                .mod_services
++                .iter()
++                .any(|grant| grant.covers(route))
++        {
++            route.provider.as_str()
++        } else {
++            "openai"
++        }
++        .into()
++    }
++
 +    fn route(&self, lead: LeadName) -> &Route {
 +        self.manifest.leads.get(lead)
 +    }
@@ -9357,84 +9452,24 @@ new file mode 100644
 +                        provider: route.provider.clone(),
 +                        reasoning: reasoning(route)?,
 +                        url: route.responses_url.clone(),
-+                        accounting_provider: if self
-+                            .manifest
-+                            .mod_services
-+                            .iter()
-+                            .any(|grant| grant.covers(route))
-+                        {
-+                            route.provider.clone()
-+                        } else {
-+                            "openai".into()
-+                        },
++                        accounting_provider: self.route_provider(route),
 +                    })
 +                })
 +                .collect::<Result<Vec<_>, String>>()?,
 +            None => vec![accounting::RequestPreset {
 +                name: preset.clone(),
 +                model: route.model.clone(),
-+                provider: if route.model == "muse-spark-1.3-contributor" {
-+                    "meta"
-+                } else if self
-+                    .manifest
-+                    .mod_worker_presets
-+                    .iter()
-+                    .any(|preset| preset.covers(route))
-+                    || self
-+                        .manifest
-+                        .mod_services
-+                        .iter()
-+                        .any(|grant| grant.covers(route))
-+                {
-+                    route.provider.as_str()
-+                } else {
-+                    "openai"
-+                }
-+                .into(),
++                provider: self.route_provider(route),
 +                reasoning: reasoning(route)?,
 +                url: route.responses_url.clone(),
-+                accounting_provider: if route.model == "muse-spark-1.3-contributor" {
-+                    "meta"
-+                } else if self
-+                    .manifest
-+                    .mod_worker_presets
-+                    .iter()
-+                    .any(|preset| preset.covers(route))
-+                    || self
-+                        .manifest
-+                        .mod_services
-+                        .iter()
-+                        .any(|grant| grant.covers(route))
-+                {
-+                    route.provider.as_str()
-+                } else {
-+                    "openai"
-+                }
-+                .into(),
++                accounting_provider: self.route_provider(route),
 +            }],
 +        };
 +        let account = Account {
 +            task: self.task.clone(),
 +            owner: owner.into(),
 +            model: route.model.clone(),
-+            provider: if route.model == "muse-spark-1.3-contributor" {
-+                "meta"
-+            } else if self
-+                .manifest
-+                .mod_worker_presets
-+                .iter()
-+                .any(|preset| preset.covers(route))
-+                || self
-+                    .manifest
-+                    .mod_services
-+                    .iter()
-+                    .any(|grant| grant.covers(route))
-+            {
-+                route.provider.as_str()
-+            } else {
-+                "openai"
-+            }
-+            .into(),
++            provider: self.route_provider(route),
 +            url: route.responses_url.clone(),
 +            max_request_bytes: self.manifest.max_request_bytes,
 +            rates: route.rates.clone(),
@@ -11395,10 +11430,10 @@ new file mode 100644
 +}
 diff --git a/b/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 0000000..144df89
+index 0000000..2670940
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,748 @@
+@@ -0,0 +1,683 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -11419,26 +11454,26 @@ index 0000000..144df89
 +use std::io;
 +use std::io::BufRead;
 +use std::io::BufReader;
-+use std::io::Read;
 +use std::io::Write;
 +use std::os::unix::fs::PermissionsExt;
-+use std::os::unix::net::UnixStream;
 +use std::os::unix::process::CommandExt;
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::process::Child;
 +use std::process::Command;
 +use std::process::Stdio;
++use std::sync::Arc;
 +use std::sync::Mutex;
 +use std::sync::mpsc;
 +use std::time::Duration;
 +use std::time::Instant;
 +
 +type Key = (String, u64, String);
++type Session = Arc<Mutex<ManagedProcess>>;
 +
 +#[derive(Default)]
 +pub(super) struct ManagedProcesses {
-+    records: Mutex<BTreeMap<Key, ManagedProcess>>,
++    records: Mutex<BTreeMap<Key, Session>>,
 +}
 +
 +struct ManagedProcess {
@@ -11571,6 +11606,25 @@ index 0000000..144df89
 +        }
 +    }
 +
++    fn session(&self, key: &Key) -> Result<Session, String> {
++        self.records
++            .lock()
++            .map_err(|_| "process_records_poisoned")?
++            .get(key)
++            .cloned()
++            .ok_or_else(|| "process_session_unavailable".into())
++    }
++
++    fn remove(&self, key: &Key, process: &Session) {
++        if let Ok(mut records) = self.records.lock()
++            && records
++                .get(key)
++                .is_some_and(|current| Arc::ptr_eq(current, process))
++        {
++            records.remove(key);
++        }
++    }
++
 +    pub fn call(
 +        &self,
 +        id: &str,
@@ -11642,14 +11696,11 @@ index 0000000..144df89
 +                    || input.arguments.iter().map(String::len).sum::<usize>() > 4096
 +                    || !matches!(
 +                        input.transport.as_deref(),
-+                        None | Some("stdio") | Some("unix_dap") | Some("stdio_dap")
++                        None | Some("stdio") | Some("stdio_dap")
 +                    )
-+                    || (input.transport.as_deref() == Some("unix_dap")
-+                        && (input.name != "dlv" || input.arguments != ["dap"]))
 +                    || (input.transport.as_deref() == Some("stdio_dap")
-+                        && !((input.name == "lldb-dap" && input.arguments.is_empty())
-+                            || (input.name == "python3"
-+                                && input.arguments == ["-m", "debugpy.adapter"])))
++                        && (input.name != "python3"
++                            || input.arguments != ["-m", "debugpy.adapter"]))
 +                    || program(&input.name, repository).as_ref() != Some(&input.path)
 +                    || input
 +                        .path
@@ -11669,22 +11720,20 @@ index 0000000..144df89
 +                    return Err("process_executable_changed".into());
 +                }
 +                let key = (id.to_owned(), generation, input.session.clone());
-+                let mut records = self
-+                    .records
-+                    .lock()
-+                    .map_err(|_| "process_records_poisoned")?;
-+                if records.contains_key(&key)
-+                    || records.len() >= 8
-+                    || records.keys().filter(|(owner, _, _)| owner == id).count() >= 5
-+                {
++                let admitted = |records: &BTreeMap<Key, Session>| {
++                    !records.contains_key(&key)
++                        && records.len() < 8
++                        && records.keys().filter(|(owner, _, _)| owner == id).count() < 5
++                };
++                if !admitted(
++                    &*self
++                        .records
++                        .lock()
++                        .map_err(|_| "process_records_poisoned")?,
++                ) {
 +                    return Err("process_session_limit_or_duplicate".into());
 +                }
-+                let scratch_root = if input.transport.as_deref() == Some("unix_dap") {
-+                    PathBuf::from("/private/tmp")
-+                } else {
-+                    std::env::temp_dir()
-+                };
-+                let scratch = scratch_root.join(format!(
++                let scratch = std::env::temp_dir().join(format!(
 +                    "omd-process-{}-{}",
 +                    std::process::id(),
 +                    std::time::SystemTime::now()
@@ -11701,23 +11750,10 @@ index 0000000..144df89
 +                )?;
 +                let launched = (|| {
 +                    let scope = read_policy(policy, &scratch)?;
-+                    let socket = scratch.join("dap.sock");
-+                    let unix_dap = input.transport.as_deref() == Some("unix_dap");
 +                    let stdio_dap = input.transport.as_deref() == Some("stdio_dap");
 +                    let mut command = vec![input.path.to_string_lossy().into_owned()];
 +                    command.extend(input.arguments);
-+                    if unix_dap {
-+                        command.push(format!("--listen=unix:{}", socket.display()));
-+                    }
-+                    let sockets = if unix_dap {
-+                        vec![
-+                            AbsolutePathBuf::from_absolute_path_checked(&socket)
-+                                .map_err(|error| error.to_string())?,
-+                        ]
-+                    } else {
-+                        Vec::new()
-+                    };
-+                    let loopback = (stdio_dap || unix_dap).then(|| ManagedNetworkSandboxContext {
++                    let loopback = stdio_dap.then(|| ManagedNetworkSandboxContext {
 +                        allow_local_binding: true,
 +                        ..Default::default()
 +                    });
@@ -11726,11 +11762,11 @@ index 0000000..144df89
 +                        file_system_sandbox_policy: &scope,
 +                        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
 +                        sandbox_policy_cwd: repository,
-+                        enforce_managed_network: stdio_dap || unix_dap,
++                        enforce_managed_network: stdio_dap,
 +                        managed_network: loopback.as_ref(),
 +                        environment_id: None,
 +                        network: None,
-+                        extra_allow_unix_sockets: &sockets,
++                        extra_allow_unix_sockets: &[],
 +                    })?;
 +                    let mut command = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE);
 +                    let mut child = command
@@ -11748,48 +11784,23 @@ index 0000000..144df89
 +                        .process_group(0)
 +                        .spawn()
 +                        .map_err(|error| error.to_string())?;
-+                    let streams: Result<(Box<dyn Write + Send>, Box<dyn Read + Send>), String> =
-+                        (|| {
-+                            if !unix_dap {
-+                                return Ok((
-+                                    Box::new(child.stdin.take().ok_or("process_stdin_missing")?)
-+                                        as Box<dyn Write + Send>,
-+                                    Box::new(child.stdout.take().ok_or("process_stdout_missing")?)
-+                                        as Box<dyn Read + Send>,
-+                                ));
-+                            }
-+                            let deadline = Instant::now() + Duration::from_secs(3);
-+                            let stream = loop {
-+                                if !active()
-+                                    || Instant::now() >= deadline
-+                                    || child
-+                                        .try_wait()
-+                                        .map_err(|error| error.to_string())?
-+                                        .is_some()
-+                                {
-+                                    return Err("process_socket_start_failed".into());
-+                                }
-+                                match UnixStream::connect(&socket) {
-+                                    Ok(stream) => break stream,
-+                                    Err(_) => std::thread::sleep(Duration::from_millis(25)),
-+                                }
-+                            };
-+                            let reader = stream.try_clone().map_err(|error| error.to_string())?;
-+                            Ok((Box::new(stream), Box::new(reader)))
-+                        })();
-+                    let (stdin, stdout) = match streams {
++                    let streams = child
++                        .stdin
++                        .take()
++                        .zip(child.stdout.take())
++                        .ok_or("process_stdio_missing");
++                    let (mut stdin, stdout) = match streams {
 +                        Ok(streams) => streams,
 +                        Err(error) => {
 +                            let _ = kill_process_group(child.id());
 +                            let _ = child.kill();
 +                            let _ = child.wait();
-+                            return Err(error);
++                            return Err(error.to_owned());
 +                        }
 +                    };
 +                    let (writer_sender, writer_receiver) =
 +                        mpsc::sync_channel::<(Vec<Value>, mpsc::SyncSender<Result<(), String>>)>(1);
 +                    std::thread::spawn(move || {
-+                        let mut stdin = stdin;
 +                        while let Ok((messages, reply)) = writer_receiver.recv() {
 +                            let result = messages
 +                                .iter()
@@ -11822,7 +11833,14 @@ index 0000000..144df89
 +                })();
 +                match launched {
 +                    Ok(process) => {
-+                        records.insert(key, process);
++                        let mut records = self
++                            .records
++                            .lock()
++                            .map_err(|_| "process_records_poisoned")?;
++                        if !admitted(&records) {
++                            return Err("process_session_limit_or_duplicate".into());
++                        }
++                        records.insert(key.clone(), Arc::new(Mutex::new(process)));
 +                        Ok(json!({"session":input.session,"running":true}))
 +                    }
 +                    Err(error) => {
@@ -11844,21 +11862,23 @@ index 0000000..144df89
 +                let input: Input =
 +                    serde_json::from_value(arguments).map_err(|error| error.to_string())?;
 +                let key = (id.to_owned(), generation, input.session.clone());
-+                let mut records = self
-+                    .records
-+                    .lock()
-+                    .map_err(|_| "process_records_poisoned")?;
 +                if operation == "process.stop" {
-+                    return Ok(json!({"stopped":records.remove(&key).is_some()}));
++                    let stopped = self
++                        .records
++                        .lock()
++                        .map_err(|_| "process_records_poisoned")?
++                        .remove(&key);
++                    return Ok(json!({"stopped":stopped.is_some()}));
 +                }
-+                let process = records.get_mut(&key).ok_or("process_session_unavailable")?;
++                let session = self.session(&key)?;
++                let mut process = session.lock().map_err(|_| "process_session_poisoned")?;
 +                if process
 +                    .child
 +                    .try_wait()
 +                    .map_err(|error| error.to_string())?
 +                    .is_some()
 +                {
-+                    records.remove(&key);
++                    self.remove(&key, &session);
 +                    return Err("process_stopped".into());
 +                }
 +                if operation == "process.status" {
@@ -11878,23 +11898,23 @@ index 0000000..144df89
 +                    let write_deadline = Instant::now() + Duration::from_secs(10);
 +                    loop {
 +                        if !active() {
-+                            records.remove(&key);
++                            self.remove(&key, &session);
 +                            return Err("process_cancelled".into());
 +                        }
 +                        match reply_receiver.recv_timeout(Duration::from_millis(50)) {
 +                            Ok(Ok(())) => break,
 +                            Ok(Err(error)) => {
-+                                records.remove(&key);
++                                self.remove(&key, &session);
 +                                return Err(error);
 +                            }
 +                            Err(mpsc::RecvTimeoutError::Disconnected) => {
-+                                records.remove(&key);
++                                self.remove(&key, &session);
 +                                return Err("process_writer_stopped".into());
 +                            }
 +                            Err(mpsc::RecvTimeoutError::Timeout)
 +                                if Instant::now() >= write_deadline =>
 +                            {
-+                                records.remove(&key);
++                                self.remove(&key, &session);
 +                                return Err("process_write_timeout".into());
 +                            }
 +                            Err(mpsc::RecvTimeoutError::Timeout) => (),
@@ -11907,7 +11927,7 @@ index 0000000..144df89
 +                let mut bytes = 0_usize;
 +                loop {
 +                    if !active() {
-+                        records.remove(&key);
++                        self.remove(&key, &session);
 +                        return Err("process_cancelled".into());
 +                    }
 +                    let next = if messages.is_empty() && input.wait_ms > 0 {
@@ -11937,11 +11957,11 @@ index 0000000..144df89
 +                            messages.push(message);
 +                        }
 +                        Ok(Err(error)) => {
-+                            records.remove(&key);
++                            self.remove(&key, &session);
 +                            return Err(error.to_string());
 +                        }
 +                        Err(mpsc::RecvTimeoutError::Disconnected) => {
-+                            records.remove(&key);
++                            self.remove(&key, &session);
 +                            return Err("process_stopped".into());
 +                        }
 +                        Err(mpsc::RecvTimeoutError::Timeout)
@@ -11962,67 +11982,6 @@ index 0000000..144df89
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
-+
-+    #[test]
-+    fn unix_dap_process_uses_private_owned_socket() {
-+        let repository_dir = tempfile::tempdir().unwrap();
-+        let repository = repository_dir.path().canonicalize().unwrap();
-+        let executable_dir = tempfile::tempdir().unwrap();
-+        let executable = executable_dir.path().join("dlv");
-+        fs::write(
-+            &executable,
-+            "#!/usr/bin/python3\nimport json,socket,sys\np=sys.argv[2].split('unix:',1)[1]\ns=socket.socket(socket.AF_UNIX)\ns.bind(p)\ns.listen(1)\nc,_=s.accept()\nwhile True:\n h=b''\n while b'\\r\\n\\r\\n' not in h:\n  b=c.recv(1)\n  if not b: sys.exit(0)\n  h+=b\n n=int(h.split(b':',1)[1].strip())\n v=json.loads(c.recv(n))\n out=json.dumps({'type':'response','request_seq':v['seq'],'success':True}).encode()\n c.sendall(b'Content-Length: '+str(len(out)).encode()+b'\\r\\n\\r\\n'+out)\n",
-+        )
-+        .unwrap();
-+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-+        let old_path = std::env::var_os("PATH").unwrap_or_default();
-+        let new_path = format!(
-+            "{}:{}",
-+            executable_dir.path().display(),
-+            old_path.to_string_lossy()
-+        );
-+        unsafe { std::env::set_var("PATH", new_path) };
-+        let processes = ManagedProcesses::default();
-+        let policy = FileSystemSandboxPolicy::read_only();
-+        let found = processes
-+            .call(
-+                "fixture",
-+                1,
-+                &repository,
-+                &policy,
-+                "process.which",
-+                json!({"names":["dlv"]}),
-+                || true,
-+            )
-+            .unwrap();
-+        let dlv = &found["found"][0];
-+        let started = processes.call("fixture", 1, &repository, &policy, "process.start", json!({"session":"dap","name":"dlv","path":dlv["path"],"sha256":dlv["sha256"],"arguments":["dap"],"transport":"unix_dap"}), || true);
-+        unsafe { std::env::set_var("PATH", old_path) };
-+        assert!(started.is_ok(), "{started:?}");
-+        let records = processes.records.lock().unwrap();
-+        let scratch = &records.values().next().unwrap().scratch;
-+        assert_eq!(
-+            fs::metadata(scratch).unwrap().permissions().mode() & 0o777,
-+            0o700
-+        );
-+        drop(records);
-+        let response = processes.call("fixture", 1, &repository, &policy, "process.exchange", json!({"session":"dap","send":[{"seq":1,"type":"request","command":"initialize"}],"wait_ms":1000}), || true).unwrap();
-+        assert_eq!(response["messages"][0]["request_seq"], 1);
-+        assert_eq!(
-+            processes
-+                .call(
-+                    "fixture",
-+                    1,
-+                    &repository,
-+                    &policy,
-+                    "process.stop",
-+                    json!({"session":"dap"}),
-+                    || true
-+                )
-+                .unwrap()["stopped"],
-+            true
-+        );
-+    }
 +
 +    #[test]
 +    fn framed_process_is_owned_bounded_and_stopped() {
@@ -12054,6 +12013,17 @@ index 0000000..144df89
 +            )
 +            .unwrap();
 +        assert_eq!(started["running"], true);
++        let scratch = processes
++            .session(&("fixture".into(), 1, "framed".into()))
++            .unwrap()
++            .lock()
++            .unwrap()
++            .scratch
++            .clone();
++        assert_eq!(
++            fs::metadata(&scratch).unwrap().permissions().mode() & 0o777,
++            0o700
++        );
 +        let answer = processes
 +            .call("fixture", 1, &repository, &policy, "process.exchange", json!({"session":"framed","send":[{"jsonrpc":"2.0","id":7,"method":"hello"}],"wait_ms":1000}), || true)
 +            .unwrap();
@@ -12362,9 +12332,10 @@ index 0000000..d2b6bf7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
+index 0000000..5b0ab3c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,1055 @@
+@@ -0,0 +1,959 @@
 +mod review;
 +use super::*;
 +use codex_core::CodexThread;
@@ -12581,10 +12552,6 @@ new file mode 100644
 +}
 +
 +impl Agents {
-+    #[expect(
-+        clippy::await_holding_invalid_type,
-+        reason = "Keep the owned workspace stable through native check and integration"
-+    )]
 +    async fn integrate(
 +        &self,
 +        lead: &Lead,
@@ -12598,33 +12565,62 @@ new file mode 100644
 +        }
 +        let host = &lead.host;
 +        host.authorize()?;
-+        let mut records = self.records.lock().await;
-+        let agent = records
-+            .get_mut(&handle.handle)
-+            .filter(|agent| agent.mod_id == mod_id && agent.generation == generation)
-+            .ok_or("unknown_or_foreign_agent")?;
-+        if !agent.consumed
-+            || !agent.finished()
-+            || !agent
-+                .result
-+                .lock()
-+                .map_err(|_| "agent_result_poisoned")?
-+                .as_ref()
-+                .is_some_and(Result::is_ok)
-+        {
-+            return Err("agent_result_not_validated_or_complete".into());
-+        }
-+        let workspace = agent
-+            .workspace
-+            .as_ref()
-+            .ok_or("agent_has_no_isolated_workspace")?;
-+        if host
-+            .operation
-+            .swap(true, std::sync::atomic::Ordering::AcqRel)
-+        {
-+            return Err("another controlled operation is active".into());
-+        }
++        let (workspace, implementation) = {
++            let mut records = self.records.lock().await;
++            let agent = records
++                .get_mut(&handle.handle)
++                .filter(|agent| agent.mod_id == mod_id && agent.generation == generation)
++                .ok_or("unknown_or_foreign_agent")?;
++            if !agent.consumed
++                || !agent.finished()
++                || !agent
++                    .result
++                    .lock()
++                    .map_err(|_| "agent_result_poisoned")?
++                    .as_ref()
++                    .is_some_and(Result::is_ok)
++            {
++                return Err("agent_result_not_validated_or_complete".into());
++            }
++            if host
++                .operation
++                .swap(true, std::sync::atomic::Ordering::AcqRel)
++            {
++                return Err("another controlled operation is active".into());
++            }
++            let workspace = agent.workspace.take();
++            let Some(workspace) = workspace else {
++                host.operation
++                    .store(false, std::sync::atomic::Ordering::Release);
++                return Err("agent_has_no_isolated_workspace".into());
++            };
++            (workspace, agent.implementation.clone())
++        };
 +        let _operation = OperationGuard(&host.operation);
++        let result = self
++            .integrate_workspace(lead, &handle.handle, &workspace, &implementation)
++            .await;
++        if result.is_err()
++            && let Some(agent) = self
++                .records
++                .lock()
++                .await
++                .get_mut(&handle.handle)
++                .filter(|agent| agent.mod_id == mod_id && agent.generation == generation)
++        {
++            agent.workspace = Some(workspace);
++        }
++        result
++    }
++
++    async fn integrate_workspace(
++        &self,
++        lead: &Lead,
++        handle: &str,
++        workspace: &Workspace,
++        implementation: &Route,
++    ) -> Result<Value, String> {
++        let host = &lead.host;
 +        let manager = host
 +            .manager
 +            .upgrade()
@@ -12645,69 +12641,38 @@ new file mode 100644
 +            codex_omd::Snapshot::capture(&workspace.root, &paths, host.manifest.snapshot_bytes)
 +                .map_err(|e| e.to_string())?;
 +        let changed = workspace.base.changed_paths(&candidate);
-+        if changed.is_empty() || changed.len() > 128 {
++        if changed.is_empty() {
 +            return Err("isolated_worker_returned_no_change".into());
 +        }
-+        let approved = host.manifest.approved_untracked.iter().cloned().collect();
-+        let tracked = codex_omd::tracked_paths(&host.manifest.repository, &approved)
-+            .map_err(|e| e.to_string())?;
-+        let mut current_paths = tracked.clone();
-+        current_paths.extend(
++        if changed.len() > 128 {
++            return Err("isolated_worker_change_limit".into());
++        }
++        let state = execution::ParentState::capture(
++            &host.manifest,
 +            workspace
 +                .base
 +                .files
 +                .keys()
 +                .chain(candidate.files.keys())
 +                .cloned(),
-+        );
-+        let current = codex_omd::Snapshot::capture(
-+            &host.manifest.repository,
-+            &current_paths,
-+            host.manifest.snapshot_bytes,
-+        )
-+        .map_err(|e| e.to_string())?;
++        )?;
 +        let merged = workspace
 +            .base
-+            .merge_candidate(&candidate, &current)
++            .merge_candidate(&candidate, &state.current)
 +            .map_err(|e| e.to_string())?;
 +        let digest = merged.hash().map_err(|e| e.to_string())?;
 +        let directory = host
 +            .manifest
 +            .scratch
-+            .join(format!("mod-integration-{}", handle.handle));
++            .join(format!("mod-integration-{handle}"));
 +        std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
 +        let mut scratch = IntegrationScratch {
 +            parent: host.manifest.scratch.clone(),
 +            directory: Some(directory.clone()),
 +        };
-+        let checked = codex_omd::create_worktree(
-+            &merged,
-+            &directory.join("checks"),
-+            host.manifest.snapshot_bytes,
-+        )
-+        .map_err(|e| e.to_string())?;
-+        std::fs::create_dir(checked.join(".omd-tmp")).map_err(|e| e.to_string())?;
-+        let check_config = execution::isolated(
-+            &parent,
-+            &checked,
-+            &host.manifest.toolchain_reads,
-+            &denied,
-+            true,
-+        )?;
-+        let check =
-+            execution::command(host, &check_config, host.manifest.check_command.clone()).await?;
-+        if check["exit_code"] != 0 || check["timed_out"] != false {
++        let check = execution::check_candidate(host, &parent, &merged, &directory, &denied).await?;
++        if !execution::passed(&check) {
 +            return Err("isolated_candidate_checks_failed".into());
-+        }
-+        if codex_omd::Snapshot::capture(
-+            &checked,
-+            &merged.files.keys().cloned().collect(),
-+            host.manifest.snapshot_bytes,
-+        )
-+        .map_err(|e| e.to_string())?
-+            != merged
-+        {
-+            return Err("candidate_changed_during_checks".into());
 +        }
 +        let review = execution::review_isolated_candidate(
 +            lead,
@@ -12716,7 +12681,7 @@ new file mode 100644
 +            &changed,
 +            &check,
 +            &directory,
-+            &agent.implementation,
++            implementation,
 +        )
 +        .await?;
 +        if execution::all_paths(host, &read).await? != paths
@@ -12726,104 +12691,14 @@ new file mode 100644
 +        {
 +            return Err("isolated_candidate_changed_after_review".into());
 +        }
-+        let delta = directory.join("delta");
-+        std::fs::create_dir(&delta).map_err(|e| e.to_string())?;
-+        current
-+            .write_new(&delta.join("a"), host.manifest.snapshot_bytes)
-+            .map_err(|e| e.to_string())?;
-+        merged
-+            .write_new(&delta.join("b"), host.manifest.snapshot_bytes)
-+            .map_err(|e| e.to_string())?;
-+        let diff_config = execution::isolated(&parent, &delta, &[], &denied, true)?;
-+        let diff = execution::command(
-+            host,
-+            &diff_config,
-+            vec![
-+                "/Library/Developer/CommandLineTools/usr/bin/git".into(),
-+                "-c".into(),
-+                "core.fsmonitor=false".into(),
-+                "diff".into(),
-+                "--no-index".into(),
-+                "--binary".into(),
-+                "--no-ext-diff".into(),
-+                "--no-textconv".into(),
-+                "--".into(),
-+                "a".into(),
-+                "b".into(),
-+            ],
-+        )
-+        .await?;
-+        if diff["exit_code"] != 1 || diff["stdout_truncated"] != false {
-+            return Err("isolated_candidate_diff_failed".into());
-+        }
-+        let patch = diff["stdout"]
-+            .as_str()
-+            .ok_or("candidate_diff_missing")?
-+            .lines()
-+            .map(|line| {
-+                if line.starts_with("diff --git ")
-+                    || line.starts_with("--- ")
-+                    || line.starts_with("+++ ")
-+                    || line.starts_with("Binary files ")
-+                {
-+                    line.replace("a/a/", "a/").replace("b/b/", "b/")
-+                } else {
-+                    line.into()
-+                }
-+            })
-+            .collect::<Vec<String>>()
-+            .join("\n")
-+            + "\n";
-+        let patch_path = directory.join("candidate.patch");
-+        std::fs::write(&patch_path, patch).map_err(|e| e.to_string())?;
-+        host.authorize()?;
-+        host.task.check_active().map_err(|e| e.to_string())?;
-+        if codex_omd::tracked_paths(&host.manifest.repository, &approved)
-+            .map_err(|e| e.to_string())?
-+            != tracked
-+            || codex_omd::Snapshot::capture(
-+                &host.manifest.repository,
-+                &current_paths,
-+                host.manifest.snapshot_bytes,
-+            )
-+            .map_err(|e| e.to_string())?
-+                != current
-+        {
-+            return Err("parent_changed_before_integration".into());
-+        }
-+        let apply_config =
-+            execution::isolated(&parent, &host.manifest.repository, &[], &denied, true)?;
-+        let applied = execution::command(
-+            host,
-+            &apply_config,
-+            vec![
-+                "/Library/Developer/CommandLineTools/usr/bin/git".into(),
-+                "-c".into(),
-+                "core.fsmonitor=false".into(),
-+                "apply".into(),
-+                "--binary".into(),
-+                patch_path.display().to_string(),
-+            ],
-+        )
-+        .await?;
-+        let evidence = host.evidence(&format!("mod-integration-{}.json", execution::hash(handle.handle.as_bytes())),
-+            &json!({"schema":1,"worker":handle.handle,"candidate_sha256":digest,"changed_paths":changed,"check":check,"review":review,"apply":applied}))?;
-+        if applied["exit_code"] != 0
-+            || codex_omd::tracked_paths(&host.manifest.repository, &approved)
-+                .map_err(|e| e.to_string())?
-+                != tracked
-+            || codex_omd::Snapshot::capture(
-+                &host.manifest.repository,
-+                &current_paths,
-+                host.manifest.snapshot_bytes,
-+            )
-+            .map_err(|e| e.to_string())?
-+                != merged
-+        {
++        let applied =
++            execution::apply_candidate(host, &parent, &denied, &directory, &state, &merged).await?;
++        let evidence = host.evidence(&format!("mod-integration-{}.json", execution::hash(handle.as_bytes())),
++            &json!({"schema":1,"worker":handle,"candidate_sha256":digest,"changed_paths":changed,"check":check,"review":review,"apply":applied}))?;
++        if applied["exit_code"] != 0 || !state.matches(&host.manifest, &merged)? {
 +            return Err("integration_incomplete_inspect_native_evidence".into());
 +        }
 +        scratch.cleanup()?;
-+        agent.workspace.take();
 +        Ok(
 +            json!({"status":"integrated","candidate_sha256":digest,"changed_paths":changed,"evidence":evidence}),
 +        )
@@ -13648,10 +13523,10 @@ index 0000000..ce5356c
 +}
 diff --git a/b/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000..19c3def
+index 0000000..6565e8b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,225 @@
 +use super::*;
 +use codex_omd::ModHostCall;
 +use std::path::Path;
@@ -13754,15 +13629,12 @@ index 0000000..19c3def
 +                }).await.map_err(|error| error.to_string())?;
 +            }
 +            if request.operation.starts_with("process.") {
-+                return processes.call(
-+                    id,
-+                    generation,
-+                    &authority.repository,
-+                    &authority.policy,
-+                    &request.operation,
-+                    request.arguments,
-+                    || host.task.check_active().is_ok(),
-+                );
++                let processes = processes.clone();
++                let task = host.task.clone();
++                let id = id.to_owned();
++                return tokio::task::spawn_blocking(move || {
++                    processes.call(&id, generation, &authority.repository, &authority.policy, &request.operation, request.arguments, || task.check_active().is_ok())
++                }).await.map_err(|error| error.to_string())?;
 +            }
 +            if request.operation == "workspace.transaction" {
 +                if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -15361,10 +15233,10 @@ index 0000000..bdda517
 +}
 diff --git a/b/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000..d5dcd8d
+index 0000000..4ff7f74
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1034 @@
+@@ -0,0 +1,1095 @@
 +mod agents;
 +mod evidence;
 +mod operations;
@@ -15437,10 +15309,49 @@ index 0000000..d5dcd8d
 +    )
 +}
 +
++pub(crate) fn git_command(
++    policy: codex_protocol::permissions::FileSystemSandboxPolicy,
++    cwd: std::path::PathBuf,
++    protected: Vec<std::path::PathBuf>,
++) -> impl Fn(Vec<String>) -> Result<std::process::Command, String> {
++    move |argv| {
++        #[cfg(target_os = "macos")]
++        {
++            use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
++            use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
++            use codex_sandboxing::seatbelt::create_seatbelt_command_args;
++            let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
++                command: argv,
++                file_system_sandbox_policy: &policy,
++                network_sandbox_policy:
++                    codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
++                sandbox_policy_cwd: &cwd,
++                enforce_managed_network: false,
++                managed_network: None,
++                environment_id: None,
++                network: None,
++                extra_allow_unix_sockets: &[],
++            })?;
++            codex_omd::git::sandboxed(
++                std::path::Path::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE),
++                args,
++                &protected,
++                &cwd,
++            )
++        }
++        #[cfg(not(target_os = "macos"))]
++        {
++            let _ = (&policy, &cwd, &protected, argv);
++            Err("git_sandbox_unavailable".to_owned())
++        }
++    }
++}
++
 +pub(crate) fn lifecycle_git(
 +    allowed: bool,
 +    repository: &std::path::Path,
 +    protected: &[std::path::PathBuf],
++    policy: &codex_protocol::permissions::FileSystemSandboxPolicy,
 +    request: codex_omd::ModHostCall,
 +    active: &dyn Fn() -> bool,
 +) -> std::io::Result<Value> {
@@ -15449,12 +15360,13 @@ index 0000000..d5dcd8d
 +            "host_operation_unavailable: git reads run in lifecycle events and commands",
 +        ));
 +    }
++    let command = git_command(policy.clone(), repository.to_path_buf(), protected.to_vec());
 +    let access = codex_omd::git::GitAccess {
 +        repository,
 +        protected,
 +        backups: None,
 +        write: Err("git_write_requires_user_command"),
-+        command: None,
++        command: &command,
 +        writable: &|_| false,
 +    };
 +    codex_omd::git::call(&access, &request.operation, request.arguments, active)
@@ -15671,8 +15583,6 @@ index 0000000..d5dcd8d
 +            event,
 +            "start" | "resume" | "turn_start" | "turn_end" | "workspace_write" | "idle"
 +        );
-+        let git_repository = owner.manifest.repository.clone();
-+        let git_protected = crate::execution::protected_paths(&owner.manifest);
 +        let allow_workspace = matches!(
 +            event,
 +            "workspace_write" | "workspace_pre_rename" | "turn_start"
@@ -15687,6 +15597,7 @@ index 0000000..d5dcd8d
 +                | "idle"
 +                | "stop"
 +        );
++        let git_cancelled = cancelled.clone();
 +        let job = tokio::task::spawn_blocking(move || {
 +            let Ok(mut runtime) = runtime.lock() else {
 +                return Vec::new();
@@ -15705,14 +15616,10 @@ index 0000000..d5dcd8d
 +                || !cancelled.load(std::sync::atomic::Ordering::Acquire),
 +                "native workflow enforcement",
 +                |id, request| {
-+                    if request.operation.starts_with("git.") {
-+                        return lifecycle_git(
-+                            allow_git,
-+                            &git_repository,
-+                            &git_protected,
-+                            request,
-+                            &|| !cancelled.load(std::sync::atomic::Ordering::Acquire),
-+                        );
++                    if request.operation.starts_with("git.") && !allow_git {
++                        return Err(std::io::Error::other(
++                            "host_operation_unavailable: git reads run in lifecycle events and commands",
++                        ));
 +                    }
 +                    if !((matches!(event, "turn_end" | "idle")
 +                        && matches!(
@@ -15730,6 +15637,7 @@ index 0000000..d5dcd8d
 +                            ))
 +                        || (allow_workspace && request.operation == "workspace.read")
 +                        || (allow_process && request.operation.starts_with("process."))
++                        || request.operation.starts_with("git.")
 +                        || (matches!(
 +                            event,
 +                            "context" | "turn_start" | "turn_end" | "idle" | "stop"
@@ -15848,6 +15756,24 @@ index 0000000..d5dcd8d
 +                    json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
 +                }))),
 +                (None, _) if request.operation == "routes.list" => Ok(json!([])),
++                (Some(lead), _) if request.operation.starts_with("git.") => {
++                    match crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await {
++                        Ok(authority) => {
++                            let repository = self.owner.manifest.repository.clone();
++                            let protected = crate::execution::protected_paths(&self.owner.manifest);
++                            let cancelled = git_cancelled.clone();
++                            tokio::task::spawn_blocking(move || {
++                                lifecycle_git(true, &repository, &protected, &authority.policy, request, &|| {
++                                    !cancelled.load(std::sync::atomic::Ordering::Acquire)
++                                })
++                            })
++                            .await
++                            .map_err(std::io::Error::other)
++                            .and_then(|result| result)
++                        }
++                        Err(error) => Err(std::io::Error::other(error)),
++                    }
++                },
 +                (Some(lead), Some(generation)) if request.operation == "workspace.read" || request.operation.starts_with("process.") => {
 +                    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await;
 +                    match authority {
@@ -15888,8 +15814,11 @@ index 0000000..d5dcd8d
 +    async fn compaction(&self, event: &'static str, input: CompactionLifecycleInput<'_>) {
 +        if lead_thread(input.thread_store) {
 +            if let Some(lead) = input.thread_store.get::<Lead>() {
-+                if let Err(error) = evidence::compact(self, &lead, event == "compaction_start").await {
-+                    self.views.diagnostic(&self.owner, "turn_evidence", Some(error));
++                if let Err(error) =
++                    evidence::compact(self, &lead, event == "compaction_start").await
++                {
++                    self.views
++                        .diagnostic(&self.owner, "turn_evidence", Some(error));
 +                }
 +            }
 +            self.event(
@@ -15912,7 +15841,7 @@ index 0000000..d5dcd8d
 +                self.services.cleanup().await;
 +                self.processes.cleanup();
 +                if let Some(turn) = self.take_turn() {
-+                    self.event("turn_end", json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}))
++                    self.event_with_lead("turn_end", json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}), input.thread_store.get::<Lead>())
 +                        .await;
 +                }
 +            }
@@ -16094,8 +16023,12 @@ index 0000000..d5dcd8d
 +            if !lead_thread(input.thread_store) {
 +                return Vec::new();
 +            }
-+            if let (Some(lead), Some(profile)) = (input.thread_store.get::<Lead>(), input.permission_profile) {
-+                let Ok(mut current) = lead.permission_profile.lock() else { return Vec::new(); };
++            if let (Some(lead), Some(profile)) =
++                (input.thread_store.get::<Lead>(), input.permission_profile)
++            {
++                let Ok(mut current) = lead.permission_profile.lock() else {
++                    return Vec::new();
++                };
 +                *current = profile.clone();
 +            }
 +            self.event_with_lead(
@@ -16401,10 +16334,10 @@ index 0000000..d5dcd8d
 +}
 diff --git a/b/codex-rs/ext/omd/src/platform_mods.rs b/codex-rs/ext/omd/src/platform_mods.rs
 new file mode 100644
-index 0000000..35b96eb
+index 0000000..1db80f0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/platform_mods.rs
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,975 @@
 +use super::*;
 +use codex_omd::ModHost;
 +use codex_omd::ModInputDecision;
@@ -16595,6 +16528,15 @@ index 0000000..35b96eb
 +                        );
 +                    }
 +                    if request.operation.starts_with("git.") {
++                        let profile = profile.as_ref().ok_or_else(|| {
++                            std::io::Error::other("platform_permission_profile_unavailable")
++                        })?;
++                        let authority =
++                            crate::workspace_operations::WorkspaceAuthority::for_platform(
++                                &repository,
++                                profile.clone(),
++                            )
++                            .map_err(std::io::Error::other)?;
 +                        return mods::lifecycle_git(
 +                            matches!(
 +                                name,
@@ -16607,6 +16549,7 @@ index 0000000..35b96eb
 +                            ),
 +                            &repository,
 +                            std::slice::from_ref(&root),
++                            &authority.policy,
 +                            request,
 +                            &|| !cancelled.load(Ordering::Acquire),
 +                        );
@@ -16797,7 +16740,10 @@ index 0000000..35b96eb
 +                    .thread_store
 +                    .get::<PlatformProcesses>()
 +                    .map(|value| value.0.clone()),
-+                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
++                input
++                    .thread_store
++                    .get::<PlatformDataScope>()
++                    .map(|value| (*value).clone()),
 +            )
 +            .await;
 +        })
@@ -16815,7 +16761,10 @@ index 0000000..35b96eb
 +                    .thread_store
 +                    .get::<PlatformProcesses>()
 +                    .map(|value| value.0.clone()),
-+                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
++                input
++                    .thread_store
++                    .get::<PlatformDataScope>()
++                    .map(|value| (*value).clone()),
 +            )
 +            .await;
 +        })
@@ -16833,7 +16782,10 @@ index 0000000..35b96eb
 +                    .thread_store
 +                    .get::<PlatformProcesses>()
 +                    .map(|value| value.0.clone()),
-+                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
++                input
++                    .thread_store
++                    .get::<PlatformDataScope>()
++                    .map(|value| (*value).clone()),
 +            )
 +            .await;
 +            if let Some(processes) = input.thread_store.get::<PlatformProcesses>() {
@@ -16960,7 +16912,10 @@ index 0000000..35b96eb
 +                    .thread_store
 +                    .get::<PlatformProcesses>()
 +                    .map(|value| value.0.clone()),
-+                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
++                input
++                    .thread_store
++                    .get::<PlatformDataScope>()
++                    .map(|value| (*value).clone()),
 +            )
 +            .await;
 +        })
@@ -16982,10 +16937,23 @@ index 0000000..35b96eb
 +                Some(TurnRecord { id, error: None }) => json!({"turn_id":id,"outcome":"completed"}),
 +                None => json!({"outcome":"completed"}),
 +            };
-+            self.event_with_data("turn_end", payload,
-+                input.thread_store.get::<PlatformPermission>().map(|value|value.0.clone()),
-+                input.thread_store.get::<PlatformProcesses>().map(|value|value.0.clone()),
-+                input.thread_store.get::<PlatformDataScope>().map(|value|(*value).clone())).await;
++            self.event_with_data(
++                "turn_end",
++                payload,
++                input
++                    .thread_store
++                    .get::<PlatformPermission>()
++                    .map(|value| value.0.clone()),
++                input
++                    .thread_store
++                    .get::<PlatformProcesses>()
++                    .map(|value| value.0.clone()),
++                input
++                    .thread_store
++                    .get::<PlatformDataScope>()
++                    .map(|value| (*value).clone()),
++            )
++            .await;
 +        })
 +    }
 +}
@@ -17101,7 +17069,10 @@ index 0000000..35b96eb
 +                            .thread_store
 +                            .get::<PlatformProcesses>()
 +                            .map(|value| value.0.clone()),
-+                        input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
++                        input
++                            .thread_store
++                            .get::<PlatformDataScope>()
++                            .map(|value| (*value).clone()),
 +                    )
 +                    .await;
 +                }
@@ -17276,7 +17247,7 @@ index 0000000..35b96eb
 +                                    .ok_or_else(|| std::io::Error::other("data_owner_missing"))?,
 +                            )?;
 +                            data.session_database = Some(scope.database.clone());
-+                        return data.call(
++                            return data.call(
 +                                &request.operation,
 +                                request.arguments,
 +                                &|path| authority.readable(path),
@@ -26242,10 +26213,10 @@ index 0000000..fea75d4
 +}
 diff --git a/b/codex-rs/omd/src/git.rs b/codex-rs/omd/src/git.rs
 new file mode 100644
-index 0000000..abd2ee2
+index 0000000..c15794b
 --- /dev/null
 +++ b/codex-rs/omd/src/git.rs
-@@ -0,0 +1,1085 @@
+@@ -0,0 +1,1190 @@
 +use serde_json::Value;
 +use serde_json::json;
 +use sha2::Digest;
@@ -26268,6 +26239,7 @@ index 0000000..abd2ee2
 +    "git.log",
 +    "git.diff",
 +    "git.branches",
++    "git.switch_preview",
 +    "git.stage",
 +    "git.unstage",
 +    "git.commit",
@@ -26288,7 +26260,7 @@ index 0000000..abd2ee2
 +pub fn is_read(operation: &str) -> bool {
 +    matches!(
 +        operation,
-+        "git.status" | "git.log" | "git.diff" | "git.branches"
++        "git.status" | "git.log" | "git.diff" | "git.branches" | "git.switch_preview"
 +    )
 +}
 +
@@ -26297,15 +26269,38 @@ index 0000000..abd2ee2
 +    pub protected: &'a [PathBuf],
 +    pub backups: Option<&'a Path>,
 +    pub write: Result<(), &'static str>,
-+    pub command: Option<&'a GitCommand>,
++    pub command: &'a GitCommand,
 +    pub writable: &'a dyn Fn(&Path) -> bool,
 +}
 +
 +pub type GitCommand = dyn Fn(Vec<String>) -> Result<Command, String>;
 +
++pub fn sandboxed(
++    executable: &Path,
++    mut args: Vec<String>,
++    protected: &[PathBuf],
++    cwd: &Path,
++) -> Result<Command, String> {
++    if args.first().map(String::as_str) != Some("-p") || args.len() < 2 {
++        return Err("git_sandbox_unavailable".to_owned());
++    }
++    for root in protected {
++        for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
++            let literal = serde_json::to_string(&path.to_string_lossy())
++                .map_err(|error| error.to_string())?;
++            args[1].push_str(&format!(
++                "\n(deny file-write* (literal {literal}) (subpath {literal}))"
++            ));
++        }
++    }
++    let mut command = Command::new(executable);
++    command.args(args).current_dir(cwd);
++    Ok(command)
++}
++
 +struct Repository<'a> {
 +    path: PathBuf,
-+    command: Option<&'a GitCommand>,
++    command: &'a GitCommand,
 +}
 +
 +impl std::ops::Deref for Repository<'_> {
@@ -26415,6 +26410,7 @@ index 0000000..abd2ee2
 +        "git.log" => log(&root, &arguments, active),
 +        "git.diff" => diff(access, &root, &arguments, active),
 +        "git.branches" => branches(&root, active),
++        "git.switch_preview" => switch_preview(&root, &arguments, active),
 +        "git.stage" | "git.unstage" => index_update(access, &root, operation, &arguments, active),
 +        "git.commit" => commit(access, &root, &arguments, active),
 +        "git.discard" => discard(access, &root, &arguments, active),
@@ -26453,14 +26449,7 @@ index 0000000..abd2ee2
 +        .map(str::to_owned),
 +    );
 +    argv.extend(args.iter().map(|arg| (*arg).to_owned()));
-+    let mut command = match root.command {
-+        Some(build) => build(argv)?,
-+        None => {
-+            let mut command = Command::new(&argv[0]);
-+            command.args(&argv[1..]);
-+            command
-+        }
-+    };
++    let mut command = (root.command)(argv)?;
 +    #[cfg(unix)]
 +    {
 +        use std::os::unix::process::CommandExt;
@@ -26842,22 +26831,17 @@ index 0000000..abd2ee2
 +}
 +
 +fn scoped(root: &Path, status: &Status, paths: &[String]) -> String {
-+    let wanted = paths.iter().collect::<BTreeSet<_>>();
-+    let covered = |entry: &&Entry| {
-+        wanted.contains(&entry.path)
-+            || wanted
-+                .iter()
-+                .any(|path| entry.path.starts_with(&format!("{path}/")))
-+    };
-+    let clean = paths
++    let prefixes = paths
 +        .iter()
-+        .filter(|path| {
-+            !status
-+                .entries
-+                .iter()
-+                .any(|entry| entry.path == **path || entry.path.starts_with(&format!("{path}/")))
-+        })
-+        .cloned()
++        .map(|path| format!("{path}/"))
++        .collect::<Vec<_>>();
++    let under = |entry: &Entry, index: usize| {
++        entry.path == paths[index] || entry.path.starts_with(&prefixes[index])
++    };
++    let covered = |entry: &&Entry| (0..paths.len()).any(|index| under(entry, index));
++    let clean = (0..paths.len())
++        .filter(|index| !status.entries.iter().any(|entry| under(entry, *index)))
++        .map(|index| paths[index].clone())
 +        .collect::<Vec<_>>();
 +    fingerprint(
 +        root,
@@ -26907,7 +26891,7 @@ index 0000000..abd2ee2
 +        .map(|entry| {
 +            json!({"path": entry.path, "orig_path": entry.orig_path, "index": entry.index.to_string(),
 +                "worktree": entry.worktree.to_string(), "conflicted": entry.conflicted,
-+                "fingerprint": scoped(root, &status, std::slice::from_ref(&entry.path))})
++                "fingerprint": fingerprint(root, &status.head, false, std::iter::once(entry), &[])})
 +        })
 +        .collect::<Vec<_>>();
 +    let fingerprint = if scope.is_empty() {
@@ -26994,6 +26978,7 @@ index 0000000..abd2ee2
 +    let scope = std::slice::from_ref(&path);
 +    for _ in 0..2 {
 +        let before = read_status(root, scope, active)?;
++        let expected = scoped(root, &before, scope);
 +        let untracked = before
 +            .entries
 +            .iter()
@@ -27028,7 +27013,7 @@ index 0000000..abd2ee2
 +        };
 +        let after = read_status(root, scope, active)?;
 +        let fingerprint = scoped(root, &after, scope);
-+        if scoped(root, &before, scope) != fingerprint {
++        if expected != fingerprint {
 +            continue;
 +        }
 +        let truncated = output.truncated || output.stdout.len() > DIFF_LIMIT;
@@ -27269,13 +27254,8 @@ index 0000000..abd2ee2
 +    Ok(json!({"backup": backup, "fingerprint": scoped(root, &after, &paths)}))
 +}
 +
-+fn switch(
-+    access: &GitAccess<'_>,
-+    root: &Repository<'_>,
-+    arguments: &Value,
-+    active: &dyn Fn() -> bool,
-+) -> Result<Value, String> {
-+    let branch = arguments
++fn branch_name(arguments: &Value) -> Result<&str, String> {
++    arguments
 +        .get("branch")
 +        .and_then(Value::as_str)
 +        .filter(|branch| {
@@ -27284,21 +27264,114 @@ index 0000000..abd2ee2
 +                && !branch.starts_with('-')
 +                && !branch.chars().any(|c| c.is_control() || c.is_whitespace())
 +        })
-+        .ok_or("invalid_git_branch")?;
-+    let expected = expected(arguments)?;
-+    let reference = format!("refs/heads/{branch}");
-+    if read(
++        .ok_or_else(|| "invalid_git_branch".to_owned())
++}
++
++fn branch_target(
++    root: &Repository<'_>,
++    branch: &str,
++    active: &dyn Fn() -> bool,
++) -> Result<String, String> {
++    let reference = format!("refs/heads/{branch}^{{commit}}");
++    let output = read(
 +        root,
-+        &["show-ref", "--verify", "--quiet", &reference],
++        &[
++            "rev-parse",
++            "--verify",
++            "--quiet",
++            "--end-of-options",
++            &reference,
++        ],
 +        active,
-+    )?
-+    .code
-+        != Some(0)
-+    {
++    )?;
++    let oid = String::from_utf8_lossy(&output.stdout).trim().to_owned();
++    if output.code != Some(0) || oid.is_empty() {
 +        return Err(format!("unknown_git_branch: {branch}"));
 +    }
++    Ok(oid)
++}
++
++fn switch_fingerprint(root: &Path, status: &Status, branch: &str, target: &str) -> Option<String> {
++    let whole = whole_fingerprint(root, status)?;
++    let mut hash = Sha256::new();
++    hash.update(b"omd-git-switch-v1\0");
++    for part in [whole.as_str(), branch, target] {
++        hash.update(part);
++        hash.update(b"\0");
++    }
++    Some(format!("{:x}", hash.finalize()))
++}
++
++fn switch_preview(
++    root: &Repository<'_>,
++    arguments: &Value,
++    active: &dyn Fn() -> bool,
++) -> Result<Value, String> {
++    let branch = branch_name(arguments)?;
++    let target = branch_target(root, branch, active)?;
++    let status = read_status(root, &[], active)?;
++    if status.head.branch.as_deref() == Some(branch) {
++        return Err(format!("git_branch_current: {branch}"));
++    }
++    let output = match status.head.oid.as_deref() {
++        Some(head) => checked(
++            read(
++                root,
++                &[
++                    "diff",
++                    "--name-status",
++                    "--no-renames",
++                    "--no-ext-diff",
++                    "-z",
++                    head,
++                    &target,
++                    "--",
++                ],
++                active,
++            )?,
++            "diff",
++        )?,
++        None => checked(
++            read(
++                root,
++                &["ls-tree", "-r", "--name-only", "-z", &target],
++                active,
++            )?,
++            "ls-tree",
++        )?,
++    };
++    let text = String::from_utf8_lossy(&output.stdout).into_owned();
++    let mut fields = text.split('\0').filter(|field| !field.is_empty());
++    let mut changes = Vec::new();
++    while let Some(field) = fields.next() {
++        let (kind, path) = if status.head.oid.is_some() {
++            (field, fields.next().unwrap_or_default())
++        } else {
++            ("A", field)
++        };
++        changes
++            .push(json!({"path": path, "status": kind.chars().next().unwrap_or('M').to_string()}));
++    }
++    let local = status.entries.len();
++    Ok(
++        json!({"branch": branch, "from": status.head.oid, "to": target,
++        "changes": changes.iter().take(ENTRY_LIMIT).collect::<Vec<_>>(),
++        "truncated": output.truncated || changes.len() > ENTRY_LIMIT, "local_changes": local,
++        "fingerprint": switch_fingerprint(root, &status, branch, &target)}),
++    )
++}
++
++fn switch(
++    access: &GitAccess<'_>,
++    root: &Repository<'_>,
++    arguments: &Value,
++    active: &dyn Fn() -> bool,
++) -> Result<Value, String> {
++    let branch = branch_name(arguments)?;
++    let expected = expected(arguments)?;
++    let target = branch_target(root, branch, active)?;
 +    let before = read_status(root, &[], active)?;
-+    for revision in std::iter::once(reference.as_str()).chain(before.head.oid.as_deref()) {
++    for revision in std::iter::once(target.as_str()).chain(before.head.oid.as_deref()) {
 +        let entries = listed_paths(checked(
 +            read(
 +                root,
@@ -27312,11 +27385,11 @@ index 0000000..abd2ee2
 +    if before.entries.iter().any(|entry| entry.conflicted) {
 +        return Err("git_conflicts_unresolved".to_owned());
 +    }
-+    fresh(expected, whole_fingerprint(root, &before))?;
++    fresh(expected, switch_fingerprint(root, &before, branch, &target))?;
 +    checked(
 +        run(
 +            root,
-+            &["switch", "--no-guess", branch],
++            &["switch", "--no-guess", "--no-overwrite-ignore", branch],
 +            None,
 +            false,
 +            TIMEOUT,
@@ -27325,6 +27398,9 @@ index 0000000..abd2ee2
 +        "switch",
 +    )?;
 +    let after = read_status(root, &[], active)?;
++    if after.head.oid.as_deref() != Some(target.as_str()) {
++        return Err("stale_git_state: the branch moved during the switch; review HEAD".to_owned());
++    }
 +    Ok(json!({"head": head_json(&after.head), "fingerprint": whole_fingerprint(root, &after)}))
 +}
 +
@@ -27333,10 +27409,10 @@ index 0000000..abd2ee2
 +mod tests;
 diff --git a/b/codex-rs/omd/src/git_tests.rs b/codex-rs/omd/src/git_tests.rs
 new file mode 100644
-index 0000000..b2db494
+index 0000000..778ff63
 --- /dev/null
 +++ b/codex-rs/omd/src/git_tests.rs
-@@ -0,0 +1,593 @@
+@@ -0,0 +1,695 @@
 +use super::*;
 +use serde_json::json;
 +use std::path::Path;
@@ -27363,6 +27439,12 @@ index 0000000..b2db494
 +        "{args:?}: {}",
 +        String::from_utf8_lossy(&status.stderr)
 +    );
++}
++
++fn plain(argv: Vec<String>) -> Result<Command, String> {
++    let mut command = Command::new(&argv[0]);
++    command.args(&argv[1..]);
++    Ok(command)
 +}
 +
 +fn repository() -> tempfile::TempDir {
@@ -27406,7 +27488,7 @@ index 0000000..b2db494
 +            protected: &self.protected,
 +            backups: Some(self.backups.path()),
 +            write: Ok(()),
-+            command: None,
++            command: &plain,
 +            writable: &|_| true,
 +        };
 +        call(&access, operation, arguments, &|| true)
@@ -27621,16 +27703,18 @@ index 0000000..b2db494
 +    let branches = fixture.call("git.branches", Value::Null).expect("branches");
 +    assert_eq!(branches["current"], "main");
 +    assert_eq!(branches["local"], json!(["feature", "main"]));
-+    let whole = fixture.call("git.status", Value::Null).unwrap()["fingerprint"].clone();
++    let preview = |branch: &str| fixture.call("git.switch_preview", json!({"branch": branch}));
 +    assert!(
-+        fixture
-+            .call(
-+                "git.switch",
-+                json!({"branch": "missing", "fingerprint": whole})
-+            )
++        preview("missing")
 +            .unwrap_err()
 +            .starts_with("unknown_git_branch")
 +    );
++    assert!(
++        preview("main")
++            .unwrap_err()
++            .starts_with("git_branch_current")
++    );
++    let whole = preview("feature").unwrap()["fingerprint"].clone();
 +    assert_eq!(
 +        fixture
 +            .call(
@@ -27650,15 +27734,109 @@ index 0000000..b2db494
 +            .unwrap_err()
 +            .starts_with("stale_git_state")
 +    );
-+    let whole = fixture.call("git.status", Value::Null).unwrap()["fingerprint"].clone();
++    let preview = preview("feature").unwrap();
++    assert_eq!(preview["local_changes"], 1);
++    assert_eq!(preview["changes"], json!([]));
 +    let result = fixture
 +        .call(
 +            "git.switch",
-+            json!({"branch": "feature", "fingerprint": whole}),
++            json!({"branch": "feature", "fingerprint": preview["fingerprint"]}),
 +        )
 +        .expect("switch");
 +    assert_eq!(result["head"]["branch"], "feature");
 +    assert!(root.join("new.txt").exists());
++}
++
++#[test]
++fn switch_preview_binds_the_destination_commit_and_its_changes() {
++    let fixture = Fixture::new();
++    let root = fixture.root();
++    git(root, &["switch", "--quiet", "-c", "feature"]);
++    std::fs::write(root.join("b.txt"), "feature\n").expect("write");
++    std::fs::write(root.join("c.txt"), "added\n").expect("write");
++    git(root, &["add", "."]);
++    git(root, &["commit", "--quiet", "-m", "feature"]);
++    git(root, &["switch", "--quiet", "main"]);
++    let preview = fixture
++        .call("git.switch_preview", json!({"branch": "feature"}))
++        .expect("preview");
++    assert_eq!(
++        preview["changes"],
++        json!([{"path": "b.txt", "status": "M"}, {"path": "c.txt", "status": "A"}])
++    );
++    assert_eq!(preview["local_changes"], 0);
++    assert_ne!(preview["from"], preview["to"]);
++    git(root, &["branch", "--force", "feature", "main"]);
++    assert!(
++        fixture
++            .call(
++                "git.switch",
++                json!({"branch": "feature", "fingerprint": preview["fingerprint"]})
++            )
++            .unwrap_err()
++            .starts_with("stale_git_state")
++    );
++    assert_eq!(
++        fixture.call("git.status", Value::Null).unwrap()["head"]["branch"],
++        "main"
++    );
++}
++
++#[test]
++fn switch_refuses_to_overwrite_ignored_files() {
++    let fixture = Fixture::new();
++    let root = fixture.root();
++    git(root, &["switch", "--quiet", "-c", "feature"]);
++    std::fs::write(root.join("secret.env"), "tracked\n").expect("write");
++    git(root, &["add", "secret.env"]);
++    git(root, &["commit", "--quiet", "-m", "track"]);
++    git(root, &["switch", "--quiet", "main"]);
++    std::fs::write(root.join(".gitignore"), "secret.env\n").expect("write");
++    git(root, &["add", ".gitignore"]);
++    git(root, &["commit", "--quiet", "-m", "ignore"]);
++    std::fs::write(root.join("secret.env"), "local\n").expect("write");
++    let preview = fixture
++        .call("git.switch_preview", json!({"branch": "feature"}))
++        .expect("preview");
++    let error = fixture
++        .call(
++            "git.switch",
++            json!({"branch": "feature", "fingerprint": preview["fingerprint"]}),
++        )
++        .unwrap_err();
++    assert!(error.starts_with("git_failed: switch"), "{error}");
++    assert_eq!(
++        std::fs::read_to_string(root.join("secret.env")).unwrap(),
++        "local\n"
++    );
++}
++
++#[test]
++fn sandboxed_git_requires_a_profile_and_denies_protected_writes() {
++    let protected = [PathBuf::from("/private/tmp/omd \"store\"")];
++    assert_eq!(
++        sandboxed(
++            Path::new("/usr/bin/sandbox-exec"),
++            vec!["git".into()],
++            &protected,
++            Path::new("/")
++        )
++        .unwrap_err(),
++        "git_sandbox_unavailable"
++    );
++    let command = sandboxed(
++        Path::new("/usr/bin/sandbox-exec"),
++        vec!["-p".into(), "(version 1)".into(), "--".into(), "git".into()],
++        &protected,
++        Path::new("/"),
++    )
++    .unwrap();
++    let args = command
++        .get_args()
++        .map(|arg| arg.to_string_lossy().into_owned())
++        .collect::<Vec<_>>();
++    assert!(args[1].contains(r#"(deny file-write* (literal "/private/tmp/omd \"store\"") (subpath "/private/tmp/omd \"store\""))"#));
++    assert_eq!(&args[2..], ["--", "git"]);
 +}
 +
 +#[test]
@@ -27691,7 +27869,7 @@ index 0000000..b2db494
 +        protected: &[],
 +        backups: None,
 +        write: Err("git_write_requires_user_command"),
-+        command: None,
++        command: &plain,
 +        writable: &|_| false,
 +    };
 +    assert_eq!(
@@ -27705,13 +27883,13 @@ index 0000000..b2db494
 +        "git_write_requires_user_command"
 +    );
 +    assert!(call(&access, "git.status", Value::Null, &|| true).is_ok());
-+    let plain = tempfile::tempdir().expect("tempdir");
++    let empty = tempfile::tempdir().expect("tempdir");
 +    let access = GitAccess {
-+        repository: plain.path(),
++        repository: empty.path(),
 +        protected: &[],
 +        backups: None,
 +        write: Ok(()),
-+        command: None,
++        command: &plain,
 +        writable: &|_| true,
 +    };
 +    assert_eq!(
@@ -27756,7 +27934,7 @@ index 0000000..b2db494
 +    let result = run(
 +        &Repository {
 +            path: fixture.root().to_path_buf(),
-+            command: None,
++            command: &plain,
 +        },
 +        &["commit", "-m", "timeout"],
 +        None,
@@ -27788,7 +27966,7 @@ index 0000000..b2db494
 +        protected: &fixture.protected,
 +        backups: Some(fixture.backups.path()),
 +        write: Ok(()),
-+        command: None,
++        command: &plain,
 +        writable: &allowed,
 +    };
 +    let index = std::fs::read(fixture.root().join(".git/index")).unwrap();
@@ -27847,7 +28025,7 @@ index 0000000..b2db494
 +        protected: &[],
 +        backups: None,
 +        write: Ok(()),
-+        command: None,
++        command: &plain,
 +        writable: &|_| true,
 +    };
 +    assert_eq!(
@@ -27882,7 +28060,7 @@ index 0000000..b2db494
 +        protected: &[],
 +        backups: None,
 +        write: Ok(()),
-+        command: None,
++        command: &plain,
 +        writable: &allowed,
 +    };
 +    let args = json!({"paths":["nested"], "fingerprint":status["fingerprint"]});
@@ -27918,7 +28096,7 @@ index 0000000..b2db494
 +    let result = run(
 +        &Repository {
 +            path: fixture.root().to_path_buf(),
-+            command: None,
++            command: &plain,
 +        },
 +        &["commit", "-m", "cancelled"],
 +        None,
@@ -35925,10 +36103,10 @@ index 0000000..5af967c
 +}
 diff --git a/b/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 0000000..5d109e3
+index 0000000..24f41fb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,156 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -35969,8 +36147,10 @@ index 0000000..5d109e3
 +                Ok("sidecars")
 +            }
 +            "workflow.status" | "workflow.restrict" => Ok("workflow"),
-+            "git.status" | "git.log" | "git.diff" | "git.branches" | "git.stage"
-+            | "git.unstage" | "git.commit" | "git.discard" | "git.switch" => Ok("git"),
++            "git.status" | "git.log" | "git.diff" | "git.branches" | "git.switch_preview"
++            | "git.stage" | "git.unstage" | "git.commit" | "git.discard" | "git.switch" => {
++                Ok("git")
++            }
 +            "mods.service" => Ok("services"),
 +            _ => Err(failure(format!(
 +                "unsupported_host_operation: {}",
@@ -40445,10 +40625,10 @@ index 0000000..4732142
 +}
 diff --git a/b/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 0000000..1bfa25b
+index 0000000..d36e2a4
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,2780 @@
+@@ -0,0 +1,2793 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -40595,6 +40775,7 @@ index 0000000..1bfa25b
 +    "git.log",
 +    "git.diff",
 +    "git.branches",
++    "git.switch_preview",
 +    "git.stage",
 +    "git.unstage",
 +    "git.commit",
@@ -42508,7 +42689,10 @@ index 0000000..1bfa25b
 +            if event == "terminal" && !reply.value.is_null() {
 +                if replaces("terminal") {
 +                    ModView::parse(reply.value.clone())?;
-+                } else if matches!(loaded.package.api.as_str(), "0.1.0-experimental.8" | MOD_API_VERSION) {
++                } else if matches!(
++                    loaded.package.api.as_str(),
++                    "0.1.0-experimental.8" | MOD_API_VERSION
++                ) {
 +                    ModViewPatch::parse(reply.value.clone())?;
 +                } else {
 +                    return Err(failure("exclusive_replacement_registration_required"));
@@ -42560,8 +42744,17 @@ index 0000000..1bfa25b
 +                current
 +                    .telemetry
 +                    .record(self.generation, event, name, elapsed, "error");
-+                if !error.to_string().starts_with("state_conflict") {
-+                    current.error = Some(error.to_string());
++                let message = error.to_string();
++                if ![
++                    "state_conflict",
++                    "host_receipt_limit",
++                    "host_call_limit",
++                    "callback_execution_budget",
++                ]
++                .iter()
++                .any(|transient| message.starts_with(transient))
++                {
++                    current.error = Some(message);
 +                }
 +                Err(error)
 +            }
@@ -49257,10 +49450,10 @@ index 0000000..aef9c99
 +}
 diff --git a/b/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 0000000..217629d
+index 0000000..83c0454
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2617 @@
+@@ -0,0 +1,2645 @@
 +use codex_omd::MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
 +use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
@@ -50025,6 +50218,34 @@ index 0000000..217629d
 +        json!({"failed":true})
 +    );
 +    assert_eq!(calls, 1);
++}
++
++#[test]
++fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
++    let source = "export default api => api.command('run', arg => { if (arg === 'small') return 'ok'; api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
++    let (temp, _, _) = fixture(source, &["commands", "task"]);
++    let mut runtime = host(&temp);
++    let generation = runtime.generation();
++    let error = runtime
++        .invoke_with(
++            "fixture",
++            generation,
++            "command",
++            "run",
++            json!("large"),
++            || true,
++            |_| Ok(json!({"text": "x".repeat(140_000)})),
++        )
++        .unwrap_err();
++    assert_eq!(error.to_string(), "host_receipt_limit");
++    assert_eq!(
++        runtime
++            .invoke_with("fixture", generation, "command", "run", json!("small"), || true, |_| {
++                Ok(Value::Null)
++            })
++            .unwrap(),
++        json!("ok")
++    );
 +}
 +
 +#[test]
@@ -59584,10 +59805,10 @@ index a08ccd8..ecabd5a 100644
  mod pager_overlay;
 diff --git a/b/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 0000000..f41b578
+index 0000000..ee9b4d6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,370 @@
+@@ -0,0 +1,361 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -59797,7 +60018,7 @@ index 0000000..f41b578
 +            use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
 +            use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
 +            use codex_sandboxing::seatbelt::create_seatbelt_command_args;
-+            let mut args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
++            let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
 +                command: argv,
 +                file_system_sandbox_policy: &scope,
 +                network_sandbox_policy:
@@ -59809,21 +60030,12 @@ index 0000000..f41b578
 +                network: None,
 +                extra_allow_unix_sockets: &[],
 +            })?;
-+            if args.first().map(String::as_str) != Some("-p") || args.len() < 2 {
-+                return Err("git_sandbox_unavailable".to_owned());
-+            }
-+            for root in &protected_roots {
-+                for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
-+                    let literal = serde_json::to_string(&path.to_string_lossy())
-+                        .map_err(|error| error.to_string())?;
-+                    args[1].push_str(&format!(
-+                        "\n(deny file-write* (literal {literal}) (subpath {literal}))"
-+                    ));
-+                }
-+            }
-+            let mut command = std::process::Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE);
-+            command.args(args).current_dir(&cwd);
-+            Ok(command)
++            codex_omd::git::sandboxed(
++                std::path::Path::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE),
++                args,
++                &protected_roots,
++                &cwd,
++            )
 +        }
 +        #[cfg(not(target_os = "macos"))]
 +        {
@@ -59840,7 +60052,7 @@ index 0000000..f41b578
 +        } else {
 +            Err("git_write_denied_by_permissions")
 +        },
-+        command: Some(&sandbox),
++        command: &sandbox,
 +        writable: &|path| policy.can_write_local_path_with_cwd(path, &paths.repository),
 +    };
 +    codex_omd::git::call(&access, &call.operation, call.arguments, &|| true)

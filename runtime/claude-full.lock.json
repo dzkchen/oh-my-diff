@@ -12,14 +12,14 @@
     ],
     "extension_type": "mod",
     "files": {
-      "index.ts": "9f2e177d915753642a1d2d1a4492d479f5a375c57ae4ce913a904baed319df2d",
+      "index.ts": "b1b8e0b9d7df76a1515cf13d868132341e810c5630b647e032dcfd38ad7536c7",
       "mod.json": "71da2882ecfd4c5e4be6625c281134665710cd987b98b639c548e266889f9be2",
-      "models.json": "6066d22d0a8074affe62d644f14d33b474e1f24731be90bd58357e3879b2b36c",
-      "setup.mjs": "486200df576ed2a65085a78f97061d8de447d1c6cb7e2cd138a6036d3cb7b892",
-      "transport.mjs": "730e59e2b2227e1a5ceae74ad8cf1955fe89bdadcd24b9fef8e44f4e06b4c793"
+      "models.json": "7204f10c94a4f23a764962a36f31b623765594d283a854008a62aef65854636b",
+      "setup.mjs": "ea055e697c84a2e57574755c6a0aea1c23ec88f79652d72565458b977f37c601",
+      "transport.mjs": "edd6044607d5d0af4be5c65ebcd819c4f91bda7a5f4308a5ac6ed03fc74aa3d5"
     },
     "id": "omd_claude_cli",
-    "package_sha256": "d6b8dd2e869c1a053025f8d8c6b744f0034d7ee58c75b644bca24610208f8cb6",
+    "package_sha256": "02825b700c5b1cb0bc48dd9cb9189457cf553a6630ca05603a50b0790cb90fc1",
     "source": "mods/first-party/omd_claude_cli",
     "version": "0.1.0-preview.1"
   },

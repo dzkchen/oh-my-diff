@@ -929,7 +929,7 @@
       "replace": null,
       "timing": "inside an approved mod callback; cleanup on disable, reload, cancellation, or thread stop",
       "ownership": "host: executable identity, read-only sandbox, restricted network, process and message limits, ownership and cleanup; mod: server selection and protocol messages",
-      "limits": "at most eight sessions, five per mod, 4 MiB messages, bounded waits and output; processes cannot write the repository directly",
+      "limits": "at most eight sessions, five per mod, 4 MiB messages, bounded waits and output, and the callback's 128 KiB receipt budget for exchanged messages; processes cannot write the repository directly",
       "native": "native tools may launch processes under their own configured task permission boundary",
       "covers": {
         "capabilities": [
@@ -1005,12 +1005,12 @@
       "id": "tool.git_operations",
       "group": "tool",
       "decision": "Repository status, history, diffs and user-invoked source-control changes",
-      "observe": "`git.status`, `git.log`, `git.diff` and `git.branches` with per-path and staged fingerprints",
+      "observe": "`git.status`, `git.log`, `git.diff`, `git.branches` and `git.switch_preview` with per-path, staged and switch fingerprints",
       "alter": "`git.stage`, `git.unstage`, `git.commit`, `git.discard` and `git.switch` against a fingerprint the mod previously read",
       "replace": null,
       "timing": "reads in lifecycle events and mod commands; writes only in user-invoked mod commands",
       "ownership": "host: fixed argument lists, repository and path containment, permissions, freshness, backups, timeouts and output limits; mod: presentation, selection, previews and confirmation flow",
-      "limits": "enabled and platform modes only; refused when the session cannot write the workspace; stale fingerprints fail; discard backs up first and refuses conflicts; switch never forces; 500 entries, 50 commits, 64 KiB diffs, 100 branches",
+      "limits": "enabled and platform modes only; refused when the session cannot write the workspace; stale fingerprints fail; discard backs up first and refuses conflicts; switch never forces or overwrites ignored files; 500 entries, 50 commits, 64 KiB diffs, 100 branches",
       "native": "native plugins use Codex's own shell and approval flow",
       "covers": {
         "capabilities": [
@@ -1023,6 +1023,7 @@
           "git.log",
           "git.diff",
           "git.branches",
+          "git.switch_preview",
           "git.stage",
           "git.unstage",
           "git.commit",

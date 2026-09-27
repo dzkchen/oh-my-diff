@@ -38,6 +38,24 @@ test('Claude mod translates host requests and replays host tool results', () => 
   assert.equal(response.at(-1).response.usage.omd_subscription_charge, 'unknown');
 });
 
+test('Claude mod folds mid-conversation developer messages into user frames', () => {
+  const developer = text => ({ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] });
+  const translated = translateRequest({ ...prompt, input: [...prompt.input,
+    { type: 'function_call', name: 'exec_command', call_id: 'call_1', arguments: '{"cmd":"pwd"}' },
+    developer('Approvals changed.'),
+    { type: 'function_call_output', call_id: 'call_1', output: '/repo' },
+    developer('Model switched.'),
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue.' }] }] }, model);
+  assert.equal(translated.system, 'Follow user instructions.');
+  assert.deepEqual(translated.frames.map(frame => frame.type), ['user', 'assistant', 'user']);
+  assert.deepEqual(translated.frames.at(-1).message.content, [
+    { type: 'tool_result', tool_use_id: 'call_1', content: '/repo', is_error: false },
+    { type: 'text', text: '<developer_message>\nApprovals changed.\n</developer_message>' },
+    { type: 'text', text: '<developer_message>\nModel switched.\n</developer_message>' },
+    { type: 'text', text: 'Continue.' },
+  ]);
+});
+
 test('Claude mod rejects route drift and unmapped tools', () => {
   assert.throws(() => translateRequest({ ...prompt, model: 'other' }, model));
   assert.throws(() => translateRequest({ ...prompt, input: [...prompt.input,
@@ -111,6 +129,39 @@ test('one upstream request is admitted and a second is refused', async () => {
     assert.equal(relay.denied, 1);
   } finally {
     relay.abort();
+    await new Promise(resolve => upstream.close(resolve));
+  }
+});
+
+test('a malformed upstream stream ends the relayed response instead of hanging', async () => {
+  const upstream = createServer((incoming, response) => {
+    incoming.resume();
+    incoming.on('end', () => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.write('event: message_start\ndata: {not json}\n\n');
+    });
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const relay = new Relay(`http://127.0.0.1:${upstream.address().port}`);
+  await relay.listen();
+  try {
+    const outcome = await Promise.race([
+      new Promise(resolve => {
+        const outgoing = request(new URL(`${relay.url}/v1/messages`), { method: 'POST' }, response => {
+          response.resume();
+          response.on('error', () => resolve('closed'));
+          response.on('close', () => resolve('closed'));
+        });
+        outgoing.on('error', () => resolve('closed'));
+        outgoing.end('{}');
+      }),
+      new Promise(resolve => setTimeout(() => resolve('hung'), 3000)),
+    ]);
+    assert.equal(outcome, 'closed');
+    assert.equal(relay.failure, 'Error');
+  } finally {
+    relay.abort();
+    upstream.closeAllConnections();
     await new Promise(resolve => upstream.close(resolve));
   }
 });

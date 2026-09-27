@@ -131,6 +131,7 @@ export interface TerminalPatch {
 export interface GitHead { oid: string | null; branch: string | null; detached: boolean; upstream: string | null; ahead: number; behind: number }
 export interface GitEntry { path: string; orig_path: string | null; index: string; worktree: string; conflicted: boolean; fingerprint: string }
 export interface GitStatus { head: GitHead; entries: GitEntry[]; truncated: boolean; fingerprint: string | null; staged_fingerprint: string }
+export interface GitSwitchPreview { branch: string; from: string | null; to: string; changes: { path: string; status: string }[]; truncated: boolean; local_changes: number; fingerprint: string | null }
 export interface GitCommit { oid: string; parents: string[]; refs: string; subject: string }
 export type CommandResult = Json | { display?: string; insert?: string; submit?: string };
 export type CompactionDecision = number | { threshold?: number; prompt?: string } | null;
@@ -195,7 +196,7 @@ export interface HostOperations {
   'workspace.transaction': { arguments: { expected: Record<string, string | null>; writes: Record<string, string>; renames?: { old: string; new: string }[] }; result: { files: Record<string, string | null> } };
   'workspace.request_rename': { arguments: { old: string; new: string }; result: { status: 'renamed'; files: Record<string, string | null> } | { status: 'fallback'; reason: string } };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
-  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; transport?: 'stdio' | 'unix_dap' | 'stdio_dap' }; result: { session: string; running: true } };
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; transport?: 'stdio' | 'stdio_dap' }; result: { session: string; running: true } };
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -223,6 +224,7 @@ export interface HostOperations {
   'git.log': { arguments: null | { limit?: number }; result: { commits: GitCommit[]; truncated: boolean } };
   'git.diff': { arguments: { path: string; staged?: boolean }; result: { text: string; binary: boolean; truncated: boolean; fingerprint: string } };
   'git.branches': { arguments: null; result: { current: string | null; local: string[]; truncated: boolean } };
+  'git.switch_preview': { arguments: { branch: string }; result: GitSwitchPreview };
   'git.stage': { arguments: { paths: string[]; fingerprint: string }; result: { fingerprint: string; staged_fingerprint: string } };
   'git.unstage': { arguments: { paths: string[]; fingerprint: string }; result: { fingerprint: string; staged_fingerprint: string } };
   'git.commit': { arguments: { message: string; fingerprint: string }; result: { oid: string; staged_fingerprint: string } };

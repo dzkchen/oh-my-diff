@@ -28,7 +28,8 @@
       {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 2}},
       {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 2}},
       {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 2}},
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 3}}
+      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 3}},
+      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 1}}
     ],
     "agents.spawn": [
       {"result": {"handle": "a", "route": "sol", "permissions": "read_only"}},
@@ -40,7 +41,9 @@
       {"result": {"handle": "g", "route": "sol", "permissions": "read_only"}},
       {"result": {"handle": "h", "route": "astra", "permissions": "isolated_worktree"}},
       {"result": {"handle": "i", "route": "sol", "permissions": "read_only"}},
-      {"error": "native_worker_limit"}
+      {"error": "native_worker_limit"},
+      {"result": {"handle": "j", "route": "astra", "permissions": "isolated_worktree"}},
+      {"result": {"handle": "k", "route": "astra", "permissions": "isolated_worktree"}}
     ],
     "agents.wait": [
       {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"found\"},\"sources\":[{\"ref\":\"src/a.rs:1\",\"why\":\"defines it\"}]}", "consumed": false, "evidence": {"ref": "native-thread:a", "sha256": "a"}}},
@@ -50,16 +53,22 @@
       {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"resumed\"},\"sources\":[{\"ref\":\"src/a.rs:1\",\"why\":\"checked again\"}]}", "consumed": false, "evidence": {"ref": "native-thread:e", "sha256": "e"}}},
       {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"good\"},\"sources\":[{\"ref\":\"src/a.rs:1\",\"why\":\"inspected\"}]}", "consumed": false, "evidence": {"ref": "native-thread:f", "sha256": "f"}}},
       {"result": {"status": "completed", "text": "{\"result\":{\"answer\":17},\"sources\":[{\"ref\":\"src/b.rs:1\",\"why\":\"inspected\"}]}", "consumed": false, "evidence": {"ref": "native-thread:g", "sha256": "g"}}},
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"edited\"},\"sources\":[{\"ref\":\"src/b.rs:1\",\"why\":\"changed\"}]}", "consumed": false, "evidence": {"ref": "native-thread:h", "sha256": "h"}}}
+      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"edited\"},\"sources\":[{\"ref\":\"src/b.rs:1\",\"why\":\"changed\"}]}", "consumed": false, "evidence": {"ref": "native-thread:h", "sha256": "h"}}},
+      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"edited\"},\"sources\":[{\"ref\":\"src/j.rs:1\",\"why\":\"changed it\"}]}", "consumed": false, "evidence": {"ref": "native-thread:j", "sha256": "j"}}},
+      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"edited\"},\"sources\":[{\"ref\":\"src/k.rs:1\",\"why\":\"changed it\"}]}", "consumed": false, "evidence": {"ref": "native-thread:k", "sha256": "k"}}}
     ],
     "agents.result": [
       {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:a", "sha256": "a"}}},
       {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:b", "sha256": "b"}}},
       {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:e", "sha256": "e"}}},
-      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:h", "sha256": "h"}}}
+      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:h", "sha256": "h"}}},
+      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:j", "sha256": "j"}}},
+      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:k", "sha256": "k"}}}
     ],
     "workspace.integrate": [
       {"result": {"status": "integrated", "candidate_sha256": "b", "changed_paths": ["src/b.rs"], "evidence": {"ref": "integration:b"}}},
+      {"error": "parent_changed_before_integration"},
+      {"result": {"status": "integrated", "candidate_sha256": "j", "changed_paths": ["src/j.rs"], "evidence": {"ref": "integration:j"}}},
       {"error": "parent_changed_before_integration"}
     ],
     "agents.cancel": [
@@ -68,7 +77,9 @@
       {"result": {"cancelled": true}},
       {"result": {"cancelled": true}},
       {"result": {"cancelled": true}},
-      {"result": {"cancelled": true}}
+      {"result": {"cancelled": true}},
+      {"result": {"cancelled": true}},
+      {"error": "unknown_or_foreign_agent"}
     ]
   },
   "steps": [
@@ -83,6 +94,8 @@
     {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "conflict", "type": "edit", "prompt": "Edit a source"}]}, "expect_error": "parent_changed_before_integration"},
     {"type": "reload"},
     {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "first", "type": "investigate", "prompt": "Inspect one"}, {"id": "second", "type": "investigate", "prompt": "Inspect two"}]}, "expect_error": "native_worker_limit"},
+    {"type": "reload"},
+    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "one", "type": "edit", "prompt": "Edit one"}, {"id": "two", "type": "edit", "prompt": "Edit two"}]}, "expect": {"status": "partially_integrated", "cancel_failures": ["two: unknown_or_foreign_agent"], "checkpoint_revision": 1, "tasks": [{"id": "one", "type": "edit", "result": {"answer": "edited"}, "sources": [{"ref": "src/j.rs:1", "why": "changed it"}], "worker_evidence": {"ref": "native-thread:j", "sha256": "j"}, "integration": {"status": "integrated", "candidate_sha256": "j", "changed_paths": ["src/j.rs"], "evidence": {"ref": "integration:j"}}}, {"id": "two", "type": "edit", "result": {"answer": "edited"}, "sources": [{"ref": "src/k.rs:1", "why": "changed it"}], "worker_evidence": {"ref": "native-thread:k", "sha256": "k"}, "integration": {"status": "failed", "error": "parent_changed_before_integration"}}]}},
     {"type": "status"}
   ]
 }

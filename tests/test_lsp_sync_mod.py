@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import select
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +28,7 @@ class Host:
         self.child = None
         self.buffer = b""
         self.sent = []
+        self.operations = []
 
     def close(self):
         if self.child is not None:
@@ -40,6 +42,8 @@ class Host:
         deadline = time.monotonic() + wait_ms / 1000
         messages = []
         while True:
+            if messages and not select.select([self.child.stdout], [], [], 0)[0] and b"\r\n\r\n" not in self.buffer:
+                return messages
             marker = self.buffer.find(b"\r\n\r\n")
             if marker >= 0:
                 headers = self.buffer[:marker].decode()
@@ -64,6 +68,7 @@ class Host:
             self.buffer += chunk
 
     def call(self, call):
+        self.operations.append(call["operation"])
         operation = call["operation"]
         arguments = call["arguments"]
         if operation == "process.which":
@@ -71,7 +76,7 @@ class Host:
         if operation == "process.start":
             if self.child is not None:
                 raise AssertionError("server started twice")
-            self.child = subprocess.Popen([self.server], cwd=self.repository, stdin=subprocess.PIPE,
+            self.child = subprocess.Popen([sys.executable, self.server] if self.server.endswith(".py") else [self.server], cwd=self.repository, stdin=subprocess.PIPE,
                                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             return {"session": "python", "running": True}
         if operation == "process.status":
@@ -118,7 +123,74 @@ def run(node, event, payload, state, host):
     raise AssertionError("mod callback did not complete")
 
 
+FAKE_SERVER = r"""
+import json, sys, time
+def send(message):
+    data = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(data) + data)
+    sys.stdout.buffer.flush()
+while True:
+    length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            sys.exit(0)
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            length = int(line.split(b":", 1)[1])
+    message = json.loads(sys.stdin.buffer.read(length))
+    method = message.get("method")
+    if method == "initialize":
+        for index in range(20):
+            send({"jsonrpc": "2.0", "method": "window/logMessage", "params": {"type": 4, "message": str(index)}})
+            time.sleep(0.01)
+        send({"jsonrpc": "2.0", "id": 1, "method": "workspace/configuration", "params": {"items": [{}]}})
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {"workspace": {"fileOperations": {"willRename": {}}}}}})
+    elif method == "textDocument/didOpen":
+        document = message["params"]["textDocument"]
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": document["uri"], "version": document["version"], "diagnostics": [{}]}})
+    elif method == "workspace/willRenameFiles":
+        old = message["params"]["files"][0]["oldUri"]
+        user = old.rsplit("/", 1)[0] + "/user.py"
+        send({"jsonrpc": "2.0", "method": "window/logMessage", "params": {"type": 4, "message": "renaming"}})
+        time.sleep(0.01)
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"changes": {user: [{"range": {"start": {"line": 0, "character": 5}, "end": {"line": 0, "character": 8}}, "newText": "new"}]}}})
+"""
+
+
 class LspSyncModTest(unittest.TestCase):
+    def test_fake_server_requests_rename_changes_and_idle(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "fake_server.py"
+            server.write_text(FAKE_SERVER)
+            (repository / "old.py").write_text("value = 1\n")
+            (repository / "user.py").write_text("from old import value\n")
+            host = Host(repository, str(server))
+            try:
+                changes = [{"path": name, "before": None, "after": digest((repository / name).read_bytes())} for name in ("old.py", "user.py")]
+                first = run(node, "workspace_write", {"repository": str(repository), "call_id": "1", "tool": "apply_patch",
+                    "outcome": "success", "status": "observed", "changes": changes}, None, host)
+                self.assertEqual(first["state"]["status"], "synced")
+                self.assertEqual(first["state"]["diagnostics"]["old.py"]["count"], 1)
+                self.assertIn({"jsonrpc": "2.0", "id": 1, "result": [None]}, host.sent)
+                idle = run(node, "idle", {"cause": "Completed"}, first["state"], host)
+                self.assertTrue(idle["state"]["running"])
+                self.assertNotIn("process.stop", host.operations)
+                rename = run(node, "workspace_pre_rename", {"repository": str(repository), "old": "old.py", "new": "new.py",
+                    "expected": {"old.py": digest((repository / "old.py").read_bytes())}}, idle["state"], host)
+                self.assertEqual(rename["value"]["status"], "ready", rename["value"])
+                self.assertEqual(rename["value"]["writes"], {"user.py": "from new import value\n"})
+                self.assertEqual(host.operations.count("process.start"), 1)
+            finally:
+                host.close()
+
+
     def test_installed_python_server_synchronizes_open_change_close(self):
         server = shutil.which("pylsp")
         node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")

@@ -26,6 +26,12 @@ fn git(root: &Path, args: &[&str]) {
     );
 }
 
+fn plain(argv: Vec<String>) -> Result<Command, String> {
+    let mut command = Command::new(&argv[0]);
+    command.args(&argv[1..]);
+    Ok(command)
+}
+
 fn repository() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
@@ -67,7 +73,7 @@ impl Fixture {
             protected: &self.protected,
             backups: Some(self.backups.path()),
             write: Ok(()),
-            command: None,
+            command: &plain,
             writable: &|_| true,
         };
         call(&access, operation, arguments, &|| true)
@@ -282,16 +288,18 @@ fn switch_requires_a_known_branch_and_fresh_state() {
     let branches = fixture.call("git.branches", Value::Null).expect("branches");
     assert_eq!(branches["current"], "main");
     assert_eq!(branches["local"], json!(["feature", "main"]));
-    let whole = fixture.call("git.status", Value::Null).unwrap()["fingerprint"].clone();
+    let preview = |branch: &str| fixture.call("git.switch_preview", json!({"branch": branch}));
     assert!(
-        fixture
-            .call(
-                "git.switch",
-                json!({"branch": "missing", "fingerprint": whole})
-            )
+        preview("missing")
             .unwrap_err()
             .starts_with("unknown_git_branch")
     );
+    assert!(
+        preview("main")
+            .unwrap_err()
+            .starts_with("git_branch_current")
+    );
+    let whole = preview("feature").unwrap()["fingerprint"].clone();
     assert_eq!(
         fixture
             .call(
@@ -311,15 +319,109 @@ fn switch_requires_a_known_branch_and_fresh_state() {
             .unwrap_err()
             .starts_with("stale_git_state")
     );
-    let whole = fixture.call("git.status", Value::Null).unwrap()["fingerprint"].clone();
+    let preview = preview("feature").unwrap();
+    assert_eq!(preview["local_changes"], 1);
+    assert_eq!(preview["changes"], json!([]));
     let result = fixture
         .call(
             "git.switch",
-            json!({"branch": "feature", "fingerprint": whole}),
+            json!({"branch": "feature", "fingerprint": preview["fingerprint"]}),
         )
         .expect("switch");
     assert_eq!(result["head"]["branch"], "feature");
     assert!(root.join("new.txt").exists());
+}
+
+#[test]
+fn switch_preview_binds_the_destination_commit_and_its_changes() {
+    let fixture = Fixture::new();
+    let root = fixture.root();
+    git(root, &["switch", "--quiet", "-c", "feature"]);
+    std::fs::write(root.join("b.txt"), "feature\n").expect("write");
+    std::fs::write(root.join("c.txt"), "added\n").expect("write");
+    git(root, &["add", "."]);
+    git(root, &["commit", "--quiet", "-m", "feature"]);
+    git(root, &["switch", "--quiet", "main"]);
+    let preview = fixture
+        .call("git.switch_preview", json!({"branch": "feature"}))
+        .expect("preview");
+    assert_eq!(
+        preview["changes"],
+        json!([{"path": "b.txt", "status": "M"}, {"path": "c.txt", "status": "A"}])
+    );
+    assert_eq!(preview["local_changes"], 0);
+    assert_ne!(preview["from"], preview["to"]);
+    git(root, &["branch", "--force", "feature", "main"]);
+    assert!(
+        fixture
+            .call(
+                "git.switch",
+                json!({"branch": "feature", "fingerprint": preview["fingerprint"]})
+            )
+            .unwrap_err()
+            .starts_with("stale_git_state")
+    );
+    assert_eq!(
+        fixture.call("git.status", Value::Null).unwrap()["head"]["branch"],
+        "main"
+    );
+}
+
+#[test]
+fn switch_refuses_to_overwrite_ignored_files() {
+    let fixture = Fixture::new();
+    let root = fixture.root();
+    git(root, &["switch", "--quiet", "-c", "feature"]);
+    std::fs::write(root.join("secret.env"), "tracked\n").expect("write");
+    git(root, &["add", "secret.env"]);
+    git(root, &["commit", "--quiet", "-m", "track"]);
+    git(root, &["switch", "--quiet", "main"]);
+    std::fs::write(root.join(".gitignore"), "secret.env\n").expect("write");
+    git(root, &["add", ".gitignore"]);
+    git(root, &["commit", "--quiet", "-m", "ignore"]);
+    std::fs::write(root.join("secret.env"), "local\n").expect("write");
+    let preview = fixture
+        .call("git.switch_preview", json!({"branch": "feature"}))
+        .expect("preview");
+    let error = fixture
+        .call(
+            "git.switch",
+            json!({"branch": "feature", "fingerprint": preview["fingerprint"]}),
+        )
+        .unwrap_err();
+    assert!(error.starts_with("git_failed: switch"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("secret.env")).unwrap(),
+        "local\n"
+    );
+}
+
+#[test]
+fn sandboxed_git_requires_a_profile_and_denies_protected_writes() {
+    let protected = [PathBuf::from("/private/tmp/omd \"store\"")];
+    assert_eq!(
+        sandboxed(
+            Path::new("/usr/bin/sandbox-exec"),
+            vec!["git".into()],
+            &protected,
+            Path::new("/")
+        )
+        .unwrap_err(),
+        "git_sandbox_unavailable"
+    );
+    let command = sandboxed(
+        Path::new("/usr/bin/sandbox-exec"),
+        vec!["-p".into(), "(version 1)".into(), "--".into(), "git".into()],
+        &protected,
+        Path::new("/"),
+    )
+    .unwrap();
+    let args = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert!(args[1].contains(r#"(deny file-write* (literal "/private/tmp/omd \"store\"") (subpath "/private/tmp/omd \"store\""))"#));
+    assert_eq!(&args[2..], ["--", "git"]);
 }
 
 #[test]
@@ -352,7 +454,7 @@ fn writes_require_permission_and_repositories_are_required() {
         protected: &[],
         backups: None,
         write: Err("git_write_requires_user_command"),
-        command: None,
+        command: &plain,
         writable: &|_| false,
     };
     assert_eq!(
@@ -366,13 +468,13 @@ fn writes_require_permission_and_repositories_are_required() {
         "git_write_requires_user_command"
     );
     assert!(call(&access, "git.status", Value::Null, &|| true).is_ok());
-    let plain = tempfile::tempdir().expect("tempdir");
+    let empty = tempfile::tempdir().expect("tempdir");
     let access = GitAccess {
-        repository: plain.path(),
+        repository: empty.path(),
         protected: &[],
         backups: None,
         write: Ok(()),
-        command: None,
+        command: &plain,
         writable: &|_| true,
     };
     assert_eq!(
@@ -417,7 +519,7 @@ fn closeout_timeout_stops_hook_descendants() {
     let result = run(
         &Repository {
             path: fixture.root().to_path_buf(),
-            command: None,
+            command: &plain,
         },
         &["commit", "-m", "timeout"],
         None,
@@ -449,7 +551,7 @@ fn closeout_all_writes_check_target_permissions() {
         protected: &fixture.protected,
         backups: Some(fixture.backups.path()),
         write: Ok(()),
-        command: None,
+        command: &plain,
         writable: &allowed,
     };
     let index = std::fs::read(fixture.root().join(".git/index")).unwrap();
@@ -508,7 +610,7 @@ fn closeout_writes_refuse_subdirectory_scope_and_read_only_metadata() {
         protected: &[],
         backups: None,
         write: Ok(()),
-        command: None,
+        command: &plain,
         writable: &|_| true,
     };
     assert_eq!(
@@ -543,7 +645,7 @@ fn closeout_directory_stage_checks_children_and_tracks_their_changes() {
         protected: &[],
         backups: None,
         write: Ok(()),
-        command: None,
+        command: &plain,
         writable: &allowed,
     };
     let args = json!({"paths":["nested"], "fingerprint":status["fingerprint"]});
@@ -579,7 +681,7 @@ fn closeout_cancel_stops_hook_descendants() {
     let result = run(
         &Repository {
             path: fixture.root().to_path_buf(),
-            command: None,
+            command: &plain,
         },
         &["commit", "-m", "cancelled"],
         None,

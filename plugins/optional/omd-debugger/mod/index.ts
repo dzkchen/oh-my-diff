@@ -122,11 +122,12 @@ export default function activate(api: ModAPI) {
   };
   const receive = (state: State, seq: number, command: string, initial: Json): Outcome => {
     let messages = initial;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      if (attempt > 0) {
+    for (let batches = 0, silent = 0; batches < 12 && silent < 6; batches++) {
+      if (batches > 0) {
         const batch = exchange(state, [], 500);
         if (!batch.ok) return batch;
         messages = batch.value.messages;
+        if (!Array.isArray(messages) || !messages.length) silent++;
       }
       if (!Array.isArray(messages)) return { ok: false, error: 'invalid_adapter_message' };
       for (const raw of messages) {
@@ -136,8 +137,14 @@ export default function activate(api: ModAPI) {
         return { ok: true, value: { result: compact(command, response) } };
       }
     }
-    stop(state, 'adapter_request_timeout');
+    save(state);
     return { ok: false, error: `debug_${command}_timeout` };
+  };
+  const drain = (state: State): Outcome => state.running ? exchange(state, [], 0) : { ok: true, value: {} };
+  const settle = (state: State) => {
+    for (let silent = 0; state.running && state.phase === 'active' && silent < 4; silent++) {
+      if (!exchange(state, [], 500).ok) return;
+    }
   };
   const request = (state: State, command: string, args: Json): Outcome => {
     const sent = send(state, command, args);
@@ -222,6 +229,7 @@ export default function activate(api: ModAPI) {
   }, payload => {
     const input = record(payload) ?? {};
     const state = restore(api.state.get());
+    drain(state);
     const source = path(input.source ?? null);
     const lines = input.lines;
     if (!state.running || !state.ready || !source || !Array.isArray(lines) || lines.length < 1 || lines.length > 32 || !lines.every(item => integer(item) !== null && Number(item) > 0)) return { error: 'invalid_breakpoints_or_adapter_not_ready' };
@@ -233,11 +241,14 @@ export default function activate(api: ModAPI) {
     parameters: { type: 'object', properties: {}, additionalProperties: false },
   }, (): Json => {
     const state = restore(api.state.get());
+    drain(state);
     if (!state.running || !state.ready || state.phase !== 'configuring') return { error: 'not_configuring_or_adapter_not_ready' };
     const exceptions = request(state, 'setExceptionBreakpoints', { filters: ['uncaught'] });
     if (!exceptions.ok) return failed(state, exceptions);
+    state.phase = 'active';
     const result = request(state, 'configurationDone', {});
-    if (result.ok && restore(api.state.get()).phase !== 'stopped') state.phase = 'active';
+    if (result.ok) settle(state);
+    else if (state.phase === 'active') state.phase = 'configuring';
     return failed(state, result);
   });
   api.tool({
@@ -247,7 +258,8 @@ export default function activate(api: ModAPI) {
   }, payload => {
     const input = record(payload) ?? {};
     const state = restore(api.state.get());
-    if (!state.running || (state.phase !== 'stopped' && input.command !== 'threads')) return { error: 'target_not_stopped' };
+    drain(state);
+    if (!state.running || (state.phase !== 'stopped' && input.command !== 'threads')) return { error: 'target_not_stopped', phase: state.phase };
     const command = string(input.command ?? null);
     let args: Json = {};
     if (command === 'stackTrace') {
@@ -277,11 +289,15 @@ export default function activate(api: ModAPI) {
   }, payload => {
     const input = record(payload) ?? {};
     const state = restore(api.state.get());
+    drain(state);
     const threadId = integer(input.thread_id ?? null) ?? state.thread_id;
     const command = string(input.command ?? null);
     if (!state.running || !threadId || !command || !['continue', 'next', 'stepIn', 'stepOut', 'pause'].includes(command)) return { error: 'invalid_control' };
+    const previous = state.phase;
+    state.phase = 'active';
     const result = request(state, command, { threadId });
-    if (result.ok && command !== 'pause' && state.phase !== 'stopped') state.phase = 'active';
+    if (result.ok) settle(state);
+    else if (state.phase === 'active') state.phase = previous;
     return failed(state, result);
   });
   api.tool({

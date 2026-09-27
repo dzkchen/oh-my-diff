@@ -214,10 +214,6 @@ struct Handle {
 }
 
 impl Agents {
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "Keep the owned workspace stable through native check and integration"
-    )]
     async fn integrate(
         &self,
         lead: &Lead,
@@ -231,33 +227,62 @@ impl Agents {
         }
         let host = &lead.host;
         host.authorize()?;
-        let mut records = self.records.lock().await;
-        let agent = records
-            .get_mut(&handle.handle)
-            .filter(|agent| agent.mod_id == mod_id && agent.generation == generation)
-            .ok_or("unknown_or_foreign_agent")?;
-        if !agent.consumed
-            || !agent.finished()
-            || !agent
-                .result
-                .lock()
-                .map_err(|_| "agent_result_poisoned")?
-                .as_ref()
-                .is_some_and(Result::is_ok)
-        {
-            return Err("agent_result_not_validated_or_complete".into());
-        }
-        let workspace = agent
-            .workspace
-            .as_ref()
-            .ok_or("agent_has_no_isolated_workspace")?;
-        if host
-            .operation
-            .swap(true, std::sync::atomic::Ordering::AcqRel)
-        {
-            return Err("another controlled operation is active".into());
-        }
+        let (workspace, implementation) = {
+            let mut records = self.records.lock().await;
+            let agent = records
+                .get_mut(&handle.handle)
+                .filter(|agent| agent.mod_id == mod_id && agent.generation == generation)
+                .ok_or("unknown_or_foreign_agent")?;
+            if !agent.consumed
+                || !agent.finished()
+                || !agent
+                    .result
+                    .lock()
+                    .map_err(|_| "agent_result_poisoned")?
+                    .as_ref()
+                    .is_some_and(Result::is_ok)
+            {
+                return Err("agent_result_not_validated_or_complete".into());
+            }
+            if host
+                .operation
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+            {
+                return Err("another controlled operation is active".into());
+            }
+            let workspace = agent.workspace.take();
+            let Some(workspace) = workspace else {
+                host.operation
+                    .store(false, std::sync::atomic::Ordering::Release);
+                return Err("agent_has_no_isolated_workspace".into());
+            };
+            (workspace, agent.implementation.clone())
+        };
         let _operation = OperationGuard(&host.operation);
+        let result = self
+            .integrate_workspace(lead, &handle.handle, &workspace, &implementation)
+            .await;
+        if result.is_err()
+            && let Some(agent) = self
+                .records
+                .lock()
+                .await
+                .get_mut(&handle.handle)
+                .filter(|agent| agent.mod_id == mod_id && agent.generation == generation)
+        {
+            agent.workspace = Some(workspace);
+        }
+        result
+    }
+
+    async fn integrate_workspace(
+        &self,
+        lead: &Lead,
+        handle: &str,
+        workspace: &Workspace,
+        implementation: &Route,
+    ) -> Result<Value, String> {
+        let host = &lead.host;
         let manager = host
             .manager
             .upgrade()
@@ -278,69 +303,38 @@ impl Agents {
             codex_omd::Snapshot::capture(&workspace.root, &paths, host.manifest.snapshot_bytes)
                 .map_err(|e| e.to_string())?;
         let changed = workspace.base.changed_paths(&candidate);
-        if changed.is_empty() || changed.len() > 128 {
+        if changed.is_empty() {
             return Err("isolated_worker_returned_no_change".into());
         }
-        let approved = host.manifest.approved_untracked.iter().cloned().collect();
-        let tracked = codex_omd::tracked_paths(&host.manifest.repository, &approved)
-            .map_err(|e| e.to_string())?;
-        let mut current_paths = tracked.clone();
-        current_paths.extend(
+        if changed.len() > 128 {
+            return Err("isolated_worker_change_limit".into());
+        }
+        let state = execution::ParentState::capture(
+            &host.manifest,
             workspace
                 .base
                 .files
                 .keys()
                 .chain(candidate.files.keys())
                 .cloned(),
-        );
-        let current = codex_omd::Snapshot::capture(
-            &host.manifest.repository,
-            &current_paths,
-            host.manifest.snapshot_bytes,
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         let merged = workspace
             .base
-            .merge_candidate(&candidate, &current)
+            .merge_candidate(&candidate, &state.current)
             .map_err(|e| e.to_string())?;
         let digest = merged.hash().map_err(|e| e.to_string())?;
         let directory = host
             .manifest
             .scratch
-            .join(format!("mod-integration-{}", handle.handle));
+            .join(format!("mod-integration-{handle}"));
         std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
         let mut scratch = IntegrationScratch {
             parent: host.manifest.scratch.clone(),
             directory: Some(directory.clone()),
         };
-        let checked = codex_omd::create_worktree(
-            &merged,
-            &directory.join("checks"),
-            host.manifest.snapshot_bytes,
-        )
-        .map_err(|e| e.to_string())?;
-        std::fs::create_dir(checked.join(".omd-tmp")).map_err(|e| e.to_string())?;
-        let check_config = execution::isolated(
-            &parent,
-            &checked,
-            &host.manifest.toolchain_reads,
-            &denied,
-            true,
-        )?;
-        let check =
-            execution::command(host, &check_config, host.manifest.check_command.clone()).await?;
-        if check["exit_code"] != 0 || check["timed_out"] != false {
+        let check = execution::check_candidate(host, &parent, &merged, &directory, &denied).await?;
+        if !execution::passed(&check) {
             return Err("isolated_candidate_checks_failed".into());
-        }
-        if codex_omd::Snapshot::capture(
-            &checked,
-            &merged.files.keys().cloned().collect(),
-            host.manifest.snapshot_bytes,
-        )
-        .map_err(|e| e.to_string())?
-            != merged
-        {
-            return Err("candidate_changed_during_checks".into());
         }
         let review = execution::review_isolated_candidate(
             lead,
@@ -349,7 +343,7 @@ impl Agents {
             &changed,
             &check,
             &directory,
-            &agent.implementation,
+            implementation,
         )
         .await?;
         if execution::all_paths(host, &read).await? != paths
@@ -359,104 +353,14 @@ impl Agents {
         {
             return Err("isolated_candidate_changed_after_review".into());
         }
-        let delta = directory.join("delta");
-        std::fs::create_dir(&delta).map_err(|e| e.to_string())?;
-        current
-            .write_new(&delta.join("a"), host.manifest.snapshot_bytes)
-            .map_err(|e| e.to_string())?;
-        merged
-            .write_new(&delta.join("b"), host.manifest.snapshot_bytes)
-            .map_err(|e| e.to_string())?;
-        let diff_config = execution::isolated(&parent, &delta, &[], &denied, true)?;
-        let diff = execution::command(
-            host,
-            &diff_config,
-            vec![
-                "/Library/Developer/CommandLineTools/usr/bin/git".into(),
-                "-c".into(),
-                "core.fsmonitor=false".into(),
-                "diff".into(),
-                "--no-index".into(),
-                "--binary".into(),
-                "--no-ext-diff".into(),
-                "--no-textconv".into(),
-                "--".into(),
-                "a".into(),
-                "b".into(),
-            ],
-        )
-        .await?;
-        if diff["exit_code"] != 1 || diff["stdout_truncated"] != false {
-            return Err("isolated_candidate_diff_failed".into());
-        }
-        let patch = diff["stdout"]
-            .as_str()
-            .ok_or("candidate_diff_missing")?
-            .lines()
-            .map(|line| {
-                if line.starts_with("diff --git ")
-                    || line.starts_with("--- ")
-                    || line.starts_with("+++ ")
-                    || line.starts_with("Binary files ")
-                {
-                    line.replace("a/a/", "a/").replace("b/b/", "b/")
-                } else {
-                    line.into()
-                }
-            })
-            .collect::<Vec<String>>()
-            .join("\n")
-            + "\n";
-        let patch_path = directory.join("candidate.patch");
-        std::fs::write(&patch_path, patch).map_err(|e| e.to_string())?;
-        host.authorize()?;
-        host.task.check_active().map_err(|e| e.to_string())?;
-        if codex_omd::tracked_paths(&host.manifest.repository, &approved)
-            .map_err(|e| e.to_string())?
-            != tracked
-            || codex_omd::Snapshot::capture(
-                &host.manifest.repository,
-                &current_paths,
-                host.manifest.snapshot_bytes,
-            )
-            .map_err(|e| e.to_string())?
-                != current
-        {
-            return Err("parent_changed_before_integration".into());
-        }
-        let apply_config =
-            execution::isolated(&parent, &host.manifest.repository, &[], &denied, true)?;
-        let applied = execution::command(
-            host,
-            &apply_config,
-            vec![
-                "/Library/Developer/CommandLineTools/usr/bin/git".into(),
-                "-c".into(),
-                "core.fsmonitor=false".into(),
-                "apply".into(),
-                "--binary".into(),
-                patch_path.display().to_string(),
-            ],
-        )
-        .await?;
-        let evidence = host.evidence(&format!("mod-integration-{}.json", execution::hash(handle.handle.as_bytes())),
-            &json!({"schema":1,"worker":handle.handle,"candidate_sha256":digest,"changed_paths":changed,"check":check,"review":review,"apply":applied}))?;
-        if applied["exit_code"] != 0
-            || codex_omd::tracked_paths(&host.manifest.repository, &approved)
-                .map_err(|e| e.to_string())?
-                != tracked
-            || codex_omd::Snapshot::capture(
-                &host.manifest.repository,
-                &current_paths,
-                host.manifest.snapshot_bytes,
-            )
-            .map_err(|e| e.to_string())?
-                != merged
-        {
+        let applied =
+            execution::apply_candidate(host, &parent, &denied, &directory, &state, &merged).await?;
+        let evidence = host.evidence(&format!("mod-integration-{}.json", execution::hash(handle.as_bytes())),
+            &json!({"schema":1,"worker":handle,"candidate_sha256":digest,"changed_paths":changed,"check":check,"review":review,"apply":applied}))?;
+        if applied["exit_code"] != 0 || !state.matches(&host.manifest, &merged)? {
             return Err("integration_incomplete_inspect_native_evidence".into());
         }
         scratch.cleanup()?;
-        agent.workspace.take();
         Ok(
             json!({"status":"integrated","candidate_sha256":digest,"changed_paths":changed,"evidence":evidence}),
         )

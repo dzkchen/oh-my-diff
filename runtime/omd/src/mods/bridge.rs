@@ -38,8 +38,10 @@ impl ModHostCall {
                 Ok("sidecars")
             }
             "workflow.status" | "workflow.restrict" => Ok("workflow"),
-            "git.status" | "git.log" | "git.diff" | "git.branches" | "git.stage"
-            | "git.unstage" | "git.commit" | "git.discard" | "git.switch" => Ok("git"),
+            "git.status" | "git.log" | "git.diff" | "git.branches" | "git.switch_preview"
+            | "git.stage" | "git.unstage" | "git.commit" | "git.discard" | "git.switch" => {
+                Ok("git")
+            }
             "mods.service" => Ok("services"),
             _ => Err(failure(format!(
                 "unsupported_host_operation: {}",

@@ -188,6 +188,15 @@ impl PlatformMods {
                         );
                     }
                     if request.operation.starts_with("git.") {
+                        let profile = profile.as_ref().ok_or_else(|| {
+                            std::io::Error::other("platform_permission_profile_unavailable")
+                        })?;
+                        let authority =
+                            crate::workspace_operations::WorkspaceAuthority::for_platform(
+                                &repository,
+                                profile.clone(),
+                            )
+                            .map_err(std::io::Error::other)?;
                         return mods::lifecycle_git(
                             matches!(
                                 name,
@@ -200,6 +209,7 @@ impl PlatformMods {
                             ),
                             &repository,
                             std::slice::from_ref(&root),
+                            &authority.policy,
                             request,
                             &|| !cancelled.load(Ordering::Acquire),
                         );
@@ -390,7 +400,10 @@ impl ThreadLifecycleContributor<Config> for PlatformMods {
                     .thread_store
                     .get::<PlatformProcesses>()
                     .map(|value| value.0.clone()),
-                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
+                input
+                    .thread_store
+                    .get::<PlatformDataScope>()
+                    .map(|value| (*value).clone()),
             )
             .await;
         })
@@ -408,7 +421,10 @@ impl ThreadLifecycleContributor<Config> for PlatformMods {
                     .thread_store
                     .get::<PlatformProcesses>()
                     .map(|value| value.0.clone()),
-                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
+                input
+                    .thread_store
+                    .get::<PlatformDataScope>()
+                    .map(|value| (*value).clone()),
             )
             .await;
         })
@@ -426,7 +442,10 @@ impl ThreadLifecycleContributor<Config> for PlatformMods {
                     .thread_store
                     .get::<PlatformProcesses>()
                     .map(|value| value.0.clone()),
-                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
+                input
+                    .thread_store
+                    .get::<PlatformDataScope>()
+                    .map(|value| (*value).clone()),
             )
             .await;
             if let Some(processes) = input.thread_store.get::<PlatformProcesses>() {
@@ -553,7 +572,10 @@ impl codex_extension_api::TurnLifecycleContributor for PlatformMods {
                     .thread_store
                     .get::<PlatformProcesses>()
                     .map(|value| value.0.clone()),
-                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
+                input
+                    .thread_store
+                    .get::<PlatformDataScope>()
+                    .map(|value| (*value).clone()),
             )
             .await;
         })
@@ -575,10 +597,23 @@ impl codex_extension_api::TurnLifecycleContributor for PlatformMods {
                 Some(TurnRecord { id, error: None }) => json!({"turn_id":id,"outcome":"completed"}),
                 None => json!({"outcome":"completed"}),
             };
-            self.event_with_data("turn_end", payload,
-                input.thread_store.get::<PlatformPermission>().map(|value|value.0.clone()),
-                input.thread_store.get::<PlatformProcesses>().map(|value|value.0.clone()),
-                input.thread_store.get::<PlatformDataScope>().map(|value|(*value).clone())).await;
+            self.event_with_data(
+                "turn_end",
+                payload,
+                input
+                    .thread_store
+                    .get::<PlatformPermission>()
+                    .map(|value| value.0.clone()),
+                input
+                    .thread_store
+                    .get::<PlatformProcesses>()
+                    .map(|value| value.0.clone()),
+                input
+                    .thread_store
+                    .get::<PlatformDataScope>()
+                    .map(|value| (*value).clone()),
+            )
+            .await;
         })
     }
 }
@@ -694,7 +729,10 @@ impl ToolLifecycleContributor for PlatformMods {
                             .thread_store
                             .get::<PlatformProcesses>()
                             .map(|value| value.0.clone()),
-                        input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
+                        input
+                            .thread_store
+                            .get::<PlatformDataScope>()
+                            .map(|value| (*value).clone()),
                     )
                     .await;
                 }
@@ -869,7 +907,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
                                     .ok_or_else(|| std::io::Error::other("data_owner_missing"))?,
                             )?;
                             data.session_database = Some(scope.database.clone());
-                        return data.call(
+                            return data.call(
                                 &request.operation,
                                 request.arguments,
                                 &|path| authority.readable(path),

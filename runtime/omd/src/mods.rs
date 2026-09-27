@@ -144,6 +144,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "git.log",
     "git.diff",
     "git.branches",
+    "git.switch_preview",
     "git.stage",
     "git.unstage",
     "git.commit",
@@ -2057,7 +2058,10 @@ impl ModHost {
             if event == "terminal" && !reply.value.is_null() {
                 if replaces("terminal") {
                     ModView::parse(reply.value.clone())?;
-                } else if matches!(loaded.package.api.as_str(), "0.1.0-experimental.8" | MOD_API_VERSION) {
+                } else if matches!(
+                    loaded.package.api.as_str(),
+                    "0.1.0-experimental.8" | MOD_API_VERSION
+                ) {
                     ModViewPatch::parse(reply.value.clone())?;
                 } else {
                     return Err(failure("exclusive_replacement_registration_required"));
@@ -2109,8 +2113,17 @@ impl ModHost {
                 current
                     .telemetry
                     .record(self.generation, event, name, elapsed, "error");
-                if !error.to_string().starts_with("state_conflict") {
-                    current.error = Some(error.to_string());
+                let message = error.to_string();
+                if ![
+                    "state_conflict",
+                    "host_receipt_limit",
+                    "host_call_limit",
+                    "callback_execution_budget",
+                ]
+                .iter()
+                .any(|transient| message.starts_with(transient))
+                {
+                    current.error = Some(message);
                 }
                 Err(error)
             }

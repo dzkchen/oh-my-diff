@@ -1775,6 +1775,27 @@ fn persist_atomic(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Resu
 }
 
 impl Host {
+    fn route_provider(&self, route: &Route) -> String {
+        if route.model == "muse-spark-1.3-contributor" {
+            "meta"
+        } else if self
+            .manifest
+            .mod_worker_presets
+            .iter()
+            .any(|preset| preset.covers(route))
+            || self
+                .manifest
+                .mod_services
+                .iter()
+                .any(|grant| grant.covers(route))
+        {
+            route.provider.as_str()
+        } else {
+            "openai"
+        }
+        .into()
+    }
+
     fn route(&self, lead: LeadName) -> &Route {
         self.manifest.leads.get(lead)
     }
@@ -1958,84 +1979,24 @@ impl Host {
                         provider: route.provider.clone(),
                         reasoning: reasoning(route)?,
                         url: route.responses_url.clone(),
-                        accounting_provider: if self
-                            .manifest
-                            .mod_services
-                            .iter()
-                            .any(|grant| grant.covers(route))
-                        {
-                            route.provider.clone()
-                        } else {
-                            "openai".into()
-                        },
+                        accounting_provider: self.route_provider(route),
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?,
             None => vec![accounting::RequestPreset {
                 name: preset.clone(),
                 model: route.model.clone(),
-                provider: if route.model == "muse-spark-1.3-contributor" {
-                    "meta"
-                } else if self
-                    .manifest
-                    .mod_worker_presets
-                    .iter()
-                    .any(|preset| preset.covers(route))
-                    || self
-                        .manifest
-                        .mod_services
-                        .iter()
-                        .any(|grant| grant.covers(route))
-                {
-                    route.provider.as_str()
-                } else {
-                    "openai"
-                }
-                .into(),
+                provider: self.route_provider(route),
                 reasoning: reasoning(route)?,
                 url: route.responses_url.clone(),
-                accounting_provider: if route.model == "muse-spark-1.3-contributor" {
-                    "meta"
-                } else if self
-                    .manifest
-                    .mod_worker_presets
-                    .iter()
-                    .any(|preset| preset.covers(route))
-                    || self
-                        .manifest
-                        .mod_services
-                        .iter()
-                        .any(|grant| grant.covers(route))
-                {
-                    route.provider.as_str()
-                } else {
-                    "openai"
-                }
-                .into(),
+                accounting_provider: self.route_provider(route),
             }],
         };
         let account = Account {
             task: self.task.clone(),
             owner: owner.into(),
             model: route.model.clone(),
-            provider: if route.model == "muse-spark-1.3-contributor" {
-                "meta"
-            } else if self
-                .manifest
-                .mod_worker_presets
-                .iter()
-                .any(|preset| preset.covers(route))
-                || self
-                    .manifest
-                    .mod_services
-                    .iter()
-                    .any(|grant| grant.covers(route))
-            {
-                route.provider.as_str()
-            } else {
-                "openai"
-            }
-            .into(),
+            provider: self.route_provider(route),
             url: route.responses_url.clone(),
             max_request_bytes: self.manifest.max_request_bytes,
             rates: route.rates.clone(),

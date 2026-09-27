@@ -765,6 +765,34 @@ fn host_error_receipts_are_catchable_without_repeating_operations() {
 }
 
 #[test]
+fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
+    let source = "export default api => api.command('run', arg => { if (arg === 'small') return 'ok'; api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
+    let (temp, _, _) = fixture(source, &["commands", "task"]);
+    let mut runtime = host(&temp);
+    let generation = runtime.generation();
+    let error = runtime
+        .invoke_with(
+            "fixture",
+            generation,
+            "command",
+            "run",
+            json!("large"),
+            || true,
+            |_| Ok(json!({"text": "x".repeat(140_000)})),
+        )
+        .unwrap_err();
+    assert_eq!(error.to_string(), "host_receipt_limit");
+    assert_eq!(
+        runtime
+            .invoke_with("fixture", generation, "command", "run", json!("small"), || true, |_| {
+                Ok(Value::Null)
+            })
+            .unwrap(),
+        json!("ok")
+    );
+}
+
+#[test]
 fn exclusive_replacement_conflicts_fail_before_activation() {
     let source = "export default api => api.replace('routing', () => 'sol')";
     let (temp, store, _) = fixture(source, &["routing"]);

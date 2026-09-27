@@ -18,26 +18,26 @@ use std::fs;
 use std::io;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::io::Read;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
 
 type Key = (String, u64, String);
+type Session = Arc<Mutex<ManagedProcess>>;
 
 #[derive(Default)]
 pub(super) struct ManagedProcesses {
-    records: Mutex<BTreeMap<Key, ManagedProcess>>,
+    records: Mutex<BTreeMap<Key, Session>>,
 }
 
 struct ManagedProcess {
@@ -170,6 +170,25 @@ impl ManagedProcesses {
         }
     }
 
+    fn session(&self, key: &Key) -> Result<Session, String> {
+        self.records
+            .lock()
+            .map_err(|_| "process_records_poisoned")?
+            .get(key)
+            .cloned()
+            .ok_or_else(|| "process_session_unavailable".into())
+    }
+
+    fn remove(&self, key: &Key, process: &Session) {
+        if let Ok(mut records) = self.records.lock()
+            && records
+                .get(key)
+                .is_some_and(|current| Arc::ptr_eq(current, process))
+        {
+            records.remove(key);
+        }
+    }
+
     pub fn call(
         &self,
         id: &str,
@@ -241,14 +260,11 @@ impl ManagedProcesses {
                     || input.arguments.iter().map(String::len).sum::<usize>() > 4096
                     || !matches!(
                         input.transport.as_deref(),
-                        None | Some("stdio") | Some("unix_dap") | Some("stdio_dap")
+                        None | Some("stdio") | Some("stdio_dap")
                     )
-                    || (input.transport.as_deref() == Some("unix_dap")
-                        && (input.name != "dlv" || input.arguments != ["dap"]))
                     || (input.transport.as_deref() == Some("stdio_dap")
-                        && !((input.name == "lldb-dap" && input.arguments.is_empty())
-                            || (input.name == "python3"
-                                && input.arguments == ["-m", "debugpy.adapter"])))
+                        && (input.name != "python3"
+                            || input.arguments != ["-m", "debugpy.adapter"]))
                     || program(&input.name, repository).as_ref() != Some(&input.path)
                     || input
                         .path
@@ -268,22 +284,20 @@ impl ManagedProcesses {
                     return Err("process_executable_changed".into());
                 }
                 let key = (id.to_owned(), generation, input.session.clone());
-                let mut records = self
-                    .records
-                    .lock()
-                    .map_err(|_| "process_records_poisoned")?;
-                if records.contains_key(&key)
-                    || records.len() >= 8
-                    || records.keys().filter(|(owner, _, _)| owner == id).count() >= 5
-                {
+                let admitted = |records: &BTreeMap<Key, Session>| {
+                    !records.contains_key(&key)
+                        && records.len() < 8
+                        && records.keys().filter(|(owner, _, _)| owner == id).count() < 5
+                };
+                if !admitted(
+                    &*self
+                        .records
+                        .lock()
+                        .map_err(|_| "process_records_poisoned")?,
+                ) {
                     return Err("process_session_limit_or_duplicate".into());
                 }
-                let scratch_root = if input.transport.as_deref() == Some("unix_dap") {
-                    PathBuf::from("/private/tmp")
-                } else {
-                    std::env::temp_dir()
-                };
-                let scratch = scratch_root.join(format!(
+                let scratch = std::env::temp_dir().join(format!(
                     "omd-process-{}-{}",
                     std::process::id(),
                     std::time::SystemTime::now()
@@ -300,23 +314,10 @@ impl ManagedProcesses {
                 )?;
                 let launched = (|| {
                     let scope = read_policy(policy, &scratch)?;
-                    let socket = scratch.join("dap.sock");
-                    let unix_dap = input.transport.as_deref() == Some("unix_dap");
                     let stdio_dap = input.transport.as_deref() == Some("stdio_dap");
                     let mut command = vec![input.path.to_string_lossy().into_owned()];
                     command.extend(input.arguments);
-                    if unix_dap {
-                        command.push(format!("--listen=unix:{}", socket.display()));
-                    }
-                    let sockets = if unix_dap {
-                        vec![
-                            AbsolutePathBuf::from_absolute_path_checked(&socket)
-                                .map_err(|error| error.to_string())?,
-                        ]
-                    } else {
-                        Vec::new()
-                    };
-                    let loopback = (stdio_dap || unix_dap).then(|| ManagedNetworkSandboxContext {
+                    let loopback = stdio_dap.then(|| ManagedNetworkSandboxContext {
                         allow_local_binding: true,
                         ..Default::default()
                     });
@@ -325,11 +326,11 @@ impl ManagedProcesses {
                         file_system_sandbox_policy: &scope,
                         network_sandbox_policy: NetworkSandboxPolicy::Restricted,
                         sandbox_policy_cwd: repository,
-                        enforce_managed_network: stdio_dap || unix_dap,
+                        enforce_managed_network: stdio_dap,
                         managed_network: loopback.as_ref(),
                         environment_id: None,
                         network: None,
-                        extra_allow_unix_sockets: &sockets,
+                        extra_allow_unix_sockets: &[],
                     })?;
                     let mut command = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE);
                     let mut child = command
@@ -347,48 +348,23 @@ impl ManagedProcesses {
                         .process_group(0)
                         .spawn()
                         .map_err(|error| error.to_string())?;
-                    let streams: Result<(Box<dyn Write + Send>, Box<dyn Read + Send>), String> =
-                        (|| {
-                            if !unix_dap {
-                                return Ok((
-                                    Box::new(child.stdin.take().ok_or("process_stdin_missing")?)
-                                        as Box<dyn Write + Send>,
-                                    Box::new(child.stdout.take().ok_or("process_stdout_missing")?)
-                                        as Box<dyn Read + Send>,
-                                ));
-                            }
-                            let deadline = Instant::now() + Duration::from_secs(3);
-                            let stream = loop {
-                                if !active()
-                                    || Instant::now() >= deadline
-                                    || child
-                                        .try_wait()
-                                        .map_err(|error| error.to_string())?
-                                        .is_some()
-                                {
-                                    return Err("process_socket_start_failed".into());
-                                }
-                                match UnixStream::connect(&socket) {
-                                    Ok(stream) => break stream,
-                                    Err(_) => std::thread::sleep(Duration::from_millis(25)),
-                                }
-                            };
-                            let reader = stream.try_clone().map_err(|error| error.to_string())?;
-                            Ok((Box::new(stream), Box::new(reader)))
-                        })();
-                    let (stdin, stdout) = match streams {
+                    let streams = child
+                        .stdin
+                        .take()
+                        .zip(child.stdout.take())
+                        .ok_or("process_stdio_missing");
+                    let (mut stdin, stdout) = match streams {
                         Ok(streams) => streams,
                         Err(error) => {
                             let _ = kill_process_group(child.id());
                             let _ = child.kill();
                             let _ = child.wait();
-                            return Err(error);
+                            return Err(error.to_owned());
                         }
                     };
                     let (writer_sender, writer_receiver) =
                         mpsc::sync_channel::<(Vec<Value>, mpsc::SyncSender<Result<(), String>>)>(1);
                     std::thread::spawn(move || {
-                        let mut stdin = stdin;
                         while let Ok((messages, reply)) = writer_receiver.recv() {
                             let result = messages
                                 .iter()
@@ -421,7 +397,14 @@ impl ManagedProcesses {
                 })();
                 match launched {
                     Ok(process) => {
-                        records.insert(key, process);
+                        let mut records = self
+                            .records
+                            .lock()
+                            .map_err(|_| "process_records_poisoned")?;
+                        if !admitted(&records) {
+                            return Err("process_session_limit_or_duplicate".into());
+                        }
+                        records.insert(key.clone(), Arc::new(Mutex::new(process)));
                         Ok(json!({"session":input.session,"running":true}))
                     }
                     Err(error) => {
@@ -443,21 +426,23 @@ impl ManagedProcesses {
                 let input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
                 let key = (id.to_owned(), generation, input.session.clone());
-                let mut records = self
-                    .records
-                    .lock()
-                    .map_err(|_| "process_records_poisoned")?;
                 if operation == "process.stop" {
-                    return Ok(json!({"stopped":records.remove(&key).is_some()}));
+                    let stopped = self
+                        .records
+                        .lock()
+                        .map_err(|_| "process_records_poisoned")?
+                        .remove(&key);
+                    return Ok(json!({"stopped":stopped.is_some()}));
                 }
-                let process = records.get_mut(&key).ok_or("process_session_unavailable")?;
+                let session = self.session(&key)?;
+                let mut process = session.lock().map_err(|_| "process_session_poisoned")?;
                 if process
                     .child
                     .try_wait()
                     .map_err(|error| error.to_string())?
                     .is_some()
                 {
-                    records.remove(&key);
+                    self.remove(&key, &session);
                     return Err("process_stopped".into());
                 }
                 if operation == "process.status" {
@@ -477,23 +462,23 @@ impl ManagedProcesses {
                     let write_deadline = Instant::now() + Duration::from_secs(10);
                     loop {
                         if !active() {
-                            records.remove(&key);
+                            self.remove(&key, &session);
                             return Err("process_cancelled".into());
                         }
                         match reply_receiver.recv_timeout(Duration::from_millis(50)) {
                             Ok(Ok(())) => break,
                             Ok(Err(error)) => {
-                                records.remove(&key);
+                                self.remove(&key, &session);
                                 return Err(error);
                             }
                             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                                records.remove(&key);
+                                self.remove(&key, &session);
                                 return Err("process_writer_stopped".into());
                             }
                             Err(mpsc::RecvTimeoutError::Timeout)
                                 if Instant::now() >= write_deadline =>
                             {
-                                records.remove(&key);
+                                self.remove(&key, &session);
                                 return Err("process_write_timeout".into());
                             }
                             Err(mpsc::RecvTimeoutError::Timeout) => (),
@@ -506,7 +491,7 @@ impl ManagedProcesses {
                 let mut bytes = 0_usize;
                 loop {
                     if !active() {
-                        records.remove(&key);
+                        self.remove(&key, &session);
                         return Err("process_cancelled".into());
                     }
                     let next = if messages.is_empty() && input.wait_ms > 0 {
@@ -536,11 +521,11 @@ impl ManagedProcesses {
                             messages.push(message);
                         }
                         Ok(Err(error)) => {
-                            records.remove(&key);
+                            self.remove(&key, &session);
                             return Err(error.to_string());
                         }
                         Err(mpsc::RecvTimeoutError::Disconnected) => {
-                            records.remove(&key);
+                            self.remove(&key, &session);
                             return Err("process_stopped".into());
                         }
                         Err(mpsc::RecvTimeoutError::Timeout)
@@ -561,67 +546,6 @@ impl ManagedProcesses {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unix_dap_process_uses_private_owned_socket() {
-        let repository_dir = tempfile::tempdir().unwrap();
-        let repository = repository_dir.path().canonicalize().unwrap();
-        let executable_dir = tempfile::tempdir().unwrap();
-        let executable = executable_dir.path().join("dlv");
-        fs::write(
-            &executable,
-            "#!/usr/bin/python3\nimport json,socket,sys\np=sys.argv[2].split('unix:',1)[1]\ns=socket.socket(socket.AF_UNIX)\ns.bind(p)\ns.listen(1)\nc,_=s.accept()\nwhile True:\n h=b''\n while b'\\r\\n\\r\\n' not in h:\n  b=c.recv(1)\n  if not b: sys.exit(0)\n  h+=b\n n=int(h.split(b':',1)[1].strip())\n v=json.loads(c.recv(n))\n out=json.dumps({'type':'response','request_seq':v['seq'],'success':True}).encode()\n c.sendall(b'Content-Length: '+str(len(out)).encode()+b'\\r\\n\\r\\n'+out)\n",
-        )
-        .unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-        let old_path = std::env::var_os("PATH").unwrap_or_default();
-        let new_path = format!(
-            "{}:{}",
-            executable_dir.path().display(),
-            old_path.to_string_lossy()
-        );
-        unsafe { std::env::set_var("PATH", new_path) };
-        let processes = ManagedProcesses::default();
-        let policy = FileSystemSandboxPolicy::read_only();
-        let found = processes
-            .call(
-                "fixture",
-                1,
-                &repository,
-                &policy,
-                "process.which",
-                json!({"names":["dlv"]}),
-                || true,
-            )
-            .unwrap();
-        let dlv = &found["found"][0];
-        let started = processes.call("fixture", 1, &repository, &policy, "process.start", json!({"session":"dap","name":"dlv","path":dlv["path"],"sha256":dlv["sha256"],"arguments":["dap"],"transport":"unix_dap"}), || true);
-        unsafe { std::env::set_var("PATH", old_path) };
-        assert!(started.is_ok(), "{started:?}");
-        let records = processes.records.lock().unwrap();
-        let scratch = &records.values().next().unwrap().scratch;
-        assert_eq!(
-            fs::metadata(scratch).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
-        drop(records);
-        let response = processes.call("fixture", 1, &repository, &policy, "process.exchange", json!({"session":"dap","send":[{"seq":1,"type":"request","command":"initialize"}],"wait_ms":1000}), || true).unwrap();
-        assert_eq!(response["messages"][0]["request_seq"], 1);
-        assert_eq!(
-            processes
-                .call(
-                    "fixture",
-                    1,
-                    &repository,
-                    &policy,
-                    "process.stop",
-                    json!({"session":"dap"}),
-                    || true
-                )
-                .unwrap()["stopped"],
-            true
-        );
-    }
 
     #[test]
     fn framed_process_is_owned_bounded_and_stopped() {
@@ -653,6 +577,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(started["running"], true);
+        let scratch = processes
+            .session(&("fixture".into(), 1, "framed".into()))
+            .unwrap()
+            .lock()
+            .unwrap()
+            .scratch
+            .clone();
+        assert_eq!(
+            fs::metadata(&scratch).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
         let answer = processes
             .call("fixture", 1, &repository, &policy, "process.exchange", json!({"session":"framed","send":[{"jsonrpc":"2.0","id":7,"method":"hello"}],"wait_ms":1000}), || true)
             .unwrap();

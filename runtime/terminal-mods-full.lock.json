@@ -12,12 +12,12 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "082db87e480ad160b439103ca285c7af9dcb760033451743ac776d0a715a07fd",
+        "index.ts": "da3da64ebc67c70fbf2b648d18a948cd2b1e4a51f5981fae7e6a2ff4cad10ffb",
         "mod.json": "da629222ab98d5cb7e8a88c61c21d036157cd2753c2c9082e9834eab07287d73",
-        "mod.test.json": "41771ae08a3540f0e25e85414aa8e034b01086f557bb1305d9c127f3e1bf48d7"
+        "mod.test.json": "64d949c776923e66029849b619389290f1717c31a5a9f19a0b66ff160a14157a"
       },
       "id": "omd_git",
-      "package_sha256": "bc3b3fb498fa1466e356d203b799c37dd38c13d0f2a72028ae545b86e001ab59",
+      "package_sha256": "b2142e57cf747c3907f7b6dcc3beefbb0b5aac9a0a965a22d2c6900297c5476d",
       "source": "mods/first-party/omd_git",
       "version": "0.1.0-preview.1"
     },

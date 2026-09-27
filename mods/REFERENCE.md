@@ -191,15 +191,13 @@ expected unavailable operation, so a mod can report fallback without treating
 server absence as a callback failure. Both `call` and `tryCall` remain subject
 to the same declared capability and host permission checks.
 
-`process.start` accepts `transport: "stdio"` by default. Its DAP transports
-are `"stdio_dap"` for `lldb-dap` or `python3 -m debugpy.adapter`, and
-`"unix_dap"` for `dlv dap`. The host creates Delve's private Unix socket,
-frames DAP messages, and allows local loopback binding required by debug
-adapters while keeping external network access restricted. It owns process
-group termination and socket removal. It starts adapters with a cleared host
-environment and an owner-only scratch directory. The opt-in debugger package
-in `plugins/optional/omd-debugger` exposes **Python launch only**; LLDB,
-Delve, and attach remain unqualified transport experiments. Its mod requires
+`process.start` accepts `transport: "stdio"` by default. Its only DAP
+transport is `"stdio_dap"` for `python3 -m debugpy.adapter`. The host frames
+DAP messages and allows the local loopback binding debugpy requires while
+keeping external network access restricted. It owns process group termination
+and starts adapters with a cleared host environment and an owner-only scratch
+directory. The opt-in debugger package in `plugins/optional/omd-debugger`
+exposes **Python launch only**; LLDB, Delve and attach are not supported. Its mod requires
 separate review, trust, and enablement. Plugin installation does not activate
 the mod or install Python or debugpy. The local on-demand marketplace is not
 part of either release installation profile.
@@ -240,8 +238,8 @@ copy keys.
 ## Git operations
 
 The experimental `git` capability (`git_operations_v1`) grants `git.status`,
-`git.log`, `git.diff`, `git.branches`, `git.stage`, `git.unstage`,
-`git.commit`, `git.discard` and `git.switch` for the session repository in
+`git.log`, `git.diff`, `git.branches`, `git.switch_preview`, `git.stage`,
+`git.unstage`, `git.commit`, `git.discard` and `git.switch` for the session repository in
 enabled and platform modes. The host runs fixed `git` argument lists with
 literal pathspecs, no pager, prompt, editor, external diff, text conversion or
 filesystem monitor, a 10 s timeout (120 s for commit hooks), and bounded
@@ -258,18 +256,23 @@ can run. Linked worktrees also require access to their shared Git directory.
 Stage and unstage check every selected descendant; commits check staged paths
 and rename sources; branch switches conservatively check both tracked trees.
 Untracked directories are listed as individual files. Incomplete path listings
-fail closed. User-command Git subprocesses, including hooks and filters, use
-Codex's macOS filesystem sandbox with networking disabled and protected OMD
-paths kept unwritable. Timeout or cancellation terminates the process group,
+fail closed. Every Git subprocess, including lifecycle reads, hooks and
+filters, uses Codex's macOS filesystem sandbox for the session's effective
+permissions with networking disabled and protected OMD paths kept unwritable,
+so a read cannot reach a file the session may not read. Timeout or cancellation terminates the process group,
 including ordinary hook descendants. Every write takes a `fingerprint` returned by a read: stage,
 unstage and discard compare the named paths (HEAD, porcelain record and
-worktree size and modification time); commit compares the staged set; switch
-compares the whole status. A mismatch fails with `stale_git_state`. Discard
+worktree size and modification time, captured before the diff is read);
+commit compares the staged set; switch compares the fingerprint from
+`git.switch_preview`, which binds the whole status, the branch name and its
+destination commit and lists the paths that differ between `from` and `to`
+(500 at most, with `local_changes` counting worktree entries). A mismatch fails with `stale_git_state`. Discard
 restores only unstaged tracked changes and untracked files, refuses conflicts
 and staged-only paths, and first copies each file (untracked files are moved)
 to a timestamped backup in OMD state outside the repository (the platform mod
-store or the enabled-mode evidence directory). Switch uses plain `git switch`,
-so Git refuses to overwrite local changes; it never forces. Commit hooks run
+store or the enabled-mode evidence directory). Switch runs `git switch
+--no-overwrite-ignore`, so Git refuses to overwrite local changes, including
+ignored files the destination tracks; it never forces. Commit hooks run
 as for a normal `git commit`. The first-party `omd_git` mod owns the sidebar,
 previews and confirmations.
 
@@ -323,6 +326,8 @@ Feature scheduling, prompts, result interpretation, anchor resolution, resource 
 | `knowledge.*`, `context.freeze/deliver` | `knowledge_read`/`knowledge_write`, plus `context` for context operations; `scoped_data_v1` | Host chooses the store and repository. Source facts retain exact anchors and refresh against current readable files. Proposed lessons require a native user action before reuse. Frozen selections never expand during a task; source changes, deletion/reset and revoked permissions invalidate delivery. Workers cannot load another thread's handles. |
 | `sessions.list/read` | `sessions_read`; `scoped_data_v1` | Exact repository and per-turn cwd, opt-out, visible local messages only. No raw file paths, hidden reasoning, tool bodies or inherited-history reconstruction. Listing is capped at 100 rows, each text page at 16 KiB; a scan is capped at 4,096 directory entries/128 MiB. Results disclose inaccessible files, truncation and incomplete final records. Pagination rejects revision drift and duplicate IDs. |
 | `api.command(..., {cli})`, `omd COMMAND --repo PATH` | `commands`; `plugin_dispatch_v1` | Generic dispatch to exactly one enabled extension export. The CLI has scoped data operations but no model or process authority. Plugin components reuse ordinary mod trust, grants, sandbox, versioning and disable/recovery. |
+
+A service grant with `network: true` gives its sidecar or provider process unrestricted outbound network access even when the session's network is restricted; services without it inherit the session network policy. Its `read_paths` (at most 16) are the only reads added to the service sandbox. The first-party Claude CLI grant adds the Claude CLI and Node installations, `~/.claude`, `~/.claude.json`, `~/Library/Keychains` for the CLI login and the macOS system library paths its runtime loads. Network and keychain access are explicit host-approved grants, not defaults for other workers, checks or integrations.
 
 Resources use private immutable files, digest verification, owner/thread/source/selection-revision checks, and a 64 MiB/1,024-entry store ceiling. Secret-pattern redaction is conservative; it is not a claim that arbitrary prose can be perfectly classified as secret. Known secret files remain subject to native read denial. A cancelled or denied call cannot be treated as evidence that an action completed.
 

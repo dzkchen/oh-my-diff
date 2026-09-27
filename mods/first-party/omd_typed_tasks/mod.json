@@ -19,6 +19,7 @@
       },
       "max_fan_out": {
         "type": "number",
+        "enum": [1, 2, 3, 4],
         "default": 2
       }
     },

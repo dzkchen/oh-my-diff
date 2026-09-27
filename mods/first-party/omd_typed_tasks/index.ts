@@ -89,15 +89,20 @@ export default function activate(api: ModAPI) {
       return prompt;
     });
     const handles: { task: Task; type: TaskType; handle: string }[] = [];
+    const cancel = () => handles.flatMap(owned => {
+      const cancelled = api.host.tryCall('agents.cancel', { handle: owned.handle });
+      return cancelled.ok ? [] : [`${owned.task.id}: ${cancelled.error}`];
+    });
+    const abort: (message: string) => never = message => {
+      const failures = cancel();
+      throw new Error(failures.length ? `${message}; cancel_failed: ${failures.join(', ')}` : message);
+    };
     for (const [index, task] of tasks.entries()) {
       const type = types[task.type] as TaskType;
       let agent: { handle: string } | null = null;
       let failure: string | null = null;
       try { agent = api.host.call('agents.spawn', { role: type.role, route: type.route, prompt: prompts[index], workspace: type.tools === 'workspace_edit' ? 'isolated_worktree' : 'read_only' }); } catch (error) { if (!(error instanceof Error)) throw error; failure = error.message; }
-      if (failure || !agent) {
-        for (const owned of handles) api.host.call('agents.cancel', { handle: owned.handle });
-        throw new Error(failure ?? 'worker_spawn_failed');
-      }
+      if (failure || !agent) abort(failure ?? 'worker_spawn_failed');
       handles.push({ task, type, handle: agent.handle });
     }
     const validated: { task: Task; type: TaskType; handle: string; value: Result; evidence: Json }[] = [];
@@ -107,24 +112,27 @@ export default function activate(api: ModAPI) {
       let value: Result | null = null;
       let failure: string | null = null;
       try { value = parseResult(result, entry.type.result_schema); } catch (error) { failure = error instanceof Error ? error.message : String(error); }
-      if (failure || !value) {
-        for (const owned of handles) api.host.call('agents.cancel', { handle: owned.handle });
-        throw new Error(failure ?? 'worker_result_invalid');
-      }
+      if (failure || !value) abort(failure ?? 'worker_result_invalid');
       validated.push({ ...entry, value, evidence: result.status === 'completed' ? result.evidence : null });
     }
     for (const entry of validated) api.host.call('agents.result', { handle: entry.handle, consume: true });
     const integrations = new Map<string, Json>();
+    let failed = false;
     for (const entry of validated) if (entry.type.tools === 'workspace_edit') {
-      let integration: Json | null = null;
-      let failure: string | null = null;
-      try { integration = api.host.call('workspace.integrate', { handle: entry.handle }); } catch (error) { if (!(error instanceof Error)) throw error; failure = error.message; }
-      if (failure || integration === null) {
-        for (const owned of handles) api.host.call('agents.cancel', { handle: owned.handle });
-        throw new Error(failure ?? 'integration_failed');
+      if (failed) {
+        integrations.set(entry.task.id, { status: 'not_attempted' });
+        continue;
       }
-      integrations.set(entry.task.id, integration);
+      const integration = api.host.tryCall('workspace.integrate', { handle: entry.handle });
+      if (integration.ok) {
+        integrations.set(entry.task.id, integration.value);
+        continue;
+      }
+      if (!integrations.size) abort(integration.error);
+      failed = true;
+      integrations.set(entry.task.id, { status: 'failed', error: integration.error });
     }
-    return { status: 'completed', checkpoint_revision: checkpoint.revision, tasks: validated.map(entry => ({ id: entry.task.id, type: entry.task.type, result: entry.value.result, sources: entry.value.sources, worker_evidence: entry.evidence, integration: integrations.get(entry.task.id) ?? null })) };
+    const cancelFailures = failed ? cancel() : [];
+    return { status: failed ? 'partially_integrated' : 'completed', ...(cancelFailures.length ? { cancel_failures: cancelFailures } : {}), checkpoint_revision: checkpoint.revision, tasks: validated.map(entry => ({ id: entry.task.id, type: entry.task.type, result: entry.value.result, sources: entry.value.sources, worker_evidence: entry.evidence, integration: integrations.get(entry.task.id) ?? null })) };
   });
 }

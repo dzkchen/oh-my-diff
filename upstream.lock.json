@@ -17,7 +17,7 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/controlled-contributor-0.157.0.patch",
-      "sha256": "e51626c1ddc08bdb7db6c333e0cb33dc6a0b1909d264463d0232b8bffcb820e5"
+      "sha256": "3d9fea4061dce1867635bb0d275a764697c3762da076ee3743f3f21e94dbb77f"
     }
   ],
   "compatibility_evidence": ".docs/audits/upstream-pin-advance-20260925.md"

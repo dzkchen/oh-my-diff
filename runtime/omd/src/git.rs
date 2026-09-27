@@ -20,6 +20,7 @@ pub const OPERATIONS: &[&str] = &[
     "git.log",
     "git.diff",
     "git.branches",
+    "git.switch_preview",
     "git.stage",
     "git.unstage",
     "git.commit",
@@ -40,7 +41,7 @@ const MESSAGE_LIMIT: usize = 4096;
 pub fn is_read(operation: &str) -> bool {
     matches!(
         operation,
-        "git.status" | "git.log" | "git.diff" | "git.branches"
+        "git.status" | "git.log" | "git.diff" | "git.branches" | "git.switch_preview"
     )
 }
 
@@ -49,15 +50,38 @@ pub struct GitAccess<'a> {
     pub protected: &'a [PathBuf],
     pub backups: Option<&'a Path>,
     pub write: Result<(), &'static str>,
-    pub command: Option<&'a GitCommand>,
+    pub command: &'a GitCommand,
     pub writable: &'a dyn Fn(&Path) -> bool,
 }
 
 pub type GitCommand = dyn Fn(Vec<String>) -> Result<Command, String>;
 
+pub fn sandboxed(
+    executable: &Path,
+    mut args: Vec<String>,
+    protected: &[PathBuf],
+    cwd: &Path,
+) -> Result<Command, String> {
+    if args.first().map(String::as_str) != Some("-p") || args.len() < 2 {
+        return Err("git_sandbox_unavailable".to_owned());
+    }
+    for root in protected {
+        for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
+            let literal = serde_json::to_string(&path.to_string_lossy())
+                .map_err(|error| error.to_string())?;
+            args[1].push_str(&format!(
+                "\n(deny file-write* (literal {literal}) (subpath {literal}))"
+            ));
+        }
+    }
+    let mut command = Command::new(executable);
+    command.args(args).current_dir(cwd);
+    Ok(command)
+}
+
 struct Repository<'a> {
     path: PathBuf,
-    command: Option<&'a GitCommand>,
+    command: &'a GitCommand,
 }
 
 impl std::ops::Deref for Repository<'_> {
@@ -167,6 +191,7 @@ pub fn call(
         "git.log" => log(&root, &arguments, active),
         "git.diff" => diff(access, &root, &arguments, active),
         "git.branches" => branches(&root, active),
+        "git.switch_preview" => switch_preview(&root, &arguments, active),
         "git.stage" | "git.unstage" => index_update(access, &root, operation, &arguments, active),
         "git.commit" => commit(access, &root, &arguments, active),
         "git.discard" => discard(access, &root, &arguments, active),
@@ -205,14 +230,7 @@ fn run(
         .map(str::to_owned),
     );
     argv.extend(args.iter().map(|arg| (*arg).to_owned()));
-    let mut command = match root.command {
-        Some(build) => build(argv)?,
-        None => {
-            let mut command = Command::new(&argv[0]);
-            command.args(&argv[1..]);
-            command
-        }
-    };
+    let mut command = (root.command)(argv)?;
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -594,22 +612,17 @@ fn fingerprint<'a>(
 }
 
 fn scoped(root: &Path, status: &Status, paths: &[String]) -> String {
-    let wanted = paths.iter().collect::<BTreeSet<_>>();
-    let covered = |entry: &&Entry| {
-        wanted.contains(&entry.path)
-            || wanted
-                .iter()
-                .any(|path| entry.path.starts_with(&format!("{path}/")))
-    };
-    let clean = paths
+    let prefixes = paths
         .iter()
-        .filter(|path| {
-            !status
-                .entries
-                .iter()
-                .any(|entry| entry.path == **path || entry.path.starts_with(&format!("{path}/")))
-        })
-        .cloned()
+        .map(|path| format!("{path}/"))
+        .collect::<Vec<_>>();
+    let under = |entry: &Entry, index: usize| {
+        entry.path == paths[index] || entry.path.starts_with(&prefixes[index])
+    };
+    let covered = |entry: &&Entry| (0..paths.len()).any(|index| under(entry, index));
+    let clean = (0..paths.len())
+        .filter(|index| !status.entries.iter().any(|entry| under(entry, *index)))
+        .map(|index| paths[index].clone())
         .collect::<Vec<_>>();
     fingerprint(
         root,
@@ -659,7 +672,7 @@ fn status(
         .map(|entry| {
             json!({"path": entry.path, "orig_path": entry.orig_path, "index": entry.index.to_string(),
                 "worktree": entry.worktree.to_string(), "conflicted": entry.conflicted,
-                "fingerprint": scoped(root, &status, std::slice::from_ref(&entry.path))})
+                "fingerprint": fingerprint(root, &status.head, false, std::iter::once(entry), &[])})
         })
         .collect::<Vec<_>>();
     let fingerprint = if scope.is_empty() {
@@ -746,6 +759,7 @@ fn diff(
     let scope = std::slice::from_ref(&path);
     for _ in 0..2 {
         let before = read_status(root, scope, active)?;
+        let expected = scoped(root, &before, scope);
         let untracked = before
             .entries
             .iter()
@@ -780,7 +794,7 @@ fn diff(
         };
         let after = read_status(root, scope, active)?;
         let fingerprint = scoped(root, &after, scope);
-        if scoped(root, &before, scope) != fingerprint {
+        if expected != fingerprint {
             continue;
         }
         let truncated = output.truncated || output.stdout.len() > DIFF_LIMIT;
@@ -1021,13 +1035,8 @@ fn discard(
     Ok(json!({"backup": backup, "fingerprint": scoped(root, &after, &paths)}))
 }
 
-fn switch(
-    access: &GitAccess<'_>,
-    root: &Repository<'_>,
-    arguments: &Value,
-    active: &dyn Fn() -> bool,
-) -> Result<Value, String> {
-    let branch = arguments
+fn branch_name(arguments: &Value) -> Result<&str, String> {
+    arguments
         .get("branch")
         .and_then(Value::as_str)
         .filter(|branch| {
@@ -1036,21 +1045,114 @@ fn switch(
                 && !branch.starts_with('-')
                 && !branch.chars().any(|c| c.is_control() || c.is_whitespace())
         })
-        .ok_or("invalid_git_branch")?;
-    let expected = expected(arguments)?;
-    let reference = format!("refs/heads/{branch}");
-    if read(
+        .ok_or_else(|| "invalid_git_branch".to_owned())
+}
+
+fn branch_target(
+    root: &Repository<'_>,
+    branch: &str,
+    active: &dyn Fn() -> bool,
+) -> Result<String, String> {
+    let reference = format!("refs/heads/{branch}^{{commit}}");
+    let output = read(
         root,
-        &["show-ref", "--verify", "--quiet", &reference],
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            &reference,
+        ],
         active,
-    )?
-    .code
-        != Some(0)
-    {
+    )?;
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if output.code != Some(0) || oid.is_empty() {
         return Err(format!("unknown_git_branch: {branch}"));
     }
+    Ok(oid)
+}
+
+fn switch_fingerprint(root: &Path, status: &Status, branch: &str, target: &str) -> Option<String> {
+    let whole = whole_fingerprint(root, status)?;
+    let mut hash = Sha256::new();
+    hash.update(b"omd-git-switch-v1\0");
+    for part in [whole.as_str(), branch, target] {
+        hash.update(part);
+        hash.update(b"\0");
+    }
+    Some(format!("{:x}", hash.finalize()))
+}
+
+fn switch_preview(
+    root: &Repository<'_>,
+    arguments: &Value,
+    active: &dyn Fn() -> bool,
+) -> Result<Value, String> {
+    let branch = branch_name(arguments)?;
+    let target = branch_target(root, branch, active)?;
+    let status = read_status(root, &[], active)?;
+    if status.head.branch.as_deref() == Some(branch) {
+        return Err(format!("git_branch_current: {branch}"));
+    }
+    let output = match status.head.oid.as_deref() {
+        Some(head) => checked(
+            read(
+                root,
+                &[
+                    "diff",
+                    "--name-status",
+                    "--no-renames",
+                    "--no-ext-diff",
+                    "-z",
+                    head,
+                    &target,
+                    "--",
+                ],
+                active,
+            )?,
+            "diff",
+        )?,
+        None => checked(
+            read(
+                root,
+                &["ls-tree", "-r", "--name-only", "-z", &target],
+                active,
+            )?,
+            "ls-tree",
+        )?,
+    };
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let mut fields = text.split('\0').filter(|field| !field.is_empty());
+    let mut changes = Vec::new();
+    while let Some(field) = fields.next() {
+        let (kind, path) = if status.head.oid.is_some() {
+            (field, fields.next().unwrap_or_default())
+        } else {
+            ("A", field)
+        };
+        changes
+            .push(json!({"path": path, "status": kind.chars().next().unwrap_or('M').to_string()}));
+    }
+    let local = status.entries.len();
+    Ok(
+        json!({"branch": branch, "from": status.head.oid, "to": target,
+        "changes": changes.iter().take(ENTRY_LIMIT).collect::<Vec<_>>(),
+        "truncated": output.truncated || changes.len() > ENTRY_LIMIT, "local_changes": local,
+        "fingerprint": switch_fingerprint(root, &status, branch, &target)}),
+    )
+}
+
+fn switch(
+    access: &GitAccess<'_>,
+    root: &Repository<'_>,
+    arguments: &Value,
+    active: &dyn Fn() -> bool,
+) -> Result<Value, String> {
+    let branch = branch_name(arguments)?;
+    let expected = expected(arguments)?;
+    let target = branch_target(root, branch, active)?;
     let before = read_status(root, &[], active)?;
-    for revision in std::iter::once(reference.as_str()).chain(before.head.oid.as_deref()) {
+    for revision in std::iter::once(target.as_str()).chain(before.head.oid.as_deref()) {
         let entries = listed_paths(checked(
             read(
                 root,
@@ -1064,11 +1166,11 @@ fn switch(
     if before.entries.iter().any(|entry| entry.conflicted) {
         return Err("git_conflicts_unresolved".to_owned());
     }
-    fresh(expected, whole_fingerprint(root, &before))?;
+    fresh(expected, switch_fingerprint(root, &before, branch, &target))?;
     checked(
         run(
             root,
-            &["switch", "--no-guess", branch],
+            &["switch", "--no-guess", "--no-overwrite-ignore", branch],
             None,
             false,
             TIMEOUT,
@@ -1077,6 +1179,9 @@ fn switch(
         "switch",
     )?;
     let after = read_status(root, &[], active)?;
+    if after.head.oid.as_deref() != Some(target.as_str()) {
+        return Err("stale_git_state: the branch moved during the switch; review HEAD".to_owned());
+    }
     Ok(json!({"head": head_json(&after.head), "fingerprint": whole_fingerprint(root, &after)}))
 }
 

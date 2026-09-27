@@ -113,7 +113,8 @@ async function prepare(recordPath, repositoryPath, prompt, model, claudePath, ma
   const home = homedir();
   const username = userInfo().username;
   const readCandidates = [mod, claude, dirname(claude), resolve(dirname(node), '..'), '/opt/homebrew',
-    join(home, '.claude'), join(home, '.claude.json'), join(home, 'Library/Keychains')];
+    join(home, '.claude'), join(home, '.claude.json'), join(home, 'Library/Keychains'), '/System', '/usr/lib',
+    '/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld', '/System/Volumes/Preboot/Cryptexes/OS/usr/lib'];
   const readPaths = [];
   for (const path of readCandidates) {
     try { readPaths.push(await realpath(path)); } catch {}

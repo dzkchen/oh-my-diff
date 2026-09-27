@@ -250,10 +250,6 @@ pub(super) fn isolated(
         "/bin",
         "/usr/sbin",
         "/sbin",
-        "/System",
-        "/usr/lib",
-        "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
-        "/System/Volumes/Preboot/Cryptexes/OS/usr/lib",
         "/Library/Developer/CommandLineTools/usr",
     ]
     .into_iter()
@@ -1817,16 +1813,13 @@ pub async fn contribute(
     host.task
         .consume_worker_result(&selected_role)
         .map_err(error)?;
-    let tracked = codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)?;
-    let mut current_paths = tracked.clone();
-    current_paths.extend(base.files.keys().chain(candidate.files.keys()).cloned());
-    let current = Snapshot::capture(
-        &manifest.repository,
-        &current_paths,
-        manifest.snapshot_bytes,
-    )
-    .map_err(error)?;
-    let merged = base.merge_candidate(&candidate, &current).map_err(error)?;
+    let state = ParentState::capture(
+        manifest,
+        base.files.keys().chain(candidate.files.keys()).cloned(),
+    )?;
+    let merged = base
+        .merge_candidate(&candidate, &state.current)
+        .map_err(error)?;
     let candidate_hash = merged.hash().map_err(error)?;
     let candidate_ref = host.evidence(
         "candidate.json",
@@ -1834,37 +1827,13 @@ pub async fn contribute(
     )?;
     let candidate_marker =
         evidence_marker("integration-candidate", &candidate_hash, &candidate_ref)?;
-    let check_root = codex_omd::create_worktree(
-        &merged,
-        &manifest.scratch.join("checks"),
-        manifest.snapshot_bytes,
-    )
-    .map_err(error)?;
-    std::fs::create_dir_all(check_root.join(".omd-tmp")).map_err(error)?;
-    let check_config = isolated(
-        &parent,
-        &check_root,
-        &manifest.toolchain_reads,
-        &denied,
-        true,
-    )?;
-    let checks = command(host, &check_config, manifest.check_command.clone()).await?;
+    let checks = check_candidate(host, &parent, &merged, &manifest.scratch, &denied).await?;
     let check_ref = host.evidence(
         "checks.json",
         &json!({"candidate_sha256": candidate_hash, "result": checks}),
     )?;
-    if checks["exit_code"] != 0 || checks["timed_out"] != false {
+    if !passed(&checks) {
         return Err("candidate checks failed".into());
-    }
-    if Snapshot::capture(
-        &check_root,
-        &merged.files.keys().cloned().collect(),
-        manifest.snapshot_bytes,
-    )
-    .map_err(error)?
-        != merged
-    {
-        return Err("checks modified the candidate".into());
     }
     let check_marker = evidence_marker("final-executable-checks", &candidate_hash, &check_ref)?;
     let (review_cycle_number, prior_findings, repair_recorded) = {
@@ -2001,105 +1970,10 @@ pub async fn contribute(
     if !review_cycle.final_approved {
         return Err("separate-model review left unresolved findings on the exact candidate".into());
     }
-    if codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)? != tracked
-        || Snapshot::capture(
-            &manifest.repository,
-            &current_paths,
-            manifest.snapshot_bytes,
-        )
-        .map_err(error)?
-            != current
-    {
-        return Err("parent changed after candidate checks/review; integration refused".into());
-    }
-    let delta = manifest.scratch.join("delta");
-    std::fs::create_dir(&delta).map_err(error)?;
-    current
-        .write_new(&delta.join("a"), manifest.snapshot_bytes)
-        .map_err(error)?;
-    merged
-        .write_new(&delta.join("b"), manifest.snapshot_bytes)
-        .map_err(error)?;
-    let diff_config = isolated(&parent, &delta, &[], &denied, true)?;
-    let diff = command(
-        host,
-        &diff_config,
-        vec![
-            "/Library/Developer/CommandLineTools/usr/bin/git".into(),
-            "-c".into(),
-            "core.fsmonitor=false".into(),
-            "diff".into(),
-            "--no-index".into(),
-            "--binary".into(),
-            "--no-ext-diff".into(),
-            "--no-textconv".into(),
-            "--".into(),
-            "a".into(),
-            "b".into(),
-        ],
-    )
-    .await?;
-    if diff["exit_code"] != 1 || diff["stdout_truncated"] != false {
-        return Err("candidate diff failed".into());
-    }
-    let patch = diff["stdout"]
-        .as_str()
-        .ok_or("candidate diff missing")?
-        .lines()
-        .map(|line| {
-            if line.starts_with("diff --git ")
-                || line.starts_with("--- ")
-                || line.starts_with("+++ ")
-                || line.starts_with("Binary files ")
-            {
-                line.replace("a/a/", "a/").replace("b/b/", "b/")
-            } else {
-                line.into()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    let patch_path = manifest.scratch.join("reviewed.patch");
-    std::fs::write(&patch_path, &patch).map_err(error)?;
-    host.authorize()?;
-    host.task.check_active().map_err(error)?;
-    let integration_config = isolated(&parent, &manifest.repository, &[], &denied, true)?;
-    if codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)? != tracked
-        || Snapshot::capture(
-            &manifest.repository,
-            &current_paths,
-            manifest.snapshot_bytes,
-        )
-        .map_err(error)?
-            != current
-    {
-        return Err("parent changed immediately before apply; integration refused".into());
-    }
-    let applied = command(
-        host,
-        &integration_config,
-        vec![
-            "/Library/Developer/CommandLineTools/usr/bin/git".into(),
-            "-c".into(),
-            "core.fsmonitor=false".into(),
-            "apply".into(),
-            "--binary".into(),
-            patch_path.display().to_string(),
-        ],
-    )
-    .await?;
+    let applied =
+        apply_candidate(host, &parent, &denied, &manifest.scratch, &state, &merged).await?;
     let integration_ref = host.evidence("integration.json", &applied)?;
-    if applied["exit_code"] != 0
-        || codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)? != tracked
-        || Snapshot::capture(
-            &manifest.repository,
-            &current_paths,
-            manifest.snapshot_bytes,
-        )
-        .map_err(error)?
-            != merged
-    {
+    if applied["exit_code"] != 0 || !state.matches(manifest, &merged)? {
         return Err("integration did not finish at the reviewed version; changes may already be applied alongside a concurrent edit; inspect retained integration evidence".into());
     }
     codex_omd::cleanup_owned_directory(&manifest.repository, &manifest.scratch).map_err(error)?;
@@ -2397,6 +2271,135 @@ pub(super) async fn all_paths(host: &Host, config: &Config) -> Result<BTreeSet<S
         .filter(|p| !p.is_empty() && !p.starts_with(".omd-tmp/"))
         .map(str::to_owned)
         .collect())
+}
+
+pub(super) struct ParentState {
+    untracked: BTreeSet<String>,
+    tracked: BTreeSet<String>,
+    paths: BTreeSet<String>,
+    pub(super) current: Snapshot,
+}
+
+impl ParentState {
+    pub(super) fn capture(
+        manifest: &Manifest,
+        candidate_paths: impl IntoIterator<Item = String>,
+    ) -> Result<Self, String> {
+        let untracked = manifest.approved_untracked.iter().cloned().collect();
+        let tracked = codex_omd::tracked_paths(&manifest.repository, &untracked).map_err(error)?;
+        let mut paths = tracked.clone();
+        paths.extend(candidate_paths);
+        let current = Snapshot::capture(&manifest.repository, &paths, manifest.snapshot_bytes)
+            .map_err(error)?;
+        Ok(Self {
+            untracked,
+            tracked,
+            paths,
+            current,
+        })
+    }
+
+    pub(super) fn matches(&self, manifest: &Manifest, expected: &Snapshot) -> Result<bool, String> {
+        Ok(
+            codex_omd::tracked_paths(&manifest.repository, &self.untracked).map_err(error)?
+                == self.tracked
+                && Snapshot::capture(&manifest.repository, &self.paths, manifest.snapshot_bytes)
+                    .map_err(error)?
+                    == *expected,
+        )
+    }
+}
+
+pub(super) fn passed(check: &Value) -> bool {
+    check["exit_code"] == 0 && check["timed_out"] == false
+}
+
+pub(super) async fn check_candidate(
+    host: &Host,
+    parent: &Config,
+    candidate: &Snapshot,
+    directory: &Path,
+    denied: &[PathBuf],
+) -> Result<Value, String> {
+    let bytes = host.manifest.snapshot_bytes;
+    let root =
+        codex_omd::create_worktree(candidate, &directory.join("checks"), bytes).map_err(error)?;
+    std::fs::create_dir_all(root.join(".omd-tmp")).map_err(error)?;
+    let config = isolated(parent, &root, &host.manifest.toolchain_reads, denied, true)?;
+    let checks = command(host, &config, host.manifest.check_command.clone()).await?;
+    if passed(&checks)
+        && Snapshot::capture(&root, &candidate.files.keys().cloned().collect(), bytes)
+            .map_err(error)?
+            != *candidate
+    {
+        return Err("checks modified the candidate".into());
+    }
+    Ok(checks)
+}
+
+pub(super) async fn apply_candidate(
+    host: &Host,
+    parent: &Config,
+    denied: &[PathBuf],
+    directory: &Path,
+    state: &ParentState,
+    candidate: &Snapshot,
+) -> Result<Value, String> {
+    let manifest = &host.manifest;
+    if !state.matches(manifest, &state.current)? {
+        return Err("parent changed after candidate checks/review; integration refused".into());
+    }
+    let delta = directory.join("delta");
+    std::fs::create_dir(&delta).map_err(error)?;
+    state
+        .current
+        .write_new(&delta.join("a"), manifest.snapshot_bytes)
+        .map_err(error)?;
+    candidate
+        .write_new(&delta.join("b"), manifest.snapshot_bytes)
+        .map_err(error)?;
+    let git = |args: &[&str]| {
+        [
+            "/Library/Developer/CommandLineTools/usr/bin/git",
+            "-c",
+            "core.fsmonitor=false",
+        ]
+        .iter()
+        .chain(args)
+        .map(|arg| (*arg).to_owned())
+        .collect::<Vec<String>>()
+    };
+    let diff = command(
+        host,
+        &isolated(parent, &delta, &[], denied, true)?,
+        git(&[
+            "diff",
+            "--no-index",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--output=candidate.patch",
+            "--",
+            "a",
+            "b",
+        ]),
+    )
+    .await?;
+    let patch = delta.join("candidate.patch");
+    if diff["exit_code"] != 1 || !patch.is_file() {
+        return Err("candidate diff failed".into());
+    }
+    host.authorize()?;
+    host.task.check_active().map_err(error)?;
+    if !state.matches(manifest, &state.current)? {
+        return Err("parent changed immediately before apply; integration refused".into());
+    }
+    command(
+        host,
+        &isolated(parent, &manifest.repository, &[], denied, true)?,
+        git(&["apply", "-p2", "--binary", &patch.display().to_string()]),
+    )
+    .await
 }
 
 pub(super) async fn review_isolated_candidate(

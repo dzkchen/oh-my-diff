@@ -593,6 +593,10 @@ setting is not a total RSS limit. A callback has at most 32 host operations and 
 seconds of cumulative JavaScript evaluation; native effects retain their own task
 deadlines. Input is
 512 KiB, source/output 64 KiB, receipts 128 KiB, and each context fragment 1 KiB.
+Receipts hold every host call's arguments and result, so large text read and
+then sent counts twice. Exceeding the receipt, host-call or evaluation budget
+fails only that callback; the mod stays enabled, unlike other callback errors,
+which disable it until an explicit reload.
 At most 16 mods, 16 tools/commands per mod, and eight managed services are admitted.
 
 ## Optional Pi adapter

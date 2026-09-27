@@ -1,5 +1,17 @@
 #!/bin/sh
-exec python3 - "$@" <<'PY'
+OMD_PYTHON=
+for candidate in python3.14 python3.13 python3.12 python3 /opt/homebrew/bin/python3 "$(command -v mise >/dev/null 2>&1 && mise which python3 2>/dev/null)"; do
+  if [ -n "$candidate" ] && command -v "$candidate" >/dev/null 2>&1 \
+    && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))' 2>/dev/null; then
+    OMD_PYTHON=$candidate
+    break
+  fi
+done
+if [ -z "$OMD_PYTHON" ]; then
+  echo "omd installer: Python 3.12 or newer is required (macOS ships 3.9); install one, for example with 'brew install python@3.12' or mise, and retry" >&2
+  exit 1
+fi
+exec "$OMD_PYTHON" - "$@" <<'PY'
 import argparse
 import fcntl
 import hashlib
@@ -159,7 +171,7 @@ def extract(archive_path, destination):
         if not members or len(members) > 1000 or sum(item.size for item in members) > 600_000_000:
             fail("release archive has an invalid inventory")
         if any(not item.isfile() or not item.name.startswith("payload/")
-               or any(part in ("", ".", "..") for part in Path(item.name).parts)
+               or ".." in Path(item.name).parts
                or item.size > 500_000_000 for item in members):
             fail("release archive contains an unsafe member")
         archive.extractall(destination, filter="data")
@@ -237,8 +249,7 @@ def install(args, root, current):
             (generation / "receipt.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
             status(generation, Path(upstream["path"]), args.bin_dir)
         except BaseException:
-            if not (generation / "prefix").exists():
-                shutil.rmtree(generation)
+            discard(generation, Path(upstream["path"]), args.bin_dir)
             raise
         if current:
             atomic_symlink(root / "previous", current)
@@ -251,9 +262,40 @@ def install(args, root, current):
             else:
                 (root / "current").unlink()
             raise
+        kept = {generation, current} - {None}
+        pruned, failures = [], []
+        for old in sorted((root / "releases").iterdir()):
+            if old in kept or not (old / "receipt.json").is_file():
+                continue
+            try:
+                remove_generation(old, Path(upstream["path"]), args.bin_dir)
+                pruned.append(old.name)
+            except (OSError, ValueError) as error:
+                failures.append(f"{old.name}: {error}")
         print(json.dumps({"installed": profile, "active": str(generation),
                           "previous": str(current) if current else None,
-                          "upstream": upstream["path"], "bin_dir": str(args.bin_dir)}, indent=2))
+                          "upstream": upstream["path"], "bin_dir": str(args.bin_dir),
+                          "pruned": pruned, "prune_failures": failures}, indent=2))
+
+
+def remove_generation(generation, upstream, bin_dir):
+    run([generation / "bin/omd-package", "uninstall"], env=environment(upstream, bin_dir))
+    (generation / "receipt.json").unlink()
+    (generation / "bin").rmdir()
+    generation.rmdir()
+
+
+def discard(generation, upstream, bin_dir):
+    if (generation / "bin/omd-package").is_file():
+        try:
+            run([generation / "bin/omd-package", "uninstall"], env=environment(upstream, bin_dir))
+        except (OSError, ValueError):
+            pass
+    (generation / "receipt.json").unlink(missing_ok=True)
+    if (generation / "prefix").exists():
+        generation.rename(generation.with_name(f"failed-{generation.name}"))
+    else:
+        shutil.rmtree(generation)
 
 
 def rollback(root, bin_dir, current):
@@ -262,7 +304,7 @@ def rollback(root, bin_dir, current):
         prior_name = receipt(current).get("previous")
         if isinstance(prior_name, str) and re.fullmatch(r"[0-9a-f]{32}", prior_name):
             prior = root / "releases" / prior_name
-            if prior.is_dir() and prior.parent == root / "releases":
+            if prior.is_dir():
                 previous = prior
     if not current or not previous:
         fail("No previous installation is available for rollback.")
@@ -302,10 +344,7 @@ def uninstall(root, bin_dir, current):
     (root / "current").unlink()
     (root / "previous").unlink(missing_ok=True)
     for generation in [item for item in generations if item != current]:
-        run([generation / "bin/omd-package", "uninstall"], env=environment(upstream, bin_dir))
-        (generation / "receipt.json").unlink()
-        (generation / "bin").rmdir()
-        generation.rmdir()
+        remove_generation(generation, upstream, bin_dir)
     print(json.dumps({"uninstalled": True, "restored_upstream": str(upstream),
                       "preserved_stores": str(root / "stores")}, indent=2))
 

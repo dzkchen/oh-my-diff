@@ -10,11 +10,11 @@
     ],
     "extension_type": "mod",
     "files": {
-      "index.ts": "8637458aa929be95ab4fd45d29d2ba8180fa339b718c326297d8617aff10d001",
-      "mod.json": "16087bd5af4c903f3e049751969b058ec7ccab7a65a240f321e8e7dbd278ef9f"
+      "index.ts": "0858127a282f37ed28ada824da20ac5a57173a05564a7f87db97c093283184a0",
+      "mod.json": "638f5620c71ba764695b1b9a0b26cc9e7c93083b071a4b82998386903a7607ba"
     },
     "id": "omd_typed_tasks",
-    "package_sha256": "5c8236f5dd44f1c2c9e01b45f848b52ae6cea94c5c95b23fbcf21b6ab1e9adab",
+    "package_sha256": "9ee1b96d532c1997300b5117741bef2ce9be229959b7a203621a41a254803b38",
     "source": "mods/first-party/omd_typed_tasks",
     "version": "0.1.0-preview.1"
   },

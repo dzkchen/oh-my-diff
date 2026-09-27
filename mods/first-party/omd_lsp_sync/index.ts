@@ -33,19 +33,14 @@ const pathFromUri = (repository: string, value: string): string | null => {
   return path && !path.split('/').some(part => !part || part === '.' || part === '..' || part === '.git') ? path : null;
 };
 
-function offset(text: string, position: Json): number | null {
+function offset(text: string, lines: number[], position: Json): number | null {
   const point = object(position);
   const line = number(point?.line ?? null);
   const character = number(point?.character ?? null);
-  if (line === null || character === null || line < 0 || character < 0) return null;
-  let start = 0;
-  for (let current = 0; current < line; current++) {
-    const next = text.indexOf('\n', start);
-    if (next < 0) return null;
-    start = next + 1;
-  }
-  const end = text.indexOf('\n', start);
-  const width = (end < 0 ? text.length : end) - start;
+  if (line === null || character === null || line < 0 || character < 0 || line >= lines.length) return null;
+  const start = lines[line];
+  const end = line + 1 < lines.length ? lines[line + 1] - 1 : text.length;
+  const width = end - start;
   if (character > width) return null;
   const index = start + character;
   if (index > start && index < text.length) {
@@ -58,11 +53,13 @@ function offset(text: string, position: Json): number | null {
 
 function rewrite(text: string, edits: Json[]): string | null {
   const ranges: { start: number; end: number; value: string }[] = [];
+  const lines = [0];
+  for (let index = text.indexOf('\n'); index >= 0; index = text.indexOf('\n', index + 1)) lines.push(index + 1);
   for (const entry of edits) {
     const edit = object(entry);
     const range = object(edit?.range ?? null);
-    const start = offset(text, range?.start ?? null);
-    const end = offset(text, range?.end ?? null);
+    const start = offset(text, lines, range?.start ?? null);
+    const end = offset(text, lines, range?.end ?? null);
     const value = string(edit?.newText ?? null);
     if (start === null || end === null || start > end || value === null) return null;
     ranges.push({ start, end, value });
@@ -138,10 +135,35 @@ function failure(s: State, reason: string, stale = false): void {
   s.reason = reason.slice(0, 256);
 }
 
+const CALL_BUDGET = 28;
+const BYTE_BUDGET = 96_000;
+const SILENT_WAITS = 10;
+const IDLE_STOP_MS = 15 * 60_000;
+const size = (value: unknown) => {
+  const text = JSON.stringify(value) ?? '';
+  let bytes = 96;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code >= 0xd800 && code <= 0xdfff ? 2 : 3;
+  }
+  return bytes;
+};
+
 export default function activate(api: ModAPI) {
+  let calls = 0;
+  let spent = 0;
+  const budget = <A, T>(argument: A, call: (argument: A) => Result<T>): Result<T> => {
+    const cost = size(argument);
+    if (calls >= CALL_BUDGET || spent + cost > BYTE_BUDGET) return { ok: false, error: 'callback_budget' };
+    calls++;
+    const result = call(argument);
+    spent += cost + size(result);
+    return result;
+  };
+  const stopServer = () => budget({ session }, argument => api.host.tryCall('process.stop', argument));
   const save = (s: State) => api.state.set(s as unknown as Json);
   const exchange = (outgoing: Json[], wait_ms: number): Result<Message[]> => {
-    const result = api.host.tryCall('process.exchange', { session, send: outgoing, wait_ms });
+    const result = budget({ session, send: outgoing, wait_ms }, argument => api.host.tryCall('process.exchange', argument));
     if (!result.ok) return result;
     const messages = result.value.messages.map(message);
     return messages.every(Boolean) ? { ok: true, value: messages as Message[] } : { ok: false, error: 'invalid_server_message' };
@@ -153,28 +175,51 @@ export default function activate(api: ModAPI) {
       : item.method === 'workspace/applyEdit' ? { applied: false } : null;
     return [{ jsonrpc: '2.0', id: item.id, result }];
   });
+  const diagnostics = (s: State, messages: Message[]) => {
+    for (const item of messages) {
+      if (item.method !== 'textDocument/publishDiagnostics') continue;
+      const params = object(item.params ?? null);
+      const path = params && string(params.uri) ? pathFromUri(s.repository, String(params.uri)) : null;
+      if (!path || !s.documents[path]) continue;
+      const version = number(params?.version ?? null);
+      if (version !== null && version !== s.documents[path].version) continue;
+      const entries = params?.diagnostics;
+      if (Array.isArray(entries)) s.diagnostics[path] = { count: entries.length, version };
+    }
+  };
+  const handle = (s: State, messages: Message[]): Message[] => {
+    diagnostics(s, messages);
+    return replies(messages);
+  };
+  const settle = (s: State, pending: Json[]): Result<true> => {
+    let outgoing: Json[] = pending;
+    while (outgoing.length) {
+      const answered = exchange(outgoing, 0);
+      if (!answered.ok) return answered;
+      outgoing = handle(s, answered.value);
+    }
+    return { ok: true, value: true };
+  };
   const request = (s: State, method: string, params: Json): Result<Json> => {
     const id = s.next_id++;
     let outgoing: Json[] = [{ jsonrpc: '2.0', id, method, params }];
-    for (let attempt = 0; attempt < 12; attempt++) {
+    for (let silent = 0; silent < SILENT_WAITS;) {
       const batch = exchange(outgoing, 1000);
       if (!batch.ok) return batch;
-      const found = batch.value.find(item => item.id === id);
+      if (!batch.value.length) silent++;
+      outgoing = handle(s, batch.value);
+      const found = batch.value.find(item => item.id === id && !('method' in item));
       if (found) {
-        const pending = replies(batch.value);
-        if (pending.length) {
-          const answered = exchange(pending, 0);
-          if (!answered.ok) return answered;
-        }
+        const settled = settle(s, outgoing);
+        if (!settled.ok) return settled;
         return 'error' in found ? { ok: false, error: `server_error:${JSON.stringify(found.error).slice(0, 160)}` } : { ok: true, value: found.result ?? null };
       }
-      outgoing = replies(batch.value);
     }
     return { ok: false, error: 'server_request_timeout' };
   };
   const initialize = (s: State, repository: string): Result<boolean> => {
     if (s.running && s.repository === repository) {
-      const status = api.host.tryCall('process.status', { session });
+      const status = budget({ session }, argument => api.host.tryCall('process.status', argument));
       if (status.ok && status.value.running) return { ok: true, value: false };
     }
     s.running = false;
@@ -182,11 +227,11 @@ export default function activate(api: ModAPI) {
     s.documents = {};
     s.diagnostics = {};
     s.next_id = 1;
-    const found = api.host.tryCall('process.which', { names: ['pylsp'] });
+    const found = budget({ names: ['pylsp'] }, argument => api.host.tryCall('process.which', argument));
     if (!found.ok) return found;
     const server = found.value.found[0];
     if (!server) return { ok: false, error: 'python_server_absent' };
-    const started = api.host.tryCall('process.start', { session, name: server.name, path: server.path, sha256: server.sha256, arguments: [] });
+    const started = budget({ session, name: server.name, path: server.path, sha256: server.sha256, arguments: [] }, argument => api.host.tryCall('process.start', argument));
     if (!started.ok) return started;
     s.running = true;
     const rootUri = fileUri(repository);
@@ -201,86 +246,76 @@ export default function activate(api: ModAPI) {
       },
     });
     if (!init.ok) {
-      api.host.tryCall('process.stop', { session });
+      stopServer();
       s.running = false;
       return init;
     }
     s.capabilities = object(init.value)?.capabilities ?? null;
     const ready = exchange([{ jsonrpc: '2.0', method: 'initialized', params: {} }], 0);
     if (!ready.ok) {
-      api.host.tryCall('process.stop', { session });
+      stopServer();
       s.running = false;
       return ready;
     }
-    return { ok: true, value: true };
-  };
-  const diagnostics = (s: State, messages: Message[]) => {
-    for (const item of messages) {
-      if (item.method !== 'textDocument/publishDiagnostics') continue;
-      const params = object(item.params ?? null);
-      const path = params && string(params.uri) ? pathFromUri(s.repository, String(params.uri)) : null;
-      if (!path || !s.documents[path]) continue;
-      const version = number(params?.version ?? null);
-      if (version !== null && version !== s.documents[path].version) continue;
-      const entries = params?.diagnostics;
-      if (Array.isArray(entries)) s.diagnostics[path] = { count: entries.length, version };
+    const settled = settle(s, handle(s, ready.value));
+    if (!settled.ok) {
+      stopServer();
+      s.running = false;
+      return settled;
     }
+    return { ok: true, value: true };
   };
   const synchronize = (s: State, paths: string[]): Result<boolean> => {
     const selected = [...new Set(paths)].filter(supported);
     if (!selected.length) return { ok: true, value: false };
     if (selected.length > 128) return { ok: false, error: 'document_batch_limit' };
-    const read = api.host.tryCall('workspace.read', { paths: selected });
-    if (!read.ok) return read;
-    const tracked = new Set(Object.keys(s.documents));
-    for (const path of selected) {
-      if (read.value.files[path]) tracked.add(path);
-      else tracked.delete(path);
-    }
-    if (tracked.size > 128) return { ok: false, error: 'document_limit' };
-    const priorDocuments = { ...s.documents };
-    const priorDiagnostics = { ...s.diagnostics };
-    const outbound: Json[] = [];
-    for (const path of selected) {
-      const file = read.value.files[path];
-      const previous = s.documents[path];
-      if (!file) {
-        if (previous) outbound.push({ jsonrpc: '2.0', method: 'textDocument/didClose', params: { textDocument: { uri: uri(s.repository, path) } } });
-        delete s.documents[path];
-        delete s.diagnostics[path];
-      } else if (!previous) {
-        s.documents[path] = { sha256: file.sha256, version: 1 };
-        outbound.push({ jsonrpc: '2.0', method: 'textDocument/didOpen', params: { textDocument: { uri: uri(s.repository, path), languageId: 'python', version: 1, text: file.text } } });
-      } else if (previous.sha256 !== file.sha256) {
-        const version = previous.version + 1;
-        s.documents[path] = { sha256: file.sha256, version };
-        delete s.diagnostics[path];
-        outbound.push({ jsonrpc: '2.0', method: 'textDocument/didChange', params: { textDocument: { uri: uri(s.repository, path), version }, contentChanges: [{ text: file.text }] } });
+    let changed = false;
+    for (let index = 0; index < selected.length; index += 16) {
+      const chunk = selected.slice(index, index + 16);
+      if (spent > BYTE_BUDGET / 2) return { ok: false, error: 'callback_budget' };
+      const read = budget({ paths: chunk }, argument => api.host.tryCall('workspace.read', argument));
+      if (!read.ok) return read;
+      const tracked = new Set(Object.keys(s.documents));
+      for (const path of chunk) {
+        if (read.value.files[path]) tracked.add(path);
+        else tracked.delete(path);
       }
-    }
-    if (!outbound.length) return { ok: true, value: false };
-    const batch = exchange(outbound, 150);
-    if (!batch.ok) {
-      api.host.tryCall('process.stop', { session });
-      s.running = false;
-      s.documents = priorDocuments;
-      s.diagnostics = priorDiagnostics;
-      return batch;
-    }
-    diagnostics(s, batch.value);
-    const pending = replies(batch.value);
-    if (pending.length) {
-      const answered = exchange(pending, 0);
-      if (!answered.ok) {
-        api.host.tryCall('process.stop', { session });
-        s.running = false;
+      if (tracked.size > 128) return { ok: false, error: 'document_limit' };
+      const priorDocuments = { ...s.documents };
+      const priorDiagnostics = { ...s.diagnostics };
+      const outbound: Json[] = [];
+      for (const path of chunk) {
+        const file = read.value.files[path];
+        const previous = s.documents[path];
+        if (!file) {
+          if (previous) outbound.push({ jsonrpc: '2.0', method: 'textDocument/didClose', params: { textDocument: { uri: uri(s.repository, path) } } });
+          delete s.documents[path];
+          delete s.diagnostics[path];
+        } else if (!previous) {
+          s.documents[path] = { sha256: file.sha256, version: 1 };
+          outbound.push({ jsonrpc: '2.0', method: 'textDocument/didOpen', params: { textDocument: { uri: uri(s.repository, path), languageId: 'python', version: 1, text: file.text } } });
+        } else if (previous.sha256 !== file.sha256) {
+          const version = previous.version + 1;
+          s.documents[path] = { sha256: file.sha256, version };
+          delete s.diagnostics[path];
+          outbound.push({ jsonrpc: '2.0', method: 'textDocument/didChange', params: { textDocument: { uri: uri(s.repository, path), version }, contentChanges: [{ text: file.text }] } });
+        }
+      }
+      if (!outbound.length) continue;
+      const batch = exchange(outbound, 150);
+      const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
+      if (!settled.ok) {
         s.documents = priorDocuments;
         s.diagnostics = priorDiagnostics;
-        return answered;
+        if (settled.error !== 'callback_budget') {
+          stopServer();
+          s.running = false;
+        }
+        return settled;
       }
-      diagnostics(s, answered.value);
+      changed = true;
     }
-    return { ok: true, value: true };
+    return { ok: true, value: changed };
   };
   api.on('workspace_write', event => {
     const s = state(api.state.get());
@@ -289,10 +324,10 @@ export default function activate(api: ModAPI) {
     const unsupported = event.changes.some(change => /\.(?:rs|ts|tsx|js|jsx|java)$/.test(change.path) || (change.path.length > 240 && /\.pyi?$/.test(change.path)));
     if (!paths.length && unsupported) { failure(s, 'unsupported_language_or_path'); save(s); return; }
     if (!paths.length) return;
+    const previous = Object.keys(s.documents);
     const started = initialize(s, event.repository);
     if (!started.ok) { failure(s, started.error); save(s); return; }
-    const all = started.value ? [...Object.keys(state(api.state.get()).documents), ...paths] : paths;
-    const synced = synchronize(s, all);
+    const synced = synchronize(s, started.value ? [...previous, ...paths] : paths);
     if (!synced.ok) failure(s, synced.error, true);
     else if (unsupported) failure(s, 'unsupported_language_or_path');
     else { s.status = 'synced'; s.reason = ''; }
@@ -309,7 +344,7 @@ export default function activate(api: ModAPI) {
     const provider = object(object(s.capabilities)?.workspace ?? null);
     const operations = object(provider?.fileOperations ?? null);
     if (!operations?.willRename) { save(s); return fallback('server_will_rename_unsupported'); }
-    const before = api.host.tryCall('workspace.read', { paths: [event.old, event.new] });
+    const before = budget({ paths: [event.old, event.new] }, argument => api.host.tryCall('workspace.read', argument));
     if (!before.ok) { failure(s, before.error, true); save(s); return fallback(before.error); }
     if (before.value.files[event.old]?.sha256 !== event.expected[event.old] || before.value.files[event.new] !== null) { failure(s, 'rename_input_stale', true); save(s); return fallback('rename_input_stale'); }
     const response = request(s, 'workspace/willRenameFiles', { files: [{ oldUri: uri(s.repository, event.old), newUri: uri(s.repository, event.new) }] });
@@ -318,14 +353,15 @@ export default function activate(api: ModAPI) {
     if (!parsed.ok) { failure(s, parsed.error); save(s); return fallback(parsed.error); }
     const paths = Object.keys(parsed.value);
     if (paths.length > 126 || paths.includes(event.new)) { save(s); return fallback('server_rename_scope_invalid'); }
-    const read = paths.length ? api.host.tryCall('workspace.read', { paths }) : null;
+    const read = paths.length ? budget({ paths }, argument => api.host.tryCall('workspace.read', argument)) : null;
     if (read && !read.ok) { failure(s, read.error, true); save(s); return fallback(read.error); }
     const expected: Record<string, string | null> = { [event.old]: event.expected[event.old], [event.new]: null };
     const writes: Record<string, string> = {};
     for (const path of paths) {
       const file = read?.ok ? read.value.files[path] : null;
       const entry = parsed.value[path];
-      if (!file || (s.documents[path] ? s.documents[path].sha256 !== file.sha256 || entry.version !== s.documents[path].version : entry.version !== null)) { failure(s, 'server_rename_document_stale', true); save(s); return fallback('server_rename_document_stale'); }
+      const tracked = s.documents[path];
+      if (!file || (tracked && tracked.sha256 !== file.sha256) || (entry.version !== null && entry.version !== tracked?.version)) { failure(s, 'server_rename_document_stale', true); save(s); return fallback('server_rename_document_stale'); }
       const updated = rewrite(file.text, entry.edits);
       if (updated === null) { save(s); return fallback('server_rename_text_edit_invalid'); }
       expected[path] = file.sha256;
@@ -346,30 +382,25 @@ export default function activate(api: ModAPI) {
     if (!synced.ok) failure(s, synced.error, true);
     else {
       const pending = exchange([], 150);
-      if (!pending.ok) failure(s, pending.error, true);
-      else {
-        diagnostics(s, pending.value);
-        const responses = replies(pending.value);
-        if (responses.length) {
-          const answered = exchange(responses, 0);
-          if (!answered.ok) failure(s, answered.error, true);
-          else diagnostics(s, answered.value);
-        }
-        if (synced.value) { s.status = 'synced'; s.reason = 'external_change_resynchronized'; }
-      }
+      const settled = pending.ok ? settle(s, handle(s, pending.value)) : pending;
+      if (!settled.ok) failure(s, settled.error, true);
+      else if (synced.value || started.value) { s.status = 'synced'; s.reason = 'external_change_resynchronized'; }
     }
     save(s);
   });
   api.on('idle', () => {
     const s = state(api.state.get());
-    if (s.running) api.host.tryCall('process.stop', { session });
+    if (!s.running) return;
+    const status = budget({ session }, argument => api.host.tryCall('process.status', argument));
+    if (status.ok && status.value.idle_ms < IDLE_STOP_MS) return;
+    if (status.ok) stopServer();
     s.running = false;
     s.status = 'idle';
     save(s);
   });
   api.on('stop', () => {
     const s = state(api.state.get());
-    if (s.running) api.host.tryCall('process.stop', { session });
+    if (s.running) stopServer();
   });
   api.tool({
     name: 'status',

@@ -157,12 +157,13 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
   };
   const uri = path => `file://${repository}/${path}`;
   let running = false;
+  let idleMs = 0;
   let rename = null;
   const server = call => {
     switch (call.operation) {
       case 'process.which': return { found: [{ name: 'pylsp', path: '/bin/pylsp', sha256: 'server-hash' }] };
       case 'process.start': running = true; return { session: 'python', running: true };
-      case 'process.status': return { session: 'python', running, idle_ms: 0 };
+      case 'process.status': return { session: 'python', running, idle_ms: idleMs };
       case 'process.stop': running = false; return { stopped: true };
       case 'workspace.read': return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
       case 'process.exchange': {
@@ -201,7 +202,11 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
   const stale = replay('workspace_pre_rename', { repository, old: 'pkg/old.py', new: 'pkg/new.py', expected: { 'pkg/old.py': 'old-hash', 'pkg/new.py': null } }, write.state);
   assert.deepEqual(stale.value, { status: 'fallback', reason: 'server_rename_document_stale' });
   const idle = replay('idle', {}, requested.state);
-  assert.equal(idle.state.status, 'idle');
+  assert.equal(idle.state.running, true);
+  assert.equal(running, true);
+  idleMs = 16 * 60_000;
+  const expired = replay('idle', {}, requested.state);
+  assert.equal(expired.state.status, 'idle');
   assert.equal(running, false);
 });
 test('LSP mod reports an absent server and leaves the write event recoverable', () => {
@@ -276,6 +281,46 @@ test('optional debugger mod keeps DAP control and inspection on managed process 
   assert.equal(calls.some(call => call.operation === 'process.exchange' && call.arguments.send?.[0]?.command === 'attach'), false);
   assert.deepEqual(run(source, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'lldb' } }).value, { error: 'invalid_adapter' });
   assert.deepEqual(replay('start', { mode: 'attach', process_id: 42 }, opened.state).value, { error: 'invalid_mode' });
+});
+test('optional debugger mod reads stop events that arrive after the control response', () => {
+  const source = readFileSync(new URL('../plugins/optional/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
+  const capabilities = ['tools', 'process', 'state', 'lifecycle'];
+  let queued = [];
+  const server = call => {
+    if (call.operation !== 'process.exchange') throw new Error(`unexpected ${call.operation}`);
+    const request = call.arguments.send?.[0];
+    if (!request) {
+      const messages = queued;
+      queued = [];
+      return { session: 'debug', running: true, messages };
+    }
+    if (['configurationDone', 'next', 'continue'].includes(request.command)) {
+      queued = [{ type: 'event', event: 'continued', body: { threadId: 3 } }, { type: 'event', event: 'stopped', body: { threadId: 3, reason: 'step' } }];
+    }
+    const body = request.command === 'stackTrace' ? { stackFrames: [{ id: 7, name: 'main', source: { path: '/tmp/bug.py' }, line: 5, column: 1 }], totalFrames: 1 } : {};
+    return { session: 'debug', running: true, messages: [{ type: 'response', request_seq: request.seq, success: true, body }] };
+  };
+  const replay = (name, payload, state) => {
+    const receipts = [];
+    for (let index = 0; index < 24; index++) {
+      const output = run(source, { capabilities, event: 'tool', name, payload, state, receipts, hook_budget_ms: 500 });
+      assert.equal(output.error, undefined, output.error);
+      if (!output.host_call) return output;
+      receipts.push({ call: output.host_call, value: server(output.host_call) });
+    }
+    assert.fail('debugger mod did not finish');
+  };
+  const configuring = { adapter: 'debugpy', executable: '/usr/bin/python3', running: true, ready: true, mode: 'launch', phase: 'configuring', next_seq: 3, launch_seq: null, thread_id: null, reason: '' };
+  const configured = replay('configure', {}, configuring);
+  assert.equal(configured.state.phase, 'stopped');
+  const stepped = replay('control', { command: 'next' }, configured.state);
+  assert.equal(stepped.state.phase, 'stopped');
+  assert.equal(stepped.state.reason, 'step');
+  queued = [{ type: 'event', event: 'stopped', body: { threadId: 3, reason: 'breakpoint' } }];
+  const running = { ...stepped.state, phase: 'active' };
+  const frames = replay('inspect', { command: 'stackTrace' }, running);
+  assert.equal(frames.value.result.frames[0].line, 5);
+  assert.equal(frames.state.reason, 'breakpoint');
 });
 test('optional debugger mod tears down a refused asynchronous launch without returning adapter text', () => {
   const source = readFileSync(new URL('../plugins/optional/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
