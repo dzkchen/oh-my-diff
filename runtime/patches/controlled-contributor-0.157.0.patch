@@ -3541,9 +3541,10 @@ index 0000000..3c8554a
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
+index 0000000..70d9bf1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,712 @@
+@@ -0,0 +1,793 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -3558,7 +3559,10 @@ new file mode 100644
 +use std::sync::Arc;
 +use std::sync::Mutex;
 +use std::sync::atomic::AtomicU64;
++use std::sync::atomic::AtomicUsize;
 +use std::sync::atomic::Ordering;
++use std::time::Duration;
++use std::time::Instant;
 +
 +pub const REVOCATION_FILE: &str = "contributor-revoked.json";
 +
@@ -3613,7 +3617,17 @@ new file mode 100644
 +    pub Mutex<BTreeMap<String, Account>>,
 +    Mutex<Option<Arc<Mutex<codex_omd::ModHost>>>>,
 +    AtomicU64,
++    Arc<AtomicUsize>,
 +);
++
++const MIDDLEWARE_WAIT: Duration = Duration::from_secs(2);
++const MIDDLEWARE_LOG_BYTES: u64 = 8 * 1024 * 1024;
++
++enum Hook<T> {
++    Ran(T),
++    Absent,
++    Skipped(&'static str),
++}
 +
 +impl Accounts {
 +    pub fn install_mod_runtime(&self, runtime: Arc<Mutex<codex_omd::ModHost>>) {
@@ -3626,13 +3640,39 @@ new file mode 100644
 +        self.1.lock().ok().and_then(|installed| installed.clone())
 +    }
 +
-+    fn idle_runtime(
++    fn middleware<T>(
 +        runtime: &Mutex<codex_omd::ModHost>,
-+    ) -> Result<Option<std::sync::MutexGuard<'_, codex_omd::ModHost>>, TransportError> {
-+        match runtime.try_lock() {
-+            Ok(runtime) => Ok(Some(runtime)),
-+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
-+            Err(std::sync::TryLockError::Poisoned(_)) => Err(denied("mod runtime poisoned")),
++        holders: &AtomicUsize,
++        wait_for_callbacks: bool,
++        hook: &str,
++        run: impl FnOnce(&mut codex_omd::ModHost) -> T,
++    ) -> Result<Hook<T>, TransportError> {
++        let deadline = Instant::now() + MIDDLEWARE_WAIT;
++        loop {
++            match runtime.try_lock() {
++                Ok(mut runtime) => {
++                    if !runtime.has_event(hook) {
++                        return Ok(Hook::Absent);
++                    }
++                    holders.fetch_add(1, Ordering::AcqRel);
++                    let value = run(&mut runtime);
++                    drop(runtime);
++                    holders.fetch_sub(1, Ordering::AcqRel);
++                    return Ok(Hook::Ran(value));
++                }
++                Err(std::sync::TryLockError::Poisoned(_)) => {
++                    return Err(denied("mod runtime poisoned"));
++                }
++                Err(std::sync::TryLockError::WouldBlock) => {
++                    if holders.load(Ordering::Acquire) == 0 && !wait_for_callbacks {
++                        return Ok(Hook::Skipped("mod_callback_in_flight"));
++                    }
++                    if Instant::now() >= deadline {
++                        return Ok(Hook::Skipped("mod_runtime_busy"));
++                    }
++                    std::thread::sleep(Duration::from_millis(2));
++                }
++            }
 +        }
 +    }
 +
@@ -3650,6 +3690,9 @@ new file mode 100644
 +            .append(true)
 +            .open(path)
 +            .map_err(denied)?;
++        if file.metadata().map_err(denied)?.len() > MIDDLEWARE_LOG_BYTES {
++            return Ok(());
++        }
 +        file.write_all(&bytes).map_err(denied)
 +    }
 +}
@@ -3786,13 +3829,22 @@ new file mode 100644
 +                "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
 +                "kind":if account.owner == "lead" {"main"} else {"subagent"}},
 +                "authorized_presets":presets,"original":route,"effective":route,"provenance":[]});
-+            let Some(mut runtime) = Self::idle_runtime(&mods)? else {
-+                return Ok(());
++            let effective = match Self::middleware(
++                &mods,
++                &self.3,
++                !account.owner.starts_with("mod-"),
++                "model_request",
++                |runtime| runtime.model_request(payload, || account.task.check_active().is_ok()),
++            )? {
++                Hook::Ran(effective) => effective.map_err(denied)?,
++                Hook::Absent => return Ok(()),
++                Hook::Skipped(reason) => {
++                    return Self::record_middleware(
++                        &account,
++                        &json!({"kind":"middleware_skipped","hook":"model_request","request_id":request_id,"reason":reason}),
++                    );
++                }
 +            };
-+            let effective = runtime
-+                .model_request(payload, || account.task.check_active().is_ok())
-+                .map_err(denied)?;
-+            drop(runtime);
 +            let selected = effective["effective"]["name"]
 +                .as_str()
 +                .and_then(|name| {
@@ -3808,7 +3860,15 @@ new file mode 100644
 +            request
 +                .headers
 +                .insert("x-omd-preset", selected.name.parse().map_err(denied)?);
-+            Self::record_middleware(&account, &json!({"kind":"model_request","value":effective}))?;
++            if effective["provenance"]
++                .as_array()
++                .is_some_and(|provenance| !provenance.is_empty())
++            {
++                Self::record_middleware(
++                    &account,
++                    &json!({"kind":"model_request","value":effective}),
++                )?;
++            }
 +        }
 +        Ok(())
 +    }
@@ -4074,6 +4134,7 @@ new file mode 100644
 +            account,
 +            admission,
 +            mods: self.mods(),
++            holders: self.3.clone(),
 +            settled: false,
 +            failed: false,
 +        })))
@@ -4084,6 +4145,7 @@ new file mode 100644
 +    account: Account,
 +    admission: Admission,
 +    mods: Option<Arc<Mutex<codex_omd::ModHost>>>,
++    holders: Arc<AtomicUsize>,
 +    settled: bool,
 +    failed: bool,
 +}
@@ -4197,7 +4259,7 @@ new file mode 100644
 +            Some("error") => self.failed("provider stream error"),
 +            _ => {}
 +        }
-+        if let Some(mods) = &self.mods {
++        if let Some(mods) = self.mods.clone() {
 +            let kind = raw["type"].as_str().unwrap_or("invalid");
 +            let text_key = if kind == "response.output_text.delta" {
 +                Some("delta")
@@ -4210,22 +4272,42 @@ new file mode 100644
 +            let payload = json!({"kind":kind,"raw_sha256":crate::execution::hash(&serde_json::to_vec(&raw).map_err(denied)?),
 +                "raw_usage":raw.pointer("/response/usage").cloned().unwrap_or(Value::Null),
 +                "opaque_reasoning":kind.contains("reasoning"),"protected":text_key.is_none(),"text":text});
-+            let Some(mut runtime) = Accounts::idle_runtime(mods)? else {
-+                return Ok(());
++            let active = || self.account.task.check_active().is_ok();
++            let transformed = match Accounts::middleware(
++                &mods,
++                &self.holders,
++                false,
++                "response_stream",
++                |runtime| runtime.response_stream(payload, active),
++            )? {
++                Hook::Ran(transformed) => transformed.map_err(denied)?,
++                Hook::Absent => {
++                    self.mods = None;
++                    return Ok(());
++                }
++                Hook::Skipped(reason) => {
++                    self.mods = None;
++                    return Accounts::record_middleware(
++                        &self.account,
++                        &json!({"kind":"middleware_skipped","hook":"response_stream","reason":reason}),
++                    );
++                }
 +            };
-+            let transformed = runtime
-+                .response_stream(payload, || self.account.task.check_active().is_ok())
-+                .map_err(denied)?;
-+            drop(runtime);
 +            if let Some(key) = text_key
 +                && let Some(text) = transformed["effective"].as_str()
 +            {
 +                event[key] = text.into();
 +            }
-+            Accounts::record_middleware(
-+                &self.account,
-+                &json!({"kind":"response_stream","value":transformed}),
-+            )?;
++            if ["provenance", "fallback"].iter().any(|field| {
++                transformed[*field]
++                    .as_array()
++                    .is_some_and(|entries| !entries.is_empty())
++            }) {
++                Accounts::record_middleware(
++                    &self.account,
++                    &json!({"kind":"response_stream","value":transformed}),
++                )?;
++            }
 +        }
 +        Ok(())
 +    }
@@ -4778,7 +4860,7 @@ new file mode 100644
 +}
 diff --git a/b/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 0000000..8651ae2
+index 0000000..e929561
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
 @@ -0,0 +1,2517 @@
@@ -5556,7 +5638,7 @@ index 0000000..8651ae2
 +        .collect()
 +}
 +
-+fn evidence_marker(
++pub(crate) fn evidence_marker(
 +    label: &str,
 +    candidate_sha256: &str,
 +    reference: &Value,
@@ -5659,7 +5741,7 @@ index 0000000..8651ae2
 +        if let Some(previous) = snapshot.cycles.last()
 +            && previous.candidate.sha256 != candidate_sha256
 +        {
-+            let unresolved = runtime.ledger.blocking();
++            let unresolved = runtime.ledger.unresolved();
 +            if !unresolved.is_empty() {
 +                let prior = runtime
 +                    .candidates
@@ -5703,7 +5785,7 @@ index 0000000..8651ae2
 +            .insert(candidate_sha256.clone(), candidate.clone());
 +        (
 +            runtime.ledger.snapshot().cycles.len() as u32 + 1,
-+            runtime.ledger.blocking(),
++            runtime.ledger.unresolved(),
 +            repair_recorded,
 +        )
 +    };
@@ -6630,7 +6712,7 @@ index 0000000..8651ae2
 +        if let Some(previous) = snapshot.cycles.last()
 +            && previous.candidate.sha256 != candidate_hash
 +        {
-+            let unresolved = runtime.ledger.blocking();
++            let unresolved = runtime.ledger.unresolved();
 +            if !unresolved.is_empty() {
 +                let prior = runtime
 +                    .candidates
@@ -6671,7 +6753,7 @@ index 0000000..8651ae2
 +            .insert(candidate_hash.clone(), merged.clone());
 +        (
 +            runtime.ledger.snapshot().cycles.len() as u32 + 1,
-+            runtime.ledger.blocking(),
++            runtime.ledger.unresolved(),
 +            repair_recorded,
 +        )
 +    };
@@ -7467,10 +7549,10 @@ index 0000000..fdb1436
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 0000000..46fd96e
+index 0000000..86f499f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,3957 @@
+@@ -0,0 +1,3973 @@
 +mod accounting;
 +mod execution;
 +mod managed_process;
@@ -9217,6 +9299,19 @@ index 0000000..46fd96e
 +}
 +
 +fn persist_atomic(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), String> {
++    persist(directory, name, bytes, true)
++}
++
++fn persist_view(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), String> {
++    persist(directory, name, bytes, false)
++}
++
++fn persist(
++    directory: &std::path::Path,
++    name: &str,
++    bytes: &[u8],
++    durable: bool,
++) -> Result<(), String> {
 +    use std::io::Write;
 +    use std::os::unix::fs::OpenOptionsExt;
 +
@@ -9236,11 +9331,14 @@ index 0000000..46fd96e
 +        .map_err(|error| error.to_string())?;
 +    let result = file
 +        .write_all(bytes)
-+        .and_then(|_| file.sync_all())
++        .and_then(|_| if durable { file.sync_all() } else { Ok(()) })
 +        .and_then(|_| std::fs::rename(&temporary, directory.join(name)));
 +    if let Err(error) = result {
 +        let _ = std::fs::remove_file(&temporary);
 +        return Err(error.to_string());
++    }
++    if !durable {
++        return Ok(());
 +    }
 +    std::fs::File::open(directory)
 +        .and_then(|directory| directory.sync_all())
@@ -12119,18 +12217,17 @@ index 0000000..2670940
 +}
 diff --git a/b/codex-rs/ext/omd/src/mods/agents/review.rs b/codex-rs/ext/omd/src/mods/agents/review.rs
 new file mode 100644
-index 0000000..d2b6bf7
+index 0000000..ffaafb0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents/review.rs
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,184 @@
 +use super::*;
 +use codex_omd::resource_data::ResourceRef;
-+use codex_omd::{ReviewCadence, ReviewFindingInput, ReviewSeverity, ReviewSubmission};
++use codex_omd::{ReviewCadence, ReviewFindingInput, ReviewLane, ReviewSeverity, ReviewSubmission};
 +
 +pub(super) struct Binding {
 +    source: ResourceRef,
-+    candidate: VersionMarker,
-+    snapshot: codex_omd::Snapshot,
++    candidate_sha256: String,
 +    cadence: ReviewCadence,
 +    stable: bool,
 +    risk: Option<String>,
@@ -12149,35 +12246,9 @@ index 0000000..d2b6bf7
 +    tools: Vec<String>,
 +}
 +
-+async fn snapshot(lead: &Lead) -> Result<codex_omd::Snapshot, String> {
-+    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
-+    let approved = lead
-+        .host
-+        .manifest
-+        .approved_untracked
-+        .iter()
-+        .cloned()
-+        .collect();
-+    let paths =
-+        codex_omd::tracked_paths(&authority.repository, &approved).map_err(|e| e.to_string())?;
-+    if paths
-+        .iter()
-+        .any(|path| !authority.readable(&authority.repository.join(path)))
-+    {
-+        return Err("review_source_permission_denied".into());
-+    }
-+    codex_omd::Snapshot::capture(
-+        &authority.repository,
-+        &paths,
-+        lead.host.manifest.snapshot_bytes,
-+    )
-+    .map_err(|e| e.to_string())
-+}
-+
-+pub(super) async fn prepare(
++pub(super) fn prepare(
 +    lead: &Lead,
 +    owner: &str,
-+    generation: u64,
 +    source_sha256: &str,
 +    arguments: Value,
 +) -> Result<(Value, Binding), String> {
@@ -12197,35 +12268,25 @@ index 0000000..d2b6bf7
 +        .validate_request(request.cadence, request.stable, request.risk.as_deref())
 +        .map_err(|e| e.to_string())?;
 +    let root = host.manifest.mods.clone().ok_or("mod_store_unavailable")?;
-+    let data = codex_omd::scoped_data::ScopedDataHost::new(
++    let packet = codex_omd::scoped_data::ScopedDataHost::new(
 +        root,
 +        host.manifest.repository.clone(),
 +        None,
++        None,
 +        owner.into(),
 +        lead.thread.to_string(),
-+        generation,
 +        source_sha256.to_owned(),
 +    )
++    .and_then(|data| data.resources().load(&request.evidence, "turn"))
 +    .map_err(|e| e.to_string())?;
-+    let packet = data
-+        .resources()
-+        .load(&request.evidence, "turn")
-+        .map_err(|e| e.to_string())?;
-+    let snapshot = snapshot(lead).await?;
-+    let sha = snapshot.hash().map_err(|e| e.to_string())?;
-+    if packet["workspace_sha256"] != sha || packet["thread_id"] != lead.thread.to_string() {
-+        return Err("review_evidence_stale_or_foreign".into());
-+    }
-+    let candidate = VersionMarker {
-+        label: "extension-review-candidate".into(),
-+        sha256: sha,
-+        evidence: format!("resource:{}", request.evidence.reference),
-+        evidence_sha256: request.evidence.sha256.clone(),
-+    };
++    let candidate_sha256 = packet["workspace_sha256"]
++        .as_str()
++        .filter(|sha| sha.len() == 64 && packet["thread_id"] == lead.thread.to_string())
++        .ok_or("review_evidence_stale_or_foreign")?
++        .to_owned();
 +    let binding = Binding {
 +        source: request.evidence,
-+        candidate,
-+        snapshot,
++        candidate_sha256,
 +        cadence: request.cadence,
 +        stable: request.stable,
 +        risk: request.risk,
@@ -12255,14 +12316,15 @@ index 0000000..d2b6bf7
 +    lead.host.authorize()?;
 +    lead.host
 +        .authorize_contract(codex_omd::ContractOperation::MilestoneReview)?;
-+    let current = snapshot(lead).await?.hash().map_err(|e| e.to_string())?;
++    let snapshot = crate::workspace_operations::workspace_snapshot(lead).await?;
++    let current = snapshot.hash().map_err(|e| e.to_string())?;
 +    let mut records = records.lock().await;
 +    let agent = records
 +        .get_mut(&input.handle)
 +        .filter(|agent| agent.mod_id == owner && agent.generation == generation)
 +        .ok_or("unknown_or_foreign_review")?;
 +    let binding = agent.review.as_mut().ok_or("worker_is_not_review")?;
-+    if binding.submitted || binding.candidate.sha256 != current {
++    if binding.submitted || binding.candidate_sha256 != current {
 +        return Err("review_already_submitted_or_stale".into());
 +    }
 +    let result = agent
@@ -12291,33 +12353,46 @@ index 0000000..d2b6bf7
 +        .review
 +        .lock()
 +        .map_err(|_| "review_runtime_poisoned")?;
-+    if !review.ledger.snapshot().policy.extension_blocking
-+        && input
-+            .findings
-+            .iter()
-+            .any(|finding| finding.severity == ReviewSeverity::Blocking)
-+    {
++    let blocking = input
++        .findings
++        .iter()
++        .any(|finding| finding.severity == ReviewSeverity::Blocking);
++    if blocking && !review.ledger.snapshot().policy.extension_blocking {
 +        return Err("extension_blocking_not_user_authorized".into());
 +    }
-+    let provenance=lead.host.evidence(&format!("extension-review-{}.json",execution::hash(input.handle.as_bytes())),&json!({"extension":owner,"generation":generation,"worker":input.handle,"model":agent.implementation.model,"provider":agent.implementation.provider,"evidence":binding.source,"response_sha256":input.result_sha256,"response":result,"findings":input.findings}))?;
++    let handle_hash = execution::hash(input.handle.as_bytes());
++    let provenance=lead.host.evidence(&format!("extension-review-{handle_hash}.json"),&json!({"extension":owner,"generation":generation,"worker":input.handle,"model":agent.implementation.model,"provider":agent.implementation.provider,"evidence":binding.source,"response_sha256":input.result_sha256,"response":result,"findings":input.findings}))?;
++    let candidate = if blocking {
++        let reference = lead.host.evidence(
++            &format!("review-candidate-{handle_hash}.json"),
++            &serde_json::to_value(&snapshot).map_err(|e| e.to_string())?,
++        )?;
++        execution::evidence_marker("extension-review-candidate", &current, &reference)?
++    } else {
++        VersionMarker {
++            label: "extension-review-candidate".into(),
++            sha256: current.clone(),
++            evidence: format!("resource:{}", binding.source.reference),
++            evidence_sha256: binding.source.sha256.clone(),
++        }
++    };
 +    let cycle = review
 +        .ledger
-+        .submit_with_severity_enforcement(
-+            ReviewSubmission {
-+                cadence: binding.cadence,
-+                candidate: binding.candidate.clone(),
-+                stable: binding.stable,
-+                risk: binding.risk.clone(),
-+                reviewer: format!("native-thread:{}", agent.worker),
-+                separate_reviewer: true,
-+                checks: vec![],
-+                findings: input.findings,
-+                resolved_finding_ids: vec![],
-+            },
-+            true,
-+        )
++        .submit_advisory(ReviewSubmission {
++            cadence: binding.cadence,
++            candidate,
++            stable: binding.stable,
++            risk: binding.risk.clone(),
++            reviewer: format!("native-thread:{}", agent.worker),
++            separate_reviewer: true,
++            checks: vec![],
++            findings: input.findings,
++            resolved_finding_ids: vec![],
++        })
 +        .map_err(|e| e.to_string())?;
-+    review.candidates.insert(current, binding.snapshot.clone());
++    if cycle.lane == ReviewLane::Enforced {
++        review.candidates.insert(current, snapshot);
++    }
 +    drop(review);
 +    binding.submitted = true;
 +    if !agent.consumed {
@@ -12332,10 +12407,10 @@ index 0000000..d2b6bf7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 0000000..5b0ab3c
+index 0000000..6820607
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,959 @@
+@@ -0,0 +1,989 @@
 +mod review;
 +use super::*;
 +use codex_core::CodexThread;
@@ -12721,6 +12796,23 @@ index 0000000..5b0ab3c
 +        }
 +    }
 +
++    pub(super) async fn cleanup_except_reviews(&self) {
++        let stale = {
++            let mut records = self.records.lock().await;
++            let keys = records
++                .iter()
++                .filter(|(_, agent)| agent.review.is_none())
++                .map(|(id, _)| id.clone())
++                .collect::<Vec<_>>();
++            keys.into_iter()
++                .filter_map(|key| records.remove(&key))
++                .collect::<Vec<_>>()
++        };
++        for mut agent in stale {
++            agent.shutdown().await;
++        }
++    }
++
 +    pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
 +        let owned = {
 +            let mut records = self.records.lock().await;
@@ -12761,7 +12853,7 @@ index 0000000..5b0ab3c
 +        lead.host.task.check_active().map_err(|e| e.to_string())?;
 +        if request.operation == "review.request" {
 +            let (arguments, binding) =
-+                review::prepare(lead, mod_id, generation, source_sha256, request.arguments).await?;
++                review::prepare(lead, mod_id, source_sha256, request.arguments)?;
 +            return self
 +                .spawn(
 +                    services,
@@ -12917,7 +13009,12 @@ index 0000000..5b0ab3c
 +            _ => return Err("unsupported_agent_workspace".into()),
 +        };
 +        if let Some(tools) = &request.tools {
-+            if writable || tools.len() > 16 || tools.iter().any(|name| !presets::read_tool(name)) {
++            if writable
++                || tools.len() > 16
++                || tools
++                    .iter()
++                    .any(|name| !presets::read_only_sandbox_tool(name))
++            {
 +                return Err("read_only_tool_surface_invalid".into());
 +            }
 +        }
@@ -13117,24 +13214,32 @@ index 0000000..5b0ab3c
 +        if let Some(reference) = request.context_snapshot {
 +            let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
 +            let root = host.manifest.mods.clone().ok_or("mod_store_unavailable")?;
-+            let mut data = codex_omd::scoped_data::ScopedDataHost::new(
-+                root,
-+                authority.repository.clone(),
-+                None,
++            let (owner, thread, source) = (
 +                mod_id.to_owned(),
 +                lead.thread.to_string(),
-+                generation,
 +                source_sha256.to_owned(),
-+            )
-+            .map_err(|e| e.to_string())?;
-+            let context = data
++            );
++            let task = host.task.clone();
++            let context = tokio::task::spawn_blocking(move || {
++                codex_omd::scoped_data::ScopedDataHost::new(
++                    root,
++                    authority.repository.clone(),
++                    None,
++                    None,
++                    owner,
++                    thread,
++                    source,
++                )?
 +                .call(
 +                    "context.deliver",
 +                    json!({"snapshot":reference}),
 +                    &|path| authority.readable(path),
-+                    || host.task.check_active().is_ok(),
++                    || task.check_active().is_ok(),
 +                )
-+                .map_err(|e| e.to_string())?;
++            })
++            .await
++            .map_err(|e| e.to_string())?
++            .map_err(|e| e.to_string())?;
 +            let text = serde_json::to_string(&context).map_err(|e| e.to_string())?;
 +            if text.len() > 16384 {
 +                return Err("worker_context_snapshot_limit".into());
@@ -13297,10 +13402,10 @@ index 0000000..5b0ab3c
 +}
 diff --git a/b/codex-rs/ext/omd/src/mods/evidence.rs b/codex-rs/ext/omd/src/mods/evidence.rs
 new file mode 100644
-index 0000000..ce5356c
+index 0000000..5ad7edf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/evidence.rs
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,200 @@
 +use super::*;
 +
 +pub(super) struct Cursor {
@@ -13451,30 +13556,10 @@ index 0000000..ce5356c
 +    .map_err(|e| e.to_string())?;
 +    packet = codex_omd::turn_evidence::combine(cursor.prefix.clone(), packet)
 +        .map_err(|error| error.to_string())?;
-+    let config = thread.config().await;
-+    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
-+    let approved = lead
-+        .host
-+        .manifest
-+        .approved_untracked
-+        .iter()
-+        .cloned()
-+        .collect();
-+    let paths =
-+        codex_omd::tracked_paths(&authority.repository, &approved).map_err(|e| e.to_string())?;
-+    if paths
-+        .iter()
-+        .any(|path| !authority.readable(&authority.repository.join(path)))
-+    {
-+        return Err("evidence_source_permission_denied".into());
-+    }
-+    let snapshot = codex_omd::Snapshot::capture(
-+        &authority.repository,
-+        &paths,
-+        lead.host.manifest.snapshot_bytes,
-+    )
-+    .map_err(|e| e.to_string())?;
-+    let sha = snapshot.hash().map_err(|e| e.to_string())?;
++    let sha = crate::workspace_operations::workspace_snapshot(lead)
++        .await?
++        .hash()
++        .map_err(|e| e.to_string())?;
 +    packet["workspace_sha256"] = json!(sha);
 +    packet["thread_id"] = json!(lead.thread.to_string());
 +    packet["outcome"] = json!(outcome);
@@ -13505,11 +13590,11 @@ index 0000000..ce5356c
 +            .sha256;
 +        let data = codex_omd::scoped_data::ScopedDataHost::new(
 +            root.clone(),
-+            authority.repository.clone(),
-+            Some(config.codex_home.join("sessions").to_path_buf()),
++            lead.host.manifest.repository.clone(),
++            None,
++            None,
 +            owner.clone(),
 +            lead.thread.to_string(),
-+            generation,
 +            source,
 +        )
 +        .map_err(|e| e.to_string())?;
@@ -13523,13 +13608,62 @@ index 0000000..ce5356c
 +}
 diff --git a/b/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 0000000..6565e8b
+index 0000000..7f0770b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,275 @@
 +use super::*;
 +use codex_omd::ModHostCall;
 +use std::path::Path;
++
++#[derive(Clone, Default)]
++pub(super) struct DataScope(Arc<Mutex<Option<codex_omd::scoped_data::ScopedDataHosts>>>);
++
++impl DataScope {
++    pub(super) async fn call(
++        &self,
++        lead: &Lead,
++        authority: crate::workspace_operations::WorkspaceAuthority,
++        id: &str,
++        source_sha256: &str,
++        request: ModHostCall,
++    ) -> Result<Value, String> {
++        let root = lead
++            .host
++            .manifest
++            .mods
++            .clone()
++            .ok_or("mod_store_unavailable")?;
++        let scope = self.0.clone();
++        let thread = lead.thread.to_string();
++        let (id, source) = (id.to_owned(), source_sha256.to_owned());
++        let task = lead.host.task.clone();
++        tokio::task::spawn_blocking(move || {
++            let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
++            scope
++                .get_or_insert_with(|| {
++                    codex_omd::scoped_data::ScopedDataHosts::new(
++                        root,
++                        authority.repository.clone(),
++                        authority.session_root.clone(),
++                        authority.session_database.clone(),
++                        thread,
++                    )
++                })
++                .call(
++                    &id,
++                    &source,
++                    &request.operation,
++                    request.arguments,
++                    &|path| authority.readable(path),
++                    || task.check_active().is_ok(),
++                )
++                .map_err(|error| error.to_string())
++        })
++        .await
++        .map_err(|error| error.to_string())?
++    }
++}
 +
 +fn protected_resource(host: &Host, path: Option<&str>) -> bool {
 +    path.is_none_or(|path| {
@@ -13563,6 +13697,7 @@ index 0000000..6565e8b
 +    services: &services::Services,
 +    processes: &Arc<crate::managed_process::ManagedProcesses>,
 +    pre_rename_runtime: &Arc<Mutex<ModHost>>,
++    data: &DataScope,
 +    lead: &Lead,
 +    id: &str,
 +    generation: u64,
@@ -13610,10 +13745,7 @@ index 0000000..6565e8b
 +            let authority = crate::workspace_operations::WorkspaceAuthority::for_call(lead, call).await?;
 +            host.authorize()?;
 +            if codex_omd::scoped_data::operation(&request.operation) {
-+                let root = host.manifest.mods.clone().ok_or("mod_store_unavailable")?;
-+                let mut data = codex_omd::scoped_data::ScopedDataHost::new(root,authority.repository.clone(),Some(authority.session_root.clone().ok_or("session_root_unavailable")?),id.to_owned(),lead.thread.to_string(),generation,source_sha256.to_owned()).map_err(|error| error.to_string())?;
-+                data.session_database = authority.session_database.clone();
-+                return data.call(&request.operation,request.arguments,&|path| authority.readable(path),|| host.task.check_active().is_ok()).map_err(|error| error.to_string());
++                return data.call(lead, authority, id, source_sha256, request).await;
 +            }
 +            if request.operation == "workspace.request_rename" {
 +                if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -13636,15 +13768,18 @@ index 0000000..6565e8b
 +                    processes.call(&id, generation, &authority.repository, &authority.policy, &request.operation, request.arguments, || task.check_active().is_ok())
 +                }).await.map_err(|error| error.to_string())?;
 +            }
-+            if request.operation == "workspace.transaction" {
++            let _operation = if request.operation == "workspace.transaction" {
 +                if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
 +                    return Err("another controlled operation is active".into());
 +                }
-+                let _operation = OperationGuard(&host.operation);
-+                authority.call(&request.operation, request.arguments, || host.task.check_active().is_ok())
++                Some(OperationGuard(&host.operation))
 +            } else {
-+                authority.call(&request.operation, request.arguments, || host.task.check_active().is_ok())
-+            }
++                None
++            };
++            let task = host.task.clone();
++            tokio::task::spawn_blocking(move || authority.call(&request.operation, request.arguments, || task.check_active().is_ok()))
++                .await
++                .map_err(|error| error.to_string())?
 +        }
 +        "pi.discover" => {
 +            let root = host.manifest.mod_pi_user.as_ref().ok_or("pi_resource_roots_not_host_approved")?;
@@ -14098,6 +14233,7 @@ index 0000000..3cd8a84
 +}
 diff --git a/codex-rs/ext/omd/src/mods/presets.rs b/codex-rs/ext/omd/src/mods/presets.rs
 new file mode 100644
+index 0000000..b005aaf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/presets.rs
 @@ -0,0 +1,93 @@
@@ -14144,7 +14280,7 @@ new file mode 100644
 +            || (self.route.rates.reservation_microusd == 0)
 +                != self.route.rates.included_subscription
 +            || self.tools.len() > 16
-+            || self.tools.iter().any(|tool| !read_tool(tool))
++            || self.tools.iter().any(|tool| !read_only_sandbox_tool(tool))
 +            || grant.path.starts_with(&manifest.repository)
 +        {
 +            return Err("worker_preset_invalid".into());
@@ -14176,7 +14312,7 @@ new file mode 100644
 +    }
 +}
 +
-+pub(crate) fn read_tool(name: &str) -> bool {
++pub(crate) fn read_only_sandbox_tool(name: &str) -> bool {
 +    matches!(
 +        name,
 +        "shell"
@@ -14821,10 +14957,10 @@ index 0000000..4bd8cdf
 +}
 diff --git a/b/codex-rs/ext/omd/src/mods/tools.rs b/codex-rs/ext/omd/src/mods/tools.rs
 new file mode 100644
-index 0000000..3976725
+index 0000000..b255ca6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/tools.rs
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,271 @@
 +use super::*;
 +
 +struct Tool {
@@ -15048,6 +15184,7 @@ index 0000000..3976725
 +                )
 +            });
 +            let mut ordinal = 0u32;
++            let data = operations::DataScope::default();
 +            while let Some((caller, source, request, reply)) = receiver.recv().await {
 +                ordinal += 1;
 +                let mut nested_call = call.clone();
@@ -15058,6 +15195,7 @@ index 0000000..3976725
 +                    &self.services,
 +                    &self.processes,
 +                    &self.pre_rename_runtime,
++                    &data,
 +                    &lead,
 +                    &caller,
 +                    generation,
@@ -15233,10 +15371,10 @@ index 0000000..bdda517
 +}
 diff --git a/b/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 0000000..4ff7f74
+index 0000000..3e3c2b7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1095 @@
+@@ -0,0 +1,1090 @@
 +mod agents;
 +mod evidence;
 +mod operations;
@@ -15735,20 +15873,15 @@ index 0000000..4ff7f74
 +            let _ = owner.persist_runtime_file("mod-status.json", &status);
 +            fragments
 +        });
++        let data = operations::DataScope::default();
 +        while let Some((id, source, request, reply)) = receiver.recv().await {
 +            let value = match (&lead, generation) {
 +                (Some(lead), Some(generation)) if matches!(request.operation.as_str(),"review.request"|"review.result"|"review.wait"|"review.submit"|"review.cancel") => self.agents.call(&self.services,lead,&id,generation,&source,request).await.map_err(std::io::Error::other),
-+                (Some(lead), Some(generation)) if codex_omd::scoped_data::operation(&request.operation) => {
-+                    async {
-+                        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await.map_err(std::io::Error::other)?;
-+                        let manager = lead.host.manager.upgrade().ok_or_else(||std::io::Error::other("thread_manager_unavailable"))?;
-+                        let config = manager.get_thread(lead.thread).await.map_err(std::io::Error::other)?.config().await;
-+                        let root = lead.host.manifest.mods.clone().ok_or_else(||std::io::Error::other("mod_store_unavailable"))?;
-+                        let mut data = codex_omd::scoped_data::ScopedDataHost::new(root,authority.repository.clone(),Some(config.codex_home.join("sessions").to_path_buf()),id,lead.thread.to_string(),generation,source)?;
-+                        data.session_database = Some(config.sqlite.state_db_path());
-+                        let task = lead.host.task.clone();
-+                        tokio::task::spawn_blocking(move || data.call(&request.operation,request.arguments,&|path|authority.readable(path),||task.check_active().is_ok())).await.map_err(std::io::Error::other)?
-+                    }.await
++                (Some(lead), Some(_)) if codex_omd::scoped_data::operation(&request.operation) => {
++                    match crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await {
++                        Ok(authority) => data.call(lead, authority, &id, &source, request).await,
++                        Err(error) => Err(error),
++                    }.map_err(std::io::Error::other)
 +                },
 +                (Some(lead), _) if request.operation == "workers.presets" => Ok(presets::list(&lead.host,&id)),
 +                (Some(lead), _) if request.operation == "routes.list" => Ok(json!([LeadName::Sol, LeadName::Astra].map(|name| {
@@ -15983,7 +16116,7 @@ index 0000000..4ff7f74
 +            if !lead_thread(input.thread_store) {
 +                return;
 +            }
-+            self.agents.cleanup().await;
++            self.agents.cleanup_except_reviews().await;
 +            self.services.cleanup().await;
 +            let runtime = self.runtime.clone();
 +            let owner = self.owner.clone();
@@ -16334,10 +16467,10 @@ index 0000000..4ff7f74
 +}
 diff --git a/b/codex-rs/ext/omd/src/platform_mods.rs b/codex-rs/ext/omd/src/platform_mods.rs
 new file mode 100644
-index 0000000..1db80f0
+index 0000000..21f1118
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/platform_mods.rs
-@@ -0,0 +1,975 @@
+@@ -0,0 +1,980 @@
 +use super::*;
 +use codex_omd::ModHost;
 +use codex_omd::ModInputDecision;
@@ -16373,6 +16506,22 @@ index 0000000..1db80f0
 +    thread: String,
 +    sessions: PathBuf,
 +    database: PathBuf,
++}
++
++impl PlatformDataScope {
++    fn hosts(
++        &self,
++        root: &std::path::Path,
++        repository: &std::path::Path,
++    ) -> codex_omd::scoped_data::ScopedDataHosts {
++        codex_omd::scoped_data::ScopedDataHosts::new(
++            root.to_path_buf(),
++            repository.to_path_buf(),
++            Some(self.sessions.clone()),
++            Some(self.database.clone()),
++            self.thread.clone(),
++        )
++    }
 +}
 +
 +struct TurnRecord {
@@ -16487,6 +16636,9 @@ index 0000000..1db80f0
 +                .into_iter()
 +                .map(|(id, owner)| (id, owner.sha256))
 +                .collect();
++            let mut data = data_scope
++                .as_ref()
++                .map(|scope| scope.hosts(&root, &repository));
 +            let fragments = mods::event_fragments(
 +                &mut runtime,
 +                name,
@@ -16495,7 +16647,7 @@ index 0000000..1db80f0
 +                "native permissions",
 +                |id, request| {
 +                    if codex_omd::scoped_data::operation(&request.operation) {
-+                        let scope = data_scope.as_ref().ok_or_else(|| {
++                        let data = data.as_mut().ok_or_else(|| {
 +                            std::io::Error::other("thread_data_scope_unavailable")
 +                        })?;
 +                        let profile = profile.as_ref().ok_or_else(|| {
@@ -16507,20 +16659,11 @@ index 0000000..1db80f0
 +                                profile.clone(),
 +                            )
 +                            .map_err(std::io::Error::other)?;
-+                        let mut data = codex_omd::scoped_data::ScopedDataHost::new(
-+                            root.clone(),
-+                            repository.clone(),
-+                            Some(scope.sessions.clone()),
-+                            id.to_owned(),
-+                            scope.thread.clone(),
-+                            generation,
++                        return data.call(
++                            id,
 +                            sources
 +                                .get(id)
-+                                .cloned()
 +                                .ok_or_else(|| std::io::Error::other("data_owner_missing"))?,
-+                        )?;
-+                        data.session_database = Some(scope.database.clone());
-+                        return data.call(
 +                            &request.operation,
 +                            request.arguments,
 +                            &|path| authority.readable(path),
@@ -16613,7 +16756,7 @@ index 0000000..1db80f0
 +            if let Ok(bytes) =
 +                serde_json::to_value(snapshot).and_then(|value| serde_json::to_vec(&value))
 +            {
-+                let _ = persist_atomic(&root, "mod-view.json", &bytes);
++                let _ = persist_view(&root, "mod-view.json", &bytes);
 +            }
 +            let status = runtime.status();
 +            for id in status["mods"]
@@ -16628,7 +16771,7 @@ index 0000000..1db80f0
 +                }
 +            }
 +            if let Ok(bytes) = serde_json::to_vec(&status) {
-+                let _ = persist_atomic(&root, "mod-status.json", &bytes);
++                let _ = persist_view(&root, "mod-status.json", &bytes);
 +            }
 +            fragments
 +        })
@@ -17218,6 +17361,10 @@ index 0000000..1db80f0
 +                    .into_iter()
 +                    .map(|(id, owner)| (id, owner.sha256))
 +                    .collect();
++                let mut data = data_scope
++                    .as_ref()
++                    .zip(authority.as_ref())
++                    .map(|(scope, authority)| scope.hosts(&root, &authority.repository));
 +                runtime.invoke_tool(
 +                    &id,
 +                    generation,
@@ -17231,23 +17378,14 @@ index 0000000..1db80f0
 +                                    "workspace_operation_requires_local_repository",
 +                                )
 +                            })?;
-+                            let scope = data_scope.as_ref().ok_or_else(|| {
++                            let data = data.as_mut().ok_or_else(|| {
 +                                std::io::Error::other("thread_data_scope_unavailable")
 +                            })?;
-+                            let mut data = codex_omd::scoped_data::ScopedDataHost::new(
-+                                root.clone(),
-+                                authority.repository.clone(),
-+                                Some(scope.sessions.clone()),
-+                                caller.to_owned(),
-+                                scope.thread.clone(),
-+                                generation,
++                            return data.call(
++                                caller,
 +                                sources
 +                                    .get(caller)
-+                                    .cloned()
 +                                    .ok_or_else(|| std::io::Error::other("data_owner_missing"))?,
-+                            )?;
-+                            data.session_database = Some(scope.database.clone());
-+                            return data.call(
 +                                &request.operation,
 +                                request.arguments,
 +                                &|path| authority.readable(path),
@@ -17610,10 +17748,10 @@ index 0000000..1327528
 +}
 diff --git a/b/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 0000000..40768da
+index 0000000..99ba5c3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,535 @@
+@@ -0,0 +1,561 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
@@ -17633,6 +17771,32 @@ index 0000000..40768da
 +    pub session_database: Option<PathBuf>,
 +    pub policy: FileSystemSandboxPolicy,
 +    pub context: FileSystemSandboxContext,
++}
++
++pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
++    let authority = WorkspaceAuthority::for_lead(lead).await?;
++    let approved = lead
++        .host
++        .manifest
++        .approved_untracked
++        .iter()
++        .cloned()
++        .collect();
++    let limit = lead.host.manifest.snapshot_bytes;
++    tokio::task::spawn_blocking(move || {
++        let snapshot = codex_omd::capture_tracked(&authority.repository, &approved, limit)
++            .map_err(|error| error.to_string())?;
++        if snapshot
++            .files
++            .keys()
++            .any(|path| !authority.readable(&authority.repository.join(path)))
++        {
++            return Err("workspace_snapshot_permission_denied".to_owned());
++        }
++        Ok(snapshot)
++    })
++    .await
++    .map_err(|error| error.to_string())?
 +}
 +
 +impl WorkspaceAuthority {
@@ -21763,7 +21927,7 @@ index 0000000..0ced262
 +}
 diff --git a/b/codex-rs/omd/src/bin/omd.rs b/codex-rs/omd/src/bin/omd.rs
 new file mode 100644
-index 0000000..5a20379
+index 0000000..747beb6
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd.rs
 @@ -0,0 +1,271 @@
@@ -21928,9 +22092,9 @@ index 0000000..5a20379
 +        root,
 +        repository.clone(),
 +        sessions,
++        None,
 +        owner.clone(),
 +        "user-command".into(),
-+        runtime.generation(),
 +        runtime
 +            .owners()
 +            .into_iter()
@@ -23467,10 +23631,10 @@ index 0000000..970adeb
 +mod tests;
 diff --git a/b/codex-rs/omd/src/completion_tests.rs b/codex-rs/omd/src/completion_tests.rs
 new file mode 100644
-index 0000000..d71ecfa
+index 0000000..86a3f70
 --- /dev/null
 +++ b/codex-rs/omd/src/completion_tests.rs
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,360 @@
 +use super::*;
 +
 +fn sha(value: char) -> String {
@@ -23500,6 +23664,7 @@ index 0000000..d71ecfa
 +fn final_review(candidate: char) -> ReviewCycle {
 +    ReviewCycle {
 +        id: 7,
++        lane: Default::default(),
 +        cadence: ReviewCadence::Final,
 +        candidate: marker("review-candidate", candidate, 'r'),
 +        stable: true,
@@ -28110,10 +28275,10 @@ index 0000000..778ff63
 +}
 diff --git a/b/codex-rs/omd/src/graph.rs b/codex-rs/omd/src/graph.rs
 new file mode 100644
-index 0000000..c834ddd
+index 0000000..a546d5f
 --- /dev/null
 +++ b/codex-rs/omd/src/graph.rs
-@@ -0,0 +1,1213 @@
+@@ -0,0 +1,1233 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use sha2::Digest;
@@ -29051,7 +29216,9 @@ index 0000000..c834ddd
 +        if bytes.len() > MAX_GRAPH_BYTES {
 +            return Err(invalid("graph snapshot exceeds size limit"));
 +        }
-+        atomic_write(path, &bytes)
++        atomic_write(path, &bytes, |existing| {
++            serde_json::from_slice::<Self>(existing).is_ok_and(|graph| graph.validate().is_ok())
++        })
 +    }
 +
 +    pub fn validate(&self) -> io::Result<()> {
@@ -29263,7 +29430,12 @@ index 0000000..c834ddd
 +    }
 +
 +    pub fn write_html(&self, path: &Path) -> io::Result<()> {
-+        atomic_write(path, self.html()?.as_bytes())
++        atomic_write(path, self.html()?.as_bytes(), |existing| {
++            std::str::from_utf8(existing).is_ok_and(|text| {
++                text.starts_with("<!doctype html>")
++                    && text.contains("<title>Oh My Diff code graph</title>")
++            })
++        })
 +    }
 +}
 +
@@ -29278,7 +29450,7 @@ index 0000000..c834ddd
 +    Ok(())
 +}
 +
-+fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
++fn atomic_write(path: &Path, bytes: &[u8], replaceable: impl Fn(&[u8]) -> bool) -> io::Result<()> {
 +    let parent = path
 +        .parent()
 +        .ok_or_else(|| invalid("output parent is missing"))?;
@@ -29294,11 +29466,24 @@ index 0000000..c834ddd
 +                file.write_all(bytes)?;
 +                file.sync_all()?;
 +                drop(file);
-+                if let Err(error) = fs::rename(&temporary, path) {
-+                    let _ = fs::remove_file(&temporary);
-+                    return Err(error);
-+                }
-+                return Ok(());
++                let result = match fs::hard_link(&temporary, path) {
++                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
++                        let existing = fs::symlink_metadata(path)?;
++                        if existing.is_file()
++                            && existing.len() <= MAX_GRAPH_BYTES as u64
++                            && replaceable(&fs::read(path)?)
++                        {
++                            fs::rename(&temporary, path)
++                        } else {
++                            Err(invalid(
++                                "output exists and is not an earlier graph artifact",
++                            ))
++                        }
++                    }
++                    result => result,
++                };
++                let _ = fs::remove_file(&temporary);
++                return result;
 +            }
 +            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
 +            Err(error) => return Err(error),
@@ -31138,7 +31323,7 @@ index 0000000..d7a4e3e
 +}
 diff --git a/b/codex-rs/omd/src/knowledge.rs b/codex-rs/omd/src/knowledge.rs
 new file mode 100644
-index 0000000..1b27bbc
+index 0000000..5a3e04d
 --- /dev/null
 +++ b/codex-rs/omd/src/knowledge.rs
 @@ -0,0 +1,1023 @@
@@ -31492,7 +31677,7 @@ index 0000000..1b27bbc
 +    Ok(current)
 +}
 +
-+fn read_source(repository: &Path, anchor: &SourceAnchor) -> io::Result<SourceVersion> {
++pub(crate) fn read_source(repository: &Path, anchor: &SourceAnchor) -> io::Result<SourceVersion> {
 +    if anchor.start_line == 0
 +        || anchor.end_line < anchor.start_line
 +        || anchor.end_line - anchor.start_line >= 200
@@ -32167,18 +32352,18 @@ index 0000000..1b27bbc
 +}
 diff --git a/b/codex-rs/omd/src/knowledge_access.rs b/codex-rs/omd/src/knowledge_access.rs
 new file mode 100644
-index 0000000..830c191
+index 0000000..2345e28
 --- /dev/null
 +++ b/codex-rs/omd/src/knowledge_access.rs
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,285 @@
 +use crate::resource_data::{ResourceRef, ResourceStore, contains_secret};
 +use crate::{
 +    KnowledgeAction, KnowledgeApproval, KnowledgeMode, KnowledgeRemoval, KnowledgeReset,
-+    KnowledgeStore, LessonCandidate, RecordKind, SourceAnchor, SourceFactInput, TaskEvidenceInput,
++    KnowledgeStore, LessonCandidate, RecordKind, SourceAnchor, SourceFact, SourceFactInput,
++    SourceFactStatus, TaskEvidenceInput,
 +};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
-+use std::collections::BTreeSet;
 +use std::io;
 +use std::path::Path;
 +
@@ -32200,28 +32385,23 @@ index 0000000..830c191
 +        Ok(())
 +    }
 +
-+    fn source(&self, source: &SourceAnchor) -> io::Result<()> {
-+        let path = crate::workspace_path(self.repository, &source.path)?;
-+        if !(self.readable)(&path) {
++    fn check(&self, source: &SourceAnchor, excerpt: &str) -> io::Result<()> {
++        if !(self.readable)(&crate::workspace_path(self.repository, &source.path)?) {
 +            return Err(io::Error::other("knowledge_source_denied"));
 +        }
-+        let snapshot = crate::Snapshot::capture(
-+            self.repository,
-+            &BTreeSet::from([source.path.clone()]),
-+            1_048_576,
-+        )?;
-+        let text = std::str::from_utf8(
-+            &snapshot
-+                .files
-+                .get(&source.path)
-+                .ok_or_else(|| io::Error::other("knowledge_source_missing"))?
-+                .bytes,
-+        )
-+        .map_err(io::Error::other)?;
-+        if contains_secret(text) {
++        if contains_secret(excerpt) {
 +            return Err(io::Error::other("knowledge_secret_source_excluded"));
 +        }
 +        Ok(())
++    }
++
++    fn fresh(&self, fact: &SourceFact) -> io::Result<()> {
++        match &fact.status {
++            SourceFactStatus::Fresh { version } => self.check(&fact.source, &version.excerpt),
++            SourceFactStatus::Invalidated { .. } => {
++                Err(io::Error::other("knowledge_source_invalidated"))
++            }
++        }
 +    }
 +
 +    pub fn call(
@@ -32251,15 +32431,21 @@ index 0000000..830c191
 +                    return Err(io::Error::other("knowledge_inspection_limit"));
 +                }
 +                let mut inspection = self.store.inspect(self.repository)?;
-+                for fact in &inspection.facts {
-+                    self.source(&fact.source)?;
-+                }
 +                if let Some(ids) = input.ids {
 +                    inspection.facts.retain(|fact| ids.contains(&fact.id));
 +                    inspection.lessons.retain(|lesson| ids.contains(&lesson.id));
 +                    inspection
 +                        .evidence
 +                        .retain(|evidence| ids.contains(&evidence.id));
++                }
++                for fact in &mut inspection.facts {
++                    if let Err(error) = self.fresh(fact)
++                        && matches!(fact.status, SourceFactStatus::Fresh { .. })
++                    {
++                        fact.status = SourceFactStatus::Invalidated {
++                            reason: error.to_string(),
++                        };
++                    }
 +                }
 +                inspection.events.clear();
 +                serde_json::to_value(inspection)?
@@ -32277,7 +32463,15 @@ index 0000000..830c191
 +                let input: Input = serde_json::from_value(arguments)?;
 +                match (input.source, input.evidence) {
 +                    (Some(source), None) => {
-+                        self.source(&source)?;
++                        let version = crate::knowledge::read_source(self.repository, &source)
++                            .map_err(|error| {
++                                if error.kind() == io::ErrorKind::NotFound {
++                                    io::Error::other("knowledge_source_missing")
++                                } else {
++                                    error
++                                }
++                            })?;
++                        self.check(&source, &version.excerpt)?;
 +                        serde_json::to_value(self.store.retain_source_fact(
 +                            self.repository,
 +                            SourceFactInput {
@@ -32401,7 +32595,7 @@ index 0000000..830c191
 +                    .approved_lessons
 +                    .retain(|lesson| input.ids.contains(&lesson.id));
 +                for fact in &session.facts {
-+                    self.source(&fact.source)?;
++                    self.fresh(fact)?;
 +                }
 +                let max = input.max_bytes.unwrap_or(32768);
 +                let payload = serde_json::to_value(&session)?;
@@ -32424,7 +32618,7 @@ index 0000000..830c191
 +                    return Err(io::Error::other("knowledge_snapshot_revoked"));
 +                }
 +                for fact in &frozen.facts {
-+                    self.source(&fact.source)?;
++                    self.fresh(fact)?;
 +                    if !current.facts.contains(fact) {
 +                        return Err(io::Error::other("knowledge_snapshot_source_changed"));
 +                    }
@@ -32449,10 +32643,10 @@ index 0000000..830c191
 +}
 diff --git a/b/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 0000000..c8624b1
+index 0000000..838601c
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,301 @@
 +mod admission;
 +mod checkpoint;
 +mod checks;
@@ -32660,12 +32854,14 @@ index 0000000..c8624b1
 +pub use reactive::ReactiveScope;
 +pub use reactive::ReactiveToolOutcome;
 +pub use reactive::ReactiveTrigger;
++pub use review::AdvisoryLane;
 +pub use review::FindingStatus;
 +pub use review::RepairRecord;
 +pub use review::ReviewCadence;
 +pub use review::ReviewCycle;
 +pub use review::ReviewFinding;
 +pub use review::ReviewFindingInput;
++pub use review::ReviewLane;
 +pub use review::ReviewPolicy;
 +pub use review::ReviewSeverity;
 +pub use review::ReviewSnapshot;
@@ -44053,10 +44249,10 @@ index 0000000..773b582
 +}
 diff --git a/b/codex-rs/omd/src/review.rs b/codex-rs/omd/src/review.rs
 new file mode 100644
-index 0000000..81a7ded
+index 0000000..021ae7a
 --- /dev/null
 +++ b/codex-rs/omd/src/review.rs
-@@ -0,0 +1,592 @@
+@@ -0,0 +1,719 @@
 +use crate::FinalReview;
 +use crate::VersionMarker;
 +use serde::Deserialize;
@@ -44162,6 +44358,14 @@ index 0000000..81a7ded
 +    Final,
 +}
 +
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub enum ReviewLane {
++    #[default]
++    Enforced,
++    Advisory,
++}
++
 +#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 +#[serde(rename_all = "snake_case")]
 +pub enum ReviewSeverity {
@@ -44195,8 +44399,6 @@ index 0000000..81a7ded
 +    pub summary: String,
 +    pub paths: Vec<String>,
 +    pub status: FindingStatus,
-+    #[serde(default = "enabled")]
-+    pub enforced: bool,
 +    pub introduced_candidate_sha256: String,
 +    pub last_seen_candidate_sha256: String,
 +    pub duplicate_observations: u32,
@@ -44220,6 +44422,8 @@ index 0000000..81a7ded
 +#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 +pub struct ReviewCycle {
 +    pub id: u32,
++    #[serde(default)]
++    pub lane: ReviewLane,
 +    pub cadence: ReviewCadence,
 +    pub candidate: VersionMarker,
 +    pub stable: bool,
@@ -44251,6 +44455,15 @@ index 0000000..81a7ded
 +    pub findings: Vec<ReviewFinding>,
 +    pub repairs: Vec<RepairRecord>,
 +    pub final_candidate_sha256: Option<String>,
++    #[serde(default)]
++    pub advisory: AdvisoryLane,
++}
++
++#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
++pub struct AdvisoryLane {
++    pub reviews: u32,
++    pub candidate_sha256: Option<String>,
++    pub findings: Vec<ReviewFinding>,
 +}
 +
 +pub struct UnifiedReview {
@@ -44268,6 +44481,7 @@ index 0000000..81a7ded
 +                findings: Vec::new(),
 +                repairs: Vec::new(),
 +                final_candidate_sha256: None,
++                advisory: AdvisoryLane::default(),
 +            },
 +        })
 +    }
@@ -44307,6 +44521,27 @@ index 0000000..81a7ded
 +                    || validate_marker(&repair.evidence).is_err()
 +            })
 +            || snapshot
++                .cycles
++                .iter()
++                .any(|cycle| cycle.lane != ReviewLane::Enforced)
++            || snapshot.advisory.findings.len() > snapshot.policy.max_findings_per_cycle
++            || snapshot
++                .advisory
++                .findings
++                .windows(2)
++                .any(|pair| pair[0].id >= pair[1].id)
++            || snapshot.advisory.findings.iter().any(|finding| {
++                finding.id == 0
++                    || validate_sha256(&finding.fingerprint).is_err()
++                    || snapshot.advisory.candidate_sha256.as_ref()
++                        != Some(&finding.last_seen_candidate_sha256)
++            })
++            || snapshot
++                .advisory
++                .candidate_sha256
++                .as_ref()
++                .is_some_and(|candidate| validate_sha256(candidate).is_err())
++            || snapshot
 +                .final_candidate_sha256
 +                .as_ref()
 +                .is_some_and(|candidate| {
@@ -44327,13 +44562,6 @@ index 0000000..81a7ded
 +            .iter()
 +            .filter(|finding| finding.status != FindingStatus::Resolved)
 +            .cloned()
-+            .collect()
-+    }
-+
-+    pub fn blocking(&self) -> Vec<ReviewFinding> {
-+        self.unresolved()
-+            .into_iter()
-+            .filter(|finding| finding.enforced)
 +            .collect()
 +    }
 +
@@ -44408,31 +44636,127 @@ index 0000000..81a7ded
 +    }
 +
 +    pub fn submit(&mut self, submission: ReviewSubmission) -> io::Result<ReviewCycle> {
-+        self.submit_with_severity_enforcement(submission, false)
-+    }
-+
-+    pub fn submit_with_severity_enforcement(
-+        &mut self,
-+        submission: ReviewSubmission,
-+        blocking_only: bool,
-+    ) -> io::Result<ReviewCycle> {
 +        let mut staged = Self {
 +            snapshot: self.snapshot.clone(),
 +        };
-+        let cycle = staged.submit_in_place(submission, blocking_only)?;
++        let cycle = staged.submit_in_place(submission)?;
 +        self.snapshot = staged.snapshot;
 +        Ok(cycle)
 +    }
 +
-+    fn submit_in_place(
++    pub fn submit_advisory(&mut self, mut submission: ReviewSubmission) -> io::Result<ReviewCycle> {
++        if submission.cadence == ReviewCadence::Final || !submission.resolved_finding_ids.is_empty()
++        {
++            return Err(invalid(
++                "advisory review cannot approve or resolve findings",
++            ));
++        }
++        validate_submission(&self.snapshot.policy, &submission)?;
++        let (blocking, advice): (Vec<_>, Vec<_>) = std::mem::take(&mut submission.findings)
++            .into_iter()
++            .partition(|finding| finding.severity == ReviewSeverity::Blocking);
++        let mut staged = Self {
++            snapshot: self.snapshot.clone(),
++        };
++        let candidate = submission.candidate.sha256.clone();
++        let mut cycle = if blocking.is_empty() {
++            ReviewCycle {
++                id: staged.snapshot.advisory.reviews.saturating_add(1),
++                lane: ReviewLane::Advisory,
++                cadence: submission.cadence,
++                candidate: submission.candidate,
++                stable: submission.stable,
++                risk: submission.risk,
++                reviewer: submission.reviewer,
++                separate_reviewer: submission.separate_reviewer,
++                checks: submission.checks,
++                observed_finding_ids: Vec::new(),
++                resolved_finding_ids: Vec::new(),
++                duplicate_findings: 0,
++                final_approved: false,
++            }
++        } else {
++            submission.findings = blocking;
++            staged.submit_in_place(submission)?
++        };
++        let (observed, duplicates) = staged.advise(&candidate, advice)?;
++        if cycle.lane == ReviewLane::Advisory {
++            cycle.observed_finding_ids = observed;
++            cycle.duplicate_findings = duplicates;
++        }
++        self.snapshot = staged.snapshot;
++        Ok(cycle)
++    }
++
++    fn advise(
 +        &mut self,
-+        submission: ReviewSubmission,
-+        blocking_only: bool,
-+    ) -> io::Result<ReviewCycle> {
++        candidate: &str,
++        advice: Vec<ReviewFindingInput>,
++    ) -> io::Result<(Vec<u32>, u32)> {
++        let limit = self.snapshot.policy.max_findings_per_cycle;
++        let lane = &mut self.snapshot.advisory;
++        if lane.candidate_sha256.as_deref() != Some(candidate) {
++            lane.findings.clear();
++            lane.candidate_sha256 = Some(candidate.to_owned());
++        }
++        lane.reviews = lane.reviews.saturating_add(1);
++        let mut deduplicated = BTreeMap::new();
++        let mut duplicates = 0;
++        for finding in advice {
++            validate_finding(&finding)?;
++            if deduplicated
++                .insert(finding.fingerprint.clone(), finding)
++                .is_some()
++            {
++                duplicates += 1;
++            }
++        }
++        let mut observed = Vec::new();
++        for (fingerprint, input) in deduplicated {
++            if let Some(existing) = lane
++                .findings
++                .iter_mut()
++                .find(|finding| finding.fingerprint == fingerprint)
++            {
++                existing.severity = input.severity;
++                existing.summary = input.summary;
++                existing.paths = input.paths;
++                existing.duplicate_observations = existing.duplicate_observations.saturating_add(1);
++                observed.push(existing.id);
++            } else {
++                let id = lane
++                    .findings
++                    .last()
++                    .map_or(1, |finding| finding.id.saturating_add(1));
++                lane.findings.push(ReviewFinding {
++                    id,
++                    fingerprint,
++                    severity: input.severity,
++                    summary: input.summary,
++                    paths: input.paths,
++                    status: FindingStatus::Open,
++                    introduced_candidate_sha256: candidate.to_owned(),
++                    last_seen_candidate_sha256: candidate.to_owned(),
++                    duplicate_observations: 0,
++                    resolved_candidate_sha256: None,
++                });
++                observed.push(id);
++            }
++        }
++        let excess = lane.findings.len().saturating_sub(limit);
++        lane.findings.drain(..excess);
++        Ok((observed, duplicates))
++    }
++
++    fn submit_in_place(&mut self, submission: ReviewSubmission) -> io::Result<ReviewCycle> {
 +        if self.snapshot.cycles.len() >= self.snapshot.policy.max_cycles as usize {
 +            return Err(invalid("review cycle limit exhausted"));
 +        }
 +        validate_submission(&self.snapshot.policy, &submission)?;
++        if self.snapshot.advisory.candidate_sha256.as_ref() != Some(&submission.candidate.sha256) {
++            self.snapshot.advisory.findings.clear();
++            self.snapshot.advisory.candidate_sha256 = None;
++        }
 +        let prior_candidate = self
 +            .snapshot
 +            .cycles
@@ -44487,7 +44811,6 @@ index 0000000..81a7ded
 +            }) {
 +                existing.status = FindingStatus::Open;
 +                existing.last_seen_candidate_sha256 = submission.candidate.sha256.clone();
-+                existing.enforced = !blocking_only || input.severity == ReviewSeverity::Blocking;
 +                existing.severity = input.severity;
 +                existing.summary = input.summary;
 +                existing.paths = input.paths;
@@ -44502,7 +44825,6 @@ index 0000000..81a7ded
 +                    summary: input.summary,
 +                    paths: input.paths,
 +                    status: FindingStatus::Open,
-+                    enforced: !blocking_only || input.severity == ReviewSeverity::Blocking,
 +                    introduced_candidate_sha256: submission.candidate.sha256.clone(),
 +                    last_seen_candidate_sha256: submission.candidate.sha256.clone(),
 +                    duplicate_observations: 0,
@@ -44515,9 +44837,10 @@ index 0000000..81a7ded
 +            return Err(invalid("open review finding limit exceeded"));
 +        }
 +        let final_approved =
-+            submission.cadence == ReviewCadence::Final && self.blocking().is_empty();
++            submission.cadence == ReviewCadence::Final && self.unresolved().is_empty();
 +        let cycle = ReviewCycle {
 +            id: self.snapshot.cycles.len() as u32 + 1,
++            lane: ReviewLane::Enforced,
 +            cadence: submission.cadence,
 +            candidate: submission.candidate,
 +            stable: submission.stable,
@@ -44651,10 +44974,10 @@ index 0000000..81a7ded
 +mod tests;
 diff --git a/b/codex-rs/omd/src/review_tests.rs b/codex-rs/omd/src/review_tests.rs
 new file mode 100644
-index 0000000..3196f72
+index 0000000..87394e6
 --- /dev/null
 +++ b/codex-rs/omd/src/review_tests.rs
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,300 @@
 +use super::*;
 +
 +fn sha(value: char) -> String {
@@ -44885,7 +45208,50 @@ index 0000000..3196f72
 +}
 +
 +#[test]
-+fn typed_advice_is_recorded_without_becoming_a_completion_blocker() {
++fn advisory_lane_is_bounded_expires_and_never_consumes_enforced_budget() {
++    let policy = ReviewPolicy {
++        every_turn_advice: true,
++        max_findings_per_cycle: 4,
++        ..Default::default()
++    };
++    let mut review = UnifiedReview::new(policy).unwrap();
++    for turn in 0..40 {
++        let mut advice = submission(ReviewCadence::EveryTurn, 'a');
++        let key = "0123456789abcdef".chars().nth(turn % 16).unwrap();
++        advice.findings.push(finding(key, "An advisory concern"));
++        advice
++            .findings
++            .push(finding(key, "The same concern reworded"));
++        let cycle = review.submit_advisory(advice).unwrap();
++        assert_eq!(cycle.lane, ReviewLane::Advisory);
++        assert_eq!(cycle.duplicate_findings, 1);
++    }
++    let snapshot = review.snapshot();
++    assert!(snapshot.cycles.is_empty());
++    assert_eq!(snapshot.advisory.reviews, 40);
++    assert_eq!(snapshot.advisory.findings.len(), 4);
++    assert!(review.unresolved().is_empty());
++    assert_eq!(
++        UnifiedReview::restore(snapshot.clone()).unwrap().snapshot(),
++        snapshot
++    );
++    let mut moved = submission(ReviewCadence::EveryTurn, 'b');
++    moved
++        .findings
++        .push(finding('1', "Advice for the next candidate"));
++    review.submit_advisory(moved).unwrap();
++    assert_eq!(review.snapshot().advisory.findings.len(), 1);
++    review
++        .submit(submission(ReviewCadence::StableMilestone, 'c'))
++        .unwrap();
++    assert!(review.snapshot().advisory.findings.is_empty());
++    let mut final_review = submission(ReviewCadence::Final, 'c');
++    final_review.checks.push(marker("check", 'c'));
++    assert!(review.submit(final_review).unwrap().final_approved);
++}
++
++#[test]
++fn blocking_advisory_findings_are_enforced_until_resolved() {
 +    let policy = ReviewPolicy {
 +        every_turn_advice: true,
 +        ..Default::default()
@@ -44893,43 +45259,37 @@ index 0000000..3196f72
 +    let mut review = UnifiedReview::new(policy).unwrap();
 +    let mut advice = submission(ReviewCadence::EveryTurn, 'a');
 +    advice.findings.push(finding('b', "An advisory concern"));
-+    review
-+        .submit_with_severity_enforcement(advice, true)
-+        .unwrap();
-+    assert_eq!(review.unresolved().len(), 1);
-+    assert!(review.blocking().is_empty());
-+    let mut final_review = submission(ReviewCadence::Final, 'a');
-+    final_review.checks.push(marker("check", 'a'));
-+    assert!(review.submit(final_review).unwrap().final_approved);
-+    let restored = UnifiedReview::restore(review.snapshot()).unwrap();
-+    assert!(restored.blocking().is_empty());
-+    let mut blocking = submission(ReviewCadence::EveryTurn, 'a');
-+    blocking.findings.push(ReviewFindingInput {
++    advice.findings.push(ReviewFindingInput {
 +        severity: ReviewSeverity::Blocking,
 +        ..finding('c', "A selected blocker")
 +    });
-+    review
-+        .submit_with_severity_enforcement(blocking, true)
-+        .unwrap();
-+    assert_eq!(review.blocking().len(), 1);
-+    let mut legacy = submission(ReviewCadence::StableMilestone, 'a');
-+    legacy
-+        .findings
-+        .push(finding('d', "Existing review behavior"));
-+    review.submit(legacy).unwrap();
-+    assert_eq!(review.blocking().len(), 2);
++    let cycle = review.submit_advisory(advice).unwrap();
++    assert_eq!(cycle.lane, ReviewLane::Enforced);
++    assert_eq!(review.unresolved().len(), 1);
++    assert_eq!(review.snapshot().advisory.findings.len(), 1);
++    let mut final_review = submission(ReviewCadence::Final, 'a');
++    final_review.checks.push(marker("check", 'a'));
++    assert!(!review.submit(final_review).unwrap().final_approved);
++    let mut resolving = submission(ReviewCadence::Final, 'd');
++    resolving.checks.push(marker("check", 'd'));
++    resolving.resolved_finding_ids.push(1);
++    assert!(review.submit(resolving).unwrap().final_approved);
++    let mut invalid = submission(ReviewCadence::EveryTurn, 'd');
++    invalid.resolved_finding_ids.push(1);
++    assert!(review.submit_advisory(invalid).is_err());
 +}
 diff --git a/b/codex-rs/omd/src/scoped_data.rs b/codex-rs/omd/src/scoped_data.rs
 new file mode 100644
-index 0000000..ea574f6
+index 0000000..317de31
 --- /dev/null
 +++ b/codex-rs/omd/src/scoped_data.rs
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,249 @@
 +use crate::KnowledgeStore;
 +use crate::knowledge_access::KnowledgeAccess;
 +use crate::resource_data::{ResourceBinding, ResourceStore, hash};
 +use crate::sessions::SessionIndex;
 +use serde_json::{Value, json};
++use std::collections::BTreeMap;
 +use std::io;
 +use std::path::{Path, PathBuf};
 +
@@ -44966,9 +45326,9 @@ index 0000000..ea574f6
 +        root: PathBuf,
 +        repository: PathBuf,
 +        session_root: Option<PathBuf>,
++        session_database: Option<PathBuf>,
 +        owner: String,
 +        thread: String,
-+        generation: u64,
 +        source_sha256: String,
 +    ) -> io::Result<Self> {
 +        if repository.canonicalize()? != repository
@@ -44976,9 +45336,6 @@ index 0000000..ea574f6
 +            || root.starts_with(&repository)
 +        {
 +            return Err(io::Error::other("data_scope_invalid"));
-+        }
-+        if generation == 0 {
-+            return Err(io::Error::other("data_dispatch_generation_invalid"));
 +        }
 +        let configuration = crate::ModStore::open(root.clone())?.configuration()?;
 +        if !configuration
@@ -45000,7 +45357,7 @@ index 0000000..ea574f6
 +            root,
 +            repository,
 +            session_root,
-+            session_database: None,
++            session_database,
 +            binding,
 +            confirmation: None,
 +            session_bytes: 0,
@@ -45121,12 +45478,67 @@ index 0000000..ea574f6
 +        }
 +    }
 +}
++
++pub struct ScopedDataHosts {
++    root: PathBuf,
++    repository: PathBuf,
++    session_root: Option<PathBuf>,
++    session_database: Option<PathBuf>,
++    thread: String,
++    hosts: BTreeMap<String, ScopedDataHost>,
++}
++
++impl ScopedDataHosts {
++    pub fn new(
++        root: PathBuf,
++        repository: PathBuf,
++        session_root: Option<PathBuf>,
++        session_database: Option<PathBuf>,
++        thread: String,
++    ) -> Self {
++        Self {
++            root,
++            repository,
++            session_root,
++            session_database,
++            thread,
++            hosts: BTreeMap::new(),
++        }
++    }
++
++    pub fn call(
++        &mut self,
++        owner: &str,
++        source_sha256: &str,
++        name: &str,
++        arguments: Value,
++        readable: &dyn Fn(&Path) -> bool,
++        active: impl Fn() -> bool,
++    ) -> io::Result<Value> {
++        let host = match self.hosts.entry(owner.to_owned()) {
++            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
++            std::collections::btree_map::Entry::Vacant(entry) => entry.insert(ScopedDataHost::new(
++                self.root.clone(),
++                self.repository.clone(),
++                self.session_root.clone(),
++                self.session_database.clone(),
++                owner.to_owned(),
++                self.thread.clone(),
++                source_sha256.to_owned(),
++            )?),
++        };
++        if host.binding.source_sha256 != source_sha256 {
++            return Err(io::Error::other("data_selection_changed_or_revoked"));
++        }
++        host.call(name, arguments, readable, active)
++    }
++}
 diff --git a/b/codex-rs/omd/src/session_policy.rs b/codex-rs/omd/src/session_policy.rs
 new file mode 100644
-index 0000000..ca694aa
+index 0000000..b481fe8
 --- /dev/null
 +++ b/codex-rs/omd/src/session_policy.rs
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,134 @@
 +use serde_json::Value;
 +use std::collections::BTreeSet;
 +use std::io::{self, Read};
@@ -45185,7 +45597,6 @@ index 0000000..ca694aa
 +    let mut child = Command::new("/usr/bin/sqlite3")
 +        .args([
 +            "-batch",
-+            "-readonly",
 +            "-json",
 +            "-init",
 +            "/dev/null",
@@ -45264,19 +45675,20 @@ index 0000000..ca694aa
 +}
 diff --git a/b/codex-rs/omd/src/sessions.rs b/codex-rs/omd/src/sessions.rs
 new file mode 100644
-index 0000000..e7010a3
+index 0000000..36487c7
 --- /dev/null
 +++ b/codex-rs/omd/src/sessions.rs
-@@ -0,0 +1,407 @@
+@@ -0,0 +1,470 @@
 +use crate::resource_data::{PAGE_BYTES, hash, redact, token};
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use std::collections::BTreeSet;
 +use std::fs;
-+use std::io;
++use std::io::{self, BufRead, Read};
 +use std::path::{Path, PathBuf};
 +
 +const SOURCE_BYTES: usize = 32 * 1024 * 1024;
++const HEAD_BYTES: u64 = 1024 * 1024;
 +const SCAN_FILES: usize = 4096;
 +const SCAN_BYTES: u64 = 128 * 1024 * 1024;
 +
@@ -45294,15 +45706,16 @@ index 0000000..e7010a3
 +    pub parent_id: Option<String>,
 +    pub timestamp: String,
 +    pub revision: String,
++    pub handle: String,
 +    pub history_mode: String,
 +    pub inherited_history: bool,
 +    pub incomplete_tail: bool,
-+    pub projection_truncated: bool,
 +}
 +
 +struct Session {
 +    summary: SessionSummary,
-+    records: Vec<Value>,
++    meta: Value,
++    bytes: Vec<u8>,
 +}
 +
 +#[derive(Deserialize)]
@@ -45319,6 +45732,7 @@ index 0000000..e7010a3
 +struct ReadRequest {
 +    session_id: String,
 +    revision: String,
++    handle: String,
 +    cursor: Option<usize>,
 +    max_bytes: Option<usize>,
 +}
@@ -45339,13 +45753,26 @@ index 0000000..e7010a3
 +            .is_ok_and(|day| (1..=31).contains(&day))
 +}
 +
++fn cancelled() -> io::Error {
++    io::Error::other("session_read_cancelled")
++}
++
++fn in_range(timestamp: Option<&str>, since: Option<&String>, until: Option<&String>) -> bool {
++    timestamp
++        .and_then(|value| value.get(..10))
++        .is_some_and(|day| {
++            since.is_none_or(|since| day >= since.as_str())
++                && until.is_none_or(|until| day < until.as_str())
++        })
++}
++
 +impl SessionIndex<'_> {
 +    fn paths(&self, active: &dyn Fn() -> bool) -> io::Result<(Vec<PathBuf>, bool)> {
 +        if !self.enabled {
 +            return Err(io::Error::other("session_access_disabled"));
 +        }
 +        if !active() {
-+            return Err(io::Error::other("session_read_cancelled"));
++            return Err(cancelled());
 +        }
 +        if self.repository.canonicalize()? != self.repository
 +            || self.root.canonicalize()? != self.root
@@ -45356,10 +45783,10 @@ index 0000000..e7010a3
 +        let mut pending = vec![(self.root.to_path_buf(), 0)];
 +        let mut paths = Vec::new();
 +        let mut seen = 0;
-+        let mut bytes = 0u64;
++        let mut truncated = false;
 +        while let Some((directory, depth)) = pending.pop() {
 +            if !active() {
-+                return Err(io::Error::other("session_read_cancelled"));
++                return Err(cancelled());
 +            }
 +            let mut entries = fs::read_dir(directory)?
 +                .take(SCAN_FILES + 1 - seen)
@@ -45368,12 +45795,11 @@ index 0000000..e7010a3
 +            for entry in entries {
 +                seen += 1;
 +                if seen > SCAN_FILES {
-+                    return Ok((paths, true));
++                    truncated = true;
++                    pending.clear();
++                    break;
 +                }
 +                let kind = entry.file_type()?;
-+                if kind.is_symlink() {
-+                    continue;
-+                }
 +                if kind.is_dir() && depth < 3 {
 +                    pending.push((entry.path(), depth + 1));
 +                } else if kind.is_file()
@@ -45382,39 +45808,61 @@ index 0000000..e7010a3
 +                        .extension()
 +                        .is_some_and(|extension| extension == "jsonl")
 +                {
-+                    bytes = bytes.saturating_add(entry.metadata()?.len());
-+                    if bytes > SCAN_BYTES {
-+                        return Ok((paths, true));
-+                    }
 +                    paths.push(entry.path());
 +                }
 +            }
 +        }
 +        paths.sort();
-+        Ok((paths, false))
++        Ok((paths, truncated))
++    }
++
++    fn name<'p>(&self, path: &'p Path) -> io::Result<&'p str> {
++        path.strip_prefix(self.root)
++            .map_err(io::Error::other)?
++            .to_str()
++            .ok_or_else(|| io::Error::other("session_path_encoding"))
++    }
++
++    fn scoped(&self, meta: &Value) -> bool {
++        meta["cwd"]
++            .as_str()
++            .and_then(|path| Path::new(path).canonicalize().ok())
++            .as_deref()
++            == Some(self.repository)
++    }
++
++    fn head(&self, path: &Path) -> io::Result<Option<Value>> {
++        let mut line = Vec::new();
++        io::BufReader::new(crate::workspace::open_contained(
++            self.root,
++            self.name(path)?,
++        )?)
++        .take(HEAD_BYTES)
++        .read_until(b'\n', &mut line)?;
++        let first: Value = serde_json::from_slice(&line)?;
++        Ok((first["type"] == "session_meta").then(|| first["payload"].clone()))
 +    }
 +
 +    fn load(&self, path: &Path, active: &dyn Fn() -> bool) -> io::Result<Option<Session>> {
 +        if !active() {
-+            return Err(io::Error::other("session_read_cancelled"));
++            return Err(cancelled());
 +        }
-+        let name = path
-+            .strip_prefix(self.root)
-+            .map_err(io::Error::other)?
-+            .to_str()
-+            .ok_or_else(|| io::Error::other("session_path_encoding"))?;
-+        let selected = BTreeSet::from([name.to_owned()]);
-+        let snapshot = crate::Snapshot::capture(self.root, &selected, SOURCE_BYTES)?;
-+        let bytes = &snapshot
++        let name = self.name(path)?;
++        let snapshot =
++            crate::Snapshot::capture(self.root, &BTreeSet::from([name.to_owned()]), SOURCE_BYTES)?;
++        let mut bytes = snapshot
 +            .files
 +            .get(name)
 +            .ok_or_else(|| io::Error::other("session_missing"))?
-+            .bytes;
++            .bytes
++            .clone();
 +        let complete = bytes
 +            .iter()
 +            .rposition(|byte| *byte == b'\n')
 +            .map_or(0, |index| index + 1);
-+        let mut lines = bytes[..complete]
++        let incomplete_tail = complete != bytes.len();
++        bytes.truncate(complete);
++        let mut lines = bytes
 +            .split(|byte| *byte == b'\n')
 +            .filter(|line| !line.is_empty());
 +        let first: Value = serde_json::from_slice(
@@ -45426,10 +45874,12 @@ index 0000000..e7010a3
 +            return Ok(None);
 +        }
 +        let initial = &first["payload"];
-+        let mut latest = initial.clone();
-+        for line in lines.clone() {
++        let mut meta = initial.clone();
++        for line in
++            lines.filter(|line| line.windows(14).any(|window| window == b"\"session_meta\""))
++        {
 +            if !active() {
-+                return Err(io::Error::other("session_read_cancelled"));
++                return Err(cancelled());
 +            }
 +            let record: Value = serde_json::from_slice(line)?;
 +            if record["type"] == "session_meta" {
@@ -45438,12 +45888,10 @@ index 0000000..e7010a3
 +                {
 +                    return Err(io::Error::other("session_metadata_changed_identity"));
 +                }
-+                latest = record["payload"].clone();
++                meta = record["payload"].clone();
 +            }
 +        }
-+        let meta = &latest;
-+        let cwd = meta["cwd"].as_str().map(Path::new);
-+        if cwd.and_then(|path| path.canonicalize().ok()).as_deref() != Some(self.repository)
++        if !self.scoped(&meta)
 +            || meta["memory_mode"]
 +                .as_str()
 +                .is_some_and(|mode| mode != "enabled")
@@ -45459,7 +45907,7 @@ index 0000000..e7010a3
 +            .as_str()
 +            .filter(|value| value.len() <= 40 && value.get(..10).is_some_and(date))
 +            .ok_or_else(|| io::Error::other("session_timestamp_invalid"))?;
-+        let mut summary = SessionSummary {
++        let summary = SessionSummary {
 +            session_id: id.to_owned(),
 +            task_id: meta["session_id"]
 +                .as_str()
@@ -45471,33 +45919,47 @@ index 0000000..e7010a3
 +                .filter(|id| token(id))
 +                .map(str::to_owned),
 +            timestamp: timestamp.to_owned(),
-+            revision: hash(&bytes[..complete]),
++            revision: hash(&bytes),
++            handle: hash(name.as_bytes()),
 +            history_mode: meta["history_mode"].as_str().unwrap_or("legacy").to_owned(),
 +            inherited_history: !meta["history_base"].is_null() || !meta["forked_from_id"].is_null(),
-+            incomplete_tail: complete != bytes.len(),
-+            projection_truncated: false,
++            incomplete_tail,
 +        };
++        Ok(Some(Session {
++            summary,
++            meta,
++            bytes,
++        }))
++    }
++
++    fn records(
++        &self,
++        session: &Session,
++        active: &dyn Fn() -> bool,
++    ) -> io::Result<(Vec<Value>, bool)> {
++        let id = &session.summary.session_id;
 +        let mut records = Vec::new();
 +        let mut turn = String::new();
 +        let mut in_scope = false;
++        let lines = session
++            .bytes
++            .split(|byte| *byte == b'\n')
++            .filter(|line| !line.is_empty())
++            .skip(1);
 +        for (index, line) in lines.enumerate() {
 +            if !active() {
-+                return Err(io::Error::other("session_read_cancelled"));
++                return Err(cancelled());
 +            }
 +            let value: Value = serde_json::from_slice(line)?;
 +            let payload = &value["payload"];
-+            if let Some(start) = meta["subagent_history_start_ordinal"].as_u64() {
++            if let Some(start) = session.meta["subagent_history_start_ordinal"].as_u64() {
 +                let ordinal = value["ordinal"].as_u64().unwrap_or(index as u64 + 1);
 +                if ordinal < start {
 +                    continue;
 +                }
 +            }
 +            if value["type"] == "turn_context" {
-+                in_scope = payload["cwd"]
-+                    .as_str()
-+                    .and_then(|path| Path::new(path).canonicalize().ok())
-+                    .as_deref()
-+                    == Some(self.repository);
++                in_scope = self.scoped(payload);
 +                turn = payload["turn_id"]
 +                    .as_str()
 +                    .filter(|id| token(id))
@@ -45528,11 +45990,10 @@ index 0000000..e7010a3
 +            let limited: String = redacted.chars().take(2048).collect();
 +            records.push(json!({"session_id":id,"turn_id":turn,"item":index+1,"role":payload["role"],"text":limited,"truncated":limited.len()<redacted.len(),"redacted":redacted!=text,"timestamp":value["timestamp"],"untrusted":true}));
 +            if records.len() >= 4096 {
-+                summary.projection_truncated = true;
-+                break;
++                return Ok((records, true));
 +            }
 +        }
-+        Ok(Some(Session { summary, records }))
++        Ok((records, false))
 +    }
 +
 +    pub fn call(
@@ -45558,22 +46019,40 @@ index 0000000..e7010a3
 +                {
 +                    return Err(io::Error::other("session_list_bounds"));
 +                }
-+                let (paths, truncated) = self.paths(&active)?;
++                let (paths, mut truncated) = self.paths(&active)?;
++                let (since, until) = (input.since.as_ref(), input.until.as_ref());
 +                let mut unavailable = 0;
++                let mut scanned = 0u64;
 +                let mut rows = Vec::new();
 +                let mut ids = BTreeSet::new();
-+                for path in paths {
-+                    match self.load(&path, &active) {
++                for path in paths.iter().rev() {
++                    let head = match self.head(path) {
++                        Ok(Some(head)) => head,
++                        Ok(None) => continue,
++                        Err(_) if !active() => return Err(cancelled()),
++                        Err(_) => {
++                            unavailable += 1;
++                            continue;
++                        }
++                    };
++                    if !self.scoped(&head) || !in_range(head["timestamp"].as_str(), since, until) {
++                        continue;
++                    }
++                    scanned = scanned
++                        .saturating_add(fs::symlink_metadata(path).map_or(0, |meta| meta.len()));
++                    if scanned > SCAN_BYTES {
++                        truncated = true;
++                        break;
++                    }
++                    match self.load(path, &active) {
 +                        Ok(Some(session))
 +                            if allowed(&session.summary.session_id)
-+                                && input.since.as_ref().is_none_or(|date| {
-+                                    session.summary.timestamp[..10] >= **date
-+                                })
-+                                && input.until.as_ref().is_none_or(|date| {
-+                                    session.summary.timestamp[..10] < **date
-+                                }) =>
++                                && in_range(Some(&session.summary.timestamp), since, until) =>
 +                        {
-+                            if !ids.insert(session.summary.session_id.clone()) {
++                            if !ids.insert((
++                                session.summary.session_id.clone(),
++                                session.meta["history_base"].to_string(),
++                            )) {
 +                                return Err(io::Error::other("session_identity_ambiguous"));
 +                            }
 +                            rows.push(session.summary);
@@ -45612,6 +46091,7 @@ index 0000000..e7010a3
 +                let limit = input.max_bytes.unwrap_or(PAGE_BYTES);
 +                if !token(&input.session_id)
 +                    || input.revision.len() != 64
++                    || input.handle.len() != 64
 +                    || !(1024..=PAGE_BYTES).contains(&limit)
 +                {
 +                    return Err(io::Error::other("session_read_bounds"));
@@ -45619,35 +46099,29 @@ index 0000000..e7010a3
 +                if !allowed(&input.session_id) {
 +                    return Err(io::Error::other("session_opted_out_or_unavailable"));
 +                }
-+                let (paths, truncated) = self.paths(&active)?;
-+                if truncated {
-+                    return Err(io::Error::other("session_scan_incomplete"));
-+                }
-+                let mut found = None;
-+                for path in paths {
-+                    if let Ok(Some(session)) = self.load(&path, &active)
-+                        && session.summary.session_id == input.session_id
-+                    {
-+                        if found.is_some() {
-+                            return Err(io::Error::other("session_identity_ambiguous"));
-+                        }
-+                        found = Some(session);
-+                    }
-+                    if !active() {
-+                        return Err(io::Error::other("session_read_cancelled"));
-+                    }
-+                }
-+                let session = found.ok_or_else(|| io::Error::other("session_unavailable"))?;
++                let (paths, _) = self.paths(&active)?;
++                let path = paths
++                    .iter()
++                    .find(|path| {
++                        self.name(path)
++                            .is_ok_and(|name| hash(name.as_bytes()) == input.handle)
++                    })
++                    .ok_or_else(|| io::Error::other("session_unavailable"))?;
++                let session = self
++                    .load(path, &active)?
++                    .filter(|session| session.summary.session_id == input.session_id)
++                    .ok_or_else(|| io::Error::other("session_unavailable"))?;
 +                if input.revision != session.summary.revision {
 +                    return Err(io::Error::other("session_revision_changed"));
 +                }
++                let (records, projection_truncated) = self.records(&session, &active)?;
 +                let start = input.cursor.unwrap_or(0);
-+                if start > session.records.len() {
++                if start > records.len() {
 +                    return Err(io::Error::other("session_cursor_invalid"));
 +                }
 +                let mut end = start;
 +                let mut bytes = 0;
-+                while let Some(record) = session.records.get(end) {
++                while let Some(record) = records.get(end) {
 +                    let size = serde_json::to_vec(record)?.len();
 +                    if bytes + size > limit {
 +                        break;
@@ -45655,17 +46129,17 @@ index 0000000..e7010a3
 +                    bytes += size;
 +                    end += 1;
 +                }
-+                if end == start && end < session.records.len() {
++                if end == start && end < records.len() {
 +                    return Err(io::Error::other("session_record_exceeds_page"));
 +                }
 +                Ok(
-+                    json!({"session":session.summary,"records":session.records[start..end],"cursor":(end<session.records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_message_records"}),
++                    json!({"session":session.summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_message_records","projection_truncated":projection_truncated}),
 +                )
 +            }
 +            _ => Err(io::Error::other("session_operation_unavailable")),
 +        }?;
 +        if !active() {
-+            return Err(io::Error::other("session_read_cancelled"));
++            return Err(cancelled());
 +        }
 +        if policy
 +            != crate::session_policy::permitted(self.root, self.repository, self.database, &active)?
@@ -45771,10 +46245,10 @@ index 0000000..2b4fccc
 +}
 diff --git a/b/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 0000000..f32699e
+index 0000000..4132877
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,957 @@
+@@ -0,0 +1,961 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -46184,6 +46658,10 @@ index 0000000..f32699e
 +
 +pub fn workspace_path(root: &Path, name: &str) -> io::Result<PathBuf> {
 +    safe_path(root, name)
++}
++
++pub(crate) fn open_contained(root: &Path, name: &str) -> io::Result<fs::File> {
++    open_source(&open_directory(&root.canonicalize()?)?, name)
 +}
 +
 +fn open_directory(path: &Path) -> io::Result<fs::File> {
@@ -47685,10 +48163,10 @@ index 0000000..f64cb6e
 +}
 diff --git a/b/codex-rs/omd/tests/graph.rs b/codex-rs/omd/tests/graph.rs
 new file mode 100644
-index 0000000..8bc935d
+index 0000000..1c8d9dd
 --- /dev/null
 +++ b/codex-rs/omd/tests/graph.rs
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,206 @@
 +use codex_omd::CodeGraph;
 +use codex_omd::GraphConfidence;
 +use codex_omd::GraphFreshness;
@@ -47796,11 +48274,19 @@ index 0000000..8bc935d
 +    graph.write_html(&html_path).unwrap();
 +    let loaded = CodeGraph::read(&graph_path).unwrap();
 +    assert_eq!(loaded, graph);
-+    let html = fs::read_to_string(html_path).unwrap();
++    let html = fs::read_to_string(&html_path).unwrap();
 +    assert!(html.contains("graph-data"));
 +    assert!(html.contains("Copy selections"));
 +    assert!(html.contains(&graph.repository.source_digest));
 +    assert_eq!(graph.freshness(temp.path()).unwrap(), GraphFreshness::Fresh);
++    graph.write(&graph_path).unwrap();
++    graph.write_html(&html_path).unwrap();
++    let source = temp.path().join("src/lib.rs");
++    let original = fs::read(&source).unwrap();
++    assert!(graph.write(&source).is_err());
++    assert!(graph.write_html(&source).is_err());
++    assert_eq!(fs::read(&source).unwrap(), original);
++    assert!(graph.write(&html_path).is_err());
 +}
 +
 +#[test]
@@ -53071,7 +53557,7 @@ index 0000000..6933b2f
 +}
 diff --git a/b/codex-rs/omd/tests/scoped_bridge.rs b/codex-rs/omd/tests/scoped_bridge.rs
 new file mode 100644
-index 0000000..121666b
+index 0000000..aa03aa1
 --- /dev/null
 +++ b/codex-rs/omd/tests/scoped_bridge.rs
 @@ -0,0 +1,196 @@
@@ -53132,9 +53618,9 @@ index 0000000..121666b
 +        store_path.clone(),
 +        repo.clone(),
 +        Some(home.join("sessions")),
++        None,
 +        "example_scoped_data".into(),
 +        "user-command".into(),
-+        host.generation(),
 +        hash.to_owned(),
 +    )
 +    .unwrap();
@@ -53193,9 +53679,9 @@ index 0000000..121666b
 +        store_path.clone(),
 +        repo.clone(),
 +        Some(home.join("sessions")),
++        None,
 +        "example_scoped_data".into(),
 +        "user-command".into(),
-+        resumed.generation() + 7,
 +        hash.to_owned(),
 +    )
 +    .unwrap();
@@ -53249,9 +53735,9 @@ index 0000000..121666b
 +        store_path.clone(),
 +        repo.clone(),
 +        Some(home.join("sessions")),
++        None,
 +        "example_scoped_data".into(),
 +        "user-command".into(),
-+        resumed.generation(),
 +        hash.to_owned(),
 +    )
 +    .unwrap();
@@ -53273,10 +53759,10 @@ index 0000000..121666b
 +}
 diff --git a/b/codex-rs/omd/tests/scoped_resources.rs b/codex-rs/omd/tests/scoped_resources.rs
 new file mode 100644
-index 0000000..e40ceeb
+index 0000000..e39169f
 --- /dev/null
 +++ b/codex-rs/omd/tests/scoped_resources.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,301 @@
 +use codex_omd::knowledge_access::KnowledgeAccess;
 +use codex_omd::resource_data::{ResourceBinding, ResourceRef, ResourceStore, hash};
 +use codex_omd::{KnowledgeAction, KnowledgeStore};
@@ -53528,12 +54014,62 @@ index 0000000..e40ceeb
 +            .is_err()
 +    );
 +}
++
++#[test]
++fn stale_facts_and_secrets_outside_the_anchor_do_not_break_inspection() {
++    let temp = tempfile::tempdir().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let repo = root.join("repo");
++    fs::create_dir(&repo).unwrap();
++    fs::write(repo.join("config.txt"), "name = demo\npassword: hunter2\n").unwrap();
++    fs::write(repo.join("gone.txt"), "temporary fact\n").unwrap();
++    let binding = ResourceBinding {
++        repository: hash(repo.as_os_str().as_encoded_bytes()),
++        owner: "fixture".into(),
++        thread: "thread-1".into(),
++        generation: 1,
++        source_sha256: hash(b"fixture-code"),
++    };
++    let store = KnowledgeStore::create(root.join("knowledge"), binding.repository.clone()).unwrap();
++    let readable = |_: &std::path::Path| true;
++    let access = KnowledgeAccess {
++        store: &store,
++        repository: &repo,
++        resources: ResourceStore {
++            root: &root,
++            binding: &binding,
++        },
++        user_action: None,
++        readable: &readable,
++    };
++    let retain = |revision: u64, id: &str, path: &str, line: u32| {
++        access.call("knowledge.retain",json!({"expected_revision":revision,"id":id,"label":"fact","source":{"path":path,"start_line":line,"end_line":line}}),||true)
++    };
++    retain(0, "fact-a", "config.txt", 1).unwrap();
++    retain(1, "fact-b", "gone.txt", 1).unwrap();
++    assert!(retain(2, "fact-c", "config.txt", 2).is_err());
++    fs::remove_file(repo.join("gone.txt")).unwrap();
++    let inspection = access
++        .call("knowledge.inspect", json!({}), || true)
++        .unwrap();
++    let status = |id: &str| {
++        inspection["facts"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .find(|fact| fact["id"] == id)
++            .unwrap()["status"]["status"]
++            .clone()
++    };
++    assert_eq!(status("fact-a"), "fresh");
++    assert_eq!(status("fact-b"), "invalidated");
++}
 diff --git a/b/codex-rs/omd/tests/sessions.rs b/codex-rs/omd/tests/sessions.rs
 new file mode 100644
-index 0000000..01106cb
+index 0000000..1a282bc
 --- /dev/null
 +++ b/codex-rs/omd/tests/sessions.rs
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,453 @@
 +use codex_omd::sessions::SessionIndex;
 +use serde_json::{Value, json};
 +use std::fs;
@@ -53588,7 +54124,7 @@ index 0000000..01106cb
 +    let result = index
 +        .call(
 +            "sessions.read",
-+            json!({"session_id":"session-a","revision":summary["revision"]}),
++            json!({"session_id":"session-a","revision":summary["revision"],"handle":summary["handle"]}),
 +            || true,
 +        )
 +        .unwrap();
@@ -53602,7 +54138,7 @@ index 0000000..01106cb
 +        index
 +            .call(
 +                "sessions.read",
-+                json!({"session_id":"session-b","revision":summary["revision"]}),
++                json!({"session_id":"session-b","revision":summary["revision"],"handle":summary["handle"]}),
 +                || true
 +            )
 +            .is_err()
@@ -53638,7 +54174,8 @@ index 0000000..01106cb
 +    let summary = index.call("sessions.list", json!({}), || true).unwrap()["sessions"][0].clone();
 +    let original = fs::read_to_string(&path).unwrap();
 +    fs::write(&path, original.clone() + "{\"partial\":").unwrap();
-+    let request = json!({"session_id":"session-a","revision":summary["revision"]});
++    let request =
++        json!({"session_id":"session-a","revision":summary["revision"],"handle":summary["handle"]});
 +    assert_eq!(
 +        index
 +            .call("sessions.read", request.clone(), || true)
@@ -53737,7 +54274,7 @@ index 0000000..01106cb
 +    let result = index
 +        .call(
 +            "sessions.read",
-+            json!({"session_id":"session-a","revision":summary["revision"]}),
++            json!({"session_id":"session-a","revision":summary["revision"],"handle":summary["handle"]}),
 +            || true,
 +        )
 +        .unwrap();
@@ -53800,7 +54337,7 @@ index 0000000..01106cb
 +        index
 +            .call(
 +                "sessions.read",
-+                json!({"session_id":"session-a","revision":old["revision"]}),
++                json!({"session_id":"session-a","revision":old["revision"],"handle":old["handle"]}),
 +                || true
 +            )
 +            .is_err()
@@ -53857,12 +54394,134 @@ index 0000000..01106cb
 +    let result = index
 +        .call(
 +            "sessions.read",
-+            json!({"session_id":"session-a","revision":summary["revision"]}),
++            json!({"session_id":"session-a","revision":summary["revision"],"handle":summary["handle"]}),
 +            || true,
 +        )
 +        .unwrap();
 +    assert_eq!(result["records"].as_array().unwrap().len(), 1);
 +    assert_eq!(result["records"][0]["turn_id"], "child-turn");
++}
++
++#[test]
++fn truncated_scan_marks_the_list_without_blocking_handle_reads() {
++    let (_temp, repo, sessions) = fixture();
++    record(&sessions.join("a.jsonl"), &repo, "session-a", "enabled");
++    let other = sessions.join("zz");
++    fs::create_dir(&other).unwrap();
++    for index in 0..4100 {
++        fs::write(other.join(format!("{index:04}.jsonl")), "{}\n").unwrap();
++    }
++    let index = SessionIndex {
++        database: None,
++        root: &sessions,
++        repository: &repo,
++        enabled: true,
++    };
++    let list = index.call("sessions.list", json!({}), || true).unwrap();
++    assert_eq!(list["scan_truncated"], true);
++    let summary = &list["sessions"][0];
++    let result = index
++        .call(
++            "sessions.read",
++            json!({"session_id":"session-a","revision":summary["revision"],"handle":summary["handle"]}),
++            || true,
++        )
++        .unwrap();
++    assert_eq!(result["records"].as_array().unwrap().len(), 2);
++    assert_eq!(result["projection_truncated"], false);
++    assert!(
++        index
++            .call(
++                "sessions.read",
++                json!({"session_id":"session-a","revision":summary["revision"],"handle":"0".repeat(64)}),
++                || true,
++            )
++            .is_err()
++    );
++}
++
++#[test]
++fn continuation_segments_list_separately_while_copies_stay_ambiguous() {
++    let (_temp, repo, sessions) = fixture();
++    record(&sessions.join("a.jsonl"), &repo, "session-a", "enabled");
++    let rows = [
++        json!({"type":"session_meta","payload":{"id":"session-a","session_id":"task-a","cwd":repo,"timestamp":"2026-09-26T13:00:00Z","memory_mode":"enabled","history_mode":"paginated","history_base":{"thread_id":"session-a","end_ordinal_exclusive":5}}}),
++        json!({"type":"turn_context","payload":{"turn_id":"turn-b","cwd":repo}}),
++        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"A later request."}]}}),
++    ];
++    let part = sessions.join("a_part.jsonl");
++    fs::write(
++        &part,
++        rows.iter()
++            .map(|row| row.to_string() + "\n")
++            .collect::<String>(),
++    )
++    .unwrap();
++    let index = SessionIndex {
++        database: None,
++        root: &sessions,
++        repository: &repo,
++        enabled: true,
++    };
++    let list = index.call("sessions.list", json!({}), || true).unwrap();
++    let listed = list["sessions"].as_array().unwrap();
++    assert_eq!(listed.len(), 2);
++    assert!(listed.iter().all(|row| row["session_id"] == "session-a"));
++    assert_ne!(listed[0]["handle"], listed[1]["handle"]);
++    assert_eq!(listed[0]["inherited_history"], true);
++    let result = index
++        .call(
++            "sessions.read",
++            json!({"session_id":"session-a","revision":listed[0]["revision"],"handle":listed[0]["handle"]}),
++            || true,
++        )
++        .unwrap();
++    assert_eq!(result["records"][0]["turn_id"], "turn-b");
++    fs::copy(&part, sessions.join("a_copy.jsonl")).unwrap();
++    assert!(
++        index
++            .call("sessions.list", json!({}), || true)
++            .unwrap_err()
++            .to_string()
++            .contains("identity_ambiguous")
++    );
++}
++
++#[test]
++fn wal_state_database_without_sidecar_files_is_readable() {
++    let (_temp, repo, sessions) = fixture();
++    record(&sessions.join("a.jsonl"), &repo, "session-a", "enabled");
++    let sqlite = sessions.parent().unwrap().join("wal-state");
++    fs::create_dir(&sqlite).unwrap();
++    let db = sqlite.join("state_5.sqlite");
++    let sql = format!(
++        "PRAGMA journal_mode=WAL; CREATE TABLE threads(id TEXT,cwd TEXT,memory_mode TEXT); INSERT INTO threads VALUES('session-a','{}','enabled'); PRAGMA wal_checkpoint(TRUNCATE);",
++        repo.to_str().unwrap().replace('\'', "''")
++    );
++    assert!(
++        std::process::Command::new("/usr/bin/sqlite3")
++            .arg(&db)
++            .arg(sql)
++            .status()
++            .unwrap()
++            .success()
++    );
++    for sidecar in ["state_5.sqlite-wal", "state_5.sqlite-shm"] {
++        let _ = fs::remove_file(sqlite.join(sidecar));
++    }
++    let index = SessionIndex {
++        database: Some(&db),
++        root: &sessions,
++        repository: &repo,
++        enabled: true,
++    };
++    assert_eq!(
++        index.call("sessions.list", json!({}), || true).unwrap()["sessions"]
++            .as_array()
++            .unwrap()
++            .len(),
++        1
++    );
 +}
 diff --git a/b/codex-rs/omd/tests/turn_evidence.rs b/codex-rs/omd/tests/turn_evidence.rs
 new file mode 100644

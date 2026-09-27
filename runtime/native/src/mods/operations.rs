@@ -2,6 +2,55 @@ use super::*;
 use codex_omd::ModHostCall;
 use std::path::Path;
 
+#[derive(Clone, Default)]
+pub(super) struct DataScope(Arc<Mutex<Option<codex_omd::scoped_data::ScopedDataHosts>>>);
+
+impl DataScope {
+    pub(super) async fn call(
+        &self,
+        lead: &Lead,
+        authority: crate::workspace_operations::WorkspaceAuthority,
+        id: &str,
+        source_sha256: &str,
+        request: ModHostCall,
+    ) -> Result<Value, String> {
+        let root = lead
+            .host
+            .manifest
+            .mods
+            .clone()
+            .ok_or("mod_store_unavailable")?;
+        let scope = self.0.clone();
+        let thread = lead.thread.to_string();
+        let (id, source) = (id.to_owned(), source_sha256.to_owned());
+        let task = lead.host.task.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut scope = scope.lock().map_err(|_| "data_scope_poisoned")?;
+            scope
+                .get_or_insert_with(|| {
+                    codex_omd::scoped_data::ScopedDataHosts::new(
+                        root,
+                        authority.repository.clone(),
+                        authority.session_root.clone(),
+                        authority.session_database.clone(),
+                        thread,
+                    )
+                })
+                .call(
+                    &id,
+                    &source,
+                    &request.operation,
+                    request.arguments,
+                    &|path| authority.readable(path),
+                    || task.check_active().is_ok(),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+}
+
 fn protected_resource(host: &Host, path: Option<&str>) -> bool {
     path.is_none_or(|path| {
         host.manifest
@@ -34,6 +83,7 @@ pub(super) async fn dispatch(
     services: &services::Services,
     processes: &Arc<crate::managed_process::ManagedProcesses>,
     pre_rename_runtime: &Arc<Mutex<ModHost>>,
+    data: &DataScope,
     lead: &Lead,
     id: &str,
     generation: u64,
@@ -81,10 +131,7 @@ pub(super) async fn dispatch(
             let authority = crate::workspace_operations::WorkspaceAuthority::for_call(lead, call).await?;
             host.authorize()?;
             if codex_omd::scoped_data::operation(&request.operation) {
-                let root = host.manifest.mods.clone().ok_or("mod_store_unavailable")?;
-                let mut data = codex_omd::scoped_data::ScopedDataHost::new(root,authority.repository.clone(),Some(authority.session_root.clone().ok_or("session_root_unavailable")?),id.to_owned(),lead.thread.to_string(),generation,source_sha256.to_owned()).map_err(|error| error.to_string())?;
-                data.session_database = authority.session_database.clone();
-                return data.call(&request.operation,request.arguments,&|path| authority.readable(path),|| host.task.check_active().is_ok()).map_err(|error| error.to_string());
+                return data.call(lead, authority, id, source_sha256, request).await;
             }
             if request.operation == "workspace.request_rename" {
                 if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -107,15 +154,18 @@ pub(super) async fn dispatch(
                     processes.call(&id, generation, &authority.repository, &authority.policy, &request.operation, request.arguments, || task.check_active().is_ok())
                 }).await.map_err(|error| error.to_string())?;
             }
-            if request.operation == "workspace.transaction" {
+            let _operation = if request.operation == "workspace.transaction" {
                 if host.operation.swap(true, std::sync::atomic::Ordering::AcqRel) {
                     return Err("another controlled operation is active".into());
                 }
-                let _operation = OperationGuard(&host.operation);
-                authority.call(&request.operation, request.arguments, || host.task.check_active().is_ok())
+                Some(OperationGuard(&host.operation))
             } else {
-                authority.call(&request.operation, request.arguments, || host.task.check_active().is_ok())
-            }
+                None
+            };
+            let task = host.task.clone();
+            tokio::task::spawn_blocking(move || authority.call(&request.operation, request.arguments, || task.check_active().is_ok()))
+                .await
+                .map_err(|error| error.to_string())?
         }
         "pi.discover" => {
             let root = host.manifest.mod_pi_user.as_ref().ok_or("pi_resource_roots_not_host_approved")?;

@@ -41,7 +41,7 @@ impl WorkerPreset {
             || (self.route.rates.reservation_microusd == 0)
                 != self.route.rates.included_subscription
             || self.tools.len() > 16
-            || self.tools.iter().any(|tool| !read_tool(tool))
+            || self.tools.iter().any(|tool| !read_only_sandbox_tool(tool))
             || grant.path.starts_with(&manifest.repository)
         {
             return Err("worker_preset_invalid".into());
@@ -73,7 +73,7 @@ impl WorkerPreset {
     }
 }
 
-pub(crate) fn read_tool(name: &str) -> bool {
+pub(crate) fn read_only_sandbox_tool(name: &str) -> bool {
     matches!(
         name,
         "shell"

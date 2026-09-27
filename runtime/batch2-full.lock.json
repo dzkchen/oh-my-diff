@@ -14,12 +14,12 @@
       ],
       "extension_type": "mod",
       "files": {
-        "README.md": "dd30343aed361411821f0a66f45ad6b8d226c541b3a93ff62a06003f5a938586",
-        "index.ts": "e551a11ccf9e2767e0843dbf05ed6ef9739e8a48de6d82e63d13968697bac5b6",
+        "README.md": "7b8c1a687c90935fdcb71acee49b777278da242aec8a6211324ba4f29d2d0459",
+        "index.ts": "6bcc8992d232dadcfffdf70a315a6e3c179b358d465db5220c3c6054059a6a24",
         "mod.json": "4d1c6b4fce23eb1cbb578d54e935f25dbf01f224c652d5f5fcc36436e1e4ac99"
       },
       "id": "omd_advisor",
-      "package_sha256": "e9f2d963bce58c9296d7d02458a6a9f89dd8427ac8738556593cdbae5ba0c086",
+      "package_sha256": "6c7f73932322793bd19b1f0f5be975e486dea320c778ed771e832216ffe26807",
       "source": "mods/first-party/omd_advisor",
       "version": "0.1.0-preview.1"
     },
@@ -32,12 +32,12 @@
       ],
       "extension_type": "mod",
       "files": {
-        "README.md": "a782bc650d1ee3ffc39d0d25f2c98a6dc69f42bfdd364599bb4135342f976810",
-        "index.ts": "bf3ba04a7fb384fc11a55acbfa07550c83c36384bec92ab37161d68efbaae867",
+        "README.md": "90aebe3e716584f4c9a08ab9cdd436ce940dd1d7d105cb422555912adaa653ad",
+        "index.ts": "831179aae900926227249c667cfaf26106fecb966725abbe21238b6f3a30d8e3",
         "mod.json": "b931893090b1ce23c3fd2823cf80effdb90889e8a1db93e5cfb609134e42a404"
       },
       "id": "omd_research",
-      "package_sha256": "de55e1abb2b34f155dd91f979933f425bb471283949e14874cf35229ee24fea8",
+      "package_sha256": "17396df3fef093b7de0ab24f34b529280172f888914fb39cfaee1f10d5c95351",
       "source": "mods/first-party/omd_research",
       "version": "0.1.0-preview.1"
     }

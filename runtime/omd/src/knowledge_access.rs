@@ -1,11 +1,11 @@
 use crate::resource_data::{ResourceRef, ResourceStore, contains_secret};
 use crate::{
     KnowledgeAction, KnowledgeApproval, KnowledgeMode, KnowledgeRemoval, KnowledgeReset,
-    KnowledgeStore, LessonCandidate, RecordKind, SourceAnchor, SourceFactInput, TaskEvidenceInput,
+    KnowledgeStore, LessonCandidate, RecordKind, SourceAnchor, SourceFact, SourceFactInput,
+    SourceFactStatus, TaskEvidenceInput,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 
@@ -27,28 +27,23 @@ impl KnowledgeAccess<'_> {
         Ok(())
     }
 
-    fn source(&self, source: &SourceAnchor) -> io::Result<()> {
-        let path = crate::workspace_path(self.repository, &source.path)?;
-        if !(self.readable)(&path) {
+    fn check(&self, source: &SourceAnchor, excerpt: &str) -> io::Result<()> {
+        if !(self.readable)(&crate::workspace_path(self.repository, &source.path)?) {
             return Err(io::Error::other("knowledge_source_denied"));
         }
-        let snapshot = crate::Snapshot::capture(
-            self.repository,
-            &BTreeSet::from([source.path.clone()]),
-            1_048_576,
-        )?;
-        let text = std::str::from_utf8(
-            &snapshot
-                .files
-                .get(&source.path)
-                .ok_or_else(|| io::Error::other("knowledge_source_missing"))?
-                .bytes,
-        )
-        .map_err(io::Error::other)?;
-        if contains_secret(text) {
+        if contains_secret(excerpt) {
             return Err(io::Error::other("knowledge_secret_source_excluded"));
         }
         Ok(())
+    }
+
+    fn fresh(&self, fact: &SourceFact) -> io::Result<()> {
+        match &fact.status {
+            SourceFactStatus::Fresh { version } => self.check(&fact.source, &version.excerpt),
+            SourceFactStatus::Invalidated { .. } => {
+                Err(io::Error::other("knowledge_source_invalidated"))
+            }
+        }
     }
 
     pub fn call(
@@ -78,15 +73,21 @@ impl KnowledgeAccess<'_> {
                     return Err(io::Error::other("knowledge_inspection_limit"));
                 }
                 let mut inspection = self.store.inspect(self.repository)?;
-                for fact in &inspection.facts {
-                    self.source(&fact.source)?;
-                }
                 if let Some(ids) = input.ids {
                     inspection.facts.retain(|fact| ids.contains(&fact.id));
                     inspection.lessons.retain(|lesson| ids.contains(&lesson.id));
                     inspection
                         .evidence
                         .retain(|evidence| ids.contains(&evidence.id));
+                }
+                for fact in &mut inspection.facts {
+                    if let Err(error) = self.fresh(fact)
+                        && matches!(fact.status, SourceFactStatus::Fresh { .. })
+                    {
+                        fact.status = SourceFactStatus::Invalidated {
+                            reason: error.to_string(),
+                        };
+                    }
                 }
                 inspection.events.clear();
                 serde_json::to_value(inspection)?
@@ -104,7 +105,15 @@ impl KnowledgeAccess<'_> {
                 let input: Input = serde_json::from_value(arguments)?;
                 match (input.source, input.evidence) {
                     (Some(source), None) => {
-                        self.source(&source)?;
+                        let version = crate::knowledge::read_source(self.repository, &source)
+                            .map_err(|error| {
+                                if error.kind() == io::ErrorKind::NotFound {
+                                    io::Error::other("knowledge_source_missing")
+                                } else {
+                                    error
+                                }
+                            })?;
+                        self.check(&source, &version.excerpt)?;
                         serde_json::to_value(self.store.retain_source_fact(
                             self.repository,
                             SourceFactInput {
@@ -228,7 +237,7 @@ impl KnowledgeAccess<'_> {
                     .approved_lessons
                     .retain(|lesson| input.ids.contains(&lesson.id));
                 for fact in &session.facts {
-                    self.source(&fact.source)?;
+                    self.fresh(fact)?;
                 }
                 let max = input.max_bytes.unwrap_or(32768);
                 let payload = serde_json::to_value(&session)?;
@@ -251,7 +260,7 @@ impl KnowledgeAccess<'_> {
                     return Err(io::Error::other("knowledge_snapshot_revoked"));
                 }
                 for fact in &frozen.facts {
-                    self.source(&fact.source)?;
+                    self.fresh(fact)?;
                     if !current.facts.contains(fact) {
                         return Err(io::Error::other("knowledge_snapshot_source_changed"));
                     }

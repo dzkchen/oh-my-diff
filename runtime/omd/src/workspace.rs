@@ -409,6 +409,10 @@ pub fn workspace_path(root: &Path, name: &str) -> io::Result<PathBuf> {
     safe_path(root, name)
 }
 
+pub(crate) fn open_contained(root: &Path, name: &str) -> io::Result<fs::File> {
+    open_source(&open_directory(&root.canonicalize()?)?, name)
+}
+
 fn open_directory(path: &Path) -> io::Result<fs::File> {
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     let mut directory = fs::File::from(open("/", flags, Mode::empty())?);

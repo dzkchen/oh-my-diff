@@ -12,7 +12,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::time::Instant;
 
 pub const REVOCATION_FILE: &str = "contributor-revoked.json";
 
@@ -67,7 +70,17 @@ pub struct Accounts(
     pub Mutex<BTreeMap<String, Account>>,
     Mutex<Option<Arc<Mutex<codex_omd::ModHost>>>>,
     AtomicU64,
+    Arc<AtomicUsize>,
 );
+
+const MIDDLEWARE_WAIT: Duration = Duration::from_secs(2);
+const MIDDLEWARE_LOG_BYTES: u64 = 8 * 1024 * 1024;
+
+enum Hook<T> {
+    Ran(T),
+    Absent,
+    Skipped(&'static str),
+}
 
 impl Accounts {
     pub fn install_mod_runtime(&self, runtime: Arc<Mutex<codex_omd::ModHost>>) {
@@ -80,13 +93,39 @@ impl Accounts {
         self.1.lock().ok().and_then(|installed| installed.clone())
     }
 
-    fn idle_runtime(
+    fn middleware<T>(
         runtime: &Mutex<codex_omd::ModHost>,
-    ) -> Result<Option<std::sync::MutexGuard<'_, codex_omd::ModHost>>, TransportError> {
-        match runtime.try_lock() {
-            Ok(runtime) => Ok(Some(runtime)),
-            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
-            Err(std::sync::TryLockError::Poisoned(_)) => Err(denied("mod runtime poisoned")),
+        holders: &AtomicUsize,
+        wait_for_callbacks: bool,
+        hook: &str,
+        run: impl FnOnce(&mut codex_omd::ModHost) -> T,
+    ) -> Result<Hook<T>, TransportError> {
+        let deadline = Instant::now() + MIDDLEWARE_WAIT;
+        loop {
+            match runtime.try_lock() {
+                Ok(mut runtime) => {
+                    if !runtime.has_event(hook) {
+                        return Ok(Hook::Absent);
+                    }
+                    holders.fetch_add(1, Ordering::AcqRel);
+                    let value = run(&mut runtime);
+                    drop(runtime);
+                    holders.fetch_sub(1, Ordering::AcqRel);
+                    return Ok(Hook::Ran(value));
+                }
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(denied("mod runtime poisoned"));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if holders.load(Ordering::Acquire) == 0 && !wait_for_callbacks {
+                        return Ok(Hook::Skipped("mod_callback_in_flight"));
+                    }
+                    if Instant::now() >= deadline {
+                        return Ok(Hook::Skipped("mod_runtime_busy"));
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
         }
     }
 
@@ -104,6 +143,9 @@ impl Accounts {
             .append(true)
             .open(path)
             .map_err(denied)?;
+        if file.metadata().map_err(denied)?.len() > MIDDLEWARE_LOG_BYTES {
+            return Ok(());
+        }
         file.write_all(&bytes).map_err(denied)
     }
 }
@@ -240,13 +282,22 @@ impl ResponseObserver for Accounts {
                 "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
                 "kind":if account.owner == "lead" {"main"} else {"subagent"}},
                 "authorized_presets":presets,"original":route,"effective":route,"provenance":[]});
-            let Some(mut runtime) = Self::idle_runtime(&mods)? else {
-                return Ok(());
+            let effective = match Self::middleware(
+                &mods,
+                &self.3,
+                !account.owner.starts_with("mod-"),
+                "model_request",
+                |runtime| runtime.model_request(payload, || account.task.check_active().is_ok()),
+            )? {
+                Hook::Ran(effective) => effective.map_err(denied)?,
+                Hook::Absent => return Ok(()),
+                Hook::Skipped(reason) => {
+                    return Self::record_middleware(
+                        &account,
+                        &json!({"kind":"middleware_skipped","hook":"model_request","request_id":request_id,"reason":reason}),
+                    );
+                }
             };
-            let effective = runtime
-                .model_request(payload, || account.task.check_active().is_ok())
-                .map_err(denied)?;
-            drop(runtime);
             let selected = effective["effective"]["name"]
                 .as_str()
                 .and_then(|name| {
@@ -262,7 +313,15 @@ impl ResponseObserver for Accounts {
             request
                 .headers
                 .insert("x-omd-preset", selected.name.parse().map_err(denied)?);
-            Self::record_middleware(&account, &json!({"kind":"model_request","value":effective}))?;
+            if effective["provenance"]
+                .as_array()
+                .is_some_and(|provenance| !provenance.is_empty())
+            {
+                Self::record_middleware(
+                    &account,
+                    &json!({"kind":"model_request","value":effective}),
+                )?;
+            }
         }
         Ok(())
     }
@@ -528,6 +587,7 @@ impl ResponseObserver for Accounts {
             account,
             admission,
             mods: self.mods(),
+            holders: self.3.clone(),
             settled: false,
             failed: false,
         })))
@@ -538,6 +598,7 @@ struct Attempt {
     account: Account,
     admission: Admission,
     mods: Option<Arc<Mutex<codex_omd::ModHost>>>,
+    holders: Arc<AtomicUsize>,
     settled: bool,
     failed: bool,
 }
@@ -651,7 +712,7 @@ impl Attempt {
             Some("error") => self.failed("provider stream error"),
             _ => {}
         }
-        if let Some(mods) = &self.mods {
+        if let Some(mods) = self.mods.clone() {
             let kind = raw["type"].as_str().unwrap_or("invalid");
             let text_key = if kind == "response.output_text.delta" {
                 Some("delta")
@@ -664,22 +725,42 @@ impl Attempt {
             let payload = json!({"kind":kind,"raw_sha256":crate::execution::hash(&serde_json::to_vec(&raw).map_err(denied)?),
                 "raw_usage":raw.pointer("/response/usage").cloned().unwrap_or(Value::Null),
                 "opaque_reasoning":kind.contains("reasoning"),"protected":text_key.is_none(),"text":text});
-            let Some(mut runtime) = Accounts::idle_runtime(mods)? else {
-                return Ok(());
+            let active = || self.account.task.check_active().is_ok();
+            let transformed = match Accounts::middleware(
+                &mods,
+                &self.holders,
+                false,
+                "response_stream",
+                |runtime| runtime.response_stream(payload, active),
+            )? {
+                Hook::Ran(transformed) => transformed.map_err(denied)?,
+                Hook::Absent => {
+                    self.mods = None;
+                    return Ok(());
+                }
+                Hook::Skipped(reason) => {
+                    self.mods = None;
+                    return Accounts::record_middleware(
+                        &self.account,
+                        &json!({"kind":"middleware_skipped","hook":"response_stream","reason":reason}),
+                    );
+                }
             };
-            let transformed = runtime
-                .response_stream(payload, || self.account.task.check_active().is_ok())
-                .map_err(denied)?;
-            drop(runtime);
             if let Some(key) = text_key
                 && let Some(text) = transformed["effective"].as_str()
             {
                 event[key] = text.into();
             }
-            Accounts::record_middleware(
-                &self.account,
-                &json!({"kind":"response_stream","value":transformed}),
-            )?;
+            if ["provenance", "fallback"].iter().any(|field| {
+                transformed[*field]
+                    .as_array()
+                    .is_some_and(|entries| !entries.is_empty())
+            }) {
+                Accounts::record_middleware(
+                    &self.account,
+                    &json!({"kind":"response_stream","value":transformed}),
+                )?;
+            }
         }
         Ok(())
     }

@@ -496,20 +496,15 @@ impl Mods {
             let _ = owner.persist_runtime_file("mod-status.json", &status);
             fragments
         });
+        let data = operations::DataScope::default();
         while let Some((id, source, request, reply)) = receiver.recv().await {
             let value = match (&lead, generation) {
                 (Some(lead), Some(generation)) if matches!(request.operation.as_str(),"review.request"|"review.result"|"review.wait"|"review.submit"|"review.cancel") => self.agents.call(&self.services,lead,&id,generation,&source,request).await.map_err(std::io::Error::other),
-                (Some(lead), Some(generation)) if codex_omd::scoped_data::operation(&request.operation) => {
-                    async {
-                        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await.map_err(std::io::Error::other)?;
-                        let manager = lead.host.manager.upgrade().ok_or_else(||std::io::Error::other("thread_manager_unavailable"))?;
-                        let config = manager.get_thread(lead.thread).await.map_err(std::io::Error::other)?.config().await;
-                        let root = lead.host.manifest.mods.clone().ok_or_else(||std::io::Error::other("mod_store_unavailable"))?;
-                        let mut data = codex_omd::scoped_data::ScopedDataHost::new(root,authority.repository.clone(),Some(config.codex_home.join("sessions").to_path_buf()),id,lead.thread.to_string(),generation,source)?;
-                        data.session_database = Some(config.sqlite.state_db_path());
-                        let task = lead.host.task.clone();
-                        tokio::task::spawn_blocking(move || data.call(&request.operation,request.arguments,&|path|authority.readable(path),||task.check_active().is_ok())).await.map_err(std::io::Error::other)?
-                    }.await
+                (Some(lead), Some(_)) if codex_omd::scoped_data::operation(&request.operation) => {
+                    match crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await {
+                        Ok(authority) => data.call(lead, authority, &id, &source, request).await,
+                        Err(error) => Err(error),
+                    }.map_err(std::io::Error::other)
                 },
                 (Some(lead), _) if request.operation == "workers.presets" => Ok(presets::list(&lead.host,&id)),
                 (Some(lead), _) if request.operation == "routes.list" => Ok(json!([LeadName::Sol, LeadName::Astra].map(|name| {
@@ -744,7 +739,7 @@ impl TurnLifecycleContributor for Mods {
             if !lead_thread(input.thread_store) {
                 return;
             }
-            self.agents.cleanup().await;
+            self.agents.cleanup_except_reviews().await;
             self.services.cleanup().await;
             let runtime = self.runtime.clone();
             let owner = self.owner.clone();

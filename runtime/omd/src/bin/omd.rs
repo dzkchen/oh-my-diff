@@ -159,9 +159,9 @@ fn run(args: Vec<String>) -> io::Result<Value> {
         root,
         repository.clone(),
         sessions,
+        None,
         owner.clone(),
         "user-command".into(),
-        runtime.generation(),
         runtime
             .owners()
             .into_iter()

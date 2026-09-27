@@ -326,7 +326,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 item = {"type": "message", "id": "memory-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Observed the selected project memory. No source changes."}]}
             if mod_profile.startswith("advisor"):
                 worker = owner and owner.startswith("mod-omd_advisor-")
-                answer = json.dumps({"findings": [{"severity": "blocking" if mod_profile == "advisor-blocking" else "advice", "summary": "Synthetic concern supported by the visible turn.", "paths": [], "quote": "A visible synthetic completed turn"}]}) if worker else "A visible synthetic completed turn; no workspace changes."
+                answer = json.dumps({"findings": [{"key": "synthetic-concern", "severity": "blocking" if mod_profile == "advisor-blocking" else "advice", "summary": "Synthetic concern supported by the visible turn.", "paths": [], "quote": "A visible synthetic completed turn"}]}) if worker else "A visible synthetic completed turn; no workspace changes."
                 item = {"type": "message", "id": "advisor-answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
                 if mod_profile == "advisor-compaction" and owner == "lead" and not Provider.compacted:
                     item = {"type": "function_call", "id": "advisor-pre-compact", "call_id": "advisor-pre-compact", "name": "omd_status", "arguments": "{}"}
@@ -694,8 +694,10 @@ enabled = false
                     assert "LEAD_ONLY_INSTRUCTION_SENTINEL" not in json.dumps(workers[0]["body"])
                     assert state["status"] == "recorded" and len(state["findings"]) == 1, state
                     ledger = json.loads((destination / "evidence/review-state.json").read_text())
-                    finding = ledger["findings"][0]
-                    assert finding["enforced"] == (mod_profile == "advisor-blocking"), ledger
+                    if mod_profile == "advisor-blocking":
+                        assert len(ledger["findings"]) == 1 and ledger["cycles"][0]["lane"] == "enforced", ledger
+                    else:
+                        assert not ledger["findings"] and not ledger["cycles"] and len(ledger["advisory"]["findings"]) == 1, ledger
                     if mod_profile == "advisor-compaction":
                         assert Provider.compacted
                         assert "omd_status" in json.dumps(workers[0]["body"]), workers[0]
@@ -749,10 +751,11 @@ enabled = false
                 assert workers[0]["body"].get("tools", []) == [], workers[0]["body"].get("tools")
                 assert "A visible synthetic completed turn" in json.dumps(workers[0]["body"]), workers
                 ledger = json.loads((destination / "evidence/review-state.json").read_text())
-                assert len(ledger["cycles"]) == 1 and ledger["cycles"][0]["cadence"] == "every_turn", ledger
-                assert ledger["cycles"][0]["separate_reviewer"] is True
+                assert not ledger["cycles"] and ledger["advisory"]["reviews"] == 1, ledger
                 state = json.loads((destination / "mod-store/state-example_review_probe.json").read_text())
                 assert state["value"]["status"] == "recorded", state
+                cycle = state["value"]["result"]["cycle"]
+                assert cycle["lane"] == "advisory" and cycle["cadence"] == "every_turn" and cycle["separate_reviewer"] is True, cycle
                 assert resources
                 if mod_profile == "shared-review-compaction":
                     assert Provider.compacted

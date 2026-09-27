@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import signal
 import subprocess
 import sys
 import time
@@ -49,12 +50,15 @@ def main():
         target = root / (hashlib.sha256(str(repo).encode()).hexdigest() + ".json")
         temporary = root / (target.stem + f".{os.getpid()}.tmp")
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(output)
-        os.replace(temporary, target)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(output)
+            os.replace(temporary, target)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
     finally:
         if process.poll() is None:
-            import signal
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
 

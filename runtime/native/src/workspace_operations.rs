@@ -19,6 +19,32 @@ pub(super) struct WorkspaceAuthority {
     pub context: FileSystemSandboxContext,
 }
 
+pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
+    let authority = WorkspaceAuthority::for_lead(lead).await?;
+    let approved = lead
+        .host
+        .manifest
+        .approved_untracked
+        .iter()
+        .cloned()
+        .collect();
+    let limit = lead.host.manifest.snapshot_bytes;
+    tokio::task::spawn_blocking(move || {
+        let snapshot = codex_omd::capture_tracked(&authority.repository, &approved, limit)
+            .map_err(|error| error.to_string())?;
+        if snapshot
+            .files
+            .keys()
+            .any(|path| !authority.readable(&authority.repository.join(path)))
+        {
+            return Err("workspace_snapshot_permission_denied".to_owned());
+        }
+        Ok(snapshot)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 impl WorkspaceAuthority {
     pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {
         let host = &lead.host;

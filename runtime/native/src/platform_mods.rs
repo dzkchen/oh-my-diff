@@ -35,6 +35,22 @@ struct PlatformDataScope {
     database: PathBuf,
 }
 
+impl PlatformDataScope {
+    fn hosts(
+        &self,
+        root: &std::path::Path,
+        repository: &std::path::Path,
+    ) -> codex_omd::scoped_data::ScopedDataHosts {
+        codex_omd::scoped_data::ScopedDataHosts::new(
+            root.to_path_buf(),
+            repository.to_path_buf(),
+            Some(self.sessions.clone()),
+            Some(self.database.clone()),
+            self.thread.clone(),
+        )
+    }
+}
+
 struct TurnRecord {
     id: String,
     error: Option<String>,
@@ -147,6 +163,9 @@ impl PlatformMods {
                 .into_iter()
                 .map(|(id, owner)| (id, owner.sha256))
                 .collect();
+            let mut data = data_scope
+                .as_ref()
+                .map(|scope| scope.hosts(&root, &repository));
             let fragments = mods::event_fragments(
                 &mut runtime,
                 name,
@@ -155,7 +174,7 @@ impl PlatformMods {
                 "native permissions",
                 |id, request| {
                     if codex_omd::scoped_data::operation(&request.operation) {
-                        let scope = data_scope.as_ref().ok_or_else(|| {
+                        let data = data.as_mut().ok_or_else(|| {
                             std::io::Error::other("thread_data_scope_unavailable")
                         })?;
                         let profile = profile.as_ref().ok_or_else(|| {
@@ -167,20 +186,11 @@ impl PlatformMods {
                                 profile.clone(),
                             )
                             .map_err(std::io::Error::other)?;
-                        let mut data = codex_omd::scoped_data::ScopedDataHost::new(
-                            root.clone(),
-                            repository.clone(),
-                            Some(scope.sessions.clone()),
-                            id.to_owned(),
-                            scope.thread.clone(),
-                            generation,
+                        return data.call(
+                            id,
                             sources
                                 .get(id)
-                                .cloned()
                                 .ok_or_else(|| std::io::Error::other("data_owner_missing"))?,
-                        )?;
-                        data.session_database = Some(scope.database.clone());
-                        return data.call(
                             &request.operation,
                             request.arguments,
                             &|path| authority.readable(path),
@@ -273,7 +283,7 @@ impl PlatformMods {
             if let Ok(bytes) =
                 serde_json::to_value(snapshot).and_then(|value| serde_json::to_vec(&value))
             {
-                let _ = persist_atomic(&root, "mod-view.json", &bytes);
+                let _ = persist_view(&root, "mod-view.json", &bytes);
             }
             let status = runtime.status();
             for id in status["mods"]
@@ -288,7 +298,7 @@ impl PlatformMods {
                 }
             }
             if let Ok(bytes) = serde_json::to_vec(&status) {
-                let _ = persist_atomic(&root, "mod-status.json", &bytes);
+                let _ = persist_view(&root, "mod-status.json", &bytes);
             }
             fragments
         })
@@ -878,6 +888,10 @@ impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
                     .into_iter()
                     .map(|(id, owner)| (id, owner.sha256))
                     .collect();
+                let mut data = data_scope
+                    .as_ref()
+                    .zip(authority.as_ref())
+                    .map(|(scope, authority)| scope.hosts(&root, &authority.repository));
                 runtime.invoke_tool(
                     &id,
                     generation,
@@ -891,23 +905,14 @@ impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
                                     "workspace_operation_requires_local_repository",
                                 )
                             })?;
-                            let scope = data_scope.as_ref().ok_or_else(|| {
+                            let data = data.as_mut().ok_or_else(|| {
                                 std::io::Error::other("thread_data_scope_unavailable")
                             })?;
-                            let mut data = codex_omd::scoped_data::ScopedDataHost::new(
-                                root.clone(),
-                                authority.repository.clone(),
-                                Some(scope.sessions.clone()),
-                                caller.to_owned(),
-                                scope.thread.clone(),
-                                generation,
+                            return data.call(
+                                caller,
                                 sources
                                     .get(caller)
-                                    .cloned()
                                     .ok_or_else(|| std::io::Error::other("data_owner_missing"))?,
-                            )?;
-                            data.session_database = Some(scope.database.clone());
-                            return data.call(
                                 &request.operation,
                                 request.arguments,
                                 &|path| authority.readable(path),

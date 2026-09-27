@@ -31,7 +31,7 @@ SHA256 = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
 TOOLS = [
     {
         "name": "graph_snapshot",
-        "description": "Build a bounded version-bound repository graph and deterministic static HTML snapshot.",
+        "description": "Build a bounded version-bound repository graph and deterministic static HTML snapshot. Both outputs must be inside .omd/graph/ and may only replace earlier graph artifacts.",
         "inputSchema": schema(
             {
                 "repository": STRING,
@@ -53,7 +53,7 @@ TOOLS = [
     },
     {
         "name": "graph_html",
-        "description": "Regenerate static HTML from a fresh graph artifact without rebuilding the graph.",
+        "description": "Regenerate static HTML inside .omd/graph/ from a fresh graph artifact without rebuilding the graph; only earlier graph HTML may be replaced.",
         "inputSchema": schema(
             {"repository": STRING, "graph_path": STRING, "html_path": STRING},
             ["repository", "graph_path", "html_path"],
@@ -194,6 +194,14 @@ def contained_path(repository, value, field, must_exist):
     return target
 
 
+def graph_output(repository, value, field):
+    target = contained_path(repository, value, field, False)
+    parts = PurePosixPath(value).parts
+    if parts[:2] != (".omd", "graph") or len(parts) < 3 or ".git" in parts:
+        raise ToolError(f"{field} must name a file inside .omd/graph/")
+    return target
+
+
 def executable(name):
     located = shutil.which(name, path=os.environ.get("PATH"))
     if not located:
@@ -267,8 +275,8 @@ def graph_tool(name, arguments):
     if name == "graph_snapshot":
         graph_raw = text(arguments.get("graph_path"), 4096, "graph_path")
         html_raw = text(arguments.get("html_path"), 4096, "html_path")
-        graph = contained_path(repository, graph_raw, "graph_path", False)
-        html = contained_path(repository, html_raw, "html_path", False)
+        graph = graph_output(repository, graph_raw, "graph_path")
+        html = graph_output(repository, html_raw, "html_path")
         identity = text(arguments.get("repository_id"), 256, "repository_id")
         revision = text(arguments.get("revision"), 256, "revision")
         _, payload = run_binary(
@@ -291,7 +299,7 @@ def graph_tool(name, arguments):
         }
     if name == "graph_html":
         html_raw = text(arguments.get("html_path"), 4096, "html_path")
-        html = contained_path(repository, html_raw, "html_path", False)
+        html = graph_output(repository, html_raw, "html_path")
         _, payload = run_binary("omd-graph", ["html", repository, graph, html])
         return {
             "status": "created",

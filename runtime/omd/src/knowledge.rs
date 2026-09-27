@@ -348,7 +348,7 @@ fn source_path(repository: &Path, relative: &str) -> io::Result<PathBuf> {
     Ok(current)
 }
 
-fn read_source(repository: &Path, anchor: &SourceAnchor) -> io::Result<SourceVersion> {
+pub(crate) fn read_source(repository: &Path, anchor: &SourceAnchor) -> io::Result<SourceVersion> {
     if anchor.start_line == 0
         || anchor.end_line < anchor.start_line
         || anchor.end_line - anchor.start_line >= 200

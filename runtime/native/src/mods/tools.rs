@@ -221,6 +221,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                 )
             });
             let mut ordinal = 0u32;
+            let data = operations::DataScope::default();
             while let Some((caller, source, request, reply)) = receiver.recv().await {
                 ordinal += 1;
                 let mut nested_call = call.clone();
@@ -231,6 +232,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                     &self.services,
                     &self.processes,
                     &self.pre_rename_runtime,
+                    &data,
                     &lead,
                     &caller,
                     generation,

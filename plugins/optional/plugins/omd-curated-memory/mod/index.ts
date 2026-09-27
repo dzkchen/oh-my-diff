@@ -6,10 +6,19 @@ type Frozen = { snapshot?: ResourceRef; error?: string };
 type State = { threads: Record<string, Frozen>; evidence: Record<string, ResourceRef>; retention?: Json };
 const object = (value: unknown): value is Record<string, Json> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const id = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{1,96}$/.test(value);
-const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const normalize = (value: string) => value.toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const secret = (text: string) => /(?:-----BEGIN .*PRIVATE KEY-----|(?:api[_-]?key|token|password|secret)\s*[:=]\s*\S{8,}|\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}))/i.test(text);
 const safeText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\x00-\x08\x0b-\x1f\x7f\u202a-\u202e\u2066-\u2069]/.test(value) && !secret(value);
-const canonicalLesson = (text: string) => normalize(text).replace(/\b(never|not|always|do|dont)\b/g, '').replace(/\s+/g, ' ').trim();
+const negations = new Set(['never', 'not', 'dont', 'doesnt', 'cannot', 'cant']);
+const lesson = (text: string) => {
+  const words = normalize(text).split(' ');
+  return { canonical: words.filter(word => !negations.has(word) && !['always', 'do', 'does'].includes(word)).join(' '), negated: words.filter(word => negations.has(word)).length % 2 === 1 };
+};
+const opposed = (left: string, right: string) => {
+  const [a, b] = [lesson(left), lesson(right)];
+  return a.canonical === b.canonical && a.negated !== b.negated;
+};
+const leaves = (value: unknown): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(leaves) : object(value) ? Object.values(value).flatMap(leaves) : [];
 
 export default function activate(api: ModAPI) {
   if (api.settings.enabled === false) return;
@@ -28,7 +37,7 @@ export default function activate(api: ModAPI) {
     for (let i = 0; i < rows.length; i++) for (let j = i + 1; j < rows.length; j++) {
       const left = String(rows[i].text ?? '');
       const right = String(rows[j].text ?? '');
-      if (left && right && canonicalLesson(left) === canonicalLesson(right) && normalize(left) !== normalize(right)) result.push([rows[i].id, rows[j].id]);
+      if (left && right && opposed(left, right)) result.push([rows[i].id, rows[j].id]);
     }
     return result.slice(0, 32);
   };
@@ -40,7 +49,7 @@ export default function activate(api: ModAPI) {
     const value = inspect();
     const excluded = new Set(conflicts(value.lessons).flat());
     const terms = typeof args.query === 'string' ? normalize(args.query).split(' ').filter(Boolean) : [];
-    const selected = eligible(value).filter(row => !excluded.has(row.id) && terms.every(term => normalize(JSON.stringify(row)).includes(term))).slice(0, 8);
+    const selected = eligible(value).filter(row => !excluded.has(row.id) && terms.every(term => normalize(leaves(row).join(' ')).includes(term))).slice(0, 8);
     return { mode, repository_identity: value.repository_identity, revision: value.revision, records: selected, contradictions_excluded: [...excluded], untrusted: true, qualification: 'Exact refreshed source facts and explicitly approved lessons only; inferred lessons may still be wrong.' };
   };
   const retain = (args: Record<string, Json>) => {
@@ -60,7 +69,7 @@ export default function activate(api: ModAPI) {
     if (value.revision !== args.expected_revision) throw new Error('memory_revision_changed_reinspect');
     const duplicate = value.lessons.find(row => normalize(String(row.text)) === normalize(args.text as string));
     if (duplicate) return { status: 'duplicate', id: duplicate.id, state: duplicate.state };
-    const contradiction = value.lessons.filter(row => canonicalLesson(String(row.text)) === canonicalLesson(args.text as string));
+    const contradiction = value.lessons.filter(row => opposed(String(row.text), args.text as string));
     const proposal = api.host.call('knowledge.propose', { expected_revision: value.revision, id: args.id, text: args.text, evidence_ids: args.evidence_ids as string[] });
     return { status: 'proposal_only', proposal, possible_contradictions: contradiction.map(row => row.id), next: 'Inspect the exact lesson and its evidence. Only a separate user-confirmed approval permits reuse; resolve contradictions first.' };
   };
@@ -122,7 +131,7 @@ export default function activate(api: ModAPI) {
     const current = state();
     let frozen = current.threads[event.thread_id];
     if (!frozen) {
-      if (Object.keys(current.threads).length >= 16) return null;
+      for (const stale of Object.keys(current.threads).slice(0, -15)) delete current.threads[stale];
       const inspected = inspect();
       const excluded = new Set(conflicts(inspected.lessons).flat());
       const ids = eligible(inspected).filter(row => selected.includes(row.id) && !excluded.has(row.id)).map(row => row.id);

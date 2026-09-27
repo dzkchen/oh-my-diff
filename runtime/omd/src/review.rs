@@ -103,6 +103,14 @@ pub enum ReviewCadence {
     Final,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewLane {
+    #[default]
+    Enforced,
+    Advisory,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewSeverity {
@@ -136,8 +144,6 @@ pub struct ReviewFinding {
     pub summary: String,
     pub paths: Vec<String>,
     pub status: FindingStatus,
-    #[serde(default = "enabled")]
-    pub enforced: bool,
     pub introduced_candidate_sha256: String,
     pub last_seen_candidate_sha256: String,
     pub duplicate_observations: u32,
@@ -161,6 +167,8 @@ pub struct ReviewSubmission {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct ReviewCycle {
     pub id: u32,
+    #[serde(default)]
+    pub lane: ReviewLane,
     pub cadence: ReviewCadence,
     pub candidate: VersionMarker,
     pub stable: bool,
@@ -192,6 +200,15 @@ pub struct ReviewSnapshot {
     pub findings: Vec<ReviewFinding>,
     pub repairs: Vec<RepairRecord>,
     pub final_candidate_sha256: Option<String>,
+    #[serde(default)]
+    pub advisory: AdvisoryLane,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+pub struct AdvisoryLane {
+    pub reviews: u32,
+    pub candidate_sha256: Option<String>,
+    pub findings: Vec<ReviewFinding>,
 }
 
 pub struct UnifiedReview {
@@ -209,6 +226,7 @@ impl UnifiedReview {
                 findings: Vec::new(),
                 repairs: Vec::new(),
                 final_candidate_sha256: None,
+                advisory: AdvisoryLane::default(),
             },
         })
     }
@@ -248,6 +266,27 @@ impl UnifiedReview {
                     || validate_marker(&repair.evidence).is_err()
             })
             || snapshot
+                .cycles
+                .iter()
+                .any(|cycle| cycle.lane != ReviewLane::Enforced)
+            || snapshot.advisory.findings.len() > snapshot.policy.max_findings_per_cycle
+            || snapshot
+                .advisory
+                .findings
+                .windows(2)
+                .any(|pair| pair[0].id >= pair[1].id)
+            || snapshot.advisory.findings.iter().any(|finding| {
+                finding.id == 0
+                    || validate_sha256(&finding.fingerprint).is_err()
+                    || snapshot.advisory.candidate_sha256.as_ref()
+                        != Some(&finding.last_seen_candidate_sha256)
+            })
+            || snapshot
+                .advisory
+                .candidate_sha256
+                .as_ref()
+                .is_some_and(|candidate| validate_sha256(candidate).is_err())
+            || snapshot
                 .final_candidate_sha256
                 .as_ref()
                 .is_some_and(|candidate| {
@@ -268,13 +307,6 @@ impl UnifiedReview {
             .iter()
             .filter(|finding| finding.status != FindingStatus::Resolved)
             .cloned()
-            .collect()
-    }
-
-    pub fn blocking(&self) -> Vec<ReviewFinding> {
-        self.unresolved()
-            .into_iter()
-            .filter(|finding| finding.enforced)
             .collect()
     }
 
@@ -349,31 +381,127 @@ impl UnifiedReview {
     }
 
     pub fn submit(&mut self, submission: ReviewSubmission) -> io::Result<ReviewCycle> {
-        self.submit_with_severity_enforcement(submission, false)
-    }
-
-    pub fn submit_with_severity_enforcement(
-        &mut self,
-        submission: ReviewSubmission,
-        blocking_only: bool,
-    ) -> io::Result<ReviewCycle> {
         let mut staged = Self {
             snapshot: self.snapshot.clone(),
         };
-        let cycle = staged.submit_in_place(submission, blocking_only)?;
+        let cycle = staged.submit_in_place(submission)?;
         self.snapshot = staged.snapshot;
         Ok(cycle)
     }
 
-    fn submit_in_place(
+    pub fn submit_advisory(&mut self, mut submission: ReviewSubmission) -> io::Result<ReviewCycle> {
+        if submission.cadence == ReviewCadence::Final || !submission.resolved_finding_ids.is_empty()
+        {
+            return Err(invalid(
+                "advisory review cannot approve or resolve findings",
+            ));
+        }
+        validate_submission(&self.snapshot.policy, &submission)?;
+        let (blocking, advice): (Vec<_>, Vec<_>) = std::mem::take(&mut submission.findings)
+            .into_iter()
+            .partition(|finding| finding.severity == ReviewSeverity::Blocking);
+        let mut staged = Self {
+            snapshot: self.snapshot.clone(),
+        };
+        let candidate = submission.candidate.sha256.clone();
+        let mut cycle = if blocking.is_empty() {
+            ReviewCycle {
+                id: staged.snapshot.advisory.reviews.saturating_add(1),
+                lane: ReviewLane::Advisory,
+                cadence: submission.cadence,
+                candidate: submission.candidate,
+                stable: submission.stable,
+                risk: submission.risk,
+                reviewer: submission.reviewer,
+                separate_reviewer: submission.separate_reviewer,
+                checks: submission.checks,
+                observed_finding_ids: Vec::new(),
+                resolved_finding_ids: Vec::new(),
+                duplicate_findings: 0,
+                final_approved: false,
+            }
+        } else {
+            submission.findings = blocking;
+            staged.submit_in_place(submission)?
+        };
+        let (observed, duplicates) = staged.advise(&candidate, advice)?;
+        if cycle.lane == ReviewLane::Advisory {
+            cycle.observed_finding_ids = observed;
+            cycle.duplicate_findings = duplicates;
+        }
+        self.snapshot = staged.snapshot;
+        Ok(cycle)
+    }
+
+    fn advise(
         &mut self,
-        submission: ReviewSubmission,
-        blocking_only: bool,
-    ) -> io::Result<ReviewCycle> {
+        candidate: &str,
+        advice: Vec<ReviewFindingInput>,
+    ) -> io::Result<(Vec<u32>, u32)> {
+        let limit = self.snapshot.policy.max_findings_per_cycle;
+        let lane = &mut self.snapshot.advisory;
+        if lane.candidate_sha256.as_deref() != Some(candidate) {
+            lane.findings.clear();
+            lane.candidate_sha256 = Some(candidate.to_owned());
+        }
+        lane.reviews = lane.reviews.saturating_add(1);
+        let mut deduplicated = BTreeMap::new();
+        let mut duplicates = 0;
+        for finding in advice {
+            validate_finding(&finding)?;
+            if deduplicated
+                .insert(finding.fingerprint.clone(), finding)
+                .is_some()
+            {
+                duplicates += 1;
+            }
+        }
+        let mut observed = Vec::new();
+        for (fingerprint, input) in deduplicated {
+            if let Some(existing) = lane
+                .findings
+                .iter_mut()
+                .find(|finding| finding.fingerprint == fingerprint)
+            {
+                existing.severity = input.severity;
+                existing.summary = input.summary;
+                existing.paths = input.paths;
+                existing.duplicate_observations = existing.duplicate_observations.saturating_add(1);
+                observed.push(existing.id);
+            } else {
+                let id = lane
+                    .findings
+                    .last()
+                    .map_or(1, |finding| finding.id.saturating_add(1));
+                lane.findings.push(ReviewFinding {
+                    id,
+                    fingerprint,
+                    severity: input.severity,
+                    summary: input.summary,
+                    paths: input.paths,
+                    status: FindingStatus::Open,
+                    introduced_candidate_sha256: candidate.to_owned(),
+                    last_seen_candidate_sha256: candidate.to_owned(),
+                    duplicate_observations: 0,
+                    resolved_candidate_sha256: None,
+                });
+                observed.push(id);
+            }
+        }
+        let excess = lane.findings.len().saturating_sub(limit);
+        lane.findings.drain(..excess);
+        Ok((observed, duplicates))
+    }
+
+    fn submit_in_place(&mut self, submission: ReviewSubmission) -> io::Result<ReviewCycle> {
         if self.snapshot.cycles.len() >= self.snapshot.policy.max_cycles as usize {
             return Err(invalid("review cycle limit exhausted"));
         }
         validate_submission(&self.snapshot.policy, &submission)?;
+        if self.snapshot.advisory.candidate_sha256.as_ref() != Some(&submission.candidate.sha256) {
+            self.snapshot.advisory.findings.clear();
+            self.snapshot.advisory.candidate_sha256 = None;
+        }
         let prior_candidate = self
             .snapshot
             .cycles
@@ -428,7 +556,6 @@ impl UnifiedReview {
             }) {
                 existing.status = FindingStatus::Open;
                 existing.last_seen_candidate_sha256 = submission.candidate.sha256.clone();
-                existing.enforced = !blocking_only || input.severity == ReviewSeverity::Blocking;
                 existing.severity = input.severity;
                 existing.summary = input.summary;
                 existing.paths = input.paths;
@@ -443,7 +570,6 @@ impl UnifiedReview {
                     summary: input.summary,
                     paths: input.paths,
                     status: FindingStatus::Open,
-                    enforced: !blocking_only || input.severity == ReviewSeverity::Blocking,
                     introduced_candidate_sha256: submission.candidate.sha256.clone(),
                     last_seen_candidate_sha256: submission.candidate.sha256.clone(),
                     duplicate_observations: 0,
@@ -456,9 +582,10 @@ impl UnifiedReview {
             return Err(invalid("open review finding limit exceeded"));
         }
         let final_approved =
-            submission.cadence == ReviewCadence::Final && self.blocking().is_empty();
+            submission.cadence == ReviewCadence::Final && self.unresolved().is_empty();
         let cycle = ReviewCycle {
             id: self.snapshot.cycles.len() as u32 + 1,
+            lane: ReviewLane::Enforced,
             cadence: submission.cadence,
             candidate: submission.candidate,
             stable: submission.stable,

@@ -27,6 +27,7 @@ fn marker(label: &str, candidate: char, evidence: char) -> VersionMarker {
 fn final_review(candidate: char) -> ReviewCycle {
     ReviewCycle {
         id: 7,
+        lane: Default::default(),
         cadence: ReviewCadence::Final,
         candidate: marker("review-candidate", candidate, 'r'),
         stable: true,

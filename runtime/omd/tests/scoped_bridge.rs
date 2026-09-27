@@ -55,9 +55,9 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         store_path.clone(),
         repo.clone(),
         Some(home.join("sessions")),
+        None,
         "example_scoped_data".into(),
         "user-command".into(),
-        host.generation(),
         hash.to_owned(),
     )
     .unwrap();
@@ -116,9 +116,9 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         store_path.clone(),
         repo.clone(),
         Some(home.join("sessions")),
+        None,
         "example_scoped_data".into(),
         "user-command".into(),
-        resumed.generation() + 7,
         hash.to_owned(),
     )
     .unwrap();
@@ -172,9 +172,9 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         store_path.clone(),
         repo.clone(),
         Some(home.join("sessions")),
+        None,
         "example_scoped_data".into(),
         "user-command".into(),
-        resumed.generation(),
         hash.to_owned(),
     )
     .unwrap();

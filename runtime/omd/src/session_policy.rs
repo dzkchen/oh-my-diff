@@ -56,7 +56,6 @@ pub(crate) fn permitted(
     let mut child = Command::new("/usr/bin/sqlite3")
         .args([
             "-batch",
-            "-readonly",
             "-json",
             "-init",
             "/dev/null",

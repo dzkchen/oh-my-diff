@@ -935,7 +935,9 @@ impl CodeGraph {
         if bytes.len() > MAX_GRAPH_BYTES {
             return Err(invalid("graph snapshot exceeds size limit"));
         }
-        atomic_write(path, &bytes)
+        atomic_write(path, &bytes, |existing| {
+            serde_json::from_slice::<Self>(existing).is_ok_and(|graph| graph.validate().is_ok())
+        })
     }
 
     pub fn validate(&self) -> io::Result<()> {
@@ -1147,7 +1149,12 @@ impl CodeGraph {
     }
 
     pub fn write_html(&self, path: &Path) -> io::Result<()> {
-        atomic_write(path, self.html()?.as_bytes())
+        atomic_write(path, self.html()?.as_bytes(), |existing| {
+            std::str::from_utf8(existing).is_ok_and(|text| {
+                text.starts_with("<!doctype html>")
+                    && text.contains("<title>Oh My Diff code graph</title>")
+            })
+        })
     }
 }
 
@@ -1162,7 +1169,7 @@ fn validate_anchor(anchor: &GraphAnchor, sources: &BTreeSet<PathBuf>) -> io::Res
     Ok(())
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+fn atomic_write(path: &Path, bytes: &[u8], replaceable: impl Fn(&[u8]) -> bool) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| invalid("output parent is missing"))?;
@@ -1178,11 +1185,24 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
                 file.write_all(bytes)?;
                 file.sync_all()?;
                 drop(file);
-                if let Err(error) = fs::rename(&temporary, path) {
-                    let _ = fs::remove_file(&temporary);
-                    return Err(error);
-                }
-                return Ok(());
+                let result = match fs::hard_link(&temporary, path) {
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        let existing = fs::symlink_metadata(path)?;
+                        if existing.is_file()
+                            && existing.len() <= MAX_GRAPH_BYTES as u64
+                            && replaceable(&fs::read(path)?)
+                        {
+                            fs::rename(&temporary, path)
+                        } else {
+                            Err(invalid(
+                                "output exists and is not an earlier graph artifact",
+                            ))
+                        }
+                    }
+                    result => result,
+                };
+                let _ = fs::remove_file(&temporary);
+                return result;
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),

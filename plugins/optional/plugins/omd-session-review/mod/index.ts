@@ -21,7 +21,7 @@ function citation(value: Observation): string {
 }
 
 function preference(text: string): string | null {
-  if (!/(?:^|[.!?]\s+)(?:i (?:prefer|want)\b|please (?:always|never)\b|always\b|never\b|do not\b|don't\b)/i.test(text)) return null;
+  if (!/(?:^|[.!?]\s+)(?:i (?:prefer|want)\b|please (?:always|never)\b|always\b|never\b(?!\s+mind\b)|do not\b|don't\b)/i.test(text)) return null;
   if (/password|token|api.key|secret|credential|private.key|\[redacted\]/i.test(text)) return null;
   if (/live (?:context|routing)|terminal|sidebar/i.test(text)) return 'mod';
   if (/before every|after every|on every|automatically (?:check|run)/i.test(text)) return 'hook';
@@ -60,32 +60,37 @@ export default function activate(api: ModAPI) {
     const observations: Observation[] = [];
     const tasks = new Set<string>();
     const signatures = new Set<string>();
+    const analyzed = new Set<string>();
     let pages = 0;
     let bytes = 0;
     let read = 0;
     let duplicates = 0;
     for (const session of sessions) {
-      if (pages >= 24 || bytes >= 49152) { notices.push('Transcript budget reached.'); break; }
+      if (pages >= 24 || 49152 - bytes < 1024) { notices.push('Transcript budget reached.'); break; }
       let cursor: number | undefined;
       const records: SessionRecord[] = [];
       let failed = false;
-      for (let page = 0; page < 2 && pages < 24 && bytes < 49152; page++) {
-        const response = api.host.tryCall('sessions.read', { session_id: session.session_id, revision: session.revision, ...(cursor === undefined ? {} : { cursor }), max_bytes: Math.min(16384, 49152 - bytes) });
+      let projected = false;
+      for (let page = 0; page < 2 && pages < 24 && 49152 - bytes >= 1024; page++) {
+        const response = api.host.tryCall('sessions.read', { session_id: session.session_id, revision: session.revision, handle: session.handle, ...(cursor === undefined ? {} : { cursor }), max_bytes: Math.min(16384, 49152 - bytes) });
         pages++;
         if (!response.ok) { notices.push(`Session ${safe(session.session_id, 40)} was unavailable or changed during reading; its partial records were discarded.`); failed = true; break; }
         bytes += response.value.bytes;
+        projected ||= response.value.projection_truncated;
         records.push(...response.value.records);
         cursor = response.value.cursor ?? undefined;
         if (cursor === undefined) break;
       }
       if (failed) continue;
-      if (cursor !== undefined || session.incomplete_tail || session.projection_truncated) notices.push(`Session ${safe(session.session_id, 40)} has omitted, incomplete or bounded records.`);
+      if (cursor !== undefined || session.incomplete_tail || projected) notices.push(`Session ${safe(session.session_id, 40)} has omitted, incomplete or bounded records.`);
       const task = session.parent_id || session.task_id || session.session_id;
       const signature = records.find(record => record.role === 'user')?.text.replace(/\s+/g, ' ').trim().toLowerCase() ?? '';
-      if (tasks.has(task) || (signature.length > 20 && signatures.has(signature))) { duplicates++; continue; }
+      const part = analyzed.has(session.session_id);
+      if (!part && (tasks.has(task) || (signature.length > 20 && signatures.has(signature)))) { duplicates++; continue; }
       tasks.add(task);
       if (signature.length > 20) signatures.add(signature);
-      read++;
+      if (!part) read++;
+      analyzed.add(session.session_id);
       observations.push(...records.filter(record => !record.redacted && !record.truncated && !/\[redacted\]/i.test(record.text)).map(record => ({ record, session, task })));
     }
     const proposals: Proposal[] = [];

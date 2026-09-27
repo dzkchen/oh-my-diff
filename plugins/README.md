@@ -107,6 +107,8 @@ exits remain refusals. The tool never edits source.
 
 Use `graph_snapshot` to create the JSON graph and deterministic static HTML,
 then `graph_validate`, `graph_html`, or `graph_select` against fresh source.
+Graph and HTML outputs must be inside `.omd/graph/` and may only replace earlier
+graph artifacts; controlled-mode stop and resume currently delete `.omd`.
 The existing native `/graph` view remains the optional live terminal navigator
 over that same JSON; no second terminal mod is required. Use the health skill to
 create an explicitly approved baseline, run the one-shot check, and page through

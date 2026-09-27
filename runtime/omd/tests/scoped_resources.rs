@@ -249,3 +249,53 @@ fn source_denial_secret_exclusion_cold_mode_and_cancellation() {
             .is_err()
     );
 }
+
+#[test]
+fn stale_facts_and_secrets_outside_the_anchor_do_not_break_inspection() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    fs::create_dir(&repo).unwrap();
+    fs::write(repo.join("config.txt"), "name = demo\npassword: hunter2\n").unwrap();
+    fs::write(repo.join("gone.txt"), "temporary fact\n").unwrap();
+    let binding = ResourceBinding {
+        repository: hash(repo.as_os_str().as_encoded_bytes()),
+        owner: "fixture".into(),
+        thread: "thread-1".into(),
+        generation: 1,
+        source_sha256: hash(b"fixture-code"),
+    };
+    let store = KnowledgeStore::create(root.join("knowledge"), binding.repository.clone()).unwrap();
+    let readable = |_: &std::path::Path| true;
+    let access = KnowledgeAccess {
+        store: &store,
+        repository: &repo,
+        resources: ResourceStore {
+            root: &root,
+            binding: &binding,
+        },
+        user_action: None,
+        readable: &readable,
+    };
+    let retain = |revision: u64, id: &str, path: &str, line: u32| {
+        access.call("knowledge.retain",json!({"expected_revision":revision,"id":id,"label":"fact","source":{"path":path,"start_line":line,"end_line":line}}),||true)
+    };
+    retain(0, "fact-a", "config.txt", 1).unwrap();
+    retain(1, "fact-b", "gone.txt", 1).unwrap();
+    assert!(retain(2, "fact-c", "config.txt", 2).is_err());
+    fs::remove_file(repo.join("gone.txt")).unwrap();
+    let inspection = access
+        .call("knowledge.inspect", json!({}), || true)
+        .unwrap();
+    let status = |id: &str| {
+        inspection["facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|fact| fact["id"] == id)
+            .unwrap()["status"]["status"]
+            .clone()
+    };
+    assert_eq!(status("fact-a"), "fresh");
+    assert_eq!(status("fact-b"), "invalidated");
+}

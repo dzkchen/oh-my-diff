@@ -38,7 +38,7 @@ def run(binary, node, inline):
             owner = self.headers.get("x-omd-owner", "")
             requests.append({"owner": owner, "body": body})
             worker = owner.startswith("mod-omd_advisor-")
-            answer = json.dumps({"findings": [{"severity": "advice", "summary": "PTY_ADVISOR_NOTE Check the visible claim.", "paths": [], "quote": "A visible synthetic completed turn"}]}) if worker else "A visible synthetic completed turn; no workspace changes."
+            answer = json.dumps({"findings": [{"key": "visible-claim", "severity": "advice", "summary": "PTY_ADVISOR_NOTE Check the visible claim.", "paths": [], "quote": "A visible synthetic completed turn"}]}) if worker else "A visible synthetic completed turn; no workspace changes."
             if owner.startswith("auxiliary:"):
                 answer = json.dumps({"title": "Report fixture"})
             item = {"type": "message", "id": "advisor-pty-answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
@@ -75,7 +75,7 @@ def run(binary, node, inline):
         if inline:
             deadline = time.monotonic() + 20
             state_path = root / "mod-store/state-omd_advisor.json"
-            while not state_path.exists() and time.monotonic() < deadline:
+            while (not state_path.exists() or '"recorded"' not in state_path.read_text()) and time.monotonic() < deadline:
                 drain(master, output, 0.2)
             drain(master, output, 0.5)
             set_size(master, 145, 34)

@@ -228,7 +228,50 @@ fn persisted_state_round_trips_and_rejects_tampering() {
 }
 
 #[test]
-fn typed_advice_is_recorded_without_becoming_a_completion_blocker() {
+fn advisory_lane_is_bounded_expires_and_never_consumes_enforced_budget() {
+    let policy = ReviewPolicy {
+        every_turn_advice: true,
+        max_findings_per_cycle: 4,
+        ..Default::default()
+    };
+    let mut review = UnifiedReview::new(policy).unwrap();
+    for turn in 0..40 {
+        let mut advice = submission(ReviewCadence::EveryTurn, 'a');
+        let key = "0123456789abcdef".chars().nth(turn % 16).unwrap();
+        advice.findings.push(finding(key, "An advisory concern"));
+        advice
+            .findings
+            .push(finding(key, "The same concern reworded"));
+        let cycle = review.submit_advisory(advice).unwrap();
+        assert_eq!(cycle.lane, ReviewLane::Advisory);
+        assert_eq!(cycle.duplicate_findings, 1);
+    }
+    let snapshot = review.snapshot();
+    assert!(snapshot.cycles.is_empty());
+    assert_eq!(snapshot.advisory.reviews, 40);
+    assert_eq!(snapshot.advisory.findings.len(), 4);
+    assert!(review.unresolved().is_empty());
+    assert_eq!(
+        UnifiedReview::restore(snapshot.clone()).unwrap().snapshot(),
+        snapshot
+    );
+    let mut moved = submission(ReviewCadence::EveryTurn, 'b');
+    moved
+        .findings
+        .push(finding('1', "Advice for the next candidate"));
+    review.submit_advisory(moved).unwrap();
+    assert_eq!(review.snapshot().advisory.findings.len(), 1);
+    review
+        .submit(submission(ReviewCadence::StableMilestone, 'c'))
+        .unwrap();
+    assert!(review.snapshot().advisory.findings.is_empty());
+    let mut final_review = submission(ReviewCadence::Final, 'c');
+    final_review.checks.push(marker("check", 'c'));
+    assert!(review.submit(final_review).unwrap().final_approved);
+}
+
+#[test]
+fn blocking_advisory_findings_are_enforced_until_resolved() {
     let policy = ReviewPolicy {
         every_turn_advice: true,
         ..Default::default()
@@ -236,29 +279,22 @@ fn typed_advice_is_recorded_without_becoming_a_completion_blocker() {
     let mut review = UnifiedReview::new(policy).unwrap();
     let mut advice = submission(ReviewCadence::EveryTurn, 'a');
     advice.findings.push(finding('b', "An advisory concern"));
-    review
-        .submit_with_severity_enforcement(advice, true)
-        .unwrap();
-    assert_eq!(review.unresolved().len(), 1);
-    assert!(review.blocking().is_empty());
-    let mut final_review = submission(ReviewCadence::Final, 'a');
-    final_review.checks.push(marker("check", 'a'));
-    assert!(review.submit(final_review).unwrap().final_approved);
-    let restored = UnifiedReview::restore(review.snapshot()).unwrap();
-    assert!(restored.blocking().is_empty());
-    let mut blocking = submission(ReviewCadence::EveryTurn, 'a');
-    blocking.findings.push(ReviewFindingInput {
+    advice.findings.push(ReviewFindingInput {
         severity: ReviewSeverity::Blocking,
         ..finding('c', "A selected blocker")
     });
-    review
-        .submit_with_severity_enforcement(blocking, true)
-        .unwrap();
-    assert_eq!(review.blocking().len(), 1);
-    let mut legacy = submission(ReviewCadence::StableMilestone, 'a');
-    legacy
-        .findings
-        .push(finding('d', "Existing review behavior"));
-    review.submit(legacy).unwrap();
-    assert_eq!(review.blocking().len(), 2);
+    let cycle = review.submit_advisory(advice).unwrap();
+    assert_eq!(cycle.lane, ReviewLane::Enforced);
+    assert_eq!(review.unresolved().len(), 1);
+    assert_eq!(review.snapshot().advisory.findings.len(), 1);
+    let mut final_review = submission(ReviewCadence::Final, 'a');
+    final_review.checks.push(marker("check", 'a'));
+    assert!(!review.submit(final_review).unwrap().final_approved);
+    let mut resolving = submission(ReviewCadence::Final, 'd');
+    resolving.checks.push(marker("check", 'd'));
+    resolving.resolved_finding_ids.push(1);
+    assert!(review.submit(resolving).unwrap().final_approved);
+    let mut invalid = submission(ReviewCadence::EveryTurn, 'd');
+    invalid.resolved_finding_ids.push(1);
+    assert!(review.submit_advisory(invalid).is_err());
 }

@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io;
+use std::io::{self, BufRead, Read};
 use std::path::{Path, PathBuf};
 
 const SOURCE_BYTES: usize = 32 * 1024 * 1024;
+const HEAD_BYTES: u64 = 1024 * 1024;
 const SCAN_FILES: usize = 4096;
 const SCAN_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -24,15 +25,16 @@ pub struct SessionSummary {
     pub parent_id: Option<String>,
     pub timestamp: String,
     pub revision: String,
+    pub handle: String,
     pub history_mode: String,
     pub inherited_history: bool,
     pub incomplete_tail: bool,
-    pub projection_truncated: bool,
 }
 
 struct Session {
     summary: SessionSummary,
-    records: Vec<Value>,
+    meta: Value,
+    bytes: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +51,7 @@ struct ListRequest {
 struct ReadRequest {
     session_id: String,
     revision: String,
+    handle: String,
     cursor: Option<usize>,
     max_bytes: Option<usize>,
 }
@@ -69,13 +72,26 @@ fn date(value: &str) -> bool {
             .is_ok_and(|day| (1..=31).contains(&day))
 }
 
+fn cancelled() -> io::Error {
+    io::Error::other("session_read_cancelled")
+}
+
+fn in_range(timestamp: Option<&str>, since: Option<&String>, until: Option<&String>) -> bool {
+    timestamp
+        .and_then(|value| value.get(..10))
+        .is_some_and(|day| {
+            since.is_none_or(|since| day >= since.as_str())
+                && until.is_none_or(|until| day < until.as_str())
+        })
+}
+
 impl SessionIndex<'_> {
     fn paths(&self, active: &dyn Fn() -> bool) -> io::Result<(Vec<PathBuf>, bool)> {
         if !self.enabled {
             return Err(io::Error::other("session_access_disabled"));
         }
         if !active() {
-            return Err(io::Error::other("session_read_cancelled"));
+            return Err(cancelled());
         }
         if self.repository.canonicalize()? != self.repository
             || self.root.canonicalize()? != self.root
@@ -86,10 +102,10 @@ impl SessionIndex<'_> {
         let mut pending = vec![(self.root.to_path_buf(), 0)];
         let mut paths = Vec::new();
         let mut seen = 0;
-        let mut bytes = 0u64;
+        let mut truncated = false;
         while let Some((directory, depth)) = pending.pop() {
             if !active() {
-                return Err(io::Error::other("session_read_cancelled"));
+                return Err(cancelled());
             }
             let mut entries = fs::read_dir(directory)?
                 .take(SCAN_FILES + 1 - seen)
@@ -98,12 +114,11 @@ impl SessionIndex<'_> {
             for entry in entries {
                 seen += 1;
                 if seen > SCAN_FILES {
-                    return Ok((paths, true));
+                    truncated = true;
+                    pending.clear();
+                    break;
                 }
                 let kind = entry.file_type()?;
-                if kind.is_symlink() {
-                    continue;
-                }
                 if kind.is_dir() && depth < 3 {
                     pending.push((entry.path(), depth + 1));
                 } else if kind.is_file()
@@ -112,39 +127,61 @@ impl SessionIndex<'_> {
                         .extension()
                         .is_some_and(|extension| extension == "jsonl")
                 {
-                    bytes = bytes.saturating_add(entry.metadata()?.len());
-                    if bytes > SCAN_BYTES {
-                        return Ok((paths, true));
-                    }
                     paths.push(entry.path());
                 }
             }
         }
         paths.sort();
-        Ok((paths, false))
+        Ok((paths, truncated))
+    }
+
+    fn name<'p>(&self, path: &'p Path) -> io::Result<&'p str> {
+        path.strip_prefix(self.root)
+            .map_err(io::Error::other)?
+            .to_str()
+            .ok_or_else(|| io::Error::other("session_path_encoding"))
+    }
+
+    fn scoped(&self, meta: &Value) -> bool {
+        meta["cwd"]
+            .as_str()
+            .and_then(|path| Path::new(path).canonicalize().ok())
+            .as_deref()
+            == Some(self.repository)
+    }
+
+    fn head(&self, path: &Path) -> io::Result<Option<Value>> {
+        let mut line = Vec::new();
+        io::BufReader::new(crate::workspace::open_contained(
+            self.root,
+            self.name(path)?,
+        )?)
+        .take(HEAD_BYTES)
+        .read_until(b'\n', &mut line)?;
+        let first: Value = serde_json::from_slice(&line)?;
+        Ok((first["type"] == "session_meta").then(|| first["payload"].clone()))
     }
 
     fn load(&self, path: &Path, active: &dyn Fn() -> bool) -> io::Result<Option<Session>> {
         if !active() {
-            return Err(io::Error::other("session_read_cancelled"));
+            return Err(cancelled());
         }
-        let name = path
-            .strip_prefix(self.root)
-            .map_err(io::Error::other)?
-            .to_str()
-            .ok_or_else(|| io::Error::other("session_path_encoding"))?;
-        let selected = BTreeSet::from([name.to_owned()]);
-        let snapshot = crate::Snapshot::capture(self.root, &selected, SOURCE_BYTES)?;
-        let bytes = &snapshot
+        let name = self.name(path)?;
+        let snapshot =
+            crate::Snapshot::capture(self.root, &BTreeSet::from([name.to_owned()]), SOURCE_BYTES)?;
+        let mut bytes = snapshot
             .files
             .get(name)
             .ok_or_else(|| io::Error::other("session_missing"))?
-            .bytes;
+            .bytes
+            .clone();
         let complete = bytes
             .iter()
             .rposition(|byte| *byte == b'\n')
             .map_or(0, |index| index + 1);
-        let mut lines = bytes[..complete]
+        let incomplete_tail = complete != bytes.len();
+        bytes.truncate(complete);
+        let mut lines = bytes
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.is_empty());
         let first: Value = serde_json::from_slice(
@@ -156,10 +193,12 @@ impl SessionIndex<'_> {
             return Ok(None);
         }
         let initial = &first["payload"];
-        let mut latest = initial.clone();
-        for line in lines.clone() {
+        let mut meta = initial.clone();
+        for line in
+            lines.filter(|line| line.windows(14).any(|window| window == b"\"session_meta\""))
+        {
             if !active() {
-                return Err(io::Error::other("session_read_cancelled"));
+                return Err(cancelled());
             }
             let record: Value = serde_json::from_slice(line)?;
             if record["type"] == "session_meta" {
@@ -168,12 +207,10 @@ impl SessionIndex<'_> {
                 {
                     return Err(io::Error::other("session_metadata_changed_identity"));
                 }
-                latest = record["payload"].clone();
+                meta = record["payload"].clone();
             }
         }
-        let meta = &latest;
-        let cwd = meta["cwd"].as_str().map(Path::new);
-        if cwd.and_then(|path| path.canonicalize().ok()).as_deref() != Some(self.repository)
+        if !self.scoped(&meta)
             || meta["memory_mode"]
                 .as_str()
                 .is_some_and(|mode| mode != "enabled")
@@ -189,7 +226,7 @@ impl SessionIndex<'_> {
             .as_str()
             .filter(|value| value.len() <= 40 && value.get(..10).is_some_and(date))
             .ok_or_else(|| io::Error::other("session_timestamp_invalid"))?;
-        let mut summary = SessionSummary {
+        let summary = SessionSummary {
             session_id: id.to_owned(),
             task_id: meta["session_id"]
                 .as_str()
@@ -201,33 +238,47 @@ impl SessionIndex<'_> {
                 .filter(|id| token(id))
                 .map(str::to_owned),
             timestamp: timestamp.to_owned(),
-            revision: hash(&bytes[..complete]),
+            revision: hash(&bytes),
+            handle: hash(name.as_bytes()),
             history_mode: meta["history_mode"].as_str().unwrap_or("legacy").to_owned(),
             inherited_history: !meta["history_base"].is_null() || !meta["forked_from_id"].is_null(),
-            incomplete_tail: complete != bytes.len(),
-            projection_truncated: false,
+            incomplete_tail,
         };
+        Ok(Some(Session {
+            summary,
+            meta,
+            bytes,
+        }))
+    }
+
+    fn records(
+        &self,
+        session: &Session,
+        active: &dyn Fn() -> bool,
+    ) -> io::Result<(Vec<Value>, bool)> {
+        let id = &session.summary.session_id;
         let mut records = Vec::new();
         let mut turn = String::new();
         let mut in_scope = false;
+        let lines = session
+            .bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .skip(1);
         for (index, line) in lines.enumerate() {
             if !active() {
-                return Err(io::Error::other("session_read_cancelled"));
+                return Err(cancelled());
             }
             let value: Value = serde_json::from_slice(line)?;
             let payload = &value["payload"];
-            if let Some(start) = meta["subagent_history_start_ordinal"].as_u64() {
+            if let Some(start) = session.meta["subagent_history_start_ordinal"].as_u64() {
                 let ordinal = value["ordinal"].as_u64().unwrap_or(index as u64 + 1);
                 if ordinal < start {
                     continue;
                 }
             }
             if value["type"] == "turn_context" {
-                in_scope = payload["cwd"]
-                    .as_str()
-                    .and_then(|path| Path::new(path).canonicalize().ok())
-                    .as_deref()
-                    == Some(self.repository);
+                in_scope = self.scoped(payload);
                 turn = payload["turn_id"]
                     .as_str()
                     .filter(|id| token(id))
@@ -258,11 +309,10 @@ impl SessionIndex<'_> {
             let limited: String = redacted.chars().take(2048).collect();
             records.push(json!({"session_id":id,"turn_id":turn,"item":index+1,"role":payload["role"],"text":limited,"truncated":limited.len()<redacted.len(),"redacted":redacted!=text,"timestamp":value["timestamp"],"untrusted":true}));
             if records.len() >= 4096 {
-                summary.projection_truncated = true;
-                break;
+                return Ok((records, true));
             }
         }
-        Ok(Some(Session { summary, records }))
+        Ok((records, false))
     }
 
     pub fn call(
@@ -288,22 +338,40 @@ impl SessionIndex<'_> {
                 {
                     return Err(io::Error::other("session_list_bounds"));
                 }
-                let (paths, truncated) = self.paths(&active)?;
+                let (paths, mut truncated) = self.paths(&active)?;
+                let (since, until) = (input.since.as_ref(), input.until.as_ref());
                 let mut unavailable = 0;
+                let mut scanned = 0u64;
                 let mut rows = Vec::new();
                 let mut ids = BTreeSet::new();
-                for path in paths {
-                    match self.load(&path, &active) {
+                for path in paths.iter().rev() {
+                    let head = match self.head(path) {
+                        Ok(Some(head)) => head,
+                        Ok(None) => continue,
+                        Err(_) if !active() => return Err(cancelled()),
+                        Err(_) => {
+                            unavailable += 1;
+                            continue;
+                        }
+                    };
+                    if !self.scoped(&head) || !in_range(head["timestamp"].as_str(), since, until) {
+                        continue;
+                    }
+                    scanned = scanned
+                        .saturating_add(fs::symlink_metadata(path).map_or(0, |meta| meta.len()));
+                    if scanned > SCAN_BYTES {
+                        truncated = true;
+                        break;
+                    }
+                    match self.load(path, &active) {
                         Ok(Some(session))
                             if allowed(&session.summary.session_id)
-                                && input.since.as_ref().is_none_or(|date| {
-                                    session.summary.timestamp[..10] >= **date
-                                })
-                                && input.until.as_ref().is_none_or(|date| {
-                                    session.summary.timestamp[..10] < **date
-                                }) =>
+                                && in_range(Some(&session.summary.timestamp), since, until) =>
                         {
-                            if !ids.insert(session.summary.session_id.clone()) {
+                            if !ids.insert((
+                                session.summary.session_id.clone(),
+                                session.meta["history_base"].to_string(),
+                            )) {
                                 return Err(io::Error::other("session_identity_ambiguous"));
                             }
                             rows.push(session.summary);
@@ -342,6 +410,7 @@ impl SessionIndex<'_> {
                 let limit = input.max_bytes.unwrap_or(PAGE_BYTES);
                 if !token(&input.session_id)
                     || input.revision.len() != 64
+                    || input.handle.len() != 64
                     || !(1024..=PAGE_BYTES).contains(&limit)
                 {
                     return Err(io::Error::other("session_read_bounds"));
@@ -349,35 +418,29 @@ impl SessionIndex<'_> {
                 if !allowed(&input.session_id) {
                     return Err(io::Error::other("session_opted_out_or_unavailable"));
                 }
-                let (paths, truncated) = self.paths(&active)?;
-                if truncated {
-                    return Err(io::Error::other("session_scan_incomplete"));
-                }
-                let mut found = None;
-                for path in paths {
-                    if let Ok(Some(session)) = self.load(&path, &active)
-                        && session.summary.session_id == input.session_id
-                    {
-                        if found.is_some() {
-                            return Err(io::Error::other("session_identity_ambiguous"));
-                        }
-                        found = Some(session);
-                    }
-                    if !active() {
-                        return Err(io::Error::other("session_read_cancelled"));
-                    }
-                }
-                let session = found.ok_or_else(|| io::Error::other("session_unavailable"))?;
+                let (paths, _) = self.paths(&active)?;
+                let path = paths
+                    .iter()
+                    .find(|path| {
+                        self.name(path)
+                            .is_ok_and(|name| hash(name.as_bytes()) == input.handle)
+                    })
+                    .ok_or_else(|| io::Error::other("session_unavailable"))?;
+                let session = self
+                    .load(path, &active)?
+                    .filter(|session| session.summary.session_id == input.session_id)
+                    .ok_or_else(|| io::Error::other("session_unavailable"))?;
                 if input.revision != session.summary.revision {
                     return Err(io::Error::other("session_revision_changed"));
                 }
+                let (records, projection_truncated) = self.records(&session, &active)?;
                 let start = input.cursor.unwrap_or(0);
-                if start > session.records.len() {
+                if start > records.len() {
                     return Err(io::Error::other("session_cursor_invalid"));
                 }
                 let mut end = start;
                 let mut bytes = 0;
-                while let Some(record) = session.records.get(end) {
+                while let Some(record) = records.get(end) {
                     let size = serde_json::to_vec(record)?.len();
                     if bytes + size > limit {
                         break;
@@ -385,17 +448,17 @@ impl SessionIndex<'_> {
                     bytes += size;
                     end += 1;
                 }
-                if end == start && end < session.records.len() {
+                if end == start && end < records.len() {
                     return Err(io::Error::other("session_record_exceeds_page"));
                 }
                 Ok(
-                    json!({"session":session.summary,"records":session.records[start..end],"cursor":(end<session.records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_message_records"}),
+                    json!({"session":session.summary,"records":records[start..end],"cursor":(end<records.len()).then_some(end),"bytes":bytes,"projection":"local_visible_message_records","projection_truncated":projection_truncated}),
                 )
             }
             _ => Err(io::Error::other("session_operation_unavailable")),
         }?;
         if !active() {
-            return Err(io::Error::other("session_read_cancelled"));
+            return Err(cancelled());
         }
         if policy
             != crate::session_policy::permitted(self.root, self.repository, self.database, &active)?

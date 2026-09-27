@@ -1,11 +1,10 @@
 use super::*;
 use codex_omd::resource_data::ResourceRef;
-use codex_omd::{ReviewCadence, ReviewFindingInput, ReviewSeverity, ReviewSubmission};
+use codex_omd::{ReviewCadence, ReviewFindingInput, ReviewLane, ReviewSeverity, ReviewSubmission};
 
 pub(super) struct Binding {
     source: ResourceRef,
-    candidate: VersionMarker,
-    snapshot: codex_omd::Snapshot,
+    candidate_sha256: String,
     cadence: ReviewCadence,
     stable: bool,
     risk: Option<String>,
@@ -24,35 +23,9 @@ struct Request {
     tools: Vec<String>,
 }
 
-async fn snapshot(lead: &Lead) -> Result<codex_omd::Snapshot, String> {
-    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
-    let approved = lead
-        .host
-        .manifest
-        .approved_untracked
-        .iter()
-        .cloned()
-        .collect();
-    let paths =
-        codex_omd::tracked_paths(&authority.repository, &approved).map_err(|e| e.to_string())?;
-    if paths
-        .iter()
-        .any(|path| !authority.readable(&authority.repository.join(path)))
-    {
-        return Err("review_source_permission_denied".into());
-    }
-    codex_omd::Snapshot::capture(
-        &authority.repository,
-        &paths,
-        lead.host.manifest.snapshot_bytes,
-    )
-    .map_err(|e| e.to_string())
-}
-
-pub(super) async fn prepare(
+pub(super) fn prepare(
     lead: &Lead,
     owner: &str,
-    generation: u64,
     source_sha256: &str,
     arguments: Value,
 ) -> Result<(Value, Binding), String> {
@@ -72,35 +45,25 @@ pub(super) async fn prepare(
         .validate_request(request.cadence, request.stable, request.risk.as_deref())
         .map_err(|e| e.to_string())?;
     let root = host.manifest.mods.clone().ok_or("mod_store_unavailable")?;
-    let data = codex_omd::scoped_data::ScopedDataHost::new(
+    let packet = codex_omd::scoped_data::ScopedDataHost::new(
         root,
         host.manifest.repository.clone(),
         None,
+        None,
         owner.into(),
         lead.thread.to_string(),
-        generation,
         source_sha256.to_owned(),
     )
+    .and_then(|data| data.resources().load(&request.evidence, "turn"))
     .map_err(|e| e.to_string())?;
-    let packet = data
-        .resources()
-        .load(&request.evidence, "turn")
-        .map_err(|e| e.to_string())?;
-    let snapshot = snapshot(lead).await?;
-    let sha = snapshot.hash().map_err(|e| e.to_string())?;
-    if packet["workspace_sha256"] != sha || packet["thread_id"] != lead.thread.to_string() {
-        return Err("review_evidence_stale_or_foreign".into());
-    }
-    let candidate = VersionMarker {
-        label: "extension-review-candidate".into(),
-        sha256: sha,
-        evidence: format!("resource:{}", request.evidence.reference),
-        evidence_sha256: request.evidence.sha256.clone(),
-    };
+    let candidate_sha256 = packet["workspace_sha256"]
+        .as_str()
+        .filter(|sha| sha.len() == 64 && packet["thread_id"] == lead.thread.to_string())
+        .ok_or("review_evidence_stale_or_foreign")?
+        .to_owned();
     let binding = Binding {
         source: request.evidence,
-        candidate,
-        snapshot,
+        candidate_sha256,
         cadence: request.cadence,
         stable: request.stable,
         risk: request.risk,
@@ -130,14 +93,15 @@ pub(super) async fn submit(
     lead.host.authorize()?;
     lead.host
         .authorize_contract(codex_omd::ContractOperation::MilestoneReview)?;
-    let current = snapshot(lead).await?.hash().map_err(|e| e.to_string())?;
+    let snapshot = crate::workspace_operations::workspace_snapshot(lead).await?;
+    let current = snapshot.hash().map_err(|e| e.to_string())?;
     let mut records = records.lock().await;
     let agent = records
         .get_mut(&input.handle)
         .filter(|agent| agent.mod_id == owner && agent.generation == generation)
         .ok_or("unknown_or_foreign_review")?;
     let binding = agent.review.as_mut().ok_or("worker_is_not_review")?;
-    if binding.submitted || binding.candidate.sha256 != current {
+    if binding.submitted || binding.candidate_sha256 != current {
         return Err("review_already_submitted_or_stale".into());
     }
     let result = agent
@@ -166,33 +130,46 @@ pub(super) async fn submit(
         .review
         .lock()
         .map_err(|_| "review_runtime_poisoned")?;
-    if !review.ledger.snapshot().policy.extension_blocking
-        && input
-            .findings
-            .iter()
-            .any(|finding| finding.severity == ReviewSeverity::Blocking)
-    {
+    let blocking = input
+        .findings
+        .iter()
+        .any(|finding| finding.severity == ReviewSeverity::Blocking);
+    if blocking && !review.ledger.snapshot().policy.extension_blocking {
         return Err("extension_blocking_not_user_authorized".into());
     }
-    let provenance=lead.host.evidence(&format!("extension-review-{}.json",execution::hash(input.handle.as_bytes())),&json!({"extension":owner,"generation":generation,"worker":input.handle,"model":agent.implementation.model,"provider":agent.implementation.provider,"evidence":binding.source,"response_sha256":input.result_sha256,"response":result,"findings":input.findings}))?;
+    let handle_hash = execution::hash(input.handle.as_bytes());
+    let provenance=lead.host.evidence(&format!("extension-review-{handle_hash}.json"),&json!({"extension":owner,"generation":generation,"worker":input.handle,"model":agent.implementation.model,"provider":agent.implementation.provider,"evidence":binding.source,"response_sha256":input.result_sha256,"response":result,"findings":input.findings}))?;
+    let candidate = if blocking {
+        let reference = lead.host.evidence(
+            &format!("review-candidate-{handle_hash}.json"),
+            &serde_json::to_value(&snapshot).map_err(|e| e.to_string())?,
+        )?;
+        execution::evidence_marker("extension-review-candidate", &current, &reference)?
+    } else {
+        VersionMarker {
+            label: "extension-review-candidate".into(),
+            sha256: current.clone(),
+            evidence: format!("resource:{}", binding.source.reference),
+            evidence_sha256: binding.source.sha256.clone(),
+        }
+    };
     let cycle = review
         .ledger
-        .submit_with_severity_enforcement(
-            ReviewSubmission {
-                cadence: binding.cadence,
-                candidate: binding.candidate.clone(),
-                stable: binding.stable,
-                risk: binding.risk.clone(),
-                reviewer: format!("native-thread:{}", agent.worker),
-                separate_reviewer: true,
-                checks: vec![],
-                findings: input.findings,
-                resolved_finding_ids: vec![],
-            },
-            true,
-        )
+        .submit_advisory(ReviewSubmission {
+            cadence: binding.cadence,
+            candidate,
+            stable: binding.stable,
+            risk: binding.risk.clone(),
+            reviewer: format!("native-thread:{}", agent.worker),
+            separate_reviewer: true,
+            checks: vec![],
+            findings: input.findings,
+            resolved_finding_ids: vec![],
+        })
         .map_err(|e| e.to_string())?;
-    review.candidates.insert(current, binding.snapshot.clone());
+    if cycle.lane == ReviewLane::Enforced {
+        review.candidates.insert(current, snapshot);
+    }
     drop(review);
     binding.submitted = true;
     if !agent.consumed {

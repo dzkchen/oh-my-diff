@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "8537baacc6ca2c8a7e6bb30c8342243451c3e95ab529f9641d685fc80311a4fb"
+    "sha256": "23d6476f98510533ef2dddb7588328d31c010cc1e866f73c2f3bfe7e24626524"
   },
   "plugins": {
     "omd-guidance-hooks": {
@@ -100,7 +100,7 @@
     "plugins/omd-lsp-adapters/scripts/omd_lsp_mcp.py": "339084ab072d08d5ef3286fffa05cb64397a3559a99e4ba5126d15fa97df7c57",
     "plugins/omd-repository-tools/.codex-plugin/plugin.json": "ce5e196395058a6f6bd9f753554cb23fcbd2b3b95ded949ac3d11db50ca23dee",
     "plugins/omd-repository-tools/.mcp.json": "9fd3f0b1c0ac500e8d05020d254f2dc8d4cac2eefb19bb953363bf3cc326afe8",
-    "plugins/omd-repository-tools/scripts/omd_repository_mcp.py": "5c9783228fef772de8506a7f3908ec7d32947ad9697318f19e51e3bf6ff94dec",
+    "plugins/omd-repository-tools/scripts/omd_repository_mcp.py": "dbac2c4009917573a745e93c79f1f121832cf47b1be62acb905c73d750aea2bc",
     "plugins/omd-repository-tools/skills/omd-code-health/SKILL.md": "5ab976e0216392225a27c915e24fa35ba374f9e59cd6349dc669fa96115ff389",
     "plugins/omd-review-policy/.codex-plugin/plugin.json": "221fe94f280ad078af6838b81debb8bad137b33143b30ebd83e651ded4697a14",
     "plugins/omd-review-policy/hooks/hooks.json": "695c491a68372be3a48bd44c4d3ef5e38bea5432cd16305b8a19936547f325bd",

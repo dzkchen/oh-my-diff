@@ -772,7 +772,7 @@ fn review_findings(
         .collect()
 }
 
-fn evidence_marker(
+pub(crate) fn evidence_marker(
     label: &str,
     candidate_sha256: &str,
     reference: &Value,
@@ -875,7 +875,7 @@ pub async fn review_current(
         if let Some(previous) = snapshot.cycles.last()
             && previous.candidate.sha256 != candidate_sha256
         {
-            let unresolved = runtime.ledger.blocking();
+            let unresolved = runtime.ledger.unresolved();
             if !unresolved.is_empty() {
                 let prior = runtime
                     .candidates
@@ -919,7 +919,7 @@ pub async fn review_current(
             .insert(candidate_sha256.clone(), candidate.clone());
         (
             runtime.ledger.snapshot().cycles.len() as u32 + 1,
-            runtime.ledger.blocking(),
+            runtime.ledger.unresolved(),
             repair_recorded,
         )
     };
@@ -1846,7 +1846,7 @@ pub async fn contribute(
         if let Some(previous) = snapshot.cycles.last()
             && previous.candidate.sha256 != candidate_hash
         {
-            let unresolved = runtime.ledger.blocking();
+            let unresolved = runtime.ledger.unresolved();
             if !unresolved.is_empty() {
                 let prior = runtime
                     .candidates
@@ -1887,7 +1887,7 @@ pub async fn contribute(
             .insert(candidate_hash.clone(), merged.clone());
         (
             runtime.ledger.snapshot().cycles.len() as u32 + 1,
-            runtime.ledger.blocking(),
+            runtime.ledger.unresolved(),
             repair_recorded,
         )
     };

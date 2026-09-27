@@ -1744,6 +1744,19 @@ pub fn install(
 }
 
 fn persist_atomic(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    persist(directory, name, bytes, true)
+}
+
+fn persist_view(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Result<(), String> {
+    persist(directory, name, bytes, false)
+}
+
+fn persist(
+    directory: &std::path::Path,
+    name: &str,
+    bytes: &[u8],
+    durable: bool,
+) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -1763,11 +1776,14 @@ fn persist_atomic(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Resu
         .map_err(|error| error.to_string())?;
     let result = file
         .write_all(bytes)
-        .and_then(|_| file.sync_all())
+        .and_then(|_| if durable { file.sync_all() } else { Ok(()) })
         .and_then(|_| std::fs::rename(&temporary, directory.join(name)));
     if let Err(error) = result {
         let _ = std::fs::remove_file(&temporary);
         return Err(error.to_string());
+    }
+    if !durable {
+        return Ok(());
     }
     std::fs::File::open(directory)
         .and_then(|directory| directory.sync_all())

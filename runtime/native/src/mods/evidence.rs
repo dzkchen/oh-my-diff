@@ -148,30 +148,10 @@ pub(super) async fn finish(
     .map_err(|e| e.to_string())?;
     packet = codex_omd::turn_evidence::combine(cursor.prefix.clone(), packet)
         .map_err(|error| error.to_string())?;
-    let config = thread.config().await;
-    let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
-    let approved = lead
-        .host
-        .manifest
-        .approved_untracked
-        .iter()
-        .cloned()
-        .collect();
-    let paths =
-        codex_omd::tracked_paths(&authority.repository, &approved).map_err(|e| e.to_string())?;
-    if paths
-        .iter()
-        .any(|path| !authority.readable(&authority.repository.join(path)))
-    {
-        return Err("evidence_source_permission_denied".into());
-    }
-    let snapshot = codex_omd::Snapshot::capture(
-        &authority.repository,
-        &paths,
-        lead.host.manifest.snapshot_bytes,
-    )
-    .map_err(|e| e.to_string())?;
-    let sha = snapshot.hash().map_err(|e| e.to_string())?;
+    let sha = crate::workspace_operations::workspace_snapshot(lead)
+        .await?
+        .hash()
+        .map_err(|e| e.to_string())?;
     packet["workspace_sha256"] = json!(sha);
     packet["thread_id"] = json!(lead.thread.to_string());
     packet["outcome"] = json!(outcome);
@@ -202,11 +182,11 @@ pub(super) async fn finish(
             .sha256;
         let data = codex_omd::scoped_data::ScopedDataHost::new(
             root.clone(),
-            authority.repository.clone(),
-            Some(config.codex_home.join("sessions").to_path_buf()),
+            lead.host.manifest.repository.clone(),
+            None,
+            None,
             owner.clone(),
             lead.thread.to_string(),
-            generation,
             source,
         )
         .map_err(|e| e.to_string())?;

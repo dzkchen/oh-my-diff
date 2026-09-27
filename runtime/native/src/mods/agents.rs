@@ -383,6 +383,23 @@ impl Agents {
         }
     }
 
+    pub(super) async fn cleanup_except_reviews(&self) {
+        let stale = {
+            let mut records = self.records.lock().await;
+            let keys = records
+                .iter()
+                .filter(|(_, agent)| agent.review.is_none())
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|key| records.remove(&key))
+                .collect::<Vec<_>>()
+        };
+        for mut agent in stale {
+            agent.shutdown().await;
+        }
+    }
+
     pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
         let owned = {
             let mut records = self.records.lock().await;
@@ -423,7 +440,7 @@ impl Agents {
         lead.host.task.check_active().map_err(|e| e.to_string())?;
         if request.operation == "review.request" {
             let (arguments, binding) =
-                review::prepare(lead, mod_id, generation, source_sha256, request.arguments).await?;
+                review::prepare(lead, mod_id, source_sha256, request.arguments)?;
             return self
                 .spawn(
                     services,
@@ -579,7 +596,12 @@ impl Agents {
             _ => return Err("unsupported_agent_workspace".into()),
         };
         if let Some(tools) = &request.tools {
-            if writable || tools.len() > 16 || tools.iter().any(|name| !presets::read_tool(name)) {
+            if writable
+                || tools.len() > 16
+                || tools
+                    .iter()
+                    .any(|name| !presets::read_only_sandbox_tool(name))
+            {
                 return Err("read_only_tool_surface_invalid".into());
             }
         }
@@ -779,24 +801,32 @@ impl Agents {
         if let Some(reference) = request.context_snapshot {
             let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
             let root = host.manifest.mods.clone().ok_or("mod_store_unavailable")?;
-            let mut data = codex_omd::scoped_data::ScopedDataHost::new(
-                root,
-                authority.repository.clone(),
-                None,
+            let (owner, thread, source) = (
                 mod_id.to_owned(),
                 lead.thread.to_string(),
-                generation,
                 source_sha256.to_owned(),
-            )
-            .map_err(|e| e.to_string())?;
-            let context = data
+            );
+            let task = host.task.clone();
+            let context = tokio::task::spawn_blocking(move || {
+                codex_omd::scoped_data::ScopedDataHost::new(
+                    root,
+                    authority.repository.clone(),
+                    None,
+                    None,
+                    owner,
+                    thread,
+                    source,
+                )?
                 .call(
                     "context.deliver",
                     json!({"snapshot":reference}),
                     &|path| authority.readable(path),
-                    || host.task.check_active().is_ok(),
+                    || task.check_active().is_ok(),
                 )
-                .map_err(|e| e.to_string())?;
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
             let text = serde_json::to_string(&context).map_err(|e| e.to_string())?;
             if text.len() > 16384 {
                 return Err("worker_context_snapshot_limit".into());

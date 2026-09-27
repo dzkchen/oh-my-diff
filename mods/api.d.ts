@@ -36,7 +36,7 @@ export interface ToolSpec {
 export interface VirtualReadRequest { uri: string; cursor?: string; expected_revision?: string; max_bytes?: number }
 export interface VirtualReadResponse { canonical_uri: string; canonical_url: string; identity: string; revision: string; text: string; anchors: string[]; cursor: string | null; truncated: boolean }
 export type ResourceRef = { reference: string; sha256: string }
-export type SessionSummary = { session_id: string; task_id: string; parent_id: string | null; timestamp: string; revision: string; history_mode: string; inherited_history: boolean; incomplete_tail: boolean; projection_truncated: boolean }
+export type SessionSummary = { session_id: string; task_id: string; parent_id: string | null; timestamp: string; revision: string; handle: string; history_mode: string; inherited_history: boolean; incomplete_tail: boolean }
 export type SessionRecord = { session_id: string; turn_id: string; item: number; role: 'user' | 'assistant'; text: string; truncated: boolean; redacted: boolean; timestamp: string | null; untrusted: true }
 export interface Context { thread_id: string; turn_id: string; checkpoint: Json }
 export interface ContextResult { text: string }
@@ -170,7 +170,7 @@ export interface EscalationRequest { failure_class: FailureClass; summary: strin
 export interface HostOperations {
   'evidence.read': { arguments: { reference: ResourceRef; cursor?: number; max_bytes?: number }; result: { reference: ResourceRef; text: string; cursor: number | null; bytes: number } };
   'sessions.list': { arguments: { since?: string; until?: string; cursor?: string; limit?: number }; result: { sessions: SessionSummary[]; cursor: string | null; revision: string; scan_truncated: boolean; unavailable: number; projection: string } };
-  'sessions.read': { arguments: { session_id: string; revision: string; cursor?: number; max_bytes?: number }; result: { session: SessionSummary; records: SessionRecord[]; cursor: number | null; bytes: number; projection: string } };
+  'sessions.read': { arguments: { session_id: string; revision: string; handle: string; cursor?: number; max_bytes?: number }; result: { session: SessionSummary; records: SessionRecord[]; cursor: number | null; bytes: number; projection: string; projection_truncated: boolean } };
   'knowledge.inspect': { arguments: { ids?: string[] }; result: Json };
   'knowledge.retain': { arguments: { expected_revision: number; id: string; label: string; source?: { path: string; start_line: number; end_line: number }; evidence?: ResourceRef }; result: Json };
   'knowledge.propose': { arguments: { expected_revision: number; id: string; text: string; evidence_ids: string[] }; result: Json };

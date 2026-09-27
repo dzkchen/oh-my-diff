@@ -162,20 +162,20 @@ class RepositoryToolsTests(unittest.TestCase):
             "graph_snapshot",
             {
                 "repository": str(self.repository),
-                "graph_path": ".omd/graph.json",
-                "html_path": ".omd/graph.html",
+                "graph_path": ".omd/graph/graph.json",
+                "html_path": ".omd/graph/graph.html",
                 "repository_id": "fixture/repository",
                 "revision": "fixture",
             },
         )
         self.assertFalse(snapshot.get("isError"), snapshot)
-        self.assertTrue((self.repository / ".omd/graph.json").is_file())
+        self.assertTrue((self.repository / ".omd/graph/graph.json").is_file())
         selected = self.tool(
             3,
             "graph_select",
             {
                 "repository": str(self.repository),
-                "graph_path": ".omd/graph.json",
+                "graph_path": ".omd/graph/graph.json",
                 "node_ids": ["src/lib.rs:1:item"],
             },
         )
@@ -188,13 +188,27 @@ class RepositoryToolsTests(unittest.TestCase):
             {
                 "repository": str(self.repository),
                 "graph_path": "../outside.json",
-                "html_path": ".omd/graph.html",
+                "html_path": ".omd/graph/graph.html",
                 "repository_id": "fixture/repository",
                 "revision": "fixture",
             },
         )
         self.assertTrue(escaped["isError"])
         self.assertIn("repository-relative", escaped["content"][0]["text"])
+        for index, target in enumerate(["src/lib.rs", ".omd/graph/.git/config"]):
+            outside = self.tool(
+                5 + index,
+                "graph_snapshot",
+                {
+                    "repository": str(self.repository),
+                    "graph_path": target,
+                    "html_path": ".omd/graph/graph.html",
+                    "repository_id": "fixture/repository",
+                    "revision": "fixture",
+                },
+            )
+            self.assertTrue(outside["isError"])
+            self.assertIn(".omd/graph/", outside["content"][0]["text"])
 
     def test_symlinked_artifact_and_stale_graph_are_refused(self):
         outside = self.root / "outside.json"
@@ -410,14 +424,14 @@ class RealRepositoryToolsTests(unittest.TestCase):
             "graph_snapshot",
             {
                 "repository": str(self.repository),
-                "graph_path": ".omd/graph.json",
-                "html_path": ".omd/graph.html",
+                "graph_path": ".omd/graph/graph.json",
+                "html_path": ".omd/graph/graph.html",
                 "repository_id": "fixture/repository",
                 "revision": "baseline",
             },
         )
         self.assertEqual(graph["status"], "created")
-        graph_value = json.loads((self.repository / ".omd/graph.json").read_text())
+        graph_value = json.loads((self.repository / ".omd/graph/graph.json").read_text())
         entry = next(
             node["id"] for node in graph_value["nodes"] if node["name"] == "entry"
         )
@@ -426,7 +440,7 @@ class RealRepositoryToolsTests(unittest.TestCase):
             "graph_select",
             {
                 "repository": str(self.repository),
-                "graph_path": ".omd/graph.json",
+                "graph_path": ".omd/graph/graph.json",
                 "node_ids": [entry],
             },
         )

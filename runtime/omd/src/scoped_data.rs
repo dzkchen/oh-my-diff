@@ -3,6 +3,7 @@ use crate::knowledge_access::KnowledgeAccess;
 use crate::resource_data::{ResourceBinding, ResourceStore, hash};
 use crate::sessions::SessionIndex;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -39,9 +40,9 @@ impl ScopedDataHost {
         root: PathBuf,
         repository: PathBuf,
         session_root: Option<PathBuf>,
+        session_database: Option<PathBuf>,
         owner: String,
         thread: String,
-        generation: u64,
         source_sha256: String,
     ) -> io::Result<Self> {
         if repository.canonicalize()? != repository
@@ -49,9 +50,6 @@ impl ScopedDataHost {
             || root.starts_with(&repository)
         {
             return Err(io::Error::other("data_scope_invalid"));
-        }
-        if generation == 0 {
-            return Err(io::Error::other("data_dispatch_generation_invalid"));
         }
         let configuration = crate::ModStore::open(root.clone())?.configuration()?;
         if !configuration
@@ -73,7 +71,7 @@ impl ScopedDataHost {
             root,
             repository,
             session_root,
-            session_database: None,
+            session_database,
             binding,
             confirmation: None,
             session_bytes: 0,
@@ -192,5 +190,60 @@ impl ScopedDataHost {
             root: &self.root,
             binding: &self.binding,
         }
+    }
+}
+
+pub struct ScopedDataHosts {
+    root: PathBuf,
+    repository: PathBuf,
+    session_root: Option<PathBuf>,
+    session_database: Option<PathBuf>,
+    thread: String,
+    hosts: BTreeMap<String, ScopedDataHost>,
+}
+
+impl ScopedDataHosts {
+    pub fn new(
+        root: PathBuf,
+        repository: PathBuf,
+        session_root: Option<PathBuf>,
+        session_database: Option<PathBuf>,
+        thread: String,
+    ) -> Self {
+        Self {
+            root,
+            repository,
+            session_root,
+            session_database,
+            thread,
+            hosts: BTreeMap::new(),
+        }
+    }
+
+    pub fn call(
+        &mut self,
+        owner: &str,
+        source_sha256: &str,
+        name: &str,
+        arguments: Value,
+        readable: &dyn Fn(&Path) -> bool,
+        active: impl Fn() -> bool,
+    ) -> io::Result<Value> {
+        let host = match self.hosts.entry(owner.to_owned()) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => entry.insert(ScopedDataHost::new(
+                self.root.clone(),
+                self.repository.clone(),
+                self.session_root.clone(),
+                self.session_database.clone(),
+                owner.to_owned(),
+                self.thread.clone(),
+                source_sha256.to_owned(),
+            )?),
+        };
+        if host.binding.source_sha256 != source_sha256 {
+            return Err(io::Error::other("data_selection_changed_or_revoked"));
+        }
+        host.call(name, arguments, readable, active)
     }
 }

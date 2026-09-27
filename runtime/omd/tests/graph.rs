@@ -105,11 +105,19 @@ fn one_versioned_graph_supports_both_views_and_evidence_selection() {
     graph.write_html(&html_path).unwrap();
     let loaded = CodeGraph::read(&graph_path).unwrap();
     assert_eq!(loaded, graph);
-    let html = fs::read_to_string(html_path).unwrap();
+    let html = fs::read_to_string(&html_path).unwrap();
     assert!(html.contains("graph-data"));
     assert!(html.contains("Copy selections"));
     assert!(html.contains(&graph.repository.source_digest));
     assert_eq!(graph.freshness(temp.path()).unwrap(), GraphFreshness::Fresh);
+    graph.write(&graph_path).unwrap();
+    graph.write_html(&html_path).unwrap();
+    let source = temp.path().join("src/lib.rs");
+    let original = fs::read(&source).unwrap();
+    assert!(graph.write(&source).is_err());
+    assert!(graph.write_html(&source).is_err());
+    assert_eq!(fs::read(&source).unwrap(), original);
+    assert!(graph.write(&html_path).is_err());
 }
 
 #[test]
