@@ -1,6 +1,8 @@
 mod agents;
+mod evidence;
 mod operations;
 mod policy;
+pub(crate) mod presets;
 pub(crate) mod services;
 mod tools;
 mod view;
@@ -37,6 +39,7 @@ fn thread_id(thread: &ExtensionData) -> Option<String> {
 struct TurnRecord {
     turn_id: String,
     error: Option<String>,
+    evidence: Option<evidence::Cursor>,
 }
 
 struct Mods {
@@ -99,13 +102,46 @@ pub(super) fn event_fragments(
     authority: &str,
     host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
 ) -> Vec<PromptFragment> {
+    event_fragments_scoped(
+        runtime,
+        event,
+        payload,
+        BTreeMap::new(),
+        active,
+        authority,
+        host,
+    )
+}
+
+fn event_fragments_scoped(
+    runtime: &mut ModHost,
+    event: &str,
+    payload: Value,
+    private: BTreeMap<String, Value>,
+    active: impl Fn() -> bool,
+    authority: &str,
+    host: impl FnMut(&str, codex_omd::ModHostCall) -> std::io::Result<Value>,
+) -> Vec<PromptFragment> {
     let mut fragments = Vec::new();
     let mut remaining_bytes = 6144;
     let assembler = (event == "context")
         .then(|| runtime.replacement_owner("context"))
         .flatten();
     let mut replaced: Vec<String> = Vec::new();
-    for (id, result) in runtime.event_guarded_with(event, payload, active, host) {
+    for (id, result) in runtime.event_scoped_with(
+        event,
+        |id| {
+            let mut value = payload.clone();
+            if let Some(fields) = private.get(id).and_then(Value::as_object) {
+                if let Some(object) = value.as_object_mut() {
+                    object.extend(fields.clone());
+                }
+            }
+            value
+        },
+        active,
+        host,
+    ) {
         match result {
             Ok(value) if event == "context" => {
                 if assembler.as_ref().is_some_and(|owner| *owner != id) {
@@ -237,12 +273,24 @@ impl Mods {
         payload: Value,
         lead: Option<Arc<Lead>>,
     ) -> Vec<PromptFragment> {
+        self.event_with_private(event, payload, lead, BTreeMap::new())
+            .await
+    }
+
+    async fn event_with_private(
+        &self,
+        event: &'static str,
+        payload: Value,
+        lead: Option<Arc<Lead>>,
+        private: BTreeMap<String, Value>,
+    ) -> Vec<PromptFragment> {
         let runtime = self.runtime.clone();
         let owner = self.owner.clone();
         let views = self.views.clone();
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let _cancellation = Cancellation(cancelled.clone());
         let (requests, mut receiver) = tokio::sync::mpsc::channel::<(
+            String,
             String,
             codex_omd::ModHostCall,
             std::sync::mpsc::SyncSender<std::io::Result<Value>>,
@@ -277,10 +325,16 @@ impl Mods {
                 return Vec::new();
             };
 
-            let mut fragments = event_fragments(
+            let sources: BTreeMap<_, _> = runtime
+                .owners()
+                .into_iter()
+                .map(|(id, owner)| (id, owner.sha256))
+                .collect();
+            let mut fragments = event_fragments_scoped(
                 &mut runtime,
                 event,
                 payload,
+                private,
                 || !cancelled.load(std::sync::atomic::Ordering::Acquire),
                 "native workflow enforcement",
                 |id, request| {
@@ -293,13 +347,26 @@ impl Mods {
                             &|| !cancelled.load(std::sync::atomic::Ordering::Acquire),
                         );
                     }
-                    if !((allow_provider
+                    if !((matches!(event, "turn_end" | "idle")
                         && matches!(
                             request.operation.as_str(),
-                            "providers.register" | "routes.list"
+                            "review.request"
+                                | "review.result"
+                                | "review.wait"
+                                | "review.submit"
+                                | "review.cancel"
                         ))
+                        || (allow_provider
+                            && matches!(
+                                request.operation.as_str(),
+                                "providers.register" | "routes.list" | "workers.presets"
+                            ))
                         || (allow_workspace && request.operation == "workspace.read")
-                        || (allow_process && request.operation.starts_with("process.")))
+                        || (allow_process && request.operation.starts_with("process."))
+                        || (matches!(
+                            event,
+                            "context" | "turn_start" | "turn_end" | "idle" | "stop"
+                        ) && codex_omd::scoped_data::operation(&request.operation)))
                     {
                         return Err(std::io::Error::other(
                             "lifecycle_host_operation_unavailable",
@@ -307,7 +374,12 @@ impl Mods {
                     }
                     let (sender, reply) = std::sync::mpsc::sync_channel(1);
                     requests
-                        .blocking_send((id.to_owned(), request, sender))
+                        .blocking_send((
+                            id.to_owned(),
+                            sources.get(id).cloned().unwrap_or_default(),
+                            request,
+                            sender,
+                        ))
                         .map_err(|_| std::io::Error::other("native_host_stopped"))?;
                     reply
                         .recv()
@@ -388,8 +460,22 @@ impl Mods {
             let _ = owner.persist_runtime_file("mod-status.json", &status);
             fragments
         });
-        while let Some((id, request, reply)) = receiver.recv().await {
+        while let Some((id, source, request, reply)) = receiver.recv().await {
             let value = match (&lead, generation) {
+                (Some(lead), Some(generation)) if matches!(request.operation.as_str(),"review.request"|"review.result"|"review.wait"|"review.submit"|"review.cancel") => self.agents.call(&self.services,lead,&id,generation,&source,request).await.map_err(std::io::Error::other),
+                (Some(lead), Some(generation)) if codex_omd::scoped_data::operation(&request.operation) => {
+                    async {
+                        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await.map_err(std::io::Error::other)?;
+                        let manager = lead.host.manager.upgrade().ok_or_else(||std::io::Error::other("thread_manager_unavailable"))?;
+                        let config = manager.get_thread(lead.thread).await.map_err(std::io::Error::other)?.config().await;
+                        let root = lead.host.manifest.mods.clone().ok_or_else(||std::io::Error::other("mod_store_unavailable"))?;
+                        let mut data = codex_omd::scoped_data::ScopedDataHost::new(root,authority.repository.clone(),Some(config.codex_home.join("sessions").to_path_buf()),id,lead.thread.to_string(),generation,source)?;
+                        data.session_database = Some(config.sqlite.state_db_path());
+                        let task = lead.host.task.clone();
+                        tokio::task::spawn_blocking(move || data.call(&request.operation,request.arguments,&|path|authority.readable(path),||task.check_active().is_ok())).await.map_err(std::io::Error::other)?
+                    }.await
+                },
+                (Some(lead), _) if request.operation == "workers.presets" => Ok(presets::list(&lead.host,&id)),
                 (Some(lead), _) if request.operation == "routes.list" => Ok(json!([LeadName::Sol, LeadName::Astra].map(|name| {
                     let route = lead.host.route(name);
                     json!({"name":name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning_effort})
@@ -434,6 +520,11 @@ impl Mods {
 
     async fn compaction(&self, event: &'static str, input: CompactionLifecycleInput<'_>) {
         if lead_thread(input.thread_store) {
+            if let Some(lead) = input.thread_store.get::<Lead>() {
+                if let Err(error) = evidence::compact(self, &lead, event == "compaction_start").await {
+                    self.views.diagnostic(&self.owner, "turn_evidence", Some(error));
+                }
+            }
             self.event(
                 event,
                 json!({"turn_id":input.turn_id,"trigger":input.trigger}),
@@ -488,7 +579,29 @@ impl TurnLifecycleContributor for Mods {
                         }
                         None => json!({"turn_id":turn.turn_id,"outcome":"completed"}),
                     };
-                    self.event("turn_end", payload).await;
+                    let lead = input.thread_store.get::<Lead>();
+                    let private = if let (Some(cursor), Some(lead)) = (&turn.evidence, &lead) {
+                        match evidence::finish(
+                            self,
+                            lead,
+                            cursor,
+                            &turn.turn_id,
+                            payload["outcome"].as_str().unwrap_or("error"),
+                        )
+                        .await
+                        {
+                            Ok(value) => value,
+                            Err(error) => {
+                                self.views
+                                    .diagnostic(&self.owner, "turn_evidence", Some(error));
+                                BTreeMap::new()
+                            }
+                        }
+                    } else {
+                        BTreeMap::new()
+                    };
+                    self.event_with_private("turn_end", payload, lead, private)
+                        .await;
                 }
             }
         })
@@ -587,10 +700,12 @@ impl TurnLifecycleContributor for Mods {
                 }
             })
             .await;
+            let evidence = evidence::begin(self, input.thread_store.get::<Lead>()).await;
             if let Ok(mut turn) = self.turn.lock() {
                 *turn = Some(TurnRecord {
                     turn_id: input.turn_id.to_owned(),
                     error: None,
+                    evidence,
                 });
             }
             self.event_with_lead(
@@ -612,10 +727,15 @@ impl ContextContributor for Mods {
             if !lead_thread(input.thread_store) {
                 return Vec::new();
             }
-            self.event(
+            if let (Some(lead), Some(profile)) = (input.thread_store.get::<Lead>(), input.permission_profile) {
+                let Ok(mut current) = lead.permission_profile.lock() else { return Vec::new(); };
+                *current = profile.clone();
+            }
+            self.event_with_lead(
                 "context",
                 json!({"thread_id": input.thread_id.to_string(), "turn_id": input.turn_id,
                 "checkpoint": self.owner.task.checkpoint().ok().flatten()}),
+                input.thread_store.get::<Lead>(),
             )
             .await
         })
@@ -804,6 +924,13 @@ impl ToolLifecycleContributor for Mods {
 
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
+            if lead_thread(input.thread_store)
+                && let Ok(mut turn) = self.turn.lock()
+                && let Some(cursor) = turn.as_mut().and_then(|turn| turn.evidence.as_mut())
+                && cursor.tools.len() < 128
+            {
+                cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":format!("{:?}",input.outcome)}));
+            }
             if input.thread_store.get::<Lead>().is_some() {
                 self.event(
                     "tool_result",

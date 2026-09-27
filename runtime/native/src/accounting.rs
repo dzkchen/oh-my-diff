@@ -48,6 +48,7 @@ pub struct Account {
     pub cost_capture: std::path::PathBuf,
     pub preset: String,
     pub authorized_presets: Vec<RequestPreset>,
+    pub worker_authorization: Option<(std::path::PathBuf, String)>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -134,6 +135,48 @@ pub fn authorized(
         && grant["repositories"]
             .as_array()
             .is_some_and(|v| v.iter().any(|r| r.as_str() == Some(repository)))
+}
+
+pub const SUBSCRIPTION_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+
+pub fn worker_authorized(
+    path: &std::path::Path,
+    expected: &str,
+    repository: &str,
+    provider: &str,
+    model: &str,
+    url: &str,
+    subscription: bool,
+) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() > 16384 {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    if crate::execution::hash(&bytes) != expected {
+        return false;
+    }
+    let Ok(grant) = serde_json::from_slice::<Value>(&bytes) else {
+        return false;
+    };
+    grant["schema"] == 1
+        && if subscription {
+            grant["included_subscription"] == true
+                && grant["paid_api_key"] != true
+                && provider == "openai"
+                && url == SUBSCRIPTION_RESPONSES_URL
+        } else {
+            grant["paid_api_key"] == true && grant["included_subscription"] != true
+        }
+        && grant["revocable"] == true
+        && grant["repository"] == repository
+        && grant["provider"] == provider
+        && grant["model"] == model
+        && grant["responses_url"] == url
 }
 
 pub fn denied(message: impl ToString) -> TransportError {
@@ -241,6 +284,25 @@ impl ResponseObserver for Accounts {
             .get(thread)
             .cloned()
             .ok_or_else(|| denied("unenrolled native thread"))?;
+        if let Some((path, sha)) = &account.worker_authorization {
+            if !worker_authorized(
+                path,
+                sha,
+                &account.repository_identity,
+                &account.provider,
+                &account.model,
+                &account.url,
+                account.rates.included_subscription,
+            ) {
+                return Err(denied("worker authorization revoked or changed"));
+            }
+            if account.rates.included_subscription
+                && (request.url != SUBSCRIPTION_RESPONSES_URL
+                    || !request.headers.contains_key("chatgpt-account-id"))
+            {
+                return Err(denied("worker requires the native subscription request"));
+            }
+        }
         if account.provider == "meta" {
             let allowed = authorized(
                 &account.authorization,
@@ -288,6 +350,13 @@ impl ResponseObserver for Accounts {
             return Err(denied("unapproved model or nonstreaming request"));
         }
         request.url = selected.url.clone();
+        if account.worker_authorization.is_some()
+            && (selected.model != account.model
+                || selected.accounting_provider != account.provider
+                || selected.url != account.url)
+        {
+            return Err(denied("worker preset route cannot change"));
+        }
         let mut account = account;
         account.model = selected.model.clone();
         account.provider = selected.accounting_provider.clone();

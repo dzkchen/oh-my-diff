@@ -30,16 +30,22 @@ def package_digest(base):
     return hashlib.sha256(payload).hexdigest()
 
 
+def validate_manifest(manifest, identifier):
+    supported = {row["version"] for row in json.loads((ROOT / "mods/compatibility.json").read_text())["apis"]}
+    if manifest["id"] != identifier or manifest["api"] not in supported:
+        raise ValueError(f"{identifier} has an incompatible package identity or mod API")
+
+
 def build():
     api = json.loads((ROOT / "mods/package.json").read_text())["version"]
     packages = {}
     for name in PACKAGES:
         base = ROOT / "mods/first-party" / name
         manifest = json.loads((base / "mod.json").read_text())
-        if manifest["id"] != base.name or manifest["api"] != api:
-            raise ValueError(f"{base.name} must declare its directory name and mod API {api}")
+        validate_manifest(manifest, base.name)
         packages[manifest["id"]] = {
             "version": manifest["version"],
+            "api": manifest["api"],
             "extension_type": "mod",
             "capabilities": manifest["capabilities"],
             "source": str(base.relative_to(ROOT)),

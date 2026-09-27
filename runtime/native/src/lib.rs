@@ -138,6 +138,8 @@ struct Manifest {
     #[serde(default)]
     mod_services: Vec<mods::services::Grant>,
     #[serde(default)]
+    mod_worker_presets: Vec<mods::presets::WorkerPreset>,
+    #[serde(default)]
     mod_secret_refs: BTreeMap<String, PathBuf>,
     #[serde(default)]
     mod_pi_user: Option<PathBuf>,
@@ -562,6 +564,7 @@ impl Drop for OperationGuard<'_> {
 
 #[derive(Clone)]
 struct Lead {
+    permission_profile: Arc<std::sync::Mutex<codex_protocol::models::PermissionProfile>>,
     thread: ThreadId,
     route: LeadName,
     owner: String,
@@ -1348,6 +1351,16 @@ pub fn install(
         &resolution.effective.contract.requirements,
     );
     let manifest = manifest;
+    if manifest.mod_worker_presets.len() > 16 {
+        return Err("worker_preset_limit".into());
+    }
+    let mut preset_names = std::collections::BTreeSet::new();
+    for preset in &manifest.mod_worker_presets {
+        preset.validate(&manifest)?;
+        if !preset_names.insert((&preset.mod_id, &preset.name)) {
+            return Err("duplicate_worker_preset".into());
+        }
+    }
     manifest.review.validate().map_err(|e| e.to_string())?;
     manifest.completion.validate().map_err(|e| e.to_string())?;
     if (!manifest.capabilities.guidelines && manifest.guideline_store.is_some())
@@ -1965,9 +1978,14 @@ impl Host {
                     "meta"
                 } else if self
                     .manifest
-                    .mod_services
+                    .mod_worker_presets
                     .iter()
-                    .any(|grant| grant.covers(route))
+                    .any(|preset| preset.covers(route))
+                    || self
+                        .manifest
+                        .mod_services
+                        .iter()
+                        .any(|grant| grant.covers(route))
                 {
                     route.provider.as_str()
                 } else {
@@ -1980,9 +1998,14 @@ impl Host {
                     "meta"
                 } else if self
                     .manifest
-                    .mod_services
+                    .mod_worker_presets
                     .iter()
-                    .any(|grant| grant.covers(route))
+                    .any(|preset| preset.covers(route))
+                    || self
+                        .manifest
+                        .mod_services
+                        .iter()
+                        .any(|grant| grant.covers(route))
                 {
                     route.provider.as_str()
                 } else {
@@ -1999,9 +2022,14 @@ impl Host {
                 "meta"
             } else if self
                 .manifest
-                .mod_services
+                .mod_worker_presets
                 .iter()
-                .any(|grant| grant.covers(route))
+                .any(|preset| preset.covers(route))
+                || self
+                    .manifest
+                    .mod_services
+                    .iter()
+                    .any(|grant| grant.covers(route))
             {
                 route.provider.as_str()
             } else {
@@ -2018,6 +2046,13 @@ impl Host {
             cost_capture: self.manifest.evidence.join("task-cost.json"),
             preset,
             authorized_presets,
+            worker_authorization: self
+                .manifest
+                .mod_worker_presets
+                .iter()
+                .find(|preset| preset.covers(route))
+                .and_then(|preset| preset.authorization())
+                .map(|grant| (grant.path.clone(), grant.sha256.clone())),
         };
         let mut accounts = self
             .accounts
@@ -2706,6 +2741,14 @@ impl ThreadLifecycleContributor<Config> for Extension {
             let Ok(thread) = ThreadId::from_string(input.thread_store.level_id()) else {
                 return;
             };
+            if self
+                .accounts
+                .0
+                .lock()
+                .map_or(true, |accounts| accounts.contains_key(&thread.to_string()))
+            {
+                return;
+            }
             let (owner, parent, depth) = match input.session_source {
                 SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
                     parent_thread_id,
@@ -2724,6 +2767,19 @@ impl ThreadLifecycleContributor<Config> for Extension {
                         parent.owner,
                         u32::try_from(*depth).unwrap_or(u32::MAX),
                     )
+                }
+                _ if input
+                    .thread_store
+                    .get::<codex_protocol::protocol::ThreadSource>()
+                    .is_some_and(|source| {
+                        !matches!(*source, codex_protocol::protocol::ThreadSource::User)
+                    })
+                    || matches!(
+                        input.session_source,
+                        SessionSource::Internal(_) | SessionSource::SubAgent(_)
+                    ) =>
+                {
+                    (format!("auxiliary:{thread}"), "lead".into(), 1)
                 }
                 _ => ("lead".into(), String::new(), 0),
             };
@@ -2749,6 +2805,9 @@ impl ThreadLifecycleContributor<Config> for Extension {
             }
             if self.enroll(thread, &owner, route).is_ok() {
                 input.thread_store.insert(Lead {
+                    permission_profile: Arc::new(std::sync::Mutex::new(
+                        input.config.permissions.effective_permission_profile(),
+                    )),
                     thread,
                     route: route_name,
                     owner,
@@ -2764,6 +2823,10 @@ impl ThreadLifecycleContributor<Config> for Extension {
     fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             if let Some(lead) = input.thread_store.get::<Lead>() {
+                if lead.owner.starts_with("auxiliary:") {
+                    let _ = self.task.finish_worker(&lead.owner);
+                    return;
+                }
                 match input.cause {
                     ThreadIdleCause::Completed
                         if self

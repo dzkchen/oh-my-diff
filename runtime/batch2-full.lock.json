@@ -1,0 +1,46 @@
+{
+  "mod_api": "0.1.0-experimental.9",
+  "packages": {
+    "omd_advisor": {
+      "api": "0.1.0-experimental.9",
+      "capabilities": [
+        "tools",
+        "lifecycle",
+        "state",
+        "turn_evidence",
+        "review",
+        "context",
+        "terminal"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "README.md": "dd30343aed361411821f0a66f45ad6b8d226c541b3a93ff62a06003f5a938586",
+        "index.ts": "e551a11ccf9e2767e0843dbf05ed6ef9739e8a48de6d82e63d13968697bac5b6",
+        "mod.json": "4d1c6b4fce23eb1cbb578d54e935f25dbf01f224c652d5f5fcc36436e1e4ac99"
+      },
+      "id": "omd_advisor",
+      "package_sha256": "e9f2d963bce58c9296d7d02458a6a9f89dd8427ac8738556593cdbae5ba0c086",
+      "source": "mods/first-party/omd_advisor",
+      "version": "0.1.0-preview.1"
+    },
+    "omd_research": {
+      "api": "0.1.0-experimental.9",
+      "capabilities": [
+        "tools",
+        "agents",
+        "workspace"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "README.md": "a782bc650d1ee3ffc39d0d25f2c98a6dc69f42bfdd364599bb4135342f976810",
+        "index.ts": "bf3ba04a7fb384fc11a55acbfa07550c83c36384bec92ab37161d68efbaae867",
+        "mod.json": "b931893090b1ce23c3fd2823cf80effdb90889e8a1db93e5cfb609134e42a404"
+      },
+      "id": "omd_research",
+      "package_sha256": "de55e1abb2b34f155dd91f979933f425bb471283949e14874cf35229ee24fea8",
+      "source": "mods/first-party/omd_research",
+      "version": "0.1.0-preview.1"
+    }
+  },
+  "schema": 1
+}

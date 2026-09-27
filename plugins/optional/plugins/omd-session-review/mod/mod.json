@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "id": "omd_session_review",
+  "version": "0.1.0-preview.1",
+  "api": "0.1.0-experimental.9",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": ["commands", "sessions_read"],
+  "compatibility": { "required_features": ["scoped_data_v1", "plugin_dispatch_v1"] }
+}

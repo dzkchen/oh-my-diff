@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "omd_research",
+  "version": "0.1.0-preview.1",
+  "api": "0.1.0-experimental.9",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": ["tools", "agents", "workspace"],
+  "compatibility": { "required_features": ["worker_presets_v1"] },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "enabled": { "type": "boolean", "default": false },
+      "preset": { "type": "string", "default": "research_luna" }
+    },
+    "additionalProperties": false
+  }
+}

@@ -11,7 +11,7 @@ const sdkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiVersion = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf8')).version;
 const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
-const publicExamples = ['routing', 'coordination', 'recovery', 'terminal', 'kernel', 'workflow'];
+const publicExamples = ['routing', 'coordination', 'recovery', 'terminal', 'kernel', 'workflow', 'workspace', 'virtual_reader', 'scoped_data', 'review_probe', 'service_request'];
 
 function fail(message) {
   throw new Error(message);
@@ -144,6 +144,11 @@ function scenarioFor(name) {
       steps: [{ type: 'invoke', mod: 'service_consumer', event: 'command', name: 'format', payload: '  typed service  ', expect: 'typed service' }],
     },
     'service-provider': { schema: 1, steps: [{ type: 'status' }] },
+    workspace: { schema: 1, steps: [{ type: 'invoke', mod: 'workspace_author', event: 'tool', name: 'move', payload: null, expect_error: 'invalid_move' }] },
+    virtual_reader: { schema: 1, steps: [{ type: 'invoke', mod: 'example_virtual_reader', event: 'virtual_read', name: 'fixture', payload: { uri: 'fixture://manual/intro' } }] },
+    scoped_data: { schema: 1, host_operations: { 'knowledge.inspect': [{ result: { revision: 0, facts: [], lessons: [] } }] }, steps: [{ type: 'invoke', mod: 'example_scoped_data', event: 'command', name: 'inspect', payload: null }] },
+    service_request: { schema: 1, host_operations: { 'sidecars.invoke': [{ result: { provider: 'example_echo', program_sha256: 'a'.repeat(64), source_hashes: {}, result: { echo: 'extension-owned request' }, untrusted: true } }] }, steps: [{ type: 'invoke', mod: 'example_service_request', event: 'tool', name: 'probe', payload: {} }] },
+    review_probe: { schema: 1, steps: [{ type: 'invoke', mod: 'example_review_probe', event: 'turn_end', name: '', payload: { turn_id: 'fixture', outcome: 'aborted' } }] },
   };
   return scenarios[name] || scenarios.minimal;
 }
@@ -155,7 +160,7 @@ function debugScenario(name) {
   if (name === 'minimal') {
     return { schema: 1, steps: [{ type: 'invoke', mod: name, event: 'command', name: 'hello', payload: 'fail', expect_error: 'INTENTIONAL_AUTHOR_FAILURE' }] };
   }
-  return { schema: 1, steps: [{ type: 'invoke', mod: name.replaceAll('-', '_'), event: 'command', name: '__intentional_missing__', payload: null, expect_error: 'unsupported_or_unregistered_operation' }] };
+  return { schema: 1, steps: [{ type: 'invoke', mod: ({ service_request: 'example_service_request', workspace: 'workspace_author', virtual_reader: 'example_virtual_reader', scoped_data: 'example_scoped_data', review_probe: 'example_review_probe' })[name] ?? name.replaceAll('-', '_'), event: 'command', name: '__intentional_missing__', payload: null, expect_error: 'unsupported_or_unregistered_operation' }] };
 }
 
 async function writeJson(path, value) {

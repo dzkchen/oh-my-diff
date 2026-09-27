@@ -2,7 +2,7 @@
 
 These are local Apple Silicon candidate profiles for the active Codex `0.157.0`
 patch. They are not a public release or a qualified default. Build the patched
-`codex`, `omd-mod`, `omd-graph`, `omd-health`, and `omd-lsp` executables from
+`codex`, `omd-mod`, `omd`, `omd-graph`, `omd-health`, and `omd-lsp` executables from
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
 SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
 and copy that archive to `/path/to/release/mod-api.tgz`. Use Node `24.18.0` from
@@ -10,7 +10,7 @@ and copy that archive to `/path/to/release/mod-api.tgz`. Use Node `24.18.0` from
 SDK/CLI, a local package-control command, and the `omd_logo` presentation mod. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
 The historical `0.155.1` candidate and private build remain frozen. Verify the
-current six package artifacts with
+current host and SDK artifacts with
 `python3 -m scripts.lean_release_lock --artifact-dir /path/to/release`.
 
 To create a checksum-bound prebuilt archive and install either profile locally:
@@ -60,10 +60,10 @@ mod, enabled, and launches patched Codex with `OMD_MODE=platform`.
 User-selected, trusted mods can run without the controlled OMD task policy.
 For `--profile full`, use the same command with
 `--omd-graph`, `--omd-health`, and `--omd-lsp` pointing to matching patched
-executables. Full installs ten current first-party candidate mods. A fresh
+executables. Full installs twelve current first-party candidate mods. A fresh
 Full store enables `omd_workspace`, `omd_logo`, and `omd_model_picker`.
 Claude, coordination, Git sidebar, LSP synchronization, recovery,
-selection-copy, and typed tasks are installed but disabled. Attaching an
+selection-copy, typed tasks, advisor review and lead-requested research are installed but disabled. Advisor every-turn selection and the separate research preset require their own explicit host policy and allowance; installation does not activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
 selections and adds newly bundled first-party packages disabled. Six curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
@@ -189,3 +189,5 @@ staged plugin marketplace to Codex, remove its plugins and run
 refuses to leave a marketplace pointing at a removed directory. Local candidate qualification
 and package limits are recorded in `.docs/ROADMAP.md` and
 `runtime/lean-release-selection.json`.
+
+Both profiles include the generic `omd` extension-command dispatcher. Its launcher selects the installation's mod store; only explicitly trusted and enabled command exports are available. For example, `omd COMMAND --repo /absolute/project` routes to the selected extension. No session-review or memory behavior is built into this binary. Package installation and activation remain separate. The current host exposes API `.9` and continues to run supported `.8` packages with their exact declared API and source hashes preserved in the package locks.

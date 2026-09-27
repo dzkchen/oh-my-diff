@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "as_of": "2026-09-25",
+  "as_of": "2026-09-26",
   "release_pin": {
     "codex": "0.157.0",
     "omd": "0.1.0",
-    "mod_api": "0.1.0-experimental.8",
+    "mod_api": "0.1.0-experimental.9",
     "node": "24.18.0"
   },
   "packages": [
@@ -208,17 +208,19 @@
     },
     {
       "id": "omd-review-policy",
-      "version": "0.1.0",
+      "version": "0.1.0+codex.20260927022545",
       "extension_type": "plugin",
-      "capability": "Selected review cadence and final review prompts",
+      "capability": "Selected review cadence and final review prompts; optional extension-owned completed-turn advisor guidance",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-review-policy",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; every-turn hook requires explicit controlled-manifest selection",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; every-turn hook requires explicit controlled-manifest selection; new optional .9 component paths tested locally at Codex 0.157.0, with explicit trust and grants",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
-        "plugin 0.1.0"
+        "plugin 0.1.0",
+        "Codex 0.157.0 with mod API 0.1.0-experimental.9",
+        "plugin 0.1.0+codex.20260927022545 local fixture only"
       ],
       "support_status": "reviewed_candidate",
       "review": "extensions/REVIEWS.md",
@@ -302,17 +304,19 @@
     },
     {
       "id": "omd-artifact-reading",
-      "version": "0.1.0",
+      "version": "0.1.0+codex.20260927032203",
       "extension_type": "plugin",
-      "capability": "Source-anchored URL, issue, PDF, and notebook reading",
+      "capability": "Source-anchored URL, issue, PDF, and notebook reading; optional plugin-owned GitHub virtual reader through the ordinary read interface",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; PDF rendering requires an installed Ghostscript",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; PDF rendering requires an installed Ghostscript; new optional .9 component paths tested locally at Codex 0.157.0, with explicit trust and grants",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
-        "plugin 0.1.0"
+        "plugin 0.1.0",
+        "Codex 0.157.0 with mod API 0.1.0-experimental.9",
+        "plugin 0.1.0+codex.20260927032203 local fixture only"
       ],
       "support_status": "reviewed_candidate",
       "review": "extensions/REVIEWS.md",

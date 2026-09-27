@@ -1,6 +1,6 @@
 {
   "name": "omd-review-policy",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260927022545",
   "description": "Explicit OMD review cadence skills and a manifest-gated every-turn lifecycle reminder.",
   "author": {
     "name": "Oh My Diff"

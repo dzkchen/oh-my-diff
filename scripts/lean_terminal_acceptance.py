@@ -118,7 +118,7 @@ def run(artifact_dir, upstream, output):
             command = ["python3", "-m", "scripts.lean_profiles", "--prefix", prefix,
                        "--bin-dir", bin_dir]
             install = ["install", "--profile", profile, "--binary", artifact_dir / "codex",
-                       "--manager", artifact_dir / "omd-mod", "--author-archive", artifact_dir / "mod-api.tgz",
+                       "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--author-archive", artifact_dir / "mod-api.tgz",
                        "--node", node, "--store", store]
             if profile == "full":
                 for name in TOOLS:

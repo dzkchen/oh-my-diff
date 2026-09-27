@@ -1,6 +1,6 @@
 {
   "name": "@oh-my-diff/mod-api",
-  "version": "0.1.0-experimental.8",
+  "version": "0.1.0-experimental.9",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@11.14.0",
@@ -30,7 +30,11 @@
     "EXTENSION_TYPES.md",
     "extension-types.json",
     "REFERENCE.md",
-    "README.md"
+    "README.md",
+    "examples/virtual_reader",
+    "examples/scoped_data",
+    "examples/review_probe",
+    "examples/service_request"
   ],
   "scripts": {
     "test": "node --test runner.test.mjs",

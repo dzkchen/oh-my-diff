@@ -118,11 +118,19 @@ impl Tool {
 
 impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
     fn tool_name(&self) -> ToolName {
-        ToolName::plain(format!("mod_{}_{}", self.id, self.definition.name))
+        ToolName::plain(if self.id.is_empty() {
+            self.definition.name.clone()
+        } else {
+            format!("mod_{}_{}", self.id, self.definition.name)
+        })
     }
     fn spec(&self) -> ToolSpec {
         ToolSpec::Function(ResponsesApiTool {
-            name: format!("mod_{}_{}", self.id, self.definition.name),
+            name: if self.id.is_empty() {
+                self.definition.name.clone()
+            } else {
+                format!("mod_{}_{}", self.id, self.definition.name)
+            },
             description: self.definition.description.clone(),
             strict: false,
             defer_loading: None,
@@ -153,12 +161,18 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
             let _cancellation = Cancellation(cancelled.clone());
             let lead = self.lead.clone();
             let label = self.label();
-            let tool_name = format!("mod_{}_{}", self.id, self.definition.name);
+            let tool_name = if self.id.is_empty() {
+                self.definition.name.clone()
+            } else {
+                format!("mod_{}_{}", self.id, self.definition.name)
+            };
             self.views.progress(&self.owner, &label, "Running");
             let views = self.views.clone();
             let progress_owner = self.owner.clone();
             let progress_label = label.clone();
             let (requests, mut receiver) = tokio::sync::mpsc::channel::<(
+                String,
+                String,
                 codex_omd::ModHostCall,
                 std::sync::mpsc::SyncSender<std::io::Result<Value>>,
             )>(1);
@@ -171,17 +185,26 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                     !cancelled.load(std::sync::atomic::Ordering::Acquire)
                         && owner.task.check_active().is_ok()
                 };
-                runtime.invoke_streaming(
+                let sources: BTreeMap<_, _> = runtime
+                    .owners()
+                    .into_iter()
+                    .map(|(id, owner)| (id, owner.sha256))
+                    .collect();
+                runtime.invoke_tool(
                     &id,
                     generation,
-                    "tool",
                     &name,
                     payload,
                     active,
-                    |request| {
+                    |caller, request| {
                         let (sender, reply) = std::sync::mpsc::sync_channel(1);
                         requests
-                            .blocking_send((request, sender))
+                            .blocking_send((
+                                caller.to_owned(),
+                                sources.get(caller).cloned().unwrap_or_default(),
+                                request,
+                                sender,
+                            ))
                             .map_err(|_| std::io::Error::other("native_host_stopped"))?;
                         loop {
                             if !active() {
@@ -198,7 +221,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                 )
             });
             let mut ordinal = 0u32;
-            while let Some((request, reply)) = receiver.recv().await {
+            while let Some((caller, source, request, reply)) = receiver.recv().await {
                 ordinal += 1;
                 let mut nested_call = call.clone();
                 nested_call.call_id =
@@ -209,8 +232,9 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                     &self.processes,
                     &self.pre_rename_runtime,
                     &lead,
-                    &self.id,
+                    &caller,
                     generation,
+                    &source,
                     &nested_call,
                     request,
                 )

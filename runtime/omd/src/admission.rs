@@ -204,6 +204,7 @@ pub struct Task {
     evidence: PathBuf,
     state: Mutex<State>,
     external_routes: Mutex<BTreeSet<(String, String)>>,
+    worker_routes: Mutex<BTreeMap<String, (String, String)>>,
 }
 
 fn denied(message: &str) -> io::Error {
@@ -294,6 +295,7 @@ impl Task {
                 calls: BTreeMap::new(),
             }),
             external_routes: Mutex::new(BTreeSet::new()),
+            worker_routes: Mutex::new(BTreeMap::new()),
         };
         let mut state = task
             .state
@@ -751,6 +753,7 @@ impl Task {
             evidence,
             state: Mutex::new(state),
             external_routes: Mutex::new(BTreeSet::new()),
+            worker_routes: Mutex::new(BTreeMap::new()),
         };
         task.rewrite_compact_checkpoint()?;
         let uncertain = task.uncertain_requests()?;
@@ -854,6 +857,10 @@ impl Task {
     }
 
     fn archive_worker(&self, state: &mut State, id: &str) -> io::Result<()> {
+        self.worker_routes
+            .lock()
+            .map_err(|_| denied("worker route lock poisoned"))?
+            .remove(id);
         let archived = ArchivedWorker::from_worker(
             id.to_owned(),
             state
@@ -1455,6 +1462,46 @@ impl Task {
         Ok(())
     }
 
+    pub fn authorize_worker_route(
+        &self,
+        owner: &str,
+        provider: &str,
+        model: &str,
+    ) -> io::Result<()> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if state.status != TaskStatus::Active
+            || self.expired()
+            || owner == "lead"
+            || !state
+                .workers
+                .get(owner)
+                .is_some_and(|worker| worker.status == WorkerStatus::Active)
+            || provider == "meta"
+            || provider.is_empty()
+            || provider.len() > 64
+            || !provider
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            || model.is_empty()
+            || model.len() > 128
+        {
+            return Err(denied("invalid worker provider route"));
+        }
+        let mut routes = self
+            .worker_routes
+            .lock()
+            .map_err(|_| denied("worker route lock poisoned"))?;
+        let route = (provider.to_owned(), model.to_owned());
+        if routes.get(owner).is_some_and(|current| current != &route) {
+            return Err(denied("worker provider route already fixed"));
+        }
+        routes.insert(owner.to_owned(), route);
+        Ok(())
+    }
+
     pub fn admit(
         &self,
         owner: &str,
@@ -1485,11 +1532,18 @@ impl Task {
             ("meta", "muse-spark-1.3-contributor") => {
                 state.contributor_authorized && owner != "lead"
             }
-            _ => self
-                .external_routes
-                .lock()
-                .map_err(|_| denied("external route lock poisoned"))?
-                .contains(&(provider.to_owned(), model.to_owned())),
+            _ => {
+                self.worker_routes
+                    .lock()
+                    .map_err(|_| denied("worker route lock poisoned"))?
+                    .get(owner)
+                    .is_some_and(|route| route == &(provider.to_owned(), model.to_owned()))
+                    || self
+                        .external_routes
+                        .lock()
+                        .map_err(|_| denied("external route lock poisoned"))?
+                        .contains(&(provider.to_owned(), model.to_owned()))
+            }
         };
         if !allowed {
             return Err(denied(

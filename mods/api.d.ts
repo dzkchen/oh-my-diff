@@ -1,5 +1,5 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services' | 'workspace' | 'process' | 'git';
+export type Capability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'state' | 'task' | 'agents' | 'review' | 'recovery' | 'execution' | 'interception' | 'routing' | 'terminal' | 'compaction' | 'providers' | 'sidecars' | 'pi_resources' | 'input' | 'workflow' | 'middleware' | 'services' | 'workspace' | 'process' | 'git' | 'turn_evidence' | 'virtual_reads' | 'sessions_read' | 'knowledge_read' | 'knowledge_write';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -33,6 +33,11 @@ export interface ToolSpec {
   parameters: { type: 'object'; properties: Record<string, Json>; required?: string[]; additionalProperties?: boolean };
   task_scoped?: boolean;
 }
+export interface VirtualReadRequest { uri: string; cursor?: string; expected_revision?: string; max_bytes?: number }
+export interface VirtualReadResponse { canonical_uri: string; canonical_url: string; identity: string; revision: string; text: string; anchors: string[]; cursor: string | null; truncated: boolean }
+export type ResourceRef = { reference: string; sha256: string }
+export type SessionSummary = { session_id: string; task_id: string; parent_id: string | null; timestamp: string; revision: string; history_mode: string; inherited_history: boolean; incomplete_tail: boolean; projection_truncated: boolean }
+export type SessionRecord = { session_id: string; turn_id: string; item: number; role: 'user' | 'assistant'; text: string; truncated: boolean; redacted: boolean; timestamp: string | null; untrusted: true }
 export interface Context { thread_id: string; turn_id: string; checkpoint: Json }
 export interface ContextResult { text: string }
 export interface Route { name: 'sol' | 'astra'; model: string; provider: string; reasoning: string }
@@ -162,11 +167,24 @@ export type RecoveryAction = 'opposite_lead' | 'pause';
 export interface ContributionRequest { brief?: string; selected_evidence?: string[]; outage_action?: RecoveryAction }
 export interface EscalationRequest { failure_class: FailureClass; summary: string; call_ids: string[]; advisory_route?: Extract<RecoveryAction, 'opposite_lead'> }
 export interface HostOperations {
+  'evidence.read': { arguments: { reference: ResourceRef; cursor?: number; max_bytes?: number }; result: { reference: ResourceRef; text: string; cursor: number | null; bytes: number } };
+  'sessions.list': { arguments: { since?: string; until?: string; cursor?: string; limit?: number }; result: { sessions: SessionSummary[]; cursor: string | null; revision: string; scan_truncated: boolean; unavailable: number; projection: string } };
+  'sessions.read': { arguments: { session_id: string; revision: string; cursor?: number; max_bytes?: number }; result: { session: SessionSummary; records: SessionRecord[]; cursor: number | null; bytes: number; projection: string } };
+  'knowledge.inspect': { arguments: { ids?: string[] }; result: Json };
+  'knowledge.retain': { arguments: { expected_revision: number; id: string; label: string; source?: { path: string; start_line: number; end_line: number }; evidence?: ResourceRef }; result: Json };
+  'knowledge.propose': { arguments: { expected_revision: number; id: string; text: string; evidence_ids: string[] }; result: Json };
+  'knowledge.approve': { arguments: { expected_revision: number; lesson_id: string }; result: Json };
+  'knowledge.remove': { arguments: { expected_revision: number; kind: 'evidence' | 'fact' | 'lesson'; id: string }; result: Json };
+  'knowledge.reset': { arguments: { expected_revision: number }; result: Json };
+  'knowledge.snapshot': { arguments: { mode: 'cold' | 'reuse'; ids: string[]; max_bytes?: number }; result: ResourceRef };
+  'context.freeze': { arguments: { mode: 'cold' | 'reuse'; ids: string[]; max_bytes?: number }; result: ResourceRef };
+  'context.deliver': { arguments: { snapshot: ResourceRef }; result: Json };
   'task.status': { arguments: null; result: Json };
   'routes.list': { arguments: null; result: Route[] };
   'checkpoint.read': { arguments: null; result: Json };
   'checkpoint.update': { arguments: CheckpointUpdate; result: Json };
-  'agents.spawn': { arguments: { role: string; route: string; prompt: string; workspace?: 'read_only' | 'isolated_worktree' }; result: Agent };
+  'workers.presets': { arguments: null; result: { name: string; model: string; provider: string; reasoning: string; tools: string[]; billing: 'explicit_paid_api_grant' | 'included_subscription'; available: boolean }[] };
+  'agents.spawn': { arguments: { role: string; route: string; prompt: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; context_snapshot?: ResourceRef }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
   'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
   'agents.result': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
@@ -181,6 +199,11 @@ export interface HostOperations {
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
+  'review.request': { arguments: { route: string; prompt: string; evidence: ResourceRef; cadence: 'every_turn' | 'stable_milestone' | 'risk_triggered'; stable: boolean; risk?: string; tools: string[] }; result: Agent };
+  'review.wait': { arguments: { handle: string }; result: AgentResult };
+  'review.result': { arguments: { handle: string }; result: AgentResult };
+  'review.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };
+  'review.submit': { arguments: { handle: string; result_sha256: string; findings: { fingerprint: string; severity: 'advice' | 'warning' | 'blocking'; summary: string; paths: string[] }[] }; result: Json };
   'review.run': { arguments: ReviewRequest; result: Json };
   'review.complete': { arguments: CompletionRequest; result: Json };
   'delegation.contribute': { arguments: ContributionRequest; result: Json };
@@ -190,6 +213,7 @@ export interface HostOperations {
   'pi.expand': { arguments: { name: string; args?: string }; result: { name: string; path: string; sha256: string; text: string } };
   'providers.unregister': { arguments: { id: string }; result: Json };
   'providers.register': { arguments: { id: string }; result: Json };
+  'sidecars.invoke': { arguments: { id: string; input: Json }; result: { provider: string; program_sha256: string; source_hashes: Record<string,string>; result: Json; untrusted: true } };
   'sidecars.start': { arguments: { id: string }; result: Json };
   'sidecars.status': { arguments: { id: string }; result: Json };
   'sidecars.stop': { arguments: { id: string }; result: Json };
@@ -224,10 +248,10 @@ export interface Events {
   workspace_write: { input: { repository: string; call_id: string; tool: string; outcome: string; changes: { path: string; before: string | null; after: string | null }[]; status: 'observed' | 'unavailable'; reason?: string | null }; output: void };
   workspace_pre_rename: { input: { repository: string; old: string; new: string; expected: Record<string, string | null> }; output: { status: 'ready'; expected: Record<string, string | null>; writes: Record<string, string> } | { status: 'fallback'; reason: string } | void };
   turn_start: { input: { turn_id: string }; output: void };
-  turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: string }; output: void };
+  turn_end: { input: { turn_id: string; outcome: 'completed' | 'aborted' | 'error'; reason?: string; error?: string; evidence?: ResourceRef }; output: void };
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
   compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
-  agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string }; output: void };
+  agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string; text?: string; sha256?: string }; output: void };
   workflow: { input: Json; output: void };
   model_request: { input: ModelRequestEvent; output: { preset: string } | null };
   response_stream: { input: ResponseStreamEvent; output: { text: string } | null };
@@ -238,7 +262,7 @@ export interface Events {
   host_operation: { input: { phase: 'before' | 'after'; caller: string; operation: keyof HostOperations; arguments?: Json; result?: Json; error?: string }; output: void };
 }
 export interface ModAPI {
-  readonly version: '0.1.0-experimental.8';
+  readonly version: '0.1.0-experimental.9';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: {
@@ -252,7 +276,8 @@ export interface ModAPI {
   contract(definition: WorkflowContract): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;
   tool(spec: ToolSpec, handler: (arguments_: Json) => Json | Promise<Json>): void;
-  command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string }): void;
+  virtualRead(definition: { scheme: string; version: string }, handler: (request: VirtualReadRequest) => VirtualReadResponse | Promise<VirtualReadResponse>): void;
+  command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string }): void;
   progress(text: string): void;
   readonly state: { get(): Json; set(value: Json): void };
   unsupported(operation: string): never;

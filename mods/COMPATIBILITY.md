@@ -1,6 +1,6 @@
 # Mod compatibility
 
-This is the supported compatibility contract as of September 25, 2026. The
+This is the supported compatibility contract as of September 26, 2026. The
 machine-readable source is [compatibility.json](compatibility.json), checked
 against the Rust host by `python3 scripts/mod_compatibility.py`.
 
@@ -13,9 +13,10 @@ against the Rust host by `python3 scripts/mod_compatibility.py`.
 | 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.6 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 | 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.7 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 | 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.8 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.157.0 | 0.1.0, experimental | 1 | 0.1.0-experimental.9 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 
-The current authoring API is `.8`. `.4` remains executable but is deprecated;
-`.5` through `.7` are older experimental APIs. `.7` adds bounded terminal components,
+The current authoring API is `.9`. `.4` remains executable but is deprecated;
+`.5` through `.8` are older experimental APIs. `.9` adds opt-in shared evidence/review, scoped data, virtual reads, service requests, constrained worker presets, and plugin CLI exports; each declares its required host features. `.7` adds bounded terminal components,
 render sites, and composable terminal observer patches. Older APIs keep their
 published exclusive-terminal behavior. `.8` adds task-scoped exposure of a mod's
 own optional tools at each sampling step; older packages retain their prior

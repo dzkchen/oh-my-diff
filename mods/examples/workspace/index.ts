@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../api.d.ts';
+import type { Json, ModAPI } from '@oh-my-diff/mod-api';
 
 type Move = { old_path: string; new_path: string; rewrites: Record<string, string> };
 

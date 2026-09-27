@@ -10,11 +10,15 @@ mod graph;
 mod guideline;
 mod health;
 mod knowledge;
+pub mod knowledge_access;
 mod lsp;
 mod mode;
 mod mods;
 mod reactive;
+pub mod resource_data;
 mod review;
+pub mod scoped_data;
+pub mod sessions;
 mod workspace;
 
 pub use admission::Admission;
@@ -287,3 +291,9 @@ pub use mods::mod_command_reference;
 pub use mods::mod_key_name;
 pub use mods::parse_command_args;
 pub use mods::substitute_args;
+
+pub mod turn_evidence;
+
+pub mod plugin_component;
+
+mod session_policy;

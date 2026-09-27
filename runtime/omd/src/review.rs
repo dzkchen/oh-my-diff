@@ -12,6 +12,8 @@ pub struct ReviewPolicy {
     #[serde(default)]
     pub every_turn_advice: bool,
     #[serde(default)]
+    pub extension_blocking: bool,
+    #[serde(default)]
     pub final_review: FinalReview,
     #[serde(default = "enabled")]
     pub milestone_review: bool,
@@ -26,6 +28,7 @@ impl Default for ReviewPolicy {
     fn default() -> Self {
         Self {
             every_turn_advice: false,
+            extension_blocking: false,
             final_review: FinalReview::Separate,
             milestone_review: true,
             max_cycles: 16,
@@ -133,6 +136,8 @@ pub struct ReviewFinding {
     pub summary: String,
     pub paths: Vec<String>,
     pub status: FindingStatus,
+    #[serde(default = "enabled")]
+    pub enforced: bool,
     pub introduced_candidate_sha256: String,
     pub last_seen_candidate_sha256: String,
     pub duplicate_observations: u32,
@@ -266,6 +271,13 @@ impl UnifiedReview {
             .collect()
     }
 
+    pub fn blocking(&self) -> Vec<ReviewFinding> {
+        self.unresolved()
+            .into_iter()
+            .filter(|finding| finding.enforced)
+            .collect()
+    }
+
     pub fn recorded_repair(
         &self,
         from_candidate_sha256: &str,
@@ -337,15 +349,27 @@ impl UnifiedReview {
     }
 
     pub fn submit(&mut self, submission: ReviewSubmission) -> io::Result<ReviewCycle> {
+        self.submit_with_severity_enforcement(submission, false)
+    }
+
+    pub fn submit_with_severity_enforcement(
+        &mut self,
+        submission: ReviewSubmission,
+        blocking_only: bool,
+    ) -> io::Result<ReviewCycle> {
         let mut staged = Self {
             snapshot: self.snapshot.clone(),
         };
-        let cycle = staged.submit_in_place(submission)?;
+        let cycle = staged.submit_in_place(submission, blocking_only)?;
         self.snapshot = staged.snapshot;
         Ok(cycle)
     }
 
-    fn submit_in_place(&mut self, submission: ReviewSubmission) -> io::Result<ReviewCycle> {
+    fn submit_in_place(
+        &mut self,
+        submission: ReviewSubmission,
+        blocking_only: bool,
+    ) -> io::Result<ReviewCycle> {
         if self.snapshot.cycles.len() >= self.snapshot.policy.max_cycles as usize {
             return Err(invalid("review cycle limit exhausted"));
         }
@@ -404,6 +428,7 @@ impl UnifiedReview {
             }) {
                 existing.status = FindingStatus::Open;
                 existing.last_seen_candidate_sha256 = submission.candidate.sha256.clone();
+                existing.enforced = !blocking_only || input.severity == ReviewSeverity::Blocking;
                 existing.severity = input.severity;
                 existing.summary = input.summary;
                 existing.paths = input.paths;
@@ -418,6 +443,7 @@ impl UnifiedReview {
                     summary: input.summary,
                     paths: input.paths,
                     status: FindingStatus::Open,
+                    enforced: !blocking_only || input.severity == ReviewSeverity::Blocking,
                     introduced_candidate_sha256: submission.candidate.sha256.clone(),
                     last_seen_candidate_sha256: submission.candidate.sha256.clone(),
                     duplicate_observations: 0,
@@ -430,7 +456,7 @@ impl UnifiedReview {
             return Err(invalid("open review finding limit exceeded"));
         }
         let final_approved =
-            submission.cadence == ReviewCadence::Final && self.unresolved().is_empty();
+            submission.cadence == ReviewCadence::Final && self.blocking().is_empty();
         let cycle = ReviewCycle {
             id: self.snapshot.cycles.len() as u32 + 1,
             cadence: submission.cadence,

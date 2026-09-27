@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.1.0-experimental.8` on OMD `0.1.0` and Codex `0.157.0`. The package's
+`0.1.0-experimental.9` on OMD `0.1.0` and Codex `0.157.0`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. A store also generates
 `active-host.d.ts` and `installed-contracts.d.ts`; those files identify the
 running host and the exact service contracts available to consumers.
@@ -307,3 +307,37 @@ Observers compose in that order; exclusive replacements, contract IDs, service
 providers, and namespaced tools fail closed when contested. Native permissions,
 credentials, accounting, cancellation, evidence, workflow enforcement, and
 provider authorization remain outside the mod API.
+
+
+## Shared data and review interfaces (.9)
+
+Feature scheduling, prompts, result interpretation, anchor resolution, resource grammar, curation, and reports belong to extension code. The host checks capabilities, provenance, scope, current permissions, cancellation, and allowance. All interfaces are opt-in; a loaded library is not an active extension.
+
+| Interface | Required capabilities/features | Authority and limits |
+| --- | --- | --- |
+| `turn_end.evidence`, `evidence.read` | `lifecycle`, `turn_evidence`; `turn_evidence_v1` | Full controlled-task host captures visible messages and tool references only for selected subscribers. No hidden reasoning or tool-output bodies. A descriptor binds extension, repository, thread, persisted selection revision, extension source hash, and digest; pages are 16 KiB, snapshots at most 256 KiB. Unavailable/reset history has no descriptor. Aborted turns never become completed evidence. |
+| `review.request/result/wait/submit/cancel` | `review`; `accounted_review_v1` | Extension supplies a prompt and interprets the returned text. Native workers retain admission/accounting, independent context, read-only permissions, cancellation and cleanup. Submission requires an owned completed worker, exact result hash and unchanged candidate. Advisory warnings are recorded without becoming completion blockers. Blocking requires the host's explicit `review.extension_blocking` setting; every-turn requests also require `review.every_turn_advice`. |
+| `workers.presets` and `agents.spawn.tools` | `agents`; `worker_presets_v1` | Lists only the caller's configured presets. Named presets require an exact repository/model/provider/URL grant, rechecked on every request. Subscription presets use `subscription_authorization`, `included_subscription: true` rates, zero monetary reservation and the native ChatGPT login at `https://chatgpt.com/backend-api/codex/responses` without provider overrides. Paid presets instead require `paid_authorization`, `paid_api_key: true` and nonzero reservation. Mixed declarations and route changes fail closed; model access still requires live qualification. Requests may only narrow a preset's read/search tool ceiling. No model names, paid fallback or research trigger are selected by the host. Unpriced hosted search/tool declarations remain denied. |
+| `api.virtualRead` and agent `read` | `virtual_reads`; `virtual_reads_v1` | One provider per nonreserved scheme. The common tool accepts exactly one local path or virtual URI and distinguishes its origin. Local reads preserve file permissions. Virtual responses preserve canonical identity, revision, cursor, anchors, provider/version and host text hash, and are marked untrusted. Continuation requires the expected revision. Text pages are at most 16 KiB. |
+| `sidecars.invoke` | `sidecars`; `service_requests_v1` | Full host only. Requires a host-approved request-capable executable, executable hash, pinned source hashes and separate network/credential grants. Sends bounded JSON to a sandboxed read-only executable; accepts bounded JSON output. Virtual handlers may call only this operation or `workspace.read`, never transactions or worker operations. The plugin owns transport-specific behavior. |
+| `knowledge.*`, `context.freeze/deliver` | `knowledge_read`/`knowledge_write`, plus `context` for context operations; `scoped_data_v1` | Host chooses the store and repository. Source facts retain exact anchors and refresh against current readable files. Proposed lessons require a native user action before reuse. Frozen selections never expand during a task; source changes, deletion/reset and revoked permissions invalidate delivery. Workers cannot load another thread's handles. |
+| `sessions.list/read` | `sessions_read`; `scoped_data_v1` | Exact repository and per-turn cwd, opt-out, visible local messages only. No raw file paths, hidden reasoning, tool bodies or inherited-history reconstruction. Listing is capped at 100 rows, each text page at 16 KiB; a scan is capped at 4,096 directory entries/128 MiB. Results disclose inaccessible files, truncation and incomplete final records. Pagination rejects revision drift and duplicate IDs. |
+| `api.command(..., {cli})`, `omd COMMAND --repo PATH` | `commands`; `plugin_dispatch_v1` | Generic dispatch to exactly one enabled extension export. The CLI has scoped data operations but no model or process authority. Plugin components reuse ordinary mod trust, grants, sandbox, versioning and disable/recovery. |
+
+Resources use private immutable files, digest verification, owner/thread/source/selection-revision checks, and a 64 MiB/1,024-entry store ceiling. Secret-pattern redaction is conservative; it is not a claim that arbitrary prose can be perfectly classified as secret. Known secret files remain subject to native read denial. A cancelled or denied call cannot be treated as evidence that an action completed.
+
+`workspace.read` and `workspace.transaction` remain the edit interface. Transactions verify all expected hashes/absence before writing and provide checked rollback; replacement is atomic per file, not process-crash atomic across files. Extensions must surface rollback conflicts and preserve ordinary diff review.
+
+## Plugin components and shell commands
+
+A plugin can contain `.codex-plugin/omd.json` with `{"schema":1,"component":"component","sha256":"<inspected package digest>"}`. The contained directory is an ordinary public-API package with `mod.json` and `index.ts`. Inspect it with `omd-mod plugin-component PLUGIN_ROOT`; the inspector rejects traversal, symlinks and digest changes. Trust and enable the inspected component through the existing mod-store workflow. The descriptor does not activate it.
+
+`omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. A standalone explicit memory approval/removal/reset additionally requires the host's current operation confirmation token using `--confirm`; extension callbacks cannot supply user-action authority. The host store must be protected from agent process writes. Ambiguous command ownership fails closed.
+
+Independent examples live in [`examples/virtual_reader`](examples/virtual_reader), [`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the existing [`examples/workspace`](examples/workspace). Their fixture tests demonstrate shared interfaces; they are not production advisor, GitHub, memory, edit-anchor or report implementations, and they do not establish live model usefulness or release qualification.
+
+Completed-turn packets retain bounded original visible records across a host-observed compaction, tagging each segment's records with its history revision. Compaction summaries do not replace those records. An unobserved history reset or interrupted compaction still rejects evidence explicitly. The extension decides how to select and summarize a truncated packet.
+
+Live session reads use the runtime's configured state database, including a separate SQLite home. Standalone commands resolve the selected user configuration/profile and `CODEX_SQLITE_HOME`; `--sqlite-home` explicitly selects the state directory. If a repository or system configuration redirects SQLite, standalone dispatch requires that explicit directory rather than guessing. Relative SQLite directories are rejected. The pinned reader consults `state_5.sqlite` read-only before and after a read, and does not modify transcripts or opt-out state.
+
+Granted request helpers use the host's bounded request supervisor. It captures a completed helper result before returning it, then terminates the process group; cancellation, deadline and loss of the host also terminate the group. Existing long-running service supervision remains separate. The helper, supplied by the extension, owns request parsing, remote protocols and content selection.

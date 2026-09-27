@@ -19,20 +19,22 @@ try:
     from scripts import typed_tasks_lock
     from scripts import lsp_sync_lock
     from scripts import terminal_mods_lock
+    from scripts import batch2_lock
 except ModuleNotFoundError:
     import private_lean_v1 as private
     import claude_lock
     import typed_tasks_lock
     import lsp_sync_lock
     import terminal_mods_lock
+    import batch2_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
 DEFAULT_ACTIVE = ("omd_logo", "omd_model_picker", "omd_workspace")
-PACKAGES = ("omd_claude_cli", "omd_coordination", "omd_git", "omd_logo", "omd_lsp_sync", "omd_model_picker",
-            "omd_recovery", "omd_selection_copy", "omd_typed_tasks", "omd_workspace")
+PACKAGES = ("omd_advisor", "omd_claude_cli", "omd_coordination", "omd_git", "omd_logo", "omd_lsp_sync", "omd_model_picker",
+            "omd_recovery", "omd_research", "omd_selection_copy", "omd_typed_tasks", "omd_workspace")
 PLATFORM_PACKAGES = ("omd_logo",)
 TOOL_NAMES = ("omd-graph", "omd-health", "omd-lsp")
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/private_lean_v1.py",
@@ -41,6 +43,7 @@ MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/private_lean_v1.py",
                     "scripts/typed_tasks_lock.py", "runtime/typed-tasks-full.lock.json",
                     "scripts/lsp_sync_lock.py", "runtime/lsp-sync-full.lock.json",
                     "scripts/terminal_mods_lock.py", "runtime/terminal-mods-full.lock.json",
+                    "scripts/batch2_lock.py", "runtime/batch2-full.lock.json",
                     "scripts/preview_lock.py", "scripts/browser_bundle.py",
                     "runtime/preview-v1.lock.json", "LEAN_PROFILES.md")
 
@@ -57,10 +60,11 @@ def package_sources(preview):
     typed = typed_tasks_lock.load()
     lsp = lsp_sync_lock.load()
     terminal = terminal_mods_lock.load()
-    if any(package.get('mod_api') != preview['mod_api'] for package in (claude, typed, lsp, terminal)):
+    batch2 = batch2_lock.load()
+    if any(package.get('mod_api') != preview['mod_api'] for package in (claude, typed, lsp, terminal, batch2)):
         raise ValueError('Full mod API disagrees with pinned preview')
     return {**preview['packages'], claude['package']['id']: claude['package'], typed['package']['id']: typed['package'],
-            lsp['package']['id']: lsp['package'], **terminal['packages']}
+            lsp['package']['id']: lsp['package'], **terminal['packages'], **batch2['packages']}
 
 
 def profile_packages(profile):
@@ -299,6 +303,7 @@ def install(args):
         raise ValueError("this candidate installer supports Apple Silicon macOS")
     if (prefix.exists() or (bin_dir / "codex").exists() or (bin_dir / "codex").is_symlink()
             or (bin_dir / "omd-mod-author").exists() or (bin_dir / "omd-mod-author").is_symlink()
+            or (bin_dir / "omd").exists() or (bin_dir / "omd").is_symlink()
             or (bin_dir / "omd-package").exists() or (bin_dir / "omd-package").is_symlink()):
         raise ValueError("managed prefix or launcher already exists")
     if args.profile == "full":
@@ -323,6 +328,8 @@ def install(args):
         raise ValueError('LSP synchronization Full lock differs from pinned sources')
     if terminal_mods_lock.load() != terminal_mods_lock.build():
         raise ValueError('terminal mod Full lock differs from pinned sources')
+    if batch2_lock.load() != batch2_lock.build():
+        raise ValueError('Batch 2 Full lock differs from pinned sources')
     packages = package_sources(locked)
     candidate = candidate_lock(upstream_lock, patch_lock, locked)
     if tuple(sorted(packages)) != PACKAGES:
@@ -393,16 +400,16 @@ def install(args):
         installed = {}
         plugin_bundle = None
         tools = {}
+        for name in ("omd",) + (TOOL_NAMES if args.profile == "full" else ()):
+            source = private.resolved(getattr(args, name.replace("-", "_")))
+            if not source.is_file() or not os.access(source, os.X_OK):
+                raise ValueError(f"optional tool binary is unavailable: {name}")
+            if private.digest(source) != candidate["artifacts"][name]["sha256"]:
+                raise ValueError(f"optional tool differs from frozen lean candidate: {name}")
+            target = artifacts / name
+            shutil.copy2(source, target)
+            tools[name] = {"installed_path": str(target), "sha256": private.digest(target)}
         if args.profile == "full":
-            for name in TOOL_NAMES:
-                source = private.resolved(getattr(args, name.replace("-", "_")))
-                if not source.is_file() or not os.access(source, os.X_OK):
-                    raise ValueError(f"optional tool binary is unavailable: {name}")
-                if private.digest(source) != candidate["artifacts"][name]["sha256"]:
-                    raise ValueError(f"optional tool differs from frozen lean candidate: {name}")
-                target = artifacts / name
-                shutil.copy2(source, target)
-                tools[name] = {"installed_path": str(target), "sha256": private.digest(target)}
             plugin_bundle = copy_curated_plugins(prefix / "bundles/oh-my-diff")
         sources = store / "sources"
         sources.mkdir(exist_ok=True)
@@ -464,8 +471,10 @@ def install(args):
         record["management"]["launcher_sha256"] = private.digest(control_launcher)
         for name, details in tools.items():
             tool_launcher = bin_dir / name
-            private.atomic_text(tool_launcher,
-                                private.tool_wrapper_text(details["installed_path"]), 0o755)
+            launcher_text = private.tool_wrapper_text(details["installed_path"])
+            if name == "omd":
+                launcher_text = f"#!/bin/sh\nexport OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
+            private.atomic_text(tool_launcher, launcher_text, 0o755)
             made_launchers.append(tool_launcher)
             details["launcher_sha256"] = private.digest(tool_launcher)
         write(prefix, record)
@@ -531,6 +540,7 @@ def main():
     install_parser.add_argument("--profile", choices=("platform", "full"), required=True)
     install_parser.add_argument("--binary", type=Path, required=True)
     install_parser.add_argument("--manager", type=Path, required=True)
+    install_parser.add_argument("--omd", type=Path, required=True)
     install_parser.add_argument("--author-archive", type=Path, required=True)
     install_parser.add_argument("--node", type=Path, required=True)
     install_parser.add_argument("--store", type=Path, required=True)

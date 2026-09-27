@@ -58,12 +58,13 @@ def run(artifact_dir, upstream, output):
 
         platform_store = base / "platform-store"
         platform = command("platform", "install", "--profile", "platform", "--binary", artifact_dir / "codex",
-                           "--manager", artifact_dir / "omd-mod", "--author-archive", artifact_dir / "mod-api.tgz",
+                           "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--author-archive", artifact_dir / "mod-api.tgz",
                            "--node", node, "--store", platform_store)
         assert platform["host_mode"] == "platform"
         assert [item["id"] for item in platform["packages"] if item["loaded_by_profile"]] == ["omd_logo"]
-        assert platform["installed_tools"] == [] and platform["plugin_bundle"] is None
+        assert platform["installed_tools"] == ["omd"] and platform["plugin_bundle"] is None
         assert call([base / "platform-bin/omd-package", "status"], env)["profile"] == "platform"
+        assert "omd COMMAND" in call([base / "platform-bin/omd", "--help"], env)["usage"]
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
         version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
         assert call([base / "platform-bin/codex", "--version"], env, False) == f"codex-cli {version}"
@@ -114,7 +115,7 @@ def run(artifact_dir, upstream, output):
 
         full_store = base / "full-store"
         install = ["install", "--profile", "full", "--binary", artifact_dir / "codex",
-                   "--manager", artifact_dir / "omd-mod", "--author-archive", artifact_dir / "mod-api.tgz",
+                   "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--author-archive", artifact_dir / "mod-api.tgz",
                    "--node", node, "--store", full_store]
         for name in TOOLS:
             install += [f"--{name}", artifact_dir / name]
@@ -124,7 +125,7 @@ def run(artifact_dir, upstream, output):
         assert active == ["omd_logo", "omd_model_picker", "omd_workspace"]
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
                    for item in full["packages"])
-        assert set(full["installed_tools"]) == set(TOOLS)
+        assert set(full["installed_tools"]) == {"omd", *TOOLS}
         assert "export OMD_INSTALL_PROFILE=full" in (base / "full-bin/codex").read_text()
         for name in TOOLS:
             probe = subprocess.run([base / "full-bin" / name, "--help"], cwd=ROOT, env=env,
@@ -222,7 +223,7 @@ def run(artifact_dir, upstream, output):
         assert {str(path.relative_to(home)): private.digest(path)
                 for path in (sentinel, auth, session)} == shared_hashes
     result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
-              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in ("codex", "omd-mod", *TOOLS, "mod-api.tgz")},
+              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in ("codex", "omd-mod", "omd", *TOOLS, "mod-api.tgz")},
               "elapsed_seconds": time.monotonic() - started, "checks": observations,
               "scope": "isolated local profile, package and author operations; no provider request or independent author"}
     output.parent.mkdir(parents=True, exist_ok=True)

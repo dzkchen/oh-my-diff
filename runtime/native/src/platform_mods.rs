@@ -27,6 +27,13 @@ struct PlatformMods {
 
 struct PlatformPermission(PermissionProfile);
 struct PlatformProcesses(Arc<crate::managed_process::ManagedProcesses>);
+struct PlatformSessionRoot(PathBuf, PathBuf);
+#[derive(Clone)]
+struct PlatformDataScope {
+    thread: String,
+    sessions: PathBuf,
+    database: PathBuf,
+}
 
 struct TurnRecord {
     id: String,
@@ -42,6 +49,8 @@ struct PlatformTool {
     generation: u64,
     definition: ModTool,
     parameters: JsonSchema,
+    root: PathBuf,
+    data_scope: Option<Arc<PlatformDataScope>>,
 }
 
 struct Cancellation(Arc<AtomicBool>);
@@ -106,6 +115,18 @@ impl PlatformMods {
         profile: Option<PermissionProfile>,
         processes: Option<Arc<crate::managed_process::ManagedProcesses>>,
     ) -> Vec<PromptFragment> {
+        self.event_with_data(name, payload, profile, processes, None)
+            .await
+    }
+
+    async fn event_with_data(
+        &self,
+        name: &'static str,
+        payload: Value,
+        profile: Option<PermissionProfile>,
+        processes: Option<Arc<crate::managed_process::ManagedProcesses>>,
+        data_scope: Option<PlatformDataScope>,
+    ) -> Vec<PromptFragment> {
         let runtime = self.runtime.clone();
         let root = self.root.clone();
         let repository = self.repository.clone();
@@ -121,6 +142,11 @@ impl PlatformMods {
             if let Some(processes) = &processes {
                 processes.cleanup_stale(generation);
             }
+            let sources: BTreeMap<_, _> = runtime
+                .owners()
+                .into_iter()
+                .map(|(id, owner)| (id, owner.sha256))
+                .collect();
             let fragments = mods::event_fragments(
                 &mut runtime,
                 name,
@@ -128,6 +154,39 @@ impl PlatformMods {
                 || !cancelled.load(Ordering::Acquire),
                 "native permissions",
                 |id, request| {
+                    if codex_omd::scoped_data::operation(&request.operation) {
+                        let scope = data_scope.as_ref().ok_or_else(|| {
+                            std::io::Error::other("thread_data_scope_unavailable")
+                        })?;
+                        let profile = profile.as_ref().ok_or_else(|| {
+                            std::io::Error::other("platform_permission_profile_unavailable")
+                        })?;
+                        let authority =
+                            crate::workspace_operations::WorkspaceAuthority::for_platform(
+                                &repository,
+                                profile.clone(),
+                            )
+                            .map_err(std::io::Error::other)?;
+                        let mut data = codex_omd::scoped_data::ScopedDataHost::new(
+                            root.clone(),
+                            repository.clone(),
+                            Some(scope.sessions.clone()),
+                            id.to_owned(),
+                            scope.thread.clone(),
+                            generation,
+                            sources
+                                .get(id)
+                                .cloned()
+                                .ok_or_else(|| std::io::Error::other("data_owner_missing"))?,
+                        )?;
+                        data.session_database = Some(scope.database.clone());
+                        return data.call(
+                            &request.operation,
+                            request.arguments,
+                            &|path| authority.readable(path),
+                            || !cancelled.load(Ordering::Acquire),
+                        );
+                    }
                     if request.operation.starts_with("git.") {
                         return mods::lifecycle_git(
                             matches!(
@@ -266,13 +325,28 @@ impl ContextContributor for PlatformMods {
         &'a self,
         input: TurnContextContributionInput<'a>,
     ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
-        Box::pin(self.event(
-            "context",
-            json!({
-                "thread_id":input.thread_id.to_string(), "turn_id":input.turn_id,
-                "checkpoint":Value::Null,
-            }),
-        ))
+        Box::pin(async move {
+            if let Some(profile) = input.permission_profile {
+                input
+                    .thread_store
+                    .insert(PlatformPermission(profile.clone()));
+            }
+            let scope =
+                input
+                    .thread_store
+                    .get::<PlatformSessionRoot>()
+                    .map(|home| PlatformDataScope {
+                        thread: input.thread_id.to_string(),
+                        sessions: home.0.clone(),
+                        database: home.1.clone(),
+                    });
+            if let Some(scope) = &scope {
+                input.thread_store.insert(scope.clone());
+            }
+            self.event_with_data("context",json!({"thread_id":input.thread_id.to_string(),"turn_id":input.turn_id,"checkpoint":Value::Null}),
+                input.thread_store.get::<PlatformPermission>().map(|value|value.0.clone()),
+                input.thread_store.get::<PlatformProcesses>().map(|value|value.0.clone()),scope).await
+        })
     }
 }
 
@@ -283,6 +357,10 @@ impl ThreadLifecycleContributor<Config> for PlatformMods {
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             let profile = input.config.permissions.effective_permission_profile();
+            input.thread_store.insert(PlatformSessionRoot(
+                input.config.codex_home.join("sessions").to_path_buf(),
+                input.config.sqlite.state_db_path(),
+            ));
             input
                 .thread_store
                 .insert(PlatformPermission(profile.clone()));
@@ -301,7 +379,7 @@ impl ThreadLifecycleContributor<Config> for PlatformMods {
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             self.event("session", json!({"phase":"resume"})).await;
-            self.event_with_profile(
+            self.event_with_data(
                 "resume",
                 Value::Null,
                 input
@@ -312,13 +390,14 @@ impl ThreadLifecycleContributor<Config> for PlatformMods {
                     .thread_store
                     .get::<PlatformProcesses>()
                     .map(|value| value.0.clone()),
+                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
             )
             .await;
         })
     }
     fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            self.event_with_profile(
+            self.event_with_data(
                 "idle",
                 json!({"cause":format!("{:?}", input.cause)}),
                 input
@@ -329,13 +408,14 @@ impl ThreadLifecycleContributor<Config> for PlatformMods {
                     .thread_store
                     .get::<PlatformProcesses>()
                     .map(|value| value.0.clone()),
+                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
             )
             .await;
         })
     }
     fn on_thread_stop<'a>(&'a self, input: ThreadStopInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            self.event_with_profile(
+            self.event_with_data(
                 "stop",
                 Value::Null,
                 input
@@ -346,6 +426,7 @@ impl ThreadLifecycleContributor<Config> for PlatformMods {
                     .thread_store
                     .get::<PlatformProcesses>()
                     .map(|value| value.0.clone()),
+                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
             )
             .await;
             if let Some(processes) = input.thread_store.get::<PlatformProcesses>() {
@@ -461,7 +542,7 @@ impl codex_extension_api::TurnLifecycleContributor for PlatformMods {
                     error: None,
                 });
             }
-            self.event_with_profile(
+            self.event_with_data(
                 "turn_start",
                 json!({"turn_id":input.turn_id}),
                 input
@@ -472,13 +553,14 @@ impl codex_extension_api::TurnLifecycleContributor for PlatformMods {
                     .thread_store
                     .get::<PlatformProcesses>()
                     .map(|value| value.0.clone()),
+                input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
             )
             .await;
         })
     }
     fn on_turn_stop<'a>(
         &'a self,
-        _: codex_extension_api::TurnStopInput<'a>,
+        input: codex_extension_api::TurnStopInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
             if let Ok(mut before) = self.workspace_before.lock() {
@@ -493,7 +575,10 @@ impl codex_extension_api::TurnLifecycleContributor for PlatformMods {
                 Some(TurnRecord { id, error: None }) => json!({"turn_id":id,"outcome":"completed"}),
                 None => json!({"outcome":"completed"}),
             };
-            self.event("turn_end", payload).await;
+            self.event_with_data("turn_end", payload,
+                input.thread_store.get::<PlatformPermission>().map(|value|value.0.clone()),
+                input.thread_store.get::<PlatformProcesses>().map(|value|value.0.clone()),
+                input.thread_store.get::<PlatformDataScope>().map(|value|(*value).clone())).await;
         })
     }
 }
@@ -590,7 +675,7 @@ impl ToolLifecycleContributor for PlatformMods {
                     (status, changes, reason)
                 };
                 if status == "unavailable" || !changes.is_empty() {
-                    self.event_with_profile(
+                    self.event_with_data(
                         "workspace_write",
                         json!({
                             "repository":self.repository,
@@ -609,6 +694,7 @@ impl ToolLifecycleContributor for PlatformMods {
                             .thread_store
                             .get::<PlatformProcesses>()
                             .map(|value| value.0.clone()),
+                        input.thread_store.get::<PlatformDataScope>().map(|value| (*value).clone()),
                     )
                     .await;
                 }
@@ -629,7 +715,11 @@ impl ToolContributor for PlatformMods {
         let Some(processes) = thread_store.get::<PlatformProcesses>() else {
             return Vec::new();
         };
-        self.tool_executors(runtime.tools(), processes.0.clone())
+        self.tool_executors(
+            runtime.tools(),
+            processes.0.clone(),
+            thread_store.get::<PlatformDataScope>(),
+        )
     }
     fn tools_for_step(
         &self,
@@ -644,7 +734,11 @@ impl ToolContributor for PlatformMods {
         let Some(processes) = thread_store.get::<PlatformProcesses>() else {
             return Vec::new();
         };
-        self.tool_executors(tools, processes.0.clone())
+        self.tool_executors(
+            tools,
+            processes.0.clone(),
+            thread_store.get::<PlatformDataScope>(),
+        )
     }
 }
 
@@ -653,6 +747,7 @@ impl PlatformMods {
         &self,
         tools: Vec<(String, u64, ModTool)>,
         processes: Arc<crate::managed_process::ManagedProcesses>,
+        data_scope: Option<Arc<PlatformDataScope>>,
     ) -> Vec<Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>> {
         tools
             .into_iter()
@@ -668,6 +763,8 @@ impl PlatformMods {
                     generation,
                     definition,
                     parameters,
+                    root: self.root.clone(),
+                    data_scope: data_scope.clone(),
                 })
                     as Arc<dyn for<'call> ToolExecutor<ToolCall<'call>>>)
             })
@@ -677,11 +774,19 @@ impl PlatformMods {
 
 impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
     fn tool_name(&self) -> ToolName {
-        ToolName::plain(format!("mod_{}_{}", self.id, self.definition.name))
+        ToolName::plain(if self.id.is_empty() {
+            self.definition.name.clone()
+        } else {
+            format!("mod_{}_{}", self.id, self.definition.name)
+        })
     }
     fn spec(&self) -> ToolSpec {
         ToolSpec::Function(ResponsesApiTool {
-            name: format!("mod_{}_{}", self.id, self.definition.name),
+            name: if self.id.is_empty() {
+                self.definition.name.clone()
+            } else {
+                format!("mod_{}_{}", self.id, self.definition.name)
+            },
             description: self.definition.description.clone(),
             strict: false,
             defer_loading: None,
@@ -710,6 +815,8 @@ impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
                 let context = environment[0].file_system_sandbox_context.clone();
                 crate::workspace_operations::WorkspaceAuthority {
                     repository: self.repository.clone(),
+                    session_root: self.data_scope.as_ref().map(|scope| scope.sessions.clone()),
+                    session_database: self.data_scope.as_ref().map(|scope| scope.database.clone()),
                     policy: context.permissions.file_system_sandbox_policy(),
                     context,
                 }
@@ -720,20 +827,55 @@ impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
             let id = self.id.clone();
             let name = self.definition.name.clone();
             let generation = self.generation;
+            let root = self.root.clone();
+            let data_scope = self.data_scope.clone();
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
             let result = tokio::task::spawn_blocking(move || {
                 let mut runtime = runtime
                     .lock()
                     .map_err(|_| std::io::Error::other("mod_runtime_poisoned"))?;
-                runtime.invoke_with(
+                let sources: BTreeMap<_, _> = runtime
+                    .owners()
+                    .into_iter()
+                    .map(|(id, owner)| (id, owner.sha256))
+                    .collect();
+                runtime.invoke_tool(
                     &id,
                     generation,
-                    "tool",
                     &name,
                     payload,
                     || !cancelled.load(Ordering::Acquire),
-                    |request| {
+                    |caller, request| {
+                        if codex_omd::scoped_data::operation(&request.operation) {
+                            let authority = authority.as_ref().ok_or_else(|| {
+                                std::io::Error::other(
+                                    "workspace_operation_requires_local_repository",
+                                )
+                            })?;
+                            let scope = data_scope.as_ref().ok_or_else(|| {
+                                std::io::Error::other("thread_data_scope_unavailable")
+                            })?;
+                            let mut data = codex_omd::scoped_data::ScopedDataHost::new(
+                                root.clone(),
+                                authority.repository.clone(),
+                                Some(scope.sessions.clone()),
+                                caller.to_owned(),
+                                scope.thread.clone(),
+                                generation,
+                                sources
+                                    .get(caller)
+                                    .cloned()
+                                    .ok_or_else(|| std::io::Error::other("data_owner_missing"))?,
+                            )?;
+                            data.session_database = Some(scope.database.clone());
+                        return data.call(
+                                &request.operation,
+                                request.arguments,
+                                &|path| authority.readable(path),
+                                || !cancelled.load(Ordering::Acquire),
+                            );
+                        }
                         if matches!(
                             request.operation.as_str(),
                             "workspace.read"
@@ -763,7 +905,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
                                 )
                             } else if request.operation.starts_with("process.") {
                                 processes.call(
-                                    &id,
+                                    caller,
                                     generation,
                                     &authority.repository,
                                     &authority.policy,
@@ -783,6 +925,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for PlatformTool {
                             ))
                         }
                     },
+                    |_| {},
                 )
             })
             .await

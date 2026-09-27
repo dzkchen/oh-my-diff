@@ -2,10 +2,11 @@
   "guide": {
     "path": "mods/PREVIEW.md"
   },
-  "mod_api": "0.1.0-experimental.8",
+  "mod_api": "0.1.0-experimental.9",
   "node": "24.18.0",
   "packages": {
     "omd_coordination": {
+      "api": "0.1.0-experimental.8",
       "capabilities": [
         "agents",
         "commands",
@@ -28,6 +29,7 @@
       "version": "0.1.0-preview.4"
     },
     "omd_recovery": {
+      "api": "0.1.0-experimental.8",
       "capabilities": [
         "commands",
         "interception",
@@ -47,6 +49,7 @@
       "version": "0.1.0-preview.2"
     },
     "omd_workspace": {
+      "api": "0.1.0-experimental.8",
       "capabilities": [
         "terminal",
         "commands",
@@ -67,6 +70,6 @@
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "e22f149a1e12da54de0b2132406128001018781053afb02e6951c63dbc357b2d"
+    "sha256": "551dc80cdf9847cd038849bd8cf404d126ac4f5fc98ef0944ac8480752da77c1"
   }
 }

@@ -652,7 +652,7 @@ def preview_sources(lock):
             if digest(base / name) != expected:
                 raise ValueError(f"pinned preview source changed: {package['source']}/{name}")
         declared = json.loads((base / "mod.json").read_text())
-        if declared["api"] != lock["mod_api"]:
+        if declared["api"] != package.get("api", lock["mod_api"]):
             raise ValueError(f"package {identifier} declares mod API {declared['api']}; "
                              f"this preview is pinned to {lock['mod_api']}")
         if declared["id"] != identifier:

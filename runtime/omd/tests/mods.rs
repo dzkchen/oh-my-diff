@@ -930,6 +930,10 @@ fn terminal_components_compose_in_dependency_order_and_old_observers_remain_obse
         &["terminal"],
         &["workspace"],
     );
+    let manifest_path = theme.join("mod.json");
+    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["api"] = json!("0.1.0-experimental.8");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     trust(&store, &theme, &["terminal"]);
     let mut runtime = host(&temp);
     let terminal = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);

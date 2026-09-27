@@ -22,10 +22,9 @@ def build():
     for mod in MODS:
         base = ROOT / "mods/first-party" / mod
         manifest = json.loads((base / "mod.json").read_text())
-        if manifest["id"] != base.name or manifest["api"] != api:
-            raise ValueError(f"{mod} identity or API differs from release pin")
+        preview_lock.validate_manifest(manifest, base.name)
         packages[mod] = {
-            "id": manifest["id"], "version": manifest["version"],
+            "id": manifest["id"], "version": manifest["version"], "api": manifest["api"],
             "extension_type": "mod", "capabilities": manifest["capabilities"],
             "source": f"mods/first-party/{mod}",
             "files": {name: preview_lock.digest(base / name) for name in FILES},

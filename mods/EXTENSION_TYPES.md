@@ -29,6 +29,9 @@ contains only the packages labeled `bundled` below.
 | `omd_model_picker@0.1.0-preview.1` | `mod` | `mods/first-party/omd_model_picker` | Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence. |
 | `omd_selection_copy@0.1.0-preview.1` | `mod` | `mods/first-party/omd_selection_copy` | Sets the live copy-on-highlight policy and reports each release result in the terminal status. |
 | `omd_git@0.1.0-preview.1` | `mod` | `mods/first-party/omd_git` | Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations. |
+| `omd_lsp_sync@0.1.0-preview.1` | `mod` | `mods/first-party/omd_lsp_sync` | Owns live language-server synchronization and rename/edit planning through generic host process and workspace operations. |
+| `omd_advisor@0.1.0-preview.1` | `mod` | `mods/first-party/omd_advisor` | Owns completed-turn scheduling, independent review prompts, typed result validation, deduplication and selected-context presentation through public accounted review primitives. |
+| `omd_research@0.1.0-preview.1` | `mod` | `mods/first-party/omd_research` | Owns lead-requested broad-research admission, bounded briefing and evidence validation using an explicitly granted read-only host worker preset. |
 
 ## Author examples
 
@@ -40,6 +43,11 @@ contains only the packages labeled `bundled` below.
 | `routing@1.0.0` | `mod` | `mods/examples/routing` | Replaces the model, provider, and reasoning preset selected at the live request boundary. |
 | `terminal@1.0.0` | `mod` | `mods/examples/terminal` | Replaces live terminal layout, theme, render templates, and key handling. |
 | `workflow@1.0.0` | `mod` | `mods/examples/workflow` | Registers and restricts a host-enforced workflow contract during a live task without owning native guarantees. |
+| `workspace_author@1.0.0` | `mod` | `mods/examples/workspace` | Exercises reusable live workspace read, pre-rename events and host-authorized transactions. |
+| `example_virtual_reader@1.0.0` | `plugin` | `mods/examples/virtual_reader` | Registers an independent virtual resource using the shared sandboxed extension bridge; the provider owns its resource grammar and content. |
+| `example_scoped_data@1.0.0` | `mod` | `mods/examples/scoped_data` | Demonstrates scoped fact selection and frozen live context reuse, plus commands through the same public bridge. |
+| `example_review_probe@1.0.0` | `hook` | `mods/examples/review_probe` | Owns a bounded completed-turn procedure and result interpretation through the shared accounted review interface. |
+| `example_service_request@1.0.0` | `plugin` | `mods/examples/service_request` | Uses only a public tool export and a granted generic service request; no live engine replacement. |
 
 ## Conformance fixtures
 

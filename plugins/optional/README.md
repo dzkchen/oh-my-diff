@@ -40,3 +40,7 @@ API `0.1.0-experimental.8`, Apple Silicon macOS Darwin `25.5.0`, Python
 restrictive read-only sandbox. [The acceptance audit](../../.docs/audits/debugger-20260925.md)
 records the tests and limits. This is a local opt-in candidate; public release
 and other platform/version support remain separate qualification work.
+
+## Batch 2 local packages
+
+The same optional marketplace offers [anchored edits](plugins/omd-anchored-edit/README.md), [past-session review](plugins/omd-session-review/README.md), and [local curated memory](plugins/omd-curated-memory/README.md). Each uses a separately inspected/trusted API .9 component. Installation does not activate a component. Local memory has no third-party backend connection.

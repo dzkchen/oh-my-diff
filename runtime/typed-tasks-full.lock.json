@@ -1,6 +1,7 @@
 {
-  "mod_api": "0.1.0-experimental.8",
+  "mod_api": "0.1.0-experimental.9",
   "package": {
+    "api": "0.1.0-experimental.8",
     "capabilities": [
       "agents",
       "execution",

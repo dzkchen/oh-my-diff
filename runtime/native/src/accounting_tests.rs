@@ -58,6 +58,7 @@ fn setup() -> (
             revocation: root.path().join("evidence").join(REVOCATION_FILE),
             cost_capture: root.path().join("evidence").join("task-cost.json"),
             preset: "worker".into(),
+            worker_authorization: None,
             authorized_presets: vec![RequestPreset {
                 name: "worker".into(),
                 model: "muse-spark-1.3-contributor".into(),
@@ -342,4 +343,173 @@ fn provider_ceiling_violation_keeps_usage_and_stops_admission() {
     let record = task.attempts().unwrap().remove(0);
     assert_eq!(record.raw_usage, Some(usage));
     assert_eq!(record.settled_microusd, None);
+}
+
+#[test]
+fn paid_preset_grants_bind_repository_route_and_current_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("paid.json");
+    let grant = json!({"schema":1,"paid_api_key":true,"revocable":true,"repository":"repo-a","provider":"provider-a","model":"model-a","responses_url":"https://example.invalid/responses"});
+    std::fs::write(&path, grant.to_string()).unwrap();
+    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    let allowed = || {
+        worker_authorized(
+            &path,
+            &sha,
+            "repo-a",
+            "provider-a",
+            "model-a",
+            "https://example.invalid/responses",
+            false,
+        )
+    };
+    assert!(allowed());
+    assert!(!worker_authorized(
+        &path,
+        &sha,
+        "repo-b",
+        "provider-a",
+        "model-a",
+        "https://example.invalid/responses",
+        false,
+    ));
+    assert!(!worker_authorized(
+        &path,
+        &sha,
+        "repo-a",
+        "provider-a",
+        "other-model",
+        "https://example.invalid/responses",
+        false,
+    ));
+    std::fs::write(&path, "revoked").unwrap();
+    assert!(!allowed());
+    std::fs::remove_file(&path).unwrap();
+    let target = root.path().join("target.json");
+    std::fs::write(&target, grant.to_string()).unwrap();
+    std::os::unix::fs::symlink(target, &path).unwrap();
+    assert!(!allowed());
+}
+
+#[test]
+fn subscription_worker_requests_recheck_grants_and_reject_paid_fallback() {
+    let (root, accounts, task, mut request, _body) = setup();
+    let path = root.path().join("subscription.json");
+    let grant = json!({"schema":1,"included_subscription":true,"revocable":true,"repository":"fixture","provider":"openai","model":"fixture-model","responses_url":SUBSCRIPTION_RESPONSES_URL});
+    std::fs::write(&path, grant.to_string()).unwrap();
+    let sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    assert!(worker_authorized(
+        &path,
+        &sha,
+        "fixture",
+        "openai",
+        "fixture-model",
+        SUBSCRIPTION_RESPONSES_URL,
+        true
+    ));
+    assert!(!worker_authorized(
+        &path,
+        &sha,
+        "fixture",
+        "openai",
+        "fixture-model",
+        SUBSCRIPTION_RESPONSES_URL,
+        false
+    ));
+    assert!(!worker_authorized(
+        &path,
+        &sha,
+        "other-repo",
+        "openai",
+        "fixture-model",
+        SUBSCRIPTION_RESPONSES_URL,
+        true
+    ));
+    assert!(!worker_authorized(
+        &path,
+        &sha,
+        "fixture",
+        "openai",
+        "other-model",
+        SUBSCRIPTION_RESPONSES_URL,
+        true
+    ));
+    {
+        let mut state = accounts.0.lock().unwrap();
+        let account = state.get_mut("child").unwrap();
+        account.model = "fixture-model".into();
+        account.provider = "openai".into();
+        account.url = SUBSCRIPTION_RESPONSES_URL.into();
+        account.rates.included_subscription = true;
+        account.rates.reservation_microusd = 0;
+        account.worker_authorization = Some((path.clone(), sha.clone()));
+        account.authorized_presets = vec![RequestPreset {
+            name: "worker".into(),
+            model: account.model.clone(),
+            provider: account.provider.clone(),
+            reasoning: "high".into(),
+            url: account.url.clone(),
+            accounting_provider: account.provider.clone(),
+        }];
+    }
+    let body = EncodedJsonBody::encode(
+        &json!({"model":"fixture-model","reasoning":{"effort":"high"},"stream":true}),
+    )
+    .unwrap();
+    assert!(
+        task.authorize_worker_route("lead", "openai", "fixture-model")
+            .is_err()
+    );
+    assert!(
+        task.authorize_worker_route("absent", "openai", "fixture-model")
+            .is_err()
+    );
+    task.authorize_worker_route("worker", "openai", "fixture-model")
+        .unwrap();
+    assert!(
+        task.authorize_worker_route("worker", "openai", "other-model")
+            .is_err()
+    );
+    assert!(task.admit("lead", "openai", "fixture-model", 0).is_err());
+    request.url = "https://api.openai.com/v1/responses".into();
+    request
+        .headers
+        .insert("chatgpt-account-id", "fixture".parse().unwrap());
+    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
+    request.url = SUBSCRIPTION_RESPONSES_URL.into();
+    request.headers.remove("chatgpt-account-id");
+    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
+    request
+        .headers
+        .insert("chatgpt-account-id", "fixture".parse().unwrap());
+    let mut mixed = grant.clone();
+    mixed["paid_api_key"] = true.into();
+    std::fs::write(&path, mixed.to_string()).unwrap();
+    let mixed_sha = crate::execution::hash(&std::fs::read(&path).unwrap());
+    assert!(!worker_authorized(
+        &path,
+        &mixed_sha,
+        "fixture",
+        "openai",
+        "fixture-model",
+        SUBSCRIPTION_RESPONSES_URL,
+        true
+    ));
+    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
+    std::fs::write(&path, grant.to_string()).unwrap();
+    assert!(task.attempts().unwrap().is_empty());
+    let mut attempt = accounts
+        .before_send(&mut request, Some(&body))
+        .unwrap()
+        .unwrap();
+    let usage =
+        json!({"input_tokens":100,"input_tokens_details":{"cached_tokens":20},"output_tokens":32});
+    let mut event = json!({"type":"response.completed","response":{"usage":usage}});
+    attempt.observe(&mut event, true).unwrap();
+    drop(attempt);
+    let record = task.attempts().unwrap().remove(0);
+    assert_eq!(record.raw_usage, Some(usage));
+    assert_eq!(record.settled_microusd, Some(0));
+    std::fs::remove_file(path).unwrap();
+    assert!(accounts.before_send(&mut request, Some(&body)).is_err());
 }

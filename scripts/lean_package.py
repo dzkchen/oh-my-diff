@@ -128,7 +128,7 @@ def install_archive(args):
             cwd=payload)
         command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
                    "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
-                   "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod",
+                   "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd",
                    "--author-archive", payload / "artifacts/mod-api.tgz", "--node", args.node,
                    "--store", args.store]
         if args.profile == "full":
@@ -156,7 +156,7 @@ def source_build(args):
         environment["CARGO_TARGET_DIR"] = str(target)
         run("cargo", f"+{upstream['rust_toolchain']}", "build", "--locked", "--release",
             "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd",
-            "--bin", "omd-mod", "--bin", "omd-graph", "--bin", "omd-health",
+            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-graph", "--bin", "omd-health",
             "--bin", "omd-lsp", cwd=checkout / "codex-rs", env=environment)
         artifacts = Path(temporary) / "artifacts"
         artifacts.mkdir()

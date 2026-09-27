@@ -41,11 +41,11 @@ class ContractTests(unittest.TestCase):
             source = (package / "index.ts").read_text()
             with self.subTest(mod=manifest["id"]):
                 self.assertLessEqual(set(manifest["capabilities"]), capabilities)
-                self.assertEqual(manifest["api"], mod_conformance.host_sets()[0])
+                self.assertIn(manifest["api"], {row["version"] for row in mod_compatibility.host_contract()["apis"]})
                 self.assertEqual(
                     re.findall(r"from '([^']+)'", source), ["../../api.d.ts"] * source.count("from '")
                 )
-                self.assertNotIn("__omd", source)
+                self.assertNotRegex(source, r"\b__omd\w*")
                 self.assertNotIn("globalThis", source)
                 body = "\n".join(line for line in source.splitlines() if not line.startswith("import "))
                 for symbol in set(re.findall(r"\bapi\.(\w+)", body)):

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "api": "0.1.0-experimental.8",
+  "api": "0.1.0-experimental.9",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {
@@ -546,8 +546,19 @@
       "ownership": "host: the native tool registry, all other tools, permissions, accounting and callback failure containment",
       "limits": "new API .8 only; a missing, invalid or failed decision exposes no optional tools; an unselected tool is not registered for that step, and a mod cannot name another package's or native tools",
       "native": "Codex has per-step native tool contributors and configured MCP/plugin filtering; no public TypeScript mod choice over its own per-step optional tools existed",
-      "covers": {"capabilities": ["tools"], "events": ["tool_exposure"], "replacements": [], "operations": []},
-      "evidence": ["rust:task_scoped_tools_follow_owned_step_selection_and_fail_closed"],
+      "covers": {
+        "capabilities": [
+          "tools"
+        ],
+        "events": [
+          "tool_exposure"
+        ],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "rust:task_scoped_tools_follow_owned_step_selection_and_fail_closed"
+      ],
       "replace_note": null
     },
     {
@@ -889,12 +900,24 @@
       "limits": "128 paths and 4 MiB per transaction; the write observer scans up to 20,000 files and 128 MiB only while selected, and reports unavailable scans or change batches beyond 128 paths or 16 KiB of path names rather than claiming coverage",
       "native": "ordinary tools write files without a public TypeScript mod transaction or change event",
       "covers": {
-        "capabilities": ["workspace"],
-        "events": ["workspace_write", "workspace_pre_rename"],
+        "capabilities": [
+          "workspace"
+        ],
+        "events": [
+          "workspace_write",
+          "workspace_pre_rename"
+        ],
         "replacements": [],
-        "operations": ["workspace.read", "workspace.transaction", "workspace.request_rename"]
+        "operations": [
+          "workspace.read",
+          "workspace.transaction",
+          "workspace.request_rename"
+        ]
       },
-      "evidence": ["node:independent workspace mod uses public read and transaction calls", "node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"],
+      "evidence": [
+        "node:independent workspace mod uses public read and transaction calls",
+        "node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"
+      ],
       "replace_note": null
     },
     {
@@ -909,12 +932,22 @@
       "limits": "at most eight sessions, five per mod, 4 MiB messages, bounded waits and output; processes cannot write the repository directly",
       "native": "native tools may launch processes under their own configured task permission boundary",
       "covers": {
-        "capabilities": ["process"],
+        "capabilities": [
+          "process"
+        ],
         "events": [],
         "replacements": [],
-        "operations": ["process.which", "process.start", "process.exchange", "process.status", "process.stop"]
+        "operations": [
+          "process.which",
+          "process.start",
+          "process.exchange",
+          "process.status",
+          "process.stop"
+        ]
       },
-      "evidence": ["node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"],
+      "evidence": [
+        "node:LSP mod synchronizes writes and applies versioned rename edits through public host calls"
+      ],
       "replace_note": null
     },
     {
@@ -1003,6 +1036,210 @@
         "patch:discard_backs_up_tracked_and_untracked_files_first",
         "patch:switch_requires_a_known_branch_and_fresh_state",
         "patch:git_host_routes_reads_and_gates_writes_on_permission"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "shared.completed_turn",
+      "group": "coordination",
+      "decision": "Bounded completed-turn evidence and independent typed review",
+      "observe": "Public API .9 operation results and owner-scoped events",
+      "alter": "Extension-owned selection and interpretation within host grants",
+      "replace": null,
+      "timing": "Inside the documented callback or explicitly dispatched plugin command",
+      "ownership": "An extension chooses cadence, prompt, findings and presentation; the host binds visible evidence, exact candidate and owned worker result to the shared allowance and ledger.",
+      "limits": "Selected completed-turn subscribers only; 16 KiB evidence pages; advice is nonblocking, explicit policy is required for enforced blockers; resets and stale candidates fail closed.",
+      "native": "Pinned Codex does not expose this OMD public extension contract",
+      "covers": {
+        "capabilities": [
+          "turn_evidence"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "evidence.read",
+          "review.request",
+          "review.result",
+          "review.wait",
+          "review.submit",
+          "review.cancel"
+        ]
+      },
+      "evidence": [
+        "fixture:shared-review/success",
+        "fixture:shared-review-denied/success",
+        "fixture:shared-disabled/success",
+        "patch:projection_contains_visible_messages_and_references_only",
+        "fixture:shared-review-compaction/success",
+        "patch:compaction_segments_preserve_original_visible_records_and_bounds"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "shared.worker_presets",
+      "group": "coordination",
+      "decision": "Explicit worker presets and billing authorization",
+      "observe": "Public API .9 operation results and owner-scoped events",
+      "alter": "Extension-owned selection and interpretation within host grants",
+      "replace": null,
+      "timing": "Inside the documented callback or explicitly dispatched plugin command",
+      "ownership": "The extension selects a named preset; the host binds its exact route to that worker, checks its read/search ceiling and revalidates separate subscription or paid-key authorization before every request.",
+      "limits": "No automatic paid fallback; model access and real value are unqualified; unpriced hosted search is denied.",
+      "native": "Pinned Codex does not expose this OMD public extension contract",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "workers.presets"
+        ]
+      },
+      "evidence": [
+        "patch:paid_preset_grants_bind_repository_route_and_current_bytes",
+        "patch:subscription_worker_requests_recheck_grants_and_reject_paid_fallback",
+        "patch:worker_route_grants_are_exact_nontransferable_and_share_allowances",
+        "fixture:research-subscription-denied/success"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "shared.virtual_read",
+      "group": "tool",
+      "decision": "Versioned reads supplied by extensions",
+      "observe": "Public API .9 operation results and owner-scoped events",
+      "alter": "Extension-owned selection and interpretation within host grants",
+      "replace": null,
+      "timing": "Inside the documented callback or explicitly dispatched plugin command",
+      "ownership": "The extension parses its namespace and retrieves content; the host routes the common read tool, binds provider source and provenance, and prevents remote resources from impersonating local files.",
+      "limits": "Reserved and colliding schemes fail closed; 16 KiB pages; continuation requires exact revision; handlers can only read workspace files or invoke a granted service.",
+      "native": "Pinned Codex does not expose this OMD public extension contract",
+      "covers": {
+        "capabilities": [
+          "virtual_reads"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:common_read_keeps_local_and_virtual_authority_separate",
+        "patch:independent_provider_revision_and_disabled_recovery"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "shared.scoped_knowledge",
+      "group": "context_recovery",
+      "decision": "Scoped facts, proposed lessons and frozen context",
+      "observe": "Public API .9 operation results and owner-scoped events",
+      "alter": "Extension-owned selection and interpretation within host grants",
+      "replace": null,
+      "timing": "Inside the documented callback or explicitly dispatched plugin command",
+      "ownership": "Extensions choose what to retain, propose and recall; the host owns repository isolation, source checks, approved-lesson reuse, concurrency, removal and bounded immutable snapshots.",
+      "limits": "Current permissions are checked again on reuse; resources bind source hash, thread and persisted selection revision; native user confirmation gates approval and destructive changes.",
+      "native": "Pinned Codex does not expose this OMD public extension contract",
+      "covers": {
+        "capabilities": [
+          "knowledge_read",
+          "knowledge_write"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "knowledge.inspect",
+          "knowledge.retain",
+          "knowledge.propose",
+          "knowledge.approve",
+          "knowledge.remove",
+          "knowledge.reset",
+          "knowledge.snapshot",
+          "context.freeze",
+          "context.deliver"
+        ]
+      },
+      "evidence": [
+        "patch:frozen_knowledge_keeps_selection_and_revokes_deleted_or_changed_facts",
+        "patch:source_denial_secret_exclusion_cold_mode_and_cancellation",
+        "patch:independent_component_uses_scoped_data_context_and_cli_dispatch",
+        "fixture:shared-context/success"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "shared.session_index",
+      "group": "context_recovery",
+      "decision": "Read-only repository-scoped session index",
+      "observe": "Public API .9 operation results and owner-scoped events",
+      "alter": "Extension-owned selection and interpretation within host grants",
+      "replace": null,
+      "timing": "Inside the documented callback or explicitly dispatched plugin command",
+      "ownership": "Extensions choose sessions and classify visible records; the host validates repository, current opt-out, transcript identity and stable page revisions and excludes hidden or tool-body content.",
+      "limits": "100-row list; 16 KiB pages; fixed scan and invocation bounds; duplicate identities, unknown opt-out state and concurrent source changes fail closed.",
+      "native": "Pinned Codex does not expose this OMD public extension contract",
+      "covers": {
+        "capabilities": [
+          "sessions_read"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "sessions.list",
+          "sessions.read"
+        ]
+      },
+      "evidence": [
+        "patch:repository_scope_opt_out_and_hidden_content_are_enforced",
+        "patch:later_metadata_and_state_database_opt_out_override_earlier_records",
+        "patch:inherited_child_prefix_is_excluded_even_with_matching_turn_context"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "shared.service_request",
+      "group": "tool",
+      "decision": "Bounded requests to explicitly granted helpers",
+      "observe": "Public API .9 operation results and owner-scoped events",
+      "alter": "Extension-owned selection and interpretation within host grants",
+      "replace": null,
+      "timing": "Inside the documented callback or explicitly dispatched plugin command",
+      "ownership": "The extension helper owns transport and response interpretation; the host pins executable and sources, supplies explicit secrets/network grants, enforces read-only scope and supervises process cleanup.",
+      "limits": "16 KiB input, 32 KiB output and 30-second deadline; changed source, missing grant, known secret output and cancellation fail closed.",
+      "native": "Pinned Codex does not expose this OMD public extension contract",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "sidecars.invoke"
+        ]
+      },
+      "evidence": [
+        "fixture:shared-service/success",
+        "fixture:shared-service-denied/success",
+        "fixture:shared-service-changed/success",
+        "fixture:shared-service-timeout/success"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "shared.plugin_dispatch",
+      "group": "tool",
+      "decision": "Generic plugin component and standalone command exports",
+      "observe": "Public API .9 operation results and owner-scoped events",
+      "alter": "Extension-owned selection and interpretation within host grants",
+      "replace": null,
+      "timing": "Inside the documented callback or explicitly dispatched plugin command",
+      "ownership": "An ordinary hash-verified public-API component supplies command behavior; the host dispatches exactly one enabled CLI alias with an explicit repository and bounded read/data operations.",
+      "limits": "No model requests, process execution or workspace mutation in standalone dispatch; no implicit install, trust or enable; source containment and collisions are checked.",
+      "native": "Pinned Codex does not expose this OMD public extension contract",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:independent_component_uses_scoped_data_context_and_cli_dispatch"
       ],
       "replace_note": null
     }

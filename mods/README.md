@@ -682,3 +682,5 @@ python3 -m benchmarks.controlled_fixture /absolute/codex /new/off-fixture --scen
 Fixtures use local synthetic providers. They establish native wiring and bounded
 behavior, not paid-provider compatibility, independent author feedback, physical
 terminal acceptance, comparative cost/quality, or release readiness.
+
+Shared interfaces and their independent author fixtures are documented in [REFERENCE.md](REFERENCE.md#shared-data-and-review-interfaces-9). Feature behavior belongs in extension source; the host owns permission, accounting, provenance and transaction checks.

@@ -12,21 +12,31 @@ pub struct ModHostCall {
 impl ModHostCall {
     pub fn capability(&self) -> Result<&'static str> {
         match self.operation.as_str() {
+            "evidence.read" => Ok("turn_evidence"),
+            "sessions.list" | "sessions.read" => Ok("sessions_read"),
+            "knowledge.inspect" | "knowledge.snapshot" | "context.freeze" | "context.deliver" => {
+                Ok("knowledge_read")
+            }
+            "knowledge.retain" | "knowledge.propose" | "knowledge.approve" | "knowledge.remove"
+            | "knowledge.reset" => Ok("knowledge_write"),
             "task.status" | "routes.list" | "checkpoint.read" | "checkpoint.update" => Ok("task"),
-            "agents.spawn" | "agents.message" | "agents.cancel" | "agents.result"
-            | "agents.wait" | "agents.list" => Ok("agents"),
+            "workers.presets" | "agents.spawn" | "agents.message" | "agents.cancel"
+            | "agents.result" | "agents.wait" | "agents.list" => Ok("agents"),
             "workspace.integrate" => Ok("execution"),
             "workspace.read" | "workspace.transaction" | "workspace.request_rename" => {
                 Ok("workspace")
             }
             "process.which" | "process.start" | "process.exchange" | "process.status"
             | "process.stop" => Ok("process"),
-            "review.run" | "review.complete" => Ok("review"),
+            "review.run" | "review.complete" | "review.request" | "review.wait"
+            | "review.result" | "review.submit" | "review.cancel" => Ok("review"),
             "recovery.escalate" | "delegation.contribute" => Ok("recovery"),
             "tools.exec" => Ok("execution"),
             "providers.register" | "providers.unregister" => Ok("providers"),
             "pi.discover" | "pi.expand" => Ok("pi_resources"),
-            "sidecars.start" | "sidecars.stop" | "sidecars.status" => Ok("sidecars"),
+            "sidecars.start" | "sidecars.stop" | "sidecars.status" | "sidecars.invoke" => {
+                Ok("sidecars")
+            }
             "workflow.status" | "workflow.restrict" => Ok("workflow"),
             "git.status" | "git.log" | "git.diff" | "git.branches" | "git.stage"
             | "git.unstage" | "git.commit" | "git.discard" | "git.switch" => Ok("git"),
@@ -113,6 +123,15 @@ pub(super) fn run(
             return Err(failure("host_call_limit"));
         }
         let capability = call.capability()?;
+        if call.operation.starts_with("context.")
+            && !loaded
+                .package
+                .capabilities
+                .iter()
+                .any(|cap| cap == "context")
+        {
+            return Err(failure("capability_denied: context"));
+        }
         if !loaded.package.capabilities.iter().any(|c| c == capability) {
             return Err(failure(format!("capability_denied: {capability}")));
         }

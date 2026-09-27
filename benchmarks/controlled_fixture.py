@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import threading
 import time
 
@@ -106,7 +107,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
             conformance_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_conformance_context_note"]
             candidate_check_outputs = [i for i in outputs if calls.get(i.get("call_id")) == f"mod_omd_task_tools_check_{candidate_check}"]
             typed_outputs = [i for i in outputs if calls.get(i.get("call_id")) == "mod_omd_typed_tasks_run"]
-            if mod_profile == "lifecycle" and "MOD_COMPACT_PROMPT_SENTINEL" in json.dumps(inputs[-1:]):
+            if mod_profile in ("lifecycle", "shared-review-compaction", "advisor-compaction") and "MOD_COMPACT_PROMPT_SENTINEL" in json.dumps(inputs[-1:]):
                 Provider.compacted = True
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -314,13 +315,51 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
                 clarification = ["Should the public addition behavior change for negative inputs?"] if report_status == "blocked" else []
                 answer = json.dumps({"schema": 1, "status": report_status, "summary": "Clarification is required before integration." if clarification else "Synthetic worker completed.", "scope": ["Changed solution.py only."], "uncertainty": ["Negative-input behavior is unresolved."] if clarification else [], "evidence": ["solution.py and the edit tool result"], "required_clarification": clarification}) if structured_worker_reports and owner != "lead" else "Synthetic worker completed."
                 item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
+            if mod_profile.startswith("research-"):
+                prior = any(item.get("type") == "function_call_output" and item.get("call_id") == "research-call" for item in body.get("input", []))
+                question = {"question": "Where is repository read authority enforced?", "scope": ["runtime", "mods", "scripts"], "brief": "Gather source evidence only.", "expected_sources": 6, "lead_read_minutes": 12, "brief_and_handoff_minutes": 2, "already_located": mod_profile == "research-narrow"}
+                item = {"type": "message", "id": "research-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Research admission fixture completed."}]} if prior else {"type": "function_call", "id": "research-call", "call_id": "research-call", "name": "mod_omd_research_gather", "arguments": json.dumps(question)}
+            if mod_profile.startswith("github-read"):
+                prior = any(item.get("type") == "function_call_output" and item.get("call_id") == "github-read-call" for item in body.get("input", []))
+                item = {"type": "message", "id": "github-read-answer", "role": "assistant", "content": [{"type": "output_text", "text": "GitHub read fixture completed."}]} if prior else {"type": "function_call", "id": "github-read-call", "call_id": "github-read-call", "name": "read", "arguments": json.dumps({"uri": "github://octocat/Hello-World/pulls/1"})}
+            if mod_profile.startswith("curated-memory"):
+                item = {"type": "message", "id": "memory-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Observed the selected project memory. No source changes."}]}
+            if mod_profile.startswith("advisor"):
+                worker = owner and owner.startswith("mod-omd_advisor-")
+                answer = json.dumps({"findings": [{"severity": "blocking" if mod_profile == "advisor-blocking" else "advice", "summary": "Synthetic concern supported by the visible turn.", "paths": [], "quote": "A visible synthetic completed turn"}]}) if worker else "A visible synthetic completed turn; no workspace changes."
+                item = {"type": "message", "id": "advisor-answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
+                if mod_profile == "advisor-compaction" and owner == "lead" and not Provider.compacted:
+                    item = {"type": "function_call", "id": "advisor-pre-compact", "call_id": "advisor-pre-compact", "name": "omd_status", "arguments": "{}"}
+            if mod_profile.startswith("anchored-edit"):
+                prior = any(item.get("call_id") == "anchored-edit-call" for item in outputs) or any(item.get("call_id") == "anchored-fallback" for item in inputs if item.get("type") == "custom_tool_call_output")
+                if prior:
+                    item = {"type": "message", "id": "anchored-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Anchored edit fixture finished; inspect the ordinary diff."}]}
+                elif mod_profile == "anchored-edit-disabled":
+                    item = {"type": "custom_tool_call", "id": "anchored-fallback", "call_id": "anchored-fallback", "name": "apply_patch", "input": "*** Begin Patch\n*** Update File: solution.py\n@@\n-    return a - b\n+    return a + b\n*** End Patch"}
+                else:
+                    sha = hashlib.sha256(b"def add(a, b):\n    return a - b\n").hexdigest()
+                    if mod_profile == "anchored-edit-stale":
+                        sha = "0" * 64
+                    item = {"type": "function_call", "id": "anchored-edit-call", "call_id": "anchored-edit-call", "name": "mod_omd_anchored_edit_edit", "arguments": json.dumps({"files": [{"path": "solution.py", "sha256": sha, "start_line": 2, "end_line": 2, "edits": [{"before": "a - b", "after": "a + b"}]}]})}
+            if mod_profile == "shared-context":
+                worker = owner and owner.startswith("mod-example_scoped_data-")
+                prior = any(item.get("type") == "function_call_output" and item.get("call_id") == "context-probe" for item in body.get("input", []))
+                item = {"type": "message", "id": "context-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Selected context observed."}]} if worker or prior else {"type": "function_call", "id": "context-call", "call_id": "context-probe", "name": "mod_example_scoped_data_worker", "arguments": "{}"}
+            if mod_profile.startswith("shared-service"):
+                prior = any(item.get("type") == "function_call_output" and item.get("call_id") == "service-probe" for item in body.get("input", []))
+                item = {"type": "message", "id": "service-answer", "role": "assistant", "content": [{"type": "output_text", "text": "Service request fixture completed."}]} if prior else {"type": "function_call", "id": "service-call", "call_id": "service-probe", "name": "mod_example_service_request_probe", "arguments": "{}"}
+            if mod_profile in ("shared-review", "shared-review-denied", "shared-review-compaction", "shared-disabled"):
+                answer = json.dumps({"findings": []}) if owner and owner.startswith("mod-example_review_probe-") else "A visible synthetic completed turn; no workspace changes."
+                item = {"type": "message", "id": "shared-answer", "role": "assistant", "content": [{"type": "output_text", "text": answer}]}
+                if mod_profile == "shared-review-compaction" and owner == "lead" and not Provider.compacted:
+                    item = {"type":"function_call", "id":"pre-compact-call", "call_id":"pre-compact-call", "name":"omd_status", "arguments":"{}"}
             if scenario == "revoked" and model == "muse-spark-1.3-contributor":
                 grant.write_text(json.dumps({"data_authorized": False}))
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
             usage = {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 20}, "output_tokens": 30, "output_tokens_details": {"reasoning_tokens": 7}, "total_tokens": 130}
-            if mod_profile == "lifecycle" and owner == "lead" and not Provider.compacted:
+            if mod_profile in ("lifecycle", "shared-review-compaction", "advisor-compaction") and owner == "lead" and not Provider.compacted:
                 usage = {"input_tokens": 40000, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 30, "output_tokens_details": {"reasoning_tokens": 7}, "total_tokens": 40030}
             if anchor_profile and owner == "lead" and item.get("name") == "omd_status" and Provider.anchor_high_usage < 2:
                 Provider.anchor_high_usage += 1
@@ -394,7 +433,7 @@ def run(binary, destination, scenario="success", context_policy="focused_brief",
     (home / "secret").write_text("SYNTHETIC_SECRET_MUST_NOT_REACH_WORKER")
     lead_model = {"sol": "gpt-5.6-sol", "astra": "gpt-6-astra"}[lead]
     lead_effort = {"sol": "high", "astra": "xhigh"}[lead]
-    compact_config = "model_context_window = 100000\nmodel_auto_compact_token_limit = 20000\n" if anchor_profile else ""
+    compact_config = "model_context_window = 100000\nmodel_auto_compact_token_limit = 20000\n" if anchor_profile or mod_profile == "shared-review-compaction" else ""
     (home / "config.toml").write_text(f'''model = {json.dumps(lead_model)}
 {compact_config}model_provider = "fixture"
 model_catalog_json = {json.dumps(str(home / "models.json"))}
@@ -545,6 +584,191 @@ enabled = false
         (destination / "stdout.txt").write_text(process.stdout)
         (destination / "stderr.txt").write_text(process.stderr)
         (destination / "requests.json").write_text(json.dumps(requests, indent=2))
+        if mod_profile.startswith("research-"):
+            assert process.returncode == 0, process.stderr[-4000:]
+            outputs = [item for request in requests for item in request["body"].get("input", []) if item.get("type") == "function_call_output" and item.get("call_id") == "research-call"]
+            combined = json.dumps(outputs)
+            expected = {"research-narrow": "not_admitted", "research-denied": "No available host-authorized", "research-disabled": "unsupported call", "research-subscription-denied": "worker_requires_native_chatgpt_login_without_provider_overrides"}[mod_profile]
+            assert expected in combined, combined
+            assert not any((request["native_owner"] or "").startswith("mod-omd_research-") for request in requests), requests
+            assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
+            record = {"status": "pass", "profile": mod_profile, "requests": len(requests), "outputs": outputs, "scope": "actual research mod admission and native route refusal; local synthetic provider only; no research provider dispatch"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
+        if mod_profile.startswith("github-read"):
+            assert process.returncode == 0, process.stderr[-4000:]
+            outputs = [item for request in requests for item in request["body"].get("input", []) if item.get("type") == "function_call_output" and item.get("call_id") == "github-read-call"]
+            combined = json.dumps(outputs)
+            if mod_profile == "github-read-denied":
+                assert "service_request_not_host_approved" in combined, combined
+            elif mod_profile == "github-read-disabled":
+                assert "virtual_provider_unavailable" in combined or "unsupported call: read" in combined, combined
+            else:
+                assert "https://github.com/octocat/Hello-World/pull/1" in combined and "Edited README via GitHub" in combined, combined
+                assert "canonical_uri" in combined and "revision" in combined and "virtual" in combined, combined
+            assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
+            assert (repo / "unrelated.txt").read_text() == "Uncommitted user work\n"
+            record = {"status": "pass", "profile": mod_profile, "outputs": outputs, "scope": "real public GitHub read through ordinary native read and plugin-owned sandboxed helper; synthetic model, no credentials"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
+        if mod_profile.startswith("curated-memory"):
+            assert process.returncode == 0, process.stderr[-4000:]
+            text = json.dumps(requests)
+            packets = list((destination / "mod-store/resources").rglob("*.json"))
+            if mod_profile.endswith("disabled"):
+                assert "CURATED_EXACT_FACT_SENTINEL" not in text and not packets
+                record = {"status": "pass", "profile": mod_profile, "evidence_packets": 0}
+            else:
+                assert "CURATED_EXACT_FACT_SENTINEL" in text, text
+                dispatcher = Path(os.environ["OMD_FIXTURE_DISPATCHER"]).resolve()
+                base = [str(dispatcher), "memory", "--repo", str(repo), "--store", str(destination / "mod-store")]
+                def memory(operation, args=None, confirm=None, ok=True, repository=None):
+                    command = base.copy()
+                    if repository:
+                        command[command.index("--repo") + 1] = str(repository)
+                    if confirm:
+                        command += ["--confirm", confirm]
+                    command += [operation] + ([json.dumps(args)] if args is not None else [])
+                    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+                    if ok:
+                        assert result.returncode == 0, result.stderr
+                        return json.loads(result.stdout)
+                    assert result.returncode != 0
+                    return result.stderr
+                inspected = memory("inspect")
+                assert len(inspected["facts"]) == 1 and len(inspected["evidence"]) == 1, inspected
+                evidence_id = inspected["evidence"][0]["id"]
+                proposed = memory("learn", {"expected_revision": inspected["revision"], "id": "lesson1", "text": "Check the current source before reusing advice.", "evidence_ids": [evidence_id]})
+                assert proposed["status"] == "proposal_only"
+                report_root = destination / "curation-reports"
+                report_root.mkdir(mode=0o700)
+                hook = ROOT / "plugins/optional/plugins/omd-curated-memory/hooks/curate.py"
+                environment = {**os.environ, "OMD_MEMORY_CURATION": "1", "OMD_MEMORY_COMMAND": str(dispatcher), "OMD_MOD_STORE": str(destination / "mod-store"), "PLUGIN_DATA": str(report_root)}
+                curated = subprocess.run([sys.executable, str(hook)], input=json.dumps({"hook_event_name": "SessionEnd", "cwd": str(repo)}), env=environment, capture_output=True, text=True, timeout=12)
+                assert curated.returncode == 0, curated.stderr
+                reports = list(report_root.glob("*.json"))
+                assert len(reports) == 1 and "lesson1" in reports[0].read_text()
+                assert len(memory("recall")["records"]) == 1
+                inspected = memory("inspect")
+                args = {"expected_revision": inspected["revision"], "lesson_id": "lesson1"}
+                denial = memory("approve", args, ok=False)
+                token = re.search(r"explicit_user_confirmation_required:([0-9a-f]{64})", denial).group(1)
+                memory("approve", args, confirm=token)
+                assert len(memory("recall")["records"]) == 2
+                other = destination / "other-memory-project"
+                other.mkdir()
+                assert memory("recall", repository=other)["records"] == []
+                (repo / "fact.txt").write_text("REFRESHED_SOURCE_SENTINEL Use pnpm.\n")
+                assert "REFRESHED_SOURCE_SENTINEL" in json.dumps(memory("recall"))
+                inspected = memory("inspect")
+                stale = memory("retain", {"expected_revision": 0, "id": "raced", "label": "stale writer", "source": {"path": "fact.txt", "start_line": 1, "end_line": 1}}, ok=False)
+                assert "revision" in stale.lower()
+                (repo / "secret.txt").write_text("password=EXCLUDED_SECRET_SENTINEL\n")
+                denied = memory("retain", {"expected_revision": inspected["revision"], "id": "secret", "label": "private", "source": {"path": "secret.txt", "start_line": 1, "end_line": 1}}, ok=False)
+                assert "excluded" in denied
+                args = {"expected_revision": memory("inspect")["revision"], "kind": "lesson", "id": "lesson1"}
+                denial = memory("remove", args, ok=False)
+                token = re.search(r"explicit_user_confirmation_required:([0-9a-f]{64})", denial).group(1)
+                memory("remove", args, confirm=token)
+                args = {"expected_revision": memory("inspect")["revision"]}
+                denial = memory("reset", args, ok=False)
+                token = re.search(r"explicit_user_confirmation_required:([0-9a-f]{64})", denial).group(1)
+                memory("reset", args, confirm=token)
+                assert memory("recall")["records"] == []
+                record = {"status": "pass", "profile": mod_profile, "checks": ["first-turn frozen source delivery", "completed-turn evidence retention", "proposal excluded until user confirmation", "bounded SessionEnd curation report", "exact confirmed approval/remove/reset", "cross-project isolation", "source refresh", "stale writer denial", "secret exclusion", "cold reset"], "scope": "synthetic fixture with actual public mod, native model context, knowledge authority and CLI dispatch"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
+        if mod_profile.startswith("advisor"):
+            assert process.returncode == 0, process.stderr[-4000:]
+            workers = [request for request in requests if (request["native_owner"] or "").startswith("mod-omd_advisor-")]
+            packets = list((destination / "mod-store/resources").rglob("*.json")) if (destination / "mod-store/resources").exists() else []
+            if mod_profile == "advisor-disabled":
+                assert not workers and not packets
+                state = None
+            else:
+                state = json.loads((destination / "mod-store/state-omd_advisor.json").read_text())["value"]
+                if mod_profile == "advisor-denied":
+                    assert state["status"] == "denied" and not workers, state
+                else:
+                    assert len(workers) == 1 and workers[0]["body"].get("tools", []) == [], workers
+                    assert "LEAD_ONLY_INSTRUCTION_SENTINEL" not in json.dumps(workers[0]["body"])
+                    assert state["status"] == "recorded" and len(state["findings"]) == 1, state
+                    ledger = json.loads((destination / "evidence/review-state.json").read_text())
+                    finding = ledger["findings"][0]
+                    assert finding["enforced"] == (mod_profile == "advisor-blocking"), ledger
+                    if mod_profile == "advisor-compaction":
+                        assert Provider.compacted
+                        assert "omd_status" in json.dumps(workers[0]["body"]), workers[0]
+            record = {"status": "pass", "profile": mod_profile, "requests": len(requests), "workers": len(workers), "evidence_packets": len(packets), "advisor": state, "scope": "extension-owned advisor with native provenance and ledger enforcement; synthetic provider only"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
+        if mod_profile.startswith("anchored-edit"):
+            assert process.returncode == 0, process.stderr[-4000:]
+            source = (repo / "solution.py").read_text()
+            output = [item for request in requests for item in request["body"].get("input", []) if item.get("type") in ("function_call_output", "custom_tool_call_output")]
+            if mod_profile == "anchored-edit-stale":
+                assert source == "def add(a, b):\n    return a - b\n", source
+                assert "stale_file_hash" in json.dumps(output), output
+            else:
+                assert source == "def add(a, b):\n    return a + b\n", (source, output)
+                if mod_profile == "anchored-edit":
+                    assert "applied" in json.dumps(output), output
+            assert (repo / "unrelated.txt").read_text() == "Uncommitted user work\n"
+            record = {"status": "pass", "profile": mod_profile, "requests": len(requests), "source": source, "ordinary_diff": subprocess.check_output(["/usr/bin/git", "diff", "--", "solution.py"], cwd=repo, text=True), "scope": "actual native transaction or ordinary apply_patch; synthetic provider, no paid call"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
+        if mod_profile == "shared-context":
+            assert process.returncode == 0, process.stderr[-4000:]
+            workers = [request for request in requests if (request["native_owner"] or "").startswith("mod-example_scoped_data-")]
+            assert len(workers) == 1, requests
+            packet = json.dumps(workers[0]["body"])
+            assert "SELECTED_FROZEN_FACT_SENTINEL" in packet and "PARENT_HISTORY_SENTINEL" not in packet, packet
+            assert workers[0]["body"].get("tools", []) == []
+            record = {"status": "pass", "profile": mod_profile, "requests": len(requests), "workers": 1, "scope": "explicit frozen context copied into an isolated synthetic worker; no parent history or tools"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
+        if mod_profile.startswith("shared-service"):
+            assert process.returncode == 0, process.stderr[-4000:]
+            state = json.loads((destination / "mod-store/state-example_service_request.json").read_text())["value"]
+            if mod_profile == "shared-service":
+                assert state["ok"] is True and state["value"]["result"] == {"echo": "extension-owned request", "write_denied": True}, state
+            else:
+                assert state["ok"] is False, state
+            assert not (repo / "forbidden-write").exists()
+            processes = subprocess.check_output(["/bin/ps", "-axo", "args="], text=True)
+            assert str(destination / "echo.py") not in processes, "service process survived request cleanup"
+            record = {"status": "pass", "profile": mod_profile, "requests": len(requests), "service": state, "scope": "synthetic granted local service; no external requests"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
+        if mod_profile in ("shared-review", "shared-review-denied", "shared-review-compaction", "shared-disabled"):
+            assert process.returncode == 0, process.stderr[-4000:]
+            workers = [request for request in requests if (request["native_owner"] or "").startswith("mod-example_review_probe-")]
+            resources = list((destination / "mod-store/resources").rglob("*.json")) if (destination / "mod-store/resources").exists() else []
+            if mod_profile in ("shared-review", "shared-review-compaction"):
+                assert len(workers) == 1, requests
+                assert workers[0]["body"].get("tools", []) == [], workers[0]["body"].get("tools")
+                assert "A visible synthetic completed turn" in json.dumps(workers[0]["body"]), workers
+                ledger = json.loads((destination / "evidence/review-state.json").read_text())
+                assert len(ledger["cycles"]) == 1 and ledger["cycles"][0]["cadence"] == "every_turn", ledger
+                assert ledger["cycles"][0]["separate_reviewer"] is True
+                state = json.loads((destination / "mod-store/state-example_review_probe.json").read_text())
+                assert state["value"]["status"] == "recorded", state
+                assert resources
+                if mod_profile == "shared-review-compaction":
+                    assert Provider.compacted
+                    packets = [json.loads(path.read_text())["payload"] for path in resources]
+                    assert any(packet.get("compacted") is True for packet in packets), packets
+                    assert any("pre-compact-call" in json.dumps(packet) and "A visible synthetic completed turn" in json.dumps(packet) for packet in packets), packets
+            elif mod_profile == "shared-disabled":
+                assert not workers and not resources
+            else:
+                assert not workers and resources
+                state = json.loads((destination / "mod-store/state-example_review_probe.json").read_text())
+                assert state["value"]["status"] == "denied", state
+            assert (repo / "solution.py").read_text() == "def add(a, b):\n    return a - b\n"
+            record = {"status": "pass", "profile": mod_profile, "requests": len(requests), "workers": len(workers), "evidence_packets": len(resources), "scope": "synthetic native public-seam fixture; no paid provider"}
+            (destination / "verification.json").write_text(json.dumps(record, indent=2))
+            return record
         if typed_profile:
             assert process.returncode == 0, process.stderr[-4000:]
             outputs = [item for request in requests for item in request["body"].get("input", []) if item.get("type") == "function_call_output" and item.get("call_id") == "typed-run"]
@@ -912,7 +1136,7 @@ def main():
     parser.add_argument("--structured-worker-reports", action="store_true")
     parser.add_argument("--reactive-rules", action="store_true")
     parser.add_argument("--mod-node", type=Path)
-    parser.add_argument("--mod-profile", choices=("counter", "platform-inactive", "platform-broken", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-inactive", "preview-denied", "preview-broken", "coordination-only", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery-pair", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only", "candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts", "candidate-anchor", "candidate-anchor-baseline", "typed-read", "typed-edit", "typed-malformed", "typed-failed", "typed-disabled", "typed-broken"), default="counter")
+    parser.add_argument("--mod-profile", choices=("counter", "platform-inactive", "platform-broken", "full", "provider", "cancel", "failure", "policy", "opaque", "routing", "lifecycle", "deny", "preview", "preview-inactive", "preview-denied", "preview-broken", "coordination-only", "coordination-focused", "coordination-shared", "coordination-parent", "coordination-task-entry", "coordination-broken", "recovery-pair", "recovery", "recovery-denied", "recovery-pause", "recovery-broken", "conformance", "conformance-conflict", "exercise", "workspace-only", "candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts", "candidate-anchor", "candidate-anchor-baseline", "typed-read", "typed-edit", "typed-malformed", "typed-failed", "typed-disabled", "typed-broken", "shared-review", "shared-review-denied", "shared-review-compaction", "shared-disabled", "shared-service", "shared-service-denied", "shared-service-changed", "shared-service-timeout", "shared-context", "anchored-edit", "anchored-edit-stale", "anchored-edit-disabled", "advisor", "advisor-denied", "advisor-disabled", "advisor-blocking", "advisor-compaction", "github-read", "github-read-denied", "github-read-disabled", "curated-memory", "curated-memory-disabled", "research-narrow", "research-denied", "research-disabled", "research-subscription-denied"), default="counter")
     args = parser.parse_args()
     print(json.dumps(run(args.binary.resolve(), args.destination.resolve(), args.scenario, args.context_policy, args.lead_policy, args.lead, args.failure_class, args.concise_user_updates, args.structured_worker_reports, args.reactive_rules, args.mod_node, args.mod_profile), indent=2))
 

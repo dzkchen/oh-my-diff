@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "as_of": "2026-09-25",
+  "as_of": "2026-09-27",
   "packages": [
     {
       "id": "omd-code-execution",
@@ -71,6 +71,48 @@
       "source": "mods/exercise/atlas_console/2.0.0",
       "reason": "Third-party-style terminal conformance fixture, not an independent community contribution",
       "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_lsp_sync",
+      "extension_type": "mod",
+      "source": "mods/first-party/omd_lsp_sync",
+      "reason": "Opt-in implementation qualified locally; public release and support remain separate gates.",
+      "review": ".docs/ROADMAP.md"
+    },
+    {
+      "id": "omd-anchored-edit",
+      "extension_type": "plugin",
+      "source": "plugins/optional/plugins/omd-anchored-edit",
+      "reason": "Optional local package; deterministic and sandboxed acceptance only, public support and real-task value unqualified.",
+      "review": ".docs/audits/batch2-packages-20260926.md"
+    },
+    {
+      "id": "omd-session-review",
+      "extension_type": "plugin",
+      "source": "plugins/optional/plugins/omd-session-review",
+      "reason": "Optional local package; deterministic and sandboxed acceptance only, public support and real-task value unqualified.",
+      "review": ".docs/audits/batch2-packages-20260926.md"
+    },
+    {
+      "id": "omd_advisor",
+      "extension_type": "mod",
+      "source": "mods/first-party/omd_advisor",
+      "reason": "Batch 2 local acceptance complete; opt-in and inactive. Real-model access and review quality remain unverified, outside the maintainer-approved completion scope.",
+      "review": ".docs/audits/batch2-packages-20260926.md"
+    },
+    {
+      "id": "omd_research",
+      "extension_type": "mod",
+      "source": "mods/first-party/omd_research",
+      "reason": "Batch 2 local acceptance complete; opt-in and inactive. Live access and representative savings remain unverified, outside the maintainer-approved completion scope; no model-use allowance granted.",
+      "review": ".docs/audits/batch2-packages-20260926.md"
+    },
+    {
+      "id": "omd-curated-memory",
+      "extension_type": "plugin",
+      "source": "plugins/optional/plugins/omd-curated-memory",
+      "reason": "Local-only opt-in memory; third-party connections deferred by maintainer. Native fixture qualification, no public support or task-value claim.",
+      "review": ".docs/audits/batch2-packages-20260926.md"
     }
   ]
 }

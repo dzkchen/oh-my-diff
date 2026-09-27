@@ -41,7 +41,9 @@ pub use outcome::ModInputDecision;
 mod package_manager;
 mod process;
 pub use bridge::ModHostCall;
+mod resources;
 mod store;
+pub use resources::ModVirtualReader;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -66,7 +68,7 @@ pub use store::ModStore;
 
 pub const CODEX_HOST_RELEASE: &str = "0.157.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-pub const MOD_API_VERSION: &str = "0.1.0-experimental.8";
+pub const MOD_API_VERSION: &str = "0.1.0-experimental.9";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -89,12 +91,20 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "git_operations_v1",
     "transactional_reload_v1",
     "task_tool_exposure_v1",
+    "virtual_reads_v1",
+    "scoped_data_v1",
+    "plugin_dispatch_v1",
+    "turn_evidence_v1",
+    "accounted_review_v1",
+    "service_requests_v1",
+    "worker_presets_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "task.status",
     "routes.list",
     "checkpoint.read",
     "checkpoint.update",
+    "workers.presets",
     "agents.spawn",
     "agents.message",
     "agents.cancel",
@@ -110,6 +120,11 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "process.exchange",
     "process.status",
     "process.stop",
+    "review.request",
+    "review.result",
+    "review.wait",
+    "review.submit",
+    "review.cancel",
     "review.run",
     "review.complete",
     "delegation.contribute",
@@ -119,6 +134,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "pi.expand",
     "providers.unregister",
     "providers.register",
+    "sidecars.invoke",
     "sidecars.start",
     "sidecars.status",
     "sidecars.stop",
@@ -133,12 +149,25 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "git.commit",
     "git.discard",
     "git.switch",
+    "evidence.read",
+    "sessions.list",
+    "sessions.read",
+    "knowledge.inspect",
+    "knowledge.retain",
+    "knowledge.propose",
+    "knowledge.approve",
+    "knowledge.remove",
+    "knowledge.reset",
+    "knowledge.snapshot",
+    "context.freeze",
+    "context.deliver",
 ];
 pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
     ("0.1.0-experimental.4", "deprecated", "2027-03-20"),
     ("0.1.0-experimental.5", "experimental", "2027-03-20"),
     ("0.1.0-experimental.6", "experimental", "2027-03-20"),
     ("0.1.0-experimental.7", "experimental", "2027-03-20"),
+    ("0.1.0-experimental.8", "experimental", "2027-03-20"),
     (MOD_API_VERSION, "experimental", "2027-03-20"),
 ];
 pub const MOD_CAPABILITIES: &[&str] = &[
@@ -166,6 +195,11 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "workspace",
     "process",
     "git",
+    "turn_evidence",
+    "virtual_reads",
+    "sessions_read",
+    "knowledge_read",
+    "knowledge_write",
 ];
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -536,6 +570,9 @@ fn source_use(
     }
     if !registrations.services.is_empty() || !services.is_empty() {
         capabilities.insert("services".to_owned());
+    }
+    if !registrations.virtual_reads.is_empty() {
+        capabilities.insert("virtual_reads".to_owned());
     }
     if source.contains(".state.get(") || source.contains(".state.set(") {
         capabilities.insert("state".to_owned());
@@ -1115,6 +1152,8 @@ pub struct ModCommand {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -1141,6 +1180,8 @@ struct Registrations {
     contracts: Vec<crate::WorkflowContract>,
     #[serde(default)]
     services: Vec<ModServiceContract>,
+    #[serde(default)]
+    virtual_reads: Vec<ModVirtualReader>,
 }
 
 #[derive(Deserialize)]
@@ -1311,6 +1352,7 @@ impl ModHost {
         }
         Self::resolve_conflicts(&mut next, initial)?;
         Self::resolve_services(&mut next, initial)?;
+        Self::resolve_virtual_readers(&mut next, initial)?;
         let order = Self::resolve_dependencies(&mut next, initial)?;
         self.selections = (
             config
@@ -1645,12 +1687,39 @@ impl ModHost {
 
     fn validate_registrations(package: &ModPackage, registrations: &Registrations) -> Result<()> {
         let has = |cap: &str| package.capabilities.iter().any(|c| c == cap);
-        if package.api != MOD_API_VERSION
-            && (registrations.tools.iter().any(|tool| tool.task_scoped)
-                || registrations
-                    .events
+        if package
+            .capabilities
+            .iter()
+            .any(|cap| cap == "turn_evidence")
+            && (package.api != MOD_API_VERSION
+                || !package
+                    .compatibility
+                    .required_features
                     .iter()
-                    .any(|event| event == "tool_exposure"))
+                    .any(|feature| feature == "turn_evidence_v1"))
+        {
+            return Err(failure("turn_evidence_capability_or_version"));
+        }
+        if ["sessions_read", "knowledge_read", "knowledge_write"]
+            .iter()
+            .any(|cap| has(cap))
+            && (package.api != MOD_API_VERSION
+                || !package
+                    .compatibility
+                    .required_features
+                    .iter()
+                    .any(|feature| feature == "scoped_data_v1"))
+        {
+            return Err(failure("scoped_data_requires_current_api_and_feature"));
+        }
+        if !matches!(
+            package.api.as_str(),
+            "0.1.0-experimental.8" | MOD_API_VERSION
+        ) && (registrations.tools.iter().any(|tool| tool.task_scoped)
+            || registrations
+                .events
+                .iter()
+                .any(|event| event == "tool_exposure"))
         {
             return Err(failure("task_tool_exposure_requires_current_api"));
         }
@@ -1671,6 +1740,7 @@ impl ModHost {
                 "registered_service_contracts_do_not_match_manifest",
             ));
         }
+        resources::validate_registrations(package, &registrations.virtual_reads)?;
         let mut contract_ids = BTreeSet::new();
         for contract in &registrations.contracts {
             contract.validate().map_err(failure)?;
@@ -1700,6 +1770,24 @@ impl ModHost {
         }
         names.clear();
         for command in &registrations.commands {
+            if let Some(cli) = &command.cli {
+                if package.api != MOD_API_VERSION
+                    || !package
+                        .compatibility
+                        .required_features
+                        .iter()
+                        .any(|feature| feature == "plugin_dispatch_v1")
+                    || cli.is_empty()
+                    || cli.len() > 64
+                    || !cli.bytes().all(|byte| {
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || matches!(byte, b'-' | b'_')
+                    })
+                {
+                    return Err(failure("cli_command_version_or_name_invalid"));
+                }
+            }
             if !identifier(&command.name)
                 || !names.insert(&command.name)
                 || command
@@ -1839,6 +1927,15 @@ impl ModHost {
             match event {
                 "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
                 "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
+                "virtual_read"
+                    if loaded
+                        .registrations
+                        .virtual_reads
+                        .iter()
+                        .any(|reader| reader.scheme == name) =>
+                {
+                    ()
+                }
                 "service"
                     if loaded.registrations.services.iter().any(|contract| {
                         contract
@@ -1861,7 +1958,11 @@ impl ModHost {
                 payload,
                 &active,
                 &mut |call| {
-                    let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":call.arguments});
+                    let private = call.operation.starts_with("knowledge.")
+                        || call.operation.starts_with("sessions.")
+                        || call.operation.starts_with("context.")
+                        || call.operation.starts_with("evidence.");
+                    let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if private {Value::Null} else {call.arguments.clone()}});
                     let _ = self.event_except("host_operation", before, id, &active);
                     let result = if call.operation == "mods.service" {
                         self.call_service(id, generation, call.arguments.clone(), &active)
@@ -1870,10 +1971,10 @@ impl ModHost {
                     };
                     let after = match &result {
                         Ok(value) => {
-                            json!({"phase":"after","caller":id,"operation":call.operation,"result":value})
+                            json!({"phase":"after","caller":id,"operation":call.operation,"result":if private {Value::Null} else {value.clone()}})
                         }
                         Err(error) => {
-                            json!({"phase":"after","caller":id,"operation":call.operation,"error":error.to_string()})
+                            json!({"phase":"after","caller":id,"operation":call.operation,"error":if private {"private_operation_failed".to_owned()} else {error.to_string()}})
                         }
                     };
                     let _ = self.event_except("host_operation", after, id, &active);
@@ -1956,7 +2057,7 @@ impl ModHost {
             if event == "terminal" && !reply.value.is_null() {
                 if replaces("terminal") {
                     ModView::parse(reply.value.clone())?;
-                } else if loaded.package.api == MOD_API_VERSION {
+                } else if matches!(loaded.package.api.as_str(), "0.1.0-experimental.8" | MOD_API_VERSION) {
                     ModViewPatch::parse(reply.value.clone())?;
                 } else {
                     return Err(failure("exclusive_replacement_registration_required"));
@@ -2293,6 +2394,16 @@ impl ModHost {
         event: &str,
         payload: Value,
         active: impl Fn() -> bool,
+        host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+    ) -> Vec<(String, Result<Value>)> {
+        self.event_scoped_with(event, |_| payload.clone(), active, host)
+    }
+
+    pub fn event_scoped_with(
+        &mut self,
+        event: &str,
+        mut payload: impl FnMut(&str) -> Value,
+        active: impl Fn() -> bool,
         mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
     ) -> Vec<(String, Result<Value>)> {
         let ids = self.event_ids(event);
@@ -2303,12 +2414,26 @@ impl ModHost {
                     self.generation,
                     event,
                     "",
-                    payload.clone(),
+                    payload(&id),
                     &active,
                     |call| host(&id, call),
                 );
                 (id, result)
             })
+            .collect()
+    }
+
+    pub fn subscribers_with_capability(&self, event: &str, capability: &str) -> Vec<String> {
+        self.active()
+            .filter(|(_, loaded)| {
+                loaded
+                    .package
+                    .capabilities
+                    .iter()
+                    .any(|cap| cap == capability)
+                    && loaded.registrations.events.iter().any(|name| name == event)
+            })
+            .map(|(id, _)| id.clone())
             .collect()
     }
 
@@ -2371,14 +2496,19 @@ impl ModHost {
     }
 
     pub fn tools(&self) -> Vec<(String, u64, ModTool)> {
-        self.active()
+        let mut tools: Vec<_> = self
+            .active()
             .flat_map(|(id, m)| {
                 m.registrations
                     .tools
                     .iter()
                     .map(|tool| (id.clone(), self.generation, tool.clone()))
             })
-            .collect()
+            .collect();
+        if !self.virtual_readers().is_empty() {
+            tools.push((String::new(), self.generation, resources::read_tool()));
+        }
+        tools
     }
 
     pub fn has_task_scoped_tools(&self) -> bool {

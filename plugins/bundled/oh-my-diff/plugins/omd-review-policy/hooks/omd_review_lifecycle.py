@@ -68,7 +68,8 @@ def load_manifest():
 
 def every_turn_selected(manifest):
     return (
-        manifest is not None
+        os.environ.get("OMD_REVIEW_CADENCE_OWNER", "manual") != "advisor"
+        and manifest is not None
         and manifest.get("capabilities", {}).get("unified_review") is True
         and manifest.get("review", {}).get("every_turn_advice") is True
     )

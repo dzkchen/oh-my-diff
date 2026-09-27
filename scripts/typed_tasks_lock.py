@@ -20,13 +20,12 @@ def build():
     base = ROOT / MOD
     manifest = json.loads((base / "mod.json").read_text())
     api = json.loads((ROOT / "mods/package.json").read_text())["version"]
-    if manifest["id"] != base.name or manifest["api"] != api:
-        raise ValueError("typed task mod identity or API differs from release pin")
+    preview_lock.validate_manifest(manifest, base.name)
     return {
         "schema": 1,
         "mod_api": api,
         "package": {
-            "id": manifest["id"], "version": manifest["version"],
+            "id": manifest["id"], "version": manifest["version"], "api": manifest["api"],
             "extension_type": "mod", "capabilities": manifest["capabilities"],
             "source": MOD,
             "files": {name: preview_lock.digest(base / name) for name in FILES},

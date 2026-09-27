@@ -226,3 +226,39 @@ fn persisted_state_round_trips_and_rejects_tampering() {
     changed.cycles[0].id = 7;
     assert!(UnifiedReview::restore(changed).is_err());
 }
+
+#[test]
+fn typed_advice_is_recorded_without_becoming_a_completion_blocker() {
+    let policy = ReviewPolicy {
+        every_turn_advice: true,
+        ..Default::default()
+    };
+    let mut review = UnifiedReview::new(policy).unwrap();
+    let mut advice = submission(ReviewCadence::EveryTurn, 'a');
+    advice.findings.push(finding('b', "An advisory concern"));
+    review
+        .submit_with_severity_enforcement(advice, true)
+        .unwrap();
+    assert_eq!(review.unresolved().len(), 1);
+    assert!(review.blocking().is_empty());
+    let mut final_review = submission(ReviewCadence::Final, 'a');
+    final_review.checks.push(marker("check", 'a'));
+    assert!(review.submit(final_review).unwrap().final_approved);
+    let restored = UnifiedReview::restore(review.snapshot()).unwrap();
+    assert!(restored.blocking().is_empty());
+    let mut blocking = submission(ReviewCadence::EveryTurn, 'a');
+    blocking.findings.push(ReviewFindingInput {
+        severity: ReviewSeverity::Blocking,
+        ..finding('c', "A selected blocker")
+    });
+    review
+        .submit_with_severity_enforcement(blocking, true)
+        .unwrap();
+    assert_eq!(review.blocking().len(), 1);
+    let mut legacy = submission(ReviewCadence::StableMilestone, 'a');
+    legacy
+        .findings
+        .push(finding('d', "Existing review behavior"));
+    review.submit(legacy).unwrap();
+    assert_eq!(review.blocking().len(), 2);
+}

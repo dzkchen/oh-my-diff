@@ -35,7 +35,7 @@
       "mod_required": false
     },
     "omd-review-policy": {
-      "version": "0.1.0",
+      "version": "0.1.0+codex.20260927022545",
       "extension_types": [
         "plugin",
         "skill",
@@ -53,7 +53,7 @@
       "mod_required": false
     },
     "omd-artifact-reading": {
-      "version": "0.1.0",
+      "version": "0.1.0+codex.20260927032203",
       "extension_types": [
         "plugin",
         "skill"
@@ -76,9 +76,15 @@
     "plugins/omd-application-bridges/hooks/hooks.json": "705c7166e08a13e189d4caf332408a3ce0b760b04ffc42d183062da2d143b993",
     "plugins/omd-application-bridges/hooks/omd_bridge_lifecycle.py": "86b565cec06d2c0bf1c7d842dd46849b203aabde71401b27663485d14b032c1e",
     "plugins/omd-application-bridges/scripts/omd_application_bridge.py": "bda4e6dc108ffbed18954ce30acbea71a2fc6b32c1e194836d3c204f826ff9c5",
-    "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "76f7cfc787897bedc0ab8fca9eec9bc520960aeaf7a46704fb5af68c044e7ee9",
+    "plugins/omd-artifact-reading/.codex-plugin/omd.json": "de16ae368bda078c2fc974ae9d0df730fbecee860131ff474cc4399da732a691",
+    "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "9324e098d303dbc68db25f2774dc624f60d04423b5f4c209a1566209f97f99a8",
+    "plugins/omd-artifact-reading/README.md": "da8b72d3f80d21bb3ef98a6dc567c180bd1c29a12db00944a263806462f0eb55",
+    "plugins/omd-artifact-reading/mod/index.ts": "2764548cdde0f6a8d2c8961bb53e22ee18a86fa21f7adf0c7edc97cf24db436d",
+    "plugins/omd-artifact-reading/mod/mod.json": "8cb9743f5498d8991603c2aaecf0431e11949b7144b56e0c60dd5f9e5b4483fc",
+    "plugins/omd-artifact-reading/scripts/github_read.py": "1a730b4c48d81b7a0e6feb4962c69b6b9f454c76db887a61984c28b5b8cdc709",
     "plugins/omd-artifact-reading/scripts/read_artifact.py": "8552f663a7b3130636ea554b66ec26a9a2b0a4b3c8b4ac6786f2e842cb7cf20f",
-    "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md": "792de39fda97a20e31ac2da9a68764979b7288aa52d01e43695edbc4c396ac00",
+    "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md": "fbbcd37ce926c7b37c15b4486aea4c53f2a73888138506fa8cc94b32ea7c3a18",
+    "plugins/omd-artifact-reading/tsconfig.json": "6bcf4da7be953f3d578863baeab06aefde1fbbbed2d1991fcde567d679637037",
     "plugins/omd-code-execution/.codex-plugin/plugin.json": "48587ca1701c0b549c9bd5b7c03d49ce022d34dc924769cd7f48ed71c133bb98",
     "plugins/omd-code-execution/skills/omd-code-execution/SKILL.md": "a95a08ca0ed0557426e49bcd1eeef2bda354c9f46801dd47d2b82d5c5759380a",
     "plugins/omd-guidance-hooks/.codex-plugin/plugin.json": "f025f02f2597d1ebbba616d8fb520cd1a1f72bc88a0b767f3f63e22f5a4223d5",
@@ -96,10 +102,10 @@
     "plugins/omd-repository-tools/.mcp.json": "9fd3f0b1c0ac500e8d05020d254f2dc8d4cac2eefb19bb953363bf3cc326afe8",
     "plugins/omd-repository-tools/scripts/omd_repository_mcp.py": "5c9783228fef772de8506a7f3908ec7d32947ad9697318f19e51e3bf6ff94dec",
     "plugins/omd-repository-tools/skills/omd-code-health/SKILL.md": "5ab976e0216392225a27c915e24fa35ba374f9e59cd6349dc669fa96115ff389",
-    "plugins/omd-review-policy/.codex-plugin/plugin.json": "66c1be527c6e212b202c6af8d7a5735b58cd4144d87706f5c9153eb233c32c1e",
+    "plugins/omd-review-policy/.codex-plugin/plugin.json": "221fe94f280ad078af6838b81debb8bad137b33143b30ebd83e651ded4697a14",
     "plugins/omd-review-policy/hooks/hooks.json": "695c491a68372be3a48bd44c4d3ef5e38bea5432cd16305b8a19936547f325bd",
-    "plugins/omd-review-policy/hooks/omd_review_lifecycle.py": "6b3d7b93f9031d3e9d10158a25e4619847c938ed22c33a91cce6e674ca93cf74",
+    "plugins/omd-review-policy/hooks/omd_review_lifecycle.py": "3298fd78ac1dac6d88bdc763ae63c9ae00d7292d61e9ff4f40944bcf69c90dd0",
     "plugins/omd-review-policy/skills/omd-final-review/SKILL.md": "07f62f9bd8534f8b8c8d263a2b36b038ee0b56a1bf2ca201ed21538ff60ea160",
-    "plugins/omd-review-policy/skills/omd-review-cadence/SKILL.md": "ce22a833fce597bbee412c96dd063395b2ab0d81c3d3a7153ad3ed415d8b29f4"
+    "plugins/omd-review-policy/skills/omd-review-cadence/SKILL.md": "a6148aeee47d7e63ceac159a8dabccc571f37f247b2df88386e18ba860f3c40d"
   }
 }

@@ -1,7 +1,8 @@
 {
-  "mod_api": "0.1.0-experimental.8",
+  "mod_api": "0.1.0-experimental.9",
   "packages": {
     "omd_git": {
+      "api": "0.1.0-experimental.8",
       "capabilities": [
         "commands",
         "git",
@@ -21,6 +22,7 @@
       "version": "0.1.0-preview.1"
     },
     "omd_logo": {
+      "api": "0.1.0-experimental.8",
       "capabilities": [
         "terminal"
       ],
@@ -36,6 +38,7 @@
       "version": "0.1.0-preview.1"
     },
     "omd_model_picker": {
+      "api": "0.1.0-experimental.8",
       "capabilities": [
         "terminal"
       ],
@@ -51,6 +54,7 @@
       "version": "0.1.0-preview.1"
     },
     "omd_selection_copy": {
+      "api": "0.1.0-experimental.8",
       "capabilities": [
         "commands",
         "state",

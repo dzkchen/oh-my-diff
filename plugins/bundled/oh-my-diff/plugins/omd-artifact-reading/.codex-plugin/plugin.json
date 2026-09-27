@@ -1,8 +1,10 @@
 {
   "name": "omd-artifact-reading",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260927032203",
   "description": "Source anchored URL, GitHub, PDF, and notebook reading for Oh My Diff.",
-  "author": {"name": "Oh My Diff"},
+  "author": {
+    "name": "Oh My Diff"
+  },
   "skills": "./skills/",
   "interface": {
     "displayName": "OMD Artifact Reading",
@@ -10,7 +12,9 @@
     "longDescription": "Read web pages, GitHub issues and pull requests, PDF pages, and notebook cells with version evidence and figure inspection using approved host tools.",
     "developerName": "Oh My Diff",
     "category": "Developer Tools",
-    "capabilities": ["Skills"],
+    "capabilities": [
+      "Skills"
+    ],
     "defaultPrompt": [
       "Read this URL with versioned source anchors",
       "Inspect this GitHub issue or pull request",
@@ -18,5 +22,11 @@
     ]
   },
   "license": "UNLICENSED",
-  "keywords": ["url", "github", "pdf", "notebook", "reading"]
+  "keywords": [
+    "url",
+    "github",
+    "pdf",
+    "notebook",
+    "reading"
+  ]
 }

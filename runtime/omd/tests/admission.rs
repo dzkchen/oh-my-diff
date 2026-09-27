@@ -60,6 +60,43 @@ fn worker() -> WorkerLimits {
     }
 }
 
+#[test]
+fn worker_route_grants_are_exact_nontransferable_and_share_allowances() {
+    let directory = tempfile::tempdir().unwrap();
+    let task = Task::create(limits(), directory.path().join("task")).unwrap();
+    task.start_worker("one".into(), "lead".into(), 1, worker())
+        .unwrap();
+    task.start_worker("two".into(), "lead".into(), 1, worker())
+        .unwrap();
+    assert!(task.admit("one", "openai", "selected-model", 20).is_err());
+    task.authorize_worker_route("one", "openai", "selected-model")
+        .unwrap();
+    assert!(
+        task.authorize_worker_route("one", "meta", "selected-model")
+            .is_err()
+    );
+    assert!(task.admit("lead", "openai", "selected-model", 20).is_err());
+    assert!(task.admit("two", "openai", "selected-model", 20).is_err());
+    assert!(task.admit("one", "openai", "other-model", 20).is_err());
+    assert!(
+        task.admit("one", "other-provider", "selected-model", 20)
+            .is_err()
+    );
+    for _ in 0..2 {
+        let admission = task.admit("one", "openai", "selected-model", 20).unwrap();
+        task.dispatch(&admission, || Ok(())).unwrap();
+        task.settle(&admission, json!({"input_tokens":1,"output_tokens":1}), 2)
+            .unwrap();
+    }
+    assert!(task.admit("one", "openai", "selected-model", 20).is_err());
+    task.finish_worker("one").unwrap();
+    assert!(
+        task.authorize_worker_route("one", "openai", "selected-model")
+            .is_err()
+    );
+    assert!(task.admit("one", "openai", "selected-model", 0).is_err());
+}
+
 fn contract() -> TaskContract {
     TaskContract {
         objective: "Persist task progress independently of conversation".into(),

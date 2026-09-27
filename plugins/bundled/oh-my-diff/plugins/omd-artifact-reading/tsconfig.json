@@ -1,0 +1,5 @@
+{
+  "extends": "../../../../../mods/tsconfig.json",
+  "compilerOptions": {"baseUrl": "../../../../..", "paths": {"@oh-my-diff/mod-api": ["mods/api.d.ts"]}},
+  "include": ["mod/**/*.ts"]
+}

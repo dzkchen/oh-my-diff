@@ -24,6 +24,10 @@ pub(crate) struct Grant {
     network: bool,
     #[serde(default)]
     read_paths: Vec<PathBuf>,
+    #[serde(default)]
+    requests: bool,
+    #[serde(default)]
+    read_hashes: BTreeMap<PathBuf, String>,
 }
 
 impl Grant {
@@ -129,9 +133,19 @@ impl Services {
         #[serde(deny_unknown_fields)]
         struct Selection {
             id: String,
+            #[serde(default)]
+            input: Option<Value>,
         }
         let selection: Selection =
             serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
+        let invoke = request.operation == "sidecars.invoke";
+        if invoke != selection.input.is_some()
+            || selection.input.as_ref().is_some_and(|input| {
+                serde_json::to_vec(input).map_or(true, |bytes| bytes.len() > 16384)
+            })
+        {
+            return Err("service_request_input_invalid".into());
+        }
         let mut records = self.records.lock().await;
         if matches!(
             request.operation.as_str(),
@@ -177,6 +191,28 @@ impl Services {
         if request.operation == "sidecars.start" && grant.route.is_some() {
             return Err("provider_registration_required".into());
         }
+        if invoke && (!grant.requests || grant.route.is_some() || grant.read_hashes.is_empty()) {
+            return Err("service_request_not_host_approved".into());
+        }
+        if grant.read_hashes.len() > 32 {
+            return Err("service_source_limit".into());
+        }
+        for (path, expected) in &grant.read_hashes {
+            if !path.is_absolute()
+                || path
+                    .canonicalize()
+                    .map_err(|_| "service_source_unavailable")?
+                    != *path
+                || std::fs::metadata(path)
+                    .map_err(|_| "service_source_unavailable")?
+                    .len()
+                    > 4 * 1024 * 1024
+                || execution::hash(&std::fs::read(path).map_err(|_| "service_source_unavailable")?)
+                    != *expected
+            {
+                return Err("service_source_changed".into());
+            }
+        }
         if grant.program.starts_with(&host.manifest.repository)
             || grant.program.canonicalize().map_err(|e| e.to_string())? != grant.program
         {
@@ -217,7 +253,15 @@ impl Services {
             .filter(|path| Some(path) != host.manifest.mods.as_ref())
             .collect::<Vec<_>>();
         let mut parent = (*parent).clone();
-        let inherited = parent.permissions.effective_permission_profile();
+        let inherited = execution::intersect(
+            &parent.permissions.effective_permission_profile(),
+            &lead
+                .permission_profile
+                .lock()
+                .map_err(|_| "permission_profile_poisoned")?
+                .clone(),
+            parent.cwd.as_path(),
+        )?;
         let source = host
             .manifest
             .mods
@@ -313,6 +357,81 @@ impl Services {
             {
                 return Err("configured_loopback_provider_required".into());
             }
+        }
+        if invoke {
+            let worker = format!(
+                "service-request-{}-{}",
+                grant.id,
+                manager.reserve_thread_id()
+            );
+            host.task
+                .start_worker(
+                    worker.clone(),
+                    lead.owner.clone(),
+                    lead.depth.saturating_add(1),
+                    host.manifest.worker_limits.clone(),
+                )
+                .map_err(|e| e.to_string())?;
+            struct RequestGuard {
+                task: Arc<Task>,
+                worker: String,
+            }
+            impl Drop for RequestGuard {
+                fn drop(&mut self) {
+                    let _ = self.task.finish_worker(&self.worker);
+                }
+            }
+            let _guard = RequestGuard {
+                task: host.task.clone(),
+                worker,
+            };
+            let mut argv = vec![grant.program.to_string_lossy().into_owned()];
+            argv.extend(grant.arguments.clone());
+            argv.push("--omd-request-json".into());
+            argv.push(serde_json::to_string(&selection.input).map_err(|e| e.to_string())?);
+            if argv.len() > 128 || argv.iter().map(String::len).sum::<usize>() > 24576 {
+                return Err("service_argument_limit".into());
+            }
+            let timeout = host
+                .task
+                .remaining()
+                .map_err(|e| e.to_string())?
+                .0
+                .min(Duration::from_secs(30));
+            let mut supervised = vec![
+                supervisor.to_string_lossy().into_owned(),
+                "--omd-managed-request-v1".into(),
+                std::process::id().to_string(),
+                timeout.as_secs().saturating_add(1).to_string(),
+            ];
+            supervised.extend(argv);
+            drop(records);
+            let output = tokio::time::timeout(timeout, request_output(&config, supervised))
+                .await
+                .map_err(|_| "service_request_deadline")??;
+            host.task.check_active().map_err(|e| e.to_string())?;
+            if output["exit_code"] != 0 {
+                return Err("service_request_failed".into());
+            }
+            let text = output["stdout"]
+                .as_str()
+                .filter(|text| text.len() <= 32768)
+                .ok_or("service_response_limit")?;
+            if config
+                .permissions
+                .shell_environment_policy
+                .r#set
+                .values()
+                .filter(|value| value.len() >= 4)
+                .any(|secret| text.contains(secret))
+            {
+                return Err("service_response_secret_excluded".into());
+            }
+            let value: Value =
+                serde_json::from_str(text).map_err(|_| "service_response_not_json")?;
+            return Ok(
+                json!({"provider":grant.id,"program_sha256":grant.program_sha256,"source_hashes":grant.read_hashes,"result":value,"untrusted":true}),
+            );
         }
         let nonce = manager.reserve_thread_id().to_string();
         config
@@ -445,4 +564,56 @@ impl Services {
             json!({"id":grant.id,"status":if port.is_some() {"ready"} else {"starting"},"secret_references":grant.secrets.values().collect::<Vec<_>>()}),
         )
     }
+}
+
+async fn request_output(config: &Config, command: Vec<String>) -> Result<Value, String> {
+    use codex_sandboxing::seatbelt::{
+        CreateSeatbeltCommandArgsParams, MACOS_PATH_TO_SEATBELT_EXECUTABLE,
+        create_seatbelt_command_args,
+    };
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+    let profile = config.permissions.effective_permission_profile();
+    let argv = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+        command,
+        file_system_sandbox_policy: &profile.file_system_sandbox_policy(),
+        network_sandbox_policy: profile.network_sandbox_policy(),
+        sandbox_policy_cwd: config.cwd.as_path(),
+        enforce_managed_network: false,
+        managed_network: None,
+        environment_id: None,
+        network: None,
+        extra_allow_unix_sockets: &[],
+    })?;
+    let mut child = tokio::process::Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
+        .args(argv)
+        .current_dir(&config.cwd)
+        .env_clear()
+        .envs(config.permissions.shell_environment_policy.r#set.iter())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    struct Group(u32);
+    impl Drop for Group {
+        fn drop(&mut self) {
+            let _ = codex_utils_pty::process_group::kill_process_group(self.0);
+        }
+    }
+    let group = Group(child.id().ok_or("service_process_id_missing")?);
+    let stdout = child.stdout.take().ok_or("service_stdout_missing")?;
+    let mut line = Vec::new();
+    tokio::io::BufReader::new(stdout)
+        .take(196_609)
+        .read_until(b'\n', &mut line)
+        .await
+        .map_err(|error| error.to_string())?;
+    drop(group);
+    let _ = child.wait().await;
+    if line.len() > 196_608 || line.last() != Some(&b'\n') {
+        return Err("service_response_limit_or_incomplete".into());
+    }
+    serde_json::from_slice(&line).map_err(|_| "service_response_invalid".into())
 }

@@ -13,11 +13,77 @@ use std::path::PathBuf;
 
 pub(super) struct WorkspaceAuthority {
     pub repository: PathBuf,
+    pub session_root: Option<PathBuf>,
+    pub session_database: Option<PathBuf>,
     pub policy: FileSystemSandboxPolicy,
     pub context: FileSystemSandboxContext,
 }
 
 impl WorkspaceAuthority {
+    pub async fn for_call(lead: &crate::Lead, call: &crate::ToolCall<'_>) -> Result<Self, String> {
+        let host = &lead.host;
+        let manager = host
+            .manager
+            .upgrade()
+            .ok_or("native_thread_manager_stopped")?;
+        let config = manager
+            .get_thread(lead.thread)
+            .await
+            .map_err(|e| e.to_string())?
+            .config()
+            .await;
+        let environment = call.environments.as_slice();
+        if environment.len() != 1
+            || environment[0].environment_id != "local"
+            || environment[0].cwd != codex_utils_path_uri::PathUri::from_abs_path(&config.cwd)
+            || config.cwd.as_path() != host.manifest.repository
+        {
+            return Err("workspace_operation_requires_local_repository".into());
+        }
+        let context = environment[0].file_system_sandbox_context.clone();
+        let mut roots = context
+            .workspace_roots
+            .iter()
+            .map(codex_utils_path_uri::PathUri::to_abs_path)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        if roots.is_empty() {
+            roots.push(config.cwd.clone());
+        }
+        let configured = config
+            .permissions
+            .permission_profile()
+            .clone()
+            .materialize_project_roots_with_workspace_roots(&roots);
+        let actual = context
+            .permissions
+            .clone()
+            .materialize_project_roots_with_workspace_roots(&roots);
+        let effective = crate::execution::intersect(&configured, &actual, config.cwd.as_path())?;
+        let current = lead
+            .permission_profile
+            .lock()
+            .map_err(|_| "permission_profile_poisoned")?
+            .clone();
+        let effective = crate::execution::intersect(&effective, &current, config.cwd.as_path())?;
+        let mut context = context;
+        context.permissions = effective.clone();
+        Ok(Self {
+            repository: host.manifest.repository.clone(),
+            policy: effective.file_system_sandbox_policy(),
+            context,
+            session_root: Some(config.codex_home.join("sessions").to_path_buf()),
+            session_database: Some(config.sqlite.state_db_path()),
+        })
+    }
+
+    pub fn readable(&self, path: &std::path::Path) -> bool {
+        path.strip_prefix(&self.repository)
+            .ok()
+            .and_then(std::path::Path::to_str)
+            .is_some_and(|name| self.paths(&[name.to_owned()], false).is_ok())
+    }
+
     pub fn for_platform(
         repository: &std::path::Path,
         profile: PermissionProfile,
@@ -32,6 +98,8 @@ impl WorkspaceAuthority {
         );
         Ok(Self {
             repository: repository.to_path_buf(),
+            session_root: None,
+            session_database: None,
             policy: profile.file_system_sandbox_policy(),
             context,
         })
@@ -202,16 +270,25 @@ impl WorkspaceAuthority {
         if config.cwd.as_path() != host.manifest.repository {
             return Err("workspace_operation_requires_local_repository".into());
         }
-        let profile = config
-            .permissions
-            .effective_permission_profile()
-            .materialize_project_roots_with_workspace_roots(std::slice::from_ref(&config.cwd));
+        let current = lead
+            .permission_profile
+            .lock()
+            .map_err(|_| "permission_profile_poisoned")?
+            .clone();
+        let profile = crate::execution::intersect(
+            &config.permissions.effective_permission_profile(),
+            &current,
+            config.cwd.as_path(),
+        )?
+        .materialize_project_roots_with_workspace_roots(std::slice::from_ref(&config.cwd));
         let context = FileSystemSandboxContext::from_permission_profile(
             profile.clone(),
             PathUri::from_abs_path(&config.cwd),
         );
         Ok(Self {
             repository: host.manifest.repository.clone(),
+            session_root: Some(config.codex_home.join("sessions").to_path_buf()),
+            session_database: Some(config.sqlite.state_db_path()),
             policy: profile.file_system_sandbox_policy(),
             context,
         })
@@ -328,6 +405,8 @@ mod tests {
         let context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
         WorkspaceAuthority {
             repository,
+            session_root: None,
+            session_database: None,
             policy,
             context,
         }

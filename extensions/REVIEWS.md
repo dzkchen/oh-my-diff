@@ -48,3 +48,5 @@ Structural editing, debugger inspection, mechanical patch recovery and
 subagent guidance have selected trials. The typed-task candidate is separately
 installed and locally functional but has not passed the later release support
 gate. Native/configured Codex remains the current path until that gate passes.
+
+The 2026-09-26 Batch 2 updates keep `omd-review-policy` and `omd-artifact-reading` as reviewed development candidates: advisor procedure/cadence selection and plugin-owned GitHub virtual reads have local fixture evidence, while public support remains unqualified. The optional `omd-curated-memory` package is local-only under the maintainer decision; `omd-anchored-edit` and `omd-session-review` are separately installed public-API components. On 2026-09-27 the maintainer accepted advisor/research on local evidence without real-model qualification, completing Batch 2; both mods remain inactive development candidates with live access, quality and savings unverified. See the [package audit](../.docs/audits/batch2-packages-20260926.md) for exact scope and limits.

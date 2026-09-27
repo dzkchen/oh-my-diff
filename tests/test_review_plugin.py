@@ -33,8 +33,9 @@ class ReviewPluginTests(unittest.TestCase):
     def write_manifest(self):
         self.manifest.write_text(json.dumps(self.manifest_value) + "\n")
 
-    def run_hook(self, event, enabled=True):
+    def run_hook(self, event, enabled=True, owner="manual"):
         environment = os.environ.copy()
+        environment["OMD_REVIEW_CADENCE_OWNER"] = owner
         if enabled:
             environment.update(
                 {
@@ -126,6 +127,14 @@ class ReviewPluginTests(unittest.TestCase):
         result = self.run_hook(self.event("Stop"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_advisor_owns_completed_turn_cadence_without_manual_stop_guard(self):
+        for event in (self.event("Stop"), self.event("SessionEnd")):
+            result = self.run_hook(event, owner="advisor")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "")
+        self.assertFalse((self.root / "plugin-data").exists())
+        self.assertEqual(json.loads(self.run_hook(self.event("Stop")).stdout)["decision"], "block")
 
     def test_tampered_marker_does_not_satisfy_stop(self):
         self.marker().parent.mkdir()

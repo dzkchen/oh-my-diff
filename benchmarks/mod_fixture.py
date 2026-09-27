@@ -1,6 +1,8 @@
 import hashlib
 import json
+import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -248,6 +250,146 @@ def install_exercise(destination, manifest, node, profile):
 
 
 def install(destination, manifest, node, profile):
+    if profile.startswith("research-"):
+        source = ROOT / "mods/first-party/omd_research"
+        package = destination / "omd_research"
+        package.mkdir()
+        declared, body = [(source / name).read_bytes() for name in ("mod.json", "index.ts")]
+        for name, data in [("mod.json", declared), ("index.ts", body)]:
+            (package / name).write_bytes(data)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": profile != "research-disabled", "capabilities": json.loads(declared)["capabilities"], "settings": {"enabled": True}}]}))
+        manifest["mods"] = str(store)
+        if profile == "research-subscription-denied":
+            url = "https://chatgpt.com/backend-api/codex/responses"
+            grant = destination / "subscription-grant.json"
+            grant.write_text(json.dumps({"schema": 1, "included_subscription": True, "revocable": True, "repository": manifest["repository_identity"], "provider": "openai", "model": "gpt-6-luna", "responses_url": url}))
+            rates = {**manifest["leads"]["sol"]["rates"], "included_subscription": True, "reservation_microusd": 0}
+            manifest["mod_worker_presets"] = [{"name": "research_luna", "mod_id": "omd_research", "route": {"model": "gpt-6-luna", "provider": "openai", "reasoning_effort": "low", "responses_url": url, "rates": rates}, "tools": ["exec_command"], "subscription_authorization": {"path": str(grant), "sha256": hashlib.sha256(grant.read_bytes()).hexdigest()}}]
+        return
+    if profile in ("curated-memory", "curated-memory-disabled"):
+        source = ROOT / "plugins/optional/plugins/omd-curated-memory/mod"
+        package = destination / "omd_curated_memory"
+        package.mkdir()
+        declared, body = [(source / name).read_bytes() for name in ("mod.json", "index.ts")]
+        for name, data in [("mod.json", declared), ("index.ts", body)]:
+            (package / name).write_bytes(data)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": profile != "curated-memory-disabled", "capabilities": json.loads(declared)["capabilities"], "settings": {"live_recall": "reuse", "recall_ids": ["fixture-fact"], "capture_turns": True, "retain_turns": True}}]}))
+        manifest["mods"] = str(store)
+        (Path(manifest["repository"]) / "fact.txt").write_text("CURATED_EXACT_FACT_SENTINEL Use pnpm.\n")
+        if profile == "curated-memory":
+            dispatcher = Path(os.environ["OMD_FIXTURE_DISPATCHER"]).resolve()
+            subprocess.run([str(dispatcher), "memory", "--repo", manifest["repository"], "--store", str(store), "retain", json.dumps({"expected_revision": 0, "id": "fixture-fact", "label": "Exact fixture source", "source": {"path": "fact.txt", "start_line": 1, "end_line": 1}})], check=True, capture_output=True)
+        return
+    if profile.startswith("github-read"):
+        source = ROOT / "plugins/bundled/oh-my-diff/plugins/omd-artifact-reading"
+        package = destination / "omd_github_read"
+        package.mkdir()
+        declared, body = [(source / "mod" / name).read_bytes() for name in ("mod.json", "index.ts")]
+        for name, data in [("mod.json", declared), ("index.ts", body)]:
+            (package / name).write_bytes(data)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": profile != "github-read-disabled", "capabilities": json.loads(declared)["capabilities"], "settings": {}}]}))
+        helper = destination / "github_read.py"
+        helper.write_bytes((source / "scripts/github_read.py").read_bytes())
+        program = Path(sys.executable).resolve()
+        manifest["mods"] = str(store)
+        manifest["mod_services"] = [{"id": "omd_github_read", "mod_id": "omd_github_read", "program": str(program), "program_sha256": hashlib.sha256(program.read_bytes()).hexdigest(), "arguments": ["-I", str(helper)], "read_paths": [str(Path(sys.prefix).resolve()), str(helper), "/private/etc/ssl"], "read_hashes": {str(helper): hashlib.sha256(helper.read_bytes()).hexdigest()}, "requests": profile != "github-read-denied", "network": True}]
+        return
+    if profile.startswith("advisor"):
+        source = ROOT / "mods/first-party/omd_advisor"
+        package = destination / "omd_advisor"
+        package.mkdir()
+        declared = (source / "mod.json").read_bytes()
+        body = (source / "index.ts").read_bytes()
+        (package / "mod.json").write_bytes(declared)
+        (package / "index.ts").write_bytes(body)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": profile != "advisor-disabled", "capabilities": json.loads(declared)["capabilities"], "settings": {"every_turn": True, "mode": "blocking" if profile == "advisor-blocking" else "advisory"}}]}))
+        manifest["mods"] = str(store)
+        manifest["review"] = {"every_turn_advice": profile != "advisor-denied", "extension_blocking": profile == "advisor-blocking", "max_cycles": 16, "max_findings_per_cycle": 64, "max_open_findings": 128, "max_repairs": 4, "repair_scope": ["."]}
+        if profile == "advisor-compaction":
+            fixture = destination / "advisor_compact_fixture"
+            fixture.mkdir()
+            fixture_manifest = json.dumps({"schema": 1, "id": "advisor_compact_fixture", "version": "1.0.0", "api": API_VERSION, "state_version": 1, "capabilities": ["compaction"]}).encode()
+            fixture_source = b"export default function activate(api) { api.replace('compaction', () => ({threshold:20000,prompt:'MOD_COMPACT_PROMPT_SENTINEL Preserve the current request.'})); }"
+            (fixture / "mod.json").write_bytes(fixture_manifest)
+            (fixture / "index.ts").write_bytes(fixture_source)
+            config = json.loads((store / "mods.json").read_text())
+            config["mods"].append({"path": str(fixture), "sha256": package_digest(fixture_manifest, fixture_source), "enabled": True, "capabilities": ["compaction"], "settings": {}})
+            (store / "mods.json").write_text(json.dumps(config))
+        return
+    if profile.startswith("anchored-edit"):
+        source = ROOT / "plugins/optional/plugins/omd-anchored-edit/mod"
+        package = destination / "omd_anchored_edit"
+        package.mkdir()
+        declared = (source / "mod.json").read_bytes()
+        body = (source / "index.ts").read_bytes()
+        (package / "mod.json").write_bytes(declared)
+        (package / "index.ts").write_bytes(body)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": profile != "anchored-edit-disabled", "capabilities": json.loads(declared)["capabilities"], "settings": {}}]}))
+        manifest["mods"] = str(store)
+        return
+    if profile == "shared-context":
+        source = ROOT / "mods/examples/scoped_data"
+        package = destination / "example_scoped_data"
+        package.mkdir()
+        declared, body = [(source / name).read_bytes() for name in ("mod.json", "index.ts")]
+        for name, data in [("mod.json", declared), ("index.ts", body)]:
+            (package / name).write_bytes(data)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": True, "capabilities": json.loads(declared)["capabilities"], "settings": {}}]}))
+        (Path(manifest["repository"]) / "fact.txt").write_text("SELECTED_FROZEN_FACT_SENTINEL\n")
+        manifest["mods"] = str(store)
+        return
+    if profile.startswith("shared-service"):
+        source = ROOT / "mods/examples/service_request"
+        package = destination / "example_service_request"
+        package.mkdir()
+        declared, body = [(source / name).read_bytes() for name in ("mod.json", "index.ts")]
+        (package / "mod.json").write_bytes(declared)
+        (package / "index.ts").write_bytes(body)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": True, "capabilities": json.loads(declared)["capabilities"], "settings": {}}]}))
+        helper = destination / "echo.py"
+        helper.write_text("import json, pathlib, sys\nrequest=json.loads(sys.argv[-1])\ntry:\n pathlib.Path('forbidden-write').write_text('bad')\n denied=False\nexcept PermissionError:\n denied=True\nprint(json.dumps({'echo':request['text'],'write_denied':denied}))\n")
+        program = Path(sys.executable).resolve()
+        manifest["mods"] = str(store)
+        manifest["mod_services"] = [{"id": "example_echo", "mod_id": "example_service_request", "program": str(program), "program_sha256": hashlib.sha256(program.read_bytes()).hexdigest(), "arguments": ["-I", str(helper)], "read_paths": [str(Path(sys.prefix).resolve()), str(helper)], "read_hashes": {str(helper): hashlib.sha256(helper.read_bytes()).hexdigest()}, "requests": profile != "shared-service-denied"}]
+        if profile == "shared-service-timeout":
+            helper.write_text("import time\ntime.sleep(45)\n" + helper.read_text())
+            manifest["mod_services"][0]["read_hashes"][str(helper)] = hashlib.sha256(helper.read_bytes()).hexdigest()
+        if profile == "shared-service-changed":
+            helper.write_text(helper.read_text() + "\nprint('changed')\n")
+        return
+    if profile in ("shared-review", "shared-review-denied", "shared-review-compaction", "shared-disabled"):
+        source = ROOT / "mods/examples/review_probe"
+        package = destination / "example_review_probe"
+        package.mkdir()
+        declared = (source / "mod.json").read_bytes()
+        body = (source / "index.ts").read_bytes()
+        if profile == "shared-review-compaction":
+            value = json.loads(declared)
+            value["capabilities"].append("compaction")
+            declared = json.dumps(value).encode()
+            body = body.replace(b"  api.on('turn_end'", b"  api.replace('compaction', () => ({threshold:20000,prompt:'MOD_COMPACT_PROMPT_SENTINEL Preserve the current request.'}));\n  api.on('turn_end'", 1)
+        (package / "mod.json").write_bytes(declared)
+        (package / "index.ts").write_bytes(body)
+        store = destination / "mod-store"
+        store.mkdir()
+        (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()), "mods": [{"path": str(package), "sha256": package_digest(declared, body), "enabled": profile != "shared-disabled", "capabilities": json.loads(declared)["capabilities"], "settings": {}}]}))
+        manifest["mods"] = str(store)
+        manifest["review"] = {"every_turn_advice": profile != "shared-review-denied", "max_cycles": 16, "max_findings_per_cycle": 64, "max_open_findings": 128, "max_repairs": 4, "repair_scope": ["."]}
+        return
     if profile.startswith("typed-"):
         source = ROOT / "mods/first-party/omd_typed_tasks"
         package = destination / "omd_typed_tasks"

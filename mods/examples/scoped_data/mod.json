@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "example_scoped_data",
+  "version": "1.0.0",
+  "api": "0.1.0-experimental.9",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "commands",
+    "context",
+    "state",
+    "sessions_read",
+    "knowledge_read",
+    "knowledge_write",
+    "tools",
+    "agents"
+  ],
+  "compatibility": {
+    "required_features": [
+      "scoped_data_v1",
+      "plugin_dispatch_v1",
+      "worker_presets_v1"
+    ]
+  }
+}

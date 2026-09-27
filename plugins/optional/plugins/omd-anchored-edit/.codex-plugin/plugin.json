@@ -1,0 +1,21 @@
+{
+  "name": "omd-anchored-edit",
+  "version": "0.1.0-preview.1",
+  "description": "Resolve exact text anchors and file hashes before an authorized workspace transaction.",
+  "author": {
+    "name": "Oh My Diff"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OMD Anchored Edit",
+    "shortDescription": "OMD Anchored Edit",
+    "longDescription": "Resolve exact text anchors and file hashes before an authorized workspace transaction.",
+    "developerName": "Oh My Diff",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Skills"
+    ],
+    "defaultPrompt": "Use OMD Anchored Edit for this repository"
+  },
+  "license": "Apache-2.0"
+}

@@ -241,6 +241,70 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations."
+    },
+    {
+      "path": "mods/examples/workspace",
+      "id": "workspace_author",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "author_example",
+      "why_mod": "Exercises reusable live workspace read, pre-rename events and host-authorized transactions."
+    },
+    {
+      "path": "mods/first-party/omd_lsp_sync",
+      "id": "omd_lsp_sync",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns live language-server synchronization and rename/edit planning through generic host process and workspace operations."
+    },
+    {
+      "path": "mods/examples/virtual_reader",
+      "id": "example_virtual_reader",
+      "version": "1.0.0",
+      "extension_type": "plugin",
+      "role": "author_example",
+      "why_mod": "Registers an independent virtual resource using the shared sandboxed extension bridge; the provider owns its resource grammar and content."
+    },
+    {
+      "path": "mods/examples/scoped_data",
+      "id": "example_scoped_data",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "author_example",
+      "why_mod": "Demonstrates scoped fact selection and frozen live context reuse, plus commands through the same public bridge."
+    },
+    {
+      "path": "mods/examples/review_probe",
+      "id": "example_review_probe",
+      "version": "1.0.0",
+      "extension_type": "hook",
+      "role": "author_example",
+      "why_mod": "Owns a bounded completed-turn procedure and result interpretation through the shared accounted review interface."
+    },
+    {
+      "path": "mods/examples/service_request",
+      "id": "example_service_request",
+      "version": "1.0.0",
+      "extension_type": "plugin",
+      "role": "author_example",
+      "why_mod": "Uses only a public tool export and a granted generic service request; no live engine replacement."
+    },
+    {
+      "id": "omd_advisor",
+      "version": "0.1.0-preview.1",
+      "path": "mods/first-party/omd_advisor",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns completed-turn scheduling, independent review prompts, typed result validation, deduplication and selected-context presentation through public accounted review primitives."
+    },
+    {
+      "id": "omd_research",
+      "version": "0.1.0-preview.1",
+      "path": "mods/first-party/omd_research",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns lead-requested broad-research admission, bounded briefing and evidence validation using an explicitly granted read-only host worker preset."
     }
   ],
   "synthetic_fixtures": [

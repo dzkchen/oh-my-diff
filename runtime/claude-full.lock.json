@@ -1,7 +1,8 @@
 {
   "cli_version": "2.1.281 (Claude Code)",
-  "mod_api": "0.1.0-experimental.8",
+  "mod_api": "0.1.0-experimental.9",
   "package": {
+    "api": "0.1.0-experimental.8",
     "capabilities": [
       "commands",
       "lifecycle",

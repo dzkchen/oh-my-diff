@@ -11,17 +11,19 @@ try:
     from scripts import typed_tasks_lock
     from scripts import lsp_sync_lock
     from scripts import terminal_mods_lock
+    from scripts import batch2_lock
 except ModuleNotFoundError:
     import private_lean_v1 as private
     import claude_lock
     import typed_tasks_lock
     import lsp_sync_lock
     import terminal_mods_lock
+    import batch2_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/lean-release.lock.json"
-BINARIES = ("codex", "omd-mod", "omd-graph", "omd-health", "omd-lsp")
+BINARIES = ("codex", "omd-mod", "omd", "omd-graph", "omd-health", "omd-lsp")
 AUTHOR_ARCHIVE = "mod-api.tgz"
 SOURCES = (
     "scripts/lean_profiles.py", "scripts/lean_release_lock.py",
@@ -29,7 +31,7 @@ SOURCES = (
     "scripts/preview_lock.py", "scripts/browser_bundle.py",
     "upstream.lock.json", "runtime/patches/manifest.json",
     "runtime/preview-v1.lock.json", "runtime/plugin-v1.lock.json",
-    "extensions/index.json", "mods/package.json", "mods/api.d.ts",
+    "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
     "LEAN_PROFILES.md",
     "scripts/claude_lock.py",
@@ -40,7 +42,24 @@ SOURCES = (
     "runtime/lsp-sync-full.lock.json",
     "scripts/terminal_mods_lock.py",
     "runtime/terminal-mods-full.lock.json",
-) + claude_lock.SOURCES + typed_tasks_lock.SOURCES + lsp_sync_lock.SOURCES + terminal_mods_lock.SOURCES
+    "scripts/batch2_lock.py", "runtime/batch2-full.lock.json",
+) + claude_lock.SOURCES + typed_tasks_lock.SOURCES + lsp_sync_lock.SOURCES + terminal_mods_lock.SOURCES + batch2_lock.SOURCES
+
+
+def sdk_sources():
+    names = set()
+    for name in json.loads((ROOT / "mods/package.json").read_text())["files"]:
+        path = ROOT / "mods" / name
+        if path.is_file():
+            names.add(path.relative_to(ROOT).as_posix())
+        elif path.is_dir():
+            names.update(item.relative_to(ROOT).as_posix() for item in path.rglob("*") if item.is_file())
+        else:
+            raise ValueError(f"declared SDK source is absent: {name}")
+    return tuple(sorted(names))
+
+
+SOURCES = tuple(sorted(set(SOURCES) | set(sdk_sources())))
 
 
 def selected_plugins(index, package_mode):
@@ -91,6 +110,9 @@ def build(artifact_dir, package_mode=False):
     typed = typed_tasks_lock.load()
     lsp = lsp_sync_lock.load()
     terminal = terminal_mods_lock.load()
+    batch2 = batch2_lock.load()
+    if not package_mode and batch2 != batch2_lock.build():
+        raise ValueError("Batch 2 Full lock differs from pinned sources")
     if not package_mode and terminal != terminal_mods_lock.build():
         raise ValueError("terminal mod Full lock differs from pinned sources")
     if not package_mode and claude != claude_lock.build():
@@ -123,8 +145,11 @@ def build(artifact_dir, package_mode=False):
     source_package.pop("packageManager", None)
     if json.loads(files.get("package/package.json", b"null")) != source_package:
         raise ValueError("packed mod author package metadata differs")
-    for name in ("api.d.ts", "author/cli.mjs"):
-        if files.get(f"package/{name}") != (ROOT / "mods" / name).read_bytes():
+    expected_sdk = {"package/" + name.removeprefix("mods/"): ROOT / name for name in sdk_sources()}
+    if set(files) != set(expected_sdk) | {"package/package.json"}:
+        raise ValueError("packed mod author file inventory differs")
+    for name, source in expected_sdk.items():
+        if files[name] != source.read_bytes():
             raise ValueError(f"packed mod author source differs: {name}")
     artifacts[AUTHOR_ARCHIVE] = {"sha256": private.digest(archive), "bytes": archive.stat().st_size}
     if private.binary_identity(artifact_dir / "codex")["version"] != f"codex-cli {version}":
@@ -142,10 +167,11 @@ def build(artifact_dir, package_mode=False):
         "node": preview["node"],
         "source_sha256": {name: private.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
+        "platform_tools": ["omd"],
         "profiles": {
             "platform": {"first_party_installed": ["omd_logo"], "first_party_default_active": ["omd_logo"],
                          "plugin_sources": [], "optional_tool_binaries": []},
-            "full": {"first_party_installed": sorted((*preview["packages"], claude["package"]["id"], typed["package"]["id"], lsp["package"]["id"], *terminal["packages"])),
+            "full": {"first_party_installed": sorted((*preview["packages"], claude["package"]["id"], typed["package"]["id"], lsp["package"]["id"], *terminal["packages"], *batch2["packages"])),
                      "first_party_default_active": ["omd_logo", "omd_model_picker", "omd_workspace"],
                      "plugin_sources": selected,
                      "optional_tool_binaries": ["omd-graph", "omd-health", "omd-lsp"]},

@@ -32,7 +32,9 @@ const tools = new Map();
 const commands = new Map();
 const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [] };
 registrations.services = [];
+registrations.virtual_reads = [];
 const serviceHandlers = new Map();
+const virtualReaders = new Map();
 const updates = [];
 let submitted = null;
 let state = structuredCloneFallback(request.state);
@@ -120,11 +122,21 @@ const api = Object.freeze({
     unique(tools, spec.name, handler);
     registrations.tools.push(spec);
   },
+  virtualRead(definition, handler) {
+    requireCapability('virtual_reads');
+    if (!activating) throw new Error('virtual_registration_outside_activation');
+    if (!definition || typeof definition.scheme !== 'string' || typeof definition.version !== 'string') throw new Error('invalid_virtual_registration');
+    unique(virtualReaders, definition.scheme, handler);
+    registrations.virtual_reads.push(structuredCloneFallback(definition));
+  },
   command(name, handler, options = {}) {
     requireCapability('commands');
-    for (const key of Object.keys(options ?? {})) if (key !== 'description') throw new Error('unsupported_command_option: ' + key);
+    for (const key of Object.keys(options ?? {})) if (!['description', 'cli'].includes(key)) throw new Error('unsupported_command_option: ' + key);
     unique(commands, name, handler);
-    registrations.commands.push(options?.description === undefined ? { name } : { name, description: options.description });
+    const entry = { name };
+    if (options?.description !== undefined) entry.description = options.description;
+    if (options?.cli !== undefined) entry.cli = options.cli;
+    registrations.commands.push(entry);
   },
   progress(text) {
     if (activating || request.event !== 'tool') throw new Error('progress_outside_tool');
@@ -175,7 +187,7 @@ const pi = new Proxy(Object.freeze({
     submitted = piText(content);
   },
 }), { get(target,key) { if (key in target) return target[key]; return unsupportedPi(String(key)); } });
-globalThis.__omd = { api, pi, handlers, tools, commands, serviceHandlers, registrations, updates,
+globalThis.__omd = { api, pi, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, updates,
   state: () => state, request, calls,
   pending: () => pending, ready: () => { activating = false; }, suspension };
 `;
@@ -209,7 +221,7 @@ try {
   await mod.evaluate({ timeout: request.hook_budget_ms });
   context.__activate = mod.namespace.default;
   const dispatch = new SourceTextModule(`
-    const { api, handlers, tools, commands, serviceHandlers, registrations, request } = globalThis.__omd;
+    const { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, request } = globalThis.__omd;
     if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
     await globalThis.__activate(request.adapter === "pi-0.74-tools-commands-v1" ? globalThis.__omd.pi : api);
     globalThis.__omd.ready();
@@ -218,6 +230,7 @@ try {
     if (request.event !== 'inspect') {
       const handler = request.event === 'tool' ? tools.get(request.name)
         : request.event === 'command' ? commands.get(request.name)
+        : request.event === 'virtual_read' ? virtualReaders.get(request.name)
         : request.event === 'service' ? serviceHandlers.get(request.name) : handlers.get(request.event);
       if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
       if (handler) value = await handler(request.payload) ?? null;

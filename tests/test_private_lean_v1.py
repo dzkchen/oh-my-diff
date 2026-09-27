@@ -331,14 +331,15 @@ class PreviewLockTests(unittest.TestCase):
     def test_pinned_preview_lock_matches_the_first_party_sources(self):
         self.assertEqual(preview_lock.build(), installer.preview_lock())
 
-    def test_every_pinned_package_declares_the_shipped_api_version(self):
+    def test_every_pinned_package_declares_its_exact_supported_api_version(self):
         lock = installer.preview_lock()
         api = json.loads((installer.ROOT / "mods/package.json").read_text())["version"]
         self.assertEqual(lock["mod_api"], api)
         self.assertTrue(lock["packages"])
         for identifier, package in lock["packages"].items():
             manifest = json.loads((installer.ROOT / package["source"] / "mod.json").read_text())
-            self.assertEqual(manifest["api"], api, identifier)
+            self.assertEqual(manifest["api"], package["api"], identifier)
+            preview_lock.validate_manifest(manifest, identifier)
             self.assertEqual(manifest["capabilities"], package["capabilities"], identifier)
             self.assertEqual(package["extension_type"], "mod", identifier)
 

@@ -37,9 +37,17 @@ def check():
         raise ValueError("duplicate catalog identity")
     marketplace = json.loads(MARKETPLACE.read_text())
     marketplace_ids = {entry["name"] for entry in marketplace["plugins"]}
-    listed_plugins = {entry["id"] for entry in entries + experiments if entry["extension_type"] == "plugin"}
+    listed_plugins = {entry["id"] for entry in entries + experiments
+                      if entry["extension_type"] == "plugin" and entry["source"].startswith("plugins/bundled/oh-my-diff/")}
     if marketplace_ids != listed_plugins:
         raise ValueError("catalog differs from bundled plugin marketplace")
+    optional_root = ROOT / "plugins/optional"
+    optional = json.loads((optional_root / ".agents/plugins/marketplace.json").read_text())
+    for entry in entries + experiments:
+        if entry["extension_type"] == "plugin" and entry["source"].startswith("plugins/optional/"):
+            matches = [item for item in optional["plugins"] if item["name"] == entry["id"]]
+            if len(matches) != 1 or (optional_root / matches[0]["source"]["path"]).resolve() != checked_path(entry["source"]):
+                raise ValueError("optional catalog source differs from its marketplace")
     first_party = {path.parent.name for path in (ROOT / "mods/first-party").glob("*/mod.json")}
     listed_mods = {entry["id"] for entry in entries + experiments if entry["extension_type"] == "mod" and entry["source"].startswith("mods/first-party/")}
     if first_party != listed_mods:
