@@ -17,6 +17,10 @@ import urllib.request
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts import upstream_surfaces  # noqa: E402
+
 UPSTREAM = "https://github.com/openai/codex.git"
 RELEASES_API = "https://api.github.com/repos/openai/codex/releases?per_page=100"
 DEFAULT_WORK_ROOT = Path("/private/tmp/omd-upstream-candidates")
@@ -179,7 +183,8 @@ class Candidate:
         if version_key(target) <= version_key(pin):
             raise CandidateError("review_required", f"{target} is not newer than the active pin {pin}")
         self.work_root.mkdir(parents=True, exist_ok=True)
-        inputs = sha256(json.dumps([self.active, self.manifest["patch"]["sha256"], target, commit, file_sha(Path(__file__))]).encode())
+        inputs = sha256(json.dumps([self.active, self.manifest["patch"]["sha256"], target, commit, file_sha(Path(__file__)),
+                                    file_sha(self.repo / "scripts/upstream_routes.json")]).encode())
         self.report["inputs_sha256"] = inputs
         marker = self.work_root / f"{target}.{inputs[:16]}.json"
         if marker.exists() and not self.args.force:
@@ -220,6 +225,7 @@ class Candidate:
         raw, normalized, count = normalize_lock(checkout, new_version)
         git(checkout, "commit", "--quiet", "-am", f"normalize {target} lock")
         normalized_commit = git(checkout, "rev-parse", "HEAD")
+        self.report["upstream_surfaces"] = self.surfaces(checkout)
         self.report["lock"] = {"cargo_lock_sha256": raw, "normalized_cargo_lock_sha256": normalized, "normalized_workspace_packages": count}
         changed = git(checkout, "diff", "--name-only", self.active["commit"], commit).splitlines()
         destinations = set(self.manifest["files"])
@@ -241,7 +247,13 @@ class Candidate:
         failed = self.checks(checkout, changed)
         if failed:
             raise CandidateError("check_failed", f"{len(failed)} check(s) failed: {', '.join(failed)}")
-        return "review_required" if authority else "green"
+        return "review_required" if authority or self.report["upstream_surfaces"].get("gap") else "green"
+
+    def surfaces(self, checkout):
+        table = self.repo / "scripts/upstream_routes.json"
+        if not table.is_file():
+            return {"skipped": "scripts/upstream_routes.json is absent"}
+        return upstream_surfaces.check(checkout, upstream_surfaces.load_table(table))
 
     def base_commit(self, checkout):
         pin = self.active
@@ -423,6 +435,14 @@ def markdown(report):
         lines += [f"- `{name}`" for name in changes["patch_destinations_changed"]]
     if report.get("authority_boundary_changes"):
         lines += ["", "## Authority boundary review required", *[f"- `{name}`" for name in report["authority_boundary_changes"]]]
+    surfaces = report.get("upstream_surfaces") or {}
+    if "gap" in surfaces:
+        lines += ["", "## Upstream surface coverage", f"{surfaces['surfaces']} upstream surfaces; {len(surfaces['unrouted'])} without a route or exclusion "
+                  f"in `scripts/upstream_routes.json`; {len(surfaces['removed_upstream'])} table entries no longer upstream."]
+        lines += [f"- unrouted `{entry['id']}` ({entry['source']})" for entry in surfaces["unrouted"]]
+        lines += [f"- invalid `{name}`" for name in surfaces["invalid"]]
+        lines += [f"- missing source `{name}`" for name in surfaces["missing_sources"]]
+        lines += [f"- removed `{name}`" for name in surfaces["removed_upstream"]]
     if report.get("proposal"):
         lines += ["", "## Proposal", f"`{report['proposal']['diff']}` changes {len(report['proposal']['files'])} file(s); "
                   "review, then apply with `git apply` and run the pin acceptance gates. Review these files for the old version:"]

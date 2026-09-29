@@ -28,6 +28,8 @@ pub(crate) struct Grant {
     requests: bool,
     #[serde(default)]
     read_hashes: BTreeMap<PathBuf, String>,
+    #[serde(default)]
+    credentials: BTreeMap<String, String>,
 }
 
 #[derive(Default)]
@@ -135,9 +137,22 @@ impl Services {
             id: String,
             #[serde(default)]
             input: Option<Value>,
+            #[serde(default)]
+            credential: Option<String>,
+            #[serde(default)]
+            secrets: Vec<String>,
         }
         let selection: Selection =
             serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
+        if (selection.credential.is_some() || !selection.secrets.is_empty())
+            && !matches!(
+                request.operation.as_str(),
+                "sidecars.start" | "providers.register"
+            )
+            || selection.secrets.len() > 16
+        {
+            return Err("credential_requires_service_start".into());
+        }
         let invoke = request.operation == "sidecars.invoke";
         if invoke != selection.input.is_some()
             || selection.input.as_ref().is_some_and(|input| {
@@ -343,6 +358,46 @@ impl Services {
                 .shell_environment_policy
                 .r#set
                 .insert(environment.clone(), value.trim_end().to_string());
+        }
+        if let Some(profile) = &selection.credential {
+            let environment = grant
+                .credentials
+                .iter()
+                .find(|(_, approved)| *approved == profile)
+                .map(|(environment, _)| environment.clone())
+                .ok_or("credential_not_host_approved")?;
+            if environment == "OMD_READY_TOKEN"
+                || environment.is_empty()
+                || environment.len() > 64
+                || !environment
+                    .bytes()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_')
+            {
+                return Err("invalid_credential_environment_key".into());
+            }
+            let secret = codex_omd::credentials::CredentialProfiles::open(&host.root)
+                .and_then(|profiles| profiles.secret(profile))
+                .map_err(|error| error.to_string())?;
+            config
+                .permissions
+                .shell_environment_policy
+                .r#set
+                .insert(environment, secret.token);
+        }
+        if !selection.secrets.is_empty() {
+            let profiles = codex_omd::credentials::CredentialProfiles::open(&host.root)
+                .map_err(|error| error.to_string())?;
+            let secrets = selection
+                .secrets
+                .iter()
+                .map(|id| profiles.owned_secret(id, mod_id))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            config
+                .permissions
+                .shell_environment_policy
+                .r#set
+                .insert("OMD_SECRETS".to_owned(), Value::Array(secrets).to_string());
         }
         if let Some(route) = &grant.route {
             if route.model.is_empty() || route.model.len() > 128 {
@@ -570,7 +625,7 @@ impl Services {
             }
         }
         Ok(
-            json!({"id":grant.id,"status":if port.is_some() {"ready"} else {"starting"},"secret_references":grant.secrets.values().collect::<Vec<_>>()}),
+            json!({"id":grant.id,"status":if port.is_some() {"ready"} else {"starting"},"secret_references":grant.secrets.values().collect::<Vec<_>>(),"credential":selection.credential}),
         )
     }
 }

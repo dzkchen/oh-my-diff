@@ -37,9 +37,20 @@ type Key = (String, u64, String);
 type Session = Arc<Mutex<ManagedProcess>>;
 type WriteRequest = (Vec<Value>, mpsc::SyncSender<Result<(), String>>);
 
+pub(super) struct ProcessNotice {
+    pub owner: String,
+    pub session: String,
+    pub output_bytes: Option<usize>,
+    pub exited: bool,
+    pub deliver: bool,
+}
+
+pub(super) type ProcessNotifier = Arc<dyn Fn(ProcessNotice) + Send + Sync>;
+
 #[derive(Default)]
 pub(super) struct ManagedProcesses {
     records: Mutex<BTreeMap<Key, Session>>,
+    notifier: std::sync::OnceLock<ProcessNotifier>,
 }
 
 #[derive(Clone, Copy)]
@@ -208,6 +219,19 @@ fn program(name: &str, repository: &Path) -> Option<PathBuf> {
 }
 
 impl ManagedProcesses {
+    pub fn set_notifier(&self, notifier: ProcessNotifier) {
+        let _ = self.notifier.set(notifier);
+    }
+
+    pub fn running(&self, owner: &str, session: &str) -> Option<bool> {
+        let records = self.records.lock().ok()?;
+        let (_, process) = records
+            .iter()
+            .find(|((id, _, name), _)| id == owner && name == session)?;
+        let mut process = process.lock().ok()?;
+        Some(process.child.try_wait().ok()?.is_none())
+    }
+
     pub fn cleanup_stale(&self, generation: u64) {
         if let Ok(mut records) = self.records.lock() {
             records.retain(|(_, current, _), _| *current == generation);
@@ -310,9 +334,21 @@ impl ManagedProcesses {
                     framing: Option<String>,
                     #[serde(default)]
                     network: Option<String>,
+                    #[serde(default)]
+                    notify: Vec<String>,
                 }
                 let input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+                if input.notify.len() > 2
+                    || input
+                        .notify
+                        .iter()
+                        .any(|kind| !matches!(kind.as_str(), "output" | "exit"))
+                {
+                    return Err("process_notify_invalid".into());
+                }
+                let notify_output = input.notify.iter().any(|kind| kind == "output");
+                let notify_exit = input.notify.iter().any(|kind| kind == "exit");
                 if input.session.is_empty()
                     || input.session.len() > 64
                     || !input
@@ -465,13 +501,39 @@ impl ManagedProcesses {
                         }
                     });
                     let (sender, receiver) = mpsc::sync_channel(128);
+                    let notifier = self.notifier.get().cloned();
+                    let (owner, session) = (id.to_owned(), input.session.clone());
                     std::thread::spawn(move || {
                         let mut reader = BufReader::new(stdout);
                         loop {
                             let result = read_framed(&mut reader, framing);
                             let terminal = result.is_err();
+                            let bytes = match (&result, notify_output) {
+                                (Ok(message), true) => {
+                                    serde_json::to_vec(message).ok().map(|bytes| bytes.len())
+                                }
+                                _ => None,
+                            };
                             if sender.send(result).is_err() || terminal {
+                                if let Some(notifier) = &notifier {
+                                    notifier(ProcessNotice {
+                                        owner: owner.clone(),
+                                        session: session.clone(),
+                                        output_bytes: None,
+                                        exited: true,
+                                        deliver: notify_exit,
+                                    });
+                                }
                                 break;
+                            }
+                            if let (Some(notifier), Some(bytes)) = (&notifier, bytes) {
+                                notifier(ProcessNotice {
+                                    owner: owner.clone(),
+                                    session: session.clone(),
+                                    output_bytes: Some(bytes),
+                                    exited: false,
+                                    deliver: true,
+                                });
                             }
                         }
                     });

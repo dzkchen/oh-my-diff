@@ -375,7 +375,11 @@ fn terminal_component<'a>(components: &'a [ModComponent], id: &str) -> Option<&'
             | ModComponent::Select { id, .. }
             | ModComponent::Markdown { id, .. }
             | ModComponent::Code { id, .. }
-            | ModComponent::List { id, .. } => (Some(id.as_str()), &[][..]),
+            | ModComponent::List { id, .. }
+            | ModComponent::Document { id, .. }
+            | ModComponent::Diff { id, .. }
+            | ModComponent::Terminal { id, .. }
+            | ModComponent::Image { id, .. } => (Some(id.as_str()), &[][..]),
             ModComponent::Slot => (None, &[][..]),
         };
         if component_id == Some(id) {

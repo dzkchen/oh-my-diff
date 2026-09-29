@@ -1,6 +1,6 @@
 # Lead-requested source gathering
 
-`omd_research` uses API `0.2.0-experimental.1` and `OMD_MODE=omd`. It remains opt-in: set `enabled: true` after installing and trusting the package. `preset` names a configured worker route and defaults to `research_luna`. The mod starts no lifecycle work. Both installation profiles use the same route and grant requirements.
+`omd_research` uses API `0.2.0-experimental.3` and `OMD_MODE=omd`. It remains opt-in: set `enabled: true` after installing and trusting the package. `preset` names a configured worker route and defaults to `research_luna`. The mod starts no lifecycle work. Both installation profiles use the same route and grant requirements.
 
 The mod owns admission, briefing, tool selection, scope checks and result validation. It accepts a precise question, three to twelve explicit repository/HTTPS scopes, a short source brief, at least four expected sources, and reading versus briefing/handoff estimates. Already located, small or uneconomic questions stay with the lead. The estimates are assertions to review, not measured savings. The UTF-8 briefing packet is at most 5.5 KiB. The worker returns at most six concise findings and explicit uncertainty, with exact file hashes/quotes or canonical source URLs. The mod rechecks file bytes before consuming the result; web quotes remain worker claims and decisive sources must be opened by the lead. Implementation and architecture decisions remain with the lead.
 

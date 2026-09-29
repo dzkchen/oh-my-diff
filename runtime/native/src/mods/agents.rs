@@ -730,6 +730,15 @@ struct Spawn {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Complete {
+    route: String,
+    prompt: String,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Handle {
     handle: String,
     #[serde(default)]
@@ -1403,6 +1412,7 @@ impl Agents {
             .map_err(|e| e.to_string())?;
         match request.operation.as_str() {
             "agents.spawn" => return self.spawn(core, lead, caller, request.arguments).await,
+            "model.complete" => return self.complete(core, lead, caller, request.arguments).await,
             "workspace.integrate" => {
                 return self.integrate(core, lead, caller, request.arguments).await;
             }
@@ -1560,6 +1570,79 @@ impl Agents {
             request.tools = Some(request.tools.take().unwrap_or_else(|| route.tools.clone()));
         }
         Ok((route.clone(), true))
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "Serialize one handle's transitions with its native waits and cancellation"
+    )]
+    async fn complete(
+        &self,
+        core: &Core,
+        lead: &Lead,
+        caller: &operations::Caller<'_>,
+        value: Value,
+    ) -> Result<Value, String> {
+        let request: Complete = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let spawned = self
+            .spawn(
+                core,
+                lead,
+                caller,
+                json!({"role": "completion", "route": request.route, "prompt": request.prompt, "tools": []}),
+            )
+            .await?;
+        let handle = spawned["handle"]
+            .as_str()
+            .ok_or("agent_handle_missing")?
+            .to_owned();
+        let slot = self.slot(&handle).await?;
+        let mut agent = slot.lock().await;
+        let deadline = lead
+            .session
+            .task
+            .remaining()
+            .map_err(|e| e.to_string())?
+            .0
+            .min(Duration::from_millis(
+                request.timeout_ms.unwrap_or(120_000).min(300_000),
+            ));
+        if let Some(job) = &mut agent.job {
+            match tokio::time::timeout(deadline, job).await {
+                Ok(result) => {
+                    agent.job = None;
+                    if let Err(error) = result {
+                        *agent.result.lock().map_err(|_| "agent_result_poisoned")? =
+                            Some(Err(error.to_string()));
+                    }
+                }
+                Err(_) => {
+                    agent.shutdown().await;
+                    drop(agent);
+                    self.remove(&handle, &slot).await;
+                    return Err("model_complete_timeout".into());
+                }
+            }
+        }
+        let result = agent
+            .result
+            .lock()
+            .map_err(|_| "agent_result_poisoned")?
+            .clone();
+        if matches!(result, Some(Ok(_))) {
+            lead.session
+                .task
+                .consume_worker_result(&handle)
+                .map_err(|e| e.to_string())?;
+            agent.consumed = true;
+        }
+        drop(agent);
+        self.remove(&handle, &slot).await;
+        match result {
+            Some(Ok(text)) => Ok(json!({"text": text})),
+            Some(Err(error)) => Err(error),
+            None => Err("model_complete_unfinished".into()),
+        }
     }
 
     async fn spawn(

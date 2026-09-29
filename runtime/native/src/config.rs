@@ -40,6 +40,8 @@ pub(crate) struct Route {
     pub mods: Vec<String>,
     #[serde(default)]
     pub grant: Option<Grant>,
+    #[serde(default)]
+    pub credential: Option<String>,
 }
 
 #[derive(Clone, Default, Deserialize)]

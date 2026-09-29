@@ -22,6 +22,8 @@ pub const BUILTINS_SNAPSHOT: &str = "builtins.json";
 pub struct HiddenCommands {
     #[serde(default)]
     pub hide: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub replace: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
@@ -38,6 +40,8 @@ pub struct BuiltinControls {
     pub commands: HiddenCommands,
     #[serde(default)]
     pub modes: DisabledModes,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, Option<String>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
@@ -46,6 +50,26 @@ pub struct BuiltinSnapshot {
     pub schema: u32,
     pub hidden_commands: BTreeMap<String, Vec<String>>,
     pub disabled_modes: BTreeMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub replaced_commands: BTreeMap<String, (String, String)>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, (String, Option<String>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<String>,
+}
+
+fn action(value: &str) -> bool {
+    value.len() <= 64
+        && value.split_once('.').is_some_and(|(context, name)| {
+            context != "approval"
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+                && !name.is_empty()
+                && context
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        })
 }
 
 fn name(value: &str) -> bool {
@@ -62,6 +86,20 @@ impl BuiltinControls {
             .map_err(|error| format!("invalid_builtins: {error}"))?;
         let unique =
             |values: &[String]| values.iter().collect::<BTreeSet<_>>().len() == values.len();
+        if controls.commands.replace.len() > 32
+            || controls.keys.len() > 64
+            || controls.commands.replace.iter().any(|(command, target)| {
+                !name(command) || !name(target) || PROTECTED_COMMANDS.contains(&command.as_str())
+            })
+            || controls.keys.iter().any(|(action_name, key)| {
+                !action(action_name)
+                    || key
+                        .as_ref()
+                        .is_some_and(|key| key.is_empty() || key.len() > 16 || !key.is_ascii())
+            })
+        {
+            return Err("invalid_builtins".into());
+        }
         if controls.commands.hide.len() > 32
             || controls.modes.disable.len() > 8
             || !unique(&controls.commands.hide)
@@ -105,7 +143,43 @@ impl BuiltinSnapshot {
                     .push(owner.clone());
             }
         }
+        let mut contested = BTreeSet::new();
+        for (owner, controls) in controls {
+            for (command, target) in &controls.commands.replace {
+                if snapshot
+                    .replaced_commands
+                    .insert(command.clone(), (owner.clone(), target.clone()))
+                    .is_some()
+                {
+                    contested.insert(format!("commands.replace.{command}"));
+                }
+            }
+            for (action, key) in &controls.keys {
+                if snapshot
+                    .keys
+                    .insert(action.clone(), (owner.clone(), key.clone()))
+                    .is_some()
+                {
+                    contested.insert(format!("keys.{action}"));
+                }
+            }
+        }
+        for conflict in &contested {
+            if let Some(command) = conflict.strip_prefix("commands.replace.") {
+                snapshot.replaced_commands.remove(command);
+            }
+            if let Some(action) = conflict.strip_prefix("keys.") {
+                snapshot.keys.remove(action);
+            }
+        }
+        snapshot.conflicts = contested.into_iter().collect();
         snapshot
+    }
+
+    pub fn command_replacement(&self, command: &str) -> Option<&(String, String)> {
+        (!PROTECTED_COMMANDS.contains(&command))
+            .then(|| self.replaced_commands.get(command))
+            .flatten()
     }
 
     pub fn read(directory: &Path) -> Self {
@@ -127,3 +201,7 @@ impl BuiltinSnapshot {
         !PROTECTED_MODES.contains(&mode) && self.disabled_modes.contains_key(mode)
     }
 }
+
+#[cfg(test)]
+#[path = "builtins_tests.rs"]
+mod tests;

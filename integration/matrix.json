@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "as_of": "2026-09-27",
+  "as_of": "2026-09-29",
   "release": {
     "codex": "0.157.0",
     "omd": "0.1.0",
-    "mod_api": "0.2.0-experimental.1",
+    "mod_api": "0.2.0-experimental.3",
     "package_schema": 1,
     "upstream_tag": "rust-v0.157.0",
     "upstream_commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d",
@@ -63,7 +63,27 @@
         "framed_process_v1",
         "kernels_v1",
         "terminal_lists_v1",
-        "adapters_v1"
+        "adapters_v1",
+        "app_v1",
+        "approval_v1",
+        "tool_output_v1",
+        "tool_batch_v1",
+        "tool_specs_v1",
+        "events_v1",
+        "store_thread_v1",
+        "turn_activity_v1",
+        "binary_evidence_v1",
+        "package_controls_v1",
+        "terminal_surface_v1",
+        "credentials_v1",
+        "completion_v1",
+        "tool_feedback_v1",
+        "terminal_media_v1",
+        "secrets_v1",
+        "terminal_prompt_v1",
+        "model_complete_v1",
+        "history_v1",
+        "terminal_pty_v1"
       ],
       "status": "supported",
       "fixtures": [
@@ -79,9 +99,11 @@
       "area": "host",
       "name": "Public TypeScript mod API",
       "owner": "OMD mod host (runtime/omd/src/mods.rs)",
-      "version": "0.2.0-experimental.1",
+      "version": "0.2.0-experimental.3",
       "supported_versions": [
-        "0.2.0-experimental.1"
+        "0.2.0-experimental.1",
+        "0.2.0-experimental.2",
+        "0.2.0-experimental.3"
       ],
       "status": "supported",
       "fixtures": [
@@ -956,7 +978,7 @@
     {
       "id": "current_api_composition",
       "retained_for": [
-        "0.2.0-experimental.1"
+        "0.2.0-experimental.3"
       ],
       "case": "Composition, precedence and conflict handling on the current API 0.2 row: declared order, cycles, contested replacements and scope shadowing.",
       "evidence": [

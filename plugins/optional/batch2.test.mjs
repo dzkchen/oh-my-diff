@@ -169,7 +169,7 @@ test('optional components register no lifecycle or context callbacks', () => {
 });
 
 const nativeEvents = readFileSync(new URL('../../runtime/omd/src/mods.rs', import.meta.url), 'utf8').match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
-const advisorOptions = { api: '0.2.0-experimental.1', surface: { events: Object.fromEntries([...nativeEvents.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), state: 'store', contracts: 'contracts' }, event: 'turn_end', name: '', settings: { every_turn: true }, capabilities: ['tools', 'lifecycle', 'store', 'sessions', 'agents', 'contracts', 'fs.read', 'context', 'terminal'], environment: ['crypto'] };
+const advisorOptions = { api: '0.2.0-experimental.3', surface: { events: Object.fromEntries([...nativeEvents.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), state: 'store', contracts: 'contracts' }, event: 'turn_end', name: '', settings: { every_turn: true }, capabilities: ['tools', 'lifecycle', 'store', 'sessions', 'agents', 'contracts', 'fs.read', 'context', 'terminal'], environment: ['crypto'] };
 const evidence = { turn_id: 'turn-1', thread_id: 'thread-1', workspace_sha256: digest('source'), records: [{ item: 1, role: 'assistant', text: 'The exact supporting concern from this turn.' }] };
 const reference = { reference: digest('ref'), sha256: digest(JSON.stringify(evidence)) };
 const completed = { turn_id: 'turn-1', outcome: 'completed', evidence: reference };
@@ -255,7 +255,7 @@ test('advisor off has no completed-turn or context subscriber and aborts do not 
   invoke('advisor', { ...completed, outcome: 'aborted' }, () => assert.fail('aborted turn review'), advisorOptions);
 });
 
-const researchOptions = { event: 'tool', name: 'gather', api: '0.2.0-experimental.1', capabilities: ['tools', 'agents', 'model', 'fs.read'], settings: { enabled: true } };
+const researchOptions = { event: 'tool', name: 'gather', api: '0.2.0-experimental.3', capabilities: ['tools', 'agents', 'model', 'fs.read'], settings: { enabled: true } };
 const researchQuestion = { question: 'Where are the read permissions enforced across these packages?', scope: ['runtime', 'mods', 'scripts'], brief: 'Trace the read permission boundary and return source evidence only.', expected_sources: 6, lead_read_minutes: 12, brief_and_handoff_minutes: 2, already_located: false };
 function researchHost(overrides = {}) {
   const calls = [];

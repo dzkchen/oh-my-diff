@@ -37,6 +37,29 @@ impl ModHostCall {
                 Ok("contracts")
             }
             "mods.service" => Ok("services"),
+            "app.request" => self.arguments["method"]
+                .as_str()
+                .and_then(crate::app_routes::route)
+                .map(|route| route.class.as_str())
+                .ok_or_else(|| failure("app_method_unrouted")),
+            "app.routes" => Ok("inventory"),
+            "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),
+            "events.publish" => Ok("events"),
+            "credentials.list" | "credentials.request" => Ok("credentials"),
+            "routes.select" => Ok("model"),
+            "turns.activity" => Ok("sessions"),
+            "terminal.notify"
+            | "terminal.show_thread"
+            | "terminal.import_file"
+            | "terminal.open"
+            | "terminal.prompt" => Ok("terminal"),
+            "terminal.pty" => Ok("exec"),
+            "model.complete" => Ok("model"),
+            "composer.read" | "composer.write" => Ok("composer"),
+            "builtins.invoke" => Ok("builtins"),
+            "packages.list" | "packages.preview" | "packages.apply" | "packages.reload" => {
+                Ok("packages")
+            }
             _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
                 Ok("agents")
             }

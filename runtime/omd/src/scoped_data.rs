@@ -1,6 +1,6 @@
 use crate::resource_data::{ResourceBinding, ResourceStore, hash};
 use crate::sessions::SessionIndex;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
@@ -113,27 +113,8 @@ impl ScopedDataHost {
             return Err(last);
         }
         if name == "evidence.write" {
-            #[derive(serde::Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Input {
-                media_type: String,
-                content: Value,
-                #[serde(default)]
-                label: Option<String>,
-            }
-            let input: Input = serde_json::from_value(arguments)?;
-            if !matches!(input.media_type.as_str(), "application/json" | "text/plain")
-                || input.media_type == "text/plain" && !input.content.is_string()
-                || input.label.as_deref().is_some_and(|label| {
-                    label.is_empty() || label.len() > 128 || label.chars().any(char::is_control)
-                })
-            {
-                return Err(io::Error::other("evidence_record_invalid"));
-            }
-            let reference = self.resources().save(
-                "evidence",
-                json!({"media_type": input.media_type, "label": input.label, "content": input.content}),
-            )?;
+            let resources = self.resources();
+            let reference = resources.save("evidence", resources.evidence_record(arguments)?)?;
             return Ok(serde_json::to_value(reference)?);
         }
         if name.starts_with("sessions.") {
@@ -202,6 +183,23 @@ impl ScopedDataHosts {
         arguments: Value,
         active: impl Fn() -> bool,
     ) -> io::Result<Value> {
+        self.host(owner, source_sha256)?
+            .call(name, arguments, active)
+    }
+
+    pub fn text_evidence(
+        &mut self,
+        owner: &str,
+        source_sha256: &str,
+        label: &str,
+        text: &str,
+    ) -> io::Result<crate::resource_data::ResourceRef> {
+        self.host(owner, source_sha256)?
+            .resources()
+            .text_evidence(label, text)
+    }
+
+    fn host(&mut self, owner: &str, source_sha256: &str) -> io::Result<&mut ScopedDataHost> {
         let host = match self.hosts.entry(owner.to_owned()) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => entry.insert(ScopedDataHost::new(
@@ -217,6 +215,6 @@ impl ScopedDataHosts {
         if host.binding.source_sha256 != source_sha256 {
             return Err(io::Error::other("data_selection_changed_or_revoked"));
         }
-        host.call(name, arguments, active)
+        Ok(host)
     }
 }

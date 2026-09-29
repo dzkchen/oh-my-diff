@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -231,6 +232,27 @@ class UpstreamCandidateTests(unittest.TestCase):
         code, summary, report = self.run_candidate("rust-v1.0.0", "rust-v1.3.0", extra=["--check-command", "true"])
         self.assertEqual((code, summary["status"]), (2, "review_required"))
         self.assertEqual(report["authority_boundary_changes"], ["codex-rs/exec/src/sandbox.rs"])
+        self.assert_active_unchanged()
+
+    def with_routes(self, surfaces):
+        table = {"schema": 1, "routes": {"r": "route"}, "exclusions": {}, "surfaces": {"slash_command:model": {"route": "r"}}}
+        write(self.repo, {"scripts/upstream_routes.json": json.dumps(table)})
+        self.original = self.snapshot()
+        listed = [{"id": name, "kind": name.split(":")[0], "name": name.split(":")[1], "source": "codex-rs/tui/src/slash_command.rs"} for name in surfaces]
+        return mock.patch.object(candidate.upstream_surfaces, "extract", return_value=(listed, []))
+
+    def test_unrouted_upstream_surface_requires_review(self):
+        with self.with_routes(["slash_command:model", "slash_command:new"]):
+            code, summary, report = self.run_candidate("rust-v1.0.0", "rust-v1.1.0", extra=["--check-command", "true"])
+        self.assertEqual((code, summary["status"]), (2, "review_required"))
+        self.assertEqual(report["upstream_surfaces"]["unrouted"], [{"id": "slash_command:new", "source": "codex-rs/tui/src/slash_command.rs"}])
+        self.assertIn("unrouted `slash_command:new`", Path(summary["candidate_dir"], "report.md").read_text())
+        self.assert_active_unchanged()
+
+    def test_fully_routed_upstream_stays_green(self):
+        with self.with_routes(["slash_command:model"]):
+            code, summary, report = self.run_candidate("rust-v1.0.0", "rust-v1.1.0", extra=["--check-command", "true"])
+        self.assertEqual((code, summary["status"], report["upstream_surfaces"]["gap"]), (0, "green", 0))
         self.assert_active_unchanged()
 
     def test_failed_fetch_leaves_the_pin(self):

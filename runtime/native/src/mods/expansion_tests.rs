@@ -1,0 +1,806 @@
+use super::*;
+use codex_extension_api::ToolOutputContributor;
+use codex_omd::ModStore;
+use std::path::Path;
+use std::path::PathBuf;
+
+struct Fixture {
+    _dir: tempfile::TempDir,
+    core: Arc<Core>,
+    lead: Lead,
+}
+
+struct Package<'a> {
+    id: &'a str,
+    capabilities: &'a [&'a str],
+    manifest: Value,
+    source: &'a str,
+}
+
+fn install(store: &ModStore, dir: &Path, package: &Package<'_>) {
+    let path = dir.join(package.id);
+    std::fs::create_dir(&path).unwrap();
+    let mut manifest = json!({"schema": 1, "id": package.id, "version": "1.0.0",
+        "api": codex_omd::MOD_API_VERSION, "state_version": 1, "capabilities": package.capabilities});
+    if let Some(extra) = package.manifest.as_object() {
+        manifest.as_object_mut().unwrap().extend(extra.clone());
+    }
+    std::fs::write(
+        path.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(path.join("index.ts"), package.source).unwrap();
+    let path = path.canonicalize().unwrap();
+    let inspected = ModStore::inspect_package(&path).unwrap();
+    store
+        .trust(
+            path.clone(),
+            inspected["sha256"].as_str().unwrap(),
+            package
+                .capabilities
+                .iter()
+                .map(|c| (*c).to_owned())
+                .collect(),
+            "user",
+        )
+        .unwrap();
+    store.enable(&path, true).unwrap();
+}
+
+fn fixture(packages: &[Package<'_>]) -> Option<Fixture> {
+    let node = PathBuf::from(std::env::var_os("OMD_TEST_NODE")?);
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let repository = base.join("repo");
+    std::fs::create_dir(&repository).unwrap();
+    let store = ModStore::create(base.join("store"), node).unwrap();
+    let sources = base.join("packages");
+    std::fs::create_dir(&sources).unwrap();
+    for package in packages {
+        install(&store, &sources, package);
+    }
+    let root = base.join("store").canonicalize().unwrap();
+    let host = Arc::new(Host {
+        root: root.clone(),
+        repository: repository.clone(),
+        repository_identity: "fixture".into(),
+        config: config::HostConfig::default(),
+        accounts: Arc::new(accounting::Accounts::default()),
+        manager: std::sync::Weak::new(),
+        epoch: 1,
+    });
+    let runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+    let input_runtime = Arc::new(Mutex::new(ModHost::open(root.clone()).unwrap()));
+    let views = Arc::new(view::Views::new());
+    let core = Arc::new_cyclic(|core| Core {
+        agents: agents::Agents::new(core.clone(), runtime.clone(), views.clone(), host.clone()),
+        host: host.clone(),
+        runtime,
+        input_runtime,
+        services: services::Services::default(),
+        views,
+        expansion: State::default(),
+    });
+    let thread = ThreadId::new();
+    let session = host.open_session(thread, false).unwrap();
+    *session.data.0.lock().unwrap() = Some(codex_omd::scoped_data::ScopedDataHosts::new(
+        root,
+        repository,
+        None,
+        None,
+        thread.to_string(),
+    ));
+    let lead = Lead {
+        host,
+        session,
+        thread,
+        owner: "lead".into(),
+        depth: 0,
+        permission_profile: Arc::new(Mutex::new(PermissionProfile::default())),
+    };
+    core.expansion.refresh(&core.runtime.lock().unwrap());
+    Some(Fixture {
+        _dir: dir,
+        core,
+        lead,
+    })
+}
+
+fn mods(core: &Arc<Core>) -> Mods {
+    Mods {
+        core: core.clone(),
+        turns: Mutex::new(BTreeMap::new()),
+        sessions: Mutex::new(BTreeMap::new()),
+        workspace_before: Mutex::new(BTreeMap::new()),
+    }
+}
+
+fn command(core: &Core, id: &str, name: &str) -> Value {
+    let mut runtime = core.runtime.lock().unwrap();
+    let generation = runtime.generation();
+    runtime
+        .invoke_with(
+            id,
+            generation,
+            "command",
+            name,
+            Value::Null,
+            || true,
+            |_| Err(std::io::Error::other("unexpected_host_call")),
+        )
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_output_owner_replaces_text_observers_append_and_original_stays_readable() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "budget",
+            capabilities: &["interception", "store"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.replace('tool_output', event => event.bytes > 4\n    ? { text: `trimmed ${event.bytes} ${event.tool} ${event.arguments.path} ${typeof event.original}` }\n    : null);\n}\n",
+        },
+        Package {
+            id: "lint",
+            capabilities: &["interception"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.on('tool_output', event => event.text.startsWith('trimmed') && event.original === null ? { append: 'lint: ok' } : null);\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    assert!(mods.expansion.tool_output_active());
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+        ExtensionData::new("turn".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let tool = ToolName::plain("read");
+    let input = |text: &'static str| codex_extension_api::ToolOutputInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        call_id: "call-1",
+        tool_name: &tool,
+        arguments: Some(r#"{"path":"a.txt"}"#),
+        success: true,
+        text,
+    };
+    assert_eq!(
+        mods.replace_tool_output(input("hello world"))
+            .await
+            .as_deref(),
+        Some("trimmed 11 read a.txt object\n\nlint: ok")
+    );
+    assert_eq!(mods.replace_tool_output(input("ok")).await, None);
+
+    let source = fixture
+        .core
+        .runtime
+        .lock()
+        .unwrap()
+        .grants("budget")
+        .unwrap()
+        .source_sha256;
+    let mut scope = fixture.lead.session.data.0.lock().unwrap();
+    let hosts = scope.as_mut().unwrap();
+    let reference = hosts
+        .text_evidence("budget", &source, "probe", "hello world")
+        .unwrap();
+    let page = hosts
+        .call(
+            "budget",
+            &source,
+            "evidence.read",
+            json!({"reference": reference}),
+            || true,
+        )
+        .unwrap();
+    assert!(page.to_string().contains("hello world"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_output_without_owner_is_not_offered() {
+    let Some(fixture) = fixture(&[Package {
+        id: "quiet",
+        capabilities: &["lifecycle"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    assert!(!fixture.core.expansion.tool_output_active());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn channel_events_reach_subscribers_in_order() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "herald",
+            capabilities: &["events"],
+            manifest: Value::Null,
+            source: "export default function () {}\n",
+        },
+        Package {
+            id: "listener",
+            capabilities: &["events", "store", "commands"],
+            manifest: json!({"subscriptions": {"channels": ["herald/*"]}}),
+            source: "export default function (api) {\n  api.on('channel', event => { api.state.set([...(api.state.get() ?? []), [event.channel, event.sequence, event.data]]); });\n  api.command('seen', () => api.state.get());\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    let core = &fixture.core;
+    *core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    for data in [json!(1), json!({"n": 2})] {
+        let delivered =
+            delivery::publish(core, "herald", json!({"channel": "ping", "data": data})).unwrap();
+        assert_eq!(delivered["delivered"], 1);
+    }
+    assert!(delivery::publish(core, "herald", json!({"channel": "Bad Name", "data": 1})).is_err());
+    assert!(!delivery::deliver(core).await);
+    assert_eq!(
+        command(core, "listener", "seen"),
+        json!([["herald/ping", 1, 1], ["herald/ping", 2, {"n": 2}]])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_delivery_wakes_on_publish_and_client_wake() {
+    let Some(fixture) = fixture(&[Package {
+        id: "hearer",
+        capabilities: &["events", "store", "commands"],
+        manifest: json!({"subscriptions": {"channels": ["crier/news"]}}),
+        source: "export default function (api) {\n  api.on('channel', event => { api.state.set([...(api.state.get() ?? []), event.data]); });\n  api.command('seen', () => api.state.get());\n}\n",
+    }]) else {
+        return;
+    };
+    let core = &fixture.core;
+    delivery::lead_started(core, &fixture.lead, None);
+    let seen = |expected: Value| async move {
+        for _ in 0..200 {
+            if command(core, "hearer", "seen") == expected {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        false
+    };
+    delivery::publish(core, "crier", json!({"channel": "news", "data": "a"})).unwrap();
+    assert!(seen(json!(["a"])).await);
+    codex_omd::event_bus::global()
+        .lock()
+        .unwrap()
+        .publish("crier", "news", json!("b"), None)
+        .unwrap();
+    codex_omd::client_surface::wake();
+    assert!(seen(json!(["a", "b"])).await);
+    let ignored =
+        delivery::publish(core, "crier", json!({"channel": "other", "data": "c"})).unwrap();
+    assert_eq!(ignored["delivered"], 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turn_activity_records_only_while_a_sessions_mod_is_enabled() {
+    let Some(fixture) = fixture(&[Package {
+        id: "ledger",
+        capabilities: &["sessions"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    let (core, lead) = (&fixture.core, &fixture.lead);
+    activity::turn_started(core, lead, "t1").await;
+    activity::tool_started(
+        core,
+        lead,
+        "c1",
+        "shell",
+        Some(r#"{"command":["ls","-a"]}"#),
+    );
+    activity::tool_finished(
+        core,
+        lead,
+        "c1",
+        "shell",
+        "Completed",
+        &[json!({"path": "a.txt", "before": null, "after": "h1"})],
+        "tool",
+    );
+    let turns = activity::read(core, lead, json!({"last": 1}))
+        .await
+        .unwrap();
+    let turn = &turns["turns"][0];
+    assert_eq!(turn["outcome"], "running");
+    assert_eq!(turn["tool_calls"][0]["outcome"], "Completed");
+    assert_eq!(turn["processes"][0]["command"], "ls -a");
+    assert_eq!(turn["processes"][0]["running"], false);
+    assert_eq!(turn["files"][0]["path"], "a.txt");
+    activity::turn_ended(core, lead, "completed", None);
+    let turns = activity::read(core, lead, Value::Null).await.unwrap();
+    assert_eq!(turns["turns"][0]["outcome"], "completed");
+
+    activity::turn_started(core, lead, "t2").await;
+    core.expansion.running.lock().unwrap().clear();
+    let turns = activity::read(core, lead, json!({"last": 2}))
+        .await
+        .unwrap();
+    assert_eq!(turns["turns"][1]["outcome"], "interrupted");
+    assert_eq!(turns["turns"][1]["unrecorded_end"], true);
+    assert_eq!(
+        activity::resume_payload(core, lead).await,
+        json!({"thread_id": lead.thread.to_string(),
+            "last_turn": {"turn_id": "t2", "status": "interrupted"}, "restarted": true})
+    );
+    assert!(
+        activity::read(core, lead, json!({"thread_id": "other"}))
+            .await
+            .unwrap_err()
+            .contains("out_of_scope")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn turn_activity_stays_empty_without_a_sessions_mod() {
+    let Some(fixture) = fixture(&[Package {
+        id: "plain",
+        capabilities: &["lifecycle"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    let (core, lead) = (&fixture.core, &fixture.lead);
+    activity::turn_started(core, lead, "t1").await;
+    activity::tool_started(core, lead, "c1", "shell", None);
+    let turns = activity::read(core, lead, Value::Null).await.unwrap();
+    assert_eq!(turns["turns"], json!([]));
+    assert_eq!(turns["recording"], false);
+    assert!(!lead.host.root.join("turn-activity").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn zero_mods_allocate_nothing_and_change_no_decision() {
+    use codex_extension_api::ApprovalGate;
+    use codex_extension_api::ApprovalGateContributor;
+    use codex_extension_api::ToolBatchContributor;
+    use codex_extension_api::ToolOutputContributor;
+    use codex_extension_api::ToolSpecContributor;
+    let Some(fixture) = fixture(&[]) else {
+        return;
+    };
+    let (core, lead) = (&fixture.core, &fixture.lead);
+    let mods = mods(core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+        ExtensionData::new("turn".to_owned()),
+    );
+    thread_store.insert(lead.clone());
+    let tool = ToolName::plain("read");
+    assert_eq!(
+        mods.replace_tool_output(codex_extension_api::ToolOutputInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "t",
+            call_id: "c",
+            tool_name: &tool,
+            arguments: None,
+            success: true,
+            text: "output",
+        })
+        .await,
+        None
+    );
+    assert_eq!(
+        mods.gate_approval(codex_extension_api::ApprovalGateInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            call_id: "c",
+            turn_id: None,
+            kind: "exec",
+            host_decision: "ask",
+            policy: "never",
+            details: Value::Null,
+        })
+        .await,
+        ApprovalGate::Continue
+    );
+    assert!(!mods.batching(&thread_store));
+    assert_eq!(mods.adjust_tool_specs(&thread_store, &[]), None);
+    activity::turn_started(core, lead, "t").await;
+    activity::tool_started(core, lead, "c", "shell", None);
+    assert!(!lead.host.root.join("turn-activity").exists());
+    assert!(core.expansion.watches.lock().unwrap().is_none());
+    assert!(core.expansion.pending.lock().unwrap().is_empty());
+    assert!(core.expansion.subscriptions.lock().unwrap().is_empty());
+}
+
+#[test]
+fn approval_decisions_deny_first_and_fail_closed_to_ask() {
+    use codex_extension_api::ApprovalGate;
+    let ok = |id: &str, value: Value| (id.to_owned(), Ok(value));
+    assert_eq!(
+        approvals::decide(vec![ok("a", Value::Null)]),
+        (ApprovalGate::Continue, None)
+    );
+    let (gate, owner) = approvals::decide(vec![
+        ok("a", json!({"ask": "check"})),
+        ok("b", json!({"deny": "no"})),
+    ]);
+    assert_eq!(
+        gate,
+        ApprovalGate::Deny("Mod b denied this action: no".into())
+    );
+    assert_eq!(owner.as_deref(), Some("b"));
+    for invalid in [
+        json!({"approve": true}),
+        json!({"ask": "x", "deny": "y"}),
+        json!("allow"),
+    ] {
+        assert!(matches!(
+            approvals::decide(vec![ok("c", invalid)]).0,
+            ApprovalGate::Ask(_)
+        ));
+    }
+    let failed = approvals::decide(vec![("d".to_owned(), Err(std::io::Error::other("boom")))]);
+    assert!(matches!(failed.0, ApprovalGate::Ask(text) if text.contains("boom")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn approval_middleware_tightens_and_reports_results() {
+    use codex_extension_api::ApprovalGate;
+    use codex_extension_api::ApprovalGateContributor;
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "guard",
+            capabilities: &["middleware", "approvals"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.middleware('approval', event => {\n    if (event.kind === 'exec' && JSON.stringify(event.details).includes('rm')) return { deny: 'destructive command' };\n    if (event.kind === 'network') return { ask: 'network needs a person' };\n    return null;\n  });\n}\n",
+        },
+        Package {
+            id: "auditor",
+            capabilities: &["approvals", "store", "commands"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.on('approval_result', event => { api.state.set([...(api.state.get() ?? []), [event.id, event.decision, event.source, event.mod ?? null]]); });\n  api.command('log', () => api.state.get());\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let gate = |call_id: &'static str, kind: &'static str, details: Value| {
+        mods.gate_approval(codex_extension_api::ApprovalGateInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            call_id,
+            turn_id: Some("turn"),
+            kind,
+            host_decision: "ask",
+            policy: "on-request",
+            details,
+        })
+    };
+    assert_eq!(
+        gate("c1", "exec", json!({"command": ["rm", "-rf", "x"]})).await,
+        ApprovalGate::Deny("Mod guard denied this action: destructive command".into())
+    );
+    assert_eq!(
+        gate("c2", "network", json!({"host": "example.com"})).await,
+        ApprovalGate::Ask("Mod guard requires approval: network needs a person".into())
+    );
+    assert_eq!(gate("c3", "patch", json!({})).await, ApprovalGate::Continue);
+    for (call_id, decision, source) in [("c1", "denied", "mod"), ("c2", "approved", "user")] {
+        mods.on_approval_result(codex_extension_api::ApprovalResultInput {
+            thread_store: &thread_store,
+            call_id,
+            kind: "exec",
+            decision,
+            source,
+        })
+        .await;
+    }
+    *fixture.core.expansion.current.lock().unwrap() = Some(LeadHandle::new(&fixture.lead));
+    delivery::deliver(&fixture.core).await;
+    assert_eq!(
+        command(&fixture.core, "auditor", "log"),
+        json!([
+            ["c1", "denied", "mod", "guard"],
+            ["c2", "approved", "user", "guard"]
+        ])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn approval_middleware_requires_the_approvals_capability() {
+    let Some(fixture) = fixture(&[Package {
+        id: "sneaky",
+        capabilities: &["middleware"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.middleware('approval', () => null);\n}\n",
+    }]) else {
+        return;
+    };
+    let status = fixture.core.runtime.lock().unwrap().status();
+    let rejected = status.to_string();
+    assert!(
+        rejected.contains("capability_denied: approvals"),
+        "{rejected}"
+    );
+    assert!(!fixture.core.expansion.approval.load(Ordering::Acquire));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_specs_owner_hides_and_redescribes_model_visible_tools() {
+    use codex_extension_api::ToolSpecContributor;
+    use codex_extension_api::ToolSpecView;
+    let Some(fixture) = fixture(&[Package {
+        id: "harness",
+        capabilities: &["tools"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.replace('tool_specs', event => ({\n    hide: event.tools.filter(tool => tool.name.startsWith('mcp__')).map(tool => tool.name),\n    describe: { read: { description: `Read (${event.tools.length} tools)` } },\n  }));\n}\n",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let thread_store = ExtensionData::new("thread".to_owned());
+    assert_eq!(mods.adjust_tool_specs(&thread_store, &[]), None);
+    thread_store.insert(fixture.lead.clone());
+    let view = |name: &str| ToolSpecView {
+        name: name.to_owned(),
+        description: String::new(),
+        parameters: json!({"type": "object"}),
+    };
+    let adjustment = mods
+        .adjust_tool_specs(&thread_store, &[view("read"), view("mcp__srv__search")])
+        .unwrap();
+    assert_eq!(adjustment.hide, vec!["mcp__srv__search".to_owned()]);
+    assert_eq!(
+        adjustment.describe.get("read"),
+        Some(&(Some("Read (2 tools)".to_owned()), None))
+    );
+    assert!(tool_specs::parse(json!({"hide": "all"})).is_err());
+    assert!(tool_specs::parse(json!({"describe": {"read": {"strict": true}}})).is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_batch_owner_merges_calls_into_its_own_tool() {
+    use codex_extension_api::ToolBatchCall;
+    use codex_extension_api::ToolBatchContributor;
+    let Some(fixture) = fixture(&[Package {
+        id: "batcher",
+        capabilities: &["interception", "tools"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.tool({ name: 'reads', description: 'Read many files', parameters: { type: 'object', properties: { paths: { type: 'array' } } } }, () => ({}));\n  api.replace('tool_batch', event => {\n    const reads = event.calls.filter(call => call.tool === 'read');\n    return reads.length < 2 ? null : { merge: [{ call_ids: reads.map(call => call.call_id), tool: 'reads', arguments: { paths: reads.map(call => call.arguments.path) } }] };\n  });\n}\n",
+    }]) else {
+        return;
+    };
+    let mods = mods(&fixture.core);
+    let thread_store = ExtensionData::new("thread".to_owned());
+    assert!(!mods.batching(&thread_store));
+    thread_store.insert(fixture.lead.clone());
+    assert!(mods.batching(&thread_store));
+    let call = |id: &str, tool: &str, path: &str| ToolBatchCall {
+        call_id: id.to_owned(),
+        tool: tool.to_owned(),
+        arguments: json!({"path": path}).to_string(),
+        parallel_safe: true,
+    };
+    let calls = [
+        call("c1", "read", "a"),
+        call("c2", "list_dir", "."),
+        call("c3", "read", "b"),
+    ];
+    let merges = mods
+        .merge_tool_batch(codex_extension_api::ToolBatchInput {
+            thread_store: &thread_store,
+            turn_id: "turn",
+            batch_id: "batch-c1",
+            calls: &calls,
+        })
+        .await;
+    assert_eq!(
+        merges,
+        vec![codex_extension_api::ToolBatchMerge {
+            call_ids: vec!["c1".into(), "c3".into()],
+            tool: "mod_batcher_reads".into(),
+            arguments: json!({"paths": ["a", "b"]}).to_string(),
+        }]
+    );
+    let known = vec!["c1".to_owned()];
+    assert!(
+        tool_batch::parse(
+            "m",
+            json!({"merge": [{"call_ids": ["zz"], "tool": "t", "arguments": {}}]}),
+            &known
+        )
+        .is_err()
+    );
+    assert!(
+        tool_batch::parse(
+            "m",
+            json!({"merge": [{"call_ids": ["c1"], "tool": "t", "arguments": []}]}),
+            &known
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn tool_before_payload_carries_schema_raw_arguments_and_batch_position() {
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+        ExtensionData::new("turn".to_owned()),
+    );
+    let facts = turn_store.get_or_init(codex_extension_api::ToolCallFacts::default);
+    facts.0.lock().unwrap().insert(
+        "c1".into(),
+        codex_extension_api::ToolCallFact {
+            schema: Some(json!({"type": "object"})),
+            batch: Some(codex_extension_api::ToolBatchPosition {
+                id: "b".into(),
+                index: 1,
+                size: 3,
+            }),
+        },
+    );
+    let _ = (&session_store, &thread_store);
+    let tool = ToolName::plain("read");
+    let value = tool_batch::tool_before_payload(
+        &turn_store,
+        "c1",
+        &tool,
+        &json!({"path": "a"}),
+        r#"{"path":"a"}"#,
+    );
+    assert_eq!(value["schema"], json!({"type": "object"}));
+    assert_eq!(value["raw_arguments"], r#"{"path":"a"}"#);
+    assert_eq!(value["batch"], json!({"id": "b", "index": 1, "size": 3}));
+    assert_eq!(value["arguments"]["path"], "a");
+}
+
+#[test]
+fn process_output_notices_coalesce_per_session_and_keep_exit_order() {
+    let state = State::default();
+    let output = |session: &str, bytes| delivery::Pending::Process {
+        owner: "m".into(),
+        session: session.into(),
+        bytes,
+    };
+    for pending in [
+        output("a", Some(3)),
+        output("a", Some(4)),
+        output("b", Some(1)),
+        output("a", None),
+        output("a", Some(5)),
+    ] {
+        delivery::push(&state, pending);
+    }
+    let queue = state
+        .pending
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|pending| match pending {
+            delivery::Pending::Process { session, bytes, .. } => (session.clone(), *bytes),
+            _ => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        queue,
+        vec![
+            ("a".to_owned(), Some(7)),
+            ("b".to_owned(), Some(1)),
+            ("a".to_owned(), None),
+            ("a".to_owned(), Some(5)),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn event_context_refuses_user_only_app_methods_before_the_client() {
+    let Some(fixture) = fixture(&[Package {
+        id: "steerer",
+        capabilities: &["threads"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    let grants = fixture.core.runtime.lock().unwrap().grants("steerer");
+    let caller = Caller {
+        id: "steerer",
+        source: "",
+        grants,
+        generation: 0,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let request = |method: &str| ModHostCall {
+        operation: "app.request".into(),
+        arguments: json!({"method": method, "params": {"threadId": fixture.lead.thread.to_string()}}),
+    };
+    let refused = dispatch(
+        &fixture.core,
+        &fixture.lead,
+        &caller,
+        request("turn/start"),
+        &cancelled,
+    )
+    .await
+    .unwrap_err();
+    assert!(refused.starts_with("app_context_user_only"), "{refused}");
+    let unattached = dispatch(
+        &fixture.core,
+        &fixture.lead,
+        &caller,
+        request("turn/steer"),
+        &cancelled,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        unattached.starts_with("client_surface_unavailable"),
+        "{unattached}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn model_completions_use_only_configured_worker_routes() {
+    let Some(fixture) = fixture(&[Package {
+        id: "summarizer",
+        capabilities: &["model"],
+        manifest: Value::Null,
+        source: "export default function () {}\n",
+    }]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let grants = fixture.core.runtime.lock().unwrap().grants("summarizer");
+    let caller = Caller {
+        id: "summarizer",
+        source: "",
+        grants,
+        generation: 0,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let complete = |arguments: Value| ModHostCall {
+        operation: "model.complete".into(),
+        arguments,
+    };
+    let run = |arguments: Value| {
+        let caller = Caller {
+            grants: caller.grants.clone(),
+            ..caller
+        };
+        operations::dispatch(
+            &fixture.core,
+            &fixture.lead,
+            caller,
+            None,
+            complete(arguments),
+            &cancelled,
+        )
+    };
+    let unknown = run(json!({"route": "missing", "prompt": "summarize"}))
+        .await
+        .unwrap_err();
+    assert_eq!(unknown, "provider_not_registered_or_stopped");
+    let malformed = run(json!({"prompt": "x"})).await.unwrap_err();
+    assert!(malformed.contains("route"), "{malformed}");
+}

@@ -75,6 +75,28 @@ contains only the packages labeled `bundled` below.
 | `atlas_policy@2.0.0` | `mod` | `mods/exercise/atlas_policy/2.0.0` | Exercises current live routing, context, coordination, interception, and cross-mod service replacement. |
 | `task_scope@1.0.0` | `mod` | `mods/exercise/task_scope` | Exercises task-scoped optional tool exposure at each native sampling step. |
 | `session_anchor@1.0.0` | `mod` | `mods/exercise/session_anchor` | Exercises bounded live compaction and checkpoint-derived context across reload. |
+| `approval_guard@1.0.0` | `mod` | `mods/examples/approval_guard` | Tightens live native approval decisions before hooks and automatic review, which hooks cannot force. |
+| `channel_pair@1.0.0` | `mod` | `mods/examples/channel_pair` | Publishes and receives namespaced in-process channel events between live mods. |
+| `confirm_note@1.0.0` | `mod` | `mods/examples/confirm_note` | Asks the user through native text and confirmation prompts from a live command. |
+| `context_fold@1.0.0` | `mod` | `mods/examples/context_fold` | Replaces the model-bound request history at each request without changing the transcript. |
+| `edit_diagnostics@1.0.0` | `mod` | `mods/examples/edit_diagnostics` | Appends composable feedback to live tool output before it reaches the model. |
+| `frecency_rank@1.0.0` | `mod` | `mods/examples/frecency_rank` | Replaces live composer mention ranking inside the terminal. |
+| `goal_store@1.0.0` | `mod` | `mods/examples/goal_store` | Keeps thread-scoped state that forks and deletes with the live thread. |
+| `image_preview@1.0.0` | `mod` | `mods/examples/image_preview` | Renders an imported image inside a live terminal render site and opens links after native confirmation. |
+| `layout_explorer@1.0.0` | `mod` | `mods/examples/layout_explorer` | Replaces the live terminal layout with splits, tabs, documents and diffs. |
+| `notification_bridge@1.0.0` | `mod` | `mods/examples/notification_bridge` | Turns live app-server notifications into terminal notifications with focus state. |
+| `output_budget@1.0.0` | `mod` | `mods/examples/output_budget` | Replaces model-visible tool output at the live tool boundary while the host keeps the original. |
+| `package_panel@1.0.0` | `mod` | `mods/examples/package_panel` | Drives package controls behind native confirmation from a live terminal panel. |
+| `profile_switcher@1.0.0` | `mod` | `mods/examples/profile_switcher` | Selects credential-bound routes at the live request boundary. |
+| `read_batcher@1.0.0` | `mod` | `mods/examples/read_batcher` | Merges parallel-safe tool calls of one live response into a single call. |
+| `screenshot_attach@1.0.0` | `mod` | `mods/examples/screenshot_attach` | Writes binary evidence and attaches it to the live composer. |
+| `shell_pane@1.0.0` | `mod` | `mods/examples/shell_pane` | Runs a sandboxed interactive shell rendered inside a live terminal pane. |
+| `site_vault@1.0.0` | `mod` | `mods/examples/site_vault` | Enrolls origin-bound secrets through native prompts and hands them only to its sidecars. |
+| `summarize_tool@1.0.0` | `mod` | `mods/examples/summarize_tool` | Runs one-shot completions on configured worker routes under live admission and the ledger. |
+| `tool_guide@1.0.0` | `mod` | `mods/examples/tool_guide` | Re-describes model-visible tool specs per route when the live tool router is built. |
+| `turn_recap@1.0.0` | `mod` | `mods/examples/turn_recap` | Reads the host turn-activity ledger for the live thread. |
+| `watch_notify@1.0.0` | `mod` | `mods/examples/watch_notify` | Watches workspace paths and reports external changes through live terminal notifications. |
+| `worktree_task@1.0.0` | `mod` | `mods/examples/worktree_task` | Starts a live thread bound to a permitted worktree root and shows it in the terminal. |
 
 ## Synthetic conformance fixtures
 

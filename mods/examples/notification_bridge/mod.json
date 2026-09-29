@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "notification_bridge",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.3",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "threads",
+    "terminal"
+  ],
+  "compatibility": {
+    "required_features": [
+      "app_v1",
+      "terminal_surface_v1"
+    ]
+  },
+  "subscriptions": {
+    "app": [
+      "turn/completed",
+      "item/commandExecution/requestApproval"
+    ]
+  }
+}

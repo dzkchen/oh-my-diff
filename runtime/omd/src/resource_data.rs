@@ -102,7 +102,7 @@ impl ResourceBinding {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceRef {
     pub reference: String,
@@ -229,6 +229,14 @@ impl ResourceStore<'_> {
         })
     }
 
+    pub(crate) fn record(&self, kind: &str, payload: Value) -> io::Result<Vec<u8>> {
+        Ok(serde_json::to_vec(&StoredResource {
+            binding: self.binding.clone(),
+            kind: kind.to_owned(),
+            payload,
+        })?)
+    }
+
     pub fn load(&self, reference: &ResourceRef, kind: &str) -> io::Result<Value> {
         if reference.reference != reference.sha256
             || reference.sha256.len() != 64
@@ -239,8 +247,11 @@ impl ResourceStore<'_> {
         {
             return Err(io::Error::other("resource_reference_invalid"));
         }
-        let directory = self.directory()?;
         let name = format!("{}.json", reference.reference);
+        let mut directory = self.directory()?;
+        if !directory.join(&name).try_exists()? {
+            directory = self.rotating_directory()?;
+        }
         let snapshot =
             crate::Snapshot::capture(&directory, &BTreeSet::from([name.clone()]), SNAPSHOT_BYTES)?;
         let bytes = &snapshot
@@ -268,7 +279,11 @@ impl ResourceStore<'_> {
         if !(1..=PAGE_BYTES).contains(&max_bytes) {
             return Err(io::Error::other("resource_page_limit"));
         }
-        let payload = serde_json::to_string(&self.load(reference, kind)?)?;
+        let loaded = self.load(reference, kind)?;
+        let payload = match self.blob_text(&loaded)? {
+            Some(text) => text,
+            None => serde_json::to_string(&loaded)?,
+        };
         if cursor > payload.len() || !payload.is_char_boundary(cursor) {
             return Err(io::Error::other("resource_cursor_invalid"));
         }

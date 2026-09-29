@@ -1,12 +1,12 @@
 # TypeScript mods
 
 The current pinned Codex `0.157.0` OMD host exposes API
-`0.2.0-experimental.1` on Apple Silicon macOS and Node `24.18.0`. Mods are
+`0.2.0-experimental.3` on Apple Silicon macOS and Node `24.18.0`. Mods are
 editable, hash-approved TypeScript packages. The API remains experimental;
 local author and host fixtures do not complete independent preview feedback or
 release qualification.
 
-Install the exact `@oh-my-diff/mod-api@0.2.0-experimental.1` author package
+Install the exact `@oh-my-diff/mod-api@0.2.0-experimental.3` author package
 with pnpm. It exports the typed SDK and `omd-mod-author` CLI. See
 [REFERENCE.md](REFERENCE.md#api-02-host-primitives) for current generic API
 operations and command documentation. The current host accepts `OMD_MODE=omd`

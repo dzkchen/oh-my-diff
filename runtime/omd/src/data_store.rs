@@ -79,22 +79,87 @@ fn now() -> u128 {
         .unwrap_or_default()
 }
 
+fn thread_directory(root: &Path, thread: &str) -> io::Result<PathBuf> {
+    if !crate::resource_data::token(thread) || root.canonicalize()? != root {
+        return Err(failure("store_thread_invalid"));
+    }
+    Ok(root.join("data").join("threads").join(thread))
+}
+
+fn copy_regular_tree(from: &Path, to: &Path) -> io::Result<()> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let target = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_regular_tree(&entry.path(), &target)?;
+        } else if kind.is_file() && !entry.file_name().to_string_lossy().starts_with('.') {
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn fork_thread_data(root: &Path, from: &str, to: &str) -> io::Result<bool> {
+    let (source, target) = (thread_directory(root, from)?, thread_directory(root, to)?);
+    match fs::symlink_metadata(&source) {
+        Ok(metadata) if metadata.is_dir() => {
+            if target.try_exists()? {
+                return Err(failure("store_thread_exists"));
+            }
+            copy_regular_tree(&source, &target).map(|()| true)
+        }
+        Ok(_) => Err(failure("store_directory_invalid")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn remove_thread_data(root: &Path, thread: &str) -> io::Result<bool> {
+    let directory = thread_directory(root, thread)?;
+    match fs::symlink_metadata(&directory) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&directory).map(|()| true),
+        Ok(_) => Err(failure("store_directory_invalid")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 impl DataStore<'_> {
     fn directory(&self, scope: &str) -> io::Result<PathBuf> {
-        let scope_key = match scope {
-            "repository" => self.repository_key,
-            "user" => "user",
+        let components = match scope {
+            "repository" => vec!["data", self.repository_key, self.owner],
+            "user" => vec!["data", "user", self.owner],
+            "thread" => {
+                let thread = self
+                    .provenance
+                    .thread_id
+                    .as_deref()
+                    .ok_or_else(|| failure("store_thread_unavailable"))?;
+                if !crate::resource_data::token(thread) {
+                    return Err(failure("store_thread_invalid"));
+                }
+                vec!["data", "threads", thread, self.owner]
+            }
             _ => return Err(failure("store_scope_invalid")),
         };
         if !crate::resource_data::token(self.owner)
-            || !(scope_key == "user"
-                || scope_key.len() == 64 && scope_key.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            || !(scope != "repository"
+                || self.repository_key.len() == 64
+                    && self
+                        .repository_key
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit()))
             || self.root.canonicalize()? != self.root
         {
             return Err(failure("store_root_invalid"));
         }
         let mut path = self.root.to_path_buf();
-        for component in ["data", scope_key, self.owner] {
+        for component in components {
             path.push(component);
             match fs::DirBuilder::new().mode(0o700).create(&path) {
                 Ok(()) => (),

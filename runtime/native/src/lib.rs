@@ -7,6 +7,7 @@ mod ledger;
 mod managed_process;
 mod mods;
 mod workspace_operations;
+mod workspace_watch;
 
 use accounting::Account;
 use accounting::Accounts;
@@ -137,6 +138,7 @@ pub fn install(
         return Err("the mod store must be canonical and outside the repository".into());
     }
     let config = HostConfig::load(&root, &repository)?;
+    accounting::set_credential_root(root.clone());
     let host = Arc::new(Host {
         repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
         root,
@@ -301,6 +303,7 @@ impl Host {
                     .and_then(|value| value.as_str().map(str::to_owned))
                     .unwrap_or_default(),
                 rates: candidate.rates.clone(),
+                credential: candidate.credential.clone(),
             })
             .collect::<Vec<_>>();
         if owner == "lead" && route.is_some() {
@@ -330,6 +333,7 @@ impl Host {
             worker_authorization: route
                 .and_then(|route| route.grant.as_ref())
                 .map(|grant| (grant.path.clone(), grant.sha256.clone())),
+            credential: route.and_then(|route| route.credential.clone()),
         };
         let mut accounts = self
             .accounts

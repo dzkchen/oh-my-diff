@@ -35,6 +35,7 @@ fn account(task: &Arc<Task>, root: &Path, owner: &str) -> Account {
         route: Some("worker".into()),
         lead_routes: Vec::new(),
         worker_authorization: None,
+        credential: None,
     }
 }
 
@@ -148,7 +149,52 @@ fn fast_route() -> RequestRoute {
         provider: "fixture".into(),
         reasoning: "xhigh".into(),
         rates: rates(),
+        credential: None,
     }
+}
+
+#[test]
+fn credential_routes_replace_auth_at_the_request_boundary_and_fail_closed() {
+    let (root, accounts, _task, mut request, body) = setup();
+    let store = root.path().join("store");
+    std::fs::create_dir(&store).unwrap();
+    let store = store.canonicalize().unwrap();
+    set_credential_root(store.clone());
+    let profiles = codex_omd::credentials::CredentialProfiles::open(&store).unwrap();
+    let profile = profiles.create("work key", "api_key", None).unwrap();
+    accounts
+        .0
+        .lock()
+        .unwrap()
+        .get_mut("child")
+        .unwrap()
+        .credential = Some(profile.id.clone());
+    request.headers.insert(
+        http::header::AUTHORIZATION,
+        "Bearer session".parse().unwrap(),
+    );
+    let refused = accounts
+        .before_send(&mut request, Some(&body))
+        .err()
+        .unwrap();
+    assert!(format!("{refused:?}").contains("credential_not_enrolled"));
+    std::fs::write(
+        profiles.home(&profile.id).unwrap().join("auth.json"),
+        br#"{"OPENAI_API_KEY":"sk-profile"}"#,
+    )
+    .unwrap();
+    assert!(accounts.before_send(&mut request, Some(&body)).is_ok());
+    assert_eq!(
+        request.headers.get(http::header::AUTHORIZATION).unwrap(),
+        "Bearer sk-profile"
+    );
+    assert!(
+        request
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .unwrap()
+            .is_sensitive()
+    );
 }
 
 #[test]

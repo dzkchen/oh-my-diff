@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "api": "0.2.0-experimental.1",
+  "api": "0.2.0-experimental.3",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {
@@ -913,6 +913,435 @@
         "patch:selection_policy_gates_the_native_release_copy"
       ],
       "replace_note": "exclusive"
+    },
+    {
+      "id": "coordination.app_bridge",
+      "group": "coordination",
+      "decision": "Pinned app-server requests and notifications",
+      "observe": "`app_notification` and `app_server_request` for subscribed methods, with coalesced and dropped counts",
+      "alter": "`app.request` sends a routed method; authority fields are refused and thread, root and model fields are checked",
+      "replace": null,
+      "timing": "user commands and event callbacks; turn-starting methods only from user contexts",
+      "ownership": "mod: which routed method; host: the route table, per-method class, contexts, confirmation and thread scope",
+      "limits": "only methods in `app.routes`; `command/exec`, `process/*`, `fs/*`, `thread/shellCommand` and credential flows are excluded; the in-process app-server only (`client_surface_unavailable` otherwise); 256 events / 1 MiB per mod queue",
+      "native": "hooks cannot call the app-server or observe its notifications",
+      "covers": {
+        "capabilities": [
+          "threads",
+          "config",
+          "config.write",
+          "inventory",
+          "account"
+        ],
+        "events": [
+          "app_notification",
+          "app_server_request"
+        ],
+        "replacements": [],
+        "operations": [
+          "app.request",
+          "app.routes"
+        ]
+      },
+      "evidence": [
+        "patch:capability_context_and_unrouted_methods_are_enforced",
+        "patch:authority_fields_are_refused_but_null_is_absent",
+        "patch:user_commands_authorize_app_requests_before_the_app_loop",
+        "patch:queue_coalesces_deltas_and_drops_oldest_with_a_count"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "coordination.approvals",
+      "group": "coordination",
+      "decision": "Approval middleware and results",
+      "observe": "`approval` for exec, patch, MCP, network and permission requests; `approval_result` with the deciding source",
+      "alter": "deny, or `ask` to force the native prompt; a mod can never approve",
+      "replace": null,
+      "timing": "before hooks, automatic review and full-access shortcuts",
+      "ownership": "mod: tighten-only policy; host: the decision, the prompt and the record",
+      "limits": "a failing middleware falls back to `ask`; the first deny wins",
+      "native": "PermissionRequest hooks can approve but run after policy shortcuts and cannot force a prompt",
+      "covers": {
+        "capabilities": [
+          "approvals"
+        ],
+        "events": [
+          "approval",
+          "approval_result"
+        ],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:approval_gates_tighten_before_automatic_review",
+        "patch:approval_decisions_deny_first_and_fail_closed_to_ask",
+        "patch:approval_middleware_requires_the_approvals_capability"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "tool.output",
+      "group": "tool",
+      "decision": "Tool-output replacement and composable feedback",
+      "observe": "`tool_output` with bounded text, byte count and, for the owner, the stored original",
+      "alter": "observers append up to 4 KiB each (16 KiB total) of feedback",
+      "replace": "tool_output (exclusive)",
+      "timing": "after the handler returns, before upstream truncation and history recording",
+      "ownership": "mod: model-visible text; host: call id, status, the retrievable original and the ledger hashes",
+      "limits": "replacement and combined text ≤ 64 KiB, else the original is kept with a diagnostic; originals rotate per mod (newest 256)",
+      "native": "PostToolUse hooks can add feedback but cannot keep a retrievable original or compose with a replacement",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "tool_output"
+        ],
+        "replacements": [
+          "tool_output"
+        ],
+        "operations": []
+      },
+      "evidence": [
+        "patch:tool_output_owner_replaces_text_observers_append_and_original_stays_readable",
+        "patch:tool_output_without_owner_is_not_offered"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "tool.batch",
+      "group": "tool",
+      "decision": "Tool-call batch merge",
+      "observe": "`tool_batch` with the parallel-safe calls of one response",
+      "alter": "merge several calls into one call of a mod-registered tool",
+      "replace": "tool_batch (exclusive)",
+      "timing": "after the response's calls are known, before dispatch",
+      "ownership": "mod: which calls merge; host: admission, approvals, per-call results and attribution",
+      "limits": "merged calls run once under a synthetic id; results fan out by call id and missing results become errors; dispatch is unchanged without an owner",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "tool_batch"
+        ],
+        "replacements": [
+          "tool_batch"
+        ],
+        "operations": []
+      },
+      "evidence": [
+        "patch:merged_results_fan_out_by_call_id_and_missing_results_fail"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "tool.specs",
+      "group": "tool",
+      "decision": "Model-visible tool descriptions",
+      "observe": "`tool_specs` with the route and the model-visible tools",
+      "alter": "hide or re-describe tools; execution identity is unchanged",
+      "replace": "tool_specs (exclusive)",
+      "timing": "when the tool router is built for a turn",
+      "ownership": "mod: descriptions and visibility; host: execution, schemas it accepts and admission",
+      "limits": "invalid schemas are ignored; tools still map arguments back through `tool_before`",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "tool_specs"
+        ],
+        "replacements": [
+          "tool_specs"
+        ],
+        "operations": []
+      },
+      "evidence": [
+        "patch:adjustments_hide_and_redescribe_by_model_visible_name",
+        "patch:tool_specs_owner_hides_and_redescribes_model_visible_tools"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "context.events",
+      "group": "context_recovery",
+      "decision": "Channels, process events and workspace watches",
+      "observe": "`channel`, `process_event` and external `workspace_change`",
+      "alter": "`events.publish` to a namespaced channel; `workspace.watch` bounded paths",
+      "replace": null,
+      "timing": "background delivery at safe points",
+      "ownership": "mod: subscriptions and payloads; host: namespaces, queues, watch roots and debounce",
+      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches per mod; protected and ignored paths excluded",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [
+          "events"
+        ],
+        "events": [
+          "channel",
+          "process_event"
+        ],
+        "replacements": [],
+        "operations": [
+          "events.publish",
+          "workspace.watch",
+          "workspace.unwatch"
+        ]
+      },
+      "evidence": [
+        "patch:publishers_are_namespaced_and_subscribers_filter_by_pattern",
+        "patch:slow_subscribers_drop_oldest_and_see_the_count",
+        "patch:external_changes_are_reported_relative_to_the_root",
+        "patch:channel_events_reach_subscribers_in_order"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "coordination.credentials",
+      "group": "coordination",
+      "decision": "Credential profiles, secrets and route selection",
+      "observe": "`credentials.list` without secret material",
+      "alter": "`credentials.request` opens native enroll, refresh or remove flows; `routes.select` picks a configured route for the next request or thread; `sidecars.start` receives the caller's own origin-bound secrets",
+      "replace": null,
+      "timing": "user contexts for credential flows; next safe request boundary for routes",
+      "ownership": "mod: which profile or route; host: storage, sign-in, injection and expiry",
+      "limits": "secrets and tokens never reach the mod runtime or the model; a missing or expired credential blocks the request",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [
+          "credentials"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "credentials.list",
+          "credentials.request",
+          "routes.select"
+        ]
+      },
+      "evidence": [
+        "patch:secrets_are_origin_bound_and_readable_only_by_their_owner",
+        "patch:secrets_read_api_keys_and_refuse_expired_or_missing_tokens",
+        "patch:profiles_get_private_homes_and_one_default"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "context.turn_activity",
+      "group": "context_recovery",
+      "decision": "Turn-activity ledger",
+      "observe": "`turns.activity` for the current thread: outcomes, tool calls, processes and file changes",
+      "alter": "no",
+      "replace": null,
+      "timing": "recorded only while an enabled mod holds `sessions`",
+      "ownership": "host: records; mod: reads",
+      "limits": "turns before recording started read as unavailable; per-turn lists are bounded and marked truncated",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "turns.activity"
+        ]
+      },
+      "evidence": [
+        "patch:completed_turn_reports_tools_processes_and_files",
+        "patch:a_turn_without_an_end_is_interrupted_unless_running_or_paused",
+        "patch:turn_activity_records_only_while_a_sessions_mod_is_enabled"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "terminal.surface",
+      "group": "terminal",
+      "decision": "Layout, notifications, composer and built-in actions",
+      "observe": "`component_event`, `view` and `focus`",
+      "alter": "`terminal.notify`, `terminal.show_thread`, `terminal.import_file`, `composer.read`/`write` and `builtins.invoke`",
+      "replace": null,
+      "timing": "user commands; composer writes and imports from user contexts",
+      "ownership": "mod: content; host: rendering, focus, confirmation and rate limits",
+      "limits": "notifications honor terminal settings and a 2 s rate limit; approval key actions and authority commands are refused",
+      "native": "hooks cannot draw, notify, edit the composer or invoke built-ins",
+      "covers": {
+        "capabilities": [
+          "composer"
+        ],
+        "events": [
+          "component_event",
+          "view",
+          "focus"
+        ],
+        "replacements": [],
+        "operations": [
+          "terminal.notify",
+          "terminal.show_thread",
+          "terminal.import_file",
+          "composer.read",
+          "composer.write",
+          "builtins.invoke"
+        ]
+      },
+      "evidence": [
+        "patch:view_changes_are_diffed_per_frame",
+        "patch:splits_tabs_and_chat_union_place_regions",
+        "patch:actions_resolve_to_their_effective_binding_and_refuse_approval"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "coordination.packages",
+      "group": "coordination",
+      "decision": "Package controls",
+      "observe": "`packages.list` and `packages.preview`",
+      "alter": "`packages.apply` installs, updates, removes, enables or disables after a native confirmation; `packages.reload`",
+      "replace": null,
+      "timing": "user contexts; changes apply at the next boundary",
+      "ownership": "mod: request; host: previewed plan, confirmation, trust and lock",
+      "limits": "the confirmed plan is applied as previewed; a changed package or lock refuses; `/omd` stays the native recovery",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [
+          "packages"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "packages.list",
+          "packages.preview",
+          "packages.apply",
+          "packages.reload"
+        ]
+      },
+      "evidence": [
+        "patch:install_enable_disable_and_remove_through_previewed_controls",
+        "patch:stale_previews_and_invalid_requests_are_refused"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "terminal.completion",
+      "group": "terminal",
+      "decision": "Composer mention completion",
+      "observe": "`completion` with the query and upstream candidates",
+      "alter": "reorder, filter or add workspace-relative paths",
+      "replace": "completion (exclusive)",
+      "timing": "each `@` query result",
+      "ownership": "mod: ranking; host: the popup, insertion and stale-result filtering",
+      "limits": "200 items; relative paths only; without an owner upstream ranking is unchanged",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "completion"
+        ],
+        "replacements": [
+          "completion"
+        ],
+        "operations": []
+      },
+      "evidence": [
+        "patch:completion_items_keep_mod_order_and_refuse_escaping_paths"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "terminal.media_and_prompts",
+      "group": "terminal",
+      "decision": "Opening links, images and native prompts",
+      "observe": "no",
+      "alter": "`terminal.open` for http(s) URLs or inert files; `terminal.prompt` asks the user to confirm or type text; `image` components",
+      "replace": null,
+      "timing": "after a native confirmation for opening",
+      "ownership": "mod: request; host: confirmation, file-type allowlist and rendering",
+      "limits": "opened files must be documents or images; prompts are answered only by the user; images render as truecolor cells, alt text under `NO_COLOR`",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "terminal.open",
+          "terminal.prompt"
+        ]
+      },
+      "evidence": [
+        "patch:open_targets_are_web_urls_or_inert_files"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "terminal.pty",
+      "group": "terminal",
+      "decision": "Interactive shell panes",
+      "observe": "`terminal.pty` read returns the screen text",
+      "alter": "start (user context, confirmed), write, read and stop a sandboxed shell rendered by `terminal` components",
+      "replace": null,
+      "timing": "while the pane runs",
+      "ownership": "mod: session and input; host: sandbox, PTY, rendering and key routing",
+      "limits": "four panes; the session sandbox without network; only the owning mod can reach a session; Ctrl+] leaves a focused pane",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "terminal.pty"
+        ]
+      },
+      "evidence": [
+        "patch:pty_output_renders_and_sessions_stay_owner_scoped"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "coordination.model_complete",
+      "group": "coordination",
+      "decision": "One-shot model completions",
+      "observe": "no",
+      "alter": "`model.complete` runs one tool-less completion on a configured worker route",
+      "replace": null,
+      "timing": "event and tool callbacks during a task",
+      "ownership": "mod: prompt and route; host: admission, ledger, allowance and cancellation",
+      "limits": "prompt ≤ 8 KiB; ≤ 300 s; counts against agent limits; unknown routes are refused",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "model.complete"
+        ]
+      },
+      "evidence": [
+        "patch:model_completions_use_only_configured_worker_routes"
+      ],
+      "replace_note": null
+    },
+    {
+      "id": "context.history",
+      "group": "context_recovery",
+      "decision": "Model-bound history view",
+      "observe": "`history` with a bounded view of the request items",
+      "alter": "drop, replace or insert text items in the request only",
+      "replace": "history (exclusive)",
+      "timing": "each model request, before admission accounting",
+      "ownership": "mod: which items; host: validation, transcript and provenance",
+      "limits": "the transcript is unchanged; reasoning items are only dropped together with the item they precede; call/output pairs stay whole; the current input is kept; failures keep the original history",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [
+          "history"
+        ],
+        "replacements": [
+          "history"
+        ],
+        "operations": []
+      },
+      "evidence": [
+        "patch:edits_fold_text_drop_paired_calls_and_insert_notes_without_touching_protected_items",
+        "patch:unsafe_edits_are_refused"
+      ],
+      "replace_note": null
     }
   ],
   "composition": [
@@ -941,7 +1370,7 @@
     },
     {
       "id": "conflict_before_activation",
-      "rule": "Contested exclusive claims \u2014 a replacement point, a workflow contract ID or a namespaced tool name \u2014 are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.",
+      "rule": "Contested exclusive claims — a replacement point, a workflow contract ID or a namespaced tool name — are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.",
       "evidence": [
         "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
       ]
@@ -971,7 +1400,7 @@
     },
     {
       "id": "reload",
-      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional \u2014 if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
+      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
       "evidence": [
         "rust:mod_reload_is_transactional_and_stale_calls_are_rejected",
         "rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation"
@@ -1012,8 +1441,8 @@
   ],
   "unsupported": [
     "Native workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace integrity, durable evidence and final acceptance.",
-    "Raw history rewriting, arbitrary compaction engines, custom prompts for provider-side remote compaction.",
-    "Raw terminal escape sequences, arbitrary widgets or DOM/canvas access, overriding native key bindings, transcript mutation, and clipboard authorization bypass.",
+    "Unbounded history rewriting or editing of reasoning and call/output pairs, arbitrary compaction engines, custom prompts for provider-side remote compaction.",
+    "Raw terminal escape sequences, arbitrary widgets or DOM/canvas access, overriding approval key bindings, transcript mutation, and clipboard authorization bypass.",
     "Arbitrary provider compatibility, runtime imports other than adapter-declared aliases, and any second scheduler or uncontrolled execution path.",
     "Mod-to-mod calls: `requires` declares presence and order only; mods never call each other or share state."
   ]

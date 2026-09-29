@@ -9,7 +9,7 @@ const surface = { events: {}, replacements: [], middleware: [], state: 'store', 
 const hash = character => character.repeat(64);
 
 function run(payload, receipts = []) {
-  const request = { source, filename: 'omd_checks.ts', api: '0.2.0-experimental.1', capabilities: ['tools', 'fs.read', 'exec'], environment: ['crypto'],
+  const request = { source, filename: 'omd_checks.ts', api: '0.2.0-experimental.3', capabilities: ['tools', 'fs.read', 'exec'], environment: ['crypto'],
     state: null, settings: {}, event: 'tool', name: 'select', payload, receipts, surface, hook_budget_ms: 2000 };
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: JSON.stringify(request), encoding: 'utf8', timeout: 5000,

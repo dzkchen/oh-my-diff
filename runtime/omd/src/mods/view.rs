@@ -40,6 +40,10 @@ pub struct ModView {
     pub selection: Option<ModSelectionPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<ModLayout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backdrop: Option<ModBackdrop>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -73,6 +77,184 @@ pub struct ModViewPatch {
     pub selection: Option<ModSelectionPolicy>,
     #[serde(default)]
     pub placeholder: Option<String>,
+    #[serde(default)]
+    pub layout: Option<ModLayout>,
+    #[serde(default)]
+    pub backdrop: Option<ModBackdrop>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModSplit {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModLayoutLeaf {
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModLayoutSplit {
+    pub split: ModSplit,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ratio: Vec<u16>,
+    pub children: Vec<ModLayout>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModTab {
+    pub title: String,
+    pub node: ModLayout,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModLayoutTabs {
+    pub tabs: Vec<ModTab>,
+    #[serde(default)]
+    pub active: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ModLayout {
+    Leaf(ModLayoutLeaf),
+    Split(ModLayoutSplit),
+    Tabs(ModLayoutTabs),
+}
+
+impl ModLayout {
+    fn walk(&self, depth: usize, leaves: &mut Vec<String>) -> bool {
+        if depth > 4 {
+            return false;
+        }
+        match self {
+            Self::Leaf(leaf) => {
+                leaves.push(leaf.content.clone());
+                matches!(leaf.content.as_str(), "transcript" | "composer")
+                    || leaf.content.strip_prefix("site:").is_some_and(valid_site)
+            }
+            Self::Split(split) => {
+                (2..=4).contains(&split.children.len())
+                    && (split.ratio.is_empty() || split.ratio.len() == split.children.len())
+                    && split.ratio.iter().all(|ratio| (1..=100).contains(ratio))
+                    && split
+                        .children
+                        .iter()
+                        .all(|child| child.walk(depth + 1, leaves))
+            }
+            Self::Tabs(tabs) => {
+                (1..=6).contains(&tabs.tabs.len())
+                    && tabs.active < tabs.tabs.len()
+                    && tabs.tabs.iter().all(|tab| {
+                        !tab.title.is_empty()
+                            && visible(&tab.title, 32)
+                            && tab.node.walk(depth + 1, leaves)
+                    })
+            }
+        }
+    }
+
+    fn composer_follows_transcript(&self) -> bool {
+        match self {
+            Self::Leaf(_) => true,
+            Self::Split(split) => {
+                let position = |content: &str| {
+                    split.children.iter().position(
+                        |child| matches!(child, Self::Leaf(leaf) if leaf.content == content),
+                    )
+                };
+                match position("composer") {
+                    Some(composer) => {
+                        split.split == ModSplit::Vertical
+                            && position("transcript")
+                                .is_some_and(|transcript| transcript + 1 == composer)
+                    }
+                    None => split.children.iter().all(Self::composer_follows_transcript),
+                }
+            }
+            Self::Tabs(tabs) => tabs
+                .tabs
+                .iter()
+                .all(|tab| tab.node.composer_follows_transcript()),
+        }
+    }
+
+    pub fn valid(&self) -> bool {
+        let mut leaves = Vec::new();
+        self.walk(1, &mut leaves)
+            && leaves.len() <= 12
+            && leaves.iter().filter(|leaf| *leaf == "transcript").count() == 1
+            && leaves.iter().filter(|leaf| *leaf == "composer").count() <= 1
+            && leaves.iter().collect::<BTreeSet<_>>().len() == leaves.len()
+            && self.composer_follows_transcript()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModAsciiBackdrop {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dim: Option<f32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModImageBackdrop {
+    pub resource: crate::resource_data::ResourceRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dim: Option<f32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModAsciiFallback {
+    pub ascii: ModAsciiBackdrop,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum ModBackdrop {
+    Ascii {
+        ascii: ModAsciiBackdrop,
+    },
+    Image {
+        image: ModImageBackdrop,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback: Option<ModAsciiFallback>,
+    },
+}
+
+impl ModBackdrop {
+    pub fn valid(&self) -> bool {
+        let dim = |dim: &Option<f32>| dim.is_none_or(|dim| (0.0..=1.0).contains(&dim));
+        let ascii = |ascii: &ModAsciiBackdrop| {
+            !ascii.text.is_empty()
+                && ascii.text.len() <= 8192
+                && multiline(&ascii.text, 8192)
+                && dim(&ascii.dim)
+        };
+        match self {
+            Self::Ascii { ascii: backdrop } => ascii(backdrop),
+            Self::Image { image, fallback } => {
+                dim(&image.dim)
+                    && image.position.as_deref().is_none_or(|position| {
+                        matches!(position, "center" | "fill" | "fit" | "tile")
+                    })
+                    && fallback
+                        .as_ref()
+                        .is_none_or(|fallback| ascii(&fallback.ascii))
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -238,7 +420,68 @@ pub enum ModComponent {
         height: Option<u16>,
         action: ModCommandAction,
     },
+    Document {
+        id: String,
+        label: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        lines: Vec<Vec<ModSpan>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<crate::resource_data::ResourceRef>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        anchors: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selected: Option<ModRange>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        find: Option<ModFind>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<ModCommandAction>,
+    },
+    Terminal {
+        id: String,
+        label: String,
+        session: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<u16>,
+    },
+    Image {
+        id: String,
+        label: String,
+        image: crate::resource_data::ResourceRef,
+        alt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<u16>,
+    },
+    Diff {
+        id: String,
+        label: String,
+        unified: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selected: Option<ModRange>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<ModCommandAction>,
+    },
     Slot,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModFind {
+    pub query: String,
+    #[serde(default)]
+    pub regex: bool,
+    #[serde(default)]
+    pub case: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -802,6 +1045,73 @@ impl ModComponent {
                     })
                     && action.valid()
             }
+            Self::Document {
+                id,
+                label,
+                lines,
+                source,
+                anchors,
+                selected,
+                find,
+                height,
+                action,
+            } => {
+                identified(id, label, ids)
+                    && (source.is_none() || lines.is_empty())
+                    && lines.len() <= 2000
+                    && lines.iter().all(|spans| {
+                        spans.len() <= 12 && spans.iter().all(|span| visible(&span.text, 1024))
+                    })
+                    && lines
+                        .iter()
+                        .flatten()
+                        .map(|span| span.text.chars().count())
+                        .sum::<usize>()
+                        <= 49_152
+                    && anchors.len() <= lines.len().max(2000)
+                    && anchors.iter().all(|anchor| visible(anchor, 128))
+                    && selected.is_none_or(|range| range.start <= range.end)
+                    && find
+                        .as_ref()
+                        .is_none_or(|find| !find.query.is_empty() && visible(&find.query, 256))
+                    && height.is_none_or(|height| (1..=40).contains(&height))
+                    && action.as_ref().is_none_or(ModCommandAction::valid)
+            }
+            Self::Diff {
+                id,
+                label,
+                unified,
+                selected,
+                height,
+                action,
+            } => {
+                identified(id, label, ids)
+                    && multiline(unified, 49_152)
+                    && selected.is_none_or(|range| range.start <= range.end)
+                    && height.is_none_or(|height| (1..=40).contains(&height))
+                    && action.as_ref().is_none_or(ModCommandAction::valid)
+            }
+            Self::Terminal {
+                id,
+                label,
+                session,
+                height,
+            } => {
+                identified(id, label, ids)
+                    && visible(session, 64)
+                    && height.is_none_or(|height| (2..=60).contains(&height))
+            }
+            Self::Image {
+                id,
+                label,
+                alt,
+                height,
+                ..
+            } => {
+                identified(id, label, ids)
+                    && visible(alt, 256)
+                    && height.is_none_or(|height| (1..=40).contains(&height))
+            }
             Self::Slot => {
                 *slots += 1;
                 *slots <= 1
@@ -828,7 +1138,17 @@ impl ModRenderSite {
 }
 
 fn valid_site(name: &str) -> bool {
+    let part = |part: &str, limit: usize| {
+        !part.is_empty()
+            && part.len() <= limit
+            && part.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+            })
+    };
     ["sidebar", "header", "above_composer", "dialog"].contains(&name)
+        || name
+            .split_once('/')
+            .is_some_and(|(owner, site)| part(owner, 24) && part(site, 32))
 }
 
 fn valid_action(action: &ModKeyAction) -> bool {
@@ -869,7 +1189,7 @@ fn valid_status(status: &[String]) -> bool {
 
 fn valid_sites(sites: &BTreeMap<String, ModRenderSite>, patch: bool) -> bool {
     let mut ids = BTreeSet::new();
-    sites.len() <= 4
+    sites.len() <= 8
         && sites
             .iter()
             .all(|(name, site)| valid_site(name) && site.valid(patch, &mut ids))
@@ -892,7 +1212,11 @@ fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
         | ModComponent::Select { id, .. }
         | ModComponent::Markdown { id, .. }
         | ModComponent::Code { id, .. }
-        | ModComponent::List { id, .. } => {
+        | ModComponent::List { id, .. }
+        | ModComponent::Document { id, .. }
+        | ModComponent::Diff { id, .. }
+        | ModComponent::Terminal { id, .. }
+        | ModComponent::Image { id, .. } => {
             ids.insert(id.clone());
         }
         ModComponent::Slot => {}
@@ -1023,6 +1347,11 @@ impl ModViewPatch {
                 .as_ref()
                 .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80))
             || !valid_glyphs(&patch.theme.glyphs)
+            || patch.layout.as_ref().is_some_and(|layout| !layout.valid())
+            || patch
+                .backdrop
+                .as_ref()
+                .is_some_and(|backdrop| !backdrop.valid())
             || serde_json::to_vec(&patch)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_patch"));
@@ -1058,6 +1387,18 @@ impl ModViewPatch {
     ) -> Result<()> {
         if let Some(title) = self.title {
             target.title = Some(title);
+        }
+        if let Some(layout) = self.layout {
+            if !replaced_sites.insert("@layout".into()) {
+                return Err(failure("terminal_layout_conflict"));
+            }
+            target.layout = Some(layout);
+        }
+        if let Some(backdrop) = self.backdrop {
+            if !replaced_sites.insert("@backdrop".into()) {
+                return Err(failure("terminal_backdrop_conflict"));
+            }
+            target.backdrop = Some(backdrop);
         }
         if let Some(foreground) = self.foreground {
             target.foreground = Some(foreground);
@@ -1183,6 +1524,11 @@ impl ModView {
                 .as_ref()
                 .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80))
             || !valid_glyphs(&view.theme.glyphs)
+            || view.layout.as_ref().is_some_and(|layout| !layout.valid())
+            || view
+                .backdrop
+                .as_ref()
+                .is_some_and(|backdrop| !backdrop.valid())
             || serde_json::to_vec(&view)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_view"));
@@ -1228,3 +1574,7 @@ impl ModViewSnapshot {
         Ok(snapshot)
     }
 }
+
+#[cfg(test)]
+#[path = "view_surface_tests.rs"]
+mod surface_tests;

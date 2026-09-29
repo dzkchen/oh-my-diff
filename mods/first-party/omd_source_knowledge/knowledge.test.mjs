@@ -15,7 +15,7 @@ const sorted = value => Array.isArray(value) ? value.map(sorted) : value && type
   ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, sorted(item)])) : value;
 
 function invoke(event, name, payload, receipts = []) {
-  const request = { source, filename: 'omd_source_knowledge.ts', api: '0.2.0-experimental.1', capabilities: ['tools', 'commands', 'fs.read', 'store'],
+  const request = { source, filename: 'omd_source_knowledge.ts', api: '0.2.0-experimental.3', capabilities: ['tools', 'commands', 'fs.read', 'store'],
     environment: ['crypto'], state: null, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 3000 };
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: JSON.stringify(request), encoding: 'utf8', timeout: 6000,

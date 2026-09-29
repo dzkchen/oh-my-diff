@@ -1,0 +1,1323 @@
+{
+ "schema": 1,
+ "upstream": {
+  "tag": "rust-v0.157.0",
+  "commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d"
+ },
+ "requests": {
+  "account/gatewayOAuth/read": {
+   "class": "account",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "account/rateLimits/read": {
+   "class": "account",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "account/read": {
+   "class": "account",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "account/usage/read": {
+   "class": "account",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "account/workspaceMessages/read": {
+   "class": "account",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "app/installed": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "app/list": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "app/read": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "collaborationMode/list": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "config/batchWrite": {
+   "class": "config.write",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true,
+   "refuse": [
+    "filePath"
+   ],
+   "keys": "edits[].keyPath"
+  },
+  "config/mcpServer/reload": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ]
+  },
+  "config/read": {
+   "class": "config",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "root": [
+    "cwd"
+   ]
+  },
+  "config/value/write": {
+   "class": "config.write",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true,
+   "refuse": [
+    "filePath"
+   ],
+   "keys": "keyPath"
+  },
+  "configRequirements/read": {
+   "class": "config",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "environment/info": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "environment/status": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "experimentalFeature/enablement/set": {
+   "class": "config.write",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true,
+   "keys": "enablement{}"
+  },
+  "experimentalFeature/list": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "externalAgentConfig/detect": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "externalAgentConfig/import": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "externalAgentConfig/import/readHistories": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ]
+  },
+  "externalAgentConfig/import/recordHistory": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ]
+  },
+  "hooks/list": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "marketplace/add": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "marketplace/remove": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "marketplace/upgrade": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "mcpServer/event/stream/start": {
+   "class": "network",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "mcpServer/event/stream/stop": {
+   "class": "network",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "mcpServer/resource/read": {
+   "class": "network",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "mcpServerStatus/list": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "memory/reset": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "memory/status": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "model/list": {
+   "class": "model",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "modelProvider/capabilities/read": {
+   "class": "model",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "permissionProfile/list": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "root": [
+    "cwd"
+   ]
+  },
+  "plugin/install": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "plugin/installed": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "plugin/list": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "plugin/read": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "plugin/reconcile": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ]
+  },
+  "plugin/search": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "plugin/skill/read": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "plugin/uninstall": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "project/create": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ]
+  },
+  "project/delete": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "project/import": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "project/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "project/move": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ]
+  },
+  "project/read": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "project/update": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ]
+  },
+  "remoteControl/status/read": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "review/start": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "rollout/compress": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ]
+  },
+  "skills/config/write": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "skills/extraRoots/set": {
+   "class": "packages",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "skills/list": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "thread/archive": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "visible"
+  },
+  "thread/attachment/add": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/attachment/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/attachment/remove": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/backgroundTerminals/clean": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "current"
+  },
+  "thread/backgroundTerminals/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/backgroundTerminals/terminate": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "current"
+  },
+  "thread/compact/start": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "current"
+  },
+  "thread/delete": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true,
+   "scope": "visible"
+  },
+  "thread/fork": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "visible",
+   "refuse": [
+    "serviceTier",
+    "runtimeWorkspaceRoots",
+    "approvalPolicy",
+    "approvalsReviewer",
+    "sandbox",
+    "permissions",
+    "config",
+    "baseInstructions",
+    "path"
+   ],
+   "root": [
+    "cwd"
+   ],
+   "route_fields": [
+    "model",
+    "modelProvider"
+   ]
+  },
+  "thread/goal/clear": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/goal/get": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/goal/set": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/items/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "root": [
+    "cwd"
+   ]
+  },
+  "thread/loaded/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "thread/memoryMode/set": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/metadata/update": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/name/set": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/queue/add": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/queue/delete": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "current"
+  },
+  "thread/queue/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/queue/reorder": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/queue/start": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/queue/update": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current"
+  },
+  "thread/read": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/realtime/listVoices": {
+   "class": "inventory",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "thread/resume": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "visible",
+   "refuse": [
+    "serviceTier",
+    "runtimeWorkspaceRoots",
+    "approvalPolicy",
+    "approvalsReviewer",
+    "sandbox",
+    "permissions",
+    "config",
+    "baseInstructions",
+    "history",
+    "path"
+   ],
+   "root": [
+    "cwd"
+   ],
+   "route_fields": [
+    "model",
+    "modelProvider"
+   ]
+  },
+  "thread/revert": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true,
+   "scope": "visible"
+  },
+  "thread/search": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "thread/searchOccurrences": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "thread/section/move": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "thread/settings/update": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current",
+   "refuse": [
+    "approvalPolicy",
+    "approvalsReviewer",
+    "sandboxPolicy",
+    "permissions",
+    "serviceTier"
+   ],
+   "root": [
+    "cwd"
+   ],
+   "route_fields": [
+    "model"
+   ]
+  },
+  "thread/start": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "root",
+   "refuse": [
+    "serviceTier",
+    "runtimeWorkspaceRoots",
+    "approvalPolicy",
+    "approvalsReviewer",
+    "sandbox",
+    "permissions",
+    "config",
+    "baseInstructions",
+    "allowProviderModelFallback",
+    "environments",
+    "dynamicTools",
+    "selectedCapabilityRoots",
+    "mockExperimentalField",
+    "experimentalRawEvents"
+   ],
+   "root": [
+    "cwd"
+   ],
+   "route_fields": [
+    "model",
+    "modelProvider"
+   ]
+  },
+  "thread/timeline/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/turns/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "visible"
+  },
+  "thread/unarchive": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "visible"
+  },
+  "threadSection/create": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "threadSection/delete": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "confirm": true
+  },
+  "threadSection/list": {
+   "class": "sessions",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "threadSection/update": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ]
+  },
+  "turn/interrupt": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "current"
+  },
+  "turn/settings/update": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "current",
+   "refuse": [
+    "approvalsReviewer",
+    "serviceTier"
+   ],
+   "route_fields": [
+    "model"
+   ]
+  },
+  "turn/start": {
+   "class": "threads",
+   "contexts": [
+    "user"
+   ],
+   "scope": "current",
+   "refuse": [
+    "toolOutput",
+    "environments",
+    "runtimeWorkspaceRoots",
+    "approvalPolicy",
+    "approvalsReviewer",
+    "sandboxPolicy",
+    "permissions",
+    "serviceTier",
+    "serviceTierForTurn",
+    "cyberAccessProgram"
+   ],
+   "root": [
+    "cwd"
+   ],
+   "route_fields": [
+    "model"
+   ]
+  },
+  "turn/steer": {
+   "class": "threads",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "scope": "current"
+  }
+ },
+ "notifications": [
+  "account/gatewayOAuth/changed",
+  "account/rateLimits/updated",
+  "account/updated",
+  "app/list/updated",
+  "autoApprovalReview/strictReviewRequired",
+  "command/exec/outputDelta",
+  "configWarning",
+  "deprecationNotice",
+  "error",
+  "externalAgentConfig/import/completed",
+  "externalAgentConfig/import/progress",
+  "fs/changed",
+  "fuzzyFileSearch/sessionCompleted",
+  "fuzzyFileSearch/sessionUpdated",
+  "guardianWarning",
+  "hook/completed",
+  "hook/started",
+  "item/agentMessage/delta",
+  "item/autoApprovalReview/completed",
+  "item/autoApprovalReview/started",
+  "item/commandExecution/outputDelta",
+  "item/commandExecution/terminalInteraction",
+  "item/completed",
+  "item/fileChange/outputDelta",
+  "item/fileChange/patchUpdated",
+  "item/mcpToolCall/progress",
+  "item/plan/delta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/textDelta",
+  "item/started",
+  "mcpServer/event/stream/notification",
+  "mcpServer/oauthLogin/completed",
+  "mcpServer/startupStatus/updated",
+  "model/rerouted",
+  "model/safetyBuffering/updated",
+  "model/verification",
+  "modelProvider/authRecoveryCompleted",
+  "modelProvider/authRecoveryStarted",
+  "process/exited",
+  "process/outputDelta",
+  "project/changed",
+  "remoteControl/status/changed",
+  "serverRequest/resolved",
+  "skills/changed",
+  "thread/archived",
+  "thread/attachment/updated",
+  "thread/closed",
+  "thread/compacted",
+  "thread/deleted",
+  "thread/environment/connected",
+  "thread/environment/disconnected",
+  "thread/goal/cleared",
+  "thread/goal/updated",
+  "thread/name/updated",
+  "thread/project/updated",
+  "thread/queue/changed",
+  "thread/realtime/closed",
+  "thread/realtime/error",
+  "thread/realtime/item/completed",
+  "thread/realtime/item/started",
+  "thread/realtime/item/transcript/delta",
+  "thread/realtime/itemAdded",
+  "thread/realtime/outputAudio/delta",
+  "thread/realtime/sdp",
+  "thread/realtime/started",
+  "thread/realtime/transcript/delta",
+  "thread/realtime/transcript/done",
+  "thread/reverted",
+  "thread/settings/updated",
+  "thread/started",
+  "thread/status/changed",
+  "thread/tokenUsage/updated",
+  "thread/unarchived",
+  "turn/completed",
+  "turn/diff/updated",
+  "turn/moderationMetadata",
+  "turn/plan/updated",
+  "turn/started",
+  "warning",
+  "windows/worldWritableWarning",
+  "windowsSandbox/setupCompleted"
+ ],
+ "server_requests": [
+  "item/commandExecution/requestApproval",
+  "item/fileChange/requestApproval",
+  "item/permissions/requestApproval",
+  "item/tool/requestUserInput",
+  "mcpServer/elicitation/request"
+ ],
+ "authority_config": [
+  "allow_login_shell",
+  "allow_symlinked_codex_home",
+  "approval_policy",
+  "approvals_reviewer",
+  "apps",
+  "apps._default",
+  "auto_review",
+  "auto_review.experimental_policy_template",
+  "auto_review.extra_policy",
+  "auto_review.policy",
+  "browser_use",
+  "browser_use.allow_history_access",
+  "browser_use.default_origin_policy",
+  "browser_use.origins",
+  "chatgpt_base_url",
+  "cli_auth_credentials_store",
+  "computer_use",
+  "computer_use.default_app_access",
+  "computer_use.macos",
+  "computer_use.windows",
+  "default_permissions",
+  "experimental_realtime_webrtc_call_base_url",
+  "experimental_realtime_ws_base_url",
+  "experimental_thread_store",
+  "features.auth_elicitation",
+  "features.browser_use_full_cdp_access",
+  "features.elevated_windows_sandbox",
+  "features.enable_experimental_windows_sandbox",
+  "features.exec_permission_approvals",
+  "features.experimental_windows_sandbox",
+  "features.guardian_approval",
+  "features.guardian_enhanced_node_repl_transcripts",
+  "features.guardian_ext",
+  "features.guardian_node_repl_transcript_images",
+  "features.guardian_reuse_parent_compaction",
+  "features.guardianv2",
+  "features.mcp_oauth_refresh_coordination",
+  "features.network_proxy",
+  "features.plugin_sharing",
+  "features.prefer_mxc",
+  "features.remote_control",
+  "features.request_permissions",
+  "features.request_permissions_tool",
+  "features.request_rule",
+  "features.respect_system_proxy",
+  "features.secret_auth_storage",
+  "features.shell_zsh_fork",
+  "features.skill_mcp_dependency_install",
+  "features.system_proxy_fallback",
+  "features.unified_exec_zsh_fork",
+  "features.use_agent_identity",
+  "features.use_legacy_landlock",
+  "features.use_linux_sandbox_bwrap",
+  "features.use_xaa",
+  "features.windows_sandbox_service",
+  "features.write_stdin_approval",
+  "forced_chatgpt_workspace_id",
+  "forced_login_method",
+  "hooks",
+  "hooks.Interrupt",
+  "hooks.PermissionRequest",
+  "hooks.PostCompact",
+  "hooks.PostToolUse",
+  "hooks.PreCompact",
+  "hooks.PreToolUse",
+  "hooks.SessionEnd",
+  "hooks.SessionStart",
+  "hooks.Stop",
+  "hooks.SubagentStart",
+  "hooks.SubagentStop",
+  "hooks.UserPromptSubmit",
+  "hooks.state",
+  "log_dir",
+  "marketplaces",
+  "mcp_enterprise_managed_auth",
+  "mcp_enterprise_managed_auth.idp",
+  "mcp_oauth_callback_port",
+  "mcp_oauth_callback_url",
+  "mcp_oauth_credentials_store",
+  "mcp_servers",
+  "model_providers",
+  "notify",
+  "openai_base_url",
+  "otel",
+  "otel.environment",
+  "otel.exporter",
+  "otel.log_user_prompt",
+  "otel.metrics_exporter",
+  "otel.span_attributes",
+  "otel.tool_result",
+  "otel.trace_exporter",
+  "otel.tracestate",
+  "permissions",
+  "profiles",
+  "projects",
+  "sandbox_mode",
+  "sandbox_workspace_write",
+  "sandbox_workspace_write.exclude_slash_tmp",
+  "sandbox_workspace_write.exclude_tmpdir_env_var",
+  "sandbox_workspace_write.network_access",
+  "sandbox_workspace_write.writable_roots",
+  "shell_environment_policy",
+  "shell_environment_policy.exclude",
+  "shell_environment_policy.experimental_use_profile",
+  "shell_environment_policy.filters",
+  "shell_environment_policy.ignore_default_excludes",
+  "shell_environment_policy.include_only",
+  "shell_environment_policy.inherit",
+  "shell_environment_policy.set",
+  "sqlite_home",
+  "windows",
+  "windows.sandbox"
+ ],
+ "writable_config": [
+  "agents",
+  "agents.default_subagent_model",
+  "agents.default_subagent_reasoning_effort",
+  "agents.enabled",
+  "agents.interrupt_message",
+  "agents.max_concurrent_threads_per_session",
+  "agents.max_depth",
+  "analytics",
+  "analytics.enabled",
+  "apps_mcp_product_sku",
+  "audio",
+  "audio.microphone",
+  "audio.speaker",
+  "background_terminal_max_timeout",
+  "check_for_update_on_startup",
+  "cloud",
+  "cloud.skills",
+  "compact_prompt",
+  "desktop",
+  "developer_instructions",
+  "disable_paste_burst",
+  "experimental_compact_prompt_file",
+  "experimental_realtime_start_instructions",
+  "experimental_realtime_ws_backend_prompt",
+  "experimental_realtime_ws_model",
+  "experimental_realtime_ws_startup_context",
+  "experimental_use_unified_exec_tool",
+  "features",
+  "features.agent_message_board",
+  "features.analytics_plan_history",
+  "features.api_key_model_discovery",
+  "features.apply_patch_freeform",
+  "features.apply_patch_preserve_line_endings",
+  "features.apply_patch_streaming_events",
+  "features.apps",
+  "features.apps_mcp_path_override",
+  "features.background_paginated_rollout_migration",
+  "features.bedrock_setup_wizard",
+  "features.browser_use",
+  "features.browser_use_external",
+  "features.chronicle",
+  "features.code_mode",
+  "features.code_mode_buffered_exec",
+  "features.code_mode_host",
+  "features.code_mode_interrupt",
+  "features.code_mode_only",
+  "features.code_mode_prewarm",
+  "features.codex_apps_mcp_2026_07_28",
+  "features.codex_git_commit",
+  "features.codex_hooks",
+  "features.collab",
+  "features.collaboration_modes",
+  "features.compaction_image_budget",
+  "features.computer_use",
+  "features.concurrent_reasoning_summaries",
+  "features.connectors",
+  "features.content_item_kinds",
+  "features.context_management",
+  "features.current_time_reminder",
+  "features.cwd_relative_turn_diffs",
+  "features.daemon_auto_start",
+  "features.default_mode_request_user_input",
+  "features.deferred_executor",
+  "features.deferred_tool_world_state",
+  "features.enable_fanout",
+  "features.enable_mcp_apps",
+  "features.enable_request_compression",
+  "features.executed_tool_call_metadata",
+  "features.executor_capability_discovery",
+  "features.experimental_use_unified_exec_tool",
+  "features.external_agent_memory_import",
+  "features.external_migration",
+  "features.fast_mode",
+  "features.goals",
+  "features.hooks",
+  "features.image_detail_original",
+  "features.image_generation",
+  "features.image_resize_notice",
+  "features.imagegenext",
+  "features.in_app_browser",
+  "features.in_app_chat",
+  "features.in_app_dictation",
+  "features.in_app_local_automation",
+  "features.in_app_updates",
+  "features.item_ids",
+  "features.js_repl",
+  "features.js_repl_tools_only",
+  "features.local_thread_store_compression",
+  "features.local_thread_store_shared_compression",
+  "features.mcp_2026_07_28",
+  "features.memories",
+  "features.memory_tool",
+  "features.mentions_v2",
+  "features.multi_agent",
+  "features.multi_agent_mode",
+  "features.multi_agent_v2",
+  "features.non_prefixed_mcp_tool_names",
+  "features.nonfatal_clock_read_errors",
+  "features.omit_app_server_notification_media",
+  "features.personality",
+  "features.plugin_hooks",
+  "features.plugins",
+  "features.powershell_shell_version",
+  "features.prevent_idle_sleep",
+  "features.psp",
+  "features.realtime_conversation",
+  "features.reasoning_effort_override",
+  "features.recommended_plugins",
+  "features.remote_compaction_v2",
+  "features.remote_models",
+  "features.remote_plugin",
+  "features.resize_all_images",
+  "features.responses_websockets",
+  "features.responses_websockets_v2",
+  "features.retain_client_developer_messages",
+  "features.rollout_budget",
+  "features.runtime_metrics",
+  "features.search_tool",
+  "features.send_async_message",
+  "features.send_message_to_user_async",
+  "features.shell_snapshot",
+  "features.shell_snapshot_v2",
+  "features.shell_tool",
+  "features.skill_env_var_dependency_prompt",
+  "features.skill_search",
+  "features.skip_host_skill_discovery",
+  "features.sleep_tool",
+  "features.sqlite",
+  "features.standalone_web_search",
+  "features.steer",
+  "features.step_model_switching",
+  "features.telepathy",
+  "features.terminal_resize_reflow",
+  "features.terminal_visualization_instructions",
+  "features.token_budget",
+  "features.tool_call_mcp_elicitation",
+  "features.tool_registry",
+  "features.tool_search",
+  "features.tool_search_always_defer_mcp_tools",
+  "features.tool_suggest",
+  "features.transcript_v2",
+  "features.tui_app_server",
+  "features.unavailable_dummy_tools",
+  "features.unbounded_connection_retries",
+  "features.undo",
+  "features.unified_exec",
+  "features.unified_exec_tty",
+  "features.unified_image_budget",
+  "features.view_image",
+  "features.web_search",
+  "features.web_search_cached",
+  "features.web_search_request",
+  "features.workspace_dependencies",
+  "features.workspace_owner_usage_nudge",
+  "features.worktrees",
+  "feedback",
+  "feedback.enabled",
+  "file_opener",
+  "ghost_snapshot",
+  "ghost_snapshot.disable_warnings",
+  "ghost_snapshot.ignore_large_untracked_dirs",
+  "ghost_snapshot.ignore_large_untracked_files",
+  "goals",
+  "goals.max_goal_token_budget",
+  "hide_agent_reasoning",
+  "history",
+  "history.max_bytes",
+  "history.persistence",
+  "include_apps_instructions",
+  "include_collaboration_mode_instructions",
+  "include_environment_context",
+  "include_permissions_instructions",
+  "instructions",
+  "mcp_optional_startup_grace_ms",
+  "memories",
+  "memories.consolidation_model",
+  "memories.dedicated_tools",
+  "memories.disable_on_external_context",
+  "memories.dual_write",
+  "memories.extract_model",
+  "memories.generate_memories",
+  "memories.max_raw_memories_for_consolidation",
+  "memories.max_rollout_age_days",
+  "memories.max_rollouts_per_startup",
+  "memories.max_unused_days",
+  "memories.min_rate_limit_remaining_percent",
+  "memories.min_rollout_idle_hours",
+  "memories.use_memories",
+  "memories.version",
+  "model",
+  "model_auto_compact_token_limit",
+  "model_auto_compact_token_limit_scope",
+  "model_catalog_json",
+  "model_context_window",
+  "model_instructions_file",
+  "model_post_turn_compact_threshold_percent",
+  "model_provider",
+  "model_reasoning_effort",
+  "model_reasoning_summary",
+  "model_verbosity",
+  "notice",
+  "notice.external_config_migration_prompts",
+  "notice.fast_default_opt_out",
+  "notice.hide_full_access_warning",
+  "notice.hide_gpt-5.1-codex-max_migration_prompt",
+  "notice.hide_gpt5_1_migration_prompt",
+  "notice.hide_rate_limit_model_nudge",
+  "notice.hide_world_writable_warning",
+  "notice.model_migrations",
+  "orchestrator",
+  "orchestrator.mcp",
+  "orchestrator.skills",
+  "oss_provider",
+  "personality",
+  "plan_mode_reasoning_effort",
+  "plugins",
+  "profile",
+  "project_doc_fallback_filenames",
+  "project_doc_max_bytes",
+  "project_root_markers",
+  "realtime",
+  "realtime.transport",
+  "realtime.type",
+  "realtime.version",
+  "realtime.voice",
+  "responses_api_metadata",
+  "review_model",
+  "service_tier",
+  "show_raw_agent_reasoning",
+  "skills",
+  "skills.bundled",
+  "skills.config",
+  "skills.include_instructions",
+  "skills.max_context_tokens",
+  "suppress_unstable_features_warning",
+  "thread_unload_delay_secs",
+  "tool_output_token_limit",
+  "tool_suggest",
+  "tool_suggest.disabled_tools",
+  "tool_suggest.discoverables",
+  "tools",
+  "tools.experimental_request_user_input",
+  "tools.update_plan",
+  "tools.web_search",
+  "tui",
+  "tui.alternate_screen",
+  "tui.animations",
+  "tui.auto_recap",
+  "tui.disable_paste_burst",
+  "tui.effects",
+  "tui.fullscreen_transcript",
+  "tui.keymap",
+  "tui.model_availability_nux",
+  "tui.notification_condition",
+  "tui.notification_method",
+  "tui.notifications",
+  "tui.pet",
+  "tui.pet_anchor",
+  "tui.question_esc_back",
+  "tui.raw_output_mode",
+  "tui.rendering",
+  "tui.resume_cwd",
+  "tui.screen_reader_detection_done",
+  "tui.session_picker_view",
+  "tui.show_server_version_notice",
+  "tui.show_tooltips",
+  "tui.status_line",
+  "tui.status_line_use_colors",
+  "tui.terminal_resize_reflow_max_rows",
+  "tui.terminal_title",
+  "tui.theme",
+  "tui.vim_mode_default",
+  "web_search"
+ ]
+}

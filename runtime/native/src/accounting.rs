@@ -47,6 +47,52 @@ pub struct Account {
     pub route: Option<String>,
     pub lead_routes: Vec<RequestRoute>,
     pub worker_authorization: Option<(std::path::PathBuf, String)>,
+    pub credential: Option<String>,
+}
+
+static CREDENTIAL_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+pub fn set_credential_root(root: std::path::PathBuf) {
+    let _ = CREDENTIAL_ROOT.set(root);
+}
+
+const ROUTE_HEADER: &str = "x-omd-route";
+
+fn mark_route(request: &mut Request, name: &str) -> Result<(), TransportError> {
+    let value = http::HeaderValue::from_str(name)
+        .map_err(|_| denied("route name is not a valid header"))?;
+    request.headers.insert(ROUTE_HEADER, value);
+    Ok(())
+}
+
+fn inject_credential(
+    request: &mut Request,
+    credential: Option<&str>,
+) -> Result<(), TransportError> {
+    let Some(profile) = credential else {
+        return Ok(());
+    };
+    let root = CREDENTIAL_ROOT
+        .get()
+        .ok_or_else(|| denied("credential store unavailable"))?;
+    let secret = codex_omd::credentials::CredentialProfiles::open(root)
+        .and_then(|profiles| profiles.secret(profile))
+        .map_err(|error| denied(error.to_string()))?;
+    let mut value = http::HeaderValue::from_str(&format!("Bearer {}", secret.token))
+        .map_err(|_| denied("credential token is not a valid header"))?;
+    value.set_sensitive(true);
+    request.headers.insert(http::header::AUTHORIZATION, value);
+    match secret.account_id {
+        Some(account) => {
+            let value = http::HeaderValue::from_str(&account)
+                .map_err(|_| denied("credential account is not a valid header"))?;
+            request.headers.insert("chatgpt-account-id", value);
+        }
+        None => {
+            request.headers.remove("chatgpt-account-id");
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -57,6 +103,7 @@ pub struct RequestRoute {
     pub reasoning: String,
     #[serde(skip)]
     pub rates: Rates,
+    pub credential: Option<String>,
 }
 
 static GLOBAL: std::sync::OnceLock<Arc<Accounts>> = std::sync::OnceLock::new();
@@ -221,7 +268,7 @@ impl ResponseObserver for Accounts {
         else {
             return Ok(());
         };
-        let Some(account) = self
+        let Some(mut account) = self
             .0
             .lock()
             .map_err(|_| denied("account lock poisoned"))?
@@ -236,6 +283,63 @@ impl ResponseObserver for Accounts {
                 .as_bytes(),
         )
         .map_err(denied)?;
+        if account.owner == "lead"
+            && let Some(selected) = crate::mods::take_route_selection(&thread)
+            && let Some(route) = account
+                .lead_routes
+                .iter()
+                .find(|route| route.name == selected)
+                .cloned()
+        {
+            value["model"] = route.model.clone().into();
+            value["reasoning"]["effort"] = route.reasoning.clone().into();
+            *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
+            account.credential = route.credential.clone();
+            mark_route(request, &route.name)?;
+            account.route = Some(route.name);
+        }
+        if let Some(mods) = self.mods()
+            && let Some(items) = value["input"].as_array().cloned()
+            && let Hook::Ran(result) = Self::middleware(
+                &mods,
+                &self.3,
+                !account.owner.starts_with("mod-"),
+                "history",
+                |runtime| {
+                    let payload = json!({"thread_id": thread, "agent_id": (account.owner != "lead").then_some(&account.owner),
+                        "model": value["model"], "items": codex_omd::history::view(&items)});
+                    runtime.history(payload, || account.task.check_active().is_ok())
+                },
+            )?
+        {
+            let edited = result
+                .map_err(|error| error.to_string())
+                .and_then(|decision| match decision {
+                    None => Ok(None),
+                    Some((owner, edit)) => serde_json::from_value(edit)
+                        .map_err(|error| format!("history_edit_invalid: {error}"))
+                        .and_then(|edit| codex_omd::history::apply(&items, edit))
+                        .map(|edited| Some((owner, edited))),
+                });
+            match edited {
+                Ok(Some((owner, edited))) => {
+                    Self::record_middleware(
+                        &account,
+                        &json!({"kind": "history", "owner": owner,
+                        "items_before": items.len(), "items_after": edited.len()}),
+                    )?;
+                    value["input"] = Value::Array(edited);
+                    *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    Self::record_middleware(
+                        &account,
+                        &json!({"kind": "history_failed", "reason": error}),
+                    )?;
+                }
+            }
+        }
         if let Some(rates) = account
             .rates
             .as_ref()
@@ -258,13 +362,13 @@ impl ResponseObserver for Accounts {
             "reasoning": value.pointer("/reasoning/effort").cloned().unwrap_or(Value::Null),
             "roles": [if account.owner == "lead" {"lead"} else {"worker"}],
             "billing": if account.rates.as_ref().is_none_or(|rates| rates.included_subscription) {"included_subscription"} else {"explicit_paid_api_grant"},
-            "tools": [], "available": true});
+            "tools": [], "available": true, "credential": account.credential});
         let mut routes = vec![original.clone()];
         if account.owner == "lead" {
             routes.extend(account.lead_routes.iter().map(|route| {
                 json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
                     "roles":["lead"],"billing":if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
-                    "tools":[],"available":true})
+                    "tools":[],"available":true,"credential":route.credential})
             }));
         }
         let payload = json!({"request_id":request_id,"scope":{"thread_id":thread,
@@ -297,6 +401,7 @@ impl ResponseObserver for Accounts {
                 .ok_or_else(|| {
                     denied("mod selected a route that is not configured for this thread")
                 })?;
+            mark_route(request, &route.name)?;
             value["model"] = route.model.clone().into();
             value["reasoning"]["effort"] = route.reasoning.clone().into();
             *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
@@ -340,14 +445,26 @@ impl ResponseObserver for Accounts {
                     .and_then(Value::as_str)
                     .map(str::to_owned)
             });
+        let marked = request
+            .headers
+            .remove(ROUTE_HEADER)
+            .and_then(|value| value.to_str().ok().map(str::to_owned));
         let switched = (account.owner == "lead")
             .then(|| {
-                account.lead_routes.iter().find(|route| {
-                    Some(&route.model) == requested.as_ref() && route.model != account.model
+                account.lead_routes.iter().find(|route| match &marked {
+                    Some(name) => &route.name == name,
+                    None => {
+                        Some(&route.model) == requested.as_ref() && route.model != account.model
+                    }
                 })
             })
             .flatten()
             .cloned();
+        let credential = match &switched {
+            Some(route) => route.credential.clone(),
+            None => account.credential.clone(),
+        };
+        inject_credential(request, credential.as_deref())?;
         let Some(rates) = account.rates.clone() else {
             let value = body
                 .and_then(|body| serde_json::from_slice::<Value>(body.as_bytes()).ok())

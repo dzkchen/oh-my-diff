@@ -98,6 +98,7 @@ const api = Object.freeze({
   middleware(event, handler) {
     if (!surface.middleware.includes(event)) throw new Error('unsupported_middleware_event: ' + event);
     requireCapability('middleware');
+    if (event === 'approval') requireCapability('approvals');
     unique(handlers, event, handler);
     registrations.events.push(event);
   },

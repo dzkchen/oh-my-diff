@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "shell_pane",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.3",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": ["commands", "terminal", "exec"],
+  "compatibility": {
+    "required_features": ["terminal_pty_v1", "terminal_surface_v1"]
+  }
+}

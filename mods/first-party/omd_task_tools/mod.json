@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "omd_task_tools",
   "version": "0.2.0-preview.1",
-  "api": "0.2.0-experimental.1",
+  "api": "0.2.0-experimental.3",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_task_tools"},

@@ -3,7 +3,7 @@ use crate::workspace_operations::WorkspaceAuthority;
 use codex_omd::data_store::Origin;
 
 #[derive(Clone, Default)]
-pub(crate) struct DataScope(Arc<Mutex<Option<codex_omd::scoped_data::ScopedDataHosts>>>);
+pub(crate) struct DataScope(pub(super) Arc<Mutex<Option<codex_omd::scoped_data::ScopedDataHosts>>>);
 
 impl DataScope {
     async fn call(
@@ -51,6 +51,7 @@ pub(super) struct Caller<'a> {
 
 pub(super) fn event_allows(event: &str, operation: &str) -> bool {
     crate::generic_host::event_allows(event, operation)
+        || super::expansion::event_allows(event, operation)
         || event == "context"
             && (codex_omd::scoped_data::operation(operation)
                 || matches!(
@@ -79,7 +80,7 @@ pub(super) fn route_info(host: &Host, route: &config::Route) -> Value {
     json!({"name": route.name, "model": route.model, "provider": route.provider,
         "reasoning": route.reasoning_effort, "roles": route.roles,
         "billing": if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
-        "tools": route.tools, "available": available})
+        "tools": route.tools, "available": available, "credential": route.credential})
 }
 
 async fn authority(lead: &Lead, call: Option<&ToolCall<'_>>) -> Result<WorkspaceAuthority, String> {
@@ -292,6 +293,9 @@ pub(super) async fn dispatch(
     if operation != "contract.status" {
         lead.restricted(&operation, &request.arguments)?;
     }
+    if super::expansion::served(&operation) {
+        return super::expansion::dispatch(core, lead, &caller, request, cancelled).await;
+    }
     let active = {
         let cancelled = cancelled.clone();
         move || !cancelled.load(Ordering::Acquire)
@@ -387,7 +391,8 @@ pub(super) async fn dispatch(
         let authority = authority(lead, call).await?;
         let processes = lead.session.processes.clone();
         let (id, generation) = (caller.id.to_owned(), caller.generation);
-        return tokio::task::spawn_blocking(move || {
+        let started = (operation == "process.start").then(|| request.arguments.clone());
+        let result = tokio::task::spawn_blocking(move || {
             processes.call(
                 crate::managed_process::ProcessOwner {
                     id: &id,
@@ -402,11 +407,18 @@ pub(super) async fn dispatch(
         })
         .await
         .map_err(|e| e.to_string())?;
+        if let (Some(arguments), Ok(_)) = (started, &result) {
+            super::expansion::process_started(core, lead, caller.id, &arguments);
+        }
+        return result;
     }
     if operation.starts_with("agents.")
         || matches!(
             operation.as_str(),
-            "workspace.integrate" | "workspace.snapshot" | "workspace.fingerprint"
+            "workspace.integrate"
+                | "workspace.snapshot"
+                | "workspace.fingerprint"
+                | "model.complete"
         )
     {
         let scoped = match (operation.as_str(), call) {

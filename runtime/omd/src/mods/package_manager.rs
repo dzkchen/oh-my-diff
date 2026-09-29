@@ -160,10 +160,20 @@ impl ModStore {
     pub fn package_plan(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
         let _guard = self.lock()?;
         self.recover_package_transaction()?;
-        self.package_plan_locked(request)
+        self.package_plan_locked(request, false)
     }
 
-    fn package_plan_locked(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
+    pub fn package_requirements(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
+        let _guard = self.lock()?;
+        self.recover_package_transaction()?;
+        self.package_plan_locked(request, true)
+    }
+
+    fn package_plan_locked(
+        &self,
+        request: ModInstallRequest,
+        inspect: bool,
+    ) -> Result<ModPackagePlan> {
         if !MOD_SCOPES.contains(&request.scope.as_str()) {
             return Err(failure("unsupported_scope: user or project"));
         }
@@ -176,6 +186,7 @@ impl ModStore {
             &request,
             &mut resolved,
             &mut visiting,
+            inspect,
         )?;
         let root_id = root.package.id.clone();
         resolved.insert(root_id.clone(), root);
@@ -228,7 +239,7 @@ impl ModStore {
     ) -> Result<ModPackageLock> {
         let _guard = self.lock()?;
         self.recover_package_transaction()?;
-        let plan = self.package_plan_locked(request)?;
+        let plan = self.package_plan_locked(request, false)?;
         if plan.confirmation != confirmation {
             return Err(failure("package_plan_changed: preview again"));
         }
@@ -573,6 +584,7 @@ impl ModStore {
         request: &ModInstallRequest,
         resolved: &mut BTreeMap<String, ResolvedPackage>,
         visiting: &mut Vec<String>,
+        inspect: bool,
     ) -> Result<ResolvedPackage> {
         let (path, normalized_source, expected_integrity) =
             self.materialize_source(source, request.offline)?;
@@ -610,12 +622,16 @@ impl ModStore {
             .clone()
             .ok_or_else(|| failure("managed_package_provenance_required"))?;
         validate_provenance(&normalized_source, &provenance)?;
-        let grant = request
-            .trust
-            .packages
-            .get(&package.id)
-            .cloned()
-            .ok_or_else(|| failure(format!("package_trust_required: {}", package.id)))?;
+        let declared = ModPackageGrant {
+            capabilities: package.capabilities.clone(),
+            dependencies: !package.dependencies.is_empty(),
+            lifecycle: package.lifecycle.keys().cloned().collect(),
+        };
+        let grant = match request.trust.packages.get(&package.id) {
+            Some(grant) => grant.clone(),
+            None if inspect => declared,
+            None => return Err(failure(format!("package_trust_required: {}", package.id))),
+        };
         if grant.capabilities != package.capabilities {
             return Err(failure(format!(
                 "explicit_exact_capability_grant_required: {}",
@@ -688,6 +704,7 @@ impl ModStore {
                 request,
                 resolved,
                 visiting,
+                inspect,
             )?;
             resolved.insert(dependency.id.clone(), dependency_package);
         }

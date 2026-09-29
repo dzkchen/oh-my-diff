@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "snapshot_review",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.1",
+  "api": "0.2.0-experimental.3",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Example author", "source": "mods/examples" },

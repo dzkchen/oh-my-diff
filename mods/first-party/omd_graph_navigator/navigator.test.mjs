@@ -17,7 +17,7 @@ const packet = { schema: 1, graph_generator: search.generator, repository_identi
 const call = (method, input) => ({ operation: 'mods.service', arguments: { name: 'omd.repository_analysis', method, input } });
 function execute(input) {
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.1', surface, capabilities: ['commands', 'services', 'store', 'terminal'], settings: {}, state: null, event: 'inspect', ...input }),
+    input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.3', surface, capabilities: ['commands', 'services', 'store', 'terminal'], settings: {}, state: null, event: 'inspect', ...input }),
     encoding: 'utf8', timeout: 5000,
   });
   assert.ifError(result.error);

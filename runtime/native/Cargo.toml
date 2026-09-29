@@ -5,11 +5,13 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
+chrono = { workspace = true }
 codex-api = { workspace = true }
 codex-client = { workspace = true }
 codex-core = { workspace = true }
 codex-extension-api = { workspace = true }
 codex-features = { workspace = true }
+codex-file-watcher = { workspace = true }
 codex-history = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-network-proxy = { workspace = true }

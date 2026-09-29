@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "id": "package_panel",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.3",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "packages",
+    "commands"
+  ],
+  "compatibility": {
+    "required_features": [
+      "package_controls_v1"
+    ]
+  }
+}

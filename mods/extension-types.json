@@ -385,6 +385,182 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns lead-requested broad-research admission, bounded briefing and evidence validation using an explicitly granted read-only host worker preset."
+    },
+    {
+      "path": "mods/examples/approval_guard",
+      "id": "approval_guard",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Tightens live native approval decisions before hooks and automatic review, which hooks cannot force."
+    },
+    {
+      "path": "mods/examples/channel_pair",
+      "id": "channel_pair",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Publishes and receives namespaced in-process channel events between live mods."
+    },
+    {
+      "path": "mods/examples/confirm_note",
+      "id": "confirm_note",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Asks the user through native text and confirmation prompts from a live command."
+    },
+    {
+      "path": "mods/examples/context_fold",
+      "id": "context_fold",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Replaces the model-bound request history at each request without changing the transcript."
+    },
+    {
+      "path": "mods/examples/edit_diagnostics",
+      "id": "edit_diagnostics",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Appends composable feedback to live tool output before it reaches the model."
+    },
+    {
+      "path": "mods/examples/frecency_rank",
+      "id": "frecency_rank",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Replaces live composer mention ranking inside the terminal."
+    },
+    {
+      "path": "mods/examples/goal_store",
+      "id": "goal_store",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Keeps thread-scoped state that forks and deletes with the live thread."
+    },
+    {
+      "path": "mods/examples/image_preview",
+      "id": "image_preview",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Renders an imported image inside a live terminal render site and opens links after native confirmation."
+    },
+    {
+      "path": "mods/examples/layout_explorer",
+      "id": "layout_explorer",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Replaces the live terminal layout with splits, tabs, documents and diffs."
+    },
+    {
+      "path": "mods/examples/notification_bridge",
+      "id": "notification_bridge",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Turns live app-server notifications into terminal notifications with focus state."
+    },
+    {
+      "path": "mods/examples/output_budget",
+      "id": "output_budget",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Replaces model-visible tool output at the live tool boundary while the host keeps the original."
+    },
+    {
+      "path": "mods/examples/package_panel",
+      "id": "package_panel",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Drives package controls behind native confirmation from a live terminal panel."
+    },
+    {
+      "path": "mods/examples/profile_switcher",
+      "id": "profile_switcher",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Selects credential-bound routes at the live request boundary."
+    },
+    {
+      "path": "mods/examples/read_batcher",
+      "id": "read_batcher",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Merges parallel-safe tool calls of one live response into a single call."
+    },
+    {
+      "path": "mods/examples/screenshot_attach",
+      "id": "screenshot_attach",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Writes binary evidence and attaches it to the live composer."
+    },
+    {
+      "path": "mods/examples/shell_pane",
+      "id": "shell_pane",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Runs a sandboxed interactive shell rendered inside a live terminal pane."
+    },
+    {
+      "path": "mods/examples/site_vault",
+      "id": "site_vault",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Enrolls origin-bound secrets through native prompts and hands them only to its sidecars."
+    },
+    {
+      "path": "mods/examples/summarize_tool",
+      "id": "summarize_tool",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Runs one-shot completions on configured worker routes under live admission and the ledger."
+    },
+    {
+      "path": "mods/examples/tool_guide",
+      "id": "tool_guide",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Re-describes model-visible tool specs per route when the live tool router is built."
+    },
+    {
+      "path": "mods/examples/turn_recap",
+      "id": "turn_recap",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Reads the host turn-activity ledger for the live thread."
+    },
+    {
+      "path": "mods/examples/watch_notify",
+      "id": "watch_notify",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Watches workspace paths and reports external changes through live terminal notifications."
+    },
+    {
+      "path": "mods/examples/worktree_task",
+      "id": "worktree_task",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Starts a live thread bound to a permitted worktree root and shows it in the terminal."
     }
   ],
   "synthetic_fixtures": [

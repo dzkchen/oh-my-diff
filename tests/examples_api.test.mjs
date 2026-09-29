@@ -42,7 +42,7 @@ test('all packed legacy examples declare the current API and type-only current i
   for (const name of names) {
     const manifest = JSON.parse(readFileSync(packageFile(name, 'mod.json'), 'utf8'));
     const source = readFileSync(packageFile(name, 'index.ts'), 'utf8');
-    assert.equal(manifest.api, '0.2.0-experimental.1', name);
+    assert.equal(manifest.api, '0.2.0-experimental.3', name);
     assert.equal(manifest.version, '2.0.0', name);
     assert.doesNotMatch(source, /mod-api\/0\.1|api-0\.1\.d\.ts/, name);
     run(name, 'inspect');

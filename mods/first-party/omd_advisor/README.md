@@ -1,6 +1,6 @@
 # Independent turn advisor
 
-`omd_advisor` is an opt-in API `0.2.0-experimental.1` mod. It owns cadence, evidence selection, reviewer prompts, typed findings, citation validation, duplicate suppression and presentation. Generic host operations own isolated agents, permissions, allowance, snapshots and contract receipts.
+`omd_advisor` is an opt-in API `0.2.0-experimental.3` mod. It owns cadence, evidence selection, reviewer prompts, typed findings, citation validation, duplicate suppression and presentation. Generic host operations own isolated agents, permissions, allowance, snapshots and contract receipts.
 
 Full installs the package inactive. Enabling it leaves `every_turn: false`; select `every_turn: true` and an available, explicitly authorized worker `route` to review completed lead turns. No setting grants model access or allowance. Reviewers receive a bounded visible turn excerpt and a frozen candidate, with no tools or parent history. Hidden reasoning and tool-output bodies are excluded. The mod reads at most 48 KiB of evidence, selects a 6 KiB excerpt and accepts at most eight findings with exact supporting quotes.
 

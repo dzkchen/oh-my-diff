@@ -1,5 +1,6 @@
 mod agents;
 mod evidence;
+mod expansion;
 mod operations;
 pub(crate) mod services;
 mod snapshots;
@@ -30,6 +31,7 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+pub(crate) use expansion::take_route_selection;
 pub(crate) use operations::DataScope;
 
 type Reply = std::sync::mpsc::SyncSender<std::io::Result<Value>>;
@@ -144,6 +146,7 @@ pub(super) struct Core {
     agents: agents::Agents,
     services: services::Services,
     views: Arc<view::Views>,
+    expansion: expansion::State,
 }
 
 struct Mods {
@@ -279,6 +282,7 @@ pub(super) fn install(
             input_runtime,
             services: services::Services::default(),
             views,
+            expansion: expansion::State::default(),
         }),
         turns: Mutex::new(BTreeMap::new()),
         sessions: Mutex::new(BTreeMap::new()),
@@ -289,6 +293,10 @@ pub(super) fn install(
     registry.thread_lifecycle_contributor(extension.clone());
     registry.tool_lifecycle_contributor(extension.clone());
     registry.turn_lifecycle_contributor(extension.clone());
+    registry.tool_output_contributor(extension.clone());
+    registry.approval_gate_contributor(extension.clone());
+    registry.tool_spec_contributor(extension.clone());
+    registry.tool_batch_contributor(extension.clone());
     registry.tool_contributor(extension);
     Ok(())
 }
@@ -409,6 +417,7 @@ impl Core {
         for (id, generation) in failed {
             self.agents.cleanup_owned(&id, generation).await;
             self.services.cleanup_owned(&id, generation).await;
+            expansion::release_owner(self, &id);
             if let Some(lead) = lead {
                 lead.session.processes.cleanup_owned(&id, generation);
             }
@@ -555,6 +564,9 @@ impl Core {
                 }
                 Err(error) => ("unavailable", Vec::new(), Some(error)),
             };
+            if let Ok(Value::Array(recorded)) = serde_json::to_value(&changes) {
+                expansion::files(self, lead, &recorded, source);
+            }
             self.event(
                 "workspace_change",
                 json!({"repository":self.host.repository,"source":source,"call_id":call_id,
@@ -836,6 +848,12 @@ impl TurnLifecycleContributor for Mods {
             };
             lead.session.processes.cleanup();
             if let Some(turn) = self.take_turn(&lead.thread) {
+                expansion::turn_ended(
+                    &self.core,
+                    &lead,
+                    "aborted",
+                    Some(format!("{:?}", input.reason)),
+                );
                 self.event(
                     "turn_end",
                     json!({"turn_id":turn.turn_id,"outcome":"aborted","reason":format!("{:?}", input.reason)}),
@@ -880,6 +898,12 @@ impl TurnLifecycleContributor for Mods {
                 Some(error) => json!({"turn_id":turn.turn_id,"outcome":"error","error":error}),
                 None => json!({"turn_id":turn.turn_id,"outcome":"completed"}),
             };
+            expansion::turn_ended(
+                &self.core,
+                &lead,
+                payload["outcome"].as_str().unwrap_or("error"),
+                payload["error"].as_str().map(str::to_owned),
+            );
             let private = match &turn.evidence {
                 Some(cursor) => match evidence::finish(
                     &self.core,
@@ -1032,6 +1056,7 @@ impl TurnLifecycleContributor for Mods {
                     },
                 );
             }
+            expansion::turn_started(&self.core, &lead, input.turn_id).await;
             self.event("turn_start", json!({"turn_id":input.turn_id}), Some(&*lead))
                 .await;
         })
@@ -1181,6 +1206,13 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 depth,
             });
             if owner == "lead" {
+                if let Some(lead) = input.thread_store.get::<Lead>() {
+                    let forked = input
+                        .thread_store
+                        .get::<codex_extension_api::ForkedFromThread>()
+                        .map(|forked| forked.0);
+                    expansion::lead_started(&self.core, &lead, forked);
+                }
                 self.event(
                     "session",
                     json!({"phase":"start","thread_id":thread.to_string()}),
@@ -1219,7 +1251,8 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     None,
                 )
                 .await;
-                self.event("resume", Value::Null, Some(&*lead)).await;
+                let payload = expansion::resume_payload(&self.core, &lead).await;
+                self.event("resume", payload, Some(&*lead)).await;
             }
         })
     }
@@ -1277,9 +1310,20 @@ impl ThreadLifecycleContributor<Config> for Mods {
 impl ToolLifecycleContributor for Mods {
     fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
-            if input.thread_store.get::<Lead>().is_none() {
+            let Some(lead) = input.thread_store.get::<Lead>() else {
                 return;
-            }
+            };
+            let arguments = match input.payload {
+                codex_tools::ToolPayload::Function { arguments } => Some(arguments.as_str()),
+                _ => None,
+            };
+            expansion::tool_started(
+                &self.core,
+                &lead,
+                input.call_id,
+                &input.tool_name.to_string(),
+                arguments,
+            );
             let runtime = self.runtime.clone();
             let repository = self.host.repository.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
@@ -1315,9 +1359,21 @@ impl ToolLifecycleContributor for Mods {
             };
             let original_tool = input.tool_name.clone();
             let scope_agent_id = agent_id(input.thread_store);
+            let raw_arguments = arguments.chars().take(65_536).collect::<String>();
             let arguments: Value = serde_json::from_str(arguments).map_err(|e| e.to_string())?;
-            let payload = json!({"tool":input.tool_name.to_string(),"arguments":arguments,"call_id":input.call_id,
-                "thread_id": input.thread_store.get::<Lead>().map(|lead| lead.thread.to_string())});
+            let mut payload = expansion::tool_before_payload(
+                input.turn_store,
+                input.call_id,
+                input.tool_name,
+                &arguments,
+                &raw_arguments,
+            );
+            payload["thread_id"] = json!(
+                input
+                    .thread_store
+                    .get::<Lead>()
+                    .map(|lead| lead.thread.to_string())
+            );
             let runtime = self.runtime.clone();
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
@@ -1401,6 +1457,15 @@ impl ToolLifecycleContributor for Mods {
             {
                 cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":tool_outcome(input.outcome)}));
             }
+            expansion::tool_finished(
+                &self.core,
+                &lead,
+                input.call_id,
+                &input.tool_name.to_string(),
+                &format!("{:?}", input.outcome),
+                &[],
+                "tool",
+            );
             let event_lead = (lead.owner == "lead").then_some(&*lead);
             self.event(
                 "tool_result",

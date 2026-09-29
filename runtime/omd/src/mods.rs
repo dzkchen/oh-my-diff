@@ -4,6 +4,8 @@ mod packages;
 mod view;
 pub use view::MOD_KEY_LIMIT;
 pub use view::ModActivity;
+pub use view::ModAsciiBackdrop;
+pub use view::ModBackdrop;
 pub use view::ModBorder;
 pub use view::ModColor;
 pub use view::ModCommandAction;
@@ -11,10 +13,17 @@ pub use view::ModCompletedTools;
 pub use view::ModComponent;
 pub use view::ModComponentAction;
 pub use view::ModDensity;
+pub use view::ModFind;
 pub use view::ModIcons;
+pub use view::ModImageBackdrop;
 pub use view::ModKeyAction;
+pub use view::ModLayout;
+pub use view::ModLayoutLeaf;
+pub use view::ModLayoutSplit;
+pub use view::ModLayoutTabs;
 pub use view::ModListRow;
 pub use view::ModPanel;
+pub use view::ModRange;
 pub use view::ModRenderSite;
 pub use view::ModSelectOption;
 pub use view::ModSelectionPolicy;
@@ -22,6 +31,8 @@ pub use view::ModSelectionSource;
 pub use view::ModSidebarSide;
 pub use view::ModSiteMode;
 pub use view::ModSpan;
+pub use view::ModSplit;
+pub use view::ModTab;
 pub use view::ModTheme;
 pub use view::ModThemePatch;
 pub use view::ModTone;
@@ -67,7 +78,7 @@ pub use store::ModStore;
 
 pub const CODEX_HOST_RELEASE: &str = "0.157.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-pub const MOD_API_VERSION: &str = "0.2.0-experimental.1";
+pub const MOD_API_VERSION: &str = "0.2.0-experimental.3";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
 
@@ -187,6 +198,26 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "kernels_v1",
     "terminal_lists_v1",
     "adapters_v1",
+    "app_v1",
+    "approval_v1",
+    "tool_output_v1",
+    "tool_batch_v1",
+    "tool_specs_v1",
+    "events_v1",
+    "store_thread_v1",
+    "turn_activity_v1",
+    "binary_evidence_v1",
+    "package_controls_v1",
+    "terminal_surface_v1",
+    "credentials_v1",
+    "completion_v1",
+    "tool_feedback_v1",
+    "terminal_media_v1",
+    "secrets_v1",
+    "terminal_prompt_v1",
+    "model_complete_v1",
+    "history_v1",
+    "terminal_pty_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -236,9 +267,35 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "sidecars.start",
     "sidecars.status",
     "sidecars.stop",
+    "app.request",
+    "app.routes",
+    "workspace.watch",
+    "workspace.unwatch",
+    "events.publish",
+    "credentials.list",
+    "credentials.request",
+    "routes.select",
+    "turns.activity",
+    "terminal.notify",
+    "terminal.show_thread",
+    "terminal.import_file",
+    "composer.read",
+    "composer.write",
+    "builtins.invoke",
+    "packages.list",
+    "packages.preview",
+    "packages.apply",
+    "packages.reload",
+    "terminal.open",
+    "terminal.prompt",
+    "terminal.pty",
+    "model.complete",
 ];
-pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
-    &[(MOD_API_VERSION, "experimental", "2027-03-20")];
+pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
+    ("0.2.0-experimental.1", "experimental", "2027-03-20"),
+    ("0.2.0-experimental.2", "experimental", "2027-03-20"),
+    (MOD_API_VERSION, "experimental", "2027-03-20"),
+];
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",
@@ -261,6 +318,16 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "sessions",
     "contracts",
     "builtins",
+    "threads",
+    "config",
+    "config.write",
+    "inventory",
+    "account",
+    "packages",
+    "approvals",
+    "events",
+    "credentials",
+    "composer",
 ];
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -294,6 +361,20 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("agent", "middleware"),
     ("tool_call", "middleware"),
     ("host_operation", "middleware"),
+    ("app_notification", "threads"),
+    ("app_server_request", "approvals"),
+    ("approval", "approvals"),
+    ("approval_result", "approvals"),
+    ("tool_output", "interception"),
+    ("tool_batch", "interception"),
+    ("tool_specs", "tools"),
+    ("process_event", "exec"),
+    ("channel", "events"),
+    ("component_event", "terminal"),
+    ("view", "terminal"),
+    ("focus", "terminal"),
+    ("completion", "composer"),
+    ("history", "context"),
 ];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "tool_before",
@@ -304,6 +385,11 @@ pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "input",
     "list",
     "selection",
+    "tool_output",
+    "tool_batch",
+    "tool_specs",
+    "completion",
+    "history",
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "model_request",
@@ -314,6 +400,7 @@ pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "tool_call",
     "tool_result",
     "host_operation",
+    "approval",
 ];
 
 pub const MOD_SCOPES: &[&str] = &["user", "project"];
@@ -601,19 +688,34 @@ fn source_use(
             return Err(failure(format!("undeclared_environment_use: {name}")));
         }
     }
-    for operation in &operations {
-        let capability = ModHostCall {
-            operation: operation.clone(),
-            arguments: Value::Null,
-        }
-        .capability()?;
-        if !package
-            .capabilities
-            .iter()
-            .any(|declared| declared == capability)
-        {
+    let used_capabilities = |operation: &String| -> Result<Vec<String>> {
+        let used = if operation == "app.request" {
+            package
+                .capabilities
+                .iter()
+                .filter(|declared| crate::app_routes::class(declared))
+                .cloned()
+                .collect()
+        } else {
+            let capability = ModHostCall {
+                operation: operation.clone(),
+                arguments: Value::Null,
+            }
+            .capability()?;
+            package
+                .capabilities
+                .iter()
+                .filter(|declared| *declared == capability)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        if used.is_empty() {
             return Err(failure(format!("undeclared_operation_use: {operation}")));
         }
+        Ok(used)
+    };
+    for operation in &operations {
+        used_capabilities(operation)?;
     }
     for service in &services {
         if !package
@@ -655,14 +757,7 @@ fn source_use(
         capabilities.insert("store".to_owned());
     }
     for operation in &operations {
-        capabilities.insert(
-            ModHostCall {
-                operation: operation.clone(),
-                arguments: Value::Null,
-            }
-            .capability()?
-            .to_owned(),
-        );
+        capabilities.extend(used_capabilities(operation)?);
     }
     let unused_grants = package
         .capabilities
@@ -749,6 +844,54 @@ pub struct ModPackage {
     pub lifecycle: BTreeMap<String, String>,
     #[serde(default = "default_hook_budget_ms")]
     pub hook_budget_ms: u64,
+    #[serde(default, skip_serializing_if = "ModSubscriptions::is_empty")]
+    pub subscriptions: ModSubscriptions,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModSubscriptions {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<String>,
+}
+
+impl ModSubscriptions {
+    pub fn is_empty(&self) -> bool {
+        self.app.is_empty() && self.channels.is_empty()
+    }
+
+    fn validate(&self, capabilities: &[String]) -> Result<()> {
+        let granted = |capability: &str| capabilities.iter().any(|c| c == capability);
+        let pattern = |value: &str, allowed: &dyn Fn(u8) -> bool| {
+            let body = value.strip_suffix('*').unwrap_or(value);
+            !value.is_empty() && value.len() <= 96 && body.bytes().all(allowed)
+        };
+        let app_ok = self.app.iter().all(|value| {
+            pattern(value, &|b| {
+                b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_')
+            }) && (crate::app_routes::notification_patterns_match(value)
+                || crate::app_routes::server_request_patterns_match(value))
+        });
+        let channels_ok = self.channels.iter().all(|value| {
+            pattern(value, &|b| {
+                b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || matches!(b, b'/' | b'_' | b'-' | b'.')
+            })
+        });
+        if self.app.len() > 32 || self.channels.len() > 32 || !app_ok || !channels_ok {
+            return Err(failure("invalid_subscriptions"));
+        }
+        if !self.app.is_empty() && !granted("threads") && !granted("approvals") {
+            return Err(failure("capability_denied: threads"));
+        }
+        if !self.channels.is_empty() && !granted("events") {
+            return Err(failure("capability_denied: events"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -892,6 +1035,7 @@ impl ModPackage {
         {
             return Err(failure("unsupported_or_duplicate_capability"));
         }
+        self.subscriptions.validate(&self.capabilities)?;
         let requires: BTreeSet<_> = self.requires.iter().collect();
         if self.requires.len() > 4
             || requires.len() != self.requires.len()
@@ -2475,6 +2619,18 @@ impl ModHost {
         self.event_guarded(event, payload, || true)
     }
 
+    pub fn history(
+        &mut self,
+        payload: Value,
+        active: impl Fn() -> bool,
+    ) -> Result<Option<(String, Value)>> {
+        let Some(owner) = self.replacement_owner("history") else {
+            return Ok(None);
+        };
+        let value = self.invoke_guarded(&owner, self.generation, "history", "", payload, active)?;
+        Ok((!value.is_null()).then_some((owner, value)))
+    }
+
     pub fn model_request(
         &mut self,
         mut payload: Value,
@@ -2727,6 +2883,23 @@ impl ModHost {
             })
             .map(|(id, _)| id.clone())
             .collect()
+    }
+
+    pub fn subscriptions(&self) -> Vec<(String, ModSubscriptions)> {
+        self.active()
+            .filter(|(_, loaded)| !loaded.package.subscriptions.is_empty())
+            .map(|(id, loaded)| (id.clone(), loaded.package.subscriptions.clone()))
+            .collect()
+    }
+
+    pub fn holds_capability(&self, capability: &str) -> bool {
+        self.active().any(|(_, loaded)| {
+            loaded
+                .package
+                .capabilities
+                .iter()
+                .any(|cap| cap == capability)
+        })
     }
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
@@ -3081,7 +3254,7 @@ impl ModHost {
             "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
             "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
-            "tool_before": {"call_id":"observe_only","thread_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable"},
+            "tool_before": {"call_id":"observe_only","thread_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
             "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
             "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
             "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
@@ -3109,7 +3282,7 @@ impl ModHost {
                 "negotiated_features":{"required":m.package.compatibility.required_features,
                     "optional_available":m.package.compatibility.optional_features.iter().filter(|feature|MOD_HOST_FEATURES.contains(&feature.as_str())).collect::<Vec<_>>(),
                     "optional_unavailable":m.package.compatibility.optional_features.iter().filter(|feature|!MOD_HOST_FEATURES.contains(&feature.as_str())).collect::<Vec<_>>()},
-                "sha256": m.selection.sha256, "capabilities": m.package.capabilities,
+                "sha256": m.selection.sha256, "capabilities": m.package.capabilities, "subscriptions": m.package.subscriptions,
                 "scope": m.selection.scope, "requires": m.package.requires, "services": m.package.services,
                 "source_use":m.source_use,"unused_grants":m.unused_grants,
                 "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
