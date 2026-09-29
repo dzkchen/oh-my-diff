@@ -18,19 +18,33 @@ pub(super) struct WorkspaceAuthority {
     pub context: FileSystemSandboxContext,
 }
 
-fn local_context(profile: codex_protocol::models::PermissionProfile, cwd: PathUri) -> Result<FileSystemSandboxContext, String> {
+fn local_context(
+    profile: codex_protocol::models::PermissionProfile,
+    cwd: PathUri,
+) -> Result<FileSystemSandboxContext, String> {
     let mut context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
     context.user_home_dir = PathUri::from_host_native_path("~").ok();
-    context.temporary_directories = Some(match std::env::var_os("TMPDIR").filter(|path| !path.is_empty()) {
-        Some(path) => vec![PathUri::from(AbsolutePathBuf::from_absolute_path(PathBuf::from(path)).map_err(|e| e.to_string())?)],
-        None => Vec::new(),
-    });
+    context.temporary_directories = Some(
+        match std::env::var_os("TMPDIR").filter(|path| !path.is_empty()) {
+            Some(path) => vec![PathUri::from(
+                AbsolutePathBuf::from_absolute_path(PathBuf::from(path))
+                    .map_err(|e| e.to_string())?,
+            )],
+            None => Vec::new(),
+        },
+    );
     Ok(context)
 }
 
 pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
     let authority = WorkspaceAuthority::for_lead(lead).await?;
-    let approved = lead.host.config.approved_untracked.iter().cloned().collect();
+    let approved = lead
+        .host
+        .config
+        .approved_untracked
+        .iter()
+        .cloned()
+        .collect();
     let limit = lead.host.config.snapshot_bytes;
     tokio::task::spawn_blocking(move || {
         let snapshot = codex_omd::capture_tracked(&authority.repository, &approved, limit)
@@ -277,10 +291,12 @@ impl WorkspaceAuthority {
                         Err("pre_rename_operation_unavailable".into())
                     }
                     operation if operation.starts_with("process.") => processes.call(
-                        id,
-                        generation,
-                        &self.repository,
-                        &self.policy,
+                        crate::managed_process::ProcessOwner {
+                            id,
+                            generation,
+                            repository: &self.repository,
+                            policy: &self.policy,
+                        },
                         operation,
                         call.arguments,
                         &active,
@@ -341,10 +357,7 @@ impl WorkspaceAuthority {
             config.cwd.as_path(),
         )?
         .materialize_project_roots_with_workspace_roots(std::slice::from_ref(&config.cwd));
-        let context = local_context(
-            profile.clone(),
-            PathUri::from_abs_path(&config.cwd),
-        )?;
+        let context = local_context(profile.clone(), PathUri::from_abs_path(&config.cwd))?;
         Ok(Self {
             repository: host.repository.clone(),
             session_root: Some(config.codex_home.join("sessions").to_path_buf()),
@@ -461,14 +474,39 @@ mod tests {
         let absolute = AbsolutePathBuf::from_absolute_path_checked(&root).unwrap();
         let cwd = PathUri::from_abs_path(&absolute);
         let policy = FileSystemSandboxPolicy::restricted(vec![
-            FileSystemSandboxEntry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Root }, FileSystemAccessMode::Read),
-            FileSystemSandboxEntry::new(FileSystemPath::Path { path: cwd.clone() }, FileSystemAccessMode::Write),
-            FileSystemSandboxEntry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Tmpdir }, FileSystemAccessMode::Write),
-            FileSystemSandboxEntry::new(FileSystemPath::Path { path: cwd.join("private").unwrap() }, FileSystemAccessMode::Deny),
+            FileSystemSandboxEntry::new(
+                FileSystemPath::Special {
+                    value: FileSystemSpecialPath::Root,
+                },
+                FileSystemAccessMode::Read,
+            ),
+            FileSystemSandboxEntry::new(
+                FileSystemPath::Path { path: cwd.clone() },
+                FileSystemAccessMode::Write,
+            ),
+            FileSystemSandboxEntry::new(
+                FileSystemPath::Special {
+                    value: FileSystemSpecialPath::Tmpdir,
+                },
+                FileSystemAccessMode::Write,
+            ),
+            FileSystemSandboxEntry::new(
+                FileSystemPath::Path {
+                    path: cwd.join("private").unwrap(),
+                },
+                FileSystemAccessMode::Deny,
+            ),
         ]);
-        let profile = PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
+        let profile =
+            PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
         let context = local_context(profile, cwd).unwrap();
-        let authority = WorkspaceAuthority { repository: root.clone(), session_root: None, session_database: None, policy, context };
+        let authority = WorkspaceAuthority {
+            repository: root.clone(),
+            session_root: None,
+            session_database: None,
+            policy,
+            context,
+        };
         assert!(authority.readable(&root.join("source")));
         assert!(!authority.readable(&root.join("private/secret")));
         assert!(authority.writable(&root.join("source")));

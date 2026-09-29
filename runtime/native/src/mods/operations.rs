@@ -30,13 +30,9 @@ impl DataScope {
                         thread,
                     )
                 })
-                .call(
-                    &id,
-                    &source,
-                    &request.operation,
-                    request.arguments,
-                    || !cancelled.load(Ordering::Acquire),
-                )
+                .call(&id, &source, &request.operation, request.arguments, || {
+                    !cancelled.load(Ordering::Acquire)
+                })
                 .map_err(|error| error.to_string())
         })
         .await
@@ -169,10 +165,12 @@ async fn submit_receipt(
                     caller.id,
                     caller.generation,
                     &lead.session.task,
-                    &input.candidate_sha256,
-                    input.acceptance_sha256.as_deref(),
-                    &input.resolves,
-                    &input.evidence,
+                    super::agents::AgentClaim {
+                        candidate_sha256: &input.candidate_sha256,
+                        acceptance_sha256: input.acceptance_sha256.as_deref(),
+                        resolves: &input.resolves,
+                        evidence: &input.evidence,
+                    },
                 )
                 .await?;
             codex_omd::ReceiptProducer {
@@ -418,10 +416,12 @@ pub(super) async fn dispatch(
         let (id, generation) = (caller.id.to_owned(), caller.generation);
         return tokio::task::spawn_blocking(move || {
             processes.call(
-                &id,
-                generation,
-                &authority.repository,
-                &authority.policy,
+                crate::managed_process::ProcessOwner {
+                    id: &id,
+                    generation,
+                    repository: &authority.repository,
+                    policy: &authority.policy,
+                },
                 &request.operation,
                 request.arguments,
                 active,

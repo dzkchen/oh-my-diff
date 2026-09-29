@@ -2,7 +2,6 @@ use codex_omd::MOD_API_VERSION;
 const CURRENT_API: &str = MOD_API_VERSION;
 use codex_omd::ModHost;
 use codex_omd::ModStore;
-use codex_omd::OMD_HOST_RELEASE;
 use serde_json::Value;
 use serde_json::json;
 use std::path::Path;

@@ -51,9 +51,8 @@ impl ToolContributor for Mods {
             );
         }
         let ledger = lead.ledger();
-        let tools = runtime.tools_for_step(thread_id(thread), ledger, || {
-            task.check_active().is_ok()
-        });
+        let tools =
+            runtime.tools_for_step(thread_id(thread), ledger, || task.check_active().is_ok());
         self.tool_executors(lead, tools)
     }
 }

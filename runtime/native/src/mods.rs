@@ -1,8 +1,8 @@
 mod agents;
 mod evidence;
 mod operations;
-mod snapshots;
 pub(crate) mod services;
+mod snapshots;
 mod tools;
 mod view;
 
@@ -181,9 +181,10 @@ fn event_fragments_scoped(
         |id| {
             let mut value = payload.clone();
             if let Some(fields) = private.get(id).and_then(Value::as_object)
-                && let Some(object) = value.as_object_mut() {
-                    object.extend(fields.clone());
-                }
+                && let Some(object) = value.as_object_mut()
+            {
+                object.extend(fields.clone());
+            }
             value
         },
         active,
@@ -276,7 +277,14 @@ pub(super) fn install(
     Ok(())
 }
 
-fn publish(runtime: &mut ModHost, host: &Host, views: &view::Views, event: &str, ledger: Value, active: impl Fn() -> bool) {
+fn publish(
+    runtime: &mut ModHost,
+    host: &Host,
+    views: &view::Views,
+    event: &str,
+    ledger: Value,
+    active: impl Fn() -> bool,
+) {
     let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime)});
     let mut terminal = runtime.terminal_view(input.clone(), active);
     let status = runtime.status();
@@ -391,7 +399,12 @@ impl Core {
         }
     }
 
-    async fn event(&self, event: &'static str, payload: Value, lead: Option<&Lead>) -> Vec<PromptFragment> {
+    async fn event(
+        &self,
+        event: &'static str,
+        payload: Value,
+        lead: Option<&Lead>,
+    ) -> Vec<PromptFragment> {
         self.event_with_private(event, payload, lead, BTreeMap::new())
             .await
     }
@@ -419,7 +432,10 @@ impl Core {
             let Ok(mut runtime) = runtime.lock() else {
                 return Vec::new();
             };
-            codex_omd::observe_workspace_changes(&host.repository, runtime.has_event("workspace_change"));
+            codex_omd::observe_workspace_changes(
+                &host.repository,
+                runtime.has_event("workspace_change"),
+            );
             let facts = facts(&runtime);
             let mut fragments = event_fragments_scoped(
                 &mut runtime,
@@ -435,7 +451,9 @@ impl Core {
                             request.operation
                         )));
                     }
-                    forward(&requests, &facts, id, request, &|| !flag.load(Ordering::Acquire))
+                    forward(&requests, &facts, id, request, &|| {
+                        !flag.load(Ordering::Acquire)
+                    })
                 },
             );
             publish(&mut runtime, &host, &views, event, ledger, || {
@@ -492,23 +510,33 @@ impl Core {
             let (status, changes, reason) = match changes {
                 Ok(changes)
                     if changes.len() > 128
-                        || changes.iter().map(|change| change.path.len()).sum::<usize>() > 16_000 =>
+                        || changes
+                            .iter()
+                            .map(|change| change.path.len())
+                            .sum::<usize>()
+                            > 16_000 =>
                 {
-                    ("unavailable", Vec::new(), Some("workspace_change_batch_limit".to_owned()))
-                }
-                Ok(changes) if changes.is_empty() => return,
-                Ok(changes) => match crate::workspace_operations::WorkspaceAuthority::for_lead(lead)
-                    .await
-                    .and_then(|authority| authority.visible_changes(changes))
-                {
-                    Ok(changes) if changes.is_empty() => return,
-                    Ok(changes) => ("observed", changes, None),
-                    Err(_) => (
+                    (
                         "unavailable",
                         Vec::new(),
-                        Some("workspace_change_scope_unavailable".to_owned()),
-                    ),
-                },
+                        Some("workspace_change_batch_limit".to_owned()),
+                    )
+                }
+                Ok(changes) if changes.is_empty() => return,
+                Ok(changes) => {
+                    match crate::workspace_operations::WorkspaceAuthority::for_lead(lead)
+                        .await
+                        .and_then(|authority| authority.visible_changes(changes))
+                    {
+                        Ok(changes) if changes.is_empty() => return,
+                        Ok(changes) => ("observed", changes, None),
+                        Err(_) => (
+                            "unavailable",
+                            Vec::new(),
+                            Some("workspace_change_scope_unavailable".to_owned()),
+                        ),
+                    }
+                }
                 Err(error) => ("unavailable", Vec::new(), Some(error)),
             };
             self.event(
@@ -562,7 +590,11 @@ impl Mods {
         .await;
     }
 
-    fn compaction_decision(&self, runtime: &mut ModHost, config: &mut Config) -> Result<(), String> {
+    fn compaction_decision(
+        &self,
+        runtime: &mut ModHost,
+        config: &mut Config,
+    ) -> Result<(), String> {
         let compaction = runtime.event(
             "compaction",
             json!({"token_limit":config.model_auto_compact_token_limit,"context_window":config.model_context_window}),
@@ -675,7 +707,9 @@ impl Mods {
                 Ok(value) if value.is_null() => continue,
                 Ok(value) => value,
                 Err(error) => {
-                    diagnostic = Some(format!("mod_routing_failed: {id}: {error}; configured model retained"));
+                    diagnostic = Some(format!(
+                        "mod_routing_failed: {id}: {error}; configured model retained"
+                    ));
                     continue;
                 }
             };
@@ -685,15 +719,26 @@ impl Mods {
                 break;
             }
             match value.get("route").and_then(Value::as_str) {
-                Some(name) if value.as_object().is_some_and(|object| object.len() == 1)
-                    && self.host.config.route(name, config::RouteRole::Lead, Some(&id)).is_some() =>
+                Some(name)
+                    if value.as_object().is_some_and(|object| object.len() == 1)
+                        && self
+                            .host
+                            .config
+                            .route(name, config::RouteRole::Lead, Some(&id))
+                            .is_some() =>
                 {
                     selected = Some(name.to_owned());
                 }
-                _ => diagnostic = Some(format!("mod_route_not_configured: {id}; configured model retained")),
+                _ => {
+                    diagnostic = Some(format!(
+                        "mod_route_not_configured: {id}; configured model retained"
+                    ))
+                }
             }
         }
-        if let Some(route) = selected.and_then(|name| self.host.config.route(&name, config::RouteRole::Lead, None)) {
+        if let Some(route) =
+            selected.and_then(|name| self.host.config.route(&name, config::RouteRole::Lead, None))
+        {
             config.model = Some(route.model.clone());
             config.model_provider_id = route.provider.clone();
             config.model_provider = config
@@ -716,12 +761,16 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         }
         let mut denies = Vec::new();
         for path in self.host.protected_paths() {
-            if path.canonicalize().map_err(|_| "protected_path_unavailable")? != path
+            if path
+                .canonicalize()
+                .map_err(|_| "protected_path_unavailable")?
+                != path
                 || path.starts_with(&self.host.repository)
             {
                 return Err("protected_mod_path_must_be_canonical_and_external".into());
             }
-            let path = AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
+            let path =
+                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
             denies.push(FileSystemSandboxEntry::new(
                 FileSystemPath::Path { path: path.into() },
                 FileSystemAccessMode::Deny,
@@ -729,7 +778,8 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         }
         config.model_provider.supports_websockets = false;
         let mut filesystem = profile.file_system_sandbox_policy();
-        filesystem.preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
+        filesystem
+            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
         let protected = PermissionProfile::from_runtime_permissions(
             &filesystem,
             profile.network_sandbox_policy(),
@@ -741,7 +791,9 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             .insert("OMD_NARROW_SANDBOX".into(), "1".into());
         config
             .permissions
-            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(protected))
+            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(
+                protected,
+            ))
             .map_err(|e| e.to_string())?;
         let mut runtime = match self.runtime.try_lock() {
             Ok(runtime) => runtime,
@@ -759,7 +811,11 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnAbortInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
+            let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            else {
                 return;
             };
             lead.session.processes.cleanup();
@@ -794,7 +850,11 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnStopInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
+            let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            else {
                 return;
             };
             let Some(turn) = self.take_turn(&lead.thread) else {
@@ -923,7 +983,11 @@ impl TurnLifecycleContributor for Mods {
 
     fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
+            let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            else {
                 return;
             };
             let runtime = self.runtime.clone();
@@ -964,7 +1028,11 @@ impl ContextContributor for Mods {
         input: TurnContextContributionInput<'a>,
     ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
         Box::pin(async move {
-            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
+            let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            else {
                 return Vec::new();
             };
             if let Some(profile) = input.permission_profile {
@@ -1013,9 +1081,9 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 return;
             }
             let parent = match input.session_source {
-                SessionSource::SubAgent(SubAgentSource::ThreadSpawn { parent_thread_id, .. }) => {
-                    Some(*parent_thread_id)
-                }
+                SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id, ..
+                }) => Some(*parent_thread_id),
                 _ => None,
             };
             let parent_session = parent.and_then(|parent| {
@@ -1025,12 +1093,19 @@ impl ThreadLifecycleContributor<Config> for Mods {
                     .get(&parent.to_string())
                     .and_then(std::sync::Weak::upgrade)
             });
-            let Some((owner, depth)) = thread_owner(&input, thread, parent_session.is_some()) else {
+            let Some((owner, depth)) = thread_owner(&input, thread, parent_session.is_some())
+            else {
                 return;
             };
             let session = match parent_session {
                 Some(session) => session,
-                None => match self.host.open_session(thread, input.thread_store.get::<codex_extension_api::ResumedThread>().is_some()) {
+                None => match self.host.open_session(
+                    thread,
+                    input
+                        .thread_store
+                        .get::<codex_extension_api::ResumedThread>()
+                        .is_some(),
+                ) {
                     Ok(session) => session,
                     Err(error) => {
                         self.views.diagnostic(
@@ -1105,7 +1180,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
         input: ThreadReadyInput<'a, Config>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
+            if let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            {
                 self.event("start", Value::Null, Some(&*lead)).await;
             }
         })
@@ -1113,7 +1192,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
 
     fn on_thread_resume<'a>(&'a self, input: ThreadResumeInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
+            if let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            {
                 self.event(
                     "session",
                     json!({"phase":"resume","thread_id":lead.thread.to_string()}),
@@ -1127,7 +1210,11 @@ impl ThreadLifecycleContributor<Config> for Mods {
 
     fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
+            if let Some(lead) = input
+                .thread_store
+                .get::<Lead>()
+                .filter(|lead| lead.owner == "lead")
+            {
                 self.event(
                     "session",
                     json!({"phase":"idle","thread_id":lead.thread.to_string(),"cause":format!("{:?}", input.cause)}),

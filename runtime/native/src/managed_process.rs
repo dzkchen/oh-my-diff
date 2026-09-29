@@ -35,15 +35,24 @@ use std::time::Instant;
 
 type Key = (String, u64, String);
 type Session = Arc<Mutex<ManagedProcess>>;
+type WriteRequest = (Vec<Value>, mpsc::SyncSender<Result<(), String>>);
 
 #[derive(Default)]
 pub(super) struct ManagedProcesses {
     records: Mutex<BTreeMap<Key, Session>>,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ProcessOwner<'a> {
+    pub id: &'a str,
+    pub generation: u64,
+    pub repository: &'a Path,
+    pub policy: &'a FileSystemSandboxPolicy,
+}
+
 struct ManagedProcess {
     child: Child,
-    sender: mpsc::SyncSender<(Vec<Value>, mpsc::SyncSender<Result<(), String>>)>,
+    sender: mpsc::SyncSender<WriteRequest>,
     receiver: mpsc::Receiver<io::Result<Value>>,
     scratch: PathBuf,
     last_used: Instant,
@@ -238,14 +247,17 @@ impl ManagedProcesses {
 
     pub fn call(
         &self,
-        id: &str,
-        generation: u64,
-        repository: &Path,
-        policy: &FileSystemSandboxPolicy,
+        owner: ProcessOwner,
         operation: &str,
         arguments: Value,
         active: impl Fn() -> bool,
     ) -> Result<Value, String> {
+        let ProcessOwner {
+            id,
+            generation,
+            repository,
+            policy,
+        } = owner;
         if !active()
             || !repository.is_absolute()
             || repository
@@ -439,8 +451,7 @@ impl ManagedProcesses {
                             return Err(error.to_owned());
                         }
                     };
-                    let (writer_sender, writer_receiver) =
-                        mpsc::sync_channel::<(Vec<Value>, mpsc::SyncSender<Result<(), String>>)>(1);
+                    let (writer_sender, writer_receiver) = mpsc::sync_channel::<WriteRequest>(1);
                     std::thread::spawn(move || {
                         while let Ok((messages, reply)) = writer_receiver.recv() {
                             let result = messages
@@ -630,24 +641,19 @@ mod tests {
         let repository = directory.path().canonicalize().unwrap();
         let processes = ManagedProcesses::default();
         let policy = FileSystemSandboxPolicy::read_only();
+        let owner = ProcessOwner {
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+        };
         let found = processes
-            .call(
-                "fixture",
-                1,
-                &repository,
-                &policy,
-                "process.which",
-                json!({"names":["cat"]}),
-                || true,
-            )
+            .call(owner, "process.which", json!({"names":["cat"]}), || true)
             .unwrap();
         let cat = found["found"].as_array().unwrap().first().unwrap();
         let started = processes
             .call(
-                "fixture",
-                1,
-                &repository,
-                &policy,
+                owner,
                 "process.start",
                 json!({"session":"framed","name":"cat","path":cat["path"],"sha256":cat["sha256"]}),
                 || true,
@@ -666,16 +672,16 @@ mod tests {
             0o700
         );
         let answer = processes
-            .call("fixture", 1, &repository, &policy, "process.exchange", json!({"session":"framed","send":[{"jsonrpc":"2.0","id":7,"method":"hello"}],"wait_ms":1000}), || true)
+            .call(owner, "process.exchange", json!({"session":"framed","send":[{"jsonrpc":"2.0","id":7,"method":"hello"}],"wait_ms":1000}), || true)
             .unwrap();
         assert_eq!(answer["messages"][0]["method"], "hello");
         assert_eq!(
             processes
                 .call(
-                    "other",
-                    1,
-                    &repository,
-                    &policy,
+                    ProcessOwner {
+                        id: "other",
+                        ..owner
+                    },
                     "process.status",
                     json!({"session":"framed"}),
                     || true
@@ -685,15 +691,7 @@ mod tests {
         );
         assert_eq!(
             processes
-                .call(
-                    "fixture",
-                    1,
-                    &repository,
-                    &policy,
-                    "process.stop",
-                    json!({"session":"framed"}),
-                    || true
-                )
+                .call(owner, "process.stop", json!({"session":"framed"}), || true)
                 .unwrap()["stopped"],
             true
         );
@@ -705,24 +703,19 @@ mod tests {
         let repository = directory.path().canonicalize().unwrap();
         let processes = ManagedProcesses::default();
         let policy = FileSystemSandboxPolicy::read_only();
+        let owner = ProcessOwner {
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+        };
         let found = processes
-            .call(
-                "fixture",
-                1,
-                &repository,
-                &policy,
-                "process.which",
-                json!({"names":["sleep"]}),
-                || true,
-            )
+            .call(owner, "process.which", json!({"names":["sleep"]}), || true)
             .unwrap();
         let sleep = found["found"].as_array().unwrap().first().unwrap();
         processes
             .call(
-                "fixture",
-                1,
-                &repository,
-                &policy,
+                 owner,
                 "process.start",
                 json!({"session":"blocked","name":"sleep","path":sleep["path"],"sha256":sleep["sha256"],"arguments":["20"]}),
                 || true,
@@ -731,10 +724,7 @@ mod tests {
         let started = Instant::now();
         let error = processes
             .call(
-                "fixture",
-                1,
-                &repository,
-                &policy,
+                owner,
                 "process.exchange",
                 json!({"session":"blocked","send":[{"data":"x".repeat(256 * 1024)}],"wait_ms":0}),
                 || started.elapsed() < Duration::from_millis(100),
@@ -745,10 +735,7 @@ mod tests {
         assert_eq!(
             processes
                 .call(
-                    "fixture",
-                    1,
-                    &repository,
-                    &policy,
+                    owner,
                     "process.status",
                     json!({"session":"blocked"}),
                     || true,
@@ -764,16 +751,14 @@ mod tests {
         let repository = directory.path().canonicalize().unwrap();
         let processes = ManagedProcesses::default();
         let policy = FileSystemSandboxPolicy::read_only();
+        let owner = ProcessOwner {
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+        };
         let found = processes
-            .call(
-                "fixture",
-                1,
-                &repository,
-                &policy,
-                "process.which",
-                json!({"names":["cat"]}),
-                || true,
-            )
+            .call(owner, "process.which", json!({"names":["cat"]}), || true)
             .unwrap();
         let cat = found["found"].as_array().unwrap().first().unwrap();
         for environment in [
@@ -784,10 +769,7 @@ mod tests {
             assert_eq!(
                 processes
                     .call(
-                        "fixture",
-                        1,
-                        &repository,
-                        &policy,
+                         owner,
                         "process.start",
                         json!({"session":"rejected","name":"cat","path":cat["path"],"sha256":cat["sha256"],"environment":environment}),
                         || true,

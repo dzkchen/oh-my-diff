@@ -111,9 +111,9 @@ fn max_request_bytes() -> usize {
 fn name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'))
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
 }
 
 impl Default for HostConfig {
@@ -167,7 +167,11 @@ impl HostConfig {
             || self.protected.iter().any(|path| !external(path))
             || self.secret_refs.values().any(|path| !external(path))
             || self.toolchain_reads.iter().any(|path| !path.is_absolute())
-            || self.contract.user.as_ref().is_some_and(|path| !path.is_absolute())
+            || self
+                .contract
+                .user
+                .as_ref()
+                .is_some_and(|path| !path.is_absolute())
         {
             return Err(format!("{HOST_CONFIG} limits or paths are invalid"));
         }
@@ -182,10 +186,14 @@ impl HostConfig {
                 || route.tools.len() > 16
                 || route.mods.len() > 16
                 || route.mods.iter().any(|id| !name(id))
-                || route.tools.iter().any(|tool| !crate::mods::read_only_sandbox_tool(tool))
-                || route.grant.as_ref().is_some_and(|grant| {
-                    !external(&grant.path) || grant.sha256.len() != 64
-                })
+                || route
+                    .tools
+                    .iter()
+                    .any(|tool| !crate::mods::read_only_sandbox_tool(tool))
+                || route
+                    .grant
+                    .as_ref()
+                    .is_some_and(|grant| !external(&grant.path) || grant.sha256.len() != 64)
                 || (route.rates.reservation_microusd == 0) != route.rates.included_subscription
                 || route.roles.contains(&RouteRole::Worker) && route.grant.is_none()
             {
@@ -195,11 +203,17 @@ impl HostConfig {
         Ok(())
     }
 
-    pub(crate) fn route(&self, name: &str, role: RouteRole, mod_id: Option<&str>) -> Option<&Route> {
+    pub(crate) fn route(
+        &self,
+        name: &str,
+        role: RouteRole,
+        mod_id: Option<&str>,
+    ) -> Option<&Route> {
         self.routes.iter().find(|route| {
             route.name == name
                 && route.roles.contains(&role)
-                && mod_id.is_none_or(|id| route.mods.is_empty() || route.mods.iter().any(|m| m == id))
+                && mod_id
+                    .is_none_or(|id| route.mods.is_empty() || route.mods.iter().any(|m| m == id))
         })
     }
 

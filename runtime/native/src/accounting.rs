@@ -203,10 +203,7 @@ pub fn denied(message: impl ToString) -> TransportError {
         status: http::StatusCode::BAD_REQUEST,
         url: None,
         headers: None,
-        body: Some(format!(
-            "local OMD request policy: {}",
-            message.to_string()
-        )),
+        body: Some(format!("local OMD request policy: {}", message.to_string())),
     }
 }
 
@@ -239,7 +236,11 @@ impl ResponseObserver for Accounts {
                 .as_bytes(),
         )
         .map_err(denied)?;
-        if let Some(rates) = account.rates.as_ref().filter(|rates| !rates.included_subscription) {
+        if let Some(rates) = account
+            .rates
+            .as_ref()
+            .filter(|rates| !rates.included_subscription)
+        {
             if rates.max_output_tokens == 0 {
                 return Err(denied("missing output ceiling"));
             }
@@ -297,7 +298,9 @@ impl ResponseObserver for Accounts {
                 .iter()
                 .find(|route| route.name == selected)
                 .filter(|_| account.owner == "lead")
-                .ok_or_else(|| denied("mod selected a route that is not configured for this thread"))?;
+                .ok_or_else(|| {
+                    denied("mod selected a route that is not configured for this thread")
+                })?;
             value["model"] = route.model.clone().into();
             value["reasoning"]["effort"] = route.reasoning.clone().into();
             *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
@@ -335,13 +338,17 @@ impl ResponseObserver for Accounts {
         };
         let requested = body
             .and_then(|body| serde_json::from_slice::<Value>(body.as_bytes()).ok())
-            .and_then(|value| value.get("model").and_then(Value::as_str).map(str::to_owned));
+            .and_then(|value| {
+                value
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
         let switched = (account.owner == "lead")
             .then(|| {
-                account
-                    .lead_routes
-                    .iter()
-                    .find(|route| Some(&route.model) == requested.as_ref() && route.model != account.model)
+                account.lead_routes.iter().find(|route| {
+                    Some(&route.model) == requested.as_ref() && route.model != account.model
+                })
             })
             .flatten()
             .cloned();
@@ -582,9 +589,11 @@ impl ResponseObserver for Accounts {
 
     fn requires_observation(&self, thread: Option<&str>) -> bool {
         thread.is_some_and(|thread| {
-            self.0
-                .lock()
-                .map_or(true, |accounts| accounts.get(thread).is_some_and(|account| account.rates.is_some()))
+            self.0.lock().map_or(true, |accounts| {
+                accounts
+                    .get(thread)
+                    .is_some_and(|account| account.rates.is_some())
+            })
         })
     }
 }
@@ -691,7 +700,10 @@ impl Attempt {
                     0
                 } else {
                     let numerator = [
-                        (input - cached - cache_write, rates.input_microusd_per_million),
+                        (
+                            input - cached - cache_write,
+                            rates.input_microusd_per_million,
+                        ),
                         (cached, rates.cached_microusd_per_million),
                         (
                             cache_write,

@@ -51,23 +51,26 @@ pub struct BuiltinSnapshot {
 fn name(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 32
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_'))
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        })
 }
 
 impl BuiltinControls {
     pub fn parse(value: &Value) -> Result<Self, String> {
-        let controls: Self =
-            serde_json::from_value(value.clone()).map_err(|error| format!("invalid_builtins: {error}"))?;
-        let unique = |values: &[String]| values.iter().collect::<BTreeSet<_>>().len() == values.len();
+        let controls: Self = serde_json::from_value(value.clone())
+            .map_err(|error| format!("invalid_builtins: {error}"))?;
+        let unique =
+            |values: &[String]| values.iter().collect::<BTreeSet<_>>().len() == values.len();
         if controls.commands.hide.len() > 32
             || controls.modes.disable.len() > 8
             || !unique(&controls.commands.hide)
             || !unique(&controls.modes.disable)
-            || controls.commands.hide.iter().any(|command| {
-                !name(command) || PROTECTED_COMMANDS.contains(&command.as_str())
-            })
+            || controls
+                .commands
+                .hide
+                .iter()
+                .any(|command| !name(command) || PROTECTED_COMMANDS.contains(&command.as_str()))
             || controls
                 .modes
                 .disable

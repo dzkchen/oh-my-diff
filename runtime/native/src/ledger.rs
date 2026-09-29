@@ -1,30 +1,64 @@
 use super::*;
 use std::path::Path;
 
-pub(crate) fn open(sessions: &Path, repository: &str, thread: ThreadId, limits: codex_omd::Limits, resumed: bool) -> Result<Task, String> {
+pub(crate) fn open(
+    sessions: &Path,
+    repository: &str,
+    thread: ThreadId,
+    limits: codex_omd::Limits,
+    resumed: bool,
+) -> Result<Task, String> {
     let directory = sessions.join(format!("ledger-{repository}-{thread}"));
     let identity = json!({"schema":1,"repository":repository,"thread":thread});
     match std::fs::symlink_metadata(&directory) {
         Ok(metadata) => {
-            if !metadata.is_dir() || directory.canonicalize().map_err(|e| e.to_string())? != directory {
+            if !metadata.is_dir()
+                || directory.canonicalize().map_err(|e| e.to_string())? != directory
+            {
                 return Err("ledger_directory_invalid".into());
             }
-            if !resumed { return Err("ledger_requires_explicit_thread_resume".into()); }
-            let saved = codex_omd::Snapshot::capture(&directory, &std::collections::BTreeSet::from(["identity.json".into()]), 1024)
-                .map_err(|e| e.to_string())?;
-            let saved: Value = serde_json::from_slice(&saved.files.get("identity.json").ok_or("ledger_identity_missing")?.bytes)
-                .map_err(|e| e.to_string())?;
-            if saved != identity { return Err("ledger_identity_changed".into()); }
+            if !resumed {
+                return Err("ledger_requires_explicit_thread_resume".into());
+            }
+            let saved = codex_omd::Snapshot::capture(
+                &directory,
+                &std::collections::BTreeSet::from(["identity.json".into()]),
+                1024,
+            )
+            .map_err(|e| e.to_string())?;
+            let saved: Value = serde_json::from_slice(
+                &saved
+                    .files
+                    .get("identity.json")
+                    .ok_or("ledger_identity_missing")?
+                    .bytes,
+            )
+            .map_err(|e| e.to_string())?;
+            if saved != identity {
+                return Err("ledger_identity_changed".into());
+            }
             Task::open(limits, directory, Some(&thread.to_string())).map_err(|e| e.to_string())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let prefix = format!("{thread}-");
-            if resumed && std::fs::read_dir(sessions).map_err(|e| e.to_string())?
-                .any(|entry| entry.is_ok_and(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))) {
+            if resumed
+                && std::fs::read_dir(sessions)
+                    .map_err(|e| e.to_string())?
+                    .any(|entry| {
+                        entry.is_ok_and(|entry| {
+                            entry.file_name().to_string_lossy().starts_with(&prefix)
+                        })
+                    })
+            {
                 return Err("legacy_ledger_requires_explicit_migration".into());
             }
             let task = Task::create(limits, directory.clone()).map_err(|e| e.to_string())?;
-            persist(&directory, "identity.json", &serde_json::to_vec(&identity).map_err(|e| e.to_string())?, false)?;
+            persist(
+                &directory,
+                "identity.json",
+                &serde_json::to_vec(&identity).map_err(|e| e.to_string())?,
+                false,
+            )?;
             Ok(task)
         }
         Err(error) => Err(error.to_string()),
@@ -36,7 +70,13 @@ mod tests {
     use super::*;
 
     fn limits() -> codex_omd::Limits {
-        codex_omd::Limits { requests: 3, exposure_microusd: 100, seconds: 300, concurrent_workers: 2, max_depth: 2 }
+        codex_omd::Limits {
+            requests: 3,
+            exposure_microusd: 100,
+            seconds: 300,
+            concurrent_workers: 2,
+            max_depth: 2,
+        }
     }
 
     #[test]
@@ -48,7 +88,14 @@ mod tests {
         task.authorize_route("fixture", "worker").unwrap();
         let request = task.admit("lead", "fixture", "worker", 30).unwrap();
         task.dispatch(&request, || Ok(())).unwrap();
-        task.observe("lead", "fixture", "main", Some(json!({"input_tokens":10})), "completed").unwrap();
+        task.observe(
+            "lead",
+            "fixture",
+            "main",
+            Some(json!({"input_tokens":10})),
+            "completed",
+        )
+        .unwrap();
         drop(task);
         assert!(open(&root, "repository", thread, limits(), false).is_err());
         let task = open(&root, "repository", thread, limits(), true).unwrap();
@@ -60,7 +107,9 @@ mod tests {
         let mut changed = limits();
         changed.requests += 1;
         assert!(open(&root, "repository", thread, changed, true).is_err());
-        let path = root.join(format!("ledger-repository-{thread}")).join("identity.json");
+        let path = root
+            .join(format!("ledger-repository-{thread}"))
+            .join("identity.json");
         std::fs::write(&path, b"{}").unwrap();
         assert!(open(&root, "repository", thread, limits(), true).is_err());
     }

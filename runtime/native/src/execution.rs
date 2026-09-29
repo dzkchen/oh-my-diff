@@ -83,10 +83,11 @@ pub(super) fn intersect(
     }) {
         return Err("non-read platform-default permissions are unsupported".into());
     }
-    let minimal = policies
-        .iter()
-        .all(|p| p.has_full_disk_read_access() || p.include_platform_defaults()
-            || p.can_read_local_path_with_cwd(Path::new("/"), cwd));
+    let minimal = policies.iter().all(|p| {
+        p.has_full_disk_read_access()
+            || p.include_platform_defaults()
+            || p.can_read_local_path_with_cwd(Path::new("/"), cwd)
+    });
     let stripped: Vec<_> = policies
         .into_iter()
         .zip([parent, requested])
@@ -118,40 +119,6 @@ pub(super) fn intersect(
         &filesystem,
         result.network_sandbox_policy(),
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn isolated_commands_keep_platform_reads_without_reopening_parent_denials() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
-        let path = AbsolutePathBuf::from_absolute_path_checked(&root).unwrap();
-        let denied = root.join("private");
-        let outside = tempfile::tempdir().unwrap();
-        let outside_file = outside.path().canonicalize().unwrap().join("source");
-        std::fs::write(&outside_file, "parent-source").unwrap();
-        std::fs::create_dir(&denied).unwrap();
-        let denial = Entry::new(FileSystemPath::Path { path: PathUri::from_host_native_path(&denied).unwrap() }, Access::Deny);
-        let parent = PermissionProfile::from_runtime_permissions(&FileSystemSandboxPolicy::restricted(vec![
-            Entry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Root }, Access::Read),
-            Entry::new(FileSystemPath::Path { path: path.clone().into() }, Access::Write), denial.clone(),
-        ]), NetworkSandboxPolicy::Restricted);
-        let requested = PermissionProfile::from_runtime_permissions(&FileSystemSandboxPolicy::restricted(vec![
-            Entry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Minimal }, Access::Read),
-            Entry::new(FileSystemPath::Path { path: path.into() }, Access::Write),
-        ]), NetworkSandboxPolicy::Restricted);
-        let policy = intersect(&parent, &requested, &root).unwrap().file_system_sandbox_policy();
-        assert!(policy.include_platform_defaults());
-        assert!(policy.entries.contains(&denial));
-        assert!(!policy.can_read_local_path_with_cwd(&denied, &root));
-        let output = crate::generic_host::sandboxed_command(&policy, &root, &[], vec!["/bin/sh".into(), "-c".into(), "if cat \"$1\"; then exit 19; fi; printf sandbox-ok".into(), "check".into(), outside_file.display().to_string()],
-            &codex_omd::host::ExecAccess { write: true, loopback: false, scratch: &root }).unwrap().output().unwrap();
-        assert!(output.status.success(), "{:?}", output);
-        assert_eq!(output.stdout, b"sandbox-ok");
-    }
 }
 
 pub(super) fn isolated(
@@ -464,4 +431,85 @@ pub(super) async fn apply_candidate(
         git(&["apply", "-p2", "--binary", &patch.display().to_string()]),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn isolated_commands_keep_platform_reads_without_reopening_parent_denials() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let path = AbsolutePathBuf::from_absolute_path_checked(&root).unwrap();
+        let denied = root.join("private");
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().canonicalize().unwrap().join("source");
+        std::fs::write(&outside_file, "parent-source").unwrap();
+        std::fs::create_dir(&denied).unwrap();
+        let denial = Entry::new(
+            FileSystemPath::Path {
+                path: PathUri::from_host_native_path(&denied).unwrap(),
+            },
+            Access::Deny,
+        );
+        let parent = PermissionProfile::from_runtime_permissions(
+            &FileSystemSandboxPolicy::restricted(vec![
+                Entry::new(
+                    FileSystemPath::Special {
+                        value: FileSystemSpecialPath::Root,
+                    },
+                    Access::Read,
+                ),
+                Entry::new(
+                    FileSystemPath::Path {
+                        path: path.clone().into(),
+                    },
+                    Access::Write,
+                ),
+                denial.clone(),
+            ]),
+            NetworkSandboxPolicy::Restricted,
+        );
+        let requested = PermissionProfile::from_runtime_permissions(
+            &FileSystemSandboxPolicy::restricted(vec![
+                Entry::new(
+                    FileSystemPath::Special {
+                        value: FileSystemSpecialPath::Minimal,
+                    },
+                    Access::Read,
+                ),
+                Entry::new(FileSystemPath::Path { path: path.into() }, Access::Write),
+            ]),
+            NetworkSandboxPolicy::Restricted,
+        );
+        let policy = intersect(&parent, &requested, &root)
+            .unwrap()
+            .file_system_sandbox_policy();
+        assert!(policy.include_platform_defaults());
+        assert!(policy.entries.contains(&denial));
+        assert!(!policy.can_read_local_path_with_cwd(&denied, &root));
+        let output = crate::generic_host::sandboxed_command(
+            &policy,
+            &root,
+            &[],
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "if cat \"$1\"; then exit 19; fi; printf sandbox-ok".into(),
+                "check".into(),
+                outside_file.display().to_string(),
+            ],
+            &codex_omd::host::ExecAccess {
+                write: true,
+                loopback: false,
+                scratch: &root,
+            },
+        )
+        .unwrap()
+        .output()
+        .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        assert_eq!(output.stdout, b"sandbox-ok");
+    }
 }

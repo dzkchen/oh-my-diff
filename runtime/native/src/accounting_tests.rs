@@ -165,9 +165,7 @@ fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
     accounts.0.lock().unwrap().insert("main".into(), lead);
     task.authorize_route("fixture", "fixture-model").unwrap();
     task.authorize_route("fixture", "fixture-fast").unwrap();
-    request
-        .headers
-        .insert("thread-id", "main".parse().unwrap());
+    request.headers.insert("thread-id", "main".parse().unwrap());
     let mut prepared = Some(body.clone());
     accounts.prepare(&mut request, &mut prepared).unwrap();
     let routed: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
@@ -200,9 +198,7 @@ fn observe_only_accounts_record_usage_without_admission() {
     lead.rates = None;
     lead.route = None;
     accounts.0.lock().unwrap().insert("main".into(), lead);
-    request
-        .headers
-        .insert("thread-id", "main".parse().unwrap());
+    request.headers.insert("thread-id", "main".parse().unwrap());
     assert!(!accounts.requires_observation(Some("main")));
     assert!(accounts.requires_observation(Some("child")));
     let body = EncodedJsonBody::encode(&json!({"model":"any-model","stream":true,

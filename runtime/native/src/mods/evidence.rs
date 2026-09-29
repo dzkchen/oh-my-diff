@@ -62,7 +62,8 @@ pub(super) async fn compact(
     if turns
         .lock()
         .map_err(|_| "turn_record_poisoned")?
-        .get(&key).is_none_or(|turn| turn.evidence.is_none())
+        .get(&key)
+        .is_none_or(|turn| turn.evidence.is_none())
     {
         return Ok(());
     }

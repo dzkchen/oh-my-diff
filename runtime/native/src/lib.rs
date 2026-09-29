@@ -94,12 +94,14 @@ struct OperationGuard<'a> {
     repository_identity: String,
 }
 
-static WORKSPACE_OPERATIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
+static WORKSPACE_OPERATIONS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeSet<String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
 
 impl Drop for OperationGuard<'_> {
     fn drop(&mut self) {
-        self.operation.store(false, std::sync::atomic::Ordering::Release);
+        self.operation
+            .store(false, std::sync::atomic::Ordering::Release);
         if let Ok(mut active) = WORKSPACE_OPERATIONS.lock() {
             active.remove(&self.repository_identity);
         }
@@ -233,14 +235,30 @@ impl Host {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.to_string()),
         }
-        if std::fs::symlink_metadata(&sessions).map_err(|e| e.to_string())?.is_symlink()
-            || sessions.canonicalize().map_err(|e| e.to_string())? != sessions {
+        if std::fs::symlink_metadata(&sessions)
+            .map_err(|e| e.to_string())?
+            .is_symlink()
+            || sessions.canonicalize().map_err(|e| e.to_string())? != sessions
+        {
             return Err("session_store_not_canonical".into());
         }
-        let task = Arc::new(ledger::open(&sessions, &self.repository_identity, thread, self.config.limits.clone(), resumed)?);
-        let scratch = self.repository.join(".omd").join(format!("session-{thread}"));
+        let task = Arc::new(ledger::open(
+            &sessions,
+            &self.repository_identity,
+            thread,
+            self.config.limits.clone(),
+            resumed,
+        )?);
+        let scratch = self
+            .repository
+            .join(".omd")
+            .join(format!("session-{thread}"));
         if resumed && scratch.symlink_metadata().is_ok() {
-            codex_omd::cleanup_owned_directory(scratch.parent().ok_or("scratch_parent_missing")?, &scratch).map_err(|e| e.to_string())?;
+            codex_omd::cleanup_owned_directory(
+                scratch.parent().ok_or("scratch_parent_missing")?,
+                &scratch,
+            )
+            .map_err(|e| e.to_string())?;
         }
         let evidence = sessions.join(format!("{thread}-{}-{}", self.epoch, ThreadId::new()));
         std::fs::create_dir(&evidence).map_err(|e| e.to_string())?;
@@ -250,7 +268,10 @@ impl Host {
             repository_identity: self.repository_identity.clone(),
             scratch,
             contract: std::sync::Mutex::new(contract::SessionContract::default()),
-            contract_state: sessions.join(format!("contract-{}-{thread}.json", self.repository_identity)),
+            contract_state: sessions.join(format!(
+                "contract-{}-{thread}.json",
+                self.repository_identity
+            )),
             operation: std::sync::atomic::AtomicBool::new(false),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
             data: mods::DataScope::default(),
@@ -360,16 +381,29 @@ impl Session {
             .map_err(|_| "contract_lock_poisoned")?
             .status();
         let bytes = serde_json::to_vec(&status).map_err(|error| error.to_string())?;
-        if status["status"] == "unavailable" { return Err("contract_unavailable".into()); }
+        if status["status"] == "unavailable" {
+            return Err("contract_unavailable".into());
+        }
         let result = if bytes.len() > contract::STATE_BYTES {
             Err("contract_state_byte_limit".into())
-        } else { persist(
-            self.contract_state.parent().ok_or("contract_state_parent_missing")?,
-            self.contract_state.file_name().and_then(|name| name.to_str()).ok_or("contract_state_name_invalid")?,
-            &bytes, true,
-        ) };
+        } else {
+            persist(
+                self.contract_state
+                    .parent()
+                    .ok_or("contract_state_parent_missing")?,
+                self.contract_state
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or("contract_state_name_invalid")?,
+                &bytes,
+                true,
+            )
+        };
         if let Err(error) = &result {
-            self.contract.lock().map_err(|_| "contract_lock_poisoned")?.invalidate(error.clone());
+            self.contract
+                .lock()
+                .map_err(|_| "contract_lock_poisoned")?
+                .invalidate(error.clone());
         }
         result?;
         persist(&self.evidence, "contract.json", &bytes, false)

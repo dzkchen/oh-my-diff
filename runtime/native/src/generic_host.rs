@@ -53,10 +53,12 @@ pub(crate) fn sandboxed_command(
 ) -> Result<Command, String> {
     #[cfg(target_os = "macos")]
     {
-        use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
         use codex_protocol::config_types::WindowsSandboxLevel;
         use codex_protocol::models::PermissionProfile;
-        use codex_sandboxing::{SandboxCommand, SandboxManager, SandboxTransformRequest, SandboxType};
+        use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
+        use codex_sandboxing::{
+            SandboxCommand, SandboxManager, SandboxTransformRequest, SandboxType,
+        };
         use codex_utils_path_uri::PathUri;
         let mut scope = if access.write {
             policy.clone()
@@ -79,23 +81,32 @@ pub(crate) fn sandboxed_command(
         });
         let (program, arguments) = argv.split_first().ok_or("exec_command_empty")?;
         let cwd = PathUri::from_host_native_path(repository).map_err(|error| error.to_string())?;
-        let permissions = PermissionProfile::from_runtime_permissions(&scope, NetworkSandboxPolicy::Restricted);
-        let transformed = SandboxManager::for_file_system_helpers().transform(SandboxTransformRequest {
-            command: SandboxCommand {
-                program: program.into(), args: arguments.to_vec(), cwd: cwd.clone(),
-                env: Default::default(), managed_network: loopback, additional_permissions: None,
-            },
-            permissions: &permissions,
-            sandbox: SandboxType::MacosSeatbelt,
-            sandbox_policy_cwd: &cwd,
-            enforce_managed_network: access.loopback,
-            environment_id: None,
-            network: None,
-            sandbox_exe: None,
-            use_legacy_landlock: false,
-            windows_sandbox_level: WindowsSandboxLevel::Disabled,
-        }).map_err(|error| error.to_string())?;
-        if transformed.command.first().map(String::as_str) != Some(MACOS_PATH_TO_SEATBELT_EXECUTABLE) {
+        let permissions =
+            PermissionProfile::from_runtime_permissions(&scope, NetworkSandboxPolicy::Restricted);
+        let transformed = SandboxManager::for_file_system_helpers()
+            .transform(SandboxTransformRequest {
+                command: SandboxCommand {
+                    program: program.into(),
+                    args: arguments.to_vec(),
+                    cwd: cwd.clone(),
+                    env: Default::default(),
+                    managed_network: loopback,
+                    additional_permissions: None,
+                },
+                permissions: &permissions,
+                sandbox: SandboxType::MacosSeatbelt,
+                sandbox_policy_cwd: &cwd,
+                enforce_managed_network: access.loopback,
+                environment_id: None,
+                network: None,
+                sandbox_exe: None,
+                use_legacy_landlock: false,
+                windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            })
+            .map_err(|error| error.to_string())?;
+        if transformed.command.first().map(String::as_str)
+            != Some(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
+        {
             return Err("exec_sandbox_unavailable".into());
         }
         sandboxed_seatbelt(
@@ -144,9 +155,15 @@ pub(crate) fn process_request_allowed(
         return Ok(());
     }
     let grants = grants.ok_or("host_caller_inactive")?;
-    let fields = request.arguments.as_object().ok_or("process_arguments_invalid")?;
+    let fields = request
+        .arguments
+        .as_object()
+        .ok_or("process_arguments_invalid")?;
     if fields.get("network").and_then(Value::as_str) == Some("loopback")
-        && !grants.capabilities.iter().any(|capability| capability == "network")
+        && !grants
+            .capabilities
+            .iter()
+            .any(|capability| capability == "network")
     {
         return Err("capability_denied: network".into());
     }
@@ -171,7 +188,10 @@ pub(crate) const LIFECYCLE_EVENTS: &[&str] = &[
 pub(crate) fn event_allows(event: &str, operation: &str) -> bool {
     LIFECYCLE_EVENTS.contains(&event)
         || event == "workspace_pre_rename"
-            && matches!(operation, "workspace.read" | "workspace.stat" | "workspace.list")
+            && matches!(
+                operation,
+                "workspace.read" | "workspace.stat" | "workspace.list"
+            )
 }
 
 #[allow(clippy::too_many_arguments)]

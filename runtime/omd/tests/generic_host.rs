@@ -17,7 +17,6 @@ use codex_omd::host::Host;
 use codex_omd::resolve_contract;
 use serde_json::Value;
 use serde_json::json;
-use sha2::Digest;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;

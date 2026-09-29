@@ -1133,18 +1133,21 @@ index 8ab596442..156970052 100644
      }
      sess.stop_mcp_prewarm_worker().await;
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index b977bb16f..e336f5557 100644
+index b977bb16f..ed51dc661 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
-@@ -4179,6 +4179,7 @@ impl Session {
+@@ -4179,6 +4179,10 @@ impl Session {
          let mut developer_sections = Vec::new();
          let context_contributors = self.services.extensions.context_contributors().to_vec();
  
-+        let extension_permission_profile = turn_context.config.permissions.effective_permission_profile();
++        let extension_permission_profile = turn_context
++            .config
++            .permissions
++            .effective_permission_profile();
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4188,6 +4189,7 @@ impl Session {
+@@ -4188,6 +4192,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -1152,15 +1155,18 @@ index b977bb16f..e336f5557 100644
                  })
                  .await
              {
-@@ -4276,6 +4278,7 @@ impl Session {
+@@ -4276,6 +4281,10 @@ impl Session {
                  }
              }
          }
-+        let extension_permission_profile = turn_context.config.permissions.effective_permission_profile();
++        let extension_permission_profile = turn_context
++            .config
++            .permissions
++            .effective_permission_profile();
          for contributor in &context_contributors {
              for fragment in contributor
                  .contribute_turn_context(TurnContextContributionInput {
-@@ -4285,6 +4288,7 @@ impl Session {
+@@ -4285,6 +4294,7 @@ impl Session {
                      thread_store: &self.services.thread_extension_data,
                      turn_store: turn_context.extension_data.as_ref(),
                      model_context_window: step_context.settings.model_info.usable_context_window(),
@@ -1799,10 +1805,10 @@ index e4519817a..8ae7b2d3a 100644
              .await
 diff --git a/codex-rs/core/src/tools/code_mode/kernels.rs b/codex-rs/core/src/tools/code_mode/kernels.rs
 new file mode 100644
-index 000000000..6514858c0
+index 000000000..44b67ca1f
 --- /dev/null
 +++ b/codex-rs/core/src/tools/code_mode/kernels.rs
-@@ -0,0 +1,981 @@
+@@ -0,0 +1,986 @@
 +use std::collections::HashMap;
 +use std::sync::Arc;
 +use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1837,9 +1843,9 @@ index 000000000..6514858c0
 +fn kernel_name(value: &str) -> bool {
 +    !value.is_empty()
 +        && value.len() <= 32
-+        && value
-+            .bytes()
-+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-')
++        && value.bytes().all(|byte| {
++            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
++        })
 +}
 +
 +fn shell_word(value: &str) -> String {
@@ -1850,7 +1856,10 @@ index 000000000..6514858c0
 +    if !kernel_name(&kernel.name)
 +        || kernel.command.is_empty()
 +        || kernel.command.len() > 16
-+        || kernel.command.iter().any(|arg| arg.is_empty() || arg.contains('\0'))
++        || kernel
++            .command
++            .iter()
++            .any(|arg| arg.is_empty() || arg.contains('\0'))
 +        || !kernel.driver.is_absolute()
 +        || kernel.driver_sha256.len() != 64
 +    {
@@ -1859,7 +1868,10 @@ index 000000000..6514858c0
 +    let metadata = std::fs::symlink_metadata(&kernel.driver)
 +        .map_err(|error| format!("kernel {} driver unavailable: {error}", kernel.name))?;
 +    if !metadata.is_file() || metadata.len() > MAX_DRIVER_BYTES {
-+        return Err(format!("kernel {} driver is not a bounded regular file", kernel.name));
++        return Err(format!(
++            "kernel {} driver is not a bounded regular file",
++            kernel.name
++        ));
 +    }
 +    let bytes = std::fs::read(&kernel.driver).map_err(|error| error.to_string())?;
 +    let digest = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(&bytes));
@@ -1909,7 +1921,9 @@ index 000000000..6514858c0
 +    ToolDefinition {
 +        name: TOOL_NAME.into(),
 +        tool_name: ToolName::plain(TOOL_NAME),
-+        description: format!("Run a cell in a persistent configured interpreter kernel. Within the cell, tool(name, arguments) calls the currently authorized agent tools through the loopback bridge. Input: {{kernel: '{names}', code: string}}. Output is bounded."),
++        description: format!(
++            "Run a cell in a persistent configured interpreter kernel. Within the cell, tool(name, arguments) calls the currently authorized agent tools through the loopback bridge. Input: {{kernel: '{names}', code: string}}. Output is bounded."
++        ),
 +        kind: CodeModeToolKind::Function,
 +        input_schema: None,
 +        output_schema: None,
@@ -2051,10 +2065,7 @@ index 000000000..6514858c0
 +                .as_i64()
 +                .and_then(|value| i32::try_from(value).ok())
 +                .ok_or_else(|| {
-+                    format!(
-+                        "{language} worker failed to start: {}",
-+                        result["output"]
-+                    )
++                    format!("{language} worker failed to start: {}", result["output"])
 +                })?;
 +            *worker = Some(WorkerState {
 +                process_id,
@@ -2989,7 +3000,7 @@ index e5ff7f2a4..a1fdaf98e 100644
                  payload: ToolPayload::Function {
                      arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index 82ba4a6c6..525fb5cb7 100644
+index 82ba4a6c6..0cb984bd0 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -10,7 +10,10 @@ use codex_extension_api::ToolStartInput;
@@ -3097,7 +3108,7 @@ index 82ba4a6c6..525fb5cb7 100644
      )
      .await;
  }
-@@ -131,6 +205,8 @@ pub(crate) async fn notify_tool_aborted(
+@@ -131,10 +205,13 @@ pub(crate) async fn notify_tool_aborted(
          tool_name,
          source,
          ToolCallOutcome::Aborted,
@@ -3106,7 +3117,12 @@ index 82ba4a6c6..525fb5cb7 100644
      )
      .await;
  }
-@@ -142,6 +218,8 @@ async fn notify_tool_finish_parts(
+ 
++#[allow(clippy::too_many_arguments)]
+ async fn notify_tool_finish_parts(
+     session: &Session,
+     turn: &TurnContext,
+@@ -142,6 +219,8 @@ async fn notify_tool_finish_parts(
      tool_name: &ToolName,
      source: ToolCallSource,
      outcome: ToolCallOutcome,
@@ -3115,7 +3131,7 @@ index 82ba4a6c6..525fb5cb7 100644
  ) {
      for contributor in session.services.extensions.tool_lifecycle_contributors() {
          contributor
-@@ -154,9 +232,37 @@ async fn notify_tool_finish_parts(
+@@ -154,9 +233,37 @@ async fn notify_tool_finish_parts(
                  tool_name,
                  source: extension_tool_call_source(source.clone()),
                  outcome,
@@ -3153,7 +3169,7 @@ index 82ba4a6c6..525fb5cb7 100644
  }
  
  pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
-@@ -167,6 +273,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+@@ -167,6 +274,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
          ToolCallSource::CodeMode {
              cell_id,
              runtime_tool_call_id,
@@ -3205,7 +3221,7 @@ index 53ddadc40..c7aa895e0 100644
                  /*experimental_show_cell_overhead*/ false,
              );
 diff --git a/codex-rs/core/src/tools/registry.rs b/codex-rs/core/src/tools/registry.rs
-index 4d3c50c0f..24d90e60b 100644
+index 4d3c50c0f..fba0c4e32 100644
 --- a/codex-rs/core/src/tools/registry.rs
 +++ b/codex-rs/core/src/tools/registry.rs
 @@ -43,6 +43,8 @@ use futures::future::BoxFuture;
@@ -3282,15 +3298,14 @@ index 4d3c50c0f..24d90e60b 100644
                          let message = outcome.feedback_message.unwrap_or_else(|| {
                              "PostToolUse hook blocked the tool result".to_string()
                          });
-@@ -756,6 +776,18 @@ impl ToolRegistry {
+@@ -756,6 +776,17 @@ impl ToolRegistry {
                          });
                      }
                  }
-+                let result_sha256 = serde_json::to_vec(
-+                    &result.result.to_response_item("", &result.payload),
-+                )
-+                .ok()
-+                .map(|bytes| format!("{:x}", Sha256::digest(bytes)));
++                let result_sha256 =
++                    serde_json::to_vec(&result.result.to_response_item("", &result.payload))
++                        .ok()
++                        .map(|bytes| format!("{:x}", Sha256::digest(bytes)));
 +                notify_tool_finish_if_unclaimed(
 +                    &invocation,
 +                    call_state.as_deref(),
@@ -3301,7 +3316,7 @@ index 4d3c50c0f..24d90e60b 100644
                  tool.on_tool_result_accepted(&invocation, result.result.as_ref());
                  dispatch_trace.record_completed(
                      &invocation,
-@@ -766,6 +798,13 @@ impl ToolRegistry {
+@@ -766,6 +797,13 @@ impl ToolRegistry {
                  Ok(result)
              }
              Err(err) => {
@@ -3315,7 +3330,7 @@ index 4d3c50c0f..24d90e60b 100644
                  dispatch_trace.record_failed(&err);
                  Err(err)
              }
-@@ -777,12 +816,13 @@ async fn notify_tool_finish_if_unclaimed(
+@@ -777,12 +815,13 @@ async fn notify_tool_finish_if_unclaimed(
      invocation: &ToolInvocation,
      call_state: Option<&ToolCallState>,
      outcome: ToolCallOutcome,
@@ -3546,7 +3561,7 @@ index 297c84fa7..b2173ea62 100644
          sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
          additional_permissions: None,
 diff --git a/codex-rs/core/tests/suite/code_mode.rs b/codex-rs/core/tests/suite/code_mode.rs
-index 67c77fb90..a34581855 100644
+index 67c77fb90..c77d06092 100644
 --- a/codex-rs/core/tests/suite/code_mode.rs
 +++ b/codex-rs/core/tests/suite/code_mode.rs
 @@ -118,6 +118,7 @@ use std::sync::atomic::AtomicUsize;
@@ -3557,7 +3572,7 @@ index 67c77fb90..a34581855 100644
  use test_case::test_case;
  use tokio::sync::oneshot;
  use wiremock::Mock;
-@@ -758,6 +759,82 @@ text(JSON.stringify(await tools.exec_command({ cmd: "printf code_mode_exec_marke
+@@ -758,6 +759,85 @@ text(JSON.stringify(await tools.exec_command({ cmd: "printf code_mode_exec_marke
      Ok(())
  }
  
@@ -3586,26 +3601,29 @@ index 67c77fb90..a34581855 100644
 +        "read a bounded CSV in Python and chart it in Bun",
 +        &code,
 +        |config| {
-+            let drivers = std::path::PathBuf::from(
-+                std::env::var_os("CODEX_KERNEL_TEST_DRIVERS")
-+                    .expect("set CODEX_KERNEL_TEST_DRIVERS to a directory with python.py and bun.mjs"),
-+            );
-+            config.code_mode.kernels = [("python", vec!["python3", "-u", "-c"], "python.py"), ("bun", vec!["bun", "-e"], "bun.mjs")]
-+                .into_iter()
-+                .map(|(name, command, file)| {
-+                    let driver = drivers.join(file);
-+                    let digest = format!(
-+                        "{:x}",
-+                        <sha2::Sha256 as sha2::Digest>::digest(std::fs::read(&driver).unwrap())
-+                    );
-+                    codex_features::CodeModeKernelToml {
-+                        name: name.into(),
-+                        command: command.into_iter().map(str::to_owned).collect(),
-+                        driver,
-+                        driver_sha256: digest,
-+                    }
-+                })
-+                .collect();
++            let drivers =
++                std::path::PathBuf::from(std::env::var_os("CODEX_KERNEL_TEST_DRIVERS").expect(
++                    "set CODEX_KERNEL_TEST_DRIVERS to a directory with python.py and bun.mjs",
++                ));
++            config.code_mode.kernels = [
++                ("python", vec!["python3", "-u", "-c"], "python.py"),
++                ("bun", vec!["bun", "-e"], "bun.mjs"),
++            ]
++            .into_iter()
++            .map(|(name, command, file)| {
++                let driver = drivers.join(file);
++                let digest = format!(
++                    "{:x}",
++                    <sha2::Sha256 as sha2::Digest>::digest(std::fs::read(&driver).unwrap())
++                );
++                codex_features::CodeModeKernelToml {
++                    name: name.into(),
++                    command: command.into_iter().map(str::to_owned).collect(),
++                    driver,
++                    driver_sha256: digest,
++                }
++            })
++            .collect();
 +            config.features.enable(Feature::CodeModeHost).unwrap();
 +            config.code_mode.disable_in_process_fallback = true;
 +            config
@@ -4045,10 +4063,10 @@ index 000000000..3c8554a4c
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..62563a3ee
+index 000000000..73d398fbc
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,857 @@
+@@ -0,0 +1,869 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -4254,10 +4272,7 @@ index 000000000..62563a3ee
 +        status: http::StatusCode::BAD_REQUEST,
 +        url: None,
 +        headers: None,
-+        body: Some(format!(
-+            "local OMD request policy: {}",
-+            message.to_string()
-+        )),
++        body: Some(format!("local OMD request policy: {}", message.to_string())),
 +    }
 +}
 +
@@ -4290,7 +4305,11 @@ index 000000000..62563a3ee
 +                .as_bytes(),
 +        )
 +        .map_err(denied)?;
-+        if let Some(rates) = account.rates.as_ref().filter(|rates| !rates.included_subscription) {
++        if let Some(rates) = account
++            .rates
++            .as_ref()
++            .filter(|rates| !rates.included_subscription)
++        {
 +            if rates.max_output_tokens == 0 {
 +                return Err(denied("missing output ceiling"));
 +            }
@@ -4348,7 +4367,9 @@ index 000000000..62563a3ee
 +                .iter()
 +                .find(|route| route.name == selected)
 +                .filter(|_| account.owner == "lead")
-+                .ok_or_else(|| denied("mod selected a route that is not configured for this thread"))?;
++                .ok_or_else(|| {
++                    denied("mod selected a route that is not configured for this thread")
++                })?;
 +            value["model"] = route.model.clone().into();
 +            value["reasoning"]["effort"] = route.reasoning.clone().into();
 +            *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
@@ -4386,13 +4407,17 @@ index 000000000..62563a3ee
 +        };
 +        let requested = body
 +            .and_then(|body| serde_json::from_slice::<Value>(body.as_bytes()).ok())
-+            .and_then(|value| value.get("model").and_then(Value::as_str).map(str::to_owned));
++            .and_then(|value| {
++                value
++                    .get("model")
++                    .and_then(Value::as_str)
++                    .map(str::to_owned)
++            });
 +        let switched = (account.owner == "lead")
 +            .then(|| {
-+                account
-+                    .lead_routes
-+                    .iter()
-+                    .find(|route| Some(&route.model) == requested.as_ref() && route.model != account.model)
++                account.lead_routes.iter().find(|route| {
++                    Some(&route.model) == requested.as_ref() && route.model != account.model
++                })
 +            })
 +            .flatten()
 +            .cloned();
@@ -4633,9 +4658,11 @@ index 000000000..62563a3ee
 +
 +    fn requires_observation(&self, thread: Option<&str>) -> bool {
 +        thread.is_some_and(|thread| {
-+            self.0
-+                .lock()
-+                .map_or(true, |accounts| accounts.get(thread).is_some_and(|account| account.rates.is_some()))
++            self.0.lock().map_or(true, |accounts| {
++                accounts
++                    .get(thread)
++                    .is_some_and(|account| account.rates.is_some())
++            })
 +        })
 +    }
 +}
@@ -4742,7 +4769,10 @@ index 000000000..62563a3ee
 +                    0
 +                } else {
 +                    let numerator = [
-+                        (input - cached - cache_write, rates.input_microusd_per_million),
++                        (
++                            input - cached - cache_write,
++                            rates.input_microusd_per_million,
++                        ),
 +                        (cached, rates.cached_microusd_per_million),
 +                        (
 +                            cache_write,
@@ -4908,10 +4938,10 @@ index 000000000..62563a3ee
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..af5d7ad98
+index 000000000..9f09af8c3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,541 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -5079,9 +5109,7 @@ index 000000000..af5d7ad98
 +    accounts.0.lock().unwrap().insert("main".into(), lead);
 +    task.authorize_route("fixture", "fixture-model").unwrap();
 +    task.authorize_route("fixture", "fixture-fast").unwrap();
-+    request
-+        .headers
-+        .insert("thread-id", "main".parse().unwrap());
++    request.headers.insert("thread-id", "main".parse().unwrap());
 +    let mut prepared = Some(body.clone());
 +    accounts.prepare(&mut request, &mut prepared).unwrap();
 +    let routed: Value = serde_json::from_slice(prepared.as_ref().unwrap().as_bytes()).unwrap();
@@ -5114,9 +5142,7 @@ index 000000000..af5d7ad98
 +    lead.rates = None;
 +    lead.route = None;
 +    accounts.0.lock().unwrap().insert("main".into(), lead);
-+    request
-+        .headers
-+        .insert("thread-id", "main".parse().unwrap());
++    request.headers.insert("thread-id", "main".parse().unwrap());
 +    assert!(!accounts.requires_observation(Some("main")));
 +    assert!(accounts.requires_observation(Some("child")));
 +    let body = EncodedJsonBody::encode(&json!({"model":"any-model","stream":true,
@@ -5459,10 +5485,10 @@ index 000000000..af5d7ad98
 +}
 diff --git a/codex-rs/ext/omd/src/config.rs b/codex-rs/ext/omd/src/config.rs
 new file mode 100644
-index 000000000..412bc83dc
+index 000000000..ad823f056
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/config.rs
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,226 @@
 +use crate::accounting::Rates;
 +use codex_omd::Limits;
 +use codex_omd::WorkerLimits;
@@ -5576,9 +5602,9 @@ index 000000000..412bc83dc
 +fn name(value: &str) -> bool {
 +    !value.is_empty()
 +        && value.len() <= 64
-+        && value
-+            .bytes()
-+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'))
++        && value.bytes().all(|byte| {
++            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
++        })
 +}
 +
 +impl Default for HostConfig {
@@ -5632,7 +5658,11 @@ index 000000000..412bc83dc
 +            || self.protected.iter().any(|path| !external(path))
 +            || self.secret_refs.values().any(|path| !external(path))
 +            || self.toolchain_reads.iter().any(|path| !path.is_absolute())
-+            || self.contract.user.as_ref().is_some_and(|path| !path.is_absolute())
++            || self
++                .contract
++                .user
++                .as_ref()
++                .is_some_and(|path| !path.is_absolute())
 +        {
 +            return Err(format!("{HOST_CONFIG} limits or paths are invalid"));
 +        }
@@ -5647,10 +5677,14 @@ index 000000000..412bc83dc
 +                || route.tools.len() > 16
 +                || route.mods.len() > 16
 +                || route.mods.iter().any(|id| !name(id))
-+                || route.tools.iter().any(|tool| !crate::mods::read_only_sandbox_tool(tool))
-+                || route.grant.as_ref().is_some_and(|grant| {
-+                    !external(&grant.path) || grant.sha256.len() != 64
-+                })
++                || route
++                    .tools
++                    .iter()
++                    .any(|tool| !crate::mods::read_only_sandbox_tool(tool))
++                || route
++                    .grant
++                    .as_ref()
++                    .is_some_and(|grant| !external(&grant.path) || grant.sha256.len() != 64)
 +                || (route.rates.reservation_microusd == 0) != route.rates.included_subscription
 +                || route.roles.contains(&RouteRole::Worker) && route.grant.is_none()
 +            {
@@ -5660,11 +5694,17 @@ index 000000000..412bc83dc
 +        Ok(())
 +    }
 +
-+    pub(crate) fn route(&self, name: &str, role: RouteRole, mod_id: Option<&str>) -> Option<&Route> {
++    pub(crate) fn route(
++        &self,
++        name: &str,
++        role: RouteRole,
++        mod_id: Option<&str>,
++    ) -> Option<&Route> {
 +        self.routes.iter().find(|route| {
 +            route.name == name
 +                && route.roles.contains(&role)
-+                && mod_id.is_none_or(|id| route.mods.is_empty() || route.mods.iter().any(|m| m == id))
++                && mod_id
++                    .is_none_or(|id| route.mods.is_empty() || route.mods.iter().any(|m| m == id))
 +        })
 +    }
 +
@@ -6509,10 +6549,10 @@ index 000000000..3e510c527
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 000000000..11cc5b9d3
+index 000000000..b167671f0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,515 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -6598,10 +6638,11 @@ index 000000000..11cc5b9d3
 +    }) {
 +        return Err("non-read platform-default permissions are unsupported".into());
 +    }
-+    let minimal = policies
-+        .iter()
-+        .all(|p| p.has_full_disk_read_access() || p.include_platform_defaults()
-+            || p.can_read_local_path_with_cwd(Path::new("/"), cwd));
++    let minimal = policies.iter().all(|p| {
++        p.has_full_disk_read_access()
++            || p.include_platform_defaults()
++            || p.can_read_local_path_with_cwd(Path::new("/"), cwd)
++    });
 +    let stripped: Vec<_> = policies
 +        .into_iter()
 +        .zip([parent, requested])
@@ -6633,40 +6674,6 @@ index 000000000..11cc5b9d3
 +        &filesystem,
 +        result.network_sandbox_policy(),
 +    ))
-+}
-+
-+#[cfg(test)]
-+mod tests {
-+    use super::*;
-+
-+    #[test]
-+    fn isolated_commands_keep_platform_reads_without_reopening_parent_denials() {
-+        let temp = tempfile::tempdir().unwrap();
-+        let root = temp.path().canonicalize().unwrap();
-+        let path = AbsolutePathBuf::from_absolute_path_checked(&root).unwrap();
-+        let denied = root.join("private");
-+        let outside = tempfile::tempdir().unwrap();
-+        let outside_file = outside.path().canonicalize().unwrap().join("source");
-+        std::fs::write(&outside_file, "parent-source").unwrap();
-+        std::fs::create_dir(&denied).unwrap();
-+        let denial = Entry::new(FileSystemPath::Path { path: PathUri::from_host_native_path(&denied).unwrap() }, Access::Deny);
-+        let parent = PermissionProfile::from_runtime_permissions(&FileSystemSandboxPolicy::restricted(vec![
-+            Entry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Root }, Access::Read),
-+            Entry::new(FileSystemPath::Path { path: path.clone().into() }, Access::Write), denial.clone(),
-+        ]), NetworkSandboxPolicy::Restricted);
-+        let requested = PermissionProfile::from_runtime_permissions(&FileSystemSandboxPolicy::restricted(vec![
-+            Entry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Minimal }, Access::Read),
-+            Entry::new(FileSystemPath::Path { path: path.into() }, Access::Write),
-+        ]), NetworkSandboxPolicy::Restricted);
-+        let policy = intersect(&parent, &requested, &root).unwrap().file_system_sandbox_policy();
-+        assert!(policy.include_platform_defaults());
-+        assert!(policy.entries.contains(&denial));
-+        assert!(!policy.can_read_local_path_with_cwd(&denied, &root));
-+        let output = crate::generic_host::sandboxed_command(&policy, &root, &[], vec!["/bin/sh".into(), "-c".into(), "if cat \"$1\"; then exit 19; fi; printf sandbox-ok".into(), "check".into(), outside_file.display().to_string()],
-+            &codex_omd::host::ExecAccess { write: true, loopback: false, scratch: &root }).unwrap().output().unwrap();
-+        assert!(output.status.success(), "{:?}", output);
-+        assert_eq!(output.stdout, b"sandbox-ok");
-+    }
 +}
 +
 +pub(super) fn isolated(
@@ -6980,12 +6987,93 @@ index 000000000..11cc5b9d3
 +    )
 +    .await
 +}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn isolated_commands_keep_platform_reads_without_reopening_parent_denials() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap();
++        let path = AbsolutePathBuf::from_absolute_path_checked(&root).unwrap();
++        let denied = root.join("private");
++        let outside = tempfile::tempdir().unwrap();
++        let outside_file = outside.path().canonicalize().unwrap().join("source");
++        std::fs::write(&outside_file, "parent-source").unwrap();
++        std::fs::create_dir(&denied).unwrap();
++        let denial = Entry::new(
++            FileSystemPath::Path {
++                path: PathUri::from_host_native_path(&denied).unwrap(),
++            },
++            Access::Deny,
++        );
++        let parent = PermissionProfile::from_runtime_permissions(
++            &FileSystemSandboxPolicy::restricted(vec![
++                Entry::new(
++                    FileSystemPath::Special {
++                        value: FileSystemSpecialPath::Root,
++                    },
++                    Access::Read,
++                ),
++                Entry::new(
++                    FileSystemPath::Path {
++                        path: path.clone().into(),
++                    },
++                    Access::Write,
++                ),
++                denial.clone(),
++            ]),
++            NetworkSandboxPolicy::Restricted,
++        );
++        let requested = PermissionProfile::from_runtime_permissions(
++            &FileSystemSandboxPolicy::restricted(vec![
++                Entry::new(
++                    FileSystemPath::Special {
++                        value: FileSystemSpecialPath::Minimal,
++                    },
++                    Access::Read,
++                ),
++                Entry::new(FileSystemPath::Path { path: path.into() }, Access::Write),
++            ]),
++            NetworkSandboxPolicy::Restricted,
++        );
++        let policy = intersect(&parent, &requested, &root)
++            .unwrap()
++            .file_system_sandbox_policy();
++        assert!(policy.include_platform_defaults());
++        assert!(policy.entries.contains(&denial));
++        assert!(!policy.can_read_local_path_with_cwd(&denied, &root));
++        let output = crate::generic_host::sandboxed_command(
++            &policy,
++            &root,
++            &[],
++            vec![
++                "/bin/sh".into(),
++                "-c".into(),
++                "if cat \"$1\"; then exit 19; fi; printf sandbox-ok".into(),
++                "check".into(),
++                outside_file.display().to_string(),
++            ],
++            &codex_omd::host::ExecAccess {
++                write: true,
++                loopback: false,
++                scratch: &root,
++            },
++        )
++        .unwrap()
++        .output()
++        .unwrap();
++        assert!(output.status.success(), "{:?}", output);
++        assert_eq!(output.stdout, b"sandbox-ok");
++    }
++}
 diff --git a/codex-rs/ext/omd/src/generic_host.rs b/codex-rs/ext/omd/src/generic_host.rs
 new file mode 100644
-index 000000000..c3cd926a9
+index 000000000..b87d094a1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/generic_host.rs
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,233 @@
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_omd::data_store::Origin;
@@ -7041,10 +7129,12 @@ index 000000000..c3cd926a9
 +) -> Result<Command, String> {
 +    #[cfg(target_os = "macos")]
 +    {
-+        use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
 +        use codex_protocol::config_types::WindowsSandboxLevel;
 +        use codex_protocol::models::PermissionProfile;
-+        use codex_sandboxing::{SandboxCommand, SandboxManager, SandboxTransformRequest, SandboxType};
++        use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
++        use codex_sandboxing::{
++            SandboxCommand, SandboxManager, SandboxTransformRequest, SandboxType,
++        };
 +        use codex_utils_path_uri::PathUri;
 +        let mut scope = if access.write {
 +            policy.clone()
@@ -7067,23 +7157,32 @@ index 000000000..c3cd926a9
 +        });
 +        let (program, arguments) = argv.split_first().ok_or("exec_command_empty")?;
 +        let cwd = PathUri::from_host_native_path(repository).map_err(|error| error.to_string())?;
-+        let permissions = PermissionProfile::from_runtime_permissions(&scope, NetworkSandboxPolicy::Restricted);
-+        let transformed = SandboxManager::for_file_system_helpers().transform(SandboxTransformRequest {
-+            command: SandboxCommand {
-+                program: program.into(), args: arguments.to_vec(), cwd: cwd.clone(),
-+                env: Default::default(), managed_network: loopback, additional_permissions: None,
-+            },
-+            permissions: &permissions,
-+            sandbox: SandboxType::MacosSeatbelt,
-+            sandbox_policy_cwd: &cwd,
-+            enforce_managed_network: access.loopback,
-+            environment_id: None,
-+            network: None,
-+            sandbox_exe: None,
-+            use_legacy_landlock: false,
-+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
-+        }).map_err(|error| error.to_string())?;
-+        if transformed.command.first().map(String::as_str) != Some(MACOS_PATH_TO_SEATBELT_EXECUTABLE) {
++        let permissions =
++            PermissionProfile::from_runtime_permissions(&scope, NetworkSandboxPolicy::Restricted);
++        let transformed = SandboxManager::for_file_system_helpers()
++            .transform(SandboxTransformRequest {
++                command: SandboxCommand {
++                    program: program.into(),
++                    args: arguments.to_vec(),
++                    cwd: cwd.clone(),
++                    env: Default::default(),
++                    managed_network: loopback,
++                    additional_permissions: None,
++                },
++                permissions: &permissions,
++                sandbox: SandboxType::MacosSeatbelt,
++                sandbox_policy_cwd: &cwd,
++                enforce_managed_network: access.loopback,
++                environment_id: None,
++                network: None,
++                sandbox_exe: None,
++                use_legacy_landlock: false,
++                windows_sandbox_level: WindowsSandboxLevel::Disabled,
++            })
++            .map_err(|error| error.to_string())?;
++        if transformed.command.first().map(String::as_str)
++            != Some(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
++        {
 +            return Err("exec_sandbox_unavailable".into());
 +        }
 +        sandboxed_seatbelt(
@@ -7132,9 +7231,15 @@ index 000000000..c3cd926a9
 +        return Ok(());
 +    }
 +    let grants = grants.ok_or("host_caller_inactive")?;
-+    let fields = request.arguments.as_object().ok_or("process_arguments_invalid")?;
++    let fields = request
++        .arguments
++        .as_object()
++        .ok_or("process_arguments_invalid")?;
 +    if fields.get("network").and_then(Value::as_str) == Some("loopback")
-+        && !grants.capabilities.iter().any(|capability| capability == "network")
++        && !grants
++            .capabilities
++            .iter()
++            .any(|capability| capability == "network")
 +    {
 +        return Err("capability_denied: network".into());
 +    }
@@ -7159,7 +7264,10 @@ index 000000000..c3cd926a9
 +pub(crate) fn event_allows(event: &str, operation: &str) -> bool {
 +    LIFECYCLE_EVENTS.contains(&event)
 +        || event == "workspace_pre_rename"
-+            && matches!(operation, "workspace.read" | "workspace.stat" | "workspace.list")
++            && matches!(
++                operation,
++                "workspace.read" | "workspace.stat" | "workspace.list"
++            )
 +}
 +
 +#[allow(clippy::too_many_arguments)]
@@ -7201,37 +7309,71 @@ index 000000000..c3cd926a9
 +}
 diff --git a/codex-rs/ext/omd/src/ledger.rs b/codex-rs/ext/omd/src/ledger.rs
 new file mode 100644
-index 000000000..00a8145e6
+index 000000000..1ea18208f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/ledger.rs
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,129 @@
 +use super::*;
 +use std::path::Path;
 +
-+pub(crate) fn open(sessions: &Path, repository: &str, thread: ThreadId, limits: codex_omd::Limits, resumed: bool) -> Result<Task, String> {
++pub(crate) fn open(
++    sessions: &Path,
++    repository: &str,
++    thread: ThreadId,
++    limits: codex_omd::Limits,
++    resumed: bool,
++) -> Result<Task, String> {
 +    let directory = sessions.join(format!("ledger-{repository}-{thread}"));
 +    let identity = json!({"schema":1,"repository":repository,"thread":thread});
 +    match std::fs::symlink_metadata(&directory) {
 +        Ok(metadata) => {
-+            if !metadata.is_dir() || directory.canonicalize().map_err(|e| e.to_string())? != directory {
++            if !metadata.is_dir()
++                || directory.canonicalize().map_err(|e| e.to_string())? != directory
++            {
 +                return Err("ledger_directory_invalid".into());
 +            }
-+            if !resumed { return Err("ledger_requires_explicit_thread_resume".into()); }
-+            let saved = codex_omd::Snapshot::capture(&directory, &std::collections::BTreeSet::from(["identity.json".into()]), 1024)
-+                .map_err(|e| e.to_string())?;
-+            let saved: Value = serde_json::from_slice(&saved.files.get("identity.json").ok_or("ledger_identity_missing")?.bytes)
-+                .map_err(|e| e.to_string())?;
-+            if saved != identity { return Err("ledger_identity_changed".into()); }
++            if !resumed {
++                return Err("ledger_requires_explicit_thread_resume".into());
++            }
++            let saved = codex_omd::Snapshot::capture(
++                &directory,
++                &std::collections::BTreeSet::from(["identity.json".into()]),
++                1024,
++            )
++            .map_err(|e| e.to_string())?;
++            let saved: Value = serde_json::from_slice(
++                &saved
++                    .files
++                    .get("identity.json")
++                    .ok_or("ledger_identity_missing")?
++                    .bytes,
++            )
++            .map_err(|e| e.to_string())?;
++            if saved != identity {
++                return Err("ledger_identity_changed".into());
++            }
 +            Task::open(limits, directory, Some(&thread.to_string())).map_err(|e| e.to_string())
 +        }
 +        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
 +            let prefix = format!("{thread}-");
-+            if resumed && std::fs::read_dir(sessions).map_err(|e| e.to_string())?
-+                .any(|entry| entry.is_ok_and(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))) {
++            if resumed
++                && std::fs::read_dir(sessions)
++                    .map_err(|e| e.to_string())?
++                    .any(|entry| {
++                        entry.is_ok_and(|entry| {
++                            entry.file_name().to_string_lossy().starts_with(&prefix)
++                        })
++                    })
++            {
 +                return Err("legacy_ledger_requires_explicit_migration".into());
 +            }
 +            let task = Task::create(limits, directory.clone()).map_err(|e| e.to_string())?;
-+            persist(&directory, "identity.json", &serde_json::to_vec(&identity).map_err(|e| e.to_string())?, false)?;
++            persist(
++                &directory,
++                "identity.json",
++                &serde_json::to_vec(&identity).map_err(|e| e.to_string())?,
++                false,
++            )?;
 +            Ok(task)
 +        }
 +        Err(error) => Err(error.to_string()),
@@ -7243,7 +7385,13 @@ index 000000000..00a8145e6
 +    use super::*;
 +
 +    fn limits() -> codex_omd::Limits {
-+        codex_omd::Limits { requests: 3, exposure_microusd: 100, seconds: 300, concurrent_workers: 2, max_depth: 2 }
++        codex_omd::Limits {
++            requests: 3,
++            exposure_microusd: 100,
++            seconds: 300,
++            concurrent_workers: 2,
++            max_depth: 2,
++        }
 +    }
 +
 +    #[test]
@@ -7255,7 +7403,14 @@ index 000000000..00a8145e6
 +        task.authorize_route("fixture", "worker").unwrap();
 +        let request = task.admit("lead", "fixture", "worker", 30).unwrap();
 +        task.dispatch(&request, || Ok(())).unwrap();
-+        task.observe("lead", "fixture", "main", Some(json!({"input_tokens":10})), "completed").unwrap();
++        task.observe(
++            "lead",
++            "fixture",
++            "main",
++            Some(json!({"input_tokens":10})),
++            "completed",
++        )
++        .unwrap();
 +        drop(task);
 +        assert!(open(&root, "repository", thread, limits(), false).is_err());
 +        let task = open(&root, "repository", thread, limits(), true).unwrap();
@@ -7267,7 +7422,9 @@ index 000000000..00a8145e6
 +        let mut changed = limits();
 +        changed.requests += 1;
 +        assert!(open(&root, "repository", thread, changed, true).is_err());
-+        let path = root.join(format!("ledger-repository-{thread}")).join("identity.json");
++        let path = root
++            .join(format!("ledger-repository-{thread}"))
++            .join("identity.json");
 +        std::fs::write(&path, b"{}").unwrap();
 +        assert!(open(&root, "repository", thread, limits(), true).is_err());
 +    }
@@ -7287,10 +7444,10 @@ index 000000000..00a8145e6
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..fc5a1e956
+index 000000000..5357aff19
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,505 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -7387,12 +7544,14 @@ index 000000000..fc5a1e956
 +    repository_identity: String,
 +}
 +
-+static WORKSPACE_OPERATIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
-+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
++static WORKSPACE_OPERATIONS: std::sync::LazyLock<
++    std::sync::Mutex<std::collections::BTreeSet<String>>,
++> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
 +
 +impl Drop for OperationGuard<'_> {
 +    fn drop(&mut self) {
-+        self.operation.store(false, std::sync::atomic::Ordering::Release);
++        self.operation
++            .store(false, std::sync::atomic::Ordering::Release);
 +        if let Ok(mut active) = WORKSPACE_OPERATIONS.lock() {
 +            active.remove(&self.repository_identity);
 +        }
@@ -7526,14 +7685,30 @@ index 000000000..fc5a1e956
 +            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
 +            Err(error) => return Err(error.to_string()),
 +        }
-+        if std::fs::symlink_metadata(&sessions).map_err(|e| e.to_string())?.is_symlink()
-+            || sessions.canonicalize().map_err(|e| e.to_string())? != sessions {
++        if std::fs::symlink_metadata(&sessions)
++            .map_err(|e| e.to_string())?
++            .is_symlink()
++            || sessions.canonicalize().map_err(|e| e.to_string())? != sessions
++        {
 +            return Err("session_store_not_canonical".into());
 +        }
-+        let task = Arc::new(ledger::open(&sessions, &self.repository_identity, thread, self.config.limits.clone(), resumed)?);
-+        let scratch = self.repository.join(".omd").join(format!("session-{thread}"));
++        let task = Arc::new(ledger::open(
++            &sessions,
++            &self.repository_identity,
++            thread,
++            self.config.limits.clone(),
++            resumed,
++        )?);
++        let scratch = self
++            .repository
++            .join(".omd")
++            .join(format!("session-{thread}"));
 +        if resumed && scratch.symlink_metadata().is_ok() {
-+            codex_omd::cleanup_owned_directory(scratch.parent().ok_or("scratch_parent_missing")?, &scratch).map_err(|e| e.to_string())?;
++            codex_omd::cleanup_owned_directory(
++                scratch.parent().ok_or("scratch_parent_missing")?,
++                &scratch,
++            )
++            .map_err(|e| e.to_string())?;
 +        }
 +        let evidence = sessions.join(format!("{thread}-{}-{}", self.epoch, ThreadId::new()));
 +        std::fs::create_dir(&evidence).map_err(|e| e.to_string())?;
@@ -7543,7 +7718,10 @@ index 000000000..fc5a1e956
 +            repository_identity: self.repository_identity.clone(),
 +            scratch,
 +            contract: std::sync::Mutex::new(contract::SessionContract::default()),
-+            contract_state: sessions.join(format!("contract-{}-{thread}.json", self.repository_identity)),
++            contract_state: sessions.join(format!(
++                "contract-{}-{thread}.json",
++                self.repository_identity
++            )),
 +            operation: std::sync::atomic::AtomicBool::new(false),
 +            processes: Arc::new(managed_process::ManagedProcesses::default()),
 +            data: mods::DataScope::default(),
@@ -7653,16 +7831,29 @@ index 000000000..fc5a1e956
 +            .map_err(|_| "contract_lock_poisoned")?
 +            .status();
 +        let bytes = serde_json::to_vec(&status).map_err(|error| error.to_string())?;
-+        if status["status"] == "unavailable" { return Err("contract_unavailable".into()); }
++        if status["status"] == "unavailable" {
++            return Err("contract_unavailable".into());
++        }
 +        let result = if bytes.len() > contract::STATE_BYTES {
 +            Err("contract_state_byte_limit".into())
-+        } else { persist(
-+            self.contract_state.parent().ok_or("contract_state_parent_missing")?,
-+            self.contract_state.file_name().and_then(|name| name.to_str()).ok_or("contract_state_name_invalid")?,
-+            &bytes, true,
-+        ) };
++        } else {
++            persist(
++                self.contract_state
++                    .parent()
++                    .ok_or("contract_state_parent_missing")?,
++                self.contract_state
++                    .file_name()
++                    .and_then(|name| name.to_str())
++                    .ok_or("contract_state_name_invalid")?,
++                &bytes,
++                true,
++            )
++        };
 +        if let Err(error) = &result {
-+            self.contract.lock().map_err(|_| "contract_lock_poisoned")?.invalidate(error.clone());
++            self.contract
++                .lock()
++                .map_err(|_| "contract_lock_poisoned")?
++                .invalidate(error.clone());
 +        }
 +        result?;
 +        persist(&self.evidence, "contract.json", &bytes, false)
@@ -7764,10 +7955,10 @@ index 000000000..fc5a1e956
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..5c392f61d
+index 000000000..f66e1bc43
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,800 @@
+@@ -0,0 +1,782 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -7805,15 +7996,24 @@ index 000000000..5c392f61d
 +
 +type Key = (String, u64, String);
 +type Session = Arc<Mutex<ManagedProcess>>;
++type WriteRequest = (Vec<Value>, mpsc::SyncSender<Result<(), String>>);
 +
 +#[derive(Default)]
 +pub(super) struct ManagedProcesses {
 +    records: Mutex<BTreeMap<Key, Session>>,
 +}
 +
++#[derive(Clone, Copy)]
++pub(super) struct ProcessOwner<'a> {
++    pub id: &'a str,
++    pub generation: u64,
++    pub repository: &'a Path,
++    pub policy: &'a FileSystemSandboxPolicy,
++}
++
 +struct ManagedProcess {
 +    child: Child,
-+    sender: mpsc::SyncSender<(Vec<Value>, mpsc::SyncSender<Result<(), String>>)>,
++    sender: mpsc::SyncSender<WriteRequest>,
 +    receiver: mpsc::Receiver<io::Result<Value>>,
 +    scratch: PathBuf,
 +    last_used: Instant,
@@ -8008,14 +8208,17 @@ index 000000000..5c392f61d
 +
 +    pub fn call(
 +        &self,
-+        id: &str,
-+        generation: u64,
-+        repository: &Path,
-+        policy: &FileSystemSandboxPolicy,
++        owner: ProcessOwner,
 +        operation: &str,
 +        arguments: Value,
 +        active: impl Fn() -> bool,
 +    ) -> Result<Value, String> {
++        let ProcessOwner {
++            id,
++            generation,
++            repository,
++            policy,
++        } = owner;
 +        if !active()
 +            || !repository.is_absolute()
 +            || repository
@@ -8209,8 +8412,7 @@ index 000000000..5c392f61d
 +                            return Err(error.to_owned());
 +                        }
 +                    };
-+                    let (writer_sender, writer_receiver) =
-+                        mpsc::sync_channel::<(Vec<Value>, mpsc::SyncSender<Result<(), String>>)>(1);
++                    let (writer_sender, writer_receiver) = mpsc::sync_channel::<WriteRequest>(1);
 +                    std::thread::spawn(move || {
 +                        while let Ok((messages, reply)) = writer_receiver.recv() {
 +                            let result = messages
@@ -8400,24 +8602,19 @@ index 000000000..5c392f61d
 +        let repository = directory.path().canonicalize().unwrap();
 +        let processes = ManagedProcesses::default();
 +        let policy = FileSystemSandboxPolicy::read_only();
++        let owner = ProcessOwner {
++            id: "fixture",
++            generation: 1,
++            repository: &repository,
++            policy: &policy,
++        };
 +        let found = processes
-+            .call(
-+                "fixture",
-+                1,
-+                &repository,
-+                &policy,
-+                "process.which",
-+                json!({"names":["cat"]}),
-+                || true,
-+            )
++            .call(owner, "process.which", json!({"names":["cat"]}), || true)
 +            .unwrap();
 +        let cat = found["found"].as_array().unwrap().first().unwrap();
 +        let started = processes
 +            .call(
-+                "fixture",
-+                1,
-+                &repository,
-+                &policy,
++                owner,
 +                "process.start",
 +                json!({"session":"framed","name":"cat","path":cat["path"],"sha256":cat["sha256"]}),
 +                || true,
@@ -8436,16 +8633,16 @@ index 000000000..5c392f61d
 +            0o700
 +        );
 +        let answer = processes
-+            .call("fixture", 1, &repository, &policy, "process.exchange", json!({"session":"framed","send":[{"jsonrpc":"2.0","id":7,"method":"hello"}],"wait_ms":1000}), || true)
++            .call(owner, "process.exchange", json!({"session":"framed","send":[{"jsonrpc":"2.0","id":7,"method":"hello"}],"wait_ms":1000}), || true)
 +            .unwrap();
 +        assert_eq!(answer["messages"][0]["method"], "hello");
 +        assert_eq!(
 +            processes
 +                .call(
-+                    "other",
-+                    1,
-+                    &repository,
-+                    &policy,
++                    ProcessOwner {
++                        id: "other",
++                        ..owner
++                    },
 +                    "process.status",
 +                    json!({"session":"framed"}),
 +                    || true
@@ -8455,15 +8652,7 @@ index 000000000..5c392f61d
 +        );
 +        assert_eq!(
 +            processes
-+                .call(
-+                    "fixture",
-+                    1,
-+                    &repository,
-+                    &policy,
-+                    "process.stop",
-+                    json!({"session":"framed"}),
-+                    || true
-+                )
++                .call(owner, "process.stop", json!({"session":"framed"}), || true)
 +                .unwrap()["stopped"],
 +            true
 +        );
@@ -8475,24 +8664,19 @@ index 000000000..5c392f61d
 +        let repository = directory.path().canonicalize().unwrap();
 +        let processes = ManagedProcesses::default();
 +        let policy = FileSystemSandboxPolicy::read_only();
++        let owner = ProcessOwner {
++            id: "fixture",
++            generation: 1,
++            repository: &repository,
++            policy: &policy,
++        };
 +        let found = processes
-+            .call(
-+                "fixture",
-+                1,
-+                &repository,
-+                &policy,
-+                "process.which",
-+                json!({"names":["sleep"]}),
-+                || true,
-+            )
++            .call(owner, "process.which", json!({"names":["sleep"]}), || true)
 +            .unwrap();
 +        let sleep = found["found"].as_array().unwrap().first().unwrap();
 +        processes
 +            .call(
-+                "fixture",
-+                1,
-+                &repository,
-+                &policy,
++                 owner,
 +                "process.start",
 +                json!({"session":"blocked","name":"sleep","path":sleep["path"],"sha256":sleep["sha256"],"arguments":["20"]}),
 +                || true,
@@ -8501,10 +8685,7 @@ index 000000000..5c392f61d
 +        let started = Instant::now();
 +        let error = processes
 +            .call(
-+                "fixture",
-+                1,
-+                &repository,
-+                &policy,
++                owner,
 +                "process.exchange",
 +                json!({"session":"blocked","send":[{"data":"x".repeat(256 * 1024)}],"wait_ms":0}),
 +                || started.elapsed() < Duration::from_millis(100),
@@ -8515,10 +8696,7 @@ index 000000000..5c392f61d
 +        assert_eq!(
 +            processes
 +                .call(
-+                    "fixture",
-+                    1,
-+                    &repository,
-+                    &policy,
++                    owner,
 +                    "process.status",
 +                    json!({"session":"blocked"}),
 +                    || true,
@@ -8534,16 +8712,14 @@ index 000000000..5c392f61d
 +        let repository = directory.path().canonicalize().unwrap();
 +        let processes = ManagedProcesses::default();
 +        let policy = FileSystemSandboxPolicy::read_only();
++        let owner = ProcessOwner {
++            id: "fixture",
++            generation: 1,
++            repository: &repository,
++            policy: &policy,
++        };
 +        let found = processes
-+            .call(
-+                "fixture",
-+                1,
-+                &repository,
-+                &policy,
-+                "process.which",
-+                json!({"names":["cat"]}),
-+                || true,
-+            )
++            .call(owner, "process.which", json!({"names":["cat"]}), || true)
 +            .unwrap();
 +        let cat = found["found"].as_array().unwrap().first().unwrap();
 +        for environment in [
@@ -8554,10 +8730,7 @@ index 000000000..5c392f61d
 +            assert_eq!(
 +                processes
 +                    .call(
-+                        "fixture",
-+                        1,
-+                        &repository,
-+                        &policy,
++                         owner,
 +                        "process.start",
 +                        json!({"session":"rejected","name":"cat","path":cat["path"],"sha256":cat["sha256"],"environment":environment}),
 +                        || true,
@@ -8570,15 +8743,15 @@ index 000000000..5c392f61d
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..a050deb16
+index 000000000..73e4d3ad7
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1344 @@
+@@ -0,0 +1,1431 @@
 +mod agents;
 +mod evidence;
 +mod operations;
-+mod snapshots;
 +pub(crate) mod services;
++mod snapshots;
 +mod tools;
 +mod view;
 +
@@ -8757,9 +8930,10 @@ index 000000000..a050deb16
 +        |id| {
 +            let mut value = payload.clone();
 +            if let Some(fields) = private.get(id).and_then(Value::as_object)
-+                && let Some(object) = value.as_object_mut() {
-+                    object.extend(fields.clone());
-+                }
++                && let Some(object) = value.as_object_mut()
++            {
++                object.extend(fields.clone());
++            }
 +            value
 +        },
 +        active,
@@ -8852,7 +9026,14 @@ index 000000000..a050deb16
 +    Ok(())
 +}
 +
-+fn publish(runtime: &mut ModHost, host: &Host, views: &view::Views, event: &str, ledger: Value, active: impl Fn() -> bool) {
++fn publish(
++    runtime: &mut ModHost,
++    host: &Host,
++    views: &view::Views,
++    event: &str,
++    ledger: Value,
++    active: impl Fn() -> bool,
++) {
 +    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime)});
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
 +    let status = runtime.status();
@@ -8967,7 +9148,12 @@ index 000000000..a050deb16
 +        }
 +    }
 +
-+    async fn event(&self, event: &'static str, payload: Value, lead: Option<&Lead>) -> Vec<PromptFragment> {
++    async fn event(
++        &self,
++        event: &'static str,
++        payload: Value,
++        lead: Option<&Lead>,
++    ) -> Vec<PromptFragment> {
 +        self.event_with_private(event, payload, lead, BTreeMap::new())
 +            .await
 +    }
@@ -8995,7 +9181,10 @@ index 000000000..a050deb16
 +            let Ok(mut runtime) = runtime.lock() else {
 +                return Vec::new();
 +            };
-+            codex_omd::observe_workspace_changes(&host.repository, runtime.has_event("workspace_change"));
++            codex_omd::observe_workspace_changes(
++                &host.repository,
++                runtime.has_event("workspace_change"),
++            );
 +            let facts = facts(&runtime);
 +            let mut fragments = event_fragments_scoped(
 +                &mut runtime,
@@ -9011,7 +9200,9 @@ index 000000000..a050deb16
 +                            request.operation
 +                        )));
 +                    }
-+                    forward(&requests, &facts, id, request, &|| !flag.load(Ordering::Acquire))
++                    forward(&requests, &facts, id, request, &|| {
++                        !flag.load(Ordering::Acquire)
++                    })
 +                },
 +            );
 +            publish(&mut runtime, &host, &views, event, ledger, || {
@@ -9068,23 +9259,33 @@ index 000000000..a050deb16
 +            let (status, changes, reason) = match changes {
 +                Ok(changes)
 +                    if changes.len() > 128
-+                        || changes.iter().map(|change| change.path.len()).sum::<usize>() > 16_000 =>
++                        || changes
++                            .iter()
++                            .map(|change| change.path.len())
++                            .sum::<usize>()
++                            > 16_000 =>
 +                {
-+                    ("unavailable", Vec::new(), Some("workspace_change_batch_limit".to_owned()))
-+                }
-+                Ok(changes) if changes.is_empty() => return,
-+                Ok(changes) => match crate::workspace_operations::WorkspaceAuthority::for_lead(lead)
-+                    .await
-+                    .and_then(|authority| authority.visible_changes(changes))
-+                {
-+                    Ok(changes) if changes.is_empty() => return,
-+                    Ok(changes) => ("observed", changes, None),
-+                    Err(_) => (
++                    (
 +                        "unavailable",
 +                        Vec::new(),
-+                        Some("workspace_change_scope_unavailable".to_owned()),
-+                    ),
-+                },
++                        Some("workspace_change_batch_limit".to_owned()),
++                    )
++                }
++                Ok(changes) if changes.is_empty() => return,
++                Ok(changes) => {
++                    match crate::workspace_operations::WorkspaceAuthority::for_lead(lead)
++                        .await
++                        .and_then(|authority| authority.visible_changes(changes))
++                    {
++                        Ok(changes) if changes.is_empty() => return,
++                        Ok(changes) => ("observed", changes, None),
++                        Err(_) => (
++                            "unavailable",
++                            Vec::new(),
++                            Some("workspace_change_scope_unavailable".to_owned()),
++                        ),
++                    }
++                }
 +                Err(error) => ("unavailable", Vec::new(), Some(error)),
 +            };
 +            self.event(
@@ -9138,7 +9339,11 @@ index 000000000..a050deb16
 +        .await;
 +    }
 +
-+    fn compaction_decision(&self, runtime: &mut ModHost, config: &mut Config) -> Result<(), String> {
++    fn compaction_decision(
++        &self,
++        runtime: &mut ModHost,
++        config: &mut Config,
++    ) -> Result<(), String> {
 +        let compaction = runtime.event(
 +            "compaction",
 +            json!({"token_limit":config.model_auto_compact_token_limit,"context_window":config.model_context_window}),
@@ -9251,7 +9456,9 @@ index 000000000..a050deb16
 +                Ok(value) if value.is_null() => continue,
 +                Ok(value) => value,
 +                Err(error) => {
-+                    diagnostic = Some(format!("mod_routing_failed: {id}: {error}; configured model retained"));
++                    diagnostic = Some(format!(
++                        "mod_routing_failed: {id}: {error}; configured model retained"
++                    ));
 +                    continue;
 +                }
 +            };
@@ -9261,15 +9468,26 @@ index 000000000..a050deb16
 +                break;
 +            }
 +            match value.get("route").and_then(Value::as_str) {
-+                Some(name) if value.as_object().is_some_and(|object| object.len() == 1)
-+                    && self.host.config.route(name, config::RouteRole::Lead, Some(&id)).is_some() =>
++                Some(name)
++                    if value.as_object().is_some_and(|object| object.len() == 1)
++                        && self
++                            .host
++                            .config
++                            .route(name, config::RouteRole::Lead, Some(&id))
++                            .is_some() =>
 +                {
 +                    selected = Some(name.to_owned());
 +                }
-+                _ => diagnostic = Some(format!("mod_route_not_configured: {id}; configured model retained")),
++                _ => {
++                    diagnostic = Some(format!(
++                        "mod_route_not_configured: {id}; configured model retained"
++                    ))
++                }
 +            }
 +        }
-+        if let Some(route) = selected.and_then(|name| self.host.config.route(&name, config::RouteRole::Lead, None)) {
++        if let Some(route) =
++            selected.and_then(|name| self.host.config.route(&name, config::RouteRole::Lead, None))
++        {
 +            config.model = Some(route.model.clone());
 +            config.model_provider_id = route.provider.clone();
 +            config.model_provider = config
@@ -9292,12 +9510,16 @@ index 000000000..a050deb16
 +        }
 +        let mut denies = Vec::new();
 +        for path in self.host.protected_paths() {
-+            if path.canonicalize().map_err(|_| "protected_path_unavailable")? != path
++            if path
++                .canonicalize()
++                .map_err(|_| "protected_path_unavailable")?
++                != path
 +                || path.starts_with(&self.host.repository)
 +            {
 +                return Err("protected_mod_path_must_be_canonical_and_external".into());
 +            }
-+            let path = AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
++            let path =
++                AbsolutePathBuf::from_absolute_path_checked(&path).map_err(|e| e.to_string())?;
 +            denies.push(FileSystemSandboxEntry::new(
 +                FileSystemPath::Path { path: path.into() },
 +                FileSystemAccessMode::Deny,
@@ -9305,7 +9527,8 @@ index 000000000..a050deb16
 +        }
 +        config.model_provider.supports_websockets = false;
 +        let mut filesystem = profile.file_system_sandbox_policy();
-+        filesystem.preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
++        filesystem
++            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
 +        let protected = PermissionProfile::from_runtime_permissions(
 +            &filesystem,
 +            profile.network_sandbox_policy(),
@@ -9317,7 +9540,9 @@ index 000000000..a050deb16
 +            .insert("OMD_NARROW_SANDBOX".into(), "1".into());
 +        config
 +            .permissions
-+            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(protected))
++            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(
++                protected,
++            ))
 +            .map_err(|e| e.to_string())?;
 +        let mut runtime = match self.runtime.try_lock() {
 +            Ok(runtime) => runtime,
@@ -9335,7 +9560,11 @@ index 000000000..a050deb16
 +        input: codex_extension_api::TurnAbortInput<'a>,
 +    ) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
++            let Some(lead) = input
++                .thread_store
++                .get::<Lead>()
++                .filter(|lead| lead.owner == "lead")
++            else {
 +                return;
 +            };
 +            lead.session.processes.cleanup();
@@ -9370,7 +9599,11 @@ index 000000000..a050deb16
 +        input: codex_extension_api::TurnStopInput<'a>,
 +    ) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
++            let Some(lead) = input
++                .thread_store
++                .get::<Lead>()
++                .filter(|lead| lead.owner == "lead")
++            else {
 +                return;
 +            };
 +            let Some(turn) = self.take_turn(&lead.thread) else {
@@ -9499,7 +9732,11 @@ index 000000000..a050deb16
 +
 +    fn on_turn_start<'a>(&'a self, input: TurnStartInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
++            let Some(lead) = input
++                .thread_store
++                .get::<Lead>()
++                .filter(|lead| lead.owner == "lead")
++            else {
 +                return;
 +            };
 +            let runtime = self.runtime.clone();
@@ -9540,7 +9777,11 @@ index 000000000..a050deb16
 +        input: TurnContextContributionInput<'a>,
 +    ) -> ExtensionFuture<'a, Vec<PromptFragment>> {
 +        Box::pin(async move {
-+            let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") else {
++            let Some(lead) = input
++                .thread_store
++                .get::<Lead>()
++                .filter(|lead| lead.owner == "lead")
++            else {
 +                return Vec::new();
 +            };
 +            if let Some(profile) = input.permission_profile {
@@ -9589,9 +9830,9 @@ index 000000000..a050deb16
 +                return;
 +            }
 +            let parent = match input.session_source {
-+                SessionSource::SubAgent(SubAgentSource::ThreadSpawn { parent_thread_id, .. }) => {
-+                    Some(*parent_thread_id)
-+                }
++                SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
++                    parent_thread_id, ..
++                }) => Some(*parent_thread_id),
 +                _ => None,
 +            };
 +            let parent_session = parent.and_then(|parent| {
@@ -9601,12 +9842,19 @@ index 000000000..a050deb16
 +                    .get(&parent.to_string())
 +                    .and_then(std::sync::Weak::upgrade)
 +            });
-+            let Some((owner, depth)) = thread_owner(&input, thread, parent_session.is_some()) else {
++            let Some((owner, depth)) = thread_owner(&input, thread, parent_session.is_some())
++            else {
 +                return;
 +            };
 +            let session = match parent_session {
 +                Some(session) => session,
-+                None => match self.host.open_session(thread, input.thread_store.get::<codex_extension_api::ResumedThread>().is_some()) {
++                None => match self.host.open_session(
++                    thread,
++                    input
++                        .thread_store
++                        .get::<codex_extension_api::ResumedThread>()
++                        .is_some(),
++                ) {
 +                    Ok(session) => session,
 +                    Err(error) => {
 +                        self.views.diagnostic(
@@ -9681,7 +9929,11 @@ index 000000000..a050deb16
 +        input: ThreadReadyInput<'a, Config>,
 +    ) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
++            if let Some(lead) = input
++                .thread_store
++                .get::<Lead>()
++                .filter(|lead| lead.owner == "lead")
++            {
 +                self.event("start", Value::Null, Some(&*lead)).await;
 +            }
 +        })
@@ -9689,7 +9941,11 @@ index 000000000..a050deb16
 +
 +    fn on_thread_resume<'a>(&'a self, input: ThreadResumeInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
++            if let Some(lead) = input
++                .thread_store
++                .get::<Lead>()
++                .filter(|lead| lead.owner == "lead")
++            {
 +                self.event(
 +                    "session",
 +                    json!({"phase":"resume","thread_id":lead.thread.to_string()}),
@@ -9703,7 +9959,11 @@ index 000000000..a050deb16
 +
 +    fn on_thread_idle<'a>(&'a self, input: ThreadIdleInput<'a>) -> ExtensionFuture<'a, ()> {
 +        Box::pin(async move {
-+            if let Some(lead) = input.thread_store.get::<Lead>().filter(|lead| lead.owner == "lead") {
++            if let Some(lead) = input
++                .thread_store
++                .get::<Lead>()
++                .filter(|lead| lead.owner == "lead")
++            {
 +                self.event(
 +                    "session",
 +                    json!({"phase":"idle","thread_id":lead.thread.to_string(),"cause":format!("{:?}", input.cause)}),
@@ -9920,10 +10180,10 @@ index 000000000..a050deb16
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..55d73c1a7
+index 000000000..8cd511cea
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,1963 @@
+@@ -0,0 +1,1973 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -10254,8 +10514,9 @@ index 000000000..55d73c1a7
 +            assert_eq!(failure.as_object().unwrap().len(), 3);
 +        }
 +        let disconnected = codex_protocol::protocol::ErrorEvent {
-+            message: "stream disconnected before completion: stream closed before response.completed"
-+                .into(),
++            message:
++                "stream disconnected before completion: stream closed before response.completed"
++                    .into(),
 +            codex_error_info: Some(Kind::Other),
 +            misalignment: None,
 +        };
@@ -10481,6 +10742,13 @@ index 000000000..55d73c1a7
 +    agent_mod == mod_id && agent_generation == generation && Arc::ptr_eq(agent_task, task)
 +}
 +
++pub(super) struct AgentClaim<'a> {
++    pub candidate_sha256: &'a str,
++    pub acceptance_sha256: Option<&'a str>,
++    pub resolves: &'a [String],
++    pub evidence: &'a codex_omd::resource_data::ResourceRef,
++}
++
 +struct Workspace {
 +    base: codex_omd::Snapshot,
 +    root: std::path::PathBuf,
@@ -10641,14 +10909,13 @@ index 000000000..55d73c1a7
 +async fn candidate(
 +    lead: &Lead,
 +    parent: &Config,
-+    workspace: &Workspace,
++    root: &std::path::Path,
 +) -> Result<(BTreeSet<String>, codex_omd::Snapshot), String> {
 +    let host = &lead.host;
-+    let read = execution::isolated(parent, &workspace.root, &[], &host.protected_paths(), false)?;
++    let read = execution::isolated(parent, root, &[], &host.protected_paths(), false)?;
 +    let paths = execution::all_paths(&lead.session.task, host.config.snapshot_bytes, &read).await?;
-+    let snapshot =
-+        codex_omd::Snapshot::capture(&workspace.root, &paths, host.config.snapshot_bytes)
-+            .map_err(|e| e.to_string())?;
++    let snapshot = codex_omd::Snapshot::capture(root, &paths, host.config.snapshot_bytes)
++        .map_err(|e| e.to_string())?;
 +    Ok((paths, snapshot))
 +}
 +
@@ -10678,11 +10945,7 @@ index 000000000..55d73c1a7
 +            source,
 +        )
 +        .map_err(|e| e.to_string())?
-+        .call(
-+            operation,
-+            arguments,
-+            || task.check_active().is_ok(),
-+        )
++        .call(operation, arguments, || task.check_active().is_ok())
 +        .map_err(|e| e.to_string())
 +    }
 +}
@@ -10712,11 +10975,14 @@ index 000000000..55d73c1a7
 +        mod_id: &str,
 +        generation: u64,
 +        task: &Arc<Task>,
-+        candidate_sha256: &str,
-+        acceptance_sha256: Option<&str>,
-+        resolves: &[String],
-+        evidence: &codex_omd::resource_data::ResourceRef,
++        claim: AgentClaim<'_>,
 +    ) -> Result<(), String> {
++        let AgentClaim {
++            candidate_sha256,
++            acceptance_sha256,
++            resolves,
++            evidence,
++        } = claim;
 +        let records = self.records.lock().await;
 +        let agent = records
 +            .get(handle)
@@ -10980,24 +11246,28 @@ index 000000000..55d73c1a7
 +            {
 +                return Err("capability_denied: agents".into());
 +            }
-+            let records = self.records.lock().await;
-+            let agent = records
-+                .get(&handle)
-+                .filter(|agent| {
-+                    agent.mod_id == caller.id
-+                        && agent.generation == caller.generation
-+                        && Arc::ptr_eq(&agent.task, &lead.session.task)
-+                })
-+                .ok_or("unknown_or_foreign_agent")?;
-+            if !agent.completed()? {
-+                return Err("snapshot_agent_not_completed".into());
-+            }
-+            let workspace = agent
-+                .workspace
-+                .as_ref()
-+                .ok_or("agent_has_no_isolated_workspace")?;
++            let root = {
++                let records = self.records.lock().await;
++                let agent = records
++                    .get(&handle)
++                    .filter(|agent| {
++                        agent.mod_id == caller.id
++                            && agent.generation == caller.generation
++                            && Arc::ptr_eq(&agent.task, &lead.session.task)
++                    })
++                    .ok_or("unknown_or_foreign_agent")?;
++                if !agent.completed()? {
++                    return Err("snapshot_agent_not_completed".into());
++                }
++                agent
++                    .workspace
++                    .as_ref()
++                    .ok_or("agent_has_no_isolated_workspace")?
++                    .root
++                    .clone()
++            };
 +            let parent = parent_config(lead).await?;
-+            let (_, snapshot) = candidate(lead, &parent, workspace).await?;
++            let (_, snapshot) = candidate(lead, &parent, &root).await?;
 +            snapshots::permitted(&snapshot, &authority, &protected)?;
 +            snapshot
 +        } else {
@@ -11119,7 +11389,7 @@ index 000000000..55d73c1a7
 +        let host = &lead.host;
 +        let task = &lead.session.task;
 +        let parent = parent_config(lead).await?;
-+        let (paths, proposed) = candidate(lead, &parent, workspace).await?;
++        let (paths, proposed) = candidate(lead, &parent, &workspace.root).await?;
 +        let changed = workspace.base.changed_paths(&proposed);
 +        if changed.is_empty() {
 +            return Err("isolated_worker_returned_no_change".into());
@@ -11163,7 +11433,7 @@ index 000000000..55d73c1a7
 +            parent: lead.session.scratch.clone(),
 +            directory: Some(directory.clone()),
 +        };
-+        let reread = candidate(lead, &parent, workspace).await?;
++        let reread = candidate(lead, &parent, &workspace.root).await?;
 +        if reread.0 != paths || reread.1 != proposed {
 +            return Err("isolated_candidate_changed_before_apply".into());
 +        }
@@ -11326,7 +11596,7 @@ index 000000000..55d73c1a7
 +                            && workspace.integrable
 +                        {
 +                            let parent = parent_config(lead).await?;
-+                            let (_, proposed) = candidate(lead, &parent, workspace).await?;
++                            let (_, proposed) = candidate(lead, &parent, &workspace.root).await?;
 +                            agent.candidate = Some((
 +                                proposed.hash().map_err(|e| e.to_string())?,
 +                                workspace
@@ -11669,7 +11939,10 @@ index 000000000..55d73c1a7
 +                context
 +            ));
 +        }
-+        let evidence = request.evidence.as_ref().map(|reference| reference.sha256.clone());
++        let evidence = request
++            .evidence
++            .as_ref()
++            .map(|reference| reference.sha256.clone());
 +        if let Some(reference) = request.evidence.take() {
 +            let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
 +            let delivered = tokio::task::spawn_blocking(scoped_resource(
@@ -11734,10 +12007,7 @@ index 000000000..55d73c1a7
 +            agent_nickname: Some(request.role.clone()),
 +            agent_role: Some(request.role.clone()),
 +        }));
-+        let spawned = match manager
-+            .spawn_isolated_subagent(lead.thread, options)
-+            .await
-+        {
++        let spawned = match manager.spawn_isolated_subagent(lead.thread, options).await {
 +            Ok(spawned) => spawned,
 +            Err(error) => {
 +                if let Ok(mut accounts) = host.accounts.0.lock() {
@@ -11889,10 +12159,10 @@ index 000000000..55d73c1a7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/evidence.rs b/codex-rs/ext/omd/src/mods/evidence.rs
 new file mode 100644
-index 000000000..d2e950551
+index 000000000..71e5e45ea
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/evidence.rs
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,213 @@
 +use super::*;
 +
 +pub(super) struct Cursor {
@@ -11957,7 +12227,8 @@ index 000000000..d2e950551
 +    if turns
 +        .lock()
 +        .map_err(|_| "turn_record_poisoned")?
-+        .get(&key).is_none_or(|turn| turn.evidence.is_none())
++        .get(&key)
++        .is_none_or(|turn| turn.evidence.is_none())
 +    {
 +        return Ok(());
 +    }
@@ -12107,7 +12378,7 @@ index 000000000..d2e950551
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..92bb59039
+index 000000000..d55ec5fe6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,567 @@
@@ -12143,13 +12414,9 @@ index 000000000..92bb59039
 +                        thread,
 +                    )
 +                })
-+                .call(
-+                    &id,
-+                    &source,
-+                    &request.operation,
-+                    request.arguments,
-+                    || !cancelled.load(Ordering::Acquire),
-+                )
++                .call(&id, &source, &request.operation, request.arguments, || {
++                    !cancelled.load(Ordering::Acquire)
++                })
 +                .map_err(|error| error.to_string())
 +        })
 +        .await
@@ -12282,10 +12549,12 @@ index 000000000..92bb59039
 +                    caller.id,
 +                    caller.generation,
 +                    &lead.session.task,
-+                    &input.candidate_sha256,
-+                    input.acceptance_sha256.as_deref(),
-+                    &input.resolves,
-+                    &input.evidence,
++                    super::agents::AgentClaim {
++                        candidate_sha256: &input.candidate_sha256,
++                        acceptance_sha256: input.acceptance_sha256.as_deref(),
++                        resolves: &input.resolves,
++                        evidence: &input.evidence,
++                    },
 +                )
 +                .await?;
 +            codex_omd::ReceiptProducer {
@@ -12531,10 +12800,12 @@ index 000000000..92bb59039
 +        let (id, generation) = (caller.id.to_owned(), caller.generation);
 +        return tokio::task::spawn_blocking(move || {
 +            processes.call(
-+                &id,
-+                generation,
-+                &authority.repository,
-+                &authority.policy,
++                crate::managed_process::ProcessOwner {
++                    id: &id,
++                    generation,
++                    repository: &authority.repository,
++                    policy: &authority.policy,
++                },
 +                &request.operation,
 +                request.arguments,
 +                active,
@@ -12680,10 +12951,10 @@ index 000000000..92bb59039
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..397f50319
+index 000000000..ae0c96a44
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,611 @@
+@@ -0,0 +1,628 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -12861,7 +13132,9 @@ index 000000000..397f50319
 +            return Err("service_already_registered".into());
 +        }
 +        let host = &lead.host;
-+        let grant = host.config.services
++        let grant = host
++            .config
++            .services
 +            .iter()
 +            .find(|g| g.id == selection.id && g.mod_id == mod_id)
 +            .cloned()
@@ -12974,8 +13247,7 @@ index 000000000..397f50319
 +            .permissions
 +            .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(scope))
 +            .map_err(|e| e.to_string())?;
-+        let mut config =
-+            execution::isolated(&parent, &host.repository, &reads, &denied, false)?;
++        let mut config = execution::isolated(&parent, &host.repository, &reads, &denied, false)?;
 +        if grant.network {
 +            let service_profile = config.permissions.effective_permission_profile();
 +            let profile = codex_protocol::models::PermissionProfile::from_runtime_permissions(
@@ -13000,7 +13272,9 @@ index 000000000..397f50319
 +            {
 +                return Err("invalid_secret_environment_key".into());
 +            }
-+            let path = host.config.secret_refs
++            let path = host
++                .config
++                .secret_refs
 +                .get(reference)
 +                .ok_or("unknown_secret_reference")?;
 +            if path.starts_with(&host.repository)
@@ -13043,7 +13317,8 @@ index 000000000..397f50319
 +                grant.id,
 +                manager.reserve_thread_id()
 +            );
-+            lead.session.task
++            lead.session
++                .task
 +                .start_worker(
 +                    worker.clone(),
 +                    lead.owner.clone(),
@@ -13071,7 +13346,9 @@ index 000000000..397f50319
 +            if argv.len() > 128 || argv.iter().map(String::len).sum::<usize>() > 24576 {
 +                return Err("service_argument_limit".into());
 +            }
-+            let timeout = lead.session.task
++            let timeout = lead
++                .session
++                .task
 +                .remaining()
 +                .map_err(|e| e.to_string())?
 +                .0
@@ -13087,7 +13364,10 @@ index 000000000..397f50319
 +            let output = tokio::time::timeout(timeout, request_output(&config, supervised))
 +                .await
 +                .map_err(|_| "service_request_deadline")??;
-+            lead.session.task.check_active().map_err(|e| e.to_string())?;
++            lead.session
++                .task
++                .check_active()
++                .map_err(|e| e.to_string())?;
 +            if output["exit_code"] != 0 {
 +                return Err("service_request_failed".into());
 +            }
@@ -13132,7 +13412,8 @@ index 000000000..397f50319
 +            })
 +            .transpose()?;
 +        let worker = format!("sidecar-{}-{}", grant.id, manager.reserve_thread_id());
-+        lead.session.task
++        lead.session
++            .task
 +            .start_worker(
 +                worker.clone(),
 +                lead.owner.clone(),
@@ -13148,7 +13429,9 @@ index 000000000..397f50319
 +        }
 +        let task = lead.session.task.clone();
 +        let output_bytes = host.config.snapshot_bytes;
-+        let timeout = lead.session.task
++        let timeout = lead
++            .session
++            .task
 +            .remaining()
 +            .map_err(|e| e.to_string())?
 +            .0
@@ -13161,10 +13444,12 @@ index 000000000..397f50319
 +        ];
 +        supervised.extend(argv);
 +        let job = tokio::spawn(async move {
-+            let result =
-+                tokio::time::timeout(timeout, execution::command(&task, output_bytes, &config, supervised))
-+                    .await
-+                    .map_err(|_| "sidecar_deadline".to_string())??;
++            let result = tokio::time::timeout(
++                timeout,
++                execution::command(&task, output_bytes, &config, supervised),
++            )
++            .await
++            .map_err(|_| "sidecar_deadline".to_string())??;
 +            Ok(json!({"exit_code":result["exit_code"],"timed_out":result["timed_out"]}))
 +        });
 +        records.insert(
@@ -13184,7 +13469,10 @@ index 000000000..397f50319
 +        if let (Some(port), Some(route)) = (port, grant.route) {
 +            let ready = tokio::time::timeout(Duration::from_secs(3), async {
 +                loop {
-+                    lead.session.task.check_active().map_err(|e| e.to_string())?;
++                    lead.session
++                        .task
++                        .check_active()
++                        .map_err(|e| e.to_string())?;
 +                    if self
 +                        .records
 +                        .lock()
@@ -13297,10 +13585,10 @@ index 000000000..397f50319
 +}
 diff --git a/codex-rs/ext/omd/src/mods/snapshots.rs b/codex-rs/ext/omd/src/mods/snapshots.rs
 new file mode 100644
-index 000000000..676b1354a
+index 000000000..24f770f86
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/snapshots.rs
-@@ -0,0 +1,516 @@
+@@ -0,0 +1,517 @@
 +use super::*;
 +use codex_omd::Snapshot;
 +use codex_omd::resource_data::ResourceRef;
@@ -13662,7 +13950,8 @@ index 000000000..676b1354a
 +            assert_eq!(store.insert(&owner, thread, snapshot).unwrap(), inserted);
 +            first.get_or_insert(inserted);
 +        }
-+        let first: ResourceRef = serde_json::from_value(first.unwrap()["snapshot"].clone()).unwrap();
++        let first: ResourceRef =
++            serde_json::from_value(first.unwrap()["snapshot"].clone()).unwrap();
 +        assert!(store.get(&owner, thread, &first).is_ok());
 +        let empty = Snapshot {
 +            files: BTreeMap::new(),
@@ -13819,10 +14108,10 @@ index 000000000..676b1354a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/tools.rs b/codex-rs/ext/omd/src/mods/tools.rs
 new file mode 100644
-index 000000000..0f7bd3cd7
+index 000000000..14ff9aeaf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/tools.rs
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,210 @@
 +use super::*;
 +
 +struct Tool {
@@ -13876,9 +14165,8 @@ index 000000000..0f7bd3cd7
 +            );
 +        }
 +        let ledger = lead.ledger();
-+        let tools = runtime.tools_for_step(thread_id(thread), ledger, || {
-+            task.check_active().is_ok()
-+        });
++        let tools =
++            runtime.tools_for_step(thread_id(thread), ledger, || task.check_active().is_ok());
 +        self.tool_executors(lead, tools)
 +    }
 +}
@@ -14172,10 +14460,10 @@ index 000000000..b2dcca438
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 000000000..141249c27
+index 000000000..ae601709d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,616 @@
+@@ -0,0 +1,654 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
@@ -14196,19 +14484,33 @@ index 000000000..141249c27
 +    pub context: FileSystemSandboxContext,
 +}
 +
-+fn local_context(profile: codex_protocol::models::PermissionProfile, cwd: PathUri) -> Result<FileSystemSandboxContext, String> {
++fn local_context(
++    profile: codex_protocol::models::PermissionProfile,
++    cwd: PathUri,
++) -> Result<FileSystemSandboxContext, String> {
 +    let mut context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
 +    context.user_home_dir = PathUri::from_host_native_path("~").ok();
-+    context.temporary_directories = Some(match std::env::var_os("TMPDIR").filter(|path| !path.is_empty()) {
-+        Some(path) => vec![PathUri::from(AbsolutePathBuf::from_absolute_path(PathBuf::from(path)).map_err(|e| e.to_string())?)],
-+        None => Vec::new(),
-+    });
++    context.temporary_directories = Some(
++        match std::env::var_os("TMPDIR").filter(|path| !path.is_empty()) {
++            Some(path) => vec![PathUri::from(
++                AbsolutePathBuf::from_absolute_path(PathBuf::from(path))
++                    .map_err(|e| e.to_string())?,
++            )],
++            None => Vec::new(),
++        },
++    );
 +    Ok(context)
 +}
 +
 +pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
 +    let authority = WorkspaceAuthority::for_lead(lead).await?;
-+    let approved = lead.host.config.approved_untracked.iter().cloned().collect();
++    let approved = lead
++        .host
++        .config
++        .approved_untracked
++        .iter()
++        .cloned()
++        .collect();
 +    let limit = lead.host.config.snapshot_bytes;
 +    tokio::task::spawn_blocking(move || {
 +        let snapshot = codex_omd::capture_tracked(&authority.repository, &approved, limit)
@@ -14455,10 +14757,12 @@ index 000000000..141249c27
 +                        Err("pre_rename_operation_unavailable".into())
 +                    }
 +                    operation if operation.starts_with("process.") => processes.call(
-+                        id,
-+                        generation,
-+                        &self.repository,
-+                        &self.policy,
++                        crate::managed_process::ProcessOwner {
++                            id,
++                            generation,
++                            repository: &self.repository,
++                            policy: &self.policy,
++                        },
 +                        operation,
 +                        call.arguments,
 +                        &active,
@@ -14519,10 +14823,7 @@ index 000000000..141249c27
 +            config.cwd.as_path(),
 +        )?
 +        .materialize_project_roots_with_workspace_roots(std::slice::from_ref(&config.cwd));
-+        let context = local_context(
-+            profile.clone(),
-+            PathUri::from_abs_path(&config.cwd),
-+        )?;
++        let context = local_context(profile.clone(), PathUri::from_abs_path(&config.cwd))?;
 +        Ok(Self {
 +            repository: host.repository.clone(),
 +            session_root: Some(config.codex_home.join("sessions").to_path_buf()),
@@ -14639,14 +14940,39 @@ index 000000000..141249c27
 +        let absolute = AbsolutePathBuf::from_absolute_path_checked(&root).unwrap();
 +        let cwd = PathUri::from_abs_path(&absolute);
 +        let policy = FileSystemSandboxPolicy::restricted(vec![
-+            FileSystemSandboxEntry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Root }, FileSystemAccessMode::Read),
-+            FileSystemSandboxEntry::new(FileSystemPath::Path { path: cwd.clone() }, FileSystemAccessMode::Write),
-+            FileSystemSandboxEntry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Tmpdir }, FileSystemAccessMode::Write),
-+            FileSystemSandboxEntry::new(FileSystemPath::Path { path: cwd.join("private").unwrap() }, FileSystemAccessMode::Deny),
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Special {
++                    value: FileSystemSpecialPath::Root,
++                },
++                FileSystemAccessMode::Read,
++            ),
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Path { path: cwd.clone() },
++                FileSystemAccessMode::Write,
++            ),
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Special {
++                    value: FileSystemSpecialPath::Tmpdir,
++                },
++                FileSystemAccessMode::Write,
++            ),
++            FileSystemSandboxEntry::new(
++                FileSystemPath::Path {
++                    path: cwd.join("private").unwrap(),
++                },
++                FileSystemAccessMode::Deny,
++            ),
 +        ]);
-+        let profile = PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
++        let profile =
++            PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
 +        let context = local_context(profile, cwd).unwrap();
-+        let authority = WorkspaceAuthority { repository: root.clone(), session_root: None, session_database: None, policy, context };
++        let authority = WorkspaceAuthority {
++            repository: root.clone(),
++            session_root: None,
++            session_database: None,
++            policy,
++            context,
++        };
 +        assert!(authority.readable(&root.join("source")));
 +        assert!(!authority.readable(&root.join("private/secret")));
 +        assert!(authority.writable(&root.join("source")));
@@ -14820,17 +15146,17 @@ index 5b7e58092..4682e8c8d 100644
  
  impl FeatureConfig for CodeModeConfigToml {
 diff --git a/codex-rs/features/src/lib.rs b/codex-rs/features/src/lib.rs
-index 5ea619d0a..c4a01610f 100644
+index 5ea619d0a..bb4544e79 100644
 --- a/codex-rs/features/src/lib.rs
 +++ b/codex-rs/features/src/lib.rs
-@@ -17,6 +17,7 @@ use toml::Table;
- mod feature_configs;
+@@ -18,6 +18,7 @@ mod feature_configs;
  mod legacy;
  pub use feature_configs::CodeModeConfigToml;
-+pub use feature_configs::CodeModeKernelToml;
  pub use feature_configs::CodeModeHostConfigToml;
++pub use feature_configs::CodeModeKernelToml;
  pub use feature_configs::ContextManagementConfigToml;
  pub use feature_configs::CurrentTimeReminderConfigToml;
+ pub use feature_configs::CurrentTimeReminderDeliveryMode;
 diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
 index ae509a4a7..fc82a6cfe 100644
 --- a/codex-rs/login/src/auth/default_client.rs
@@ -14959,10 +15285,10 @@ HcmV?d00001
 
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 000000000..7629a4acb
+index 000000000..1a1f04a37
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1380 @@
+@@ -0,0 +1,1384 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -15268,7 +15594,9 @@ index 000000000..7629a4acb
 +            })
 +            .collect::<Vec<_>>();
 +        records.sort_by_key(fs::DirEntry::file_name);
-+        if records.len() > 200_000 { return Err(denied("resume journal limit")); }
++        if records.len() > 200_000 {
++            return Err(denied("resume journal limit"));
++        }
 +        if records.is_empty() {
 +            return Err(denied("resume evidence is empty"));
 +        }
@@ -15285,7 +15613,10 @@ index 000000000..7629a4acb
 +        let mut created_unix_millis = None;
 +        for entry in records {
 +            let metadata = entry.metadata()?;
-+            if entry.file_type()?.is_symlink() || !metadata.is_file() || metadata.len() > 4 * 1024 * 1024 {
++            if entry.file_type()?.is_symlink()
++                || !metadata.is_file()
++                || metadata.len() > 4 * 1024 * 1024
++            {
 +                return Err(denied("resume evidence must be a bounded regular file"));
 +            }
 +            let value: Value = serde_json::from_slice(&fs::read(entry.path())?)?;
@@ -15469,7 +15800,9 @@ index 000000000..7629a4acb
 +                    if state.observed.len() >= MAX_OBSERVED_REQUESTS
 +                        || attempt.request as usize != state.observed.len() + 1
 +                        || !attempt.status.starts_with("observed_")
-+                        || attempt.reserved_microusd != 0 || attempt.settled_microusd.is_some() {
++                        || attempt.reserved_microusd != 0
++                        || attempt.settled_microusd.is_some()
++                    {
 +                        return Err(denied("resume observed request invalid"));
 +                    }
 +                    state.observed.push(attempt);
@@ -15981,10 +16314,7 @@ index 000000000..7629a4acb
 +            .get(&admission.request)
 +            .cloned()
 +            .ok_or_else(|| denied("unknown request"))?;
-+        if state.status != TaskStatus::Active
-+            || self.expired()
-+            || attempt.status != "unknown"
-+        {
++        if state.status != TaskStatus::Active || self.expired() || attempt.status != "unknown" {
 +            return Err(denied(
 +                "request dispatch stopped, expired, revoked or already consumed",
 +            ));
@@ -17304,10 +17634,10 @@ index 000000000..1b7dad306
 +}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
-index 000000000..a47a905af
+index 000000000..19ad07651
 --- /dev/null
 +++ b/codex-rs/omd/src/builtins.rs
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,129 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -17361,23 +17691,26 @@ index 000000000..a47a905af
 +fn name(value: &str) -> bool {
 +    !value.is_empty()
 +        && value.len() <= 32
-+        && value
-+            .bytes()
-+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_'))
++        && value.bytes().all(|byte| {
++            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
++        })
 +}
 +
 +impl BuiltinControls {
 +    pub fn parse(value: &Value) -> Result<Self, String> {
-+        let controls: Self =
-+            serde_json::from_value(value.clone()).map_err(|error| format!("invalid_builtins: {error}"))?;
-+        let unique = |values: &[String]| values.iter().collect::<BTreeSet<_>>().len() == values.len();
++        let controls: Self = serde_json::from_value(value.clone())
++            .map_err(|error| format!("invalid_builtins: {error}"))?;
++        let unique =
++            |values: &[String]| values.iter().collect::<BTreeSet<_>>().len() == values.len();
 +        if controls.commands.hide.len() > 32
 +            || controls.modes.disable.len() > 8
 +            || !unique(&controls.commands.hide)
 +            || !unique(&controls.modes.disable)
-+            || controls.commands.hide.iter().any(|command| {
-+                !name(command) || PROTECTED_COMMANDS.contains(&command.as_str())
-+            })
++            || controls
++                .commands
++                .hide
++                .iter()
++                .any(|command| !name(command) || PROTECTED_COMMANDS.contains(&command.as_str()))
 +            || controls
 +                .modes
 +                .disable
@@ -17436,10 +17769,10 @@ index 000000000..a47a905af
 +}
 diff --git a/codex-rs/omd/src/contract_document.rs b/codex-rs/omd/src/contract_document.rs
 new file mode 100644
-index 000000000..bc6442da5
+index 000000000..2c27d1cd4
 --- /dev/null
 +++ b/codex-rs/omd/src/contract_document.rs
-@@ -0,0 +1,645 @@
+@@ -0,0 +1,646 @@
 +use crate::resource_data::ResourceRef;
 +use serde::Deserialize;
 +use serde::Serialize;
@@ -17910,6 +18243,7 @@ index 000000000..bc6442da5
 +}
 +
 +#[derive(Clone, Debug, PartialEq)]
++#[allow(clippy::large_enum_variant)]
 +pub enum ContractResolution {
 +    None,
 +    Active {
@@ -18087,10 +18421,10 @@ index 000000000..bc6442da5
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
-index 000000000..e0bab5757
+index 000000000..9e60df418
 --- /dev/null
 +++ b/codex-rs/omd/src/data_store.rs
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,323 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -18302,7 +18636,10 @@ index 000000000..e0bab5757
 +            }
 +            "store.put" => {
 +                let name = checked_key()?.to_owned();
-+                let value = input.value.clone().ok_or_else(|| failure("store_value_required"))?;
++                let value = input
++                    .value
++                    .clone()
++                    .ok_or_else(|| failure("store_value_required"))?;
 +                if serde_json::to_vec(&value)?.len() > VALUE_BYTES {
 +                    return Err(failure("store_value_limit"));
 +                }
@@ -19660,7 +19997,7 @@ index 000000000..cb541e864
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..8b704a0e8
+index 000000000..ed75af226
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
 @@ -0,0 +1,147 @@
@@ -19682,8 +20019,8 @@ index 000000000..8b704a0e8
 +pub use admission::Limits;
 +pub use admission::Task;
 +pub use admission::TaskCostCapture;
-+pub use admission::WorkerLimits;
 +pub use admission::VersionMarker;
++pub use admission::WorkerLimits;
 +pub use admission::WorkerStatus;
 +pub use builtins::BUILTINS_SNAPSHOT;
 +pub use builtins::BuiltinControls;
@@ -19695,10 +20032,10 @@ index 000000000..8b704a0e8
 +pub use contract_document::ContractRequirement;
 +pub use contract_document::ContractResolution;
 +pub use contract_document::ContractSelection;
-+pub use contract_document::FindingSeverity;
 +pub use contract_document::FindingLedger;
 +pub use contract_document::FindingLedgerEntry;
 +pub use contract_document::FindingResolution;
++pub use contract_document::FindingSeverity;
 +pub use contract_document::Gate;
 +pub use contract_document::PROJECT_CONTRACT_SELECTION;
 +pub use contract_document::Producer;
@@ -19707,10 +20044,10 @@ index 000000000..8b704a0e8
 +pub use contract_document::ReceiptFinding;
 +pub use contract_document::ReceiptOutcome;
 +pub use contract_document::ReceiptProducer;
-+pub use contract_document::apply_finding_receipt;
-+pub use contract_document::replay_finding_receipts;
 +pub use contract_document::USER_CONTRACT_SELECTION;
++pub use contract_document::apply_finding_receipt;
 +pub use contract_document::contract_confirmation;
++pub use contract_document::replay_finding_receipts;
 +pub use contract_document::resolve_contract;
 +pub use mode::EffectiveMode;
 +pub use mode::MANIFEST_ENV;
@@ -19725,22 +20062,22 @@ index 000000000..8b704a0e8
 +pub use owner::PolicyOwner;
 +pub use workspace::File;
 +pub use workspace::Fingerprint;
++pub use workspace::INDEX_BYTES;
++pub use workspace::INDEX_FILES;
++pub use workspace::RecordedChange;
 +pub use workspace::Snapshot;
 +pub use workspace::WorkspaceChange;
 +pub use workspace::WorkspaceIndex;
 +pub use workspace::WorkspaceRename;
 +pub use workspace::WorkspaceTransaction;
 +pub use workspace::WorkspaceTransactionResult;
-+pub use workspace::INDEX_BYTES;
-+pub use workspace::INDEX_FILES;
-+pub use workspace::RecordedChange;
 +pub use workspace::capture_tracked;
 +pub use workspace::change_baseline;
++pub use workspace::cleanup_owned_directory;
++pub use workspace::create_worktree;
 +pub use workspace::observe_workspace_changes;
 +pub use workspace::record_workspace_change;
 +pub use workspace::take_workspace_changes;
-+pub use workspace::cleanup_owned_directory;
-+pub use workspace::create_worktree;
 +pub use workspace::tracked_paths;
 +pub use workspace::workspace_path;
 +
@@ -19943,10 +20280,10 @@ index 000000000..e1d28e163
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..403165c9f
+index 000000000..afe9fda01
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,3133 @@
+@@ -0,0 +1,3130 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -21408,15 +21745,12 @@ index 000000000..403165c9f
 +                    })
 +                    .collect()
 +            };
-+            let adapter = match package.adapter.as_deref() {
-+                Some(name) => Some(
-+                    adapters
-+                        .get(name)
-+                        .cloned()
-+                        .ok_or_else(|| failure(format!("adapter_unavailable: {name}"))),
-+                ),
-+                _ => None,
-+            };
++            let adapter = package.adapter.as_deref().map(|name| {
++                adapters
++                    .get(name)
++                    .cloned()
++                    .ok_or_else(|| failure(format!("adapter_unavailable: {name}")))
++            });
 +            let mut loaded = Loaded {
 +                adapter: adapter
 +                    .as_ref()
@@ -25433,10 +25767,10 @@ index 000000000..4f51961c1
 +}
 diff --git a/codex-rs/omd/src/mods/resources.rs b/codex-rs/omd/src/mods/resources.rs
 new file mode 100644
-index 000000000..7096001a6
+index 000000000..3d156d888
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/resources.rs
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,339 @@
 +use super::*;
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -25681,6 +26015,7 @@ index 000000000..7096001a6
 +}
 +
 +impl ModHost {
++    #[allow(clippy::too_many_arguments)]
 +    pub fn invoke_tool(
 +        &mut self,
 +        owner: &str,
@@ -28324,10 +28659,10 @@ index 000000000..4b52a5e30
 +}
 diff --git a/codex-rs/omd/src/session_policy.rs b/codex-rs/omd/src/session_policy.rs
 new file mode 100644
-index 000000000..a907c0ac1
+index 000000000..0ad89566b
 --- /dev/null
 +++ b/codex-rs/omd/src/session_policy.rs
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,133 @@
 +use serde_json::Value;
 +use std::collections::BTreeSet;
 +use std::io::{self, Read};
@@ -28358,9 +28693,10 @@ index 000000000..a907c0ac1
 +            if let Some(version) = name
 +                .strip_prefix("state_")
 +                .and_then(|value| value.strip_suffix(".sqlite"))
-+                && version.parse::<u32>().map_or(true, |version| version > 5) {
-+                    return Err(io::Error::other("session_policy_version_unsupported"));
-+                }
++                && version.parse::<u32>().map_or(true, |version| version > 5)
++            {
++                return Err(io::Error::other("session_policy_version_unsupported"));
++            }
 +        }
 +    }
 +    if !database.try_exists()? {
@@ -29032,10 +29368,10 @@ index 000000000..2b4fccce5
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 000000000..ea1cb6377
+index 000000000..e58ca64a5
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1189 @@
+@@ -0,0 +1,1225 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -29109,7 +29445,8 @@ index 000000000..ea1cb6377
 +    pub backup: Option<serde_json::Value>,
 +}
 +
-+pub type BackupSink<'a> = dyn Fn(&BTreeMap<String, Option<Vec<u8>>>) -> io::Result<serde_json::Value> + 'a;
++pub type BackupSink<'a> =
++    dyn Fn(&BTreeMap<String, Option<Vec<u8>>>) -> io::Result<serde_json::Value> + 'a;
 +
 +fn fingerprint_matches(
 +    expected: &Option<Fingerprint>,
@@ -29262,7 +29599,9 @@ index 000000000..ea1cb6377
 +            return Err(invalid("duplicate write"));
 +        }
 +        let deletes = self.deletes.iter().cloned().collect::<BTreeSet<_>>();
-+        if deletes.len() != self.deletes.len() || deletes.iter().any(|name| writes.contains_key(name)) {
++        if deletes.len() != self.deletes.len()
++            || deletes.iter().any(|name| writes.contains_key(name))
++        {
 +            return Err(invalid("duplicate or overlapping delete"));
 +        }
 +        let mut affected = writes.keys().cloned().collect::<BTreeSet<_>>();
@@ -29322,7 +29661,9 @@ index 000000000..ea1cb6377
 +            Some(sink) => Some(sink(
 +                &before
 +                    .iter()
-+                    .map(|(name, entry)| (name.clone(), entry.as_ref().map(|(bytes, _)| bytes.clone())))
++                    .map(|(name, entry)| {
++                        (name.clone(), entry.as_ref().map(|(bytes, _)| bytes.clone()))
++                    })
 +                    .collect(),
 +            )?),
 +            None => None,
@@ -30019,7 +30360,9 @@ index 000000000..ea1cb6377
 +            expected: BTreeMap::from([
 +                (
 +                    "old.ts".into(),
-+                    Some(Fingerprint::Hash(content_hash(b"export const value = 1;\n"))),
++                    Some(Fingerprint::Hash(content_hash(
++                        b"export const value = 1;\n",
++                    ))),
 +                ),
 +                ("new.ts".into(), None),
 +                (
@@ -30057,7 +30400,10 @@ index 000000000..ea1cb6377
 +        let root = directory.path().canonicalize().unwrap();
 +        fs::write(root.join("file.py"), "changed\n").unwrap();
 +        let transaction = WorkspaceTransaction {
-+            expected: BTreeMap::from([("file.py".into(), Some(Fingerprint::Hash(content_hash(b"old\n"))))]),
++            expected: BTreeMap::from([(
++                "file.py".into(),
++                Some(Fingerprint::Hash(content_hash(b"old\n"))),
++            )]),
 +            writes: BTreeMap::from([("file.py".into(), "new\n".into())]),
 +            renames: Vec::new(),
 +            ..Default::default()
@@ -30133,7 +30479,10 @@ index 000000000..ea1cb6377
 +        let original = vec![b'x'; 4 * 1024 * 1024 + 1];
 +        fs::write(root.join("large.py"), &original).unwrap();
 +        let transaction = WorkspaceTransaction {
-+            expected: BTreeMap::from([("large.py".into(), Some(Fingerprint::Hash(content_hash(&original))))]),
++            expected: BTreeMap::from([(
++                "large.py".into(),
++                Some(Fingerprint::Hash(content_hash(&original))),
++            )]),
 +            writes: BTreeMap::from([("large.py".into(), "small\n".into())]),
 +            renames: Vec::new(),
 +            ..Default::default()
@@ -30162,28 +30511,51 @@ index 000000000..ea1cb6377
 +        };
 +        let transaction = WorkspaceTransaction {
 +            expected: BTreeMap::from([
-+                ("drop.txt".into(), Some(Fingerprint::Stat { size, mtime_ms })),
-+                ("keep.txt".into(), Some(Fingerprint::Hash(content_hash(b"keep\n")))),
++                (
++                    "drop.txt".into(),
++                    Some(Fingerprint::Stat { size, mtime_ms }),
++                ),
++                (
++                    "keep.txt".into(),
++                    Some(Fingerprint::Hash(content_hash(b"keep\n"))),
++                ),
 +            ]),
 +            writes: BTreeMap::from([("keep.txt".into(), "kept\n".into())]),
 +            deletes: vec!["drop.txt".into()],
 +            backup: true,
 +            ..Default::default()
 +        };
-+        let result = transaction.apply_with_backup(&root, || true, Some(&sink)).unwrap();
++        let result = transaction
++            .apply_with_backup(&root, || true, Some(&sink))
++            .unwrap();
 +        assert!(!root.join("drop.txt").exists());
 +        assert_eq!(fs::read_to_string(root.join("keep.txt")).unwrap(), "kept\n");
 +        assert_eq!(result.files["drop.txt"], None);
 +        assert_eq!(result.backup, Some(serde_json::json!({"backup": "ok"})));
 +        assert_eq!(saved.borrow()["drop.txt"], Some(b"drop\n".to_vec()));
 +        let stale = WorkspaceTransaction {
-+            expected: BTreeMap::from([("keep.txt".into(), Some(Fingerprint::Stat { size: 1, mtime_ms: 1 }))]),
++            expected: BTreeMap::from([(
++                "keep.txt".into(),
++                Some(Fingerprint::Stat {
++                    size: 1,
++                    mtime_ms: 1,
++                }),
++            )]),
 +            deletes: vec!["keep.txt".into()],
 +            ..Default::default()
 +        };
-+        assert!(stale.apply(&root, || true).unwrap_err().to_string().contains("stale"));
++        assert!(
++            stale
++                .apply(&root, || true)
++                .unwrap_err()
++                .to_string()
++                .contains("stale")
++        );
 +        let missing_sink = WorkspaceTransaction {
-+            expected: BTreeMap::from([("keep.txt".into(), Some(Fingerprint::Hash(content_hash(b"kept\n"))))]),
++            expected: BTreeMap::from([(
++                "keep.txt".into(),
++                Some(Fingerprint::Hash(content_hash(b"kept\n"))),
++            )]),
 +            deletes: vec!["keep.txt".into()],
 +            backup: true,
 +            ..Default::default()
@@ -30618,10 +30990,10 @@ index 000000000..330b7bc69
 +}
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..b209c4ee7
+index 000000000..4382f7dd6
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,1546 @@
+@@ -0,0 +1,1545 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -30641,7 +31013,6 @@ index 000000000..b209c4ee7
 +use codex_omd::resolve_contract;
 +use serde_json::Value;
 +use serde_json::json;
-+use sha2::Digest;
 +use std::path::Path;
 +use std::path::PathBuf;
 +use std::process::Command;
@@ -32170,15 +32541,14 @@ index 000000000..b209c4ee7
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
-index 000000000..aec296541
+index 000000000..c0e95eb24
 --- /dev/null
 +++ b/codex-rs/omd/tests/integration.rs
-@@ -0,0 +1,541 @@
+@@ -0,0 +1,540 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::ModHost;
 +use codex_omd::ModStore;
-+use codex_omd::OMD_HOST_RELEASE;
 +use serde_json::Value;
 +use serde_json::json;
 +use std::path::Path;
@@ -36259,11 +36629,11 @@ index 000000000..ae7cd47d4
 +}
 diff --git a/codex-rs/omd/tests/scoped_resources.rs b/codex-rs/omd/tests/scoped_resources.rs
 new file mode 100644
-index 000000000..adfa7511c
+index 000000000..aca1c2bf7
 --- /dev/null
 +++ b/codex-rs/omd/tests/scoped_resources.rs
 @@ -0,0 +1,91 @@
-+use codex_omd::resource_data::{ResourceBinding, ResourceRef, ResourceStore, hash};
++use codex_omd::resource_data::{ResourceBinding, ResourceStore, hash};
 +use serde_json::json;
 +use std::fs;
 +
@@ -37423,34 +37793,56 @@ index 000000000..03463c997
 +    );
 +}
 diff --git a/codex-rs/protocol/src/error.rs b/codex-rs/protocol/src/error.rs
-index 14825e4db..08589fbed 100644
+index 14825e4db..438e566ff 100644
 --- a/codex-rs/protocol/src/error.rs
 +++ b/codex-rs/protocol/src/error.rs
-@@ -462,7 +462,7 @@ impl CodexErr {
+@@ -462,9 +462,11 @@ impl CodexErr {
              CodexErrorDetails::RetryLimit(_) => CodexErrorInfo::ResponseTooManyFailedAttempts {
                  http_status_code: self.http_status_code_value(),
              },
 -            CodexErrorDetails::ConnectionFailed(_) => CodexErrorInfo::HttpConnectionFailed {
-+            CodexErrorDetails::ConnectionFailed(_) | CodexErrorDetails::UnexpectedStatus(_) => CodexErrorInfo::HttpConnectionFailed {
-                 http_status_code: self.http_status_code_value(),
-             },
+-                http_status_code: self.http_status_code_value(),
+-            },
++            CodexErrorDetails::ConnectionFailed(_) | CodexErrorDetails::UnexpectedStatus(_) => {
++                CodexErrorInfo::HttpConnectionFailed {
++                    http_status_code: self.http_status_code_value(),
++                }
++            }
              CodexErrorDetails::ResponseStreamFailed(_) => {
+                 CodexErrorInfo::ResponseStreamConnectionFailed {
+                     http_status_code: self.http_status_code_value(),
 diff --git a/codex-rs/protocol/src/error_tests.rs b/codex-rs/protocol/src/error_tests.rs
-index 8819c7fd6..cc60d1b8a 100644
+index 8819c7fd6..fc60927e5 100644
 --- a/codex-rs/protocol/src/error_tests.rs
 +++ b/codex-rs/protocol/src/error_tests.rs
-@@ -11,6 +11,17 @@ use http::StatusCode;
+@@ -11,6 +11,33 @@ use http::StatusCode;
  use pretty_assertions::assert_eq;
  use std::time::Duration;
  
 +#[test]
 +fn unexpected_http_status_survives_error_event_conversion() {
-+    for status in [StatusCode::BAD_REQUEST, StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS, StatusCode::SERVICE_UNAVAILABLE] {
++    for status in [
++        StatusCode::BAD_REQUEST,
++        StatusCode::UNAUTHORIZED,
++        StatusCode::TOO_MANY_REQUESTS,
++        StatusCode::SERVICE_UNAVAILABLE,
++    ] {
 +        let error = CodexErr::UnexpectedStatus(UnexpectedResponseError {
-+            status, body: String::new(), user_message: None, url: None, cf_ray: None,
-+            request_id: None, identity_authorization_error: None, identity_error_code: None,
++            status,
++            body: String::new(),
++            user_message: None,
++            url: None,
++            cf_ray: None,
++            request_id: None,
++            identity_authorization_error: None,
++            identity_error_code: None,
 +        });
-+        assert_eq!(error.to_error_event(None).codex_error_info, Some(CodexErrorInfo::HttpConnectionFailed { http_status_code: Some(status.as_u16()) }));
++        assert_eq!(
++            error.to_error_event(None).codex_error_info,
++            Some(CodexErrorInfo::HttpConnectionFailed {
++                http_status_code: Some(status.as_u16())
++            })
++        );
 +    }
 +}
 +
@@ -38853,7 +39245,7 @@ index 4dbdc87bf..663c54fe9 100644
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 158c39f1c..37b8373af 100644
+index 158c39f1c..8f5a9843e 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -465,6 +465,7 @@ pub enum InputResult {
@@ -38940,7 +39332,7 @@ index 158c39f1c..37b8373af 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -9801,6 +9815,24 @@ mod tests {
+@@ -9801,6 +9815,25 @@ mod tests {
          );
      }
  
@@ -38958,14 +39350,15 @@ index 158c39f1c..37b8373af 100644
 +        assert!(matches!(composer.popups.active, ActivePopup::Command(_)));
 +        composer.draft.textarea.set_text_clearing_elements("/model");
 +        composer.draft.textarea.set_cursor("/model".len());
-+        let (result, _) = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
++        let (result, _) =
++            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 +        assert!(matches!(result, InputResult::Command(SlashCommand::Model)));
 +    }
 +
      #[test]
      fn kill_buffer_persists_after_submit() {
          use crossterm::event::KeyCode;
-@@ -10294,6 +10326,7 @@ mod tests {
+@@ -10294,6 +10327,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected diff command, got service tier {command:?}")
              }
@@ -38973,7 +39366,7 @@ index 158c39f1c..37b8373af 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch after Tab completion, got literal submit: {text}")
              }
-@@ -10494,6 +10527,7 @@ mod tests {
+@@ -10494,6 +10528,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected mention command, got service tier {command:?}")
              }
@@ -39260,10 +39653,10 @@ index 575a7ea33..76e2b7f8d 100644
          let note_lines = self
 diff --git a/codex-rs/tui/src/bottom_pane/list_selection_view/mod_list.rs b/codex-rs/tui/src/bottom_pane/list_selection_view/mod_list.rs
 new file mode 100644
-index 000000000..cec7181a3
+index 000000000..acc20862d
 --- /dev/null
 +++ b/codex-rs/tui/src/bottom_pane/list_selection_view/mod_list.rs
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,75 @@
 +use super::*;
 +use codex_omd::ModComponent;
 +use std::cell::RefCell;
@@ -39276,7 +39669,11 @@ index 000000000..cec7181a3
 +}
 +
 +impl ModListRequest {
-+    pub(crate) fn new(view_id: &'static str, title: &str, subtitle: Option<String>) -> Option<Self> {
++    pub(crate) fn new(
++        view_id: &'static str,
++        title: &str,
++        subtitle: Option<String>,
++    ) -> Option<Self> {
 +        crate::omd::list_replaced().then(|| Self {
 +            view_id,
 +            title: title.to_owned(),
@@ -39287,7 +39684,11 @@ index 000000000..cec7181a3
 +}
 +
 +impl ListSelectionView {
-+    fn mod_list_components(&self, request: &ModListRequest, width: u16) -> Option<Vec<ModComponent>> {
++    fn mod_list_components(
++        &self,
++        request: &ModListRequest,
++        width: u16,
++    ) -> Option<Vec<ModComponent>> {
 +        if self.is_searchable && !self.search_query.is_empty() {
 +            return None;
 +        }
@@ -39313,7 +39714,11 @@ index 000000000..cec7181a3
 +        components
 +    }
 +
-+    pub(super) fn mod_list_lines(&self, request: &ModListRequest, width: u16) -> Option<Vec<Line<'static>>> {
++    pub(super) fn mod_list_lines(
++        &self,
++        request: &ModListRequest,
++        width: u16,
++    ) -> Option<Vec<Line<'static>>> {
 +        let components = self.mod_list_components(request, width)?;
 +        let selected = self.selected_actual_idx().map(|index| index.to_string());
 +        let lines = crate::mod_ui::component_lines(&components, width, selected.as_deref());
@@ -39328,17 +39733,17 @@ index 000000000..cec7181a3
 +    }
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
-index 3f16d118e..313b38eab 100644
+index 3f16d118e..0eb51cf35 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
 +++ b/codex-rs/tui/src/bottom_pane/mod.rs
-@@ -160,6 +160,7 @@ pub(crate) use footer::GoalStatusIndicator;
- #[cfg(test)]
+@@ -161,6 +161,7 @@ pub(crate) use footer::GoalStatusIndicator;
  pub(crate) use footer::goal_status_indicator_line;
  pub(crate) use list_selection_view::ColumnWidthMode;
-+pub(crate) use list_selection_view::ModListRequest;
  pub(crate) use list_selection_view::ListSelectionView;
++pub(crate) use list_selection_view::ModListRequest;
  pub(crate) use list_selection_view::OnSelectionChangedCallback;
  pub(crate) use list_selection_view::PickerSurface;
+ pub(crate) use list_selection_view::SelectionDescriptionLayout;
 @@ -1766,6 +1767,16 @@ impl BottomPane {
          self.composer.copy_selection(event, copy)
      }
@@ -39573,10 +39978,10 @@ index f763f6079..865cbbb0f 100644
      }
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..c29deda32
+index 000000000..5088b3111
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,107 @@
 +use super::*;
 +use crate::mod_runtime::ModCommandResult;
 +use crate::mod_runtime::ModSlashCommand;
@@ -39609,7 +40014,11 @@ index 000000000..c29deda32
 +        self.add_info_message(format!("Running /{invocation}"), None);
 +        std::thread::spawn(move || {
 +            let result = crate::mod_runtime::run(&command.target, &args, &token);
-+            tx.send(AppEvent::ModCommandFinished { invocation, token, result });
++            tx.send(AppEvent::ModCommandFinished {
++                invocation,
++                token,
++                result,
++            });
 +        });
 +    }
 +
@@ -41918,10 +42327,10 @@ index 1a2df82a9..2333597ec 100644
  │                                                 │
  │ See full release notes:                         │
 diff --git a/codex-rs/tui/src/history_cell/tests.rs b/codex-rs/tui/src/history_cell/tests.rs
-index 5ce4b7656..187998983 100644
+index 5ce4b7656..070ccece2 100644
 --- a/codex-rs/tui/src/history_cell/tests.rs
 +++ b/codex-rs/tui/src/history_cell/tests.rs
-@@ -1830,6 +1830,26 @@ fn completed_mcp_tool_call_multiple_outputs_inline_snapshot() {
+@@ -1830,6 +1830,23 @@ fn completed_mcp_tool_call_multiple_outputs_inline_snapshot() {
      insta::assert_snapshot!(rendered);
  }
  
@@ -41936,10 +42345,7 @@ index 5ce4b7656..187998983 100644
 +    );
 +    let visual = render_lines(&cell.display_lines(80)).join("\n");
 +    assert!(visual.contains(">_ OpenAI Codex (v9.8.7)"));
-+    assert_eq!(
-+        cell.raw_lines()[0].to_string(),
-+        "OpenAI Codex (v9.8.7)"
-+    );
++    assert_eq!(cell.raw_lines()[0].to_string(), "OpenAI Codex (v9.8.7)");
 +    let narrow = cell.display_lines(24);
 +    assert!(narrow.iter().all(|line| line_width(line) <= 24));
 +    assert!(render_lines(&narrow).join("\n").contains("OpenAI"));
@@ -44773,10 +45179,10 @@ index 000000000..9cbfdea84
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..0bbcc5da9
+index 000000000..45541dec1
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,558 @@
+@@ -0,0 +1,591 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -44815,8 +45221,9 @@ index 000000000..0bbcc5da9
 +    mod_paths().map_or_else(
 +        || (false, codex_omd::ModViewSnapshot::default()),
 +        |paths| {
-+            let mut snapshot = codex_omd::ModViewSnapshot::read(&paths.evidence.join("mod-view.json"))
-+                .unwrap_or_default();
++            let mut snapshot =
++                codex_omd::ModViewSnapshot::read(&paths.evidence.join("mod-view.json"))
++                    .unwrap_or_default();
 +            if let Some(status) = mod_status() {
 +                let errors = status["mods"]
 +                    .as_array()
@@ -44834,12 +45241,19 @@ index 000000000..0bbcc5da9
 +                    .take(16)
 +                    .collect::<Vec<_>>();
 +                if !errors.is_empty()
-+                    && !snapshot.view.panels.iter().any(|panel| panel.title == "Mod errors")
++                    && !snapshot
++                        .view
++                        .panels
++                        .iter()
++                        .any(|panel| panel.title == "Mod errors")
 +                {
-+                    snapshot.view.panels.insert(0, codex_omd::ModPanel {
-+                        title: "Mod errors".into(),
-+                        lines: errors,
-+                    });
++                    snapshot.view.panels.insert(
++                        0,
++                        codex_omd::ModPanel {
++                            title: "Mod errors".into(),
++                            lines: errors,
++                        },
++                    );
 +                }
 +            }
 +            (true, snapshot)
@@ -44868,8 +45282,16 @@ index 000000000..0bbcc5da9
 +        .unwrap_or(Value::Null);
 +    let paths = |value: &Value| -> Vec<PathBuf> {
 +        match value {
-+            Value::Array(items) => items.iter().filter_map(Value::as_str).map(PathBuf::from).collect(),
-+            Value::Object(items) => items.values().filter_map(Value::as_str).map(PathBuf::from).collect(),
++            Value::Array(items) => items
++                .iter()
++                .filter_map(Value::as_str)
++                .map(PathBuf::from)
++                .collect(),
++            Value::Object(items) => items
++                .values()
++                .filter_map(Value::as_str)
++                .map(PathBuf::from)
++                .collect(),
 +            _ => Vec::new(),
 +        }
 +    };
@@ -44906,7 +45328,11 @@ index 000000000..0bbcc5da9
 +}
 +
 +pub(crate) fn builtins() -> codex_omd::BuiltinSnapshot {
-+    type Cached = (Option<PathBuf>, std::time::Instant, codex_omd::BuiltinSnapshot);
++    type Cached = (
++        Option<PathBuf>,
++        std::time::Instant,
++        codex_omd::BuiltinSnapshot,
++    );
 +    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
 +    let root = mod_paths().map(|paths| paths.evidence);
 +    let mut cache = CACHE
@@ -45087,9 +45513,18 @@ index 000000000..0bbcc5da9
 +    snapshot.contract = match (contract["status"].as_str(), contract["active"].as_object()) {
 +        (Some("active"), Some(active)) => format!(
 +            "{}@{} ({})",
-+            active.get("id").and_then(Value::as_str).unwrap_or("unknown"),
-+            active.get("version").and_then(Value::as_u64).unwrap_or_default(),
-+            active.get("assurance").and_then(Value::as_str).unwrap_or("unlabelled")
++            active
++                .get("id")
++                .and_then(Value::as_str)
++                .unwrap_or("unknown"),
++            active
++                .get("version")
++                .and_then(Value::as_u64)
++                .unwrap_or_default(),
++            active
++                .get("assurance")
++                .and_then(Value::as_str)
++                .unwrap_or("unlabelled")
 +        ),
 +        (Some(status), _) => status.to_string(),
 +        _ => "none".to_string(),
@@ -45204,7 +45639,10 @@ index 000000000..0bbcc5da9
 +        };
 +        assert_eq!(daemon_exclusion_for(mode(None)), None);
 +        assert_eq!(daemon_exclusion_for(mode(Some("upstream_direct"))), None);
-+        assert_eq!(daemon_exclusion_for(mode(Some("omd"))), Some("Oh My Diff mode"));
++        assert_eq!(
++            daemon_exclusion_for(mode(Some("omd"))),
++            Some("Oh My Diff mode")
++        );
 +        assert_eq!(
 +            daemon_exclusion_for(mode(Some("platform"))),
 +            Some("an invalid Oh My Diff mode")
@@ -45313,7 +45751,9 @@ index 000000000..0bbcc5da9
 +        assert!(!command_hidden("omd"));
 +        assert!(!command_hidden("model"));
 +        assert!(mode_disabled(codex_protocol::config_types::ModeKind::Plan));
-+        assert!(!mode_disabled(codex_protocol::config_types::ModeKind::Default));
++        assert!(!mode_disabled(
++            codex_protocol::config_types::ModeKind::Default
++        ));
 +        let _direct = EnvGuard::set(MODE_ENV, Some("upstream_direct"));
 +        assert!(!command_hidden("plan"));
 +        assert!(!mode_disabled(codex_protocol::config_types::ModeKind::Plan));
@@ -45333,7 +45773,6 @@ index 000000000..0bbcc5da9
 +            assert!(compact_status().contains("OMD_MODE=omd"));
 +        }
 +    }
-+
 +}
 diff --git a/codex-rs/tui/src/pager_overlay/transcript.rs b/codex-rs/tui/src/pager_overlay/transcript.rs
 index af5f6aa9d..3887e9b71 100644

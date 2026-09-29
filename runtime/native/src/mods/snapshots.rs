@@ -359,7 +359,8 @@ mod tests {
             assert_eq!(store.insert(&owner, thread, snapshot).unwrap(), inserted);
             first.get_or_insert(inserted);
         }
-        let first: ResourceRef = serde_json::from_value(first.unwrap()["snapshot"].clone()).unwrap();
+        let first: ResourceRef =
+            serde_json::from_value(first.unwrap()["snapshot"].clone()).unwrap();
         assert!(store.get(&owner, thread, &first).is_ok());
         let empty = Snapshot {
             files: BTreeMap::new(),

@@ -1459,15 +1459,12 @@ impl ModHost {
                     })
                     .collect()
             };
-            let adapter = match package.adapter.as_deref() {
-                Some(name) => Some(
-                    adapters
-                        .get(name)
-                        .cloned()
-                        .ok_or_else(|| failure(format!("adapter_unavailable: {name}"))),
-                ),
-                _ => None,
-            };
+            let adapter = package.adapter.as_deref().map(|name| {
+                adapters
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| failure(format!("adapter_unavailable: {name}")))
+            });
             let mut loaded = Loaded {
                 adapter: adapter
                     .as_ref()

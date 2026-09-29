@@ -328,8 +328,9 @@ mod history_tests {
             assert_eq!(failure.as_object().unwrap().len(), 3);
         }
         let disconnected = codex_protocol::protocol::ErrorEvent {
-            message: "stream disconnected before completion: stream closed before response.completed"
-                .into(),
+            message:
+                "stream disconnected before completion: stream closed before response.completed"
+                    .into(),
             codex_error_info: Some(Kind::Other),
             misalignment: None,
         };
@@ -555,6 +556,13 @@ fn agent_owned_by(
     agent_mod == mod_id && agent_generation == generation && Arc::ptr_eq(agent_task, task)
 }
 
+pub(super) struct AgentClaim<'a> {
+    pub candidate_sha256: &'a str,
+    pub acceptance_sha256: Option<&'a str>,
+    pub resolves: &'a [String],
+    pub evidence: &'a codex_omd::resource_data::ResourceRef,
+}
+
 struct Workspace {
     base: codex_omd::Snapshot,
     root: std::path::PathBuf,
@@ -715,14 +723,13 @@ async fn parent_config(lead: &Lead) -> Result<Arc<Config>, String> {
 async fn candidate(
     lead: &Lead,
     parent: &Config,
-    workspace: &Workspace,
+    root: &std::path::Path,
 ) -> Result<(BTreeSet<String>, codex_omd::Snapshot), String> {
     let host = &lead.host;
-    let read = execution::isolated(parent, &workspace.root, &[], &host.protected_paths(), false)?;
+    let read = execution::isolated(parent, root, &[], &host.protected_paths(), false)?;
     let paths = execution::all_paths(&lead.session.task, host.config.snapshot_bytes, &read).await?;
-    let snapshot =
-        codex_omd::Snapshot::capture(&workspace.root, &paths, host.config.snapshot_bytes)
-            .map_err(|e| e.to_string())?;
+    let snapshot = codex_omd::Snapshot::capture(root, &paths, host.config.snapshot_bytes)
+        .map_err(|e| e.to_string())?;
     Ok((paths, snapshot))
 }
 
@@ -752,11 +759,7 @@ fn scoped_resource(
             source,
         )
         .map_err(|e| e.to_string())?
-        .call(
-            operation,
-            arguments,
-            || task.check_active().is_ok(),
-        )
+        .call(operation, arguments, || task.check_active().is_ok())
         .map_err(|e| e.to_string())
     }
 }
@@ -786,11 +789,14 @@ impl Agents {
         mod_id: &str,
         generation: u64,
         task: &Arc<Task>,
-        candidate_sha256: &str,
-        acceptance_sha256: Option<&str>,
-        resolves: &[String],
-        evidence: &codex_omd::resource_data::ResourceRef,
+        claim: AgentClaim<'_>,
     ) -> Result<(), String> {
+        let AgentClaim {
+            candidate_sha256,
+            acceptance_sha256,
+            resolves,
+            evidence,
+        } = claim;
         let records = self.records.lock().await;
         let agent = records
             .get(handle)
@@ -1054,24 +1060,28 @@ impl Agents {
             {
                 return Err("capability_denied: agents".into());
             }
-            let records = self.records.lock().await;
-            let agent = records
-                .get(&handle)
-                .filter(|agent| {
-                    agent.mod_id == caller.id
-                        && agent.generation == caller.generation
-                        && Arc::ptr_eq(&agent.task, &lead.session.task)
-                })
-                .ok_or("unknown_or_foreign_agent")?;
-            if !agent.completed()? {
-                return Err("snapshot_agent_not_completed".into());
-            }
-            let workspace = agent
-                .workspace
-                .as_ref()
-                .ok_or("agent_has_no_isolated_workspace")?;
+            let root = {
+                let records = self.records.lock().await;
+                let agent = records
+                    .get(&handle)
+                    .filter(|agent| {
+                        agent.mod_id == caller.id
+                            && agent.generation == caller.generation
+                            && Arc::ptr_eq(&agent.task, &lead.session.task)
+                    })
+                    .ok_or("unknown_or_foreign_agent")?;
+                if !agent.completed()? {
+                    return Err("snapshot_agent_not_completed".into());
+                }
+                agent
+                    .workspace
+                    .as_ref()
+                    .ok_or("agent_has_no_isolated_workspace")?
+                    .root
+                    .clone()
+            };
             let parent = parent_config(lead).await?;
-            let (_, snapshot) = candidate(lead, &parent, workspace).await?;
+            let (_, snapshot) = candidate(lead, &parent, &root).await?;
             snapshots::permitted(&snapshot, &authority, &protected)?;
             snapshot
         } else {
@@ -1193,7 +1203,7 @@ impl Agents {
         let host = &lead.host;
         let task = &lead.session.task;
         let parent = parent_config(lead).await?;
-        let (paths, proposed) = candidate(lead, &parent, workspace).await?;
+        let (paths, proposed) = candidate(lead, &parent, &workspace.root).await?;
         let changed = workspace.base.changed_paths(&proposed);
         if changed.is_empty() {
             return Err("isolated_worker_returned_no_change".into());
@@ -1237,7 +1247,7 @@ impl Agents {
             parent: lead.session.scratch.clone(),
             directory: Some(directory.clone()),
         };
-        let reread = candidate(lead, &parent, workspace).await?;
+        let reread = candidate(lead, &parent, &workspace.root).await?;
         if reread.0 != paths || reread.1 != proposed {
             return Err("isolated_candidate_changed_before_apply".into());
         }
@@ -1400,7 +1410,7 @@ impl Agents {
                             && workspace.integrable
                         {
                             let parent = parent_config(lead).await?;
-                            let (_, proposed) = candidate(lead, &parent, workspace).await?;
+                            let (_, proposed) = candidate(lead, &parent, &workspace.root).await?;
                             agent.candidate = Some((
                                 proposed.hash().map_err(|e| e.to_string())?,
                                 workspace
@@ -1743,7 +1753,10 @@ impl Agents {
                 context
             ));
         }
-        let evidence = request.evidence.as_ref().map(|reference| reference.sha256.clone());
+        let evidence = request
+            .evidence
+            .as_ref()
+            .map(|reference| reference.sha256.clone());
         if let Some(reference) = request.evidence.take() {
             let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
             let delivered = tokio::task::spawn_blocking(scoped_resource(
@@ -1808,10 +1821,7 @@ impl Agents {
             agent_nickname: Some(request.role.clone()),
             agent_role: Some(request.role.clone()),
         }));
-        let spawned = match manager
-            .spawn_isolated_subagent(lead.thread, options)
-            .await
-        {
+        let spawned = match manager.spawn_isolated_subagent(lead.thread, options).await {
             Ok(spawned) => spawned,
             Err(error) => {
                 if let Ok(mut accounts) = host.accounts.0.lock() {

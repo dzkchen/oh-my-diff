@@ -1,4 +1,4 @@
-use codex_omd::resource_data::{ResourceBinding, ResourceRef, ResourceStore, hash};
+use codex_omd::resource_data::{ResourceBinding, ResourceStore, hash};
 use serde_json::json;
 use std::fs;
 

@@ -468,6 +468,7 @@ pub struct ContractSelection {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum ContractResolution {
     None,
     Active {

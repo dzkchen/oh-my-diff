@@ -242,6 +242,7 @@ pub(super) fn read_tool() -> ModTool {
 }
 
 impl ModHost {
+    #[allow(clippy::too_many_arguments)]
     pub fn invoke_tool(
         &mut self,
         owner: &str,

@@ -303,7 +303,9 @@ impl Task {
             })
             .collect::<Vec<_>>();
         records.sort_by_key(fs::DirEntry::file_name);
-        if records.len() > 200_000 { return Err(denied("resume journal limit")); }
+        if records.len() > 200_000 {
+            return Err(denied("resume journal limit"));
+        }
         if records.is_empty() {
             return Err(denied("resume evidence is empty"));
         }
@@ -320,7 +322,10 @@ impl Task {
         let mut created_unix_millis = None;
         for entry in records {
             let metadata = entry.metadata()?;
-            if entry.file_type()?.is_symlink() || !metadata.is_file() || metadata.len() > 4 * 1024 * 1024 {
+            if entry.file_type()?.is_symlink()
+                || !metadata.is_file()
+                || metadata.len() > 4 * 1024 * 1024
+            {
                 return Err(denied("resume evidence must be a bounded regular file"));
             }
             let value: Value = serde_json::from_slice(&fs::read(entry.path())?)?;
@@ -504,7 +509,9 @@ impl Task {
                     if state.observed.len() >= MAX_OBSERVED_REQUESTS
                         || attempt.request as usize != state.observed.len() + 1
                         || !attempt.status.starts_with("observed_")
-                        || attempt.reserved_microusd != 0 || attempt.settled_microusd.is_some() {
+                        || attempt.reserved_microusd != 0
+                        || attempt.settled_microusd.is_some()
+                    {
                         return Err(denied("resume observed request invalid"));
                     }
                     state.observed.push(attempt);
@@ -1016,10 +1023,7 @@ impl Task {
             .get(&admission.request)
             .cloned()
             .ok_or_else(|| denied("unknown request"))?;
-        if state.status != TaskStatus::Active
-            || self.expired()
-            || attempt.status != "unknown"
-        {
+        if state.status != TaskStatus::Active || self.expired() || attempt.status != "unknown" {
             return Err(denied(
                 "request dispatch stopped, expired, revoked or already consumed",
             ));

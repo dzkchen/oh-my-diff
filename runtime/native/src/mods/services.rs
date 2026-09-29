@@ -175,7 +175,9 @@ impl Services {
             return Err("service_already_registered".into());
         }
         let host = &lead.host;
-        let grant = host.config.services
+        let grant = host
+            .config
+            .services
             .iter()
             .find(|g| g.id == selection.id && g.mod_id == mod_id)
             .cloned()
@@ -288,8 +290,7 @@ impl Services {
             .permissions
             .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::legacy(scope))
             .map_err(|e| e.to_string())?;
-        let mut config =
-            execution::isolated(&parent, &host.repository, &reads, &denied, false)?;
+        let mut config = execution::isolated(&parent, &host.repository, &reads, &denied, false)?;
         if grant.network {
             let service_profile = config.permissions.effective_permission_profile();
             let profile = codex_protocol::models::PermissionProfile::from_runtime_permissions(
@@ -314,7 +315,9 @@ impl Services {
             {
                 return Err("invalid_secret_environment_key".into());
             }
-            let path = host.config.secret_refs
+            let path = host
+                .config
+                .secret_refs
                 .get(reference)
                 .ok_or("unknown_secret_reference")?;
             if path.starts_with(&host.repository)
@@ -357,7 +360,8 @@ impl Services {
                 grant.id,
                 manager.reserve_thread_id()
             );
-            lead.session.task
+            lead.session
+                .task
                 .start_worker(
                     worker.clone(),
                     lead.owner.clone(),
@@ -385,7 +389,9 @@ impl Services {
             if argv.len() > 128 || argv.iter().map(String::len).sum::<usize>() > 24576 {
                 return Err("service_argument_limit".into());
             }
-            let timeout = lead.session.task
+            let timeout = lead
+                .session
+                .task
                 .remaining()
                 .map_err(|e| e.to_string())?
                 .0
@@ -401,7 +407,10 @@ impl Services {
             let output = tokio::time::timeout(timeout, request_output(&config, supervised))
                 .await
                 .map_err(|_| "service_request_deadline")??;
-            lead.session.task.check_active().map_err(|e| e.to_string())?;
+            lead.session
+                .task
+                .check_active()
+                .map_err(|e| e.to_string())?;
             if output["exit_code"] != 0 {
                 return Err("service_request_failed".into());
             }
@@ -446,7 +455,8 @@ impl Services {
             })
             .transpose()?;
         let worker = format!("sidecar-{}-{}", grant.id, manager.reserve_thread_id());
-        lead.session.task
+        lead.session
+            .task
             .start_worker(
                 worker.clone(),
                 lead.owner.clone(),
@@ -462,7 +472,9 @@ impl Services {
         }
         let task = lead.session.task.clone();
         let output_bytes = host.config.snapshot_bytes;
-        let timeout = lead.session.task
+        let timeout = lead
+            .session
+            .task
             .remaining()
             .map_err(|e| e.to_string())?
             .0
@@ -475,10 +487,12 @@ impl Services {
         ];
         supervised.extend(argv);
         let job = tokio::spawn(async move {
-            let result =
-                tokio::time::timeout(timeout, execution::command(&task, output_bytes, &config, supervised))
-                    .await
-                    .map_err(|_| "sidecar_deadline".to_string())??;
+            let result = tokio::time::timeout(
+                timeout,
+                execution::command(&task, output_bytes, &config, supervised),
+            )
+            .await
+            .map_err(|_| "sidecar_deadline".to_string())??;
             Ok(json!({"exit_code":result["exit_code"],"timed_out":result["timed_out"]}))
         });
         records.insert(
@@ -498,7 +512,10 @@ impl Services {
         if let (Some(port), Some(route)) = (port, grant.route) {
             let ready = tokio::time::timeout(Duration::from_secs(3), async {
                 loop {
-                    lead.session.task.check_active().map_err(|e| e.to_string())?;
+                    lead.session
+                        .task
+                        .check_active()
+                        .map_err(|e| e.to_string())?;
                     if self
                         .records
                         .lock()

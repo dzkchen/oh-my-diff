@@ -71,7 +71,8 @@ pub struct WorkspaceTransactionResult {
     pub backup: Option<serde_json::Value>,
 }
 
-pub type BackupSink<'a> = dyn Fn(&BTreeMap<String, Option<Vec<u8>>>) -> io::Result<serde_json::Value> + 'a;
+pub type BackupSink<'a> =
+    dyn Fn(&BTreeMap<String, Option<Vec<u8>>>) -> io::Result<serde_json::Value> + 'a;
 
 fn fingerprint_matches(
     expected: &Option<Fingerprint>,
@@ -224,7 +225,9 @@ impl WorkspaceTransaction {
             return Err(invalid("duplicate write"));
         }
         let deletes = self.deletes.iter().cloned().collect::<BTreeSet<_>>();
-        if deletes.len() != self.deletes.len() || deletes.iter().any(|name| writes.contains_key(name)) {
+        if deletes.len() != self.deletes.len()
+            || deletes.iter().any(|name| writes.contains_key(name))
+        {
             return Err(invalid("duplicate or overlapping delete"));
         }
         let mut affected = writes.keys().cloned().collect::<BTreeSet<_>>();
@@ -284,7 +287,9 @@ impl WorkspaceTransaction {
             Some(sink) => Some(sink(
                 &before
                     .iter()
-                    .map(|(name, entry)| (name.clone(), entry.as_ref().map(|(bytes, _)| bytes.clone())))
+                    .map(|(name, entry)| {
+                        (name.clone(), entry.as_ref().map(|(bytes, _)| bytes.clone()))
+                    })
                     .collect(),
             )?),
             None => None,
@@ -981,7 +986,9 @@ mod transaction_tests {
             expected: BTreeMap::from([
                 (
                     "old.ts".into(),
-                    Some(Fingerprint::Hash(content_hash(b"export const value = 1;\n"))),
+                    Some(Fingerprint::Hash(content_hash(
+                        b"export const value = 1;\n",
+                    ))),
                 ),
                 ("new.ts".into(), None),
                 (
@@ -1019,7 +1026,10 @@ mod transaction_tests {
         let root = directory.path().canonicalize().unwrap();
         fs::write(root.join("file.py"), "changed\n").unwrap();
         let transaction = WorkspaceTransaction {
-            expected: BTreeMap::from([("file.py".into(), Some(Fingerprint::Hash(content_hash(b"old\n"))))]),
+            expected: BTreeMap::from([(
+                "file.py".into(),
+                Some(Fingerprint::Hash(content_hash(b"old\n"))),
+            )]),
             writes: BTreeMap::from([("file.py".into(), "new\n".into())]),
             renames: Vec::new(),
             ..Default::default()
@@ -1095,7 +1105,10 @@ mod transaction_tests {
         let original = vec![b'x'; 4 * 1024 * 1024 + 1];
         fs::write(root.join("large.py"), &original).unwrap();
         let transaction = WorkspaceTransaction {
-            expected: BTreeMap::from([("large.py".into(), Some(Fingerprint::Hash(content_hash(&original))))]),
+            expected: BTreeMap::from([(
+                "large.py".into(),
+                Some(Fingerprint::Hash(content_hash(&original))),
+            )]),
             writes: BTreeMap::from([("large.py".into(), "small\n".into())]),
             renames: Vec::new(),
             ..Default::default()
@@ -1124,28 +1137,51 @@ mod transaction_tests {
         };
         let transaction = WorkspaceTransaction {
             expected: BTreeMap::from([
-                ("drop.txt".into(), Some(Fingerprint::Stat { size, mtime_ms })),
-                ("keep.txt".into(), Some(Fingerprint::Hash(content_hash(b"keep\n")))),
+                (
+                    "drop.txt".into(),
+                    Some(Fingerprint::Stat { size, mtime_ms }),
+                ),
+                (
+                    "keep.txt".into(),
+                    Some(Fingerprint::Hash(content_hash(b"keep\n"))),
+                ),
             ]),
             writes: BTreeMap::from([("keep.txt".into(), "kept\n".into())]),
             deletes: vec!["drop.txt".into()],
             backup: true,
             ..Default::default()
         };
-        let result = transaction.apply_with_backup(&root, || true, Some(&sink)).unwrap();
+        let result = transaction
+            .apply_with_backup(&root, || true, Some(&sink))
+            .unwrap();
         assert!(!root.join("drop.txt").exists());
         assert_eq!(fs::read_to_string(root.join("keep.txt")).unwrap(), "kept\n");
         assert_eq!(result.files["drop.txt"], None);
         assert_eq!(result.backup, Some(serde_json::json!({"backup": "ok"})));
         assert_eq!(saved.borrow()["drop.txt"], Some(b"drop\n".to_vec()));
         let stale = WorkspaceTransaction {
-            expected: BTreeMap::from([("keep.txt".into(), Some(Fingerprint::Stat { size: 1, mtime_ms: 1 }))]),
+            expected: BTreeMap::from([(
+                "keep.txt".into(),
+                Some(Fingerprint::Stat {
+                    size: 1,
+                    mtime_ms: 1,
+                }),
+            )]),
             deletes: vec!["keep.txt".into()],
             ..Default::default()
         };
-        assert!(stale.apply(&root, || true).unwrap_err().to_string().contains("stale"));
+        assert!(
+            stale
+                .apply(&root, || true)
+                .unwrap_err()
+                .to_string()
+                .contains("stale")
+        );
         let missing_sink = WorkspaceTransaction {
-            expected: BTreeMap::from([("keep.txt".into(), Some(Fingerprint::Hash(content_hash(b"kept\n"))))]),
+            expected: BTreeMap::from([(
+                "keep.txt".into(),
+                Some(Fingerprint::Hash(content_hash(b"kept\n"))),
+            )]),
             deletes: vec!["keep.txt".into()],
             backup: true,
             ..Default::default()

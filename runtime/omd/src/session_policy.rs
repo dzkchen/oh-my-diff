@@ -28,9 +28,10 @@ pub(crate) fn permitted(
             if let Some(version) = name
                 .strip_prefix("state_")
                 .and_then(|value| value.strip_suffix(".sqlite"))
-                && version.parse::<u32>().map_or(true, |version| version > 5) {
-                    return Err(io::Error::other("session_policy_version_unsupported"));
-                }
+                && version.parse::<u32>().map_or(true, |version| version > 5)
+            {
+                return Err(io::Error::other("session_policy_version_unsupported"));
+            }
         }
     }
     if !database.try_exists()? {

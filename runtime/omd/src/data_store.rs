@@ -209,7 +209,10 @@ impl DataStore<'_> {
             }
             "store.put" => {
                 let name = checked_key()?.to_owned();
-                let value = input.value.clone().ok_or_else(|| failure("store_value_required"))?;
+                let value = input
+                    .value
+                    .clone()
+                    .ok_or_else(|| failure("store_value_required"))?;
                 if serde_json::to_vec(&value)?.len() > VALUE_BYTES {
                     return Err(failure("store_value_limit"));
                 }
