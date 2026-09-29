@@ -71,7 +71,7 @@ pub(super) fn evaluate(
         .ok_or_else(|| failure("missing_stdout"))?;
     let reader = std::thread::spawn(move || {
         let mut output = Vec::new();
-        stdout.take(65_537).read_to_end(&mut output)?;
+        stdout.take(262_145).read_to_end(&mut output)?;
         Ok::<_, std::io::Error>(output)
     });
     let deadline = Instant::now() + budget + Duration::from_millis(250);
@@ -96,7 +96,7 @@ pub(super) fn evaluate(
     let output = reader.join().map_err(|_| failure("reader_failed"))??;
     let errors = errors.join().unwrap_or_default();
     let status = status?;
-    if output.len() > 65_536 {
+    if output.len() > 262_144 {
         return Err(failure("output_limit"));
     }
     let value: Value = serde_json::from_slice(&output).map_err(|_| {

@@ -82,6 +82,11 @@ const api = Object.freeze({
   version: request.api,
   fieldPolicies: Object.freeze(structuredCloneFallback(request.field_policies ?? {})),
   host: Object.freeze({ call: hostCall, tryCall: hostTryCall }),
+  assets: Object.freeze({ read(name) {
+    if (name === request.entrypoint) return { text: request.source, sha256: request.entrypoint_sha256 };
+    if (typeof name !== 'string' || !Object.hasOwn(request.assets ?? {}, name)) throw new Error('package_asset_unavailable');
+    return structuredCloneFallback(request.assets[name]);
+  } }),
   services: Object.freeze({ call(name, method, input = null) { return hostCall('mods.service', { name, method, input }); } }),
   settings: Object.freeze(structuredCloneFallback(request.settings)),
   on(event, handler) {
@@ -270,7 +275,7 @@ try {
   `, { context });
   await dispatch.link(() => { throw new Error('unsupported_import'); });
   await dispatch.evaluate({ timeout: request.hook_budget_ms });
-  if (context.__result.length > 65536) throw new Error('output_limit');
+  if (context.__result.length > 262144) throw new Error('output_limit');
   process.stdout.write(context.__result);
 } catch (error) {
   process.stdout.write(JSON.stringify({ error: String(error?.stack ?? error).slice(0, 768) }));

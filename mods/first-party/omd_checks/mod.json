@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "omd_checks",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.1",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_checks" },
+  "capabilities": ["tools", "fs.read", "exec"],
+  "environment": ["crypto"],
+  "compatibility": { "required_features": ["workspace_fs_v1", "workspace_snapshots_v1", "exec_v1"] }
+}

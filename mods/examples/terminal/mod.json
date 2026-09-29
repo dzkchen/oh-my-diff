@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "terminal",
-  "version": "1.0.0",
-  "api": "0.1.0-experimental.7",
+  "version": "2.0.0",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": {
@@ -10,7 +10,10 @@
     "source": "mods/examples"
   },
   "compatibility": {
-    "required_features": ["terminal_components_v1", "terminal_render_sites_v1"]
+    "required_features": [
+      "terminal_components_v1",
+      "terminal_render_sites_v1"
+    ]
   },
   "capabilities": [
     "terminal",

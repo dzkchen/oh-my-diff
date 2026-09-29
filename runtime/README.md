@@ -1,4 +1,31 @@
-# Controlled Contributor experiment
+# Runtime
+
+The patched `rust-v0.157.0` host accepts `OMD_MODE=omd` for the generic mod host
+and `OMD_MODE=upstream_direct` for the pinned upstream task flow; with no mode
+selected it runs upstream-style direct. `OMD_MODE=enabled`, `OMD_MODE=platform`
+and `OMD_CONTROLLED_MANIFEST` fail closed. The single artifact is
+`patches/omd-0.157.0.patch`; `runtime/omd` and `runtime/native` mirror its
+`codex-rs/omd` and `codex-rs/ext/omd` crates byte for byte.
+
+The host is feature-agnostic. Workflow, analysis, knowledge, guidance, Pi
+resources, Git and terminal presentation are TypeScript mods in
+[`mods/first-party`](../mods/first-party) over the public API in
+[`mods/REFERENCE.md`](../mods/REFERENCE.md). With zero first-party mods the host
+runs as modded Codex with no feature behavior. `mise run native:ownership`
+fails when a native operation, event, capability or host configuration field
+names a feature.
+
+`omd_workflow` owns the reviewed and solo-evidence workflows; the host enforces
+only an explicitly selected schema-2 contract, route grants, permissions and
+receipts. `omd-contract` selects a contract; enabling the package alone selects
+none and authorizes no provider. Installation is described in
+[`LEAN_PROFILES.md`](../LEAN_PROFILES.md).
+
+## Historical pre-Batch 2.55 controlled-contributor design and evidence
+
+The remainder records the former native controlled-workflow experiment.
+Commands, modes, manifest rules, and scenario lists below describe that
+historical host and are not instructions for the current binary.
 
 This experimental patch links the completed Oh My Diff controls into pinned
 Codex `rust-v0.157.0`. The custom binary has an explicit upstream-style direct
@@ -60,9 +87,8 @@ behavior. Delegation requires unified review; the completion gate requires both
 unified review and checkpoints. Disabling delegation selects direct single-agent
 work without disabling unrelated OMD controls. Inactive guideline, knowledge,
 LSP, or reactive-rule configuration is rejected instead of being silently
-ignored. The exact Phase 8 foundation profiles and supported build matrix are
-frozen in
-[`lean-v1.lock.json`](lean-v1.lock.json).
+ignored. The Phase 8 foundation lock and private installer were removed after
+Batch 2.55; git history retains them.
 
 Every enabled task runs under exactly one versioned workflow contract, which
 owns the second-party calls the task may make and the final review and
@@ -450,22 +476,18 @@ behavior with `codex --no-alt-screen` or:
 alternate_screen = "never"
 ```
 
-Controlled sessions show Oh My Diff branding and a compact task/request/
-Contributor status. `/omd` opens the on-demand inspector for worker/archive,
-allowance/exposure, permission/approval, renderer, mouse, evidence, and current
-authorization state; its confirmed revoke action durably blocks future
-Contributor requests. Ctrl+T transcript view supports `/` or Ctrl+F search and
-`n`/`N` navigation. In fullscreen, mouse input goes to Codex's transcript and
-composer: scrolling, click-to-position, drag selection, Shift-click extension,
-and right-click or copy-key copying. In enabled and platform modes, releasing a
-drag selection also copies it once through Codex's existing clipboard path, and
-mod UI regions receive their clicks first. `OMD_TUI_MOUSE=off` removes these
-additions; upstream-style direct mode never adds them. The composer displays
-`===`, `->`, and `<=` as width-preserving `≡`, `→`, and `≤` while keeping literal
-ASCII for editing, copying, and submission. Set `OMD_TUI_ASCII=1`, or use a
-non-Unicode locale, for literal rendering.
+The Full profile enables `omd_logo` and `omd_inspector` for branding and the
+`/omd` dialog. The inspector shows profile, mod counts, selected contract,
+task limits and ledger data when available. Upstream-style direct mode has no
+inspector. Ctrl+T transcript view supports `/` or Ctrl+F search and `n`/`N`
+navigation. In fullscreen, mouse input goes to Codex's transcript and composer:
+scrolling, click-to-position, drag selection, Shift-click extension, and
+right-click or copy-key copying. The optional `omd_selection_copy` mod owns
+copy-on-highlight behavior. The optional `omd_theme` mod owns configured glyph
+substitution while preserving literal submitted text.
 
-Run the no-provider macOS end-to-end fixture from this repository:
+The former no-provider macOS end-to-end fixture used this command, which does
+not validate the current host:
 
 ```sh
 python3 -m benchmarks.controlled_fixture /path/to/codex/codex-rs/target/debug/codex /private/tmp/omd-fixture-new --scenario runner

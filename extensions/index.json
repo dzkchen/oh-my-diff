@@ -4,19 +4,19 @@
   "release_pin": {
     "codex": "0.157.0",
     "omd": "0.1.0",
-    "mod_api": "0.1.0-experimental.9",
+    "mod_api": "0.2.0-experimental.1",
     "node": "24.18.0"
   },
   "packages": [
     {
       "id": "omd_claude_cli",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "capability": "Opt-in official Claude CLI subscription request route",
       "source": "mods/first-party/omd_claude_cli",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0; official Claude CLI 2.1.281",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; Node 24.18.0; official Claude CLI 2.1.281",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -29,13 +29,13 @@
     },
     {
       "id": "omd_coordination",
-      "version": "0.1.0-preview.4",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "capability": "Live task routing, worker context, and delegation preparation",
       "source": "mods/first-party/omd_coordination",
       "license": "undeclared",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -47,13 +47,13 @@
     },
     {
       "id": "omd_recovery",
-      "version": "0.1.0-preview.2",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "capability": "Failure-aware escalation and delegation dispatch",
       "source": "mods/first-party/omd_recovery",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -65,13 +65,13 @@
     },
     {
       "id": "omd_workspace",
-      "version": "0.2.0-preview.2",
+      "version": "0.2.0-preview.3",
       "extension_type": "mod",
       "capability": "Live terminal task and worker workspace",
       "source": "mods/first-party/omd_workspace",
       "license": "undeclared",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -83,13 +83,13 @@
     },
     {
       "id": "omd_typed_tasks",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "capability": "Typed bounded subagent tasks with isolated edit and reviewed integration",
       "source": "mods/first-party/omd_typed_tasks",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.156.1; OMD 0.1.0; mod API 0.1.0-experimental.8; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -101,13 +101,13 @@
     },
     {
       "id": "omd_logo",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "capability": "Oh My Diff terminal logo and launch status in both profiles",
       "source": "mods/first-party/omd_logo",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -119,13 +119,13 @@
     },
     {
       "id": "omd_model_picker",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "capability": "Compact Full OMD /model and reasoning picker presentation",
       "source": "mods/first-party/omd_model_picker",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_picker_theme_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; terminal_lists_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -137,13 +137,13 @@
     },
     {
       "id": "omd_selection_copy",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "capability": "User-selectable copy-on-highlight policy with release status",
       "source": "mods/first-party/omd_selection_copy",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.1.0-experimental.8; terminal_selection_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; terminal_selection_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -155,13 +155,13 @@
     },
     {
       "id": "omd_git",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "capability": "Opt-in left Git sidebar with commit graph, changed files and confirmed actions",
       "source": "mods/first-party/omd_git",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.1.0-experimental.8; git_operations_v1, terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; git_operations_v1, terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -179,7 +179,7 @@
       "source": "plugins/bundled/oh-my-diff/plugins/omd-guidance-hooks",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; selected hooks require OMD_MODE=enabled and matching controlled manifest",
+      "compatibility": "Bundled Codex plugin marketplace at Codex 0.157.0 and OMD 0.1.0; selected hooks require OMD_MODE=omd and plugin-owned configuration",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -261,46 +261,6 @@
           "path": "hooks/hooks.json"
         }
       ]
-    },
-    {
-      "id": "omd-repository-tools",
-      "version": "0.1.0",
-      "extension_type": "plugin",
-      "capability": "Source-linked repository graph and focused code health evidence",
-      "source": "plugins/bundled/oh-my-diff/plugins/omd-repository-tools",
-      "license": "UNLICENSED",
-      "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires matching omd-graph and omd-health binaries",
-      "tested_versions": [
-        "Codex 0.156.1",
-        "OMD 0.1.0",
-        "plugin 0.1.0"
-      ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md",
-      "components": [
-        {
-          "extension_type": "skill",
-          "path": "skills/omd-code-health"
-        }
-      ]
-    },
-    {
-      "id": "omd-lsp-adapters",
-      "version": "0.1.0",
-      "extension_type": "plugin",
-      "capability": "Opt-in Rust, TypeScript, JavaScript, Python, and Java LSP operations",
-      "source": "plugins/bundled/oh-my-diff/plugins/omd-lsp-adapters",
-      "license": "UNLICENSED",
-      "maintainer": "Oh My Diff",
-      "compatibility": "Bundled Codex plugin marketplace at Codex 0.156.1 and OMD 0.1.0; requires matching omd-lsp and separately installed language servers",
-      "tested_versions": [
-        "Codex 0.156.1",
-        "OMD 0.1.0",
-        "plugin 0.1.0"
-      ],
-      "support_status": "reviewed_candidate",
-      "review": "extensions/REVIEWS.md"
     },
     {
       "id": "omd-artifact-reading",

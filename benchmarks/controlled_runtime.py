@@ -11,6 +11,8 @@ SYSTEM_READS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin", "/Library/Developer/Co
 
 
 def configure(root, runtime, workspace, home, evidence, gateway, limits, env, overrides):
+    if "controlled" in runtime:
+        raise RuntimeError("legacy controlled benchmark policy requires a rebuilt OMD_MODE=omd fixture with explicit mod store, host routes, and workflow contract")
     require(not (workspace / ".omd").exists(), "source occupies reserved runtime scratch")
     require(not (workspace / ".omd-tmp").exists(), "source occupies reserved tool scratch")
     reads = [*SYSTEM_READS, *(str(artifact(root, ref)) for ref in runtime.get("path_helpers", []))]

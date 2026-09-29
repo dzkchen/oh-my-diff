@@ -1,101 +1,473 @@
 {
   "schema": 1,
   "virtual_time_ms": 1000,
+  "packages": [
+    "../omd_workflow"
+  ],
   "settings": {
     "omd_typed_tasks": {
       "max_fan_out": 2,
       "task_types": {
         "investigate": {
           "role": "investigator",
-          "route": "sol",
+          "route": "reader",
           "tools": "read_search",
-          "result_schema": {"type": "object", "properties": {"answer": {"type": "string", "maxLength": 100}}, "required": ["answer"], "additionalProperties": false}
-        },
-        "edit": {
-          "role": "editor",
-          "route": "astra",
-          "tools": "workspace_edit",
-          "result_schema": {"type": "object", "properties": {"answer": {"type": "string", "maxLength": 100}}, "required": ["answer"], "additionalProperties": false}
+          "result_schema": {
+            "type": "object",
+            "properties": {
+              "answer": {
+                "type": "string",
+                "maxLength": 100
+              }
+            },
+            "required": [
+              "answer"
+            ],
+            "additionalProperties": false
+          }
         }
       }
     }
   },
   "host_operations": {
-    "checkpoint.read": [
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 1}},
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 1}},
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 1}},
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 2}},
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 2}},
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 2}},
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 3}},
-      {"result": {"objective": "Fix solution.py so add returns the sum", "revision": 1}}
+    "task.status": [
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      }
+    ],
+    "contract.status": [
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "reviewed_omd"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      }
+    ],
+    "store.get": [
+      {
+        "result": null
+      },
+      {
+        "result": {
+          "value": {
+            "schema": 1,
+            "objective": "Fix the requested task",
+            "acceptance_criteria": [
+              "tests"
+            ],
+            "acceptance": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "remaining_work": [
+              "tests"
+            ],
+            "failed_hypotheses": [],
+            "status": "active",
+            "decisions": []
+          },
+          "revision": 1
+        }
+      },
+      {
+        "result": {
+          "value": {
+            "status": "running",
+            "acceptance": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "criteria": [
+              "tests"
+            ],
+            "entries": [
+              {
+                "task": {
+                  "id": "inspect",
+                  "type": "investigate",
+                  "prompt": "Inspect source.ts"
+                },
+                "type": {
+                  "role": "investigator",
+                  "route": "reader",
+                  "tools": "read_search",
+                  "result_schema": {
+                    "type": "object",
+                    "properties": {
+                      "answer": {
+                        "type": "string",
+                        "maxLength": 100
+                      }
+                    },
+                    "required": [
+                      "answer"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "handle": "reader-1"
+              }
+            ]
+          },
+          "revision": 3
+        }
+      },
+      {
+        "result": {
+          "value": {
+            "status": "running",
+            "acceptance": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "criteria": [
+              "tests"
+            ],
+            "entries": [
+              {
+                "task": {
+                  "id": "inspect",
+                  "type": "investigate",
+                  "prompt": "Inspect source.ts"
+                },
+                "type": {
+                  "role": "investigator",
+                  "route": "reader",
+                  "tools": "read_search",
+                  "result_schema": {
+                    "type": "object",
+                    "properties": {
+                      "answer": {
+                        "type": "string",
+                        "maxLength": 100
+                      }
+                    },
+                    "required": [
+                      "answer"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "handle": "reader-1",
+                "value": {
+                  "result": {
+                    "answer": "found"
+                  },
+                  "sources": [
+                    {
+                      "ref": "source.ts:1",
+                      "why": "defines the requested behavior"
+                    }
+                  ]
+                },
+                "evidence": {
+                  "reference": "fixture-evidence",
+                  "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+              }
+            ]
+          },
+          "revision": 4
+        }
+      }
+    ],
+    "store.put": [
+      {
+        "result": {
+          "revision": 1
+        }
+      },
+      {
+        "result": {
+          "revision": 2
+        }
+      },
+      {
+        "result": {
+          "revision": 3
+        }
+      },
+      {
+        "result": {
+          "revision": 4
+        }
+      },
+      {
+        "result": {
+          "revision": 5
+        }
+      }
+    ],
+    "evidence.write": [
+      {
+        "result": {
+          "reference": "fixture-evidence",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      }
+    ],
+    "routes.list": [
+      {
+        "result": [
+          {
+            "name": "reader",
+            "roles": [
+              "worker"
+            ],
+            "available": true
+          }
+        ]
+      }
+    ],
+    "workspace.snapshot": [
+      {
+        "result": {
+          "snapshot": {
+            "reference": "snapshot:fixture",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      }
     ],
     "agents.spawn": [
-      {"result": {"handle": "a", "route": "sol", "permissions": "read_only"}},
-      {"result": {"handle": "b", "route": "astra", "permissions": "isolated_worktree"}},
-      {"result": {"handle": "c", "route": "sol", "permissions": "read_only"}},
-      {"result": {"handle": "d", "route": "sol", "permissions": "read_only"}},
-      {"result": {"handle": "e", "route": "sol", "permissions": "read_only"}},
-      {"result": {"handle": "f", "route": "sol", "permissions": "read_only"}},
-      {"result": {"handle": "g", "route": "sol", "permissions": "read_only"}},
-      {"result": {"handle": "h", "route": "astra", "permissions": "isolated_worktree"}},
-      {"result": {"handle": "i", "route": "sol", "permissions": "read_only"}},
-      {"error": "native_worker_limit"},
-      {"result": {"handle": "j", "route": "astra", "permissions": "isolated_worktree"}},
-      {"result": {"handle": "k", "route": "astra", "permissions": "isolated_worktree"}}
+      {
+        "result": {
+          "handle": "reader-1",
+          "route": "reader",
+          "permissions": "read_only"
+        }
+      }
     ],
     "agents.wait": [
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"found\"},\"sources\":[{\"ref\":\"src/a.rs:1\",\"why\":\"defines it\"}]}", "consumed": false, "evidence": {"ref": "native-thread:a", "sha256": "a"}}},
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"edited\"},\"sources\":[{\"ref\":\"src/b.rs:2\",\"why\":\"changed it\"}]}", "consumed": false, "evidence": {"ref": "native-thread:b", "sha256": "b"}}},
-      {"result": {"status": "completed", "text": "not JSON", "consumed": false, "evidence": {"ref": "native-thread:c", "sha256": "c"}}},
-      {"result": {"status": "failed", "error": "native_agent_failed"}},
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"resumed\"},\"sources\":[{\"ref\":\"src/a.rs:1\",\"why\":\"checked again\"}]}", "consumed": false, "evidence": {"ref": "native-thread:e", "sha256": "e"}}},
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"good\"},\"sources\":[{\"ref\":\"src/a.rs:1\",\"why\":\"inspected\"}]}", "consumed": false, "evidence": {"ref": "native-thread:f", "sha256": "f"}}},
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":17},\"sources\":[{\"ref\":\"src/b.rs:1\",\"why\":\"inspected\"}]}", "consumed": false, "evidence": {"ref": "native-thread:g", "sha256": "g"}}},
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"edited\"},\"sources\":[{\"ref\":\"src/b.rs:1\",\"why\":\"changed\"}]}", "consumed": false, "evidence": {"ref": "native-thread:h", "sha256": "h"}}},
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"edited\"},\"sources\":[{\"ref\":\"src/j.rs:1\",\"why\":\"changed it\"}]}", "consumed": false, "evidence": {"ref": "native-thread:j", "sha256": "j"}}},
-      {"result": {"status": "completed", "text": "{\"result\":{\"answer\":\"edited\"},\"sources\":[{\"ref\":\"src/k.rs:1\",\"why\":\"changed it\"}]}", "consumed": false, "evidence": {"ref": "native-thread:k", "sha256": "k"}}}
+      {
+        "result": {
+          "status": "completed",
+          "text": "{\"result\": {\"answer\": \"found\"}, \"sources\": [{\"ref\": \"source.ts:1\", \"why\": \"defines the requested behavior\"}]}",
+          "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence": {
+            "reference": "fixture-evidence",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "consumed": false
+        }
+      }
     ],
     "agents.result": [
-      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:a", "sha256": "a"}}},
-      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:b", "sha256": "b"}}},
-      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:e", "sha256": "e"}}},
-      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:h", "sha256": "h"}}},
-      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:j", "sha256": "j"}}},
-      {"result": {"status": "completed", "text": "", "consumed": true, "evidence": {"ref": "native-thread:k", "sha256": "k"}}}
-    ],
-    "workspace.integrate": [
-      {"result": {"status": "integrated", "candidate_sha256": "b", "changed_paths": ["src/b.rs"], "evidence": {"ref": "integration:b"}}},
-      {"error": "parent_changed_before_integration"},
-      {"result": {"status": "integrated", "candidate_sha256": "j", "changed_paths": ["src/j.rs"], "evidence": {"ref": "integration:j"}}},
-      {"error": "parent_changed_before_integration"}
+      {
+        "result": {
+          "status": "completed",
+          "text": "{\"result\": {\"answer\": \"found\"}, \"sources\": [{\"ref\": \"source.ts:1\", \"why\": \"defines the requested behavior\"}]}",
+          "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence": {
+            "reference": "fixture-evidence",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "consumed": true
+        }
+      }
     ],
     "agents.cancel": [
-      {"result": {"cancelled": true}},
-      {"result": {"cancelled": true}},
-      {"result": {"cancelled": true}},
-      {"result": {"cancelled": true}},
-      {"result": {"cancelled": true}},
-      {"result": {"cancelled": true}},
-      {"result": {"cancelled": true}},
-      {"error": "unknown_or_foreign_agent"}
+      {
+        "result": {
+          "cancelled": true
+        }
+      }
     ]
   },
   "steps": [
-    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "read", "type": "investigate", "prompt": "Find the definition"}, {"id": "write", "type": "edit", "prompt": "Edit the file"}]}},
-    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "bad", "type": "investigate", "prompt": "Find the definition"}]}, "expect_error": "malformed_worker_json"},
-    {"type": "reload"},
-    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "failed", "type": "investigate", "prompt": "Find the definition"}]}, "expect_error": "worker_failed: native_agent_failed"},
-    {"type": "reload"},
-    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "retry", "type": "investigate", "prompt": "Recheck after resume"}]}},
-    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "good", "type": "investigate", "prompt": "Check a source"}, {"id": "bad_schema", "type": "investigate", "prompt": "Check another source"}]}, "expect_error": "worker_result_schema_mismatch"},
-    {"type": "reload"},
-    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "conflict", "type": "edit", "prompt": "Edit a source"}]}, "expect_error": "parent_changed_before_integration"},
-    {"type": "reload"},
-    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "first", "type": "investigate", "prompt": "Inspect one"}, {"id": "second", "type": "investigate", "prompt": "Inspect two"}]}, "expect_error": "native_worker_limit"},
-    {"type": "reload"},
-    {"type": "invoke", "mod": "omd_typed_tasks", "event": "tool", "name": "run", "payload": {"tasks": [{"id": "one", "type": "edit", "prompt": "Edit one"}, {"id": "two", "type": "edit", "prompt": "Edit two"}]}, "expect": {"status": "partially_integrated", "cancel_failures": ["two: unknown_or_foreign_agent"], "checkpoint_revision": 1, "tasks": [{"id": "one", "type": "edit", "result": {"answer": "edited"}, "sources": [{"ref": "src/j.rs:1", "why": "changed it"}], "worker_evidence": {"ref": "native-thread:j", "sha256": "j"}, "integration": {"status": "integrated", "candidate_sha256": "j", "changed_paths": ["src/j.rs"], "evidence": {"ref": "integration:j"}}}, {"id": "two", "type": "edit", "result": {"answer": "edited"}, "sources": [{"ref": "src/k.rs:1", "why": "changed it"}], "worker_evidence": {"ref": "native-thread:k", "sha256": "k"}, "integration": {"status": "failed", "error": "parent_changed_before_integration"}}]}},
-    {"type": "status"}
+    {
+      "type": "invoke",
+      "mod": "omd_typed_tasks",
+      "event": "tool",
+      "name": "run",
+      "payload": {
+        "tasks": [
+          {
+            "id": "inspect",
+            "type": "investigate",
+            "prompt": "Inspect source.ts"
+          }
+        ]
+      },
+      "expect": {
+        "status": "running",
+        "tasks": [
+          {
+            "id": "inspect",
+            "handle": "reader-1"
+          }
+        ],
+        "next": "advance"
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_typed_tasks",
+      "event": "tool",
+      "name": "advance",
+      "payload": {},
+      "expect": {
+        "status": "running",
+        "acceptance": {
+          "reference": "fixture-evidence",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "criteria": [
+          "tests"
+        ],
+        "entries": [
+          {
+            "task": {
+              "id": "inspect",
+              "type": "investigate",
+              "prompt": "Inspect source.ts"
+            },
+            "type": {
+              "role": "investigator",
+              "route": "reader",
+              "tools": "read_search",
+              "result_schema": {
+                "type": "object",
+                "properties": {
+                  "answer": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "answer"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "handle": "reader-1",
+            "value": {
+              "result": {
+                "answer": "found"
+              },
+              "sources": [
+                {
+                  "ref": "source.ts:1",
+                  "why": "defines the requested behavior"
+                }
+              ]
+            },
+            "evidence": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_typed_tasks",
+      "event": "tool",
+      "name": "advance",
+      "payload": {},
+      "expect": {
+        "status": "completed",
+        "acceptance": {
+          "reference": "fixture-evidence",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "criteria": [
+          "tests"
+        ],
+        "entries": [
+          {
+            "task": {
+              "id": "inspect",
+              "type": "investigate",
+              "prompt": "Inspect source.ts"
+            },
+            "type": {
+              "role": "investigator",
+              "route": "reader",
+              "tools": "read_search",
+              "result_schema": {
+                "type": "object",
+                "properties": {
+                  "answer": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "answer"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "handle": "reader-1",
+            "value": {
+              "result": {
+                "answer": "found"
+              },
+              "sources": [
+                {
+                  "ref": "source.ts:1",
+                  "why": "defines the requested behavior"
+                }
+              ]
+            },
+            "evidence": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_typed_tasks",
+      "event": "tool",
+      "name": "run",
+      "payload": {
+        "tasks": [
+          {
+            "id": "inspect",
+            "type": "unknown",
+            "prompt": "Inspect source.ts"
+          }
+        ]
+      },
+      "expect_error": "task_invalid"
+    }
   ]
 }

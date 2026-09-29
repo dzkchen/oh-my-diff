@@ -25,8 +25,6 @@ retain detailed local evidence but are not required to read this register.
 | `omd-guidance-hooks` | Local plugin packages three selected skills and controlled hooks with host-gated reactions | Useful report/task result without instruction priority drift or excessive context |
 | `omd-review-policy` | Local plugin packages review skills and a selected every-turn hook; native ledger remains authoritative | Incremental findings beyond native final review at acceptable cost |
 | `omd-application-bridges` | Local plugin exposes prompt-approved managed bridge tools and session hooks | Real application task, exact dependency/teardown and disclosure checks |
-| `omd-repository-tools` | Local plugin exposes native graph and health operators through approved MCP tools | Representative repository accuracy, decision value and cold/reuse cost |
-| `omd-lsp-adapters` | Local plugin presents five language adapters over native safe-operation checks | Per-language installed server, exact-scope edit and task-benefit checks |
 | `omd-artifact-reading` | Local plugin packages one source-anchored reading skill | Per-source task value, parser/source drift and missing-dependency checks |
 
 Every plugin currently declares `UNLICENSED`; the first-party coordination and

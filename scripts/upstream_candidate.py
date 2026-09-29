@@ -264,7 +264,7 @@ class Candidate:
     def write_proposal(self, checkout, normalized_commit, target, tag_object, commit, raw, normalized, count):
         version = target.removeprefix("rust-v")
         proposed = self.dir / "proposed"
-        patch_name = f"runtime/patches/controlled-contributor-{version}.patch"
+        patch_name = f"runtime/patches/omd-{version}.patch"
         patch_bytes = subprocess.run(["git", "diff", "--binary", normalized_commit, "HEAD"], cwd=checkout, capture_output=True, check=True).stdout
         files = {}
         for name in git(checkout, "diff", "--name-only", "--no-renames", normalized_commit, "HEAD").splitlines():

@@ -62,18 +62,22 @@ def sha256(data):
 
 
 def load_manifest():
-    if os.environ.get("OMD_MODE") != "enabled":
+    if os.environ.get("OMD_MODE") != "omd":
         return None
-    raw = os.environ.get("OMD_CONTROLLED_MANIFEST")
+    raw = os.environ.get("OMD_GUIDANCE_CONFIG")
+    if not raw and os.environ.get("OMD_MOD_STORE"):
+        candidate = Path(os.environ["OMD_MOD_STORE"]) / "plugin-config" / "omd-guidance-hooks.json"
+        if candidate.exists():
+            raw = str(candidate)
     if not raw:
         return None
-    path = canonical_file(raw, "controlled manifest")
+    path = canonical_file(raw, "plugin configuration")
     data = path.read_bytes()
     if len(data) > MAX_INPUT_BYTES:
-        raise Invalid("controlled manifest exceeds hook size limit")
+        raise Invalid("plugin configuration exceeds hook size limit")
     manifest = parse_json(data)
     if not isinstance(manifest, dict):
-        raise Invalid("controlled manifest must be an object")
+        raise Invalid("plugin configuration must be an object")
     return manifest
 
 
@@ -247,7 +251,7 @@ def write_marker(manifest, event, rule, source, source_sha256, scope, rule_set_v
 def post_tool_use(manifest, event):
     capabilities = manifest.get("capabilities", {})
     if not isinstance(capabilities, dict):
-        raise Invalid("controlled capabilities are invalid")
+        raise Invalid("plugin capabilities are invalid")
     if capabilities.get("reactive_rules") is not True:
         return
     required = {"session_id", "turn_id", "tool_name", "tool_use_id"}

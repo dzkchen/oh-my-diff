@@ -1,7 +1,6 @@
 use super::*;
 use crate::workspace_operations::WorkspaceAuthority;
 use codex_omd::data_store::Origin;
-use std::path::Path;
 
 #[derive(Clone, Default)]
 pub(crate) struct DataScope(Arc<Mutex<Option<codex_omd::scoped_data::ScopedDataHosts>>>);
@@ -36,7 +35,6 @@ impl DataScope {
                     &source,
                     &request.operation,
                     request.arguments,
-                    &|path| authority.readable(path),
                     || !cancelled.load(Ordering::Acquire),
                 )
                 .map_err(|error| error.to_string())
@@ -60,7 +58,12 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
             && (codex_omd::scoped_data::operation(operation)
                 || matches!(
                     operation,
-                    "store.get" | "store.list" | "routes.list" | "task.status" | "contract.status"
+                    "store.get"
+                        | "store.list"
+                        | "routes.list"
+                        | "task.status"
+                        | "contract.status"
+                        | "workspace.snapshot"
                 ))
 }
 
@@ -90,22 +93,30 @@ async fn authority(lead: &Lead, call: Option<&ToolCall<'_>>) -> Result<Workspace
 }
 
 pub(super) fn exclusive(session: &Session) -> Result<OperationGuard<'_>, String> {
-    if session.operation.swap(true, Ordering::AcqRel) {
-        return Err("workspace_operation_active: another integrate, restore, rename or transaction is running".into());
-    }
-    Ok(OperationGuard(&session.operation))
+    acquire_workspace_operation(&session.operation, &session.repository_identity)
 }
 
-fn protected_resource(host: &Host, path: Option<&str>) -> bool {
-    path.is_none_or(|path| {
-        host.protected_paths()
-            .iter()
-            .filter(|protected| Some(*protected) != host.config.pi_user.as_ref())
-            .any(|protected| Path::new(path).starts_with(protected))
-    })
+fn needs_exclusive_workspace(operation: &str, arguments: &Value) -> bool {
+    matches!(operation, "workspace.transaction" | "workspace.restore")
+        || operation == "exec.run"
+            && arguments.get("snapshot").is_none()
+            && (arguments.get("write") == Some(&Value::Bool(true))
+                || arguments.get("guards").is_some()
+                || arguments.get("required_access").is_some())
 }
 
-fn now() -> u128 {
+fn workspace_guard<'a>(
+    operation: &str,
+    arguments: &Value,
+    active: &'a AtomicBool,
+    repository_identity: &str,
+) -> Result<Option<OperationGuard<'a>>, String> {
+    needs_exclusive_workspace(operation, arguments)
+        .then(|| acquire_workspace_operation(active, repository_identity))
+        .transpose()
+}
+
+pub(super) fn now() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis())
@@ -139,17 +150,46 @@ async fn submit_receipt(
         #[serde(default)]
         agent: Option<String>,
         #[serde(default)]
+        execution: bool,
+        #[serde(default)]
         findings: Vec<codex_omd::ReceiptFinding>,
+        #[serde(default)]
+        resolves: Vec<String>,
     }
     let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
+    if input.execution && input.agent.is_some() {
+        return Err("receipt_producer_conflict".into());
+    }
     let producer = match input.agent {
         Some(handle) => {
             core.agents
-                .attest(&handle, caller.id, caller.generation)
+                .attest(
+                    &handle,
+                    caller.id,
+                    caller.generation,
+                    &lead.session.task,
+                    &input.candidate_sha256,
+                    input.acceptance_sha256.as_deref(),
+                    &input.resolves,
+                    &input.evidence,
+                )
                 .await?;
             codex_omd::ReceiptProducer {
                 kind: codex_omd::ProducerKind::Agent,
                 handle: Some(handle),
+            }
+        }
+        None if input.execution => {
+            core.agents.attest_execution(
+                lead,
+                caller,
+                &input.candidate_sha256,
+                &input.evidence,
+                input.outcome,
+            )?;
+            codex_omd::ReceiptProducer {
+                kind: codex_omd::ProducerKind::Host,
+                handle: None,
             }
         }
         None => codex_omd::ReceiptProducer {
@@ -165,6 +205,7 @@ async fn submit_receipt(
         evidence: input.evidence,
         producer,
         findings: input.findings,
+        resolves: input.resolves,
         submitted_by: caller.id.to_owned(),
         at: now(),
     };
@@ -188,13 +229,14 @@ pub(super) fn gate(
     lead: &Lead,
     gate: codex_omd::Gate,
     candidate_sha256: &str,
+    acceptance_sha256: Option<&str>,
 ) -> Result<Vec<codex_omd::ContractRequirement>, String> {
     let missing = lead
         .session
         .contract
         .lock()
         .map_err(|_| "contract_lock_poisoned")?
-        .gate(gate, candidate_sha256, None)?;
+        .gate(gate, candidate_sha256, acceptance_sha256)?;
     notify_contract(
         core,
         json!({"gate": gate, "outcome": if missing.is_empty() {"passed"} else {"refused"},
@@ -208,8 +250,11 @@ async fn complete(core: &Core, lead: &Lead, arguments: Value) -> Result<Value, S
     #[serde(deny_unknown_fields)]
     struct Input {
         candidate_sha256: String,
+        #[serde(default)]
+        acceptance_sha256: Option<String>,
     }
     let input: Input = serde_json::from_value(arguments).map_err(|e| e.to_string())?;
+    let _workspace_guard = exclusive(&lead.session)?;
     let host = lead.host.clone();
     let current = tokio::task::spawn_blocking(move || contract::current_candidate(&host))
         .await
@@ -217,63 +262,48 @@ async fn complete(core: &Core, lead: &Lead, arguments: Value) -> Result<Value, S
     if current != input.candidate_sha256 {
         return Err("candidate_changed: the workspace no longer matches candidate_sha256".into());
     }
-    let missing = gate(core, lead, codex_omd::Gate::Complete, &current)?;
-    if !missing.is_empty() {
-        return Ok(json!({"status": "refused", "missing": missing}));
-    }
-    let status = lead
+    let contract = lead
         .session
         .contract
         .lock()
-        .map_err(|_| "contract_lock_poisoned")?
-        .status();
+        .map_err(|_| "contract_lock_poisoned")?;
+    let missing = match contract.gate(
+        codex_omd::Gate::Complete,
+        &current,
+        input.acceptance_sha256.as_deref(),
+    ) {
+        Ok(missing) => missing,
+        Err(error) if error.starts_with("unresolved_blocking_findings:") => {
+            let outstanding = error
+                .trim_start_matches("unresolved_blocking_findings:")
+                .split(',')
+                .collect::<Vec<_>>();
+            notify_contract(
+                core,
+                json!({"gate":"complete","outcome":"refused","reason":"unresolved_blocking_findings",
+                    "outstanding_findings":outstanding,"candidate_sha256":current}),
+            );
+            return Ok(
+                json!({"status":"refused","reason":"unresolved_blocking_findings",
+                "outstanding_findings":outstanding}),
+            );
+        }
+        Err(error) => return Err(error),
+    };
+    notify_contract(
+        core,
+        json!({"gate":"complete","outcome":if missing.is_empty() {"passed"} else {"refused"},
+            "missing":missing,"candidate_sha256":current}),
+    );
+    if !missing.is_empty() {
+        return Ok(json!({"status": "refused", "missing": missing}));
+    }
+    let status = contract.status();
     lead.session.evidence(
         &format!("completion-{current}-{}.json", now()),
         &json!({"candidate_sha256": current, "contract": status}),
     )?;
     Ok(json!({"status": "completed", "receipts": status["receipts"]}))
-}
-
-fn pi(host: &Host, operation: &str, arguments: Value) -> Result<Value, String> {
-    let root = host
-        .config
-        .pi_user
-        .as_ref()
-        .ok_or("pi_resource_roots_not_host_approved")?;
-    if operation == "pi.discover" {
-        let mut catalog = codex_omd::ModStore::discover_pi(root, &host.repository)
-            .map_err(|e| e.to_string())?;
-        let mut denied = false;
-        if let Some(resources) = catalog["resources"].as_array_mut() {
-            resources.retain(|resource| {
-                let protected = protected_resource(host, resource["path"].as_str());
-                denied |= protected;
-                !protected
-            });
-        }
-        if denied && let Some(diagnostics) = catalog["diagnostics"].as_array_mut() {
-            diagnostics.push(json!({"error":"pi_protected_resource"}));
-        }
-        return Ok(catalog);
-    }
-    let name = arguments["name"]
-        .as_str()
-        .filter(|name| !name.is_empty() && name.len() <= 128)
-        .ok_or("invalid_pi_prompt_name")?;
-    let text = arguments["args"].as_str().unwrap_or_default();
-    if arguments
-        .as_object()
-        .is_none_or(|object| object.keys().any(|key| key != "name" && key != "args"))
-        || text.len() > 8192
-    {
-        return Err("invalid_pi_expand_arguments".into());
-    }
-    let expanded = codex_omd::ModStore::expand_pi_prompt(root, &host.repository, name, text)
-        .map_err(|e| e.to_string())?;
-    if protected_resource(host, expanded["path"].as_str()) {
-        return Err("pi_protected_resource".into());
-    }
-    Ok(expanded)
 }
 
 pub(super) async fn dispatch(
@@ -287,16 +317,35 @@ pub(super) async fn dispatch(
     let host = &lead.host;
     let operation = request.operation.clone();
     if operation != "contract.status" {
-        lead.restricted(&operation)?;
+        lead.restricted(&operation, &request.arguments)?;
     }
     let active = {
         let cancelled = cancelled.clone();
         move || !cancelled.load(Ordering::Acquire)
     };
     if codex_omd::host::served(&operation) {
-        let _guard = matches!(operation.as_str(), "workspace.transaction" | "workspace.restore")
-            .then(|| exclusive(&lead.session))
-            .transpose()?;
+        if operation == "exec.run" && request.arguments.get("snapshot").is_some() {
+            if request.arguments.get("guards").is_some()
+                || request.arguments.get("required_access").is_some()
+            {
+                return Err("exec_guards_require_live_workspace".into());
+            }
+            let authority = authority(lead, call).await?;
+            let scoped = Lead {
+                permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),
+                ..lead.clone()
+            };
+            return core
+                .agents
+                .execute_snapshot(&scoped, &caller, request.arguments, cancelled)
+                .await;
+        }
+        let _guard = workspace_guard(
+            &operation,
+            &request.arguments,
+            &lead.session.operation,
+            &lead.session.repository_identity,
+        )?;
         let authority = authority(lead, call).await?;
         let (root, protected) = (host.root.clone(), host.protected_paths());
         let (id, thread) = (caller.id.to_owned(), lead.thread.to_string());
@@ -317,6 +366,17 @@ pub(super) async fn dispatch(
         .await
         .map_err(|e| e.to_string())?;
     }
+    if operation == "sessions.snapshot" {
+        let authority = authority(lead, call).await?;
+        let scoped = Lead {
+            permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),
+            ..lead.clone()
+        };
+        return core
+            .agents
+            .history_evidence(&scoped, &caller, request.arguments, cancelled)
+            .await;
+    }
     if codex_omd::scoped_data::operation(&operation) {
         let authority = authority(lead, call).await?;
         return lead
@@ -324,21 +384,6 @@ pub(super) async fn dispatch(
             .data
             .call(lead, authority, &caller, request, cancelled.clone())
             .await;
-    }
-    if operation.starts_with("git.") {
-        if caller.origin != Origin::Event {
-            return Err(
-                "host_operation_unavailable: git reads run in lifecycle events and commands".into(),
-            );
-        }
-        let authority = authority(lead, call).await?;
-        let (repository, protected) = (host.repository.clone(), host.protected_paths());
-        return tokio::task::spawn_blocking(move || {
-            lifecycle_git(true, &repository, &protected, &authority.policy, request, &active)
-        })
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string());
     }
     if operation == "workspace.request_rename" {
         if call.is_none() {
@@ -353,7 +398,13 @@ pub(super) async fn dispatch(
         let generation = caller.generation;
         return tokio::task::spawn_blocking(move || {
             let mut runtime = runtime.lock().map_err(|_| "pre_rename_runtime_poisoned")?;
-            authority.request_rename(request.arguments, &mut runtime, &processes, generation, active)
+            authority.request_rename(
+                request.arguments,
+                &mut runtime,
+                &processes,
+                generation,
+                active,
+            )
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -377,9 +428,14 @@ pub(super) async fn dispatch(
         .await
         .map_err(|e| e.to_string())?;
     }
-    if operation.starts_with("agents.") || operation == "workspace.integrate" {
+    if operation.starts_with("agents.")
+        || matches!(
+            operation.as_str(),
+            "workspace.integrate" | "workspace.snapshot"
+        )
+    {
         let scoped = match (operation.as_str(), call) {
-            ("agents.spawn", Some(call)) => {
+            ("agents.spawn" | "workspace.snapshot", Some(call)) => {
                 let authority = WorkspaceAuthority::for_call(lead, call).await?;
                 Some(Lead {
                     permission_profile: Arc::new(std::sync::Mutex::new(
@@ -391,6 +447,12 @@ pub(super) async fn dispatch(
             _ => None,
         };
         let lead = scoped.as_ref().unwrap_or(lead);
+        if operation == "workspace.snapshot" {
+            return core
+                .agents
+                .snapshot(lead, &caller, request.arguments, cancelled)
+                .await;
+        }
         return core.agents.call(core, lead, &caller, request).await;
     }
     if operation.starts_with("providers.") || operation.starts_with("sidecars.") {
@@ -407,8 +469,10 @@ pub(super) async fn dispatch(
                 .map(|route| route_info(host, route))
                 .collect::<Vec<_>>()
         )),
-        "task.status" => Ok(json!({"ledger": lead.ledger(), "limits": host.config.limits,
-            "worker_limits": host.config.worker_limits})),
+        "task.status" => Ok(
+            json!({"ledger": lead.ledger(), "limits": host.config.limits,
+            "worker_limits": host.config.worker_limits}),
+        ),
         "receipts.submit" => submit_receipt(core, lead, &caller, request.arguments).await,
         "task.complete" => complete(core, lead, request.arguments).await,
         "contract.status" => Ok(lead
@@ -427,7 +491,59 @@ pub(super) async fn dispatch(
             lead.session.persist_contract()?;
             Ok(restricted)
         }
-        "pi.discover" | "pi.expand" => pi(host, &operation, request.arguments),
         _ => Err(format!("unsupported_host_operation: {operation}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_exec_write_reserves_the_workspace_across_sessions() {
+        let temp = tempfile::tempdir().unwrap();
+        let repository = temp.path().to_str().unwrap();
+        let write = json!({"program":"sh","write":true});
+        let first = AtomicBool::new(false);
+        let second = AtomicBool::new(false);
+        assert!(
+            workspace_guard("exec.run", &json!({"program":"sh"}), &first, repository)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            workspace_guard(
+                "exec.run",
+                &json!({"program":"sh","write":true,"snapshot":{"sha256":"x"}}),
+                &first,
+                repository
+            )
+            .unwrap()
+            .is_none()
+        );
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let write = &write;
+            let first = &first;
+            scope.spawn(move || {
+                let _guard = workspace_guard("exec.run", write, first, repository)
+                    .unwrap()
+                    .unwrap();
+                held_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            });
+            held_rx.recv().unwrap();
+            assert!(
+                workspace_guard("workspace.restore", &json!({}), &second, repository)
+                    .err()
+                    .unwrap()
+                    .contains("workspace_operation_active")
+            );
+            release_tx.send(()).unwrap();
+        });
+        let _guard = workspace_guard("exec.run", &write, &second, repository)
+            .unwrap()
+            .unwrap();
     }
 }

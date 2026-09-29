@@ -409,35 +409,8 @@ pub struct ModTheme {
     pub density: ModDensity,
     #[serde(default)]
     pub icons: ModIcons,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub picker: Option<ModPicker>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub glyphs: BTreeMap<String, String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ModPickerLayout {
-    #[default]
-    Native,
-    Compact,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ModPicker {
-    #[serde(default)]
-    pub layout: ModPickerLayout,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub brand: Option<String>,
-}
-
-impl ModPicker {
-    fn valid(&self) -> bool {
-        self.brand.as_ref().is_none_or(|brand| {
-            !brand.is_empty() && brand.chars().count() <= 24 && visible(brand, 96)
-        })
-    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -467,8 +440,6 @@ pub struct ModThemePatch {
     pub density: Option<ModDensity>,
     #[serde(default)]
     pub icons: Option<ModIcons>,
-    #[serde(default)]
-    pub picker: Option<ModPicker>,
     #[serde(default)]
     pub glyphs: BTreeMap<String, String>,
 }
@@ -804,11 +775,16 @@ impl ModComponent {
                 height,
                 action,
             } => {
-                let values = rows.iter().map(|row| row.value.as_str()).collect::<BTreeSet<_>>();
+                let values = rows
+                    .iter()
+                    .map(|row| row.value.as_str())
+                    .collect::<BTreeSet<_>>();
                 identified(id, label, ids)
                     && rows.len() <= 200
                     && values.len() == rows.len()
-                    && selected.as_ref().is_none_or(|value| values.contains(value.as_str()))
+                    && selected
+                        .as_ref()
+                        .is_none_or(|value| values.contains(value.as_str()))
                     && height.is_none_or(|height| (1..=40).contains(&height))
                     && rows.iter().all(|row| {
                         !row.value.is_empty()
@@ -817,7 +793,12 @@ impl ModComponent {
                             && visible(&row.label, 256)
                             && row.spans.len() <= 12
                             && row.spans.iter().all(|span| visible(&span.text, 256))
-                            && row.spans.iter().map(|span| span.text.chars().count()).sum::<usize>() <= 256
+                            && row
+                                .spans
+                                .iter()
+                                .map(|span| span.text.chars().count())
+                                .sum::<usize>()
+                                <= 256
                     })
                     && action.valid()
             }
@@ -1012,9 +993,6 @@ impl ModThemePatch {
         if let Some(icons) = self.icons {
             target.icons = icons;
         }
-        if self.picker.is_some() {
-            target.picker = self.picker;
-        }
         target.glyphs.extend(self.glyphs);
     }
 }
@@ -1036,11 +1014,6 @@ impl ModViewPatch {
                 .syntax
                 .as_ref()
                 .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
-            || patch
-                .theme
-                .picker
-                .as_ref()
-                .is_some_and(|picker| !picker.valid())
             || patch
                 .selection
                 .as_ref()
@@ -1201,11 +1174,6 @@ impl ModView {
                 .syntax
                 .as_ref()
                 .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
-            || view
-                .theme
-                .picker
-                .as_ref()
-                .is_some_and(|picker| !picker.valid())
             || view
                 .selection
                 .as_ref()

@@ -3,24 +3,17 @@
   "steps": [
     {
       "type": "event",
-      "event": "terminal",
+      "event": "list",
       "payload": {
-        "event": "start",
-        "checkpoint": null
-      },
-      "expect": [
-        {
-          "mod": "omd_model_picker",
-          "value": {
-            "theme": {
-              "picker": {
-                "brand": "oh my diff",
-                "layout": "compact"
-              }
-            }
-          }
-        }
-      ]
+        "view_id": "model",
+        "title": "Model",
+        "subtitle": "Choose a model",
+        "width": 40,
+        "selected": 0,
+        "items": [
+          { "label": "Example", "description": "Current route", "current": true, "disabled": false, "order": 0 }
+        ]
+      }
     }
   ]
 }

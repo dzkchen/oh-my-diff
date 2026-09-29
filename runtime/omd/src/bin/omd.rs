@@ -1,19 +1,9 @@
 use codex_omd::{ModHost, scoped_data::ScopedDataHost};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-
-fn visible(path: &Path) -> bool {
-    !path.components().any(|part| {
-        let value = part.as_os_str().to_string_lossy();
-        value == ".git"
-            || value == ".env"
-            || value.starts_with(".env.")
-            || value == ".ssh"
-            || value == ".codex"
-    })
-}
 
 fn configuration(path: &Path) -> io::Result<toml::Value> {
     if !path.try_exists()? {
@@ -70,7 +60,7 @@ fn database(
 fn run(args: Vec<String>) -> io::Result<Value> {
     if args.is_empty() || args[0] == "--help" {
         return Ok(
-            json!({"usage":"omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [--confirm DIGEST] [ARGS]","commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here."}),
+            json!({"usage":"omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS]","commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here."}),
         );
     }
     if args.len() > 128 || args.iter().map(String::len).sum::<usize>() > 8192 {
@@ -80,7 +70,6 @@ fn run(args: Vec<String>) -> io::Result<Value> {
     let mut repository = None;
     let mut store = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
     let mut home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
-    let mut confirmation = None;
     let mut sqlite = None;
     let mut payload = Vec::new();
     let mut remaining = args[1..].iter();
@@ -123,14 +112,6 @@ fn run(args: Vec<String>) -> io::Result<Value> {
                         .ok_or_else(|| io::Error::other("sqlite_home_required"))?,
                 ));
             }
-            "--confirm" => {
-                confirmation = Some(
-                    remaining
-                        .next()
-                        .ok_or_else(|| io::Error::other("confirmation_required"))?
-                        .clone(),
-                );
-            }
             _ => payload.push(argument.clone()),
         }
     }
@@ -155,44 +136,80 @@ fn run(args: Vec<String>) -> io::Result<Value> {
         }));
     }
     let (owner, export) = &exports[0];
+    let sources: BTreeMap<String, String> = runtime
+        .owners()
+        .into_iter()
+        .map(|(id, owner)| (id, owner.sha256))
+        .collect();
+    let mut providers = BTreeMap::<String, ScopedDataHost>::new();
     let mut data = ScopedDataHost::new(
-        root,
+        root.clone(),
         repository.clone(),
-        sessions,
+        sessions.clone(),
         None,
         owner.clone(),
         "user-command".into(),
-        runtime
-            .owners()
-            .into_iter()
-            .find(|(id, _)| id == owner)
-            .ok_or_else(|| io::Error::other("command_owner_missing"))?
-            .1
-            .sha256,
+        sources
+            .get(owner)
+            .cloned()
+            .ok_or_else(|| io::Error::other("command_owner_missing"))?,
     )?;
-    data.confirmation = confirmation;
     let deadline = Instant::now() + Duration::from_secs(30);
-    runtime.invoke_with(
+    runtime.invoke_scoped_with(
         owner,
         runtime.generation(),
         "command",
         &export.name,
         json!(payload),
         || Instant::now() < deadline,
-        |request| {
+        |caller, request| {
             if !codex_omd::scoped_data::operation(&request.operation) {
                 return Err(io::Error::other("standalone_host_operation_unavailable"));
             }
-            if request.operation.starts_with("sessions.") {
-                data.session_database = Some(database(
+            let needs_sessions = request.operation.starts_with("sessions.");
+            let session_database = if needs_sessions {
+                Some(database(
                     home.as_deref()
                         .ok_or_else(|| io::Error::other("session_home_required"))?,
                     &repository,
                     sqlite.clone(),
                     std::env::var_os("CODEX_SQLITE_HOME").map(PathBuf::from),
-                )?);
+                )?)
+            } else {
+                None
+            };
+            if caller == owner {
+                if needs_sessions {
+                    data.session_database = session_database;
+                }
+                return data.call(&request.operation, request.arguments, || {
+                    Instant::now() < deadline
+                });
             }
-            data.call(&request.operation, request.arguments, &visible, || {
+            let source = sources
+                .get(caller)
+                .ok_or_else(|| io::Error::other("service_provider_missing"))?;
+            let provider = match providers.entry(caller.to_owned()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(ScopedDataHost::new(
+                        root.clone(),
+                        repository.clone(),
+                        sessions.clone(),
+                        session_database.clone(),
+                        caller.to_owned(),
+                        "user-command".into(),
+                        source.clone(),
+                    )?)
+                }
+            };
+            if provider.binding.source_sha256 != *source {
+                return Err(io::Error::other("data_selection_changed_or_revoked"));
+            }
+            if needs_sessions {
+                provider.session_database = session_database;
+            }
+            provider.call(&request.operation, request.arguments, || {
                 Instant::now() < deadline
             })
         },

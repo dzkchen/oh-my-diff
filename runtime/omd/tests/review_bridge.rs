@@ -5,7 +5,6 @@ use std::fs;
 use std::path::PathBuf;
 
 #[test]
-#[ignore = "the native review lane was retired in Batch 2.5; Batch 2.55 rewrites review_probe over agents.spawn and receipts.submit"]
 fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -29,31 +28,46 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
     store.enable(&package, true).unwrap();
     let mut host = ModHost::open(root.join("store")).unwrap();
     assert_eq!(
-        host.subscribers_with_capability("turn_end", "turn_evidence"),
+        host.subscribers_with_capability("turn_end", "lifecycle"),
         ["example_review_probe"]
     );
     let generation = host.generation();
     let reference = json!({"reference":hash(b"packet"),"sha256":hash(b"packet")});
+    let snapshot = json!({"reference":hash(b"candidate"),"sha256":hash(b"candidate")});
+    let result_ref =
+        json!({"reference":"native-thread:fixture","sha256":hash(b"{\"findings\":[]}")});
     let event = json!({"turn_id":"turn-a","outcome":"completed","evidence":reference});
     let mut calls = Vec::new();
-    let text = "{\"findings\":[]}";
-    host.invoke_with("example_review_probe",generation,"turn_end","",event.clone(),||true,|call| {
+    host.invoke_with("example_review_probe", generation, "turn_end", "", event.clone(), || true, |call| {
         calls.push(call.operation.clone());
         match call.operation.as_str() {
-            "evidence.read"=>Ok(json!({"reference":reference,"text":"Visible fixture evidence","cursor":null,"bytes":24})),
-            "review.request"=>{assert!(call.arguments["prompt"].as_str().unwrap().contains("Visible fixture evidence"));assert_eq!(call.arguments["tools"],json!([]));Ok(json!({"handle":"host-worker","route":"astra","permissions":"read_only"}))},
-            "review.wait"=>Ok(json!({"status":"completed","text":text,"consumed":false,"evidence":{"ref":"native-thread:fixture","sha256":hash(text.as_bytes())}})),
-            "review.submit"=>{assert_eq!(call.arguments["result_sha256"],hash(text.as_bytes()));Ok(json!({"cycle":{"id":1}}))},
-            _=>panic!("unexpected operation {}",call.operation),
+            "evidence.read" => Ok(json!({"reference":reference,"text":"Visible fixture evidence","cursor":null,"bytes":24})),
+            "workspace.snapshot" => Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]})),
+            "agents.spawn" => {
+                assert!(call.arguments["prompt"].as_str().unwrap().contains("Visible fixture evidence"));
+                assert_eq!(call.arguments["tools"], json!([]));
+                assert_eq!(call.arguments["workspace"], "read_only");
+                Ok(json!({"handle":"host-worker","route":"reviewer","permissions":"read_only"}))
+            }
+            "agents.wait" => Ok(json!({"status":"completed","text":"{\"findings\":[]}","consumed":false,"evidence":result_ref,"candidate_sha256":snapshot["sha256"]})),
+            "receipts.submit" => {
+                assert_eq!(call.arguments["agent"], "host-worker");
+                assert_eq!(call.arguments["candidate_sha256"], snapshot["sha256"]);
+                Ok(json!({"kind":"turn_review","outcome":"pass"}))
+            }
+            "agents.cancel" => Ok(json!({"status":"cancelled"})),
+            _ => panic!("unexpected operation {}", call.operation),
         }
     }).unwrap();
     assert_eq!(
         calls,
         [
             "evidence.read",
-            "review.request",
-            "review.wait",
-            "review.submit"
+            "workspace.snapshot",
+            "agents.spawn",
+            "agents.wait",
+            "receipts.submit",
+            "agents.cancel"
         ]
     );
     let status = host
@@ -77,7 +91,10 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
             "evidence.read" => {
                 Ok(json!({"reference":reference,"text":"fixture","cursor":null,"bytes":7}))
             }
-            "review.request" => Err(std::io::Error::other("allowance_exhausted")),
+            "workspace.snapshot" => {
+                Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]}))
+            }
+            "agents.spawn" => Err(std::io::Error::other("allowance_exhausted")),
             _ => panic!("must not start another operation after denial"),
         },
     )
@@ -96,7 +113,7 @@ fn independent_reviewer_owns_prompt_wait_interpretation_and_denial_handling() {
     store.enable(&package, false).unwrap();
     host.turn_boundary();
     assert!(
-        host.subscribers_with_capability("turn_end", "turn_evidence")
+        host.subscribers_with_capability("turn_end", "lifecycle")
             .is_empty()
     );
     assert!(

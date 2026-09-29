@@ -100,14 +100,16 @@ fn plan(store: &Path, repository: &Path, key: &str) -> io::Result<Value> {
     let resolution = effective(&documents, store, repository)?;
     let before = current(&resolution);
     let weakens = before.is_some_and(|before| next.weaker_than(before));
-    Ok(json!({"schema": 2, "before": describe(&resolution), "after": summary(&next, &owner),
+    Ok(
+        json!({"schema": 2, "before": describe(&resolution), "after": summary(&next, &owner),
         "weakens": weakens,
         "confirmation": weakens.then(|| codex_omd::contract_confirmation(before, &next)),
         "note": if weakens {
             "this selection reduces assurance; pass the confirmation to omd-contract select"
         } else {
             "this selection does not reduce assurance"
-        }}))
+        }}),
+    )
 }
 
 fn run(args: &[String]) -> io::Result<Value> {
@@ -157,8 +159,10 @@ fn run(args: &[String]) -> io::Result<Value> {
                 ..ContractSelection::default()
             }
             .write(&path)?;
-            Ok(json!({"schema": 2, "selected": summary(&next, &owner), "path": path,
-                "note": "the selection applies to the next session"}))
+            Ok(
+                json!({"schema": 2, "selected": summary(&next, &owner), "path": path,
+                "note": "the selection applies to the next session"}),
+            )
         }
         [command, store, repository, key] if command == "require" => {
             let documents = documents(Path::new(store))?;
@@ -171,8 +175,10 @@ fn run(args: &[String]) -> io::Result<Value> {
             selection.floor = Some(floor.key());
             selection.floor_digest = Some(floor.digest());
             selection.write(&path)?;
-            Ok(json!({"schema": 2, "floor": summary(&floor, &owner), "path": path,
-                "note": "weaker selections now resolve to this floor"}))
+            Ok(
+                json!({"schema": 2, "floor": summary(&floor, &owner), "path": path,
+                "note": "weaker selections now resolve to this floor"}),
+            )
         }
         [command, store, repository, scope] if command == "clear" => {
             let path = match scope.as_str() {

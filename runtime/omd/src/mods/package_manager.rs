@@ -523,8 +523,7 @@ impl ModStore {
         self.commit_package_transaction(lock, config, &[])
     }
 
-    /// Runs `lifecycle` scripts and writes both files, restoring the previous
-    /// lock and configuration if any step fails.
+    /// Runs `lifecycle` scripts and restores the previous lock and configuration on failure.
     fn commit_package_transaction(
         &self,
         lock: ModPackageLock,
@@ -932,6 +931,9 @@ impl ModStore {
         let result = (|| {
             copy_file(source, &staging, "mod.json", 8192)?;
             copy_file(source, &staging, &package.entrypoint, 65_536)?;
+            for asset in &package.assets {
+                copy_file(source, &staging, asset, 65_536)?;
+            }
             for script in package.lifecycle.values() {
                 copy_file(source, &staging, script, 65_536)?;
             }

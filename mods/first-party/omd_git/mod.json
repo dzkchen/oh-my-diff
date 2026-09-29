@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_git",
-  "version": "0.1.0-preview.1",
-  "api": "0.1.0-experimental.8",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": {
@@ -11,13 +11,16 @@
   },
   "capabilities": [
     "commands",
-    "git",
+    "exec",
+    "fs.read",
+    "fs.write",
+    "store",
     "lifecycle",
-    "state",
     "terminal"
   ],
+  "exec_environment": ["GIT_OPTIONAL_LOCKS"],
   "compatibility": {
-    "required_features": ["git_operations_v1", "terminal_components_v1", "terminal_render_sites_v1"]
+    "required_features": ["exec_v1", "guarded_exec_v1", "workspace_access_v1", "workspace_fs_v1", "terminal_lists_v1", "store_v1"]
   },
   "settings_schema": {
     "type": "object",

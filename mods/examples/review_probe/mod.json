@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "id": "example_review_probe",
-  "version": "1.0.0",
-  "api": "0.1.0-experimental.9",
+  "version": "2.0.0",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
-  "capabilities": ["lifecycle", "turn_evidence", "review", "state", "commands"],
-  "compatibility": { "required_features": ["turn_evidence_v1", "accounted_review_v1"] }
+  "capabilities": ["lifecycle", "agents", "contracts", "fs.read", "store", "commands"],
+  "compatibility": { "required_features": ["workspace_snapshots_v1", "contracts_v2"] }
 }

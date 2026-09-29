@@ -1,10 +1,35 @@
 {
   "schema": 1,
   "id": "omd_verification_gate",
-  "version": "0.1.0-candidate.1",
-  "api": "0.1.0-experimental.8",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
-  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_verification_gate"},
-  "capabilities": ["workflow", "tools", "task", "commands"]
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_verification_gate"
+  },
+  "capabilities": [
+    "contracts",
+    "fs.read",
+    "services",
+    "tools",
+    "commands"
+  ],
+  "compatibility": {
+    "required_features": [
+      "contracts_v2",
+      "workspace_snapshots_v1",
+      "contract_scoped_restrictions_v1",
+      "service_dispatch_v1"
+    ]
+  },
+  "services": {
+    "imports": [
+      {
+        "name": "omd.workflow",
+        "version": "1.0.0"
+      }
+    ]
+  }
 }

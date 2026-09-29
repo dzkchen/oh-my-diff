@@ -1,4 +1,4 @@
-import type { ModAPI, TerminalComponent, TerminalIdentity, TerminalPatch, TerminalTone } from '../../api-0.1.d.ts';
+import type { ModAPI, TerminalComponent, TerminalIdentity, TerminalPatch, TerminalTone } from '../../api.d.ts';
 
 const MARK = ['╭─╮ ╭╮╭╮ ┌─╮', '│ │ │╰╯│ │ │', '╰─╯ ╵  ╵ └─╯'];
 const MARK_ASCII = ['.-. |\\/| |-.', '| | |  | | |', "'-' |  | |-'"];
@@ -8,14 +8,13 @@ const PROFILES: Record<string, [string, string]> = {
   private: ['Private foundation', 'Private'],
 };
 const MODES: Record<string, [string, string]> = {
-  enabled: ['OMD enabled', 'enabled'],
-  platform: ['mod host on', 'mod host'],
+  omd: ['OMD enabled', 'enabled'],
 };
 
 export default function activate(api: ModAPI) {
   const span = (text: string, tone: TerminalTone = 'normal', bold = false) => ({ text, tone, bold });
 
-  const view = (event: string, identity: TerminalIdentity | undefined): TerminalPatch => {
+  const view = (identity: TerminalIdentity | undefined, settled: boolean): TerminalPatch => {
     const ascii = api.settings.icons === 'ascii';
     const dot = ascii ? '-' : '·';
     const mark = ascii ? MARK_ASCII : MARK;
@@ -45,22 +44,26 @@ export default function activate(api: ModAPI) {
       [span(`${profileLong} ${dot} ${modeLong}`, 'muted')],
       [span(`Codex ${release} ${dot} ${counts}`, 'muted')],
     ];
-    const components: TerminalComponent[] = event === 'start'
-      ? [
-          {
-            type: 'box', id: 'omd_logo_mark', label: 'Oh My Diff logo', min_width: 60,
-            children: rows.map((side, index) => ({
-              type: 'line' as const,
-              id: `omd_logo_mark_${index + 1}`,
-              label: index === 0 ? 'Oh My Diff' : side.map(part => part.text).join(''),
-              spans: [span('+ ', 'success'), span(mark[index], 'success'), span('   '), ...side],
-            })),
-          },
-          compact('omd_logo_narrow', false),
-        ]
-      : [compact('omd_logo_compact', true), compact('omd_logo_narrow', false)];
+    const components: TerminalComponent[] = settled ? [compact('omd_logo_after_turn', true)] : [
+      {
+        type: 'box', id: 'omd_logo_mark', label: 'Oh My Diff logo', min_width: 60,
+        children: rows.map((side, index) => ({
+          type: 'line' as const,
+          id: `omd_logo_mark_${index + 1}`,
+          label: index === 0 ? 'Oh My Diff' : side.map(part => part.text).join(''),
+          spans: [span('+ ', 'success'), span(mark[index], 'success'), span('   '), ...side],
+        })),
+      },
+      compact('omd_logo_narrow', false),
+    ];
     return { sites: { header: { mode: 'wrap', components: [...components, { type: 'slot' }] } } };
   };
 
-  api.on('terminal', input => view(input.event, input.identity));
+  api.on('terminal', input => {
+    const stored = api.state.get();
+    const settled = stored !== null && typeof stored === 'object' && !Array.isArray(stored) && stored.settled === true;
+    if (input.event === 'start' && settled) api.state.set({ settled: false });
+    if (input.event === 'turn_end' && !settled) api.state.set({ settled: true });
+    return view(input.identity, input.event === 'start' ? false : settled || input.event === 'turn_end');
+  });
 }

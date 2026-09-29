@@ -115,17 +115,15 @@ def run(archive, upstream, output):
             assert full["installed"] == "full"
             full_status = command("status", *fixed)["profile"]
             assert full_status["profile"] == "full"
-            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_logo", "omd_model_picker", "omd_workspace"}
+            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace"}
             assert not full_status["plugin_bundle"]["installed_by_candidate"]
-            assert len(full_status["plugin_bundle"]["plugins"]) == 6
-            assert {name for name in ("omd-graph", "omd-health", "omd-lsp") if (bin_dir / name).is_symlink()} == {"omd-graph", "omd-health", "omd-lsp"}
+            assert len(full_status["plugin_bundle"]["plugins"]) == 4
             previous_link = install_root / "previous"
             previous_link.unlink()
             previous_link.symlink_to((install_root / "current").resolve())
             prior = command("rollback", *fixed)
             assert prior["profile"] == "platform"
             assert command("status", *fixed)["profile"]["profile"] == "platform"
-            assert not any((bin_dir / name).is_symlink() for name in ("omd-graph", "omd-health", "omd-lsp"))
             again = command("rollback", *fixed)
             assert again["profile"] == "full"
             assert command("status", *fixed)["profile"]["profile"] == "full"

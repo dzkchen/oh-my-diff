@@ -1,4 +1,4 @@
-import type { ModAPI, TerminalPatch, TerminalTheme } from '../../api-0.1.d.ts';
+import type { ModAPI, TerminalPatch, TerminalTheme } from '../../api.d.ts';
 
 const palettes: Record<string, { foreground: number; background: number; theme: TerminalTheme }> = {
   midnight: {
@@ -23,6 +23,7 @@ export default function activate(api: ModAPI) {
     const selected = typeof api.settings.palette === 'string' ? api.settings.palette : 'midnight';
     const palette = palettes[selected] ?? palettes.midnight;
     const icons = api.settings.symbols === 'unicode' ? 'unicode' : 'ascii';
-    return { foreground: palette.foreground, background: palette.background, theme: { ...palette.theme, icons } };
+    const glyphs: Record<string, string> = icons === 'unicode' ? { '===': '≡  ', '->': '→ ', '<=': '≤ ' } : {};
+    return { foreground: palette.foreground, background: palette.background, theme: { ...palette.theme, icons, glyphs } };
   });
 }

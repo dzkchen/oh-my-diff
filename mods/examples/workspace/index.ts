@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '@oh-my-diff/mod-api/0.1';
+import type { Json, ModAPI } from '@oh-my-diff/mod-api';
 
 type Move = { old_path: string; new_path: string; rewrites: Record<string, string> };
 
@@ -12,7 +12,7 @@ function input(value: Json): Move {
 }
 
 export default function activate(api: ModAPI) {
-  api.on('workspace_write', event => {
+  api.on('workspace_change', event => {
     api.state.set({ last_write: { status: event.status, changes: event.changes } });
   });
   api.on('workspace_pre_rename', event => {

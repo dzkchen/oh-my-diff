@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "omd_inspector",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
+  "capabilities": ["agents", "commands", "contracts", "store", "terminal"],
+  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1"] },
+  "settings_schema": { "type": "object", "properties": {}, "additionalProperties": false }
+}

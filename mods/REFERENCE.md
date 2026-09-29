@@ -2,11 +2,9 @@
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
 `0.2.0-experimental.1` on OMD `0.1.0` and Codex `0.157.0`. The package's
-[`api.d.ts`](api.d.ts) is the complete typed surface. Packages that still declare
-an `0.1.0-experimental.*` API import the transitional
-`@oh-my-diff/mod-api/0.1` surface ([`api-0.1.d.ts`](api-0.1.d.ts)); the sections
-after [API 0.2 host primitives](#api-02-host-primitives) describe that earlier
-surface and are retired with it. A store also generates `active-host.d.ts` and
+[`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
+historical and do not load in the current host; the later .9 reference sections
+remain only as migration evidence. A store also generates `active-host.d.ts` and
 `installed-contracts.d.ts`; those files identify the running host and the exact
 service contracts available to consumers.
 
@@ -30,8 +28,8 @@ native work.
 | Capability | Grants |
 | --- | --- |
 | `exec` | `exec.run`, `process.*`, `sidecars.*` |
-| `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, the `workspace_change` event |
-| `fs.write` | `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
+| `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, read-only `workspace.check_access`, `workspace.snapshot`, the `workspace_change` event |
+| `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
 | `model` | `routes.list`, `providers.*`, the `routing` event |
 | `agents` | `agents.*`, `task.status`, `workspace.integrate` |
@@ -42,6 +40,12 @@ native work.
 | `terminal` | `terminal`, `list`, `selection` and `selection_result` events |
 | `context`, `tools`, `commands`, `lifecycle`, `input`, `interception`, `compaction`, `middleware`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
 
+`tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
+`result_sha256` and `result_complete` fields on `tool_result`. The result digest
+covers the accepted model-visible output with a fixed call ID; blocked, failed,
+aborted and unavailable lifecycle results have no result digest. `tool_before` supplies `thread_id`
+for thread-scoped interception decisions.
+
 A manifest may list up to 16 `exec_environment` names that `exec.run` passes
 through from the host environment; `PATH`, `HOME`, `TMPDIR`, shell, loader and
 interpreter variables and the `DYLD_`, `LD_`, `OMD_`, `CODEX_`, `SSH_`, `GPG_`
@@ -49,8 +53,8 @@ and `GIT_CONFIG` prefixes are refused.
 
 ### One-shot commands: `exec.run`
 
-`{program, sha256?, argv?, cwd?, env?, stdin?, timeout_ms?, max_output_bytes?,
-write?, network?}` runs one program in the session's effective sandbox. A bare
+`{program, sha256?, argv?, cwd?, env?, stdin?, timeout_ms?, max_output_bytes?, output_artifact?,
+write?, network?, guards?, required_access?}` runs one program in the session's effective sandbox. A bare
 program name resolves on `PATH` outside the repository; an absolute path must
 be canonical and outside the repository; `sha256` pins the resolved file. `cwd`
 is repository-relative. The environment starts empty except `PATH`, a private
@@ -60,24 +64,76 @@ the ceiling 120 s; stdout and stderr keep at most 1 MiB each and report
 truncation; at most 4 runs per repository are concurrent. Without `write` the
 repository is read-only; with `network: "loopback"` only local binding is
 allowed. Cancellation kills the process group and returns `exec_cancelled`.
-The result is `{exit_code, signal, stdout, stderr, stdout_truncated,
-stderr_truncated, timed_out, duration_ms, program: {path, sha256}}`.
+The result is `{exit_code, signal, stdout, stdout_sha256, stderr,
+stdout_truncated, stderr_truncated, timed_out, duration_ms, program: {path,
+sha256}, guards_verified}`. The digest covers the raw captured stdout bytes.
+With `output_artifact: true`, the host accepts complete UTF-8 stdout up to 16 MiB,
+returns a 4 KiB preview plus `{reference, sha256}` in `output_artifact`, and
+reports `stdout_bytes` and `stdout_preview_truncated`. Oversize output fails
+without creating an artifact. `exec.output_page {artifact, cursor?, max_bytes?}`
+reads at most 16 KiB per call with a byte cursor. The artifact is bound to the
+repository, current mod source and thread, hash-checked on reads, and subject
+to a 64 MiB quota per binding. This keeps large command output outside mod
+callback receipts; callers can page it in later callbacks.
+
+`api.assets.read(name)` returns a selected package's UTF-8 entrypoint or
+declared text asset with its SHA-256. It reads only the caller's hash-bound
+package. Installed package caches include declared assets. The total declared
+text sent to one callback is limited to 128 KiB. A mod can supply its own
+source to a sandboxed `exec.run` process without relying on a workspace copy.
+For a live-workspace write, `guards` may contain up to four read-only command
+preconditions: `{program, sha256?, argv?, cwd?, env?, stdout_sha256}`. The host
+runs them without network under its exclusive workspace operation guard and
+compares their full, non-truncated stdout to the expected digest immediately
+before the write. Each guard is limited to 10 s and 1 MiB of output, and its
+time counts against the write's timeout. A failed or changed guard prevents the
+write. Guarded writes cannot target a frozen snapshot. Other processes outside
+the host can still modify the workspace between a guard and the write; commands
+that support their own locking or expected-version options should use them.
+`required_access: {write: [paths]}` checks up to 128 named workspace paths for
+write permission after the command guards and before the write, under that same
+host operation guard. It requires `write: true` and cannot target a snapshot.
+It is intended for commands that mutate metadata on behalf of selected files,
+such as staging. The command itself still runs under the effective filesystem
+sandbox; the host cannot infer which files an arbitrary command represents.
 
 ### Workspace: list, stat, preconditions, backups and changes
 
 `workspace.list {path?, recursive?, include_ignored?, max_entries?}` returns at
 most 20,000 readable entries, skipping `.git`, `.omd` and paths the session
 cannot read. `workspace.stat {paths, hash?}` returns `{kind, size, mtime_ms,
-sha256?}` or `null`. Every `workspace.transaction` path needs an `expected`
+sha256?}` or `null`. `workspace.check_access {paths, write?}` verifies up to
+128 distinct named paths against the caller's current read or write grant and
+effective workspace permissions, returning `{paths, write}` on success. A
+separate check does not reserve permission for a later command; guarded
+`exec.run.required_access` rechecks inside the write operation. Every
+`workspace.transaction` path needs an `expected`
 fingerprint: a SHA-256, `{size, mtime_ms}` or `null` for absent; it accepts
 `writes`, `deletes`, `renames` and `backup: true`, which stores the prior bytes
 outside the repository and returns a `ResourceRef`. `workspace.backup
 {expected}` and `workspace.restore {backup, expected}` save and restore up to
 256 files (64 MiB) under the same preconditions. Transactions and restores are
-exclusive per session. `workspace_change {repository, source, call_id, changes,
+exclusive per repository within the host. `workspace_change {repository, source, call_id, changes,
 status, reason}` is delivered after a tool call changes readable files; the
 host scans only while a mod subscribes, is bounded to 20,000 files and
 128 MiB, and reports `unavailable` instead of partial coverage.
+
+`workspace.snapshot {agent?, expected?}` requires `fs.read` and returns
+`{snapshot: ResourceRef, candidate_sha256}`. It freezes the current tracked and
+approved-untracked files, or a completed owned agent's workspace (`agents` is
+also required). `expected` rejects a changed candidate. References are bound to
+the caller, package source, generation and thread; the registry holds at most
+16 snapshots and 64 MiB, deduplicates identical captures, and clears on owner
+cleanup or session stop. Snapshots do not authorize reading denied paths.
+
+`exec.run` accepts `snapshot` to run against a private copy of frozen input.
+Normal command, filesystem and cancellation permissions still apply. It may
+create build artifacts, but changing captured source rejects the result. The
+result includes `candidate_sha256` and host-recorded `evidence`. Submit that
+reference with `receipts.submit {execution: true, ...}` for a `host` producer;
+the host verifies ownership, candidate, reference and outcome. A successful
+receipt requires exit zero, no signal or timeout, and untruncated output. Each
+session holds at most 64 execution records.
 
 ### Durable data: `store.*` and evidence
 
@@ -122,7 +178,7 @@ non-boundary events cannot stop a stream.
 
 `api.builtins({commands: {hide}, modes: {disable}})`, registered during
 activation, hides slash commands and disables collaboration modes from the next
-idle boundary until the mod is disabled, unloaded or fails. `/omd`, `/quit`,
+idle boundary until the mod is disabled, unloaded or fails. `/quit`,
 `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode
 cannot be removed. A turn that requests a disabled mode runs in the default mode
 and reports why, including for app-server and exec clients.
@@ -132,7 +188,7 @@ and reports why, including for app-server and exec clients.
 `api.contract(document)` registers a versioned schema-2 contract document:
 `{schema: 2, id, version, description, assurance, gates: {complete?,
 integrate?}, restrict?}`. A requirement names a receipt kind, a producer (`any`,
-`lead` or `separate_agent`), bindings (`candidate`, `acceptance`) and whether
+`lead`, `host`, `integration` or `separate_agent`), bindings (`candidate`, `acceptance`) and whether
 blocking findings are allowed. Users select a contract with `omd-contract select
 STORE REPOSITORY ID@VERSION`; `omd-contract require` records a project floor in
 `.omd/contract-selection.json`. Selections pin the document digest, so a mod
@@ -140,26 +196,93 @@ that changes a registered document makes the selection unavailable instead of
 silently weakening it; a weaker selection needs the confirmation printed by
 `omd-contract plan`. With no selection nothing is gated. `receipts.submit`
 records a receipt with a host-attested producer (`agent` must be a completed
-agent handle owned by the caller). `task.complete {candidate_sha256}` checks
+agent handle owned by the caller). Only a successful `workspace.integrate` can
+record an `integration` producer; an execution receipt cannot impersonate one.
+`task.complete {candidate_sha256, acceptance_sha256?}` checks
 the current workspace against the `complete` gate and returns `completed` or
 `refused` with the missing requirements; `workspace.integrate` checks the
 `integrate` gate against the agent's candidate (`candidate_sha256` from
-`agents.result`). An unavailable selection fails closed. `contract.restrict`
+`agents.result`) and records an integration receipt tied to the resulting parent
+candidate and the supplied acceptance digest. An unavailable selection fails
+closed. Old `workflow.json` selections are not imported. `contract.restrict`
 only narrows operations for the rest of the session.
+
+For an active contract, blocking finding fingerprints remain open across later
+receipts and candidate changes. `contract.status.finding_ledger` reports each
+finding and its resolution. A passing `receipts.submit` from a completed,
+host-attested agent may include `resolves: [fingerprint, ...]` for at most 32
+distinct open findings. The resolution must use a changed candidate, the
+original acceptance digest and a different agent from the reporting agent.
+The agent must be spawned read-only from a frozen snapshot with
+`resolution_context: {acceptance_sha256, findings}` and the matching acceptance
+evidence. The host delivers the open finding details, binds that context to the
+agent, and checks a matching top-level `resolution_assertion` in the agent's
+actual JSON result before accepting `resolves`. The assertion contains
+`outcome: "pass"`, `candidate_sha256`, `acceptance_sha256`, and the exact
+fingerprint set. This attests the independent result and its declared review
+context; interpretation of the finding and fix remains the agent's judgment.
+Submitting a clean later receipt does not erase an earlier blocker. The ledger
+survives explicit resume and is replay-checked on restore. `task.complete`
+refuses while any blocker remains, returning `reason:
+"unresolved_blocking_findings"` and `outstanding_findings`; a session without a
+selected contract remains ungated.
+
+`contract.restrict {operations?, scoped?, reason}` can also narrow matching
+arguments. Each scoped rule is `{operation, when: {"/json/pointer": scalar}}`;
+all predicates must match. For example, restricting `agents.spawn` when
+`"/workspace"` equals `"isolated_worktree"` leaves read-only agents available.
+There are at most 64 rules with 1–8 scalar predicates each. Restrictions are
+monotone, and saved rules are validated again on restart.
+
+Contract receipts and restrictions survive restart in protected session state.
+The selected document and owner must still match; invalid state fails closed.
+Pass `acceptance_sha256` to `task.complete` or `workspace.integrate` when the
+selected contract binds receipts to acceptance criteria.
 
 ### Agents
 
-`agents.spawn {role, route, prompt, workspace?, tools?, evidence?}` starts a
+`agents.spawn {role, route, prompt, workspace?, tools?, evidence?, snapshot?, parent_history?}` starts a
 read-only or isolated-worktree agent on a worker route under the session's
 worker limits; `evidence` delivers a stored evidence reference to the agent.
+`snapshot` selects a frozen copy and requires `fs.read`; its permission is
+always `read_only`, its result identifies the captured candidate, and it cannot
+be integrated as an edit. Permissions are rechecked when the agent starts.
 `agents.message`, `agents.wait` (at most 30 s), `agents.result`,
 `agents.cancel` and `agents.list` address only the caller's handles. Agents
 live until cancelled, the mod is disabled or fails, or the session stops.
+
+`parent_history: true` additionally requires `sessions` and delivers frozen
+parent conversation records including visible tool calls and outputs. It
+refuses more than 8,192 records or 1 MiB instead of silently truncating them.
+The spawn result includes the history digest, byte count, item count and
+revision. The records are labelled untrusted task data. `sessions.snapshot
+{call_ids?}` preserves the same history in a caller-bound evidence reference
+and additionally requires `store`. A selection contains 1–32 unique IDs and
+must include each complete call/output pair; evidence storage's 256 KiB limit
+still applies. This does not expose hidden reasoning.
+
+Failed `agents.result`/`agents.wait` and `agent_end` retain an optional
+`failure: {category, code, message}` from the host error. Categories are
+`transport`, `rate_limit`, `authorization`, `sandbox`, `allowance`,
+`invalid_request` or `unknown`. Missing details are unknown, never evidence
+of an outage. The message is bounded to 1,024 characters; `code` preserves
+the structured protocol error. Mods own retry policy; the host owns admission.
+
+Explicit thread resume reopens the same task ledger, preserving requests,
+exposure, observed lead usage and uncertain in-flight requests. Repository,
+thread identity, original limits and saved journal must validate. Implicit
+reopening, changed limits, completed tasks and unmigrated legacy journals are
+refused. Agent handles and snapshot handles do not survive process restart;
+mods must reconcile saved pending work without silently spawning replacements.
 
 ### Framed processes
 
 `process.start` takes `framing: "content-length"` (default) or `"ndjson"` and
 `network: "none"` or `"loopback"`; the protocol-named transports are removed.
+The host replaces `{process.home}` in process arguments with that session's
+private scratch directory, for tools that do not honor the `HOME` environment.
+`environment` supplies at most eight explicit, bounded variables to that
+process. The host rejects its own reserved variables and loader overrides.
 
 ### Terminal lists, selection, insert, placeholder and glyphs
 
@@ -362,18 +485,20 @@ private scratch directory. The framed JSON exchange has bounded message size,
 wait, output, and session count. Sessions belong to one mod and generation;
 disable, reload, cancellation, and thread stop clean them up. A process cannot
 write the repository through this API. The first-party `omd_lsp_sync` mod owns
-the Python server choice and language protocol; it is installed inactive with
-Full OMD and can also be installed explicitly in a platform-only store. It
-never installs a language server. Absent or unsupported servers report fallback.
+Python, TypeScript/JavaScript, Rust and Java server choices and language
+protocol; it is installed inactive with Full OMD and can also be installed
+explicitly in a platform-only store. It never installs a language server.
+Definition, references and code-action discovery return bounded read-only
+results for observed sources; applying an action and symbol rename remain
+unsupported. Absent or unsupported servers report fallback.
 `api.host.tryCall` returns `{ok:true,value}` or `{ok:false,error}` for an
 expected unavailable operation, so a mod can report fallback without treating
 server absence as a callback failure. Both `call` and `tryCall` remain subject
 to the same declared capability and host permission checks.
 
-`process.start` accepts `transport: "stdio"` by default. Its only DAP
-transport is `"stdio_dap"` for `python3 -m debugpy.adapter`. The host frames
-DAP messages and allows the local loopback binding debugpy requires while
-keeping external network access restricted. It owns process group termination
+`process.start` frames stdio as `content-length` (default) or `ndjson`;
+`network: "loopback"` (with the `network` capability) allows local binding
+while keeping external network access restricted. It owns process group termination
 and starts adapters with a cleared host environment and an owner-only scratch
 directory. The opt-in debugger package in `plugins/optional/omd-debugger`
 exposes **Python launch only**; LLDB, Delve and attach are not supported. Its mod requires
@@ -388,7 +513,7 @@ fullscreen transcript; inline `--no-alt-screen` sessions keep only status
 segments and commands. The `terminal` input carries a read-only `identity`
 (`terminal_identity_v1`): `codex_version` from the installed build,
 `install_profile` (`full`, `platform_only`, `private`, `unknown` or
-`unreported`), effective `mode` (`enabled` or `platform`), and installed,
+`unreported`), effective `mode` (`omd`), and installed,
 enabled and active mod counts. Upstream-style direct mode loads no mods.
 
 `terminal_rich_line_v1` adds a one-row `line` component with up to 12 styled
@@ -398,17 +523,15 @@ the accessible text, and optional `min_width`/`max_width` (1–500 columns) on
 header height counts only drawn boxes. Header rows are never spaced by the
 comfortable density.
 
-`terminal_picker_theme_v1` adds `theme.picker = {layout, brand?}`. `compact`
-restyles only the native model and reasoning pickers; native keeps rows,
-labels, warnings, keys, digit shortcuts, session actions and persistence, and
-never restyles approval, permission, trust, elicitation or update prompts. A
-missing, disabled or broken mod leaves the native picker.
+`terminal_lists_v1` lets a mod replace built-in list rows through
+`api.replace('list', event)`. The host keeps selection actions, session state,
+keyboard handling and native fallback when the mod is absent or fails.
 
 `terminal_selection_v1` adds a view or patch `selection` policy
 `{copy_on_release, sources, min_chars}` for released mouse drags in the
 transcript, composer and transcript pager; one mod may set it. Native performs
-the single fail-closed clipboard write. Without a valid policy, the existing
-enabled/platform release copy stays. Subscribers to the observe-only
+the single fail-closed clipboard write. Without a policy or a `selection`
+replacement the host never copies on release. Subscribers to the observe-only
 `selection` event receive `{source, chars, lines, copied, reason?}` after each
 release, never the selected text; `reason` is `policy_off`, `too_short`,
 `clipboard_unavailable` or `clipboard_failed`. Keyboard selection keeps native
@@ -416,44 +539,57 @@ copy keys.
 
 ## Git operations
 
-The experimental `git` capability (`git_operations_v1`) grants `git.status`,
-`git.log`, `git.diff`, `git.branches`, `git.switch_preview`, `git.stage`,
-`git.unstage`, `git.commit`, `git.discard` and `git.switch` for the session repository in
-enabled and platform modes. The host runs fixed `git` argument lists with
-literal pathspecs, no pager, prompt, editor, external diff, text conversion or
-filesystem monitor, a 10 s timeout (120 s for commit hooks), and bounded
-output (500 status entries, 50 commits, 64 KiB diff, 100 branches). Paths must
-be repository-relative, outside `.git` and host-protected OMD stores.
+The first-party `omd_git` mod owns Git reads, the sidebar, previews and
+user-invoked mutations through the public API 0.2 operations. It runs fixed
+`git` argument lists through `exec.run` in the session's effective sandbox
+with `network: "none"`. Reads have a 10 s timeout and reject truncated output;
+the mod bounds status to 1,000 entries and 64 KiB, log to 50 commits, and each
+diff to 64 KiB. The mod disables pagers and the filesystem monitor for its
+commands, and external diffs and text conversion for diff reads. The host has no
+`git.*` operations or Git-specific capability.
 
-Reads run from lifecycle events and mod commands. Writes run only from
-user-invoked mod commands and are refused when the session cannot write the
-workspace. Writes require launching from the repository root and permission
-for Git metadata as well as the affected files. Codex protects `.git` by default;
-enabling the mod does not grant write access to it. A user-selected permission
-profile must explicitly allow the repository's Git metadata before mutations
-can run. Linked worktrees also require access to their shared Git directory.
-Stage and unstage check every selected descendant; commits check staged paths
-and rename sources; branch switches conservatively check both tracked trees.
-Untracked directories are listed as individual files. Incomplete path listings
-fail closed. Every Git subprocess, including lifecycle reads, hooks and
-filters, uses Codex's macOS filesystem sandbox for the session's effective
-permissions with networking disabled and protected OMD paths kept unwritable,
-so a read cannot reach a file the session may not read. Timeout or cancellation terminates the process group,
-including ordinary hook descendants. Every write takes a `fingerprint` returned by a read: stage,
-unstage and discard compare the named paths (HEAD, porcelain record and
-worktree size and modification time, captured before the diff is read);
-commit compares the staged set; switch compares the fingerprint from
-`git.switch_preview`, which binds the whole status, the branch name and its
-destination commit and lists the paths that differ between `from` and `to`
-(500 at most, with `local_changes` counting worktree entries). A mismatch fails with `stale_git_state`. Discard
-restores only unstaged tracked changes and untracked files, refuses conflicts
-and staged-only paths, and first copies each file (untracked files are moved)
-to a timestamped backup in OMD state outside the repository (the platform mod
-store or the enabled-mode evidence directory). Switch runs `git switch
---no-overwrite-ignore`, so Git refuses to overwrite local changes, including
-ignored files the destination tracks; it never forces. Commit hooks run
-as for a normal `git commit`. The first-party `omd_git` mod owns the sidebar,
-previews and confirmations.
+Stage and unstage require an exact single-file scope and reject conflicts and
+renames. Stage additionally requires a regular file or tracked deletion.
+Before each sandboxed Git write, the host checks `required_access` for every
+affected path and verifies bounded `exec.run` guards. Index writes guard
+status, HEAD and the full index; stage also guards file content. The guards
+run inside the exclusive write operation; a mismatch rejects a stale preview.
+The mod refuses incomplete or oversized scopes, and path-mutating actions
+reject non-regular files. Git metadata still needs to be writable under the
+session's effective permissions; installing the mod does not grant access. The
+default workspace profile protects `.git`, so staging, committing, and switching
+require a permission profile that explicitly grants `.git` write access for the
+selected workspace. The current-host terminal fixture verifies both the default
+denial and the explicitly granted path without changing the default profile.
+For an opt-in workspace profile, the relevant configuration is:
+
+```toml
+default_permissions = "git-workspace"
+
+[permissions.git-workspace]
+extends = ":workspace"
+
+[permissions.git-workspace.filesystem.":workspace_roots"]
+".git" = "write"
+```
+
+Commit previews list staged paths and can show the staged diff. Confirmation
+guards status, HEAD and the full index, then runs ordinary Git hooks and
+signing in the sandbox. A failed hook reports the failure and whether HEAD
+moved. A successful commit compares the committed tree with the previewed
+index; a hook that changed the index produces an explicit warning to inspect
+the resulting commit. This post-check reports a difference after the commit;
+it cannot prevent a hook from changing staged content during execution.
+
+Discard supports regular tracked worktree changes and untracked files. It
+backs up the exact file outside the repository before changing it; untracked
+deletion uses `workspace.transaction` with an expected content hash. Restore
+requires the path to still match the post-discard state. Branch switching
+requires a clean worktree, a local destination, a bounded nonempty set of
+regular or absent affected paths, and a backup. Its guards bind status, HEAD,
+destination commit and branch diff before `git switch --no-overwrite-ignore`.
+Conflicts, symlinks, directories, oversized scopes and unsupported path
+shapes fail closed.
 
 ## Diagnostics and source maps
 
@@ -481,6 +617,8 @@ stream runs without stream hooks for the rest of that response. The middleware
 log records only selections, transformations and fallbacks, and stops growing
 at 8 MiB.
 
+`service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and host-operation provenance when a consumer calls it. A nested call shares the initiating callback's cancellation, 32-call and 5 s execution budgets; recursive providers and chains beyond eight callback frames fail closed. Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation. Offline `host_calls` records the actual mod caller for every mocked operation.
+
 `hook_budget_ms` bounds each JavaScript evaluation, not their sum. A callback
 that makes host calls is replayed once per call, so the host re-runs the module
 and that replay cost is the host's, not the mod's. The callback as a whole,
@@ -495,32 +633,11 @@ credentials, accounting, cancellation, evidence, workflow enforcement, and
 provider authorization remain outside the mod API.
 
 
-## Shared data and review interfaces (.9)
-
-Feature scheduling, prompts, result interpretation, anchor resolution, resource grammar, curation, and reports belong to extension code. The host checks capabilities, provenance, scope, current permissions, cancellation, and allowance. All interfaces are opt-in; a loaded library is not an active extension.
-
-| Interface | Required capabilities/features | Authority and limits |
-| --- | --- | --- |
-| `turn_end.evidence`, `evidence.read` | `lifecycle`, `turn_evidence`; `turn_evidence_v1` | Full controlled-task host captures visible messages and tool references only for selected subscribers. No hidden reasoning or tool-output bodies. A descriptor binds extension, repository, thread, persisted selection revision, extension source hash, and digest; pages are 16 KiB, snapshots at most 256 KiB. Unavailable/reset history has no descriptor. Aborted turns never become completed evidence. |
-| `review.request/result/wait/submit/cancel` | `review`; `accounted_review_v1` | Extension supplies a prompt and interprets the returned text. Native workers retain admission/accounting, independent context, read-only permissions, cancellation and cleanup. Submission requires an owned completed worker, exact result hash and unchanged candidate. Advice and warnings enter a bounded advisory lane of the ledger (at most `max_findings_per_cycle`, deduplicated by fingerprint) that never consumes enforced review cycles or open-finding budget and expires when the candidate changes. Blocking findings become an enforced ledger cycle. Review workers survive the next turn start and are cancelled when that turn ends; session shutdown can interrupt one that is still running. Blocking requires the host's explicit `review.extension_blocking` setting; every-turn requests also require `review.every_turn_advice`. |
-| `workers.presets` and `agents.spawn.tools` | `agents`; `worker_presets_v1` | Lists only the caller's configured presets. Named presets require an exact repository/model/provider/URL grant, rechecked on every request. Subscription presets use `subscription_authorization`, `included_subscription: true` rates, zero monetary reservation and the native ChatGPT login at `https://chatgpt.com/backend-api/codex/responses` without provider overrides. Paid presets instead require `paid_authorization`, `paid_api_key: true` and nonzero reservation. Mixed declarations and route changes fail closed; model access still requires live qualification. Requests may only narrow a preset's tool ceiling. That ceiling is the set allowed under a read-only sandbox: `read`, `grep_files`, `list_dir`, `web`/`web_search` and the shell tools `shell`, `shell_command`, `exec_command` and `write_stdin`. The read-only sandbox, not the tool list, prevents writes. No model names, paid fallback or research trigger are selected by the host. Unpriced hosted search/tool declarations remain denied. |
-| `api.virtualRead` and agent `read` | `virtual_reads`; `virtual_reads_v1` | One provider per nonreserved scheme. The common tool accepts exactly one local path or virtual URI and distinguishes its origin. Local reads preserve file permissions. Virtual responses preserve canonical identity, revision, cursor, anchors, provider/version and host text hash, and are marked untrusted. Continuation requires the expected revision. Text pages are at most 16 KiB. |
-| `sidecars.invoke` | `sidecars`; `service_requests_v1` | Full host only. Requires a host-approved request-capable executable, executable hash, pinned source hashes and separate network/credential grants. Sends bounded JSON to a sandboxed read-only executable; accepts bounded JSON output. Virtual handlers may call only this operation or `workspace.read`, never transactions or worker operations. The plugin owns transport-specific behavior. |
-| `knowledge.*`, `context.freeze/deliver` | `knowledge_read`/`knowledge_write`, plus `context` for context operations; `scoped_data_v1` | Host chooses the store and repository. Source facts retain exact anchors and refresh against current readable files. Secret screening covers the anchored lines only; `knowledge.inspect` reports a stale, denied or secret-bearing fact as `invalidated` instead of failing the call. Proposed lessons require a native user action before reuse. Frozen selections never expand during a task; source changes, deletion/reset and revoked permissions invalidate delivery. Workers cannot load another thread's handles. |
-| `sessions.list/read` | `sessions_read`; `scoped_data_v1` | Exact repository and per-turn cwd, opt-out, visible local messages only. No raw file paths, hidden reasoning, tool bodies or inherited-history reconstruction. Listing is capped at 100 rows, each text page at 16 KiB. A scan reads each file's first line to select the repository and date range, then fully reads matching sessions newest first; it is capped at 4,096 directory entries and 128 MiB of matching sessions, and a capped scan only marks the list `scan_truncated`. Each summary carries an opaque `handle`; `sessions.read` requires it and opens only that session file, reporting `projection_truncated` when records exceed the projection. Paginated continuation files of one session are listed as separate rows with their own handles; files repeating the same ID and history base are rejected as ambiguous. The host reads the state database with an ordinary query-only SQLite connection, which may create its `-wal`/`-shm` files. Results disclose inaccessible files, truncation and incomplete final records. Pagination rejects revision drift and duplicate IDs. |
-| `api.command(..., {cli})`, `omd COMMAND --repo PATH` | `commands`; `plugin_dispatch_v1` | Generic dispatch to exactly one enabled extension export. The CLI has scoped data operations but no model or process authority. Plugin components reuse ordinary mod trust, grants, sandbox, versioning and disable/recovery. |
-
-A service grant with `network: true` gives its sidecar or provider process unrestricted outbound network access even when the session's network is restricted; services without it inherit the session network policy. Its `read_paths` (at most 16) are the only reads added to the service sandbox. The first-party Claude CLI grant adds the Claude CLI and Node installations, `~/.claude`, `~/.claude.json`, `~/Library/Keychains` for the CLI login and the macOS system library paths its runtime loads. Network and keychain access are explicit host-approved grants, not defaults for other workers, checks or integrations.
-
-Resources use private immutable files, digest verification, owner/thread/source/selection-revision checks, and a 64 MiB/1,024-entry store ceiling. Secret-pattern redaction is conservative; it is not a claim that arbitrary prose can be perfectly classified as secret. Known secret files remain subject to native read denial. A cancelled or denied call cannot be treated as evidence that an action completed.
-
-`workspace.read` and `workspace.transaction` remain the edit interface. Transactions verify all expected hashes/absence before writing and provide checked rollback; replacement is atomic per file, not process-crash atomic across files. Extensions must surface rollback conflicts and preserve ordinary diff review.
-
 ## Plugin components and shell commands
 
 A plugin can contain `.codex-plugin/omd.json` with `{"schema":1,"component":"component","sha256":"<inspected package digest>"}`. The contained directory is an ordinary public-API package with `mod.json` and `index.ts`. Inspect it with `omd-mod plugin-component PLUGIN_ROOT`; the inspector rejects traversal, symlinks and digest changes. Trust and enable the inspected component through the existing mod-store workflow. The descriptor does not activate it.
 
-`omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. A standalone explicit memory approval/removal/reset additionally requires the host's current operation confirmation token using `--confirm`; extension callbacks cannot supply user-action authority. The host store must be protected from agent process writes. Ambiguous command ownership fails closed.
+`omd COMMAND --repo PATH --store STORE [--home CODEX_HOME]` dispatches an exported CLI alias. It offers `evidence.*` and `sessions.*` only; model and process operations are unavailable. The host store must be protected from agent process writes. Ambiguous command ownership fails closed.
 
 Independent examples live in [`examples/virtual_reader`](examples/virtual_reader), [`examples/scoped_data`](examples/scoped_data), [`examples/review_probe`](examples/review_probe), and the existing [`examples/workspace`](examples/workspace). Their fixture tests demonstrate shared interfaces; they are not production advisor, GitHub, memory, edit-anchor or report implementations, and they do not establish live model usefulness or release qualification.
 

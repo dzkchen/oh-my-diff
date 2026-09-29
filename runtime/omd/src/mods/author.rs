@@ -21,9 +21,7 @@ impl OfflineHost {
             .as_object()
             .ok_or_else(|| failure("offline_host_operations_must_be_an_object"))?;
         for (operation, values) in operations {
-            if !MOD_HOST_OPERATIONS.contains(&operation.as_str())
-                && !LEGACY_MOD_HOST_OPERATIONS.contains(&operation.as_str())
-            {
+            if !MOD_HOST_OPERATIONS.contains(&operation.as_str()) {
                 return Err(failure(format!(
                     "offline_unknown_host_operation: {operation}"
                 )));
@@ -38,10 +36,11 @@ impl OfflineHost {
         Ok(host)
     }
 
-    fn call(&mut self, call: ModHostCall) -> Result<Value> {
-        self.calls
-            .push(json!({"at_ms":self.now_ms,"operation":call.operation,
-            "arguments":call.arguments}));
+    fn call(&mut self, caller: &str, call: ModHostCall) -> Result<Value> {
+        self.calls.push(
+            json!({"at_ms":self.now_ms,"caller":caller,"operation":call.operation,
+            "arguments":call.arguments}),
+        );
         let response = self
             .replies
             .get_mut(&call.operation)
@@ -276,14 +275,14 @@ impl ModHost {
                 let mut values = Vec::new();
                 for id in ids {
                     let generation = self.generation;
-                    let value = self.invoke_with(
+                    let value = self.invoke_scoped_with(
                         &id,
                         generation,
                         event,
                         "",
                         payload.clone(),
                         || active,
-                        |call| host.call(call),
+                        |caller, call| host.call(caller, call),
                     )?;
                     values.push(json!({"mod":id,"value":value}));
                 }
@@ -293,26 +292,26 @@ impl ModHost {
                 let id = required_string(step, "mod")?;
                 let event = required_string(step, "event")?;
                 let name = required_string(step, "name")?;
-                self.invoke_with(
+                self.invoke_scoped_with(
                     id,
                     self.generation,
                     event,
                     name,
                     payload,
                     || active,
-                    |call| host.call(call),
+                    |caller, call| host.call(caller, call),
                 )
             }
             "terminal_mount" | "terminal_interact" => {
                 let id = required_string(step, "mod")?;
-                let view = self.invoke_with(
+                let view = self.invoke_scoped_with(
                     id,
                     self.generation,
                     "terminal",
                     "",
                     payload,
                     || active,
-                    |call| host.call(call),
+                    |caller, call| host.call(caller, call),
                 )?;
                 let parsed = ModView::parse(view.clone())?;
                 if kind == "terminal_mount" {
@@ -337,14 +336,14 @@ impl ModHost {
                 if let Some(command) = action.get("command").and_then(Value::as_str) {
                     let (owner, name) = command.split_once(':').unwrap_or((id, command));
                     let args = action.get("args").cloned().unwrap_or_else(|| json!(""));
-                    let result = self.invoke_with(
+                    let result = self.invoke_scoped_with(
                         owner,
                         self.generation,
                         "command",
                         name,
                         args,
                         || active,
-                        |call| host.call(call),
+                        |caller, call| host.call(caller, call),
                     )?;
                     Ok(json!({"action":action,"result":result}))
                 } else {

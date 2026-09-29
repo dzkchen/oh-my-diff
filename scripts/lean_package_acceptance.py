@@ -9,9 +9,9 @@ import tarfile
 import tempfile
 
 try:
-    from scripts import private_lean_v1 as private
+    from scripts import install_support as private
 except ModuleNotFoundError:
-    import private_lean_v1 as private
+    import install_support as private
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,14 +66,14 @@ def run(archive, sha256, upstream, output):
             assert not any((prefix / name).exists() for name in
                            ("browser", "bridge", "mcp", "sidecar", "code-mode"))
             if profile == "platform":
-                assert status["installed_tools"] == [] and status["plugin_bundle"] is None
+                assert set(status["installed_tools"]) == {"omd", "omd-contract"} and status["plugin_bundle"] is None
                 assert [item["id"] for item in status["packages"] if item["installed"]] == ["omd_logo"]
                 assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_logo"]
             else:
-                assert set(status["installed_tools"]) == {"omd-graph", "omd-health", "omd-lsp"}
-                assert len([item for item in status["packages"] if item["installed"]]) == 10
-                assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_model_picker", "omd_workspace"]
-                assert len(status["plugin_bundle"]["plugins"]) == 6
+                assert set(status["installed_tools"]) == {"omd", "omd-contract"}
+                assert len([item for item in status["packages"] if item["installed"]]) == 13
+                assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace"]
+                assert len(status["plugin_bundle"]["plugins"]) == 4
                 disabled = call([bin_dir / "omd-package", "mod", "disable", "omd_workspace"], environment)
                 assert not next(item for item in disabled["packages"]
                                 if item["id"] == "omd_workspace")["enabled_in_store"]

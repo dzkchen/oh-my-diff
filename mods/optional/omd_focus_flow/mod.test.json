@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "steps": [
+    {"type": "invoke", "mod": "omd_focus_flow", "event": "terminal", "name": "", "payload": {"event": "idle", "ledger": null}, "expect": {"completed_tools": "compact", "keybindings": {"F9": {"command": "omd_focus_flow:toggle"}}}},
+    {"type": "invoke", "mod": "omd_focus_flow", "event": "command", "name": "toggle", "payload": null, "expect": {"display": "Completed agent tools: expanded. Active work, failures, prompts, evidence and recovery stay visible."}},
+    {"type": "invoke", "mod": "omd_focus_flow", "event": "terminal", "name": "", "payload": {"event": "idle", "ledger": null}, "expect": {"completed_tools": "normal", "keybindings": {"F9": {"command": "omd_focus_flow:toggle"}}}},
+    {"type": "reload"},
+    {"type": "invoke", "mod": "omd_focus_flow", "event": "terminal", "name": "", "payload": {"event": "idle", "ledger": null}, "expect": {"completed_tools": "normal", "keybindings": {"F9": {"command": "omd_focus_flow:toggle"}}}},
+    {"type": "invoke", "mod": "omd_focus_flow", "event": "command", "name": "toggle", "payload": null, "expect": {"display": "Completed agent tools: compact. Active work, failures, prompts, evidence and recovery stay visible."}},
+    {"type": "invoke", "mod": "omd_focus_flow", "event": "terminal", "name": "", "payload": {"event": "idle", "ledger": null}, "expect": {"completed_tools": "compact", "keybindings": {"F9": {"command": "omd_focus_flow:toggle"}}}}
+  ]
+}

@@ -10,27 +10,34 @@ import tempfile
 import time
 
 
-def sample(binary, source_manifest, source_store, enabled):
+def selected_store(source_store, destination, enabled):
+    selection = json.loads(source_store.read_text())
+    if selection.get("schema") != 1 or not isinstance(selection.get("mods"), list):
+        raise ValueError("source mod store has an unsupported selection schema")
+    selection["mods"] = [mod for mod in selection["mods"] if Path(mod["path"]).name == "omd_task_tools"] if enabled else []
+    if enabled and len(selection["mods"]) != 1:
+        raise ValueError("source mod store must select exactly one omd_task_tools package")
+    if enabled and selection["mods"][0].get("enabled") is not True:
+        raise ValueError("omd_task_tools must be enabled for the task-tools arm")
+    destination.mkdir()
+    (destination / "mods.json").write_text(json.dumps(selection))
+    return destination
+
+
+def launch_environment(home, store):
+    environment = os.environ.copy()
+    environment.pop("OMD_CONTROLLED_MANIFEST", None)
+    environment.update({"CODEX_HOME": str(home), "CODEX_SQLITE_HOME": str(home), "OMD_MODE": "omd", "OMD_MOD_STORE": str(store)})
+    return environment
+
+
+def sample(binary, source_store, enabled):
     with tempfile.TemporaryDirectory(prefix="omd-task-tools-idle-", dir="/private/tmp") as directory:
         root = Path(directory)
         home = root / "home"
         home.mkdir()
-        manifest = json.loads(source_manifest.read_text())
-        manifest["evidence"] = str(root / "evidence")
-        if enabled:
-            selection = json.loads(source_store.read_text())
-            selection["mods"] = [mod for mod in selection["mods"] if Path(mod["path"]).name == "omd_task_tools"]
-            assert len(selection["mods"]) == 1
-            store = root / "store"
-            store.mkdir()
-            (store / "mods.json").write_text(json.dumps(selection))
-            manifest["mods"] = str(store)
-        else:
-            manifest.pop("mods", None)
-        manifest_path = root / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest))
-        environment = os.environ.copy()
-        environment.update({"CODEX_HOME": str(home), "CODEX_SQLITE_HOME": str(home), "OMD_MODE": "enabled", "OMD_CONTROLLED_MANIFEST": str(manifest_path)})
+        store = selected_store(source_store, root / "store", enabled)
+        environment = launch_environment(home, store)
         started = time.monotonic()
         process = subprocess.Popen([str(binary), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment, bufsize=0)
         try:
@@ -60,7 +67,6 @@ def sample(binary, source_manifest, source_store, enabled):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary", type=Path)
-    parser.add_argument("source_manifest", type=Path)
     parser.add_argument("source_store", type=Path)
     parser.add_argument("--repeats", type=int, default=12)
     args = parser.parse_args()
@@ -68,7 +74,7 @@ def main():
     random.Random(110226).shuffle(arms)
     results = {"baseline": [], "task_tools": []}
     for arm in arms:
-        results[arm].append(sample(args.binary, args.source_manifest, args.source_store, arm == "task_tools"))
+        results[arm].append(sample(args.binary, args.source_store, arm == "task_tools"))
     summary = {arm: {key: statistics.median(value[key] for value in values) for key in ("initialize_ms", "idle_rss_kib")}
                for arm, values in results.items()}
     print(json.dumps({"schema": 1, "repeats": args.repeats, "raw": results, "median": summary, "paid_requests": 0}, indent=2))

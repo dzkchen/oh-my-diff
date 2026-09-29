@@ -1,4 +1,4 @@
-import type { ModAPI, TerminalView } from '@oh-my-diff/mod-api/0.1';
+import type { ModAPI, TerminalView } from '@oh-my-diff/mod-api';
 
 export default function activate(api: ModAPI) {
   api.command('layout', argument => ({ display: `Layout request: ${String(argument)}` }), {

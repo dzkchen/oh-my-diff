@@ -2,72 +2,232 @@
   "schema": 1,
   "virtual_time_ms": 1000,
   "packages": [
-    "../omd_coordination"
+    "../omd_coordination",
+    "../omd_workflow"
   ],
   "settings": {
-    "omd_coordination": {
-      "lead_policy": "task_entry",
-      "worker_context": "focused_brief",
-      "evidence": ["solution.py"]
-    },
     "omd_recovery": {
-      "failure_policy": "edit",
-      "eligible_tools": ["direct", "delegation", "advisory"],
-      "outage_action": "opposite_lead"
+      "advisory_route": "opposite",
+      "allowed_failure_classes": ["edit"],
+      "evidence_bytes": 100000
     }
   },
   "host_operations": {
-    "recovery.escalate": [
+    "task.status": [
       {
         "result": {
-          "status": "consulted"
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
         }
       },
       {
         "result": {
-          "status": "consulted"
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
         }
       }
     ],
-    "delegation.contribute": [
+    "store.get": [
+      {
+        "result": null
+      },
       {
         "result": {
-          "status": "integrated"
+          "value": {
+            "status": "running",
+            "handle": "advice-1",
+            "evidence": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "classification": "edit",
+            "route": "opposite"
+          },
+          "revision": 2
         }
       },
       {
         "result": {
-          "status": "integrated"
+          "value": {
+            "status": "completed",
+            "handle": "advice-1",
+            "evidence": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "classification": "edit",
+            "route": "opposite",
+            "result": {
+              "status": "completed",
+              "text": "Inspect the failed edit before retrying",
+              "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "evidence": {
+                "reference": "fixture-evidence",
+                "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "consumed": false
+            }
+          },
+          "revision": 3
+        }
+      }
+    ],
+    "store.put": [
+      {
+        "result": {
+          "revision": 1
+        }
+      },
+      {
+        "result": {
+          "revision": 2
+        }
+      },
+      {
+        "result": {
+          "revision": 3
+        }
+      }
+    ],
+    "routes.list": [
+      {
+        "result": [
+          {
+            "name": "lead",
+            "roles": ["lead", "worker"],
+            "available": true,
+            "provider": "fixture",
+            "model": "lead",
+            "reasoning": "high",
+            "billing": "included_subscription"
+          },
+          {
+            "name": "opposite",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "available": true,
+            "provider": "fixture",
+            "model": "opposite",
+            "reasoning": "high",
+            "billing": "included_subscription"
+          }
+        ]
+      }
+    ],
+    "sessions.snapshot": [
+      {
+        "result": {
+          "evidence": {
+            "reference": "fixture-evidence",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "provenance": {"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "bytes": 4096, "items": 1, "revision": 1}
+        }
+      }
+    ],
+    "workspace.snapshot": [
+      {
+        "result": {
+          "snapshot": {
+            "reference": "snapshot:fixture",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      }
+    ],
+    "agents.spawn": [
+      {
+        "result": {
+          "handle": "advice-1",
+          "route": "opposite",
+          "permissions": "read_only"
+        }
+      }
+    ],
+    "agents.wait": [
+      {
+        "result": {
+          "status": "completed",
+          "text": "Inspect the failed edit before retrying",
+          "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence": {
+            "reference": "fixture-evidence",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "consumed": false
+        }
+      }
+    ],
+    "agents.cancel": [
+      {
+        "result": {
+          "cancelled": true
         }
       }
     ]
   },
   "steps": [
     {
-      "type": "event",
-      "event": "tool_before",
+      "type": "model_request",
       "payload": {
-        "tool": "omd_escalate",
-        "arguments": {
-          "failure_class": "model",
-          "summary": "edit failed",
-          "call_ids": ["failed-edit"]
+        "request_id": "fixture",
+        "scope": {
+          "kind": "main",
+          "thread_id": "fixture-thread"
         },
-        "call_id": "escalate"
-      },
-      "expect": [
-        {
-          "mod": "omd_recovery",
-          "value": {
-            "tool": "mod_omd_recovery_recover",
-            "arguments": {
-              "failure_class": "model",
-              "summary": "edit failed",
-              "call_ids": ["failed-edit"]
-            }
+        "original": {
+          "provider": "fixture",
+          "model": "lead",
+          "reasoning": "high"
+        },
+        "effective": {
+          "provider": "fixture",
+          "model": "lead",
+          "reasoning": "high"
+        },
+        "routes": [
+          {
+            "name": "opposite",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "available": true,
+            "provider": "fixture",
+            "model": "opposite",
+            "reasoning": "high",
+            "billing": "included_subscription"
           }
-        }
-      ]
+        ],
+        "authorized_presets": [
+          {
+            "name": "opposite",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "available": true,
+            "provider": "fixture",
+            "model": "opposite",
+            "reasoning": "high",
+            "billing": "included_subscription"
+          }
+        ]
+      }
     },
     {
       "type": "invoke",
@@ -75,53 +235,49 @@
       "event": "tool",
       "name": "recover",
       "payload": {
-        "failure_class": "model",
-        "summary": "edit failed",
-        "call_ids": ["failed-edit"]
+        "failure_class": "edit",
+        "summary": "The exact edit failed",
+        "call_ids": [
+          "failed-edit"
+        ]
       },
       "expect": {
-        "status": "consulted"
-      }
-    },
-    {
-      "type": "event",
-      "event": "tool_before",
-      "payload": {
-        "tool": "omd_contribute",
-        "arguments": {
-          "brief": "fix add",
-          "selected_evidence": ["solution.py", "notes.txt"]
+        "status": "running",
+        "handle": "advice-1",
+        "evidence": {
+          "reference": "fixture-evidence",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         },
-        "call_id": "delegate"
-      },
-      "expect": [
-        {
-          "mod": "omd_recovery",
-          "value": {
-            "tool": "mod_omd_recovery_delegate",
-            "arguments": {
-              "brief": "fix add",
-              "selected_evidence": ["solution.py", "notes.txt"]
-            }
-          }
-        }
-      ]
+        "classification": "edit",
+        "route": "opposite"
+      }
     },
     {
       "type": "invoke",
       "mod": "omd_recovery",
       "event": "tool",
-      "name": "delegate",
-      "payload": {
-        "brief": "fix add",
-        "selected_evidence": ["solution.py", "notes.txt"]
-      },
+      "name": "advice",
+      "payload": {},
       "expect": {
-        "status": "integrated"
+        "status": "completed",
+        "handle": "advice-1",
+        "evidence": {
+          "reference": "fixture-evidence",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "classification": "edit",
+        "route": "opposite",
+        "result": {
+          "status": "completed",
+          "text": "Inspect the failed edit before retrying",
+          "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence": {
+            "reference": "fixture-evidence",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "consumed": false
+        }
       }
-    },
-    {
-      "type": "reload"
     },
     {
       "type": "invoke",
@@ -129,33 +285,13 @@
       "event": "tool",
       "name": "recover",
       "payload": {
-        "failure_class": "environment",
-        "summary": "retry after reload",
-        "call_ids": ["failed-reload"]
+        "failure_class": "edit",
+        "summary": "The exact edit failed",
+        "call_ids": [
+          "failed-edit"
+        ]
       },
-      "expect": {
-        "status": "consulted"
-      }
-    },
-    {
-      "type": "invoke",
-      "mod": "omd_recovery",
-      "event": "tool",
-      "name": "delegate",
-      "payload": {
-        "brief": "fix after reload",
-        "selected_evidence": ["solution.py"]
-      },
-      "expect": {
-        "status": "integrated"
-      }
-    },
-    {
-      "type": "invoke",
-      "mod": "omd_recovery",
-      "event": "command",
-      "name": "policy",
-      "payload": null
+      "expect_error": "task_advisory_attempt_already_used"
     }
   ]
 }

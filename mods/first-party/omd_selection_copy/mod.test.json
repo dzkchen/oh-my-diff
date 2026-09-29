@@ -3,128 +3,15 @@
   "steps": [
     {
       "type": "event",
-      "event": "terminal",
-      "payload": {
-        "event": "start",
-        "checkpoint": null
-      },
-      "expect": [
-        {
-          "mod": "omd_selection_copy",
-          "value": {
-            "selection": {
-              "copy_on_release": true,
-              "min_chars": 1,
-              "sources": []
-            },
-            "status": [
-              "copy on"
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "type": "event",
       "event": "selection",
-      "payload": {
-        "source": "transcript",
-        "chars": 42,
-        "lines": 2,
-        "copied": true
-      },
-      "expect": [
-        {
-          "mod": "omd_selection_copy",
-          "value": null
-        }
-      ]
+      "payload": { "source": "transcript", "chars": 5, "lines": 1 },
+      "expect": [{ "mod": "omd_selection_copy", "value": { "copy": true } }]
     },
     {
       "type": "event",
-      "event": "terminal",
-      "payload": {
-        "event": "start",
-        "checkpoint": null
-      },
-      "expect": [
-        {
-          "mod": "omd_selection_copy",
-          "value": {
-            "selection": {
-              "copy_on_release": true,
-              "min_chars": 1,
-              "sources": []
-            },
-            "status": [
-              "copy ok 42"
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "type": "invoke",
-      "mod": "omd_selection_copy",
-      "event": "command",
-      "name": "policy",
-      "payload": "sources composer,pager",
-      "expect": {
-        "display": "copy-on-highlight on (composer, pager, at least 1 character)\nlast release: copied 42 characters from the transcript"
-      }
-    },
-    {
-      "type": "invoke",
-      "mod": "omd_selection_copy",
-      "event": "command",
-      "name": "policy",
-      "payload": "min 5",
-      "expect": {
-        "display": "copy-on-highlight on (composer, pager, at least 5 characters)\nlast release: copied 42 characters from the transcript"
-      }
-    },
-    {
-      "type": "event",
-      "event": "selection",
-      "payload": {
-        "source": "transcript",
-        "chars": 3,
-        "lines": 1,
-        "copied": false,
-        "reason": "policy_off"
-      },
-      "expect": [
-        {
-          "mod": "omd_selection_copy",
-          "value": null
-        }
-      ]
-    },
-    {
-      "type": "event",
-      "event": "terminal",
-      "payload": {
-        "event": "idle",
-        "checkpoint": null
-      },
-      "expect": [
-        {
-          "mod": "omd_selection_copy",
-          "value": {
-            "selection": {
-              "copy_on_release": true,
-              "min_chars": 5,
-              "sources": [
-                "composer",
-                "pager"
-              ]
-            },
-            "status": [
-              "copy off here"
-            ]
-          }
-        }
-      ]
+      "event": "selection_result",
+      "payload": { "source": "transcript", "chars": 5, "lines": 1, "copied": true },
+      "expect": [{ "mod": "omd_selection_copy", "value": null }]
     },
     {
       "type": "invoke",
@@ -132,45 +19,7 @@
       "event": "command",
       "name": "policy",
       "payload": "off",
-      "expect": {
-        "display": "copy-on-highlight off\nlast release: not copied (off here) in the transcript"
-      }
-    },
-    {
-      "type": "event",
-      "event": "terminal",
-      "payload": {
-        "event": "idle",
-        "checkpoint": null
-      },
-      "expect": [
-        {
-          "mod": "omd_selection_copy",
-          "value": {
-            "selection": {
-              "copy_on_release": false,
-              "min_chars": 5,
-              "sources": [
-                "composer",
-                "pager"
-              ]
-            },
-            "status": [
-              "copy off"
-            ]
-          }
-        }
-      ]
-    },
-    {
-      "type": "invoke",
-      "mod": "omd_selection_copy",
-      "event": "command",
-      "name": "policy",
-      "payload": "sources clipboard",
-      "expect": {
-        "display": "sources must be all or a comma list of transcript, composer, pager"
-      }
+      "expect": { "display": "copy-on-highlight off\nlast release: copied 5 characters from the transcript" }
     }
   ]
 }

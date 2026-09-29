@@ -8,11 +8,12 @@ export default function activate(api: ModAPI) {
   api.builtins({ commands: { hide: ['plan'] } });
   api.tool({
     name: 'check', label: 'Release check', description: 'Run the repository check, record evidence and request completion',
-    parameters: { type: 'object', properties: { candidate_sha256: { type: 'string' } }, required: ['candidate_sha256'], additionalProperties: false },
-  }, input => {
-    const candidate = String((input as { candidate_sha256: string }).candidate_sha256);
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  }, () => {
+    const candidate = api.host.call('workspace.snapshot', {}).candidate_sha256;
     const sources = api.host.call('workspace.list', { path: 'src', recursive: true });
     const run = api.host.call('exec.run', { program: 'sh', argv: ['-c', 'test -d src'], timeout_ms: 5000 });
+    api.host.call('workspace.snapshot', { expected: candidate });
     const evidence = api.host.call('evidence.write', {
       media_type: 'application/json', label: 'check run', content: { exit_code: run.exit_code, files: sources.entries.length },
     });

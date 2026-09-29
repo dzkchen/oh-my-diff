@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "omd_project_pi_prompts",
+  "version": "0.1.0-preview.2",
+  "api": "0.2.0-experimental.1",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_project_pi_prompts" },
+  "capabilities": ["tools", "commands", "fs.read", "exec"],
+  "assets": ["pi_user_cli.mjs"],
+  "settings_schema": { "type": "object", "properties": { "user_agent_dir": { "type": "string" } }, "additionalProperties": false },
+  "environment": ["crypto"],
+  "compatibility": { "required_features": ["workspace_fs_v1", "workspace_snapshots_v1", "package_text_assets_v1", "exec_output_artifacts_v1"] }
+}

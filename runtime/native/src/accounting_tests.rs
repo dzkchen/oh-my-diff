@@ -54,7 +54,6 @@ fn setup() -> (
                 seconds: 30,
                 concurrent_workers: 2,
                 max_depth: 2,
-                max_reassessments: 1,
             },
             root.path().join("evidence"),
         )

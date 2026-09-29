@@ -1,11 +1,9 @@
-use crate::KnowledgeStore;
-use crate::knowledge_access::KnowledgeAccess;
 use crate::resource_data::{ResourceBinding, ResourceStore, hash};
 use crate::sessions::SessionIndex;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct ScopedDataHost {
     pub root: PathBuf,
@@ -13,26 +11,13 @@ pub struct ScopedDataHost {
     pub session_root: Option<PathBuf>,
     pub session_database: Option<PathBuf>,
     pub binding: ResourceBinding,
-    pub confirmation: Option<String>,
     pub(crate) session_bytes: usize,
 }
 
 pub fn operation(name: &str) -> bool {
     matches!(
         name,
-        "evidence.read"
-            | "evidence.write"
-            | "sessions.list"
-            | "sessions.read"
-            | "knowledge.inspect"
-            | "knowledge.retain"
-            | "knowledge.propose"
-            | "knowledge.approve"
-            | "knowledge.remove"
-            | "knowledge.reset"
-            | "knowledge.snapshot"
-            | "context.freeze"
-            | "context.deliver"
+        "evidence.read" | "evidence.write" | "sessions.list" | "sessions.read"
     )
 }
 
@@ -74,7 +59,6 @@ impl ScopedDataHost {
             session_root,
             session_database,
             binding,
-            confirmation: None,
             session_bytes: 0,
         })
     }
@@ -83,7 +67,6 @@ impl ScopedDataHost {
         &mut self,
         name: &str,
         arguments: Value,
-        readable: &dyn Fn(&Path) -> bool,
         active: impl Fn() -> bool,
     ) -> io::Result<Value> {
         if !active() {
@@ -99,14 +82,10 @@ impl ScopedDataHost {
             operation: name.into(),
             arguments: Value::Null,
         }
-        .capabilities_any();
+        .capability()
+        .map_err(|error| io::Error::other(error.to_string()))?;
         if configuration.revision != self.binding.generation
-            || !selection
-                .capabilities
-                .iter()
-                .any(|cap| required.contains(&cap.as_str()))
-            || name.starts_with("context.")
-                && !selection.capabilities.iter().any(|cap| cap == "context")
+            || !selection.capabilities.iter().any(|cap| cap == required)
         {
             return Err(io::Error::other("data_selection_changed_or_revoked"));
         }
@@ -145,10 +124,9 @@ impl ScopedDataHost {
             let input: Input = serde_json::from_value(arguments)?;
             if !matches!(input.media_type.as_str(), "application/json" | "text/plain")
                 || input.media_type == "text/plain" && !input.content.is_string()
-                || input
-                    .label
-                    .as_deref()
-                    .is_some_and(|label| label.is_empty() || label.len() > 128 || label.chars().any(char::is_control))
+                || input.label.as_deref().is_some_and(|label| {
+                    label.is_empty() || label.len() > 128 || label.chars().any(char::is_control)
+                })
             {
                 return Err(io::Error::other("evidence_record_invalid"));
             }
@@ -178,47 +156,7 @@ impl ScopedDataHost {
             }
             return Ok(result);
         }
-        if !operation(name) {
-            return Err(io::Error::other("data_operation_unavailable"));
-        }
-        let resources = ResourceStore {
-            root: &self.root,
-            binding: &self.binding,
-        };
-        let directory = resources.directory()?;
-        let path = directory.join("knowledge");
-        let store = if path.try_exists()? {
-            KnowledgeStore::open(path)?
-        } else {
-            KnowledgeStore::create(path, self.binding.repository.clone())?
-        };
-        let user_action = if matches!(
-            name,
-            "knowledge.approve" | "knowledge.remove" | "knowledge.reset"
-        ) {
-            let token = hash(&serde_json::to_vec(
-                &json!({"binding":self.binding,"operation":name,"arguments":arguments}),
-            )?);
-            if self.confirmation.as_deref() != Some(&token) {
-                return Err(io::Error::other(format!(
-                    "explicit_user_confirmation_required:{token}"
-                )));
-            }
-            Some(crate::KnowledgeAction {
-                actor: "user".into(),
-                reason: format!("explicit {name} confirmation {token}"),
-            })
-        } else {
-            None
-        };
-        KnowledgeAccess {
-            store: &store,
-            repository: &self.repository,
-            resources,
-            user_action,
-            readable,
-        }
-        .call(name, arguments, active)
+        Err(io::Error::other("data_operation_unavailable"))
     }
 
     pub fn resources(&self) -> ResourceStore<'_> {
@@ -262,7 +200,6 @@ impl ScopedDataHosts {
         source_sha256: &str,
         name: &str,
         arguments: Value,
-        readable: &dyn Fn(&Path) -> bool,
         active: impl Fn() -> bool,
     ) -> io::Result<Value> {
         let host = match self.hosts.entry(owner.to_owned()) {
@@ -280,6 +217,6 @@ impl ScopedDataHosts {
         if host.binding.source_sha256 != source_sha256 {
             return Err(io::Error::other("data_selection_changed_or_revoked"));
         }
-        host.call(name, arguments, readable, active)
+        host.call(name, arguments, active)
     }
 }

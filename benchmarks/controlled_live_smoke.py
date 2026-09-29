@@ -39,6 +39,7 @@ def native_rate(model):
 
 
 def setup(destination, node, gateway, arm):
+    raise RuntimeError("legacy live controlled fixture requires a rebuilt OMD_MODE=omd mod workflow, host routes, and contract before provider use")
     repo, home, env = prepare(destination, node, gateway.port, gateway.token, "direct")
     shell_home = repo / ".omd-cache"
     shell_home.mkdir()
@@ -109,6 +110,7 @@ def setup(destination, node, gateway, arm):
 
 
 def run(binary, output, arms, usd_exposure, max_requests):
+    raise RuntimeError("legacy live controlled fixture requires a rebuilt OMD_MODE=omd mod workflow, host routes, and contract before provider use")
     if output.exists():
         raise ValueError("output already exists")
     output.mkdir(parents=True)

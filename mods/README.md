@@ -1,13 +1,20 @@
 # TypeScript mods
 
-API `0.1.0-experimental.8` runs on the pinned Codex 0.157.0 OMD 0.1.0 host,
-Apple Silicon macOS, and Node 24.18.0. Mods are editable, hash-approved TypeScript
-packages. The API remains experimental; this delivery does not freeze the API or
-complete independent preview feedback.
+The current pinned Codex `0.157.0` OMD host exposes API
+`0.2.0-experimental.1` on Apple Silicon macOS and Node `24.18.0`. Mods are
+editable, hash-approved TypeScript packages. The API remains experimental;
+local author and host fixtures do not complete independent preview feedback or
+release qualification.
 
-Install the exact `@oh-my-diff/mod-api@0.1.0-experimental.8` author package with
-pnpm. It exports the typed SDK and `omd-mod-author` CLI. See
-[REFERENCE.md](REFERENCE.md) for version-matched API and command documentation.
+Install the exact `@oh-my-diff/mod-api@0.2.0-experimental.1` author package
+with pnpm. It exports the typed SDK and `omd-mod-author` CLI. See
+[REFERENCE.md](REFERENCE.md#api-02-host-primitives) for current generic API
+operations and command documentation. The current host accepts `OMD_MODE=omd`
+or `OMD_MODE=upstream_direct`; it rejects `OMD_MODE=enabled`,
+`OMD_MODE=platform`, and `OMD_CONTROLLED_MANIFEST`. Point the mod host at an
+external store with `OMD_MOD_STORE=/absolute/external/mod-store`. Trusting and
+enabling a package does not grant a provider, select a workflow contract, or
+authorize spending.
 The quickest local flow is:
 
 ```sh
@@ -29,6 +36,22 @@ live-replacement examples with `omd-mod-author examples DIR`. Small
 demonstrations remain repository-only conformance fixtures.
 [EXTENSION_TYPES.md](EXTENSION_TYPES.md) records the checked classification and
 rationale for every package.
+
+For a local host, initialize the external store with `omd-mod init STORE NODE`,
+then inspect, trust, enable, and reload a package through `omd-mod`. Run the
+patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The Full profile
+installer in [LEAN_PROFILES.md](../LEAN_PROFILES.md) stages candidate packages
+inactive except its three explicitly selected presentation packages. Its
+`omd_workflow` package implements task controls through mod-owned schema-2
+contracts selected separately by `omd-contract`.
+
+## Historical API 0.1 authoring and controlled-host reference
+
+The remaining sections preserve the API `0.1.0-experimental.*` authoring,
+native controlled-manifest, first-party preview, and fixture record. Their
+host calls, manifest setup, package inventory, and commands are not current
+instructions for the API 0.2 host. The version-matched current surface is in
+[REFERENCE.md](REFERENCE.md#api-02-host-primitives).
 
 ## Install, edit, and recover
 
@@ -193,18 +216,21 @@ They are not part of the private preview or a supported release bundle; install
 and enable them only through exact source trust while their task-value and
 overhead gates remain open.
 
-Four terminal packages ship with the installation profiles through the public
+Five terminal packages ship with the installation profiles through the public
 API described in [the reference](REFERENCE.md#terminal-identity-rich-lines-picker-and-selection):
 [`omd_logo`](first-party/omd_logo/index.ts) draws the Oh My Diff wordmark and
 launch status from the read-only identity and is active in both profiles;
 [`omd_model_picker`](first-party/omd_model_picker/index.ts) selects the compact
 native `/model` and reasoning layout and is active in Full OMD;
+[`omd_inspector`](first-party/omd_inspector/index.ts) supplies `/omd` as a
+replaceable dialog command and is active in Full OMD;
 [`omd_selection_copy`](first-party/omd_selection_copy/index.ts) sets the
 copy-on-highlight policy and shows its last result; and
 [`omd_git`](first-party/omd_git/index.ts) adds a left Git sidebar with a commit
 graph, changed files, diffs, stage, unstage, confirmed commit, discard and
-branch switch over the [`git` operations](REFERENCE.md#git-operations). The last
-two are installed inactive in Full OMD; enable them explicitly.
+branch switch over the [`git` operations](REFERENCE.md#git-operations).
+`omd_selection_copy` is active by default in Full OMD; `omd_git` is installed
+inactive, so enable it explicitly.
 
 `omd_typed_tasks` is a separately installed, inactive Full OMD candidate. It
 uses the public task tool and host operations to run up to four typed siblings,
@@ -212,9 +238,8 @@ validate each final result and its cited sources before consumption, and
 request host-owned isolated integration for edit workers. Its generic host
 operations are described in [the API reference](REFERENCE.md#typed-worker-and-workspace-operations).
 
-[PREVIEW.md](PREVIEW.md) is the first-use and customization guide;
-`scripts/private_lean_v1.py preview install` provisions them from pinned
-sources into an external store.
+`python3 -m scripts.lean_profiles install --profile full` provisions them from
+pinned sources into an external store; see [LEAN_PROFILES.md](../LEAN_PROFILES.md).
 
 ```sh
 pnpm --dir mods install --frozen-lockfile
@@ -396,6 +421,16 @@ The fine-grained `session`, `prompt`, `agent`, `tool_call`, `tool_result`, and
 the native host owns them. Their fields remain observe-only in middleware. Exclusive
 `input` and `tool_before` replacements retain their existing native permission,
 transcript, and workflow boundaries.
+
+`tool_result` reports the originating `thread_id`, a call SHA-256 over the executed
+tool name and payload, and a result SHA-256 over the accepted model-visible item.
+The result digest is absent and `result_complete` is false for `Blocked`,
+`Failed`, `Aborted` or unserializable lifecycle results. A completed tool can
+still report `success: false`. The digest covers the entire model-visible item,
+which may itself contain tool-level truncation. The digests omit the call ID and
+do not expose tool arguments or output. `tool_before` includes `thread_id` so a
+replacement can apply thread-scoped policy without making a host call during
+interception.
 
 ## Workflow contracts
 
@@ -613,25 +648,11 @@ command description is shown in the `/` popup, and `sendUserMessage` becomes the
 command's `submit` result. The virtual `typebox` import provides String, Number,
 Integer, Boolean, Literal, Array, Union, Optional, and Object schema constructors.
 
-`omd-mod pi-discover USER_PI_AGENT_DIRECTORY PROJECT_ROOT` discovers Markdown
-skills/prompts in the user directory and project `.pi` directory without
-executing anything. Skills follow Pi v0.74 traversal: a directory containing
-`SKILL.md` is a skill root, root-level `.md` files are skills, subdirectories are
-searched (skipping dot entries and `node_modules`), and `.gitignore`, `.ignore`
-and `.fdignore` rules apply with Pi's path prefixing. YAML frontmatter supplies
-skill `name`/`description` (skills without a description are omitted with a
-diagnostic) and prompt `description`/`argument-hint`; prompts without a
-description use their first non-empty line. Results include paths, hashes and
-diagnostics. Symlinked files and directories are rejected, and native discovery
-omits protected secret/store resources with a visible diagnostic.
-`pi.discover` exposes the same operation to mods with `pi_resources`, after the
-host sets `mod_pi_user` to the approved user directory.
-
-`pi.expand {name, args}` and the TUI expand a discovered prompt with Pi's
-argument rules (`$1`…, `$@`, `$ARGUMENTS`, `${@:N}`, `${@:N:L}`, quote-aware
-argument splitting and JavaScript replacement semantics). Discovered prompts
-appear in the `/` popup as `/pi:<name>` (plus a bare alias under the same rules
-as mod commands); invoking one submits the expanded prompt.
+Pi Markdown prompts and skills are handled by the
+[`omd_project_pi_prompts`](first-party/omd_project_pi_prompts/README.md) mod,
+not the host. It follows Pi v0.74 discovery, frontmatter and argument
+expansion, reads an explicitly configured user directory through sandboxed
+`exec.run`, and submits an expanded prompt through its `/pi` command.
 
 Compatibility gaps: no Pi agent-loop/TUI emulation, runtime package imports,
 provider registry/auth implementation, abort signals, custom renderers

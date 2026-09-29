@@ -14,37 +14,25 @@ import tomllib
 from datetime import datetime, timezone
 
 try:
-    from scripts import private_lean_v1 as private
-    from scripts import claude_lock
-    from scripts import typed_tasks_lock
-    from scripts import lsp_sync_lock
-    from scripts import terminal_mods_lock
-    from scripts import batch2_lock
+    from scripts import install_support as private
+    from scripts import full_mods_lock
+    from scripts import preview_lock
 except ModuleNotFoundError:
-    import private_lean_v1 as private
-    import claude_lock
-    import typed_tasks_lock
-    import lsp_sync_lock
-    import terminal_mods_lock
-    import batch2_lock
+    import install_support as private
+    import full_mods_lock
+    import preview_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
-DEFAULT_ACTIVE = ("omd_logo", "omd_model_picker", "omd_workspace")
-PACKAGES = ("omd_advisor", "omd_claude_cli", "omd_coordination", "omd_git", "omd_logo", "omd_lsp_sync", "omd_model_picker",
-            "omd_recovery", "omd_research", "omd_selection_copy", "omd_typed_tasks", "omd_workspace")
+DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace")
+PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo",)
-TOOL_NAMES = ("omd-graph", "omd-health", "omd-lsp")
-MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/private_lean_v1.py",
-                    "scripts/claude_lock.py",
-                    "runtime/claude-full.lock.json",
-                    "scripts/typed_tasks_lock.py", "runtime/typed-tasks-full.lock.json",
-                    "scripts/lsp_sync_lock.py", "runtime/lsp-sync-full.lock.json",
-                    "scripts/terminal_mods_lock.py", "runtime/terminal-mods-full.lock.json",
-                    "scripts/batch2_lock.py", "runtime/batch2-full.lock.json",
-                    "scripts/preview_lock.py", "scripts/browser_bundle.py",
+HOST_TOOLS = ("omd", "omd-contract")
+MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py",
+                    "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
+                    "scripts/preview_lock.py",
                     "runtime/preview-v1.lock.json", "LEAN_PROFILES.md")
 
 
@@ -56,15 +44,10 @@ def invoke(*arguments):
 
 
 def package_sources(preview):
-    claude = claude_lock.load()
-    typed = typed_tasks_lock.load()
-    lsp = lsp_sync_lock.load()
-    terminal = terminal_mods_lock.load()
-    batch2 = batch2_lock.load()
-    if any(package.get('mod_api') != preview['mod_api'] for package in (claude, typed, lsp, terminal, batch2)):
-        raise ValueError('Full mod API disagrees with pinned preview')
-    return {**preview['packages'], claude['package']['id']: claude['package'], typed['package']['id']: typed['package'],
-            lsp['package']['id']: lsp['package'], **terminal['packages'], **batch2['packages']}
+    full = full_mods_lock.load()
+    if full["mod_api"] != preview["mod_api"]:
+        raise ValueError("Full mod API disagrees with pinned preview")
+    return {**preview["packages"], **full["packages"]}
 
 
 def profile_packages(profile):
@@ -162,11 +145,8 @@ def selected_text(record):
     lines.append(f"export OMD_INSTALL_PROFILE={'platform_only' if record['profile'] == 'platform' else 'full'}")
     if selection == "direct":
         lines.append("export OMD_MODE=upstream_direct")
-    elif selection == "controlled":
-        lines.extend(["export OMD_MODE=enabled",
-                      f"export OMD_CONTROLLED_MANIFEST={shlex.quote(record['activation']['controlled_manifest'])}"])
     else:
-        lines.extend(["export OMD_MODE=platform", f"export OMD_MOD_STORE={shlex.quote(store)}"])
+        lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}"])
     lines.append(f"exec {shlex.quote(binary)} \"$@\"")
     return "\n".join(lines) + "\n"
 
@@ -246,9 +226,7 @@ def status(prefix, bin_dir):
                          "error": active.get(identifier, {}).get("error")})
     return {"product": PRODUCT, "profile": record["profile"],
             "activation": record["activation"]["selection"],
-            "host_mode": {"direct": "upstream_direct", "controlled": "enabled"}.get(
-                record["activation"]["selection"], "platform"),
-            "controlled_manifest": record["activation"].get("controlled_manifest"),
+            "host_mode": "upstream_direct" if record["activation"]["selection"] == "direct" else "omd",
             "binary_sha256": record["binary"]["sha256"], "runtime_patch_sha256": record["runtime_patch_sha256"],
             "store": str(store), "mod_api": host["api"], "packages": packages,
             "effective_mod_selection": selection,
@@ -260,25 +238,12 @@ def status(prefix, bin_dir):
             "installer_configured_optional_services": [], "shared_state": record["shared_state"]}
 
 
-def activate(prefix, bin_dir, selection, controlled_manifest=None):
+def activate(prefix, bin_dir, selection):
     record = load(prefix)
     check(record, bin_dir)
-    if selection not in ("direct", record["profile"], "controlled" if record["profile"] == "full" else None):
-        raise ValueError("activation must select the installed profile, direct, or Full controlled mode")
-    if selection == "controlled":
-        if controlled_manifest is None:
-            raise ValueError("controlled mode requires --manifest")
-        controlled_manifest = private.resolved(controlled_manifest)
-        if not controlled_manifest.is_file():
-            raise ValueError("controlled manifest is unavailable")
-        declared = json.loads(controlled_manifest.read_text())
-        selected_store = declared.get("mods") if isinstance(declared, dict) else None
-        if not isinstance(selected_store, str) or private.resolved(selected_store) != private.resolved(record["store"]):
-            raise ValueError("controlled manifest must select this candidate's mod store")
-    elif controlled_manifest is not None:
-        raise ValueError("--manifest is only valid for controlled mode")
-    record["activation"] = {"selection": selection,
-                            "controlled_manifest": str(controlled_manifest) if controlled_manifest else None}
+    if selection not in ("direct", record["profile"]):
+        raise ValueError("activation must select the installed profile or direct")
+    record["activation"] = {"selection": selection}
     launcher = bin_dir / "codex"
     private.atomic_text(launcher, selected_text(record), 0o755)
     record["activation"]["sha256"] = private.digest(launcher)
@@ -292,9 +257,38 @@ def select_mod(prefix, bin_dir, identifier, enabled):
         raise ValueError("only installed first-party candidate mods can be selected here")
     _, manager = check(record, bin_dir)
     source = Path(record["store"]) / "sources" / identifier
+    def selection():
+        current = invoke(manager, "selection-status", record["store"])
+        matches = [item for item in current["selections"] if item.get("path") == str(source)]
+        if len(matches) != 1 or matches[0].get("id") != identifier or not isinstance(matches[0].get("selected"), bool):
+            raise ValueError(f"managed mod selection is unavailable: {identifier}")
+        return matches[0]
+
+    previous = selection()
+    if previous["selected"] == enabled:
+        result = status(prefix, bin_dir)
+        package = next((item for item in result["packages"] if item["id"] == identifier), None)
+        if package is None or package["error"] or package["enabled_in_store"] != enabled:
+            raise ValueError(f"managed mod selection did not load: {identifier}: {package['error'] if package else 'absent'}")
+        return result
     invoke(manager, "enable" if enabled else "disable", record["store"], source)
-    invoke(manager, "reload", record["store"])
-    return status(prefix, bin_dir)
+    try:
+        invoke(manager, "reload", record["store"])
+        result = status(prefix, bin_dir)
+        package = next((item for item in result["packages"] if item["id"] == identifier), None)
+        if package is None or package["error"] or package["enabled_in_store"] != enabled:
+            raise ValueError(f"managed mod selection did not load: {identifier}: {package['error'] if package else 'absent'}")
+        return result
+    except Exception as error:
+        try:
+            invoke(manager, "enable" if previous["selected"] else "disable", record["store"], source)
+            invoke(manager, "reload", record["store"])
+            restored = selection()
+            if restored["selected"] != previous["selected"] or restored["settings_sha256"] != previous["settings_sha256"]:
+                raise ValueError("managed mod selection or settings changed during rollback")
+        except Exception as rollback_error:
+            raise ValueError(f"managed mod selection failed: {error}; rollback failed: {rollback_error}") from rollback_error
+        raise ValueError(f"managed mod selection failed and was restored: {error}") from error
 
 
 def install(args):
@@ -304,15 +298,9 @@ def install(args):
     if (prefix.exists() or (bin_dir / "codex").exists() or (bin_dir / "codex").is_symlink()
             or (bin_dir / "omd-mod-author").exists() or (bin_dir / "omd-mod-author").is_symlink()
             or (bin_dir / "omd").exists() or (bin_dir / "omd").is_symlink()
+            or (bin_dir / "omd-contract").exists() or (bin_dir / "omd-contract").is_symlink()
             or (bin_dir / "omd-package").exists() or (bin_dir / "omd-package").is_symlink()):
         raise ValueError("managed prefix or launcher already exists")
-    if args.profile == "full":
-        if any(getattr(args, name.replace("-", "_")) is None for name in TOOL_NAMES):
-            raise ValueError("Full OMD requires the three matching optional tool binaries")
-        if any((bin_dir / name).exists() or (bin_dir / name).is_symlink() for name in TOOL_NAMES):
-            raise ValueError("optional tool launcher path is already managed")
-    elif any(getattr(args, name.replace("-", "_")) is not None for name in TOOL_NAMES):
-        raise ValueError("the platform-only profile has no bundled optional tools")
     if store.exists() != args.attach_store:
         raise ValueError("use --attach-store for an existing mod store; omit it for a new store")
     upstream_lock = json.loads((ROOT / "upstream.lock.json").read_text())
@@ -320,16 +308,8 @@ def install(args):
     if private.digest(ROOT / patch_lock["patch"]["path"]) != patch_lock["patch"]["sha256"]:
         raise ValueError("active runtime patch hash mismatch")
     locked = private.preview_sources(private.preview_lock())
-    if claude_lock.load() != claude_lock.build():
-        raise ValueError('Claude Full lock differs from pinned sources')
-    if typed_tasks_lock.load() != typed_tasks_lock.build():
-        raise ValueError('typed task Full lock differs from pinned sources')
-    if lsp_sync_lock.load() != lsp_sync_lock.build():
-        raise ValueError('LSP synchronization Full lock differs from pinned sources')
-    if terminal_mods_lock.load() != terminal_mods_lock.build():
-        raise ValueError('terminal mod Full lock differs from pinned sources')
-    if batch2_lock.load() != batch2_lock.build():
-        raise ValueError('Batch 2 Full lock differs from pinned sources')
+    if full_mods_lock.load() != full_mods_lock.build():
+        raise ValueError("Full mod lock differs from pinned sources")
     packages = package_sources(locked)
     candidate = candidate_lock(upstream_lock, patch_lock, locked)
     if tuple(sorted(packages)) != PACKAGES:
@@ -400,12 +380,12 @@ def install(args):
         installed = {}
         plugin_bundle = None
         tools = {}
-        for name in ("omd",) + (TOOL_NAMES if args.profile == "full" else ()):
+        for name in HOST_TOOLS:
             source = private.resolved(getattr(args, name.replace("-", "_")))
             if not source.is_file() or not os.access(source, os.X_OK):
-                raise ValueError(f"optional tool binary is unavailable: {name}")
+                raise ValueError(f"host tool binary is unavailable: {name}")
             if private.digest(source) != candidate["artifacts"][name]["sha256"]:
-                raise ValueError(f"optional tool differs from frozen lean candidate: {name}")
+                raise ValueError(f"host tool differs from frozen lean candidate: {name}")
             target = artifacts / name
             shutil.copy2(source, target)
             tools[name] = {"installed_path": str(target), "sha256": private.digest(target)}
@@ -471,7 +451,7 @@ def install(args):
         record["management"]["launcher_sha256"] = private.digest(control_launcher)
         for name, details in tools.items():
             tool_launcher = bin_dir / name
-            launcher_text = private.tool_wrapper_text(details["installed_path"])
+            launcher_text = f"#!/bin/sh\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
             if name == "omd":
                 launcher_text = f"#!/bin/sh\nexport OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
             private.atomic_text(tool_launcher, launcher_text, 0o755)
@@ -479,8 +459,9 @@ def install(args):
             details["launcher_sha256"] = private.digest(tool_launcher)
         write(prefix, record)
         result = status(prefix, bin_dir)
-        if any(package["error"] for package in result["packages"]):
-            raise ValueError("candidate mod failed to load during installation")
+        failed = [(package["id"], package["error"]) for package in result["packages"] if package["error"]]
+        if failed:
+            raise ValueError(f"candidate mod failed to load during installation: {failed}")
         return result
     except BaseException:
         for launcher in made_launchers:
@@ -540,17 +521,15 @@ def main():
     install_parser.add_argument("--profile", choices=("platform", "full"), required=True)
     install_parser.add_argument("--binary", type=Path, required=True)
     install_parser.add_argument("--manager", type=Path, required=True)
-    install_parser.add_argument("--omd", type=Path, required=True)
+    for name in HOST_TOOLS:
+        install_parser.add_argument(f"--{name}", type=Path, required=True)
     install_parser.add_argument("--author-archive", type=Path, required=True)
     install_parser.add_argument("--node", type=Path, required=True)
     install_parser.add_argument("--store", type=Path, required=True)
-    for name in TOOL_NAMES:
-        install_parser.add_argument(f"--{name}", type=Path)
     install_parser.add_argument("--attach-store", action="store_true")
     commands.add_parser("status")
     activate_parser = commands.add_parser("activate")
-    activate_parser.add_argument("selection", choices=("platform", "full", "direct", "controlled"))
-    activate_parser.add_argument("--manifest", type=Path)
+    activate_parser.add_argument("selection", choices=("platform", "full", "direct"))
     mod_parser = commands.add_parser("mod")
     mod_parser.add_argument("action", choices=("enable", "disable"))
     mod_parser.add_argument("identifier", choices=PACKAGES)
@@ -568,7 +547,7 @@ def main():
     elif args.command == "status":
         result = status(prefix, bin_dir)
     elif args.command == "activate":
-        result = activate(prefix, bin_dir, args.selection, args.manifest)
+        result = activate(prefix, bin_dir, args.selection)
     elif args.command == "mod":
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
     elif args.command == 'claude':

@@ -1,12 +1,10 @@
-import type { Json, ModAPI, TerminalSelectionEvent, TerminalSelectionPolicy, TerminalSelectionSource } from '../../api-0.1.d.ts';
+import type { Json, ModAPI, TerminalSelectionEvent, TerminalSelectionResult, TerminalSelectionSource } from '../../api.d.ts';
 
 type Saved = { copy: boolean | null; sources: TerminalSelectionSource[] | null; min: number | null; last: string | null; detail: string | null };
 
 const SOURCES: TerminalSelectionSource[] = ['transcript', 'composer', 'pager'];
-const SHORT: Record<string, string> = { policy_off: 'off here', too_short: 'too short', clipboard_unavailable: 'unconfirmed', clipboard_failed: 'failed' };
+const SHORT: Record<string, string> = { clipboard_unavailable: 'unconfirmed', clipboard_failed: 'failed' };
 const REASONS: Record<string, string> = {
-  policy_off: 'not copied (off here)',
-  too_short: 'not copied (too short)',
   clipboard_unavailable: 'copy unconfirmed',
   clipboard_failed: 'copy failed',
 };
@@ -33,7 +31,7 @@ export default function activate(api: ModAPI) {
 
   const clamp = (value: number) => Math.min(10_000, Math.max(1, Math.floor(value)));
 
-  const policy = (): Required<TerminalSelectionPolicy> => {
+  const policy = () => {
     const state = saved();
     const setting = typeof api.settings.min_chars === 'number' ? api.settings.min_chars : 1;
     return {
@@ -43,7 +41,7 @@ export default function activate(api: ModAPI) {
     };
   };
 
-  const describe = (current: Required<TerminalSelectionPolicy>) => {
+  const describe = (current: ReturnType<typeof policy>) => {
     if (!current.copy_on_release) return 'copy-on-highlight off';
     const where = current.sources.length ? current.sources.join(', ') : 'everywhere';
     return `copy-on-highlight on (${where}, at least ${current.min_chars} ${current.min_chars === 1 ? 'character' : 'characters'})`;
@@ -52,13 +50,21 @@ export default function activate(api: ModAPI) {
   api.on('terminal', () => {
     const current = policy();
     const last = saved().last;
-    return { selection: current, status: [!current.copy_on_release ? 'copy off' : last ?? 'copy on'] };
+    return { status: [!current.copy_on_release ? 'copy off' : last ?? 'copy on'] };
   });
 
-  api.on('selection', (event: TerminalSelectionEvent) => {
+  api.replace('selection', (event: TerminalSelectionEvent) => {
+    const current = policy();
+    return current.copy_on_release && event.chars >= current.min_chars && (!current.sources.length || current.sources.includes(event.source)) ? { copy: true } : null;
+  });
+
+  api.on('selection_result', (event: TerminalSelectionResult) => {
     const state = saved();
-    const summary = event.copied ? `copy ok ${event.chars}` : `copy ${SHORT[event.reason ?? ''] ?? 'skipped'}`;
-    api.state.set({ ...state, last: summary, detail: event.copied ? `copied ${event.chars} ${event.chars === 1 ? 'character' : 'characters'} from the ${event.source}` : `${REASONS[event.reason ?? ''] ?? 'not copied'} in the ${event.source}` });
+    const current = policy();
+    const declined = event.reason === 'declined' ? !current.copy_on_release || current.sources.length > 0 && !current.sources.includes(event.source) ? 'off here' : event.chars < current.min_chars ? 'too short' : 'skipped' : null;
+    const summary = event.copied ? `copy ok ${event.chars}` : `copy ${declined ?? SHORT[event.reason ?? ''] ?? 'skipped'}`;
+    const reason = declined ? `not copied (${declined})` : REASONS[event.reason ?? ''] ?? 'not copied';
+    api.state.set({ ...state, last: summary, detail: event.copied ? `copied ${event.chars} ${event.chars === 1 ? 'character' : 'characters'} from the ${event.source}` : `${reason} in the ${event.source}` });
   });
 
   api.command(

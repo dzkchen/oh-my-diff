@@ -18,15 +18,16 @@
       "installed_contract_types_v1",
       "package_manager_v1",
       "service_contracts_v1",
+      "service_dispatch_v1",
+      "integration_receipts_v1",
+      "tool_result_fingerprints_v1",
       "source_use_v1",
       "state_migration_v1",
       "terminal_components_v1",
       "terminal_identity_v1",
-      "terminal_picker_theme_v1",
       "terminal_render_sites_v1",
       "terminal_rich_line_v1",
       "terminal_selection_v1",
-      "git_operations_v1",
       "transactional_reload_v1",
       "task_tool_exposure_v1",
       "virtual_reads_v1",
@@ -35,7 +36,17 @@
       "turn_evidence_v1",
       "service_requests_v1",
       "exec_v1",
+      "exec_output_artifacts_v1",
+      "guarded_exec_v1",
+      "package_text_assets_v1",
+      "workspace_access_v1",
       "workspace_fs_v1",
+      "workspace_snapshots_v1",
+      "snapshot_exec_v1",
+      "agent_parent_history_v1",
+      "agent_failures_v1",
+      "task_resume_v1",
+      "contract_scoped_restrictions_v1",
       "store_v1",
       "routes_v1",
       "stream_control_v1",
@@ -48,42 +59,6 @@
     ]
   },
   "apis": [
-    {
-      "version": "0.1.0-experimental.4",
-      "stability": "deprecated",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
-    {
-      "version": "0.1.0-experimental.5",
-      "stability": "experimental",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
-    {
-      "version": "0.1.0-experimental.6",
-      "stability": "experimental",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
-    {
-      "version": "0.1.0-experimental.7",
-      "stability": "experimental",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
-    {
-      "version": "0.1.0-experimental.8",
-      "stability": "experimental",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
-    {
-      "version": "0.1.0-experimental.9",
-      "stability": "experimental",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
     {
       "version": "0.2.0-experimental.1",
       "stability": "experimental",

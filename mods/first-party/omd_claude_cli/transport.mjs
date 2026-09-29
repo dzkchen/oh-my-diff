@@ -302,13 +302,15 @@ async function inert(path) {
   }
 }
 
-async function serve(port, model, claude, home, username) {
+async function serve(port, model, claude, home, username, maxRequests) {
   if (!models.has(model)) throw new Error('unsupported_claude_model');
+  if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 8) throw new Error('claude_task_request_limit_must_be_1_to_8');
   checkCli(claude, home, username);
   const localToken = process.env.OMD_CLAUDE_LOCAL_TOKEN ?? '';
   const readyToken = process.env.OMD_READY_TOKEN ?? '';
   if (localToken.length < 32 || !readyToken) throw new Error('native_provider_tokens_required');
   const active = new Set();
+  let admitted = 0;
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/_omd/ready') {
       response.writeHead(200).end(`OMD_READY:${readyToken}`);
@@ -320,6 +322,8 @@ async function serve(port, model, claude, home, username) {
     let translated;
     try { payload = JSON.parse(await bodyOf(request, 8 * 1024 * 1024)); translated = translateRequest(payload, model); }
     catch { response.writeHead(400).end('invalid_claude_request'); return; }
+    if (admitted >= maxRequests) { response.writeHead(429).end('claude_task_request_limit'); return; }
+    admitted++;
     const controller = new AbortController();
     active.add(controller);
     response.on('close', () => controller.abort());
@@ -347,6 +351,6 @@ if (process.argv[1] === file) {
   const [action, ...args] = process.argv.slice(2);
   if (action === 'inert') await inert(args[0]);
   else if (action === 'status') checkCli(args[0]);
-  else if (action === 'serve') await serve(Number(args[0]), args[1], args[2], args[3], args[4]);
+  else if (action === 'serve') await serve(Number(args[0]), args[1], args[2], args[3], args[4], Number(args[5]));
   else throw new Error('unsupported_claude_transport_action');
 }

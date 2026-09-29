@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "id": "omd_research",
-  "version": "0.1.0-preview.1",
-  "api": "0.1.0-experimental.9",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
-  "capabilities": ["tools", "agents", "workspace"],
-  "compatibility": { "required_features": ["worker_presets_v1"] },
+  "capabilities": ["tools", "agents", "model", "fs.read"],
+  "compatibility": { "required_features": ["routes_v1", "workspace_fs_v1"] },
   "settings_schema": {
     "type": "object",
     "properties": {

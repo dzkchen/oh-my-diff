@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -20,11 +21,25 @@ def call(*args):
 
 
 def install(store, source):
+    manifest = json.loads((source / "mod.json").read_text())
     request = json.dumps({"source": {"kind": "local", "path": str(source)}, "activate": True,
-                          "trust": {"packages": {"counter": {"capabilities": ["tools", "commands", "state"]}}}})
+                          "trust": {"packages": {manifest["id"]: {"capabilities": manifest["capabilities"]}}}})
     plan = call("package-plan", store, request)
     lock = call("package-apply", store, request, plan["confirmation"])
     return {"confirmation": plan["confirmation"], "lock": lock}
+
+
+def compatible_upgrade(record):
+    current_api = json.loads((ROOT / "mods/package.json").read_text())["version"]
+    if record["api"] != current_api:
+        raise RuntimeError(f"counter fixture API {record['api']} differs from current SDK {current_api}")
+    version = record["version"]
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        raise RuntimeError(f"counter fixture version is not a stable semver: {version}")
+    upgraded = dict(record)
+    upgraded["version"] = f"{match.group(1)}.{match.group(2)}.{int(match.group(3)) + 1}"
+    return upgraded
 
 
 def main():
@@ -41,9 +56,8 @@ def main():
         before = call("command", store, "counter", "show", "null")
         manifest = source / "mod.json"
         record = json.loads(manifest.read_text())
-        record["version"] = "1.0.1"
-        record["api"] = "0.1.0-experimental.8"
-        manifest.write_text(json.dumps(record, indent=2) + "\n")
+        upgraded = compatible_upgrade(record)
+        manifest.write_text(json.dumps(upgraded, indent=2) + "\n")
         second = install(store, source)
         after = call("command", store, "counter", "show", "null")
         status = call("status", store)
@@ -53,8 +67,8 @@ def main():
         raise RuntimeError("compatible upgrade was rejected")
     if len(first["lock"].get("packages", [])) != 1 or len(second["lock"].get("packages", [])) != 1:
         raise RuntimeError("package upgrade changed the installed count")
-    output = {"schema": 1, "from_api": "0.1.0-experimental.7", "to_api": "0.1.0-experimental.8",
-              "from_version": "1.0.0", "to_version": "1.0.1", "state_version": 1,
+    output = {"schema": 1, "from_api": record["api"], "to_api": upgraded["api"],
+              "from_version": record["version"], "to_version": upgraded["version"], "state_version": record["state_version"],
               "offline": exercised["offline"], "paid_requests": exercised["paid_requests"],
               "before": before, "after": after,
               "status_api": status["api"], "rejected": status["rejected"],

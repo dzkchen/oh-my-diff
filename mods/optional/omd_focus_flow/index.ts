@@ -1,4 +1,4 @@
-import type { ModAPI, TerminalPatch } from '../../api-0.1.d.ts';
+import type { ModAPI, TerminalPatch } from '../../api.d.ts';
 
 export default function activate(api: ModAPI) {
   const compact = () => api.state.get() !== false;

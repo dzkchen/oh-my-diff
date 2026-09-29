@@ -15,7 +15,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = (ROOT / "runtime/omd/src/mods/runner.mjs").read_text()
 SOURCE = (ROOT / "mods/first-party/omd_lsp_sync/index.ts").read_text()
-CAPABILITIES = ["lifecycle", "process", "state", "tools", "workspace"]
+MANIFEST = json.loads((ROOT / "mods/first-party/omd_lsp_sync/mod.json").read_text())
+CAPABILITIES = MANIFEST["capabilities"]
 HOST = (ROOT / "runtime/omd/src/mods.rs").read_text()
 
 
@@ -23,17 +24,21 @@ def table(name):
     return re.search(rf"pub const {name}: &\[[^\]]*\] = &\[(.*?)\];", HOST, re.S).group(1)
 
 
-LEGACY_SURFACE = {
-    "events": dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', table("LEGACY_MOD_EVENTS"))),
-    "replacements": re.findall(r'"([a-z_]+)"', table("LEGACY_MOD_REPLACEMENT_POINTS")),
+CURRENT_SURFACE = {
+    "events": dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', table("MOD_EVENTS"))),
+    "replacements": re.findall(r'"([a-z_]+)"', table("MOD_REPLACEMENT_POINTS")),
     "middleware": re.findall(r'"([a-z_]+)"', table("MOD_MIDDLEWARE_EVENTS")),
-    "state": "state",
-    "contracts": "workflow",
+    "state": "store",
+    "contracts": "contracts",
 }
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+class HostFailure(Exception):
+    pass
 
 
 class Host:
@@ -44,6 +49,10 @@ class Host:
         self.buffer = b""
         self.sent = []
         self.operations = []
+        self.store = {}
+        self.backups = {}
+        self.fail_sync_once = False
+        self.thread_id = "thread-a"
 
     def close(self):
         if self.child is not None:
@@ -86,6 +95,15 @@ class Host:
         self.operations.append(call["operation"])
         operation = call["operation"]
         arguments = call["arguments"]
+        if operation == "store.get":
+            return self.store.get(arguments["key"])
+        if operation == "store.put":
+            current = self.store.get(arguments["key"])
+            if (current["revision"] if current else None) != arguments["expected_revision"]:
+                raise AssertionError("store revision mismatch")
+            revision = (current["revision"] if current else 0) + 1
+            self.store[arguments["key"]] = {"revision": revision, "value": arguments["value"], "provenance": {"thread_id": self.thread_id}}
+            return {"revision": revision}
         if operation == "process.which":
             return {"found": [{"name": "pylsp", "path": self.server, "sha256": digest(Path(self.server).read_bytes())}]}
         if operation == "process.start":
@@ -99,6 +117,9 @@ class Host:
                 raise AssertionError("server is unavailable")
             return {"session": "python", "running": True, "idle_ms": 0}
         if operation == "process.exchange":
+            if self.fail_sync_once and any(message.get("method") == "textDocument/didChange" for message in arguments.get("send", [])):
+                self.fail_sync_once = False
+                raise HostFailure("synthetic_sync_failure")
             for message in arguments.get("send", []):
                 self.sent.append(message)
                 payload = json.dumps(message, separators=(",", ":")).encode()
@@ -116,15 +137,52 @@ class Host:
                 data = path.read_bytes() if path.exists() else None
                 files[name] = {"text": data.decode(), "sha256": digest(data)} if data is not None else None
             return {"files": files}
+        if operation == "workspace.backup":
+            files = {}
+            for name, expected in arguments["expected"].items():
+                path = self.repository / name
+                data = path.read_bytes() if path.exists() else None
+                if (digest(data) if data is not None else None) != expected:
+                    raise HostFailure("stale_backup_input")
+                files[name] = data
+            reference = digest(json.dumps({name: data.hex() if data is not None else None for name, data in files.items()}, sort_keys=True).encode())
+            self.backups[reference] = files
+            return {"backup": {"reference": reference, "sha256": reference}}
+        if operation == "workspace.transaction":
+            if set(arguments["expected"]) != set(arguments["writes"]):
+                raise HostFailure("transaction_scope_invalid")
+            for name, expected in arguments["expected"].items():
+                data = (self.repository / name).read_bytes()
+                if digest(data) != expected:
+                    raise HostFailure("stale_transaction_input")
+            for name, value in arguments["writes"].items():
+                (self.repository / name).write_text(value)
+            return {"files": {name: digest((self.repository / name).read_bytes()) for name in arguments["writes"]}, "backup": None}
+        if operation == "workspace.restore":
+            files = self.backups[arguments["backup"]["reference"]]
+            if set(files) != set(arguments["expected"]):
+                raise HostFailure("restore_scope_invalid")
+            for name, expected in arguments["expected"].items():
+                path = self.repository / name
+                data = path.read_bytes() if path.exists() else None
+                if (digest(data) if data is not None else None) != expected:
+                    raise HostFailure("restore_conflict")
+            for name, data in files.items():
+                path = self.repository / name
+                if data is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(data)
+            return {"files": {name: digest(data) if data is not None else None for name, data in files.items()}}
         raise AssertionError(f"unexpected host operation {operation}")
 
 
-def run(node, event, payload, state, host):
+def run(node, event, payload, state, host, name=None):
     receipts = []
     for _ in range(36):
-        request = {"source": SOURCE, "filename": "omd_lsp_sync/index.ts", "capabilities": CAPABILITIES,
-                   "state": state, "settings": {}, "event": event, "payload": payload, "receipts": receipts,
-                   "hook_budget_ms": 1000, "surface": LEGACY_SURFACE}
+        request = {"source": SOURCE, "filename": "omd_lsp_sync/index.ts", "api": MANIFEST["api"], "capabilities": CAPABILITIES,
+                   "state": state, "settings": {}, "event": event, "name": name, "payload": payload, "receipts": receipts,
+                   "hook_budget_ms": 1000, "surface": CURRENT_SURFACE}
         result = subprocess.run([node, "--no-warnings", "--experimental-vm-modules", "--input-type=module",
                                  "--eval", RUNNER], input=json.dumps(request), text=True, capture_output=True,
                                 timeout=8, check=True)
@@ -134,12 +192,16 @@ def run(node, event, payload, state, host):
         if output.get("host_call") is None:
             return output
         call = output["host_call"]
-        receipts.append({"call": call, "value": host.call(call)})
+        try:
+            receipts.append({"call": call, "value": host.call(call)})
+        except HostFailure as error:
+            receipts.append({"call": call, "error": str(error)})
     raise AssertionError("mod callback did not complete")
 
 
 FAKE_SERVER = r"""
 import json, sys, time
+action_requests = 0
 def send(message):
     data = json.dumps(message).encode()
     sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(data) + data)
@@ -161,7 +223,7 @@ while True:
             send({"jsonrpc": "2.0", "method": "window/logMessage", "params": {"type": 4, "message": str(index)}})
             time.sleep(0.01)
         send({"jsonrpc": "2.0", "id": 1, "method": "workspace/configuration", "params": {"items": [{}]}})
-        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {"workspace": {"fileOperations": {"willRename": {}}}}}})
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {"definitionProvider": True, "referencesProvider": True, "codeActionProvider": True, "renameProvider": {"prepareProvider": True}, "workspace": {"fileOperations": {"willRename": {}}}}}})
     elif method == "textDocument/didOpen":
         document = message["params"]["textDocument"]
         send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": document["uri"], "version": document["version"], "diagnostics": [{}]}})
@@ -171,10 +233,250 @@ while True:
         send({"jsonrpc": "2.0", "method": "window/logMessage", "params": {"type": 4, "message": "renaming"}})
         time.sleep(0.01)
         send({"jsonrpc": "2.0", "id": message["id"], "result": {"changes": {user: [{"range": {"start": {"line": 0, "character": 5}, "end": {"line": 0, "character": 8}}, "newText": "new"}]}}})
+    elif method in ("textDocument/definition", "textDocument/references"):
+        source = message["params"]["textDocument"]["uri"]
+        target = source.rsplit("/", 1)[0] + ("/" + "x" * 4000 + ".py" if source.endswith("/longtarget.py") else "/old.py")
+        send({"jsonrpc": "2.0", "id": message["id"], "result": [{"uri": target, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}}]})
+    elif method == "textDocument/prepareRename":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}}})
+    elif method == "textDocument/rename":
+        source = message["params"]["textDocument"]["uri"]
+        user = source.rsplit("/", 1)[0] + "/user.py"
+        if message["params"]["newName"] == "resource":
+            send({"jsonrpc": "2.0", "id": message["id"], "result": {"documentChanges": [{"kind": "rename", "oldUri": source, "newUri": user}]}})
+            continue
+        version = 9 if message["params"]["newName"] == "stale" else 1
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"documentChanges": [
+            {"textDocument": {"uri": source, "version": version}, "edits": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}, "newText": message["params"]["newName"]}]},
+            {"textDocument": {"uri": user, "version": 1}, "edits": [{"range": {"start": {"line": 0, "character": 16}, "end": {"line": 0, "character": 21}}, "newText": message["params"]["newName"]}]}
+        ]}})
+    elif method == "textDocument/codeAction":
+        source = message["params"]["textDocument"]["uri"]
+        if message["params"]["textDocument"]["uri"].endswith("/longkind.py"):
+            send({"jsonrpc": "2.0", "id": message["id"], "result": [{"title": "Oversized", "kind": "x" * 70000}]})
+        elif message["params"]["textDocument"]["uri"].endswith("/longtitle.py"):
+            send({"jsonrpc": "2.0", "id": message["id"], "result": [{"title": "é" * 512, "kind": "quickfix"} for _ in range(32)]})
+        elif source.endswith("/deferred.py"):
+            send({"jsonrpc": "2.0", "id": message["id"], "result": [{"title": "Deferred", "kind": "quickfix", "data": {"token": "fixture"}}]})
+        else:
+            user = source.rsplit("/", 1)[0] + "/user.py"
+            action_requests += 1
+            replacement = "other" if source.endswith("/unstable.py") and action_requests > 1 else "new"
+            edit = {"changes": {user: [{"range": {"start": {"line": 0, "character": 5}, "end": {"line": 0, "character": 8}}, "newText": replacement}]}}
+            send({"jsonrpc": "2.0", "id": message["id"], "result": [{"title": "Update import", "kind": "quickfix", "edit": edit}, {"title": "Run tool", "command": "unsafe.command"}]})
 """
 
 
 class LspSyncModTest(unittest.TestCase):
+    def test_symbol_rename_and_code_action_apply_exact_text_scopes(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "fake_server.py"
+            server.write_text(FAKE_SERVER)
+            (repository / "old.py").write_text("value = 1\n")
+            (repository / "user.py").write_text("from old import value\n")
+            host = Host(repository, str(server))
+            try:
+                expected = {name: digest((repository / name).read_bytes()) for name in ("old.py", "user.py")}
+                opened = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "1", "status": "observed",
+                    "changes": [{"path": name, "before": None, "after": sha} for name, sha in expected.items()]}, None, host)
+                base = {"path": "old.py", "source_sha256": expected["old.py"]}
+                refused = run(node, "tool", {**base, "line": 0, "character": 1, "new_name": "stale", "scope": ["old.py", "user.py"], "expected": expected}, opened["state"], host, "rename_symbol")
+                self.assertEqual(refused["value"]["reason"], "server_edit_stale")
+                resource = run(node, "tool", {**base, "line": 0, "character": 1, "new_name": "resource", "scope": ["old.py", "user.py"], "expected": expected}, opened["state"], host, "rename_symbol")
+                self.assertEqual(resource["value"]["reason"], "server_edit_invalid")
+                narrow = run(node, "tool", {**base, "line": 0, "character": 1, "new_name": "renamed", "scope": ["old.py"], "expected": {"old.py": expected["old.py"]}}, opened["state"], host, "rename_symbol")
+                self.assertEqual(narrow["value"]["reason"], "server_edit_scope_mismatch")
+                self.assertNotIn("workspace.transaction", host.operations)
+                renamed = run(node, "tool", {**base, "line": 0, "character": 1, "new_name": "renamed", "scope": ["old.py", "user.py"], "expected": expected}, opened["state"], host, "rename_symbol")
+                self.assertEqual(renamed["value"]["status"], "applied", renamed["value"])
+                self.assertEqual((repository / "old.py").read_text(), "renamed = 1\n")
+                self.assertEqual((repository / "user.py").read_text(), "from old import renamed\n")
+                self.assertEqual(renamed["state"]["servers"]["python"]["documents"]["old.py"]["version"], 2)
+                self.assertIn("workspace.backup", host.operations)
+                self.assertIn("workspace.transaction", host.operations)
+                self.assertNotIn("workspace.restore", host.operations)
+            finally:
+                host.close()
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "fake_server.py"
+            server.write_text(FAKE_SERVER)
+            (repository / "old.py").write_text("value = 1\n")
+            (repository / "user.py").write_text("from old import value\n")
+            host = Host(repository, str(server))
+            try:
+                expected = {name: digest((repository / name).read_bytes()) for name in ("old.py", "user.py")}
+                opened = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "1", "status": "observed",
+                    "changes": [{"path": name, "before": None, "after": sha} for name, sha in expected.items()]}, None, host)
+                base = {"path": "old.py", "source_sha256": expected["old.py"], "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}, "scope": ["user.py"], "expected": {"user.py": expected["user.py"]}}
+                preview = run(node, "tool", {"path": base["path"], "range": base["range"]}, opened["state"], host, "code_actions")
+                self.assertEqual(preview["value"]["application"], "exact_scope_text_edits_only")
+                command = run(node, "tool", {**base, "action_index": 1, "title": "Run tool"}, preview["state"], host, "apply_code_action")
+                self.assertEqual(command["value"]["reason"], "server_code_action_unsupported")
+                applied = run(node, "tool", {**base, "action_index": 0, "title": "Update import"}, command["state"], host, "apply_code_action")
+                self.assertEqual(applied["value"]["status"], "applied", applied["value"])
+                self.assertEqual((repository / "user.py").read_text(), "from new import value\n")
+                self.assertNotIn("workspace.restore", host.operations)
+            finally:
+                host.close()
+
+    def test_failed_semantic_sync_restores_exact_backup(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "fake_server.py"
+            server.write_text(FAKE_SERVER)
+            (repository / "old.py").write_text("value = 1\n")
+            (repository / "user.py").write_text("from old import value\n")
+            host = Host(repository, str(server))
+            try:
+                expected = {name: digest((repository / name).read_bytes()) for name in ("old.py", "user.py")}
+                opened = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "1", "status": "observed",
+                    "changes": [{"path": name, "before": None, "after": sha} for name, sha in expected.items()]}, None, host)
+                host.fail_sync_once = True
+                failed = run(node, "tool", {"path": "old.py", "source_sha256": expected["old.py"], "line": 0, "character": 1,
+                    "new_name": "renamed", "scope": ["old.py", "user.py"], "expected": expected}, opened["state"], host, "rename_symbol")
+                self.assertEqual(failed["value"]["reason"], "sync_failed_rolled_back")
+                self.assertEqual({name: digest((repository / name).read_bytes()) for name in expected}, expected)
+                self.assertIn("workspace.transaction", host.operations)
+                self.assertIn("workspace.restore", host.operations)
+                self.assertFalse(failed["state"]["servers"]["python"]["running"])
+            finally:
+                host.close()
+
+    def test_code_action_apply_requires_exact_preview_and_rejects_deferred_edit(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "fake_server.py"
+            server.write_text(FAKE_SERVER)
+            for name, content in {"unstable.py": "value = 1\n", "deferred.py": "value = 1\n", "user.py": "from old import value\n"}.items():
+                (repository / name).write_text(content)
+            host = Host(repository, str(server))
+            try:
+                expected = {name: digest((repository / name).read_bytes()) for name in ("unstable.py", "deferred.py", "user.py")}
+                opened = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "1", "status": "observed",
+                    "changes": [{"path": name, "before": None, "after": sha} for name, sha in expected.items()]}, None, host)
+                area = {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}
+                preview = run(node, "tool", {"path": "unstable.py", "range": area}, opened["state"], host, "code_actions")
+                self.assertEqual(preview["value"]["actions"][0]["title"], "Update import")
+                host.thread_id = "thread-b"
+                foreign = run(node, "tool", {"path": "unstable.py", "source_sha256": expected["unstable.py"], "range": area, "action_index": 0,
+                    "title": "Update import", "scope": ["user.py"], "expected": {"user.py": expected["user.py"]}}, preview["state"], host, "apply_code_action")
+                self.assertEqual(foreign["value"]["reason"], "code_action_preview_thread_mismatch")
+                host.thread_id = "thread-a"
+                changed = run(node, "tool", {"path": "unstable.py", "source_sha256": expected["unstable.py"], "range": area, "action_index": 0,
+                    "title": "Update import", "scope": ["user.py"], "expected": {"user.py": expected["user.py"]}}, foreign["state"], host, "apply_code_action")
+                self.assertEqual(changed["value"]["reason"], "code_action_preview_stale")
+                deferred_preview = run(node, "tool", {"path": "deferred.py", "range": area}, changed["state"], host, "code_actions")
+                deferred = run(node, "tool", {"path": "deferred.py", "source_sha256": expected["deferred.py"], "range": area, "action_index": 0,
+                    "title": "Deferred", "scope": ["user.py"], "expected": {"user.py": expected["user.py"]}}, deferred_preview["state"], host, "apply_code_action")
+                self.assertEqual(deferred["value"]["reason"], "server_code_action_deferred_unsupported")
+                self.assertNotIn("workspace.backup", host.operations)
+                self.assertNotIn("workspace.transaction", host.operations)
+                self.assertEqual((repository / "user.py").read_text(), "from old import value\n")
+            finally:
+                host.close()
+
+    def test_semantic_reads_are_scoped_and_actions_are_discovery_only(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "fake_server.py"
+            server.write_text(FAKE_SERVER)
+            (repository / "old.py").write_text("value = 1\n")
+            host = Host(repository, str(server))
+            try:
+                opened = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "1",
+                    "status": "observed", "changes": [{"path": "old.py", "before": None,
+                    "after": digest((repository / "old.py").read_bytes())}]}, None, host)
+                state = opened["state"]
+                definition = run(node, "tool", {"path": "old.py", "line": 0, "character": 1}, state, host, "definition")
+                self.assertEqual(definition["value"]["status"], "ready")
+                self.assertEqual(definition["value"]["locations"][0]["path"], "old.py")
+                self.assertEqual(definition["value"]["locations"][0]["sha256"], digest((repository / "old.py").read_bytes()))
+                references = run(node, "tool", {"path": "old.py", "line": 0, "character": 1, "include_declaration": True}, definition["state"], host, "references")
+                self.assertEqual(references["value"]["status"], "ready")
+                self.assertTrue(any(item.get("method") == "textDocument/references" and item["params"]["context"]["includeDeclaration"] for item in host.sent))
+                actions = run(node, "tool", {"path": "old.py", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}}, references["state"], host, "code_actions")
+                self.assertEqual(actions["value"]["application"], "exact_scope_text_edits_only")
+                self.assertEqual([item["has_command"] for item in actions["value"]["actions"]], [False, True])
+                no_actions = json.loads(json.dumps(actions["state"]))
+                no_actions["servers"]["python"]["capabilities"]["codeActionProvider"] = False
+                unsupported = run(node, "tool", {"path": "old.py", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}}, no_actions, host, "code_actions")
+                self.assertEqual(unsupported["value"]["reason"], "server_code_actions_unsupported")
+                invalid = run(node, "tool", {"path": "../old.py", "line": 0, "character": 1}, actions["state"], host, "definition")
+                self.assertEqual(invalid["value"]["reason"], "unsupported_or_invalid_path")
+                (repository / "old.py").write_text("x\n")
+                stale = run(node, "tool", {"path": "old.py", "line": 0, "character": 0}, actions["state"], host, "definition")
+                self.assertEqual(stale["value"]["reason"], "server_location_stale_or_invalid")
+                (repository / "longkind.py").write_text("value = 1\n")
+                added = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "2",
+                    "status": "observed", "changes": [{"path": "longkind.py", "before": None,
+                    "after": digest((repository / "longkind.py").read_bytes())}]}, stale["state"], host)
+                oversized = run(node, "tool", {"path": "longkind.py", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}}, added["state"], host, "code_actions")
+                self.assertEqual(oversized["value"]["reason"], "server_code_actions_invalid")
+                (repository / "longtitle.py").write_text("value = 1\n")
+                title_added = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "3",
+                    "status": "observed", "changes": [{"path": "longtitle.py", "before": None,
+                    "after": digest((repository / "longtitle.py").read_bytes())}]}, oversized["state"], host)
+                title_overflow = run(node, "tool", {"path": "longtitle.py", "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}}}, title_added["state"], host, "code_actions")
+                self.assertEqual(title_overflow["value"]["reason"], "server_code_actions_output_limit")
+                (repository / "longtarget.py").write_text("value = 1\n")
+                target_added = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "4",
+                    "status": "observed", "changes": [{"path": "longtarget.py", "before": None,
+                    "after": digest((repository / "longtarget.py").read_bytes())}]}, title_overflow["state"], host)
+                target_overflow = run(node, "tool", {"path": "longtarget.py", "line": 0, "character": 1}, target_added["state"], host, "definition")
+                self.assertEqual(target_overflow["value"]["reason"], "server_location_invalid")
+                self.assertFalse(any(item.get("method") == "workspace/applyEdit" for item in host.sent))
+            finally:
+                host.close()
+
+    def test_semantic_request_rejects_untracked_target_and_foreign_store(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo-a"
+            other = Path(directory).resolve() / "repo-b"
+            repository.mkdir()
+            other.mkdir()
+            server = Path(directory).resolve() / "fake_server.py"
+            server.write_text(FAKE_SERVER)
+            (repository / "old.py").write_text("value = 1\n")
+            (repository / "user.py").write_text("from old import value\n")
+            host = Host(repository, str(server))
+            foreign = Host(other, str(server))
+            try:
+                opened = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "1",
+                    "status": "observed", "changes": [{"path": "user.py", "before": None,
+                    "after": digest((repository / "user.py").read_bytes())}]}, None, host)
+                location = run(node, "tool", {"path": "user.py", "line": 0, "character": 5}, opened["state"], host, "definition")
+                self.assertEqual(location["value"]["reason"], "server_location_unobserved_or_stale")
+                foreign.store["lsp.observed_repository"] = {"revision": 1, "value": {"repository": str(other)}}
+                bound = run(node, "tool", {"path": "user.py", "line": 0, "character": 5}, opened["state"], foreign, "definition")
+                self.assertEqual(bound["value"]["reason"], "repository_binding_mismatch")
+                self.assertNotIn("process.start", foreign.operations)
+                self.assertNotIn("workspace.read", foreign.operations)
+            finally:
+                host.close()
+                foreign.close()
+
     def test_fake_server_requests_rename_changes_and_idle(self):
         node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
         if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
@@ -189,13 +491,13 @@ class LspSyncModTest(unittest.TestCase):
             host = Host(repository, str(server))
             try:
                 changes = [{"path": name, "before": None, "after": digest((repository / name).read_bytes())} for name in ("old.py", "user.py")]
-                first = run(node, "workspace_write", {"repository": str(repository), "call_id": "1", "tool": "apply_patch",
+                first = run(node, "workspace_change", {"repository": str(repository), "call_id": "1", "tool": "apply_patch",
                     "outcome": "success", "status": "observed", "changes": changes}, None, host)
-                self.assertEqual(first["state"]["status"], "synced")
-                self.assertEqual(first["state"]["diagnostics"]["old.py"]["count"], 1)
+                self.assertEqual(first["state"]["servers"]["python"]["status"], "synced")
+                self.assertEqual(first["state"]["servers"]["python"]["diagnostics"]["old.py"]["count"], 1)
                 self.assertIn({"jsonrpc": "2.0", "id": 1, "result": [None]}, host.sent)
                 idle = run(node, "idle", {"cause": "Completed"}, first["state"], host)
-                self.assertTrue(idle["state"]["running"])
+                self.assertTrue(idle["state"]["servers"]["python"]["running"])
                 self.assertNotIn("process.stop", host.operations)
                 rename = run(node, "workspace_pre_rename", {"repository": str(repository), "old": "old.py", "new": "new.py",
                     "expected": {"old.py": digest((repository / "old.py").read_bytes())}}, idle["state"], host)
@@ -217,24 +519,24 @@ class LspSyncModTest(unittest.TestCase):
             path.write_text("value = 1\n")
             host = Host(repository, server)
             try:
-                first = run(node, "workspace_write", {"repository": str(repository), "call_id": "1",
+                first = run(node, "workspace_change", {"repository": str(repository), "call_id": "1",
                     "tool": "apply_patch", "outcome": "success", "status": "observed",
                     "changes": [{"path": "sample.py", "before": None, "after": digest(path.read_bytes())}]}, None, host)
-                self.assertEqual(first["state"]["status"], "synced")
+                self.assertEqual(first["state"]["servers"]["python"]["status"], "synced")
                 self.assertTrue(any(item.get("method") == "textDocument/didOpen" for item in host.sent))
                 path.write_text("value = 2\n")
-                second = run(node, "workspace_write", {"repository": str(repository), "call_id": "2",
+                second = run(node, "workspace_change", {"repository": str(repository), "call_id": "2",
                     "tool": "apply_patch", "outcome": "success", "status": "observed",
-                    "changes": [{"path": "sample.py", "before": first["state"]["documents"]["sample.py"]["sha256"],
+                    "changes": [{"path": "sample.py", "before": first["state"]["servers"]["python"]["documents"]["sample.py"]["sha256"],
                                  "after": digest(path.read_bytes())}]}, first["state"], host)
-                self.assertEqual(second["state"]["documents"]["sample.py"]["version"], 2)
+                self.assertEqual(second["state"]["servers"]["python"]["documents"]["sample.py"]["version"], 2)
                 self.assertTrue(any(item.get("method") == "textDocument/didChange" for item in host.sent))
                 path.unlink()
-                third = run(node, "workspace_write", {"repository": str(repository), "call_id": "3",
+                third = run(node, "workspace_change", {"repository": str(repository), "call_id": "3",
                     "tool": "apply_patch", "outcome": "success", "status": "observed",
-                    "changes": [{"path": "sample.py", "before": second["state"]["documents"]["sample.py"]["sha256"],
+                    "changes": [{"path": "sample.py", "before": second["state"]["servers"]["python"]["documents"]["sample.py"]["sha256"],
                                  "after": None}]}, second["state"], host)
-                self.assertEqual(third["state"]["documents"], {})
+                self.assertEqual(third["state"]["servers"]["python"]["documents"], {})
                 self.assertTrue(any(item.get("method") == "textDocument/didClose" for item in host.sent))
             finally:
                 host.close()

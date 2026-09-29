@@ -10,13 +10,15 @@ import time
 import tomllib
 
 try:
-    from scripts import private_lean_v1 as private
+    from scripts import install_support as private
 except ModuleNotFoundError:
-    import private_lean_v1 as private
+    import install_support as private
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLS = ("omd-graph", "omd-health", "omd-lsp")
+PROVIDER_ENV_PREFIXES = ("OPENAI_", "ANTHROPIC_", "GOOGLE_", "GEMINI_", "AZURE_", "AWS_",
+                         "MISTRAL_", "GROQ_", "CEREBRAS_", "DEEPSEEK_", "TOGETHER_",
+                         "OPENROUTER_", "HF_")
 
 
 def call(arguments, env, parse=True):
@@ -25,6 +27,17 @@ def call(arguments, env, parse=True):
     if result.returncode:
         raise RuntimeError(f"command failed: {arguments[:4]}: {(result.stderr or result.stdout)[-1200:]}")
     return json.loads(result.stdout) if parse else result.stdout.strip()
+
+
+def isolated_environment(base, home, upstream, source=None):
+    inherited = os.environ if source is None else source
+    env = {name: value for name, value in inherited.items()
+           if not name.startswith(("CODEX_", "OMD_", *PROVIDER_ENV_PREFIXES))}
+    env.update(HOME=str(home), CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home),
+               TMPDIR=str(base), XDG_CONFIG_HOME=str(base / "xdg-config"),
+               XDG_DATA_HOME=str(base / "xdg-data"), XDG_CACHE_HOME=str(base / "xdg-cache"))
+    env["PATH"] = str(upstream.parent) + os.pathsep + env.get("PATH", "")
+    return env
 
 
 def run(artifact_dir, upstream, output):
@@ -45,9 +58,7 @@ def run(artifact_dir, upstream, output):
         session.write_text('{"type":"preserve-session"}\n')
         shared_hashes = {str(path.relative_to(home)): private.digest(path)
                          for path in (sentinel, auth, session)}
-        env = os.environ.copy()
-        env.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home))
-        env["PATH"] = str(upstream.parent) + os.pathsep + env.get("PATH", "")
+        env = isolated_environment(base, home, upstream)
         observations = {}
 
         def command(profile, *args):
@@ -58,11 +69,11 @@ def run(artifact_dir, upstream, output):
 
         platform_store = base / "platform-store"
         platform = command("platform", "install", "--profile", "platform", "--binary", artifact_dir / "codex",
-                           "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--author-archive", artifact_dir / "mod-api.tgz",
+                           "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--omd-contract", artifact_dir / "omd-contract", "--author-archive", artifact_dir / "mod-api.tgz",
                            "--node", node, "--store", platform_store)
-        assert platform["host_mode"] == "platform"
+        assert platform["host_mode"] == "omd"
         assert [item["id"] for item in platform["packages"] if item["loaded_by_profile"]] == ["omd_logo"]
-        assert platform["installed_tools"] == ["omd"] and platform["plugin_bundle"] is None
+        assert platform["installed_tools"] == ["omd", "omd-contract"] and platform["plugin_bundle"] is None
         assert call([base / "platform-bin/omd-package", "status"], env)["profile"] == "platform"
         assert "omd COMMAND" in call([base / "platform-bin/omd", "--help"], env)["usage"]
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
@@ -115,24 +126,18 @@ def run(artifact_dir, upstream, output):
 
         full_store = base / "full-store"
         install = ["install", "--profile", "full", "--binary", artifact_dir / "codex",
-                   "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--author-archive", artifact_dir / "mod-api.tgz",
+                   "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--omd-contract", artifact_dir / "omd-contract", "--author-archive", artifact_dir / "mod-api.tgz",
                    "--node", node, "--store", full_store]
-        for name in TOOLS:
-            install += [f"--{name}", artifact_dir / name]
         full = command("full", *install)
         assert call([base / "full-bin/omd-package", "status"], env)["profile"] == "full"
         active = [item["id"] for item in full["packages"] if item["loaded_by_profile"]]
-        assert active == ["omd_logo", "omd_model_picker", "omd_workspace"]
+        assert active == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace"]
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
                    for item in full["packages"])
-        assert set(full["installed_tools"]) == {"omd", *TOOLS}
+        assert set(full["installed_tools"]) == {"omd", "omd-contract"}
         assert "export OMD_INSTALL_PROFILE=full" in (base / "full-bin/codex").read_text()
-        for name in TOOLS:
-            probe = subprocess.run([base / "full-bin" / name, "--help"], cwd=ROOT, env=env,
-                                   capture_output=True, text=True)
-            assert probe.returncode == 1 and f"usage: {name}" in probe.stdout + probe.stderr
         bundle = Path(full["plugin_bundle"]["marketplace"])
-        assert len(full["plugin_bundle"]["plugins"]) == 6
+        assert len(full["plugin_bundle"]["plugins"]) == 4
         assert not (bundle / "plugins/omd-code-execution").exists()
         assert not (base / "full-prefix/browser").exists()
         assert not (base / "full-prefix/artifacts/codex-code-mode-host").exists()
@@ -156,7 +161,7 @@ def run(artifact_dir, upstream, output):
                 for script in scripts:
                     inactive_env = env.copy()
                     inactive_env.pop("OMD_CONTROLLED_MANIFEST", None)
-                    inactive_env["OMD_MODE"] = "platform"
+                    inactive_env["OMD_MODE"] = "omd"
                     probe = subprocess.run(["python3", plugin_root / script], input="{}", text=True,
                                            capture_output=True, env=inactive_env, cwd=ROOT)
                     assert probe.returncode == 0 and not probe.stdout and not probe.stderr
@@ -179,11 +184,8 @@ def run(artifact_dir, upstream, output):
         assert (base / "full-bin/codex").is_file()
         assert not next(item for item in command("full", "status")["packages"]
                         if item["id"] == "omd_workspace")["enabled_in_store"]
-        controlled_manifest = base / "controlled-manifest.json"
-        controlled_manifest.write_text(json.dumps({"mods": str(full_store)}))
-        controlled = command("full", "activate", "controlled", "--manifest", controlled_manifest)
-        assert controlled["host_mode"] == "enabled"
-        assert controlled["controlled_manifest"] == str(controlled_manifest)
+        activated = command("full", "activate", "full")
+        assert activated["host_mode"] == "omd"
         direct = command("full", "activate", "direct")
         assert not any(item["loaded_by_profile"] for item in direct["packages"])
         try:
@@ -205,7 +207,7 @@ def run(artifact_dir, upstream, output):
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert full_store.is_dir() and tomllib.loads(sentinel.read_text())["model"] == "preserve-user-choice"
         attached = command("full", *(install + ["--attach-store"]))
-        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_model_picker"]
+        assert [item["id"] for item in attached["packages"] if item["loaded_by_profile"]] == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy"]
         enabled = command("full", "mod", "enable", "omd_workspace")
         assert next(item for item in enabled["packages"] if item["id"] == "omd_workspace")["loaded_by_profile"]
         assert call([base / "full-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
@@ -214,7 +216,7 @@ def run(artifact_dir, upstream, output):
                                 "inert_tool_binaries": full["installed_tools"],
                                 "plugin_explicit_install_remove": full["plugin_bundle"]["plugins"], "disable": True,
                                 "staged_skills": staged_skills, "inactive_hook_noops": inert_hooks,
-                                "controlled_manifest_selection": True, "direct_switch": True,
+                                "omd_profile_selection": True, "direct_switch": True,
                                 "marketplace_reference_protected": True,
                                 "unmanaged_user_file_protected": True,
                                 "attach_preserved_disable": True,
@@ -223,7 +225,7 @@ def run(artifact_dir, upstream, output):
         assert {str(path.relative_to(home)): private.digest(path)
                 for path in (sentinel, auth, session)} == shared_hashes
     result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
-              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in ("codex", "omd-mod", "omd", *TOOLS, "mod-api.tgz")},
+              "artifact_sha256": {name: private.digest(artifact_dir / name) for name in ("codex", "omd-mod", "omd", "mod-api.tgz")},
               "elapsed_seconds": time.monotonic() - started, "checks": observations,
               "scope": "isolated local profile, package and author operations; no provider request or independent author"}
     output.parent.mkdir(parents=True, exist_ok=True)

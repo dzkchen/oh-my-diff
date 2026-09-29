@@ -41,12 +41,12 @@ def canonical_file(raw, label):
 
 
 def selection(environment):
-    if environment.get("OMD_MODE") != "enabled":
-        raise Invalid("application bridge requires enabled OMD mode")
+    if environment.get("OMD_MODE") != "omd":
+        raise Invalid("application bridge requires OMD mode")
     manifest_path = canonical_file(
-        environment.get("OMD_CONTROLLED_MANIFEST"), "controlled manifest"
+        environment.get("OMD_BRIDGE_CONFIG") or (str(Path(environment["OMD_MOD_STORE"]) / "plugin-config/omd-application-bridges.json") if environment.get("OMD_MOD_STORE") else None), "plugin configuration"
     )
-    manifest, _ = read_json(manifest_path, "controlled manifest")
+    manifest, _ = read_json(manifest_path, "plugin configuration")
     capabilities = manifest.get("capabilities", {})
     if (
         not isinstance(capabilities, dict)

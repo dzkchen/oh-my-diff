@@ -11,7 +11,7 @@ const sdkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiVersion = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf8')).version;
 const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
-const publicExamples = ['routing', 'coordination', 'recovery', 'terminal', 'kernel', 'workflow', 'workspace', 'virtual_reader', 'scoped_data', 'review_probe', 'service_request', 'release_check'];
+const publicExamples = ['routing', 'coordination', 'recovery', 'terminal', 'kernel', 'workflow', 'workspace', 'virtual_reader', 'scoped_data', 'review_probe', 'service_request', 'release_check', 'snapshot_review'];
 
 function fail(message) {
   throw new Error(message);
@@ -44,7 +44,7 @@ function packageJson(name) {
     },
     devDependencies: {
       '@oh-my-diff/mod-api': process.env.OMD_MOD_SDK_SPEC || apiVersion,
-      typescript: '5.9.3',
+      typescript: process.env.OMD_MOD_TYPESCRIPT_SPEC || '5.9.3',
     },
   };
 }
@@ -84,11 +84,14 @@ function scenarioFor(name) {
     },
     routing: {
       schema: 1,
-      steps: [{ type: 'event', event: 'routing', payload: { routes: [{ name: 'sol', model: 'm1', provider: 'p', reasoning: 'high' }, { name: 'astra', model: 'm2', provider: 'p', reasoning: 'xhigh' }], model: null, provider: 'p', reasoning: null }, expect: [{ mod: 'routing', value: 'sol' }] }],
+      settings: { routing: { route: 'sol' } },
+      steps: [{ type: 'event', event: 'routing', payload: { routes: [{ name: 'sol', model: 'm1', provider: 'p', available: true, billing: 'included_subscription' }, { name: 'astra', model: 'm2', provider: 'p', available: true, billing: 'included_subscription' }] }, expect: [{ mod: 'routing', value: { route: 'sol' } }] }],
     },
     coordination: {
       schema: 1,
       host_operations: {
+        'routes.list': [{ result: [{ name: 'sol', model: 'm1', provider: 'p', available: true, billing: 'included_subscription', roles: ['worker'] }, { name: 'astra', model: 'm2', provider: 'p', available: true, billing: 'included_subscription', roles: ['worker'] }] }],
+        'workspace.snapshot': [{ result: { snapshot: { id: 'fixture-snapshot', sha256: 'a'.repeat(64) } } }],
         'agents.spawn': [{ result: { handle: 'a', route: 'sol', permissions: 'read_only' } }, { result: { handle: 'b', route: 'astra', permissions: 'read_only' } }],
         'agents.wait': [{ result: { status: 'completed', text: 'one', consumed: true } }, { result: { status: 'completed', text: 'two', consumed: true } }],
       },
@@ -96,21 +99,20 @@ function scenarioFor(name) {
     },
     context: {
       schema: 1,
-      steps: [{ type: 'event', event: 'context', payload: { thread_id: 't', turn_id: 'u', checkpoint: { remaining_work: ['test'] } } }],
+      steps: [{ type: 'event', event: 'context', payload: { thread_id: 't', turn_id: 'u' } }],
     },
     recovery: {
       schema: 1,
-      host_operations: { 'checkpoint.read': [{ result: { remaining_work: ['resume'] } }] },
       steps: [
         { type: 'event', event: 'compaction', payload: { token_limit: 32000, context_window: 64000 } },
-        { type: 'event', event: 'context', payload: { thread_id: 't', turn_id: 'u', checkpoint: { remaining_work: ['resume'] } } },
-        { type: 'invoke', mod: 'recovery', event: 'tool', name: 'checkpoint', payload: {} },
+        { type: 'event', event: 'context', payload: { thread_id: 't', turn_id: 'u' } },
+        { type: 'invoke', mod: 'recovery', event: 'tool', name: 'checkpoint', payload: {}, expect_error: 'unsupported_operation: checkpoint.read' },
       ],
     },
     kernel: {
       schema: 1,
       steps: [
-        { type: 'event', event: 'model_request', payload: { authorized_presets: [{ name: 'sol' }, { name: 'astra' }] }, expect: [{ mod: 'kernel', value: { preset: 'astra' } }] },
+        { type: 'event', event: 'model_request', payload: { routes: [{ name: 'sol', available: true, billing: 'included_subscription' }, { name: 'astra', available: true, billing: 'included_subscription' }] }, expect: [{ mod: 'kernel', value: { route: 'astra' } }] },
         { type: 'event', event: 'response_stream', payload: { protected: false, text: 'experimental API' }, expect: [{ mod: 'kernel', value: { text: 'preview API' } }] },
       ],
     },
@@ -129,12 +131,11 @@ function scenarioFor(name) {
     workflow: {
       schema: 1,
       host_operations: {
-        'workflow.status': [{ result: { id: 'reviewed_omd', version: 1, assurance: 'independent' } }],
-        'workflow.restrict': [{ result: { restricted: true } }],
+        'contract.status': [{ result: { id: 'paired_review', version: 1, assurance: 'independent-review-candidate' } }],
+        'contract.restrict': [{ result: { restricted: true } }],
       },
       steps: [
-        { type: 'event', event: 'workflow', payload: { id: 'reviewed_omd', version: 1 } },
-        { type: 'invoke', mod: 'workflow', event: 'command', name: 'workflow', payload: null },
+        { type: 'invoke', mod: 'workflow', event: 'command', name: 'workflow', payload: null, expect: { id: 'paired_review', version: 1, assurance: 'independent-review-candidate' } },
         { type: 'invoke', mod: 'workflow', event: 'command', name: 'no_delegation', payload: null, expect: { restricted: true } },
       ],
     },
@@ -146,9 +147,10 @@ function scenarioFor(name) {
     'service-provider': { schema: 1, steps: [{ type: 'status' }] },
     workspace: { schema: 1, steps: [{ type: 'invoke', mod: 'workspace_author', event: 'tool', name: 'move', payload: null, expect_error: 'invalid_move' }] },
     virtual_reader: { schema: 1, steps: [{ type: 'invoke', mod: 'example_virtual_reader', event: 'virtual_read', name: 'fixture', payload: { uri: 'fixture://manual/intro' } }] },
-    scoped_data: { schema: 1, host_operations: { 'knowledge.inspect': [{ result: { revision: 0, facts: [], lessons: [] } }] }, steps: [{ type: 'invoke', mod: 'example_scoped_data', event: 'command', name: 'inspect', payload: null }] },
+    scoped_data: { schema: 1, host_operations: { 'store.get': [{ result: null }] }, steps: [{ type: 'invoke', mod: 'example_scoped_data', event: 'command', name: 'inspect', payload: null, expect: null }] },
     service_request: { schema: 1, host_operations: { 'sidecars.invoke': [{ result: { provider: 'example_echo', program_sha256: 'a'.repeat(64), source_hashes: {}, result: { echo: 'extension-owned request' }, untrusted: true } }] }, steps: [{ type: 'invoke', mod: 'example_service_request', event: 'tool', name: 'probe', payload: {} }] },
     review_probe: { schema: 1, steps: [{ type: 'invoke', mod: 'example_review_probe', event: 'turn_end', name: '', payload: { turn_id: 'fixture', outcome: 'aborted' } }] },
+    snapshot_review: { schema: 1, host_operations: { 'task.status': [{ result: { ledger: { thread_id: 'author-preview' } } }], 'store.get': [{ result: null }] }, steps: [{ type: 'invoke', mod: 'snapshot_review', event: 'tool', name: 'start', payload: {}, expect_error: 'capture_first' }] },
   };
   return scenarios[name] || scenarios.minimal;
 }
@@ -191,6 +193,8 @@ async function copyExample(directory, name) {
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
   cpSync(source, directory, { recursive: true });
   await writeProjectFiles(directory, name);
+  const suppliedScenario = join(source, 'mod.test.json');
+  if (existsSync(suppliedScenario)) cpSync(suppliedScenario, join(directory, 'mod.test.json'));
 }
 
 async function copyExamples(directory) {

@@ -7,14 +7,16 @@ import { spawnSync } from 'node:child_process';
 const runner = readFileSync(new URL('../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const sources = Object.fromEntries(['anchored-edit', 'session-review'].map(name => [name, readFileSync(new URL(`./plugins/omd-${name}/mod/index.ts`, import.meta.url), 'utf8')]));
 sources.memory = readFileSync(new URL('./plugins/omd-curated-memory/mod/index.ts', import.meta.url), 'utf8');
+const manifests = Object.fromEntries(['anchored-edit', 'session-review', 'curated-memory'].map(name => [name === 'curated-memory' ? 'memory' : name, JSON.parse(readFileSync(new URL(`./plugins/omd-${name}/mod/mod.json`, import.meta.url), 'utf8'))]));
 sources.advisor = readFileSync(new URL('../../mods/first-party/omd_advisor/index.ts', import.meta.url), 'utf8');
 sources.research = readFileSync(new URL('../../mods/first-party/omd_research/index.ts', import.meta.url), 'utf8');
+for (const name of ['advisor', 'research']) manifests[name] = JSON.parse(readFileSync(new URL(`../../mods/first-party/omd_${name}/mod.json`, import.meta.url), 'utf8'));
 const digest = text => createHash('sha256').update(text).digest('hex');
 
 function invoke(name, payload, host, extra = {}) {
   const receipts = [];
   for (let i = 0; i < 40; i++) {
-    const request = { source: sources[name], filename: 'index.ts', api: '0.1.0-experimental.9', capabilities: name === 'anchored-edit' ? ['tools', 'workspace'] : ['commands', 'sessions_read'], state: null, settings: {}, event: name === 'anchored-edit' ? 'tool' : 'command', name: name === 'anchored-edit' ? 'edit' : 'review', payload, receipts, ...extra };
+    const request = { source: sources[name], filename: 'index.ts', api: manifests[name].api, capabilities: manifests[name].capabilities, surface: { events: { context: 'context', turn_end: 'lifecycle' }, state: 'store', middleware: [], replacements: [] }, state: null, settings: {}, event: name === 'anchored-edit' ? 'tool' : 'command', name: name === 'anchored-edit' ? 'edit' : 'review', payload, receipts, ...extra };
     const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
     assert.ifError(result.error);
     const reply = JSON.parse(result.stdout);
@@ -166,7 +168,8 @@ test('optional components register no lifecycle or context callbacks', () => {
   }
 });
 
-const advisorOptions = { event: 'turn_end', name: '', settings: { every_turn: true }, capabilities: ['tools', 'lifecycle', 'state', 'turn_evidence', 'review', 'context', 'terminal'], environment: ['crypto'] };
+const nativeEvents = readFileSync(new URL('../../runtime/omd/src/mods.rs', import.meta.url), 'utf8').match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
+const advisorOptions = { api: '0.2.0-experimental.1', surface: { events: Object.fromEntries([...nativeEvents.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), state: 'store', contracts: 'contracts' }, event: 'turn_end', name: '', settings: { every_turn: true }, capabilities: ['tools', 'lifecycle', 'store', 'sessions', 'agents', 'contracts', 'fs.read', 'context', 'terminal'], environment: ['crypto'] };
 const evidence = { turn_id: 'turn-1', thread_id: 'thread-1', workspace_sha256: digest('source'), records: [{ item: 1, role: 'assistant', text: 'The exact supporting concern from this turn.' }] };
 const reference = { reference: digest('ref'), sha256: digest(JSON.stringify(evidence)) };
 const completed = { turn_id: 'turn-1', outcome: 'completed', evidence: reference };
@@ -179,8 +182,11 @@ function advisorHost(overrides = {}, source = evidence) {
     calls.push(call);
     if (Object.hasOwn(overrides, call.operation)) return overrides[call.operation](call);
     if (call.operation === 'evidence.read') return { reference, text: JSON.stringify(source), cursor: null, bytes: 200 };
-    if (call.operation === 'review.request') { assert.deepEqual(call.arguments.tools, []); return { handle: 'reviewer-1', route: 'astra', permissions: 'read_only' }; }
-    if (call.operation === 'review.submit') { assert.ok(call.arguments.findings.every(finding => !('key' in finding))); return { cycle: { id: 1, lane: 'advisory' } }; }
+    if (call.operation === 'workspace.snapshot') return { snapshot: { reference: 'snapshot:fixture', sha256: source.workspace_sha256 }, candidate_sha256: source.workspace_sha256 };
+    if (call.operation === 'contract.status') return { status: 'active', active: { gates: { complete: [{ receipt: 'advisor_review', producer: 'separate_agent', blocking_findings: 'reject' }] } } };
+    if (call.operation === 'agents.spawn') { assert.deepEqual(call.arguments.tools, []); assert.equal(call.arguments.snapshot.sha256, source.workspace_sha256); return { handle: 'reviewer-1', route: 'astra', permissions: 'read_only' }; }
+    if (call.operation === 'agents.cancel') return { cancelled: true };
+    if (call.operation === 'receipts.submit') { assert.ok(call.arguments.findings.every(finding => !('key' in finding))); assert.equal(call.arguments.agent, 'reviewer-1'); return call.arguments; }
     throw new Error(`unexpected host operation ${call.operation}`);
   } };
 }
@@ -191,7 +197,7 @@ function review(options = advisorOptions, output = undefined, source = evidence)
   const request = advisorHost({}, source);
   const requested = invoke('advisor', completed, request.host, options);
   assert.equal(requested.state.status, 'reviewing');
-  assert.deepEqual(request.calls.map(call => call.operation), ['evidence.read', 'review.request']);
+  assert.deepEqual(request.calls.map(call => call.operation), ['evidence.read', ...(options.settings.mode === 'blocking' ? ['contract.status'] : []), 'workspace.snapshot', 'agents.spawn']);
   const submit = advisorHost();
   const result = invoke('advisor', ended(output), submit.host, { ...options, event: 'agent_end', state: requested.state });
   return { ...result, calls: submit.calls, requested };
@@ -223,12 +229,12 @@ test('advisor keeps the newest evidence when older records exceed the excerpt', 
 test('advisor rejects invented citations, honors denial, and reports incomplete results', () => {
   const invalid = review(advisorOptions, { findings: [{ key: 'unfounded', severity: 'advice', summary: 'Unfounded claim', paths: [], quote: 'This never appeared in the turn' }] });
   assert.equal(invalid.state.status, 'invalid_result');
-  assert.deepEqual(invalid.calls, []);
-  const denied = advisorHost({ 'review.request': () => { throw new Error('allowance_exhausted'); } });
+  assert.deepEqual(invalid.calls.map(call => call.operation), ['agents.cancel']);
+  const denied = advisorHost({ 'agents.spawn': () => { throw new Error('allowance_exhausted'); } });
   assert.equal(invoke('advisor', completed, denied.host, advisorOptions).state.status, 'denied');
-  assert.equal(denied.calls.length, 2);
+  assert.equal(denied.calls.length, 3);
   const requested = invoke('advisor', completed, advisorHost().host, advisorOptions).state;
-  const failed = invoke('advisor', ended(undefined, { status: 'failed', error: 'native_agent_deadline', text: undefined }), () => assert.fail('failed review submitted'), { ...advisorOptions, event: 'agent_end', state: requested });
+  const failed = invoke('advisor', ended(undefined, { status: 'failed', error: 'native_agent_deadline', text: undefined }), call => { assert.equal(call.operation, 'agents.cancel'); return { cancelled: true }; }, { ...advisorOptions, event: 'agent_end', state: requested });
   assert.equal(failed.state.status, 'incomplete');
   const foreign = invoke('advisor', ended(undefined, { handle: 'other' }), () => assert.fail('foreign result submitted'), { ...advisorOptions, event: 'agent_end', state: requested });
   assert.equal(foreign.state.status, 'reviewing');
@@ -239,7 +245,7 @@ test('advisor keeps cross-thread and stale advice out of context, with explicit 
   const context = { thread_id: 'thread-1', turn_id: 'turn-2', checkpoint: { live: { workspace_sha256: evidence.workspace_sha256 } } };
   assert.match(invoke('advisor', context, advisorHost().host, { ...advisorOptions, event: 'context', state }).value.text, /Independent advisor findings/);
   assert.equal(invoke('advisor', { ...context, thread_id: 'other' }, () => assert.fail('cross-thread call'), { ...advisorOptions, event: 'context', state }).value, null);
-  assert.equal(invoke('advisor', { ...context, checkpoint: { live: { workspace_sha256: digest('changed') } } }, () => assert.fail('stale call'), { ...advisorOptions, event: 'context', state }).value, null);
+  assert.equal(invoke('advisor', context, advisorHost({ 'workspace.snapshot': () => { throw new Error('snapshot_source_changed'); } }).host, { ...advisorOptions, event: 'context', state }).value, null);
   invoke('advisor', { phase: 'resume' }, () => assert.fail('resume must not relaunch review'), { ...advisorOptions, event: 'resume', state });
 });
 
@@ -249,7 +255,7 @@ test('advisor off has no completed-turn or context subscriber and aborts do not 
   invoke('advisor', { ...completed, outcome: 'aborted' }, () => assert.fail('aborted turn review'), advisorOptions);
 });
 
-const researchOptions = { event: 'tool', name: 'gather', capabilities: ['tools', 'agents', 'workspace'], settings: { enabled: true } };
+const researchOptions = { event: 'tool', name: 'gather', api: '0.2.0-experimental.1', capabilities: ['tools', 'agents', 'model', 'fs.read'], settings: { enabled: true } };
 const researchQuestion = { question: 'Where are the read permissions enforced across these packages?', scope: ['runtime', 'mods', 'scripts'], brief: 'Trace the read permission boundary and return source evidence only.', expected_sources: 6, lead_read_minutes: 12, brief_and_handoff_minutes: 2, already_located: false };
 function researchHost(overrides = {}) {
   const calls = [];
@@ -259,7 +265,7 @@ function researchHost(overrides = {}) {
   return { calls, host(call) {
     calls.push(call);
     if (Object.hasOwn(overrides, call.operation)) return overrides[call.operation](call);
-    if (call.operation === 'workers.presets') return [{ name: 'research_luna', model: 'gpt-6-luna', provider: 'fixture', tools: ['exec_command', 'apply_patch', 'spawn_agent'], available: true, billing: 'explicit_paid_api_grant' }];
+    if (call.operation === 'routes.list') return [{ name: 'research_luna', roles: ['worker'], model: 'gpt-6-luna', provider: 'fixture', tools: ['exec_command', 'apply_patch', 'spawn_agent'], available: true, billing: 'explicit_paid_api_grant' }];
     if (call.operation === 'agents.spawn') { assert.deepEqual(call.arguments.tools, ['exec_command']); assert.equal(call.arguments.workspace, 'read_only'); return { handle: 'worker', route: 'research_luna', permissions: 'read_only' }; }
     if (call.operation === 'agents.wait' || call.operation === 'agents.result') return completed;
     if (call.operation === 'workspace.read') return { files: { 'runtime/example.rs': { text: source, sha256: digest(source) } } };
@@ -276,8 +282,8 @@ test('research rejects small, located or uneconomic questions without a host cal
 });
 
 test('research requires the separately granted exact model and never falls back', () => {
-  for (const presets of [[], [{ name: 'research_luna', model: 'other-model', available: true, billing: 'explicit_paid_api_grant' }], [{ name: 'research_luna', model: 'gpt-6-luna', available: false, billing: 'explicit_paid_api_grant' }]]) {
-    const host = researchHost({ 'workers.presets': () => presets });
+  for (const presets of [[], [{ name: 'research_luna', roles: ['lead'], model: 'gpt-6-luna', available: true, billing: 'included_subscription' }], [{ name: 'research_luna', roles: ['worker'], model: 'other-model', available: true, billing: 'explicit_paid_api_grant' }], [{ name: 'research_luna', roles: ['worker'], model: 'gpt-6-luna', available: false, billing: 'explicit_paid_api_grant' }]]) {
+    const host = researchHost({ 'routes.list': () => presets });
     assert.equal(invoke('research', researchQuestion, host.host, researchOptions).value.status, 'denied');
     assert.equal(host.calls.length, 1);
   }
@@ -296,7 +302,7 @@ test('research narrows tools, validates source hashes and quotes, and returns de
 });
 
 test('research can use a separately authorized subscription preset without paid fallback', () => {
-  const host = researchHost({ 'workers.presets': () => [{ name: 'research_luna', model: 'gpt-6-luna', provider: 'openai', tools: ['exec_command'], available: true, billing: 'included_subscription' }] });
+  const host = researchHost({ 'routes.list': () => [{ name: 'research_luna', roles: ['worker'], model: 'gpt-6-luna', provider: 'openai', tools: ['exec_command'], available: true, billing: 'included_subscription' }] });
   assert.equal(invoke('research', researchQuestion, host.host, researchOptions).value.status, 'sources_gathered');
   assert.equal(host.calls.filter(call => call.operation === 'agents.spawn').length, 1);
 });
@@ -322,85 +328,135 @@ test('advisor inline notes compose with the workspace and disappear on resume, n
   assert.deepEqual(view.status, ['Advisor: 1 note']);
   assert.equal(view.sites.above_composer.components[0].type, 'slot');
   assert.match(view.sites.above_composer.components[1].children[0].text, /warning: Check/);
-  for (const event of ['resume', 'turn_start', 'start']) {
+  for (const event of ['resume', 'turn_start', 'start', 'workspace_change']) {
     const hidden = invoke('advisor', {}, () => assert.fail('lifecycle relaunch'), { ...advisorOptions, event, state }).state;
     assert.equal(hidden.present, false);
     assert.equal(invoke('advisor', payload, () => assert.fail('render launches work'), { ...advisorOptions, event: 'terminal', state: hidden }).value.sites, undefined);
   }
-  assert.equal(invoke('advisor', { ...payload, checkpoint: { live: { workspace_sha256: digest('changed') } } }, () => assert.fail('render launches work'), { ...advisorOptions, event: 'terminal', state }).value.sites, undefined);
 });
 
-const memoryOptions = { event: 'tool', name: 'recall', capabilities: ['tools', 'commands', 'state', 'lifecycle', 'context', 'turn_evidence', 'knowledge_read', 'knowledge_write'], settings: {} };
-const memoryData = { repository_identity: digest('repo'), revision: 4, generation: 0, evidence: [{ id: 'evidence1', status: { status: 'available' } }], facts: [{ id: 'fact1', label: 'Exact source', source: { path: 'README.md', start_line: 1, end_line: 1 }, status: { status: 'fresh', version: { excerpt: 'Use pnpm for this project.' } } }], lessons: [{ id: 'lesson1', text: 'Use tabs', evidence_ids: ['evidence1'], state: { state: 'approved' } }, { id: 'proposal', text: 'An unapproved proposal', evidence_ids: ['evidence1'], state: { state: 'candidate' } }] };
-function memoryHost(overrides = {}) {
+const memoryOptions = { event: 'tool', name: 'recall', settings: {} };
+const memoryText = 'Use pnpm for this project.';
+const memoryRef = { reference: digest('memory-ref'), sha256: digest('memory-evidence') };
+const memoryData = { schema: 1, evidence: [{ id: 'evidence1', label: 'Turn evidence', reference: memoryRef }], facts: [{ id: 'fact1', label: 'Exact source', source: { path: 'README.md', start_line: 1, end_line: 1, sha256: digest(memoryText), excerpt: memoryText } }], lessons: [{ id: 'lesson1', text: 'Use tabs', evidence_ids: ['evidence1'], state: 'approved' }, { id: 'proposal', text: 'An unapproved proposal', evidence_ids: ['evidence1'], state: 'candidate' }] };
+function memoryHost(initial = memoryData) {
   const calls = [];
-  return { calls, host(call) {
+  const fixture = { value: initial === null ? null : structuredClone(initial), revision: initial === null ? 0 : 4, file: memoryText, evidenceAvailable: true };
+  return { calls, fixture, host(call) {
     calls.push(call);
-    if (Object.hasOwn(overrides, call.operation)) return overrides[call.operation](call);
-    if (call.operation === 'knowledge.inspect') return memoryData;
-    if (call.operation === 'context.freeze') return reference;
-    if (call.operation === 'context.deliver') return { facts: memoryData.facts, approved_lessons: [memoryData.lessons[0]] };
-    if (call.operation === 'knowledge.propose') return { ...call.arguments, state: { state: 'candidate' } };
+    if (call.operation === 'store.get') return fixture.value === null ? null : { value: fixture.value, revision: fixture.revision, provenance: { mod: 'omd_curated_memory', source_sha256: digest('source'), thread_id: 't', origin: 'tool', at: 1 } };
+    if (call.operation === 'store.put') {
+      assert.equal(call.arguments.expected_revision, fixture.revision || null);
+      fixture.value = structuredClone(call.arguments.value);
+      return { revision: ++fixture.revision };
+    }
+    if (call.operation === 'workspace.read') return { files: { 'README.md': { text: fixture.file, sha256: digest(fixture.file) } } };
+    if (call.operation === 'evidence.read') {
+      if (!fixture.evidenceAvailable || call.arguments.reference.sha256 !== memoryRef.sha256) throw new Error('evidence_unavailable');
+      return { reference: memoryRef, text: 'evidence', cursor: null, bytes: 8 };
+    }
     throw new Error(`unexpected operation ${call.operation}`);
   } };
 }
 
-test('memory recall excludes proposals, stale facts and contradictory lessons; cold reads nothing', () => {
+test('memory recall rechecks source and evidence and excludes proposals and contradictions', () => {
   assert.deepEqual(invoke('memory', { mode: 'cold' }, () => assert.fail('cold host read'), memoryOptions).value.records, []);
   const host = memoryHost();
   assert.deepEqual(invoke('memory', {}, host.host, memoryOptions).value.records.map(row => row.id), ['fact1', 'lesson1']);
-  const contradictory = structuredClone(memoryData);
-  contradictory.lessons.push({ id: 'opposed', text: 'Do not use tabs', evidence_ids: ['evidence1'], state: { state: 'approved' } });
-  contradictory.facts[0].status = { status: 'invalidated' };
-  const result = invoke('memory', {}, memoryHost({ 'knowledge.inspect': () => contradictory }).host, memoryOptions).value;
+  host.fixture.file = 'Changed source';
+  host.fixture.value.lessons.push({ id: 'opposed', text: 'Do not use tabs', evidence_ids: ['evidence1'], state: 'approved' });
+  const result = invoke('memory', {}, host.host, memoryOptions).value;
   assert.deepEqual(result.records, []);
   assert.deepEqual(result.contradictions_excluded, ['lesson1', 'opposed']);
-  for (const [text, opposed] of [["Don't use tabs", true], ['Never use tabs', true], ['Do use tabs', false], ['Always use tabs', false]]) {
-    const pair = structuredClone(memoryData);
-    pair.lessons.push({ id: 'other', text, evidence_ids: ['evidence1'], state: { state: 'approved' } });
-    const excluded = invoke('memory', {}, memoryHost({ 'knowledge.inspect': () => pair }).host, memoryOptions).value.contradictions_excluded;
-    assert.deepEqual(excluded, opposed ? ['lesson1', 'other'] : [], text);
-  }
-  assert.deepEqual(invoke('memory', { query: 'status' }, memoryHost().host, memoryOptions).value.records, []);
+  host.fixture.evidenceAvailable = false;
+  assert.deepEqual(invoke('memory', {}, host.host, memoryOptions).value.records, []);
+  assert.ok(host.calls.every(call => ['store.get', 'workspace.read', 'evidence.read'].includes(call.operation)));
 });
 
-test('memory keeps learning as a revision-bound proposal and blocks secrets before host access', () => {
-  const args = { id: 'new', text: 'Check source versions before reuse.', expected_revision: 4, evidence_ids: ['evidence1'] };
+test('memory retains exact source and evidence, proposes under CAS and blocks secrets', () => {
   const host = memoryHost();
-  const result = invoke('memory', args, host.host, { ...memoryOptions, name: 'learn' }).value;
-  assert.equal(result.status, 'proposal_only');
-  assert.equal(host.calls[1].operation, 'knowledge.propose');
-  assert.throws(() => invoke('memory', { ...args, expected_revision: 3 }, memoryHost().host, { ...memoryOptions, name: 'learn' }), /revision_changed/);
-  assert.throws(() => invoke('memory', { ...args, text: 'password=EXCLUDED_SECRET' }, () => assert.fail('secret reached host'), { ...memoryOptions, name: 'learn' }), /lesson_invalid/);
-  assert.equal(invoke('memory', { ...args, text: 'Use tabs' }, memoryHost().host, { ...memoryOptions, name: 'learn' }).value.status, 'duplicate');
+  const retained = invoke('memory', { id: 'new_fact', label: 'Package manager', expected_revision: 4, source: { path: 'README.md', start_line: 1, end_line: 1 } }, host.host, { ...memoryOptions, name: 'retain' }).value;
+  assert.equal(retained.revision, 5);
+  assert.equal(host.fixture.value.facts.at(-1).source.sha256, digest(memoryText));
+  const proposal = invoke('memory', { id: 'new_lesson', text: 'Check source versions before reuse.', expected_revision: 5, evidence_ids: ['evidence1'] }, host.host, { ...memoryOptions, name: 'learn' }).value;
+  assert.equal(proposal.status, 'proposal_only');
+  assert.equal(host.fixture.value.lessons.at(-1).state, 'candidate');
+  assert.throws(() => invoke('memory', { id: 'stale', text: 'Check versions.', expected_revision: 4, evidence_ids: ['evidence1'] }, host.host, { ...memoryOptions, name: 'learn' }), /revision_changed/);
+  assert.throws(() => invoke('memory', { id: 'secret', text: 'password=EXCLUDED_SECRET', expected_revision: 6, evidence_ids: ['evidence1'] }, () => assert.fail('secret reached host'), { ...memoryOptions, name: 'learn' }), /lesson_invalid/);
+  assert.equal(invoke('memory', { id: 'duplicate', text: 'Use tabs', expected_revision: 6, evidence_ids: ['evidence1'] }, host.host, { ...memoryOptions, name: 'learn' }).value.status, 'duplicate');
 });
 
-test('memory freezes selected first recall, reuses it across compaction and excludes revoked snapshots', () => {
+test('memory creates a repository store and retains only accessible evidence', () => {
+  const host = memoryHost(null);
+  const source = invoke('memory', { id: 'fact', label: 'Package manager', expected_revision: 0, source: { path: 'README.md', start_line: 1, end_line: 1 } }, host.host, { ...memoryOptions, name: 'retain' }).value;
+  assert.equal(source.revision, 1);
+  const evidence = invoke('memory', { id: 'turn', label: 'Completed turn', expected_revision: 1, evidence: memoryRef }, host.host, { ...memoryOptions, name: 'retain' }).value;
+  assert.equal(evidence.revision, 2);
+  assert.equal(host.fixture.value.evidence[0].reference.sha256, memoryRef.sha256);
+  host.fixture.evidenceAvailable = false;
+  assert.throws(() => invoke('memory', { id: 'revoked', label: 'Revoked', expected_revision: 2, evidence: memoryRef }, host.host, { ...memoryOptions, name: 'retain' }), /evidence_unavailable/);
+  assert.equal(host.fixture.revision, 2);
+});
+
+test('memory approval, removal and reset require explicit revision-bound command confirmation', () => {
+  const host = memoryHost();
+  const command = (operation, args) => JSON.parse(invoke('memory', [operation, JSON.stringify(args)], host.host, { ...memoryOptions, event: 'command', name: 'memory' }).value.display);
+  const pending = command('approve', { expected_revision: 4, lesson_id: 'proposal' });
+  assert.equal(pending.status, 'explicit_confirmation_required');
+  assert.equal(host.fixture.value.lessons[1].state, 'candidate');
+  assert.equal(command('approve', { expected_revision: 4, lesson_id: 'proposal', confirm: pending.confirmation }).status, 'approved');
+  assert.equal(host.fixture.value.lessons[1].state, 'approved');
+  assert.throws(() => command('remove', { expected_revision: 4, kind: 'lesson', id: 'proposal', confirm: 'remove:lesson:proposal:4' }), /revision_changed/);
+  assert.equal(command('remove', { expected_revision: 5, kind: 'lesson', id: 'proposal', confirm: 'remove:lesson:proposal:5' }).status, 'removed');
+  assert.equal(command('reset', { expected_revision: 6, confirm: 'reset:all:6' }).status, 'reset');
+  assert.deepEqual(host.fixture.value, { schema: 1, facts: [], evidence: [], lessons: [] });
+});
+
+test('memory context freezes selected rows and withholds them after source or store drift', () => {
   const extra = { ...memoryOptions, event: 'context', settings: { live_recall: 'reuse', recall_ids: ['fact1', 'proposal'] } };
-  const context = { thread_id: 'thread-a', turn_id: 'turn-1', checkpoint: {} };
+  const context = { thread_id: 'thread-a', turn_id: 'turn-1' };
   const host = memoryHost();
   const first = invoke('memory', context, host.host, extra);
-  assert.deepEqual(host.calls[1].arguments.ids, ['fact1']);
   assert.match(first.value.text, /frozen/);
-  const reused = memoryHost();
-  invoke('memory', { ...context, turn_id: 'after-compaction' }, reused.host, { ...extra, state: first.state });
-  assert.deepEqual(reused.calls.map(call => call.operation), ['context.deliver']);
-  assert.equal(invoke('memory', context, memoryHost({ 'context.deliver': () => { throw new Error('snapshot_revoked'); } }).host, { ...extra, state: first.state }).value, null);
-  const other = memoryHost();
-  invoke('memory', { ...context, thread_id: 'thread-b' }, other.host, { ...extra, state: first.state });
-  assert.equal(other.calls[0].operation, 'knowledge.inspect');
+  assert.deepEqual(first.state.threads['thread-a'].records.map(row => row.id), ['fact1']);
+  assert.match(invoke('memory', { ...context, turn_id: 'after-compaction' }, host.host, { ...extra, state: first.state }).value.text, /frozen/);
+  host.fixture.file = 'Changed source';
+  assert.equal(invoke('memory', context, host.host, { ...extra, state: first.state }).value, null);
+  host.fixture.file = memoryText;
+  host.fixture.revision++;
+  assert.equal(invoke('memory', context, host.host, { ...extra, state: first.state }).value, null);
   const crowded = { ...first.state, threads: Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`thread-${index}`, first.state.threads['thread-a']])) };
-  const fresh = invoke('memory', { ...context, thread_id: 'thread-new' }, memoryHost().host, { ...extra, state: crowded });
-  assert.match(fresh.value.text, /frozen/);
-  assert.equal(Object.keys(fresh.state.threads).length, 16);
-  assert.ok(!('thread-0' in fresh.state.threads));
+  assert.equal(invoke('memory', { ...context, thread_id: 'thread-new' }, memoryHost().host, { ...extra, state: crowded }).value, null);
 });
 
-test('memory disabled and unselected live recall have no lifecycle cost or external authority', () => {
+test('memory captures only completed turn evidence when explicitly selected', () => {
+  const host = memoryHost(null);
+  const selected = { ...memoryOptions, event: 'turn_end', settings: { capture_turns: true, retain_turns: true } };
+  const aborted = invoke('memory', { turn_id: 'bad', outcome: 'aborted', evidence: memoryRef }, host.host, selected);
+  assert.equal(aborted.state, null);
+  assert.deepEqual(host.calls, []);
+  const completed = invoke('memory', { turn_id: 'good', outcome: 'completed', evidence: memoryRef }, host.host, selected);
+  assert.equal(completed.state.retention.status, 'retained');
+  assert.deepEqual(Object.keys(completed.state.evidence), ['good']);
+  assert.equal(host.fixture.value.evidence[0].id, 'turn_good');
+});
+
+test('memory disabled and unselected live recall register no lifecycle work', () => {
   const off = invoke('memory', null, () => assert.fail('off operation'), { ...memoryOptions, event: 'inspect', settings: { enabled: false } });
   assert.deepEqual(off.registrations.events, []);
   assert.deepEqual(off.registrations.tools, []);
   const ordinary = invoke('memory', null, () => assert.fail('inspect operation'), { ...memoryOptions, event: 'inspect' });
   assert.deepEqual(ordinary.registrations.events, []);
-  assert.ok(!memoryOptions.capabilities.includes('sidecars'));
+  assert.ok(!manifests.memory.capabilities.includes('network'));
+});
+
+test('advisor releases a superseded running reviewer before admitting the next turn', () => {
+  const first = invoke('advisor', completed, advisorHost().host, advisorOptions);
+  const nextEvidence = { ...evidence, turn_id: 'turn-2' };
+  const next = advisorHost({}, nextEvidence);
+  const second = invoke('advisor', { ...completed, turn_id: 'turn-2', evidence: { ...reference, sha256: digest('next-turn') } }, next.host,
+    { ...advisorOptions, state: first.state });
+  assert.equal(second.state.turn, 'turn-2');
+  const operations = next.calls.map(call => call.operation);
+  assert.ok(operations.indexOf('agents.cancel') < operations.indexOf('agents.spawn'));
 });

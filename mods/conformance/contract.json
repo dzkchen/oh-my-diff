@@ -43,7 +43,7 @@
       "replace": null,
       "timing": "any tool, command or lifecycle callback with a live session",
       "ownership": "mod: role, prompt, route, tool ceiling and when to integrate; host: sandbox, worktree, worker limits, accounting and the integrate gate",
-      "limits": "worker routes need a current grant; at most 16 records; a writable agent works only in an isolated worktree; integration refuses stale parents, changed candidates and an unmet `integrate` contract gate",
+      "limits": "worker routes need a current grant; at most 16 records; a writable agent works only in an isolated worktree; integration refuses stale parents, changed candidates and an unmet `integrate` contract gate; optional parent_history requires sessions; failed results retain structured host categories; explicit resume preserves task allowance but never agent handles",
       "native": "native subagents cannot be spawned, limited or integrated by a plugin or hook",
       "covers": {
         "capabilities": [
@@ -67,7 +67,10 @@
       "evidence": [
         "rust:native_host_bridge_preserves_once_only_effects_and_rust_capability_checks",
         "rust:integration_candidate_preserves_unrelated_edits_and_rejects_conflicts",
-        "rust:worker_route_grants_are_exact_nontransferable_and_share_allowances"
+        "rust:worker_route_grants_are_exact_nontransferable_and_share_allowances",
+        "patch:structured_failures_do_not_classify_permissions_or_allowance_as_outages",
+        "patch:resumed_ledgers_keep_allowance_observation_and_uncertain_requests",
+        "patch:unexpected_http_status_survives_error_event_conversion"
       ]
     },
     {
@@ -75,7 +78,7 @@
       "group": "coordination",
       "decision": "Completion and integration contract",
       "observe": "`contract.status` returns the selected document, provenance, receipts and restrictions",
-      "alter": "`contract.restrict` only narrows operations; `receipts.submit` adds host-attested receipts",
+      "alter": "`contract.restrict` only narrows operations; `receipts.submit` adds host-attested receipts; scoped argument predicates can only tighten selected operations",
       "replace": null,
       "timing": "selection at session start; gates at `task.complete` and `workspace.integrate`",
       "ownership": "mod: registers documents and submits receipts; user: selects the document; host: digest pinning, project floor, producer attestation and the gate",
@@ -100,7 +103,9 @@
         "rust:contract_documents_gate_on_bound_receipts_and_detect_weaker_selections",
         "rust:contract_selection_pins_digests_applies_the_project_floor_and_fails_closed",
         "patch:no_selection_means_no_gate_and_restrictions_are_enforced",
-        "patch:active_contracts_require_bound_receipts_and_unavailable_contracts_fail_closed"
+        "patch:active_contracts_require_bound_receipts_and_unavailable_contracts_fail_closed",
+        "patch:restart_restores_bound_receipts_and_restrictions_without_accepting_changed_selection",
+        "patch:argument_restrictions_are_monotone_and_survive_restart"
       ]
     },
     {
@@ -372,12 +377,12 @@
       "id": "shared.session_index",
       "group": "context_recovery",
       "decision": "Session history and turn evidence",
-      "observe": "`sessions.list` and `sessions.read` page visible records; `turn_end` carries turn evidence to subscribers",
+      "observe": "`sessions.list` and `sessions.read` page visible messages; `sessions.snapshot` freezes complete visible current-thread tool history or selected call/output pairs; `turn_end` carries turn evidence",
       "alter": "none",
       "replace": null,
       "timing": "any callback; turn evidence at turn end",
       "ownership": "host: repository scope, opt-outs, redaction and bounds",
-      "limits": "visible user and assistant text only; hidden content, other repositories and opted-out sessions are excluded",
+      "limits": "Snapshots require sessions and store, omit private reasoning and opaque metadata, and refuse missing call/output pairs or oversized history; all evidence remains owner, source and thread bound",
       "native": "native hooks see only the current payload",
       "covers": {
         "capabilities": [
@@ -387,13 +392,15 @@
         "replacements": [],
         "operations": [
           "sessions.list",
-          "sessions.read"
+          "sessions.read",
+          "sessions.snapshot"
         ]
       },
       "evidence": [
         "rust:repository_scope_opt_out_and_hidden_content_are_enforced",
         "rust:projection_contains_visible_messages_and_references_only",
-        "rust:compaction_segments_preserve_original_visible_records_and_bounds"
+        "rust:compaction_segments_preserve_original_visible_records_and_bounds",
+        "patch:parent_history_keeps_tool_records_and_refuses_partial_delivery"
       ]
     },
     {
@@ -553,12 +560,12 @@
       "id": "tool.exec",
       "group": "tool",
       "decision": "One-shot sandboxed commands",
-      "observe": "the result reports exit status, bounded output, timing and the program hash",
-      "alter": "`sha256` pins the program; `write` and `network` widen only with `fs.write` and `network`",
+      "observe": "the result reports exit status, bounded output, timing, captured stdout digest and the program hash; snapshot commands return candidate-bound host execution evidence",
+      "alter": "`sha256` pins the program; `write` and `network` widen only with `fs.write` and `network`; guarded writes recheck bounded command output and named path access under the host operation guard",
       "replace": null,
       "timing": "any tool, command or lifecycle callback",
       "ownership": "mod: program and arguments; host: resolution, sandbox, environment, limits and cancellation",
-      "limits": "10 s default and 120 s ceiling; 1 MiB per stream; 4 concurrent runs; declared environment names only; read-only repository without `write`",
+      "limits": "10 s default and 120 s ceiling; 1 MiB per stream normally, or a complete UTF-8 stdout artifact up to 16 MiB with 16 KiB bound pages; artifacts are bound to the same repository, mod source and thread and capped at 64 MiB per binding; 4 concurrent runs; declared environment names only; read-only repository without `write`; at most 4 read-only command guards and 128 required write-access paths; selected snapshots are frozen, source changes are refused, and successful execution receipts require zero exit without timeout, signal or truncated output",
       "native": "native hooks run commands outside the session sandbox",
       "covers": {
         "capabilities": [
@@ -568,24 +575,29 @@
         "events": [],
         "replacements": [],
         "operations": [
-          "exec.run"
+          "exec.run",
+          "exec.output_page"
         ]
       },
       "evidence": [
         "rust:exec_run_bounds_program_environment_output_time_and_authority",
-        "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters"
+        "rust:exec_output_artifact_is_paged_and_bound_to_the_caller",
+        "rust:exec_guards_recheck_output_before_a_write",
+        "rust:workspace_access_checks_named_paths_and_guarded_write_authority",
+        "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters",
+        "patch:execution_receipts_reject_forged_bindings_and_false_success"
       ]
     },
     {
       "id": "tool.workspace",
       "group": "tool",
       "decision": "Workspace reads, listings, preconditioned writes and changes",
-      "observe": "`workspace.read`, `workspace.list`, `workspace.stat` and `workspace_change` within the session's read scope",
+      "observe": "`workspace.read`, `workspace.list`, `workspace.stat`, `workspace.check_access` and `workspace_change` within the session's effective permission scope; workspace.snapshot captures an owner-bound frozen candidate",
       "alter": "`workspace.transaction`, `workspace.backup`, `workspace.restore` and `workspace.request_rename` with exact preconditions",
       "replace": null,
       "timing": "tools; lifecycle events; `workspace_pre_rename` during a requested rename",
       "ownership": "mod: paths and contents; host: permissions, preconditions, atomic replacement, backups and change scans",
-      "limits": "stale fingerprints fail; `.git` and symlinks are refused; transactions and restores are exclusive per session; scans are bounded and report `unavailable` instead of partial coverage",
+      "limits": "stale fingerprints fail; `.git` and symlinks are refused; transactions and restores are exclusive per repository within the host; scans are bounded and report `unavailable` instead of partial coverage",
       "native": "native hooks can rewrite a tool's input but not perform checked multi-file writes",
       "covers": {
         "capabilities": [
@@ -601,17 +613,22 @@
           "workspace.read",
           "workspace.list",
           "workspace.stat",
+          "workspace.check_access",
           "workspace.transaction",
           "workspace.backup",
           "workspace.restore",
-          "workspace.request_rename"
+          "workspace.request_rename",
+          "workspace.snapshot"
         ]
       },
       "evidence": [
         "rust:workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions",
         "patch:workspace_read_and_transaction_obey_effective_permissions",
         "patch:write_observation_hides_denied_paths",
-        "patch:pre_rename_plan_applies_companion_write_and_move"
+        "patch:pre_rename_plan_applies_companion_write_and_move",
+        "patch:snapshots_are_owner_source_generation_thread_and_digest_bound",
+        "patch:snapshots_deduplicate_and_evict_the_oldest_until_session_cleanup",
+        "patch:capture_requires_current_permissions_and_preserves_frozen_bytes"
       ]
     },
     {
@@ -744,7 +761,7 @@
       },
       "evidence": [
         "patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer",
-        "rust:terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only",
+        "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
         "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
       ],
       "replace_note": null
@@ -849,13 +866,13 @@
     {
       "id": "terminal.identity_and_rich_presentation",
       "group": "terminal",
-      "decision": "Launch identity, styled header lines, width-bounded boxes and settings-picker layout",
+      "decision": "Launch identity, styled header lines and width-bounded boxes",
       "observe": "the read-only `identity` on the terminal input: installed Codex version, install profile, effective mode and installed, enabled and active mod counts",
-      "alter": "a `line` of styled spans, `box` width bounds, and `theme.picker` layout and brand",
+      "alter": "a `line` of styled spans and `box` width bounds",
       "replace": null,
       "timing": "every terminal redraw on the alternate screen, including Codex's owned fullscreen transcript",
-      "ownership": "host: identity values, width fitting, header height, picker rows, labels, warnings, keys and persistence; mod: presentation choice",
-      "limits": "12 spans and 256 characters per line; widths 1-500; brand 24 characters; only native-marked model and reasoning pickers; approvals, permissions, trust, elicitation and update prompts are never restyled; no identity or picker in upstream-style direct mode",
+      "ownership": "host: identity values, width fitting and header height; mod: presentation choice",
+      "limits": "12 spans and 256 characters per line; widths 1-500; no mod identity or presentation in upstream-style direct mode",
       "native": "native plugins cannot draw terminal presentation",
       "covers": {
         "capabilities": [],
@@ -864,11 +881,10 @@
         "operations": []
       },
       "evidence": [
-        "rust:rich_lines_width_bounds_picker_theme_and_selection_policy_are_bounded",
+        "rust:rich_lines_width_bounds_and_selection_policy_are_bounded",
         "rust:terminal_identity_reports_profile_mode_and_mod_counts",
         "patch:width_bounded_boxes_and_styled_lines_follow_the_header_width",
-        "patch:owned_fullscreen_draws_mod_header_and_sidebar_beside_the_transcript",
-        "patch:compact_picker_keeps_native_rows_warnings_and_hints"
+        "patch:owned_fullscreen_draws_mod_header_and_sidebar_beside_the_transcript"
       ],
       "replace_note": "presentation fields in the terminal view or patch"
     },
@@ -926,7 +942,7 @@
       "id": "terminal_patch_composition",
       "rule": "Terminal patches apply after the exclusive base in dependency order. Wrappers contain one slot; one patch may replace a site or own completed-tool presentation; duplicate site, key, status-budget or completed-tool claims fail the later mod transactionally without leaking any of its earlier fields.",
       "evidence": [
-        "rust:terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only",
+        "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
         "rust:a_failed_terminal_patch_is_transactional"
       ]
     },

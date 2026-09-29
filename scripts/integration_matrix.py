@@ -27,41 +27,33 @@ COMPONENT_FIELDS = ("id", "area", "name", "owner", "version", "status", "fixture
 
 def sources():
     host = (ROOT / "runtime/omd/src/mods.rs").read_text()
-    lsp = (ROOT / "runtime/omd/src/lsp.rs").read_text()
+    lsp = (ROOT / "mods/first-party/omd_lsp_sync/index.ts").read_text()
     coverage = (ROOT / "mods/COVERAGE.md").read_text()
 
     def constant(name):
-        return re.search(rf"{name}: &\[[^]]*\] = &\[(.*?)\];", host, re.S).group(1)
+        return re.search(rf"{name}: &\[[^]]*\] =\s*&\[(.*?)\];", host, re.S).group(1)
 
-    language_ids = re.search(r"pub fn language_id\(self\).*?\n    \}", lsp, re.S).group(0)
-    languages = re.findall(r"Self::(\w+) => \"([a-z]+)\"", language_ids)
-    candidates = re.search(r"fn candidates\(self\).*?\n    \}", lsp, re.S).group(0)
-    servers = {}
-    for arm, block in re.findall(r"((?:Self::\w+ \| )*Self::\w+) =>\s*&\[(.*?)\],\n", candidates, re.S):
-        for variant in re.findall(r"Self::(\w+)", arm):
-            servers[variant] = re.findall(r'\("([\w-]+)"', block)
+    servers = {language: re.findall(r"name: '([\w-]+)'", block)
+               for language, block in re.findall(r"^  (\w+): \{ candidates: \[(.*?)\] \},$", lsp, re.M)}
+    servers["javascript"] = servers["typescript"]
     api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
     return {
         "upstream": json.loads((ROOT / "upstream.lock.json").read_text()),
         "compatibility": json.loads((ROOT / "mods/compatibility.json").read_text()),
         "browser": json.loads((ROOT / "browser/browser.lock.json").read_text()),
         "preview": json.loads((ROOT / "runtime/preview-v1.lock.json").read_text()),
-        "lean": json.loads((ROOT / "runtime/lean-v1.lock.json").read_text()),
         "plugin": json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text()),
         "api": api,
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
-        "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES")))
-        | set(re.findall(r'"([a-z_.]+)"', constant("LEGACY_MOD_CAPABILITIES"))),
-        "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS")))
-        | set(re.findall(r'"([a-z_.]+)"', constant("LEGACY_MOD_HOST_OPERATIONS"))),
+        "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))),
+        "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))),
         "features": re.findall(r'"([a-z0-9_]+)"', constant("MOD_HOST_FEATURES")),
         "apis": [
             api if row == "MOD_API_VERSION" else row.strip('"')
             for row, _, _ in re.findall(r'\(([^,]+), "([a-z]+)", "([\d-]+)"\)', constant("SUPPORTED_MOD_APIS"))
         ],
-        "languages": {language: servers[variant] for variant, language in languages},
+        "languages": servers,
         "hooks": re.findall(r"`([a-z_]+)`", re.search(r"and hooks for (.*?)\.\nA hook", coverage, re.S).group(1)),
-        "pi_adapter": re.search(r'"adapter":"([\w.-]+)"', (ROOT / "runtime/omd/src/mods/pi.rs").read_text()).group(1),
     }
 
 
@@ -138,12 +130,6 @@ def check(matrix):
     bundled_plugin = source["plugin"]["plugins"]["omd-guidance-hooks"]
     claim("omd_guidance_hooks", "version", bundled_plugin["version"])
     claim("omd_guidance_hooks", "extension_type", bundled_plugin["extension_types"])
-    repository_plugin = source["plugin"]["plugins"]["omd-repository-tools"]
-    claim("omd_repository_tools", "version", repository_plugin["version"])
-    claim("omd_repository_tools", "extension_type", repository_plugin["extension_types"])
-    lsp_plugin = source["plugin"]["plugins"]["omd-lsp-adapters"]
-    claim("omd_lsp_adapters", "version", lsp_plugin["version"])
-    claim("omd_lsp_adapters", "extension_type", lsp_plugin["extension_types"])
     review_plugin = source["plugin"]["plugins"]["omd-review-policy"]
     claim("omd_review_policy", "version", review_plugin["version"])
     claim("omd_review_policy", "extension_type", review_plugin["extension_types"])
@@ -156,7 +142,6 @@ def check(matrix):
     execution_plugin = source["plugin"]["plugins"]["omd-code-execution"]
     claim("omd_code_execution", "version", execution_plugin["version"])
     claim("omd_code_execution", "extension_type", execution_plugin["extension_types"])
-    claim("pi_resources", "version", source["pi_adapter"])
     browser = source["browser"]
     claim("browser_bundle", "versions", {
         "node": browser["node"]["version"],
@@ -180,8 +165,8 @@ def check(matrix):
             if operation not in source["operations"]:
                 problems.append(f"{component['id']}: {operation} is not a host operation")
         capability = component.get("capability")
-        if capability and capability not in source["capabilities"] and capability not in source["lean"]["profiles"]["omd_enabled"]["capabilities"]:
-            problems.append(f"{component['id']}: {capability} is neither a mod capability nor a host capability")
+        if capability and capability not in source["capabilities"]:
+            problems.append(f"{component['id']}: {capability} is not a mod capability")
 
     profiles, scenarios = mod_conformance.fixture_profiles()
     boundaries = {boundary["id"] for boundary in matrix["boundaries"]}

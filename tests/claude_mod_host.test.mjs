@@ -50,7 +50,7 @@ test('pinned Codex executes a mod-mapped host tool and returns its result',
     try {
       const child = spawn(process.env.OMD_TEST_CODEX, argv, { env: { ...process.env,
         CODEX_HOME: join(root, 'codex-home'), OMD_CLAUDE_LOCAL_TOKEN: 'x'.repeat(40),
-        OMD_MODE: process.env.OMD_TEST_MOD_STORE ? 'platform' : 'upstream_direct',
+        OMD_MODE: process.env.OMD_TEST_MOD_STORE ? 'omd' : 'upstream_direct',
         ...(process.env.OMD_TEST_MOD_STORE ? { OMD_MOD_STORE: process.env.OMD_TEST_MOD_STORE } : {}) },
       stdio: ['ignore', 'pipe', 'pipe'] });
       let output = '';

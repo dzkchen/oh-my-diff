@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "steps": [
+    { "type": "invoke", "mod": "omd_graph_navigator", "event": "command", "name": "select", "payload": "unknown", "expect": { "display": "select a visible graph node first" } }
+  ]
+}

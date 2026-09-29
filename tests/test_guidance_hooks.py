@@ -86,14 +86,14 @@ class GuidanceHooksTests(unittest.TestCase):
         environment = os.environ.copy()
         if enabled:
             environment.update({
-                "OMD_MODE": "enabled",
-                "OMD_CONTROLLED_MANIFEST": str(self.manifest),
+                "OMD_MODE": "omd",
+                "OMD_GUIDANCE_CONFIG": str(self.manifest),
                 "PLUGIN_ROOT": str(PLUGIN),
                 "PLUGIN_DATA": str(self.root / "plugin-data"),
             })
         else:
             environment.pop("OMD_MODE", None)
-            environment.pop("OMD_CONTROLLED_MANIFEST", None)
+            environment.pop("OMD_GUIDANCE_CONFIG", None)
         return subprocess.run(
             [sys.executable, str(HOOK)],
             input=json.dumps(event),

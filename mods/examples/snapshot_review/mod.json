@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "snapshot_review",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.1",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Example author", "source": "mods/examples" },
+  "capabilities": ["agents", "contracts", "exec", "fs.read", "fs.write", "lifecycle", "sessions", "store", "tools"],
+  "settings_schema": { "type": "object", "properties": { "denied_source": { "type": "string", "default": "" } }, "additionalProperties": false },
+  "compatibility": { "required_features": ["workspace_snapshots_v1", "snapshot_exec_v1", "agent_parent_history_v1", "contract_scoped_restrictions_v1", "agent_failures_v1", "task_resume_v1"] }
+}

@@ -32,8 +32,7 @@ import uuid
 
 RELEASE_URL = ""
 RELEASE_SHA256 = "dd4af10730de910ba2b2f71e834e616f369a14eb1f82c2e52477bdf6df24f939"
-LINKS = ("codex", "omd-package", "omd-mod-author", "omd-graph", "omd-health", "omd-lsp")
-BASE_LINKS = LINKS[:3]
+LINKS = ("codex", "omd-package", "omd-mod-author")
 
 
 def fail(message):
@@ -178,10 +177,6 @@ def extract(archive_path, destination):
     return destination / "payload"
 
 
-def installed_names(profile):
-    return LINKS if profile == "full" else BASE_LINKS
-
-
 def link_target(root, name):
     return root / "current" / "bin" / name
 
@@ -194,16 +189,13 @@ def check_links(root, bin_dir):
                 fail(f"existing launcher is not managed by this installer: {path}")
 
 
-def set_links(root, bin_dir, profile):
+def set_links(root, bin_dir):
     bin_dir.mkdir(parents=True, exist_ok=True)
     check_links(root, bin_dir)
-    names = installed_names(profile)
-    for name in names:
+    for name in LINKS:
         path = bin_dir / name
         if not path.is_symlink():
             atomic_symlink(path, link_target(root, name))
-    for name in set(LINKS) - set(names):
-        (bin_dir / name).unlink(missing_ok=True)
 
 
 def status(generation, upstream, bin_dir):
@@ -255,7 +247,7 @@ def install(args, root, current):
             atomic_symlink(root / "previous", current)
         atomic_symlink(root / "current", generation)
         try:
-            set_links(root, args.bin_dir, profile)
+            set_links(root, args.bin_dir)
         except BaseException:
             if current:
                 atomic_symlink(root / "current", current)
@@ -315,7 +307,7 @@ def rollback(root, bin_dir, current):
     atomic_symlink(root / "previous", current)
     atomic_symlink(root / "current", previous)
     try:
-        set_links(root, bin_dir, target["profile"])
+        set_links(root, bin_dir)
     except BaseException:
         atomic_symlink(root / "current", current)
         raise
@@ -336,7 +328,7 @@ def uninstall(root, bin_dir, current):
     try:
         run([current / "bin/omd-package", "uninstall"], env=environment(upstream, bin_dir))
     except BaseException:
-        set_links(root, bin_dir, receipt(current)["profile"])
+        set_links(root, bin_dir)
         raise
     (current / "receipt.json").unlink()
     (current / "bin").rmdir()

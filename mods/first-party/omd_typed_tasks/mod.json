@@ -1,15 +1,25 @@
 {
   "schema": 1,
   "id": "omd_typed_tasks",
-  "version": "0.1.0-preview.1",
-  "api": "0.1.0-experimental.8",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party"
   },
-  "capabilities": ["agents", "execution", "task", "tools"],
+  "capabilities": [
+    "agents",
+    "contracts",
+    "exec",
+    "fs.read",
+    "fs.write",
+    "model",
+    "services",
+    "store",
+    "tools"
+  ],
   "settings_schema": {
     "type": "object",
     "properties": {
@@ -19,10 +29,42 @@
       },
       "max_fan_out": {
         "type": "number",
-        "enum": [1, 2, 3, 4],
+        "enum": [
+          1,
+          2,
+          3,
+          4
+        ],
         "default": 2
+      },
+      "check": {
+        "type": "object",
+        "default": {}
+      },
+      "review_route": {
+        "type": "string",
+        "default": "reviewer"
       }
     },
     "additionalProperties": false
+  },
+  "compatibility": {
+    "required_features": [
+      "routes_v1",
+      "service_contracts_v1",
+      "contracts_v2",
+      "workspace_snapshots_v1",
+      "snapshot_exec_v1",
+      "store_v1",
+      "service_dispatch_v1"
+    ]
+  },
+  "services": {
+    "imports": [
+      {
+        "name": "omd.workflow",
+        "version": "1.0.0"
+      }
+    ]
   }
 }

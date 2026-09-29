@@ -258,13 +258,6 @@ impl ResourceStore<'_> {
         Ok(value.payload)
     }
 
-    pub(crate) fn artifact(&self, reference: &ResourceRef, kind: &str) -> io::Result<PathBuf> {
-        self.load(reference, kind)?;
-        Ok(self
-            .directory()?
-            .join(format!("{}.json", reference.reference)))
-    }
-
     pub fn page(
         &self,
         reference: &ResourceRef,

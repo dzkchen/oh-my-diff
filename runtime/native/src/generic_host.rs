@@ -53,9 +53,11 @@ pub(crate) fn sandboxed_command(
 ) -> Result<Command, String> {
     #[cfg(target_os = "macos")]
     {
-        use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
         use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
-        use codex_sandboxing::seatbelt::create_seatbelt_command_args;
+        use codex_protocol::config_types::WindowsSandboxLevel;
+        use codex_protocol::models::PermissionProfile;
+        use codex_sandboxing::{SandboxCommand, SandboxManager, SandboxTransformRequest, SandboxType};
+        use codex_utils_path_uri::PathUri;
         let mut scope = if access.write {
             policy.clone()
         } else {
@@ -75,20 +77,30 @@ pub(crate) fn sandboxed_command(
             allow_local_binding: true,
             ..Default::default()
         });
-        let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
-            command: argv,
-            file_system_sandbox_policy: &scope,
-            network_sandbox_policy: NetworkSandboxPolicy::Restricted,
-            sandbox_policy_cwd: repository,
+        let (program, arguments) = argv.split_first().ok_or("exec_command_empty")?;
+        let cwd = PathUri::from_host_native_path(repository).map_err(|error| error.to_string())?;
+        let permissions = PermissionProfile::from_runtime_permissions(&scope, NetworkSandboxPolicy::Restricted);
+        let transformed = SandboxManager::for_file_system_helpers().transform(SandboxTransformRequest {
+            command: SandboxCommand {
+                program: program.into(), args: arguments.to_vec(), cwd: cwd.clone(),
+                env: Default::default(), managed_network: loopback, additional_permissions: None,
+            },
+            permissions: &permissions,
+            sandbox: SandboxType::MacosSeatbelt,
+            sandbox_policy_cwd: &cwd,
             enforce_managed_network: access.loopback,
-            managed_network: loopback.as_ref(),
             environment_id: None,
             network: None,
-            extra_allow_unix_sockets: &[],
-        })?;
-        codex_omd::git::sandboxed(
+            sandbox_exe: None,
+            use_legacy_landlock: false,
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+        }).map_err(|error| error.to_string())?;
+        if transformed.command.first().map(String::as_str) != Some(MACOS_PATH_TO_SEATBELT_EXECUTABLE) {
+            return Err("exec_sandbox_unavailable".into());
+        }
+        sandboxed_seatbelt(
             Path::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE),
-            args,
+            transformed.command[1..].to_vec(),
             protected,
             repository,
         )
@@ -100,6 +112,30 @@ pub(crate) fn sandboxed_command(
     }
 }
 
+#[cfg(target_os = "macos")]
+fn sandboxed_seatbelt(
+    executable: &Path,
+    mut args: Vec<String>,
+    protected: &[PathBuf],
+    cwd: &Path,
+) -> Result<Command, String> {
+    if args.first().map(String::as_str) != Some("-p") || args.len() < 2 {
+        return Err("exec_sandbox_unavailable".to_owned());
+    }
+    for root in protected {
+        for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
+            let literal = serde_json::to_string(&path.to_string_lossy())
+                .map_err(|error| error.to_string())?;
+            args[1].push_str(&format!(
+                "\n(deny file-write* (literal {literal}) (subpath {literal}))"
+            ));
+        }
+    }
+    let mut command = Command::new(executable);
+    command.args(args).current_dir(cwd);
+    Ok(command)
+}
+
 pub(crate) fn process_request_allowed(
     grants: Option<&codex_omd::ModGrants>,
     request: &codex_omd::ModHostCall,
@@ -109,15 +145,6 @@ pub(crate) fn process_request_allowed(
     }
     let grants = grants.ok_or("host_caller_inactive")?;
     let fields = request.arguments.as_object().ok_or("process_arguments_invalid")?;
-    if codex_omd::legacy_api(&grants.api) {
-        if fields.contains_key("framing") || fields.contains_key("network") {
-            return Err("process_framing_requires_current_api".into());
-        }
-        return Ok(());
-    }
-    if fields.contains_key("transport") {
-        return Err("process_transport_removed: use framing and network".into());
-    }
     if fields.get("network").and_then(Value::as_str) == Some("loopback")
         && !grants.capabilities.iter().any(|capability| capability == "network")
     {

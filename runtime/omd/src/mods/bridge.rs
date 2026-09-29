@@ -10,19 +10,25 @@ pub struct ModHostCall {
 }
 
 impl ModHostCall {
-    pub fn capability(&self, api: &str) -> Result<&'static str> {
-        if legacy_api(api) {
-            return self.legacy_capability();
-        }
+    pub fn capability(&self) -> Result<&'static str> {
         let operation = self.operation.as_str();
         match operation {
-            "exec.run" => Ok("exec"),
-            "workspace.read" | "workspace.list" | "workspace.stat" => Ok("fs.read"),
-            "workspace.transaction" | "workspace.backup" | "workspace.restore"
+            "exec.run" | "exec.output_page" => Ok("exec"),
+            "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.snapshot" => {
+                Ok("fs.read")
+            }
+            "workspace.check_access" => Ok(if self.arguments["write"] == true {
+                "fs.write"
+            } else {
+                "fs.read"
+            }),
+            "workspace.transaction"
+            | "workspace.backup"
+            | "workspace.restore"
             | "workspace.request_rename" => Ok("fs.write"),
             "store.get" | "store.put" | "store.delete" | "store.list" | "store.export"
             | "store.reset" | "evidence.write" | "evidence.read" => Ok("store"),
-            "sessions.list" | "sessions.read" => Ok("sessions"),
+            "sessions.list" | "sessions.read" | "sessions.snapshot" => Ok("sessions"),
             "routes.list" | "providers.register" | "providers.unregister" => Ok("model"),
             "task.status" | "workspace.integrate" => Ok("agents"),
             "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict" => {
@@ -43,53 +49,6 @@ impl ModHostCall {
             ))),
         }
     }
-
-    pub fn capabilities_any(&self) -> Vec<&'static str> {
-        [self.legacy_capability(), self.capability(MOD_API_VERSION)]
-            .into_iter()
-            .filter_map(Result::ok)
-            .collect()
-    }
-
-    fn legacy_capability(&self) -> Result<&'static str> {
-        match self.operation.as_str() {
-            "evidence.read" => Ok("turn_evidence"),
-            "sessions.list" | "sessions.read" => Ok("sessions_read"),
-            "knowledge.inspect" | "knowledge.snapshot" | "context.freeze" | "context.deliver" => {
-                Ok("knowledge_read")
-            }
-            "knowledge.retain" | "knowledge.propose" | "knowledge.approve" | "knowledge.remove"
-            | "knowledge.reset" => Ok("knowledge_write"),
-            "task.status" | "routes.list" | "checkpoint.read" | "checkpoint.update" => Ok("task"),
-            "workers.presets" | "agents.spawn" | "agents.message" | "agents.cancel"
-            | "agents.result" | "agents.wait" | "agents.list" => Ok("agents"),
-            "workspace.integrate" => Ok("execution"),
-            "workspace.read" | "workspace.transaction" | "workspace.request_rename" => {
-                Ok("workspace")
-            }
-            "process.which" | "process.start" | "process.exchange" | "process.status"
-            | "process.stop" => Ok("process"),
-            "review.run" | "review.complete" | "review.request" | "review.wait"
-            | "review.result" | "review.submit" | "review.cancel" => Ok("review"),
-            "recovery.escalate" | "delegation.contribute" => Ok("recovery"),
-            "tools.exec" => Ok("execution"),
-            "providers.register" | "providers.unregister" => Ok("providers"),
-            "pi.discover" | "pi.expand" => Ok("pi_resources"),
-            "sidecars.start" | "sidecars.stop" | "sidecars.status" | "sidecars.invoke" => {
-                Ok("sidecars")
-            }
-            "workflow.status" | "workflow.restrict" => Ok("workflow"),
-            "git.status" | "git.log" | "git.diff" | "git.branches" | "git.switch_preview"
-            | "git.stage" | "git.unstage" | "git.commit" | "git.discard" | "git.switch" => {
-                Ok("git")
-            }
-            "mods.service" => Ok("services"),
-            _ => Err(failure(format!(
-                "unsupported_host_operation: {}",
-                self.operation
-            ))),
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -103,6 +62,7 @@ pub(super) fn run(
     host: &mut dyn FnMut(ModHostCall) -> Result<Value>,
     progress: &mut dyn FnMut(String),
     virtual_time_ms: Option<u64>,
+    scope: &InvocationScope,
 ) -> Result<Reply> {
     let mut receipts = Vec::new();
     let mut expected = Vec::new();
@@ -114,30 +74,34 @@ pub(super) fn run(
         }
         let request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
             "api": MOD_API_VERSION,
+            "assets": loaded.assets,
+            "entrypoint": loaded.package.entrypoint,
+            "entrypoint_sha256": digest(loaded.source.as_bytes()),
             "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": loaded.selection.settings,
             "state": loaded.state, "event": event, "name": name, "payload": payload, "receipts": receipts,
             "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
         let mut request = request;
         request["field_policies"] = ModHost::field_policies();
         request["surface"] = json!({
-            "events": events_for(&loaded.package.api).iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
-            "replacements": replacements_for(&loaded.package.api),
+            "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
+            "replacements": MOD_REPLACEMENT_POINTS,
             "middleware": MOD_MIDDLEWARE_EVENTS,
-            "state": state_capability(&loaded.package.api),
-            "contracts": contract_capability(&loaded.package.api),
+            "state": "store",
+            "contracts": "contracts",
             "adapter": loaded.adapter,
         });
         request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
         let started = Instant::now();
         let budget = Duration::from_millis(loaded.package.hook_budget_ms);
-        let reply: Reply =
-            serde_json::from_value(process::evaluate(node, &request, budget, active)?)?;
+        let evaluated = process::evaluate(node, &request, budget, active);
+        let elapsed = started.elapsed();
+        scope.charge_execution(elapsed)?;
+        execution += elapsed;
+        let reply: Reply = serde_json::from_value(evaluated?)?;
         if event != "inspect" && reply.registrations != loaded.registrations {
             return Err(failure("registration_changed_during_callback"));
         }
-        execution += started.elapsed();
-        // `hook_budget_ms` bounds each evaluation, which `process::evaluate` already enforces.
-        // Replaying host calls re-runs the module, so the whole callback carries its own total.
+        // Host-call replay re-runs the module, so the whole callback carries a total budget.
         if execution > Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS) {
             return Err(failure("callback_execution_budget"));
         }
@@ -173,7 +137,7 @@ pub(super) fn run(
         if expected.len() >= 32 {
             return Err(failure("host_call_limit"));
         }
-        let capability = call.capability(&loaded.package.api)?;
+        let capability = call.capability()?;
         if call.operation.starts_with("context.")
             && !loaded
                 .package
@@ -189,6 +153,7 @@ pub(super) fn run(
         if !active() {
             return Err(failure("callback_cancelled"));
         }
+        scope.charge_call()?;
         let result = host(call.clone());
         let receipt = match result {
             Ok(value) => json!({"call": call, "value": value}),
@@ -201,5 +166,6 @@ pub(super) fn run(
         if serde_json::to_vec(&receipts)?.len() > 131_072 {
             return Err(failure("host_receipt_limit"));
         }
+        scope.charge_receipt(serde_json::to_vec(receipts.last().unwrap())?.len())?;
     }
 }

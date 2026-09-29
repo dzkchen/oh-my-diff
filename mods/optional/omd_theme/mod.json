@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_theme",
-  "version": "0.1.0-candidate.1",
-  "api": "0.1.0-experimental.8",
+  "version": "0.2.0-candidate.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/optional/omd_theme" },

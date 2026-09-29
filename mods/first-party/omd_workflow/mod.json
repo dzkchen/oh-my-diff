@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "id": "omd_workflow",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "agents",
+    "commands",
+    "context",
+    "contracts",
+    "exec",
+    "fs.read",
+    "fs.write",
+    "model",
+    "services",
+    "store",
+    "tools",
+    "sessions",
+    "middleware",
+    "interception",
+    "lifecycle"
+  ],
+  "compatibility": {
+    "required_features": [
+      "contracts_v2",
+      "workspace_snapshots_v1",
+      "store_v1",
+      "routes_v1",
+      "snapshot_exec_v1",
+      "agent_parent_history_v1",
+      "contract_scoped_restrictions_v1",
+      "agent_failures_v1",
+      "task_resume_v1",
+      "service_dispatch_v1",
+      "integration_receipts_v1",
+      "tool_result_fingerprints_v1"
+    ]
+  },
+  "services": {
+    "exports": [
+      {
+        "name": "omd.workflow",
+        "version": "1.0.0",
+        "methods": {
+          "status": {
+            "input": "null",
+            "output": "object"
+          },
+          "checkpoint": {
+            "input": "object",
+            "output": "object"
+          },
+          "delegate": {
+            "input": "object",
+            "output": "object"
+          }
+        }
+      }
+    ]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "worker_route": {
+        "type": "string",
+        "default": "contributor"
+      },
+      "review_route": {
+        "type": "string",
+        "default": "reviewer"
+      },
+      "verify_route": {
+        "type": "string",
+        "default": "verifier"
+      },
+      "check": {
+        "type": "object",
+        "default": {}
+      },
+      "fallback_route": {
+        "type": "string",
+        "default": ""
+      },
+      "initial_task": {
+        "type": "object",
+        "default": {}
+      },
+      "max_no_progress_calls": {
+        "type": "number",
+        "default": 0
+      }
+    },
+    "additionalProperties": false
+  }
+}

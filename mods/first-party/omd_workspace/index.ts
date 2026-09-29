@@ -1,4 +1,4 @@
-import type { Json, ModAPI, TerminalComponent, TerminalRenderSite, TerminalView } from '../../api-0.1.d.ts';
+import type { Json, Ledger, ModAPI, TerminalComponent, TerminalRenderSite, TerminalView } from '../../api.d.ts';
 
 type Density = 'full' | 'compact';
 type Side = 'left' | 'right';
@@ -11,16 +11,13 @@ export default function activate(api: ModAPI) {
   const record = (object: Json | undefined, key: string): Json | undefined =>
     object && typeof object === 'object' && !Array.isArray(object) ? object[key] : undefined;
 
-  const texts = (value: Json | undefined): string[] =>
-    Array.isArray(value) ? value.filter(item => typeof item === 'string') : [];
-
   const trim = (text: string, width: number) =>
     text.length > width ? `${text.slice(0, width - 1)}…` : text;
 
   const saved = (): Saved => {
     const stored = api.state.get();
     return {
-      activity: texts(record(stored, 'activity')),
+      activity: Array.isArray(record(stored, 'activity')) ? (record(stored, 'activity') as Json[]).filter((item): item is string => typeof item === 'string') : [],
       density: DENSITIES.find(value => value === record(stored, 'density')) ?? null,
       side: SIDES.find(value => value === record(stored, 'side')) ?? null,
       dialog: record(stored, 'dialog') === true,
@@ -42,60 +39,10 @@ export default function activate(api: ModAPI) {
   const pane = (id: string, title: string, children: TerminalComponent[], collapsed = false): TerminalComponent =>
     ({ type: 'pane', id, label: `${title} panel`, title, collapsed, children });
 
-  const taskPane = (checkpoint: Json): TerminalComponent => {
-    const status = record(checkpoint, 'task_status');
-    const objective = record(checkpoint, 'objective');
-    const live = record(record(checkpoint, 'live'), 'workspace_sha256');
-    return pane('workspace_task', 'Task', [
-      line('workspace_task_status', 'Task status', `status  ${typeof status === 'string' ? status : 'no active task'}`, 'accent'),
-      line('workspace_task_goal', 'Task objective', `goal    ${trim(typeof objective === 'string' ? objective : 'none', 52)}`),
-      line('workspace_task_tree', 'Workspace version', `tree    ${typeof live === 'string' ? live.slice(0, 12) : 'unknown'}`, 'muted'),
-    ]);
-  };
-
-  const remainingPane = (checkpoint: Json): TerminalComponent => {
-    const remaining = texts(record(checkpoint, 'remaining_work'));
-    const done = record(checkpoint, 'completed_acceptance');
-    const count = Array.isArray(done) ? done.length : 0;
-    return pane(
-      'workspace_remaining',
-      `Remaining (${remaining.length} open, ${count} accepted)`,
-      remaining.length
-        ? remaining.slice(0, 8).map((item, index) => line(`workspace_remaining_${index}`, `Remaining item ${index + 1}`, `· ${trim(item, 54)}`))
-        : [line('workspace_remaining_empty', 'No remaining work', '· nothing outstanding', 'success')],
-    );
-  };
-
-  const workerPane = (checkpoint: Json): TerminalComponent => {
-    const workers = record(checkpoint, 'workers');
-    const archived = record(checkpoint, 'archived_workers');
-    const live = Array.isArray(workers) ? workers : [];
-    const children = live.length
-      ? live.slice(0, 8).map((worker, index) => {
-          const role = record(worker, 'objective') ?? record(worker, 'role');
-          const status = record(worker, 'status');
-          return line(
-            `workspace_worker_${index}`,
-            `Worker ${index + 1}`,
-            `· ${trim(`${typeof status === 'string' ? status : '?'} ${typeof role === 'string' ? role : ''}`, 54)}`,
-            status === 'failed' ? 'failure' : status === 'completed' ? 'success' : 'normal',
-          );
-        })
-      : [line('workspace_workers_empty', 'No live workers', '· none spawned', 'muted')];
-    return pane('workspace_workers', `Workers (${live.length} live, ${typeof archived === 'number' ? archived : 0} archived)`, children);
-  };
-
-  const allowancePane = (checkpoint: Json): TerminalComponent => {
-    const allowance = record(checkpoint, 'allowance');
-    const requests = record(allowance, 'requests_remaining');
-    const seconds = record(allowance, 'seconds_remaining');
-    const exposure = record(allowance, 'exposure_remaining_microusd');
-    return pane('workspace_allowance', 'Allowance', [
-      line('workspace_allowance_requests', 'Requests remaining', `requests ${typeof requests === 'number' ? requests : '—'}`),
-      line('workspace_allowance_seconds', 'Seconds remaining', `seconds  ${typeof seconds === 'number' ? seconds : '—'}`),
-      line('workspace_allowance_budget', 'Budget remaining', `budget   ${typeof exposure === 'number' ? `$${(exposure / 1_000_000).toFixed(2)}` : '—'}`),
-    ]);
-  };
+  const taskPane = (ledger: Ledger | null): TerminalComponent => pane('workspace_task', 'Session', [
+    line('workspace_task_thread', 'Session thread', `thread  ${ledger?.thread_id?.slice(0, 12) ?? 'unavailable'}`, 'accent'),
+    line('workspace_task_cost', 'Session cost', `cost    ${ledger?.cost === null || ledger?.cost === undefined ? 'unavailable' : trim(JSON.stringify(ledger.cost), 52)}`, 'muted'),
+  ]);
 
   const dialogSite = (density: Density, side: Side, review: string): TerminalRenderSite => ({
     mode: 'replace',
@@ -123,7 +70,7 @@ export default function activate(api: ModAPI) {
     }],
   });
 
-  const view = (event: string, checkpoint: Json): TerminalView => {
+  const view = (event: string, ledger: Ledger | null): TerminalView => {
     const state = saved();
     const density = state.density ?? setting('density', DENSITIES) ?? 'full';
     const side = state.side ?? setting('side', SIDES) ?? 'left';
@@ -131,15 +78,7 @@ export default function activate(api: ModAPI) {
     const review = state.review ?? (typeof api.settings.review_prompt === 'string'
       ? api.settings.review_prompt
       : 'Review the current candidate and list the remaining risks.');
-    const sidebar = density === 'compact'
-      ? [taskPane(checkpoint), pane('workspace_activity', 'Activity', activity.slice(-6).map((entry, index) => line(`workspace_activity_${index}`, `Activity ${index + 1}`, entry, 'muted')), true)]
-      : [
-          taskPane(checkpoint),
-          remainingPane(checkpoint),
-          workerPane(checkpoint),
-          allowancePane(checkpoint),
-          pane('workspace_activity', 'Activity', activity.slice(-10).map((entry, index) => line(`workspace_activity_${index}`, `Activity ${index + 1}`, entry, 'muted')), true),
-        ];
+    const sidebar = [taskPane(ledger), pane('workspace_activity', 'Activity', activity.slice(-(density === 'compact' ? 6 : 10)).map((entry, index) => line(`workspace_activity_${index}`, `Activity ${index + 1}`, entry, 'muted')), density === 'compact')];
     const sites: Partial<Record<'sidebar' | 'header' | 'above_composer' | 'dialog', TerminalRenderSite>> = {
       sidebar: { mode: 'replace', components: sidebar },
       header: { mode: 'replace', components: [line('workspace_header', 'Workspace state', `${density} · ${side} sidebar · ${trim(event, 24)}`, 'accent')] },
@@ -164,7 +103,7 @@ export default function activate(api: ModAPI) {
     };
   };
 
-  api.replace('terminal', ({ event, checkpoint }) => view(event, checkpoint));
+  api.replace('terminal', ({ event, ledger }) => view(event, ledger));
 
   api.command(
     'layout',

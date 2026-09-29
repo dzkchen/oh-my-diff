@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::Digest;
 use sha2::Sha256;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const CONTRACT_DOCUMENT_SCHEMA: u32 = 2;
 const REQUIREMENT_LIMIT: usize = 16;
@@ -17,6 +17,8 @@ pub enum Producer {
     Any,
     Lead,
     SeparateAgent,
+    Host,
+    Integration,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Ord, PartialOrd)]
@@ -106,6 +108,8 @@ pub struct ReceiptFinding {
 pub enum ProducerKind {
     Lead,
     Agent,
+    Host,
+    Integration,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -127,20 +131,46 @@ pub struct Receipt {
     pub producer: ReceiptProducer,
     #[serde(default)]
     pub findings: Vec<ReceiptFinding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolves: Vec<String>,
     pub submitted_by: String,
     pub at: u128,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FindingResolution {
+    pub candidate_sha256: String,
+    pub producer: ReceiptProducer,
+    pub receipt_index: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FindingLedgerEntry {
+    pub finding: ReceiptFinding,
+    pub reported_candidate_sha256: String,
+    pub acceptance_sha256: String,
+    pub reported_producer: ReceiptProducer,
+    pub report_receipt_index: usize,
+    pub resolution: Option<FindingResolution>,
+}
+
+pub type FindingLedger = BTreeMap<String, FindingLedgerEntry>;
+
 pub fn token(value: &str, limit: usize) -> bool {
     !value.is_empty()
         && value.len() <= limit
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.'))
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.')
+        })
 }
 
 pub fn sha256_hex(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn canonical(value: &Value) -> Value {
@@ -148,7 +178,11 @@ fn canonical(value: &Value) -> Value {
         Value::Object(object) => {
             let mut keys = object.keys().collect::<Vec<_>>();
             keys.sort();
-            Value::Object(keys.into_iter().map(|key| (key.clone(), canonical(&object[key]))).collect())
+            Value::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), canonical(&object[key])))
+                    .collect(),
+            )
         }
         Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
         other => other.clone(),
@@ -157,7 +191,8 @@ fn canonical(value: &Value) -> Value {
 
 impl ContractDocument {
     pub fn parse(value: &Value) -> Result<Self, String> {
-        let document: Self = serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+        let document: Self =
+            serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
         document.validate()?;
         Ok(document)
     }
@@ -168,7 +203,10 @@ impl ContractDocument {
 
     pub fn digest(&self) -> String {
         let value = canonical(&serde_json::to_value(self).unwrap_or(Value::Null));
-        format!("{:x}", Sha256::digest(serde_json::to_vec(&value).unwrap_or_default()))
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&value).unwrap_or_default())
+        )
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -190,7 +228,11 @@ impl ContractDocument {
         }
         for requirements in [&self.gates.complete, &self.gates.integrate] {
             if requirements.len() > REQUIREMENT_LIMIT
-                || requirements.iter().map(|r| &r.receipt).collect::<BTreeSet<_>>().len()
+                || requirements
+                    .iter()
+                    .map(|r| &r.receipt)
+                    .collect::<BTreeSet<_>>()
+                    .len()
                     != requirements.len()
                 || requirements.iter().any(|requirement| {
                     !token(&requirement.receipt, 64)
@@ -219,7 +261,10 @@ impl ContractDocument {
                     candidate.receipt == required.receipt
                         && (candidate.producer == required.producer
                             || required.producer == Producer::Any)
-                        && required.bind.iter().all(|bind| candidate.bind.contains(bind))
+                        && required
+                            .bind
+                            .iter()
+                            .all(|bind| candidate.bind.contains(bind))
                         && (candidate.blocking_findings == BlockingFindings::Reject
                             || required.blocking_findings == BlockingFindings::Allow)
                 })
@@ -227,7 +272,10 @@ impl ContractDocument {
         };
         !covers(&self.gates.complete, &other.gates.complete)
             || !covers(&self.gates.integrate, &other.gates.integrate)
-            || other.restrict.iter().any(|operation| !self.restrict.contains(operation))
+            || other
+                .restrict
+                .iter()
+                .any(|operation| !self.restrict.contains(operation))
     }
 
     pub fn missing(
@@ -240,25 +288,36 @@ impl ContractDocument {
         self.requirements(gate)
             .iter()
             .filter(|requirement| {
-                !receipts.iter().rev().any(|receipt| {
-                    receipt.kind == requirement.receipt
-                        && receipt.outcome == ReceiptOutcome::Pass
-                        && (!requirement.bind.contains(&Binding::Candidate)
-                            || receipt.candidate_sha256 == candidate_sha256)
-                        && (!requirement.bind.contains(&Binding::Acceptance)
-                            || acceptance_sha256.is_some()
-                                && receipt.acceptance_sha256.as_deref() == acceptance_sha256)
-                        && match requirement.producer {
-                            Producer::Any => true,
-                            Producer::Lead => receipt.producer.kind == ProducerKind::Lead,
-                            Producer::SeparateAgent => receipt.producer.kind == ProducerKind::Agent,
-                        }
-                        && (requirement.blocking_findings == BlockingFindings::Allow
-                            || !receipt
-                                .findings
-                                .iter()
-                                .any(|finding| finding.severity == FindingSeverity::Blocking))
-                })
+                !receipts
+                    .iter()
+                    .rev()
+                    .find(|receipt| {
+                        receipt.kind == requirement.receipt
+                            && (!requirement.bind.contains(&Binding::Candidate)
+                                || receipt.candidate_sha256 == candidate_sha256)
+                            && (!requirement.bind.contains(&Binding::Acceptance)
+                                || acceptance_sha256.is_some()
+                                    && receipt.acceptance_sha256.as_deref() == acceptance_sha256)
+                            && match requirement.producer {
+                                Producer::Any => true,
+                                Producer::Lead => receipt.producer.kind == ProducerKind::Lead,
+                                Producer::SeparateAgent => {
+                                    receipt.producer.kind == ProducerKind::Agent
+                                }
+                                Producer::Host => receipt.producer.kind == ProducerKind::Host,
+                                Producer::Integration => {
+                                    receipt.producer.kind == ProducerKind::Integration
+                                }
+                            }
+                    })
+                    .is_some_and(|receipt| {
+                        receipt.outcome == ReceiptOutcome::Pass
+                            && (requirement.blocking_findings == BlockingFindings::Allow
+                                || !receipt
+                                    .findings
+                                    .iter()
+                                    .any(|finding| finding.severity == FindingSeverity::Blocking))
+                    })
             })
             .cloned()
             .collect()
@@ -275,19 +334,117 @@ impl Receipt {
                 .is_some_and(|value| !sha256_hex(value))
             || !sha256_hex(&self.evidence.sha256)
             || self.findings.len() > FINDING_LIMIT
+            || self.resolves.len() > FINDING_LIMIT
+            || self
+                .findings
+                .iter()
+                .map(|finding| &finding.fingerprint)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != self.findings.len()
+            || self.resolves.iter().collect::<BTreeSet<_>>().len() != self.resolves.len()
             || self.findings.iter().any(|finding| {
                 !token(&finding.fingerprint, 128)
                     || finding.summary.is_empty()
                     || finding.summary.len() > 512
                     || finding.paths.len() > 32
-                    || finding.paths.iter().any(|path| path.is_empty() || path.len() > 1024)
+                    || finding
+                        .paths
+                        .iter()
+                        .any(|path| path.is_empty() || path.len() > 1024)
             })
+            || self.resolves.iter().any(|fingerprint| {
+                !token(fingerprint, 128)
+                    || self
+                        .findings
+                        .iter()
+                        .any(|finding| &finding.fingerprint == fingerprint)
+            })
+            || self
+                .findings
+                .iter()
+                .any(|finding| finding.severity == FindingSeverity::Blocking)
+                && self.acceptance_sha256.is_none()
+            || !self.resolves.is_empty()
+                && (self.outcome != ReceiptOutcome::Pass
+                    || self.producer.kind != ProducerKind::Agent
+                    || self.acceptance_sha256.is_none())
             || (self.producer.kind == ProducerKind::Agent) != self.producer.handle.is_some()
         {
             return Err("invalid_receipt".into());
         }
         Ok(())
     }
+}
+
+pub fn apply_finding_receipt(
+    ledger: &mut FindingLedger,
+    receipt: &Receipt,
+    receipt_index: usize,
+) -> Result<(), String> {
+    receipt.validate()?;
+    for fingerprint in &receipt.resolves {
+        let entry = ledger
+            .get(fingerprint)
+            .ok_or("finding_resolution_unknown")?;
+        if entry.resolution.is_some() {
+            return Err("finding_already_resolved".into());
+        }
+        if entry.reported_candidate_sha256 == receipt.candidate_sha256 {
+            return Err("finding_resolution_candidate_unchanged".into());
+        }
+        if receipt.acceptance_sha256.as_deref() != Some(entry.acceptance_sha256.as_str()) {
+            return Err("finding_resolution_acceptance_changed".into());
+        }
+        if entry.reported_producer.kind == ProducerKind::Agent
+            && entry.reported_producer.handle == receipt.producer.handle
+        {
+            return Err("finding_resolution_agent_not_separate".into());
+        }
+    }
+    for fingerprint in &receipt.resolves {
+        ledger
+            .get_mut(fingerprint)
+            .ok_or("finding_resolution_unknown")?
+            .resolution = Some(FindingResolution {
+            candidate_sha256: receipt.candidate_sha256.clone(),
+            producer: receipt.producer.clone(),
+            receipt_index,
+        });
+    }
+    for finding in &receipt.findings {
+        if finding.severity == FindingSeverity::Blocking {
+            if ledger
+                .get(&finding.fingerprint)
+                .is_some_and(|entry| entry.resolution.is_none())
+            {
+                continue;
+            }
+            ledger.insert(
+                finding.fingerprint.clone(),
+                FindingLedgerEntry {
+                    finding: finding.clone(),
+                    reported_candidate_sha256: receipt.candidate_sha256.clone(),
+                    acceptance_sha256: receipt
+                        .acceptance_sha256
+                        .clone()
+                        .ok_or("finding_acceptance_required")?,
+                    reported_producer: receipt.producer.clone(),
+                    report_receipt_index: receipt_index,
+                    resolution: None,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+pub fn replay_finding_receipts(receipts: &[Receipt]) -> Result<FindingLedger, String> {
+    let mut ledger = FindingLedger::new();
+    for (index, receipt) in receipts.iter().enumerate() {
+        apply_finding_receipt(&mut ledger, receipt, index)?;
+    }
+    Ok(ledger)
 }
 
 pub const USER_CONTRACT_SELECTION: &str = "contract-selection.json";
@@ -339,10 +496,9 @@ impl ContractSelection {
             || !digest(&self.floor_digest)
             || self.contract.is_none() && self.contract_digest.is_some()
             || self.floor.is_none() && self.floor_digest.is_some()
-            || self
-                .confirmation
-                .as_deref()
-                .is_some_and(|value| value.len() != 16 || !value.bytes().all(|b| b.is_ascii_hexdigit()))
+            || self.confirmation.as_deref().is_some_and(|value| {
+                value.len() != 16 || !value.bytes().all(|b| b.is_ascii_hexdigit())
+            })
         {
             return Err("invalid_contract_selection".into());
         }
@@ -352,9 +508,10 @@ impl ContractSelection {
     pub fn read(path: &std::path::Path) -> Result<Option<Self>, String> {
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.is_file() && metadata.len() <= SELECTION_BYTES => {
-                let selection: Self =
-                    serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?)
-                        .map_err(|error| format!("invalid contract selection: {error}"))?;
+                let selection: Self = serde_json::from_slice(
+                    &std::fs::read(path).map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| format!("invalid contract selection: {error}"))?;
                 selection.validate()?;
                 Ok(Some(selection))
             }
@@ -417,7 +574,9 @@ pub fn resolve_contract(
     project: Option<&ContractSelection>,
 ) -> ContractResolution {
     let find = |key: &str, digest: Option<&String>| {
-        let (document, owner) = documents.iter().find(|(document, _)| document.key() == key)?;
+        let (document, owner) = documents
+            .iter()
+            .find(|(document, _)| document.key() == key)?;
         digest
             .is_none_or(|digest| *digest == document.digest())
             .then(|| (document.clone(), owner.clone()))

@@ -3,6 +3,7 @@ mod config;
 mod contract;
 mod execution;
 mod generic_host;
+mod ledger;
 mod managed_process;
 mod mods;
 mod workspace_operations;
@@ -68,9 +69,11 @@ pub(crate) struct Host {
 
 pub(crate) struct Session {
     task: Arc<Task>,
+    repository_identity: String,
     evidence: PathBuf,
     scratch: PathBuf,
     contract: std::sync::Mutex<contract::SessionContract>,
+    contract_state: PathBuf,
     operation: std::sync::atomic::AtomicBool,
     processes: Arc<managed_process::ManagedProcesses>,
     data: mods::DataScope,
@@ -86,12 +89,43 @@ pub(crate) struct Lead {
     permission_profile: Arc<std::sync::Mutex<codex_protocol::models::PermissionProfile>>,
 }
 
-struct OperationGuard<'a>(&'a std::sync::atomic::AtomicBool);
+struct OperationGuard<'a> {
+    operation: &'a std::sync::atomic::AtomicBool,
+    repository_identity: String,
+}
+
+static WORKSPACE_OPERATIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
 
 impl Drop for OperationGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, std::sync::atomic::Ordering::Release);
+        self.operation.store(false, std::sync::atomic::Ordering::Release);
+        if let Ok(mut active) = WORKSPACE_OPERATIONS.lock() {
+            active.remove(&self.repository_identity);
+        }
     }
+}
+
+fn acquire_workspace_operation<'a>(
+    operation: &'a std::sync::atomic::AtomicBool,
+    repository_identity: &str,
+) -> Result<OperationGuard<'a>, String> {
+    use std::sync::atomic::Ordering;
+    if operation.swap(true, Ordering::AcqRel) {
+        return Err("workspace_operation_active: another integrate, restore, rename or transaction is running".into());
+    }
+    let mut active = WORKSPACE_OPERATIONS.lock().map_err(|_| {
+        operation.store(false, Ordering::Release);
+        "workspace_operation_lock_poisoned"
+    })?;
+    if !active.insert(repository_identity.to_owned()) {
+        operation.store(false, Ordering::Release);
+        return Err("workspace_operation_active: another integrate, restore, rename or transaction is running".into());
+    }
+    Ok(OperationGuard {
+        operation,
+        repository_identity: repository_identity.to_owned(),
+    })
 }
 
 pub fn install(
@@ -185,11 +219,10 @@ impl Host {
         let mut paths = vec![self.root.clone()];
         paths.extend(self.config.protected.iter().cloned());
         paths.extend(self.config.secret_refs.values().cloned());
-        paths.extend(self.config.pi_user.iter().cloned());
         paths
     }
 
-    fn open_session(&self, thread: ThreadId) -> Result<Arc<Session>, String> {
+    fn open_session(&self, thread: ThreadId, resumed: bool) -> Result<Arc<Session>, String> {
         let sessions = self.root.join("sessions");
         match std::fs::create_dir(&sessions) {
             Ok(()) => {
@@ -200,16 +233,24 @@ impl Host {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.to_string()),
         }
-        let evidence = sessions.join(format!("{thread}-{}", self.epoch));
-        let task = Arc::new(
-            Task::create(self.config.limits.clone(), evidence.clone())
-                .map_err(|error| error.to_string())?,
-        );
+        if std::fs::symlink_metadata(&sessions).map_err(|e| e.to_string())?.is_symlink()
+            || sessions.canonicalize().map_err(|e| e.to_string())? != sessions {
+            return Err("session_store_not_canonical".into());
+        }
+        let task = Arc::new(ledger::open(&sessions, &self.repository_identity, thread, self.config.limits.clone(), resumed)?);
+        let scratch = self.repository.join(".omd").join(format!("session-{thread}"));
+        if resumed && scratch.symlink_metadata().is_ok() {
+            codex_omd::cleanup_owned_directory(scratch.parent().ok_or("scratch_parent_missing")?, &scratch).map_err(|e| e.to_string())?;
+        }
+        let evidence = sessions.join(format!("{thread}-{}-{}", self.epoch, ThreadId::new()));
+        std::fs::create_dir(&evidence).map_err(|e| e.to_string())?;
         let evidence = evidence.canonicalize().map_err(|error| error.to_string())?;
         Ok(Arc::new(Session {
             task,
-            scratch: self.repository.join(".omd").join(format!("session-{thread}")),
+            repository_identity: self.repository_identity.clone(),
+            scratch,
             contract: std::sync::Mutex::new(contract::SessionContract::default()),
+            contract_state: sessions.join(format!("contract-{}-{thread}.json", self.repository_identity)),
             operation: std::sync::atomic::AtomicBool::new(false),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
             data: mods::DataScope::default(),
@@ -319,6 +360,18 @@ impl Session {
             .map_err(|_| "contract_lock_poisoned")?
             .status();
         let bytes = serde_json::to_vec(&status).map_err(|error| error.to_string())?;
+        if status["status"] == "unavailable" { return Err("contract_unavailable".into()); }
+        let result = if bytes.len() > contract::STATE_BYTES {
+            Err("contract_state_byte_limit".into())
+        } else { persist(
+            self.contract_state.parent().ok_or("contract_state_parent_missing")?,
+            self.contract_state.file_name().and_then(|name| name.to_str()).ok_or("contract_state_name_invalid")?,
+            &bytes, true,
+        ) };
+        if let Err(error) = &result {
+            self.contract.lock().map_err(|_| "contract_lock_poisoned")?.invalidate(error.clone());
+        }
+        result?;
         persist(&self.evidence, "contract.json", &bytes, false)
     }
 
@@ -334,15 +387,15 @@ impl Session {
 
 impl Lead {
     fn ledger(&self) -> Value {
-        json!({"thread_id": self.thread.to_string(), "cost": self.session.task.cost_capture().ok()})
+        json!({"thread_id": self.thread.to_string(), "cwd": self.host.repository, "cost": self.session.task.cost_capture().ok()})
     }
 
-    fn restricted(&self, operation: &str) -> Result<(), String> {
+    fn restricted(&self, operation: &str, arguments: &Value) -> Result<(), String> {
         self.session
             .contract
             .lock()
             .map_err(|_| "contract_lock_poisoned")?
-            .restricted(operation)
+            .restricted(operation, arguments)
     }
 }
 
@@ -375,6 +428,18 @@ fn thread_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_operation_guard_excludes_other_sessions_in_same_repository() {
+        let first = std::sync::atomic::AtomicBool::new(false);
+        let second = std::sync::atomic::AtomicBool::new(false);
+        let held = acquire_workspace_operation(&first, "repo-a").unwrap();
+        assert!(acquire_workspace_operation(&first, "repo-a").is_err());
+        assert!(acquire_workspace_operation(&second, "repo-a").is_err());
+        assert!(acquire_workspace_operation(&second, "repo-b").is_ok());
+        drop(held);
+        assert!(acquire_workspace_operation(&second, "repo-a").is_ok());
+    }
 
     #[test]
     fn host_config_defaults_are_bounded_and_route_free() {

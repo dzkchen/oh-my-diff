@@ -6,7 +6,8 @@
       "cwd": ".",
       "env_vars": [
         "OMD_MODE",
-        "OMD_CONTROLLED_MANIFEST"
+        "OMD_BRIDGE_CONFIG",
+        "OMD_MOD_STORE"
       ],
       "default_tools_approval_mode": "prompt",
       "startup_timeout_sec": 10,

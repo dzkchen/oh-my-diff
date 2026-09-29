@@ -8,7 +8,9 @@ replayed: `1.0.0` on mod API `0.1.0-experimental.5` with state version 1, and
 `2.0.0` on `0.1.0-experimental.6` with state version 2 and an explicit `migrate`
 handler.
 
-`python3 scripts/mod_full_api_exercise.py` (or `mise run mods:full-api-exercise`)
+`python3 scripts/mod_full_api_exercise.py` was the historical API 0.1 replay;
+the current API 0.2 host rejects these packages. The active authoring gate is
+`mise run mods:author-acceptance`.
 replays the whole exercise from a clean root: it packs the SDK, scaffolds both
 packages with `omd-mod-author create`, copies these sources in, checks, tests,
 debugs and packages them, installs them next to the repository-only `counter`

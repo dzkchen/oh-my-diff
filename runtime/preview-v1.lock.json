@@ -1,75 +1,104 @@
 {
-  "guide": {
-    "path": "mods/PREVIEW.md"
-  },
   "mod_api": "0.2.0-experimental.1",
   "node": "24.18.0",
   "packages": {
     "omd_coordination": {
-      "api": "0.1.0-experimental.8",
+      "api": "0.2.0-experimental.1",
       "capabilities": [
         "agents",
         "commands",
         "context",
+        "fs.read",
         "lifecycle",
-        "recovery",
-        "routing",
+        "model",
         "services",
-        "state",
-        "task",
+        "sessions",
+        "store",
         "tools"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "15dab4e41af6402f56869261944026898b1373200dc0ee80c975e211640b3c77",
-        "mod.json": "709bcf629095d4a4880dcf40281b250c78c8c02d222200a96c7e93ce14a910ed"
+        "index.ts": "1e380cde4e5c00e0e52cd8acadc7801bb2089017c8236108807fe0588b7d6733",
+        "mod.json": "014a40c74b335cb17248e6c8d1385f3252e9587a3f4eff13ec35e078da30067b"
       },
-      "package_sha256": "c79afbabfe6f2c157798900255a84d8393577900bdcac59a88600cc3c121c18c",
+      "package_sha256": "56134ddc8ddb63b58bd5522f7e87316c8b150feb06a02bb9edfc5b249d650ce7",
       "source": "mods/first-party/omd_coordination",
-      "version": "0.1.0-preview.4"
+      "version": "0.2.0-preview.1"
     },
     "omd_recovery": {
-      "api": "0.1.0-experimental.8",
+      "api": "0.2.0-experimental.1",
       "capabilities": [
+        "agents",
         "commands",
         "interception",
         "lifecycle",
-        "recovery",
+        "model",
         "services",
-        "state",
-        "tools"
+        "sessions",
+        "store",
+        "fs.read",
+        "tools",
+        "middleware"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "01fe0166877ebbf0f96c638f7833dd14e37071de1c75cf1edfdc3c14d1e80d00",
-        "mod.json": "beb3ea66c97940f0ff80edd5fbf6511980183dd8e2e4ae9361cf59d991a7da62"
+        "index.ts": "2e371ad3cb12de2283a404959615fe17881642b99013dc6656471a8b46c40d10",
+        "mod.json": "14ff2fb1ef46014ce08027c763d5b17a4bdc7aa2780a9651c81c73bd5e5046d3"
       },
-      "package_sha256": "22c5f4373518abcdb584a184917f38dba4ba9746bdddfce33cbaba13d3eb08dc",
+      "package_sha256": "558ca32c4934a05c650303fdae6fe282e90e00e65ae852238cff2578f68dacc3",
       "source": "mods/first-party/omd_recovery",
-      "version": "0.1.0-preview.2"
+      "version": "0.2.0-preview.1"
+    },
+    "omd_workflow": {
+      "api": "0.2.0-experimental.1",
+      "capabilities": [
+        "agents",
+        "commands",
+        "context",
+        "contracts",
+        "exec",
+        "fs.read",
+        "fs.write",
+        "model",
+        "services",
+        "store",
+        "tools",
+        "sessions",
+        "middleware",
+        "interception",
+        "lifecycle"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "90d1e2941eedb87871a0f8df99151e13fe7f9dacbf9dcfbd830ac2d5f20100f2",
+        "mod.json": "8e937d022b4ca17bac00ef6c7ed9b58af20d416f261abf4344d4671d900e873e"
+      },
+      "package_sha256": "88f604641c9bb8d2e10890720ff4f75b777ca2d8bab8670b9deec900fbe08f00",
+      "source": "mods/first-party/omd_workflow",
+      "version": "0.2.0-preview.1"
     },
     "omd_workspace": {
-      "api": "0.1.0-experimental.8",
+      "api": "0.2.0-experimental.1",
       "capabilities": [
         "terminal",
         "commands",
         "lifecycle",
-        "state"
+        "store"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "a9fb5f9ada26799b0a6e2c5d1dd7e084e1394069dae48b7e2658a10083fb311b",
-        "mod.json": "85b84ccf8ea0b912a63f9499fab80345a40f277a73052cd89e67aa8c76a000e3"
+        "index.ts": "0dc4a510af85470a0579373b1538d0a1ebfa071aa151a6332d87ef9692df0bb4",
+        "mod.json": "1768f45bece8005b80c67bee30d4d490f08f7e8ddca9be63fc8360e43a8579e2"
       },
-      "package_sha256": "e27d5a9c057c6e22c0bd249559bfb661c113e02cc52d73b8b1a6cc333cb35c6e",
+      "package_sha256": "099a83ea8daaa67a6957769fd5214c57b64b13f51fb5507936e8fdd6217aa26e",
       "source": "mods/first-party/omd_workspace",
-      "version": "0.2.0-preview.2"
+      "version": "0.2.0-preview.3"
     }
   },
   "product": "oh-my-diff-private-preview-v1",
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "1f2b26fabec9c6f549bde4d15735dccfd8a6d3c05c09d44bc16d6e8f193b0109"
+    "sha256": "5ffbcbc1afb7683ecd7e7c9f2f1e1d3aca057f2e46865507efbdf688cbf47ebb"
   }
 }

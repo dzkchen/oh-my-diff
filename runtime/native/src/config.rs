@@ -77,8 +77,6 @@ pub(crate) struct HostConfig {
     #[serde(default)]
     pub approved_untracked: Vec<String>,
     #[serde(default)]
-    pub pi_user: Option<PathBuf>,
-    #[serde(default)]
     pub contract: ContractSelectionConfig,
 }
 
@@ -93,7 +91,6 @@ fn agent_limits() -> Limits {
         seconds: 86_400,
         concurrent_workers: 4,
         max_depth: 2,
-        max_reassessments: 0,
     }
 }
 
@@ -136,7 +133,6 @@ impl Default for HostConfig {
             snapshot_bytes: snapshot_bytes(),
             max_request_bytes: max_request_bytes(),
             approved_untracked: Vec::new(),
-            pi_user: None,
             contract: ContractSelectionConfig::default(),
         }
     }
@@ -175,7 +171,6 @@ impl HostConfig {
             || self.protected.iter().any(|path| !external(path))
             || self.secret_refs.values().any(|path| !external(path))
             || self.toolchain_reads.iter().any(|path| !path.is_absolute())
-            || self.pi_user.as_ref().is_some_and(|path| !external(path))
             || self.contract.user.as_ref().is_some_and(|path| !path.is_absolute())
         {
             return Err(format!("{HOST_CONFIG} limits or paths are invalid"));

@@ -13,11 +13,10 @@ pub(super) fn validate_registrations(
 ) -> Result<()> {
     if readers.len() > 8
         || !readers.is_empty()
-            && (api_rank(&package.api) < 9
-                || !package
-                    .capabilities
-                    .iter()
-                    .any(|cap| cap == "virtual_reads")
+            && (!package
+                .capabilities
+                .iter()
+                .any(|cap| cap == "virtual_reads")
                 || !package
                     .compatibility
                     .required_features
@@ -156,21 +155,21 @@ impl ModHost {
             }));
         }
         let (owner, reader) = &providers[0];
-        let value = self.invoke_with(
+        let value = self.invoke_scoped_with(
             owner,
             self.generation,
             "virtual_read",
             namespace,
             arguments,
             &active,
-            |call| {
+            |caller, call| {
                 if !matches!(
                     call.operation.as_str(),
                     "workspace.read" | "sidecars.invoke"
                 ) {
                     return Err(failure("virtual_read_authority_denied"));
                 }
-                host(owner, call)
+                host(caller, call)
             },
         )?;
         if !active() {
@@ -254,15 +253,8 @@ impl ModHost {
         progress: impl FnMut(String),
     ) -> Result<Value> {
         if !owner.is_empty() {
-            return self.invoke_streaming(
-                owner,
-                generation,
-                "tool",
-                name,
-                payload,
-                active,
-                |call| host(owner, call),
-                progress,
+            return self.invoke_scoped_streaming(
+                owner, generation, "tool", name, payload, active, &mut host, progress,
             );
         }
         if name != "read"

@@ -36,19 +36,23 @@ def read_object(stream, label):
 
 
 def active():
-    if os.environ.get("OMD_MODE") != "enabled":
+    if os.environ.get("OMD_MODE") != "omd":
         return False
-    raw = os.environ.get("OMD_CONTROLLED_MANIFEST")
+    raw = os.environ.get("OMD_BRIDGE_CONFIG")
+    if not raw and os.environ.get("OMD_MOD_STORE"):
+        candidate = Path(os.environ["OMD_MOD_STORE"]) / "plugin-config" / "omd-application-bridges.json"
+        if candidate.exists():
+            raw = str(candidate)
     if not raw:
         return False
     path = Path(raw).expanduser()
     if not path.is_absolute() or path.resolve() != path or not path.is_file():
-        raise Invalid("controlled manifest path is not canonical")
+        raise Invalid("plugin configuration path is not canonical")
     with path.open("rb") as stream:
-        manifest = read_object(stream, "controlled manifest")
+        manifest = read_object(stream, "plugin configuration")
     capabilities = manifest.get("capabilities", {})
     if not isinstance(capabilities, dict):
-        raise Invalid("controlled capabilities are invalid")
+        raise Invalid("plugin capabilities are invalid")
     return capabilities.get("application_bridge") is True
 
 

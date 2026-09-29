@@ -1,17 +1,19 @@
 {
   "schema": 1,
   "id": "omd_anchored_edit",
-  "version": "0.1.0-preview.1",
-  "api": "0.1.0-experimental.9",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
   "capabilities": [
     "tools",
-    "workspace"
+    "fs.read",
+    "fs.write"
   ],
   "compatibility": {
     "required_features": [
-      "plugin_dispatch_v1"
+      "plugin_dispatch_v1",
+      "workspace_snapshots_v1"
     ]
   }
 }

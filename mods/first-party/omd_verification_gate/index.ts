@@ -1,57 +1,30 @@
-import type { Json, ModAPI } from '../../api-0.1.d.ts';
+import type { ContractRequirement, Json, ModAPI } from '../../api.d.ts';
 
 const CONTRACT = 'omd_verification_gate';
-
-function record(value: Json): Record<string, Json> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
+const required = (receipt: string, producer: ContractRequirement['producer']): ContractRequirement => ({ receipt, producer, bind: ['candidate', 'acceptance'], blocking_findings: 'reject' });
+const object = (value: Json): Record<string, Json> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 export default function activate(api: ModAPI) {
-  api.contract({
-    schema: 1,
-    id: CONTRACT,
-    version: 1,
-    requirements: {
-      delegation: true,
-      child_agents: true,
-      opposite_lead: true,
-      escalation: true,
-      checkpoints: true,
-      milestone_review: true,
-      final_review: 'separate',
-      completion: 'adversarial_separate',
-    },
-  });
-  api.tool({
-    name: 'seal_candidate',
-    description: 'After the selected workflow has recorded acceptance evidence for this exact candidate, close delegation and child-agent spawning for final verification. Native review, escalation and completion stay active.',
-    parameters: {
-      type: 'object',
-      properties: { candidate_sha256: { type: 'string' } },
-      required: ['candidate_sha256'],
-      additionalProperties: false,
-    },
+  api.contract({ schema: 2, id: CONTRACT, version: 1, description: 'Reviewed workflow with explicit candidate sealing', assurance: 'independently-verified', gates: {
+    complete: [required('checks', 'host'), required('final_review', 'separate_agent'), required('adversarial_verification', 'separate_agent')],
+    integrate: [required('contribution_checks', 'host'), required('contribution_review', 'separate_agent')],
+  } });
+  api.tool({ name: 'seal_candidate', description: 'Close writable delegation and integration after all acceptance assessments cover the exact candidate; read-only reviewers remain available',
+    parameters: { type: 'object', properties: { candidate_sha256: { type: 'string' } }, required: ['candidate_sha256'], additionalProperties: false },
   }, input => {
-    const candidate = record(input).candidate_sha256;
+    const candidate = object(input).candidate_sha256;
     if (typeof candidate !== 'string' || !/^[a-f0-9]{64}$/.test(candidate)) throw new Error('exact candidate SHA-256 required');
-    const active = record(api.host.call('workflow.status', null));
-    const contract = record(record(active.provenance).contract);
-    if (contract.id !== CONTRACT) throw new Error('select omd_verification_gate through the native workflow surface first');
-    const checkpoint = record(api.host.call('checkpoint.read', null));
-    const versions = checkpoint.candidate_versions;
-    const criteria = checkpoint.acceptance_criteria;
-    const acceptance = checkpoint.completed_acceptance;
-    const current = Array.isArray(versions) ? record(versions.at(-1) ?? null).sha256 : null;
-    if (current !== candidate || !Array.isArray(criteria) || criteria.length === 0 || !Array.isArray(acceptance)
-        || acceptance.length !== criteria.length || !criteria.every(criterion => acceptance.some(entry => record(entry).criterion === criterion))) {
-      throw new Error('current candidate and all acceptance evidence are required before sealing');
-    }
-    return api.host.call('workflow.restrict', {
-      operations: ['delegate', 'spawn_child_agent'],
-      reason: `Candidate ${candidate} entered final verification with recorded acceptance evidence`,
-    });
+    const contract = api.host.call('contract.status', null);
+    if (contract.status !== 'active' || contract.active?.id !== CONTRACT) throw new Error('select omd_verification_gate first');
+    const task = object(api.services.call('omd.workflow', 'status', null));
+    const acceptance = object(task.completed_acceptance ?? null);
+    const criteria = task.acceptance_criteria;
+    const assessments = acceptance.assessments;
+    if (task.pending || acceptance.candidate_sha256 !== candidate || !Array.isArray(criteria) || !criteria.length || !Array.isArray(assessments)
+        || assessments.length !== criteria.length || !criteria.every(criterion => assessments.some(item => object(item).criterion === criterion && object(item).verdict === 'pass'))) throw new Error('current complete acceptance assessments required before sealing');
+    api.host.call('workspace.snapshot', { expected: candidate });
+    return api.host.call('contract.restrict', { operations: ['workspace.integrate'], scoped: [{ operation: 'agents.spawn', when: { '/workspace': 'isolated_worktree' } }],
+      reason: `Candidate ${candidate} entered final verification` });
   });
-  api.command('policy', () => api.host.call('workflow.status', null), {
-    description: 'Show the selected workflow contract and any recorded verification restrictions',
-  });
+  api.command('policy', () => api.host.call('contract.status', null) as unknown as Json, { description: 'Show the selected contract and verification restrictions' });
 }

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "id": "omd_repository_analysis",
+  "version": "0.1.0-preview.2",
+  "api": "0.2.0-experimental.1",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_repository_analysis" },
+  "capabilities": ["tools", "services", "fs.read", "store", "exec"],
+  "assets": ["analysis_cli.mjs"],
+  "services": { "exports": [{ "name": "omd.repository_analysis", "version": "1.0.0",
+    "methods": { "search": { "input": "object", "output": "object" }, "select": { "input": "object", "output": "object" } } }] },
+  "environment": ["crypto"],
+  "compatibility": { "required_features": ["workspace_fs_v1", "workspace_snapshots_v1", "store_v1", "package_text_assets_v1", "exec_output_artifacts_v1"] }
+}

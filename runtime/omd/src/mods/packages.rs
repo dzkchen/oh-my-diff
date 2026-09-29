@@ -80,10 +80,10 @@ impl ModStore {
         if selection.enabled
             || hash != selection.sha256
             || selection.capabilities != package.capabilities
-            || !package.capabilities.iter().any(|c| c == state_capability(&package.api))
+            || !package.capabilities.iter().any(|c| c == "store")
         {
             return Err(failure(
-                "migration_requires_disabled_trusted_state_capability",
+                "migration_requires_disabled_trusted_store_capability",
             ));
         }
         let name = ModStore::state_name(&package.id, &selection.scope);
@@ -101,6 +101,7 @@ impl ModStore {
         let mut loaded = Loaded {
             package,
             source,
+            assets: BTreeMap::new(),
             selection: selection.clone(),
             adapter: None,
             state: previous["value"].clone(),
@@ -167,10 +168,10 @@ impl ModStore {
             || !package
                 .capabilities
                 .iter()
-                .any(|capability| capability == state_capability(&package.api))
+                .any(|capability| capability == "store")
         {
             return Err(failure(
-                "rollback_requires_disabled_trusted_state_capability",
+                "rollback_requires_disabled_trusted_store_capability",
             ));
         }
         let backup = backup.canonicalize()?;

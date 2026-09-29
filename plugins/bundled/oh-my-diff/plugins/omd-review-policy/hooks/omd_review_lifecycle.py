@@ -7,7 +7,7 @@ import sys
 
 
 MAX_BYTES = 262_144
-CADENCES = {"stable_milestone", "risk_triggered", "every_turn", "final"}
+CADENCES = {"milestone_review", "final_review", "adversarial_verification"}
 
 
 class Invalid(Exception):
@@ -47,22 +47,26 @@ def canonical_file(raw, label):
 
 
 def load_manifest():
-    if os.environ.get("OMD_MODE") != "enabled":
+    if os.environ.get("OMD_MODE") != "omd":
         return None
-    raw = os.environ.get("OMD_CONTROLLED_MANIFEST")
+    raw = os.environ.get("OMD_REVIEW_CONFIG")
+    if not raw and os.environ.get("OMD_MOD_STORE"):
+        candidate = Path(os.environ["OMD_MOD_STORE"]) / "plugin-config" / "omd-review-policy.json"
+        if candidate.exists():
+            raw = str(candidate)
     if not raw:
         return None
-    path = canonical_file(raw, "controlled manifest")
+    path = canonical_file(raw, "plugin configuration")
     data = path.read_bytes()
     if len(data) > MAX_BYTES:
-        raise Invalid("controlled manifest exceeds hook size limit")
+        raise Invalid("plugin configuration exceeds hook size limit")
     value = parse_json(data)
     if not isinstance(value, dict):
-        raise Invalid("controlled manifest must be an object")
+        raise Invalid("plugin configuration must be an object")
     capabilities = value.get("capabilities", {})
     review = value.get("review", {})
     if not isinstance(capabilities, dict) or not isinstance(review, dict):
-        raise Invalid("controlled review configuration is invalid")
+        raise Invalid("plugin review configuration is invalid")
     return value
 
 
@@ -111,14 +115,20 @@ def marker_path(event):
 
 
 def record_review(event):
-    if event.get("tool_name") != "omd_review":
+    if event.get("tool_name") != "mod_omd_workflow_advance":
         return
-    arguments = event.get("tool_input")
-    if not isinstance(arguments, dict) or arguments.get("cadence") not in CADENCES:
-        raise Invalid("successful omd_review event has invalid cadence")
+    result = event.get("tool_response")
+    if isinstance(result, str):
+        result = parse_json(result)
+    receipt = result.get("receipt") if isinstance(result, dict) else None
+    if (not isinstance(receipt, dict) or result.get("status") != "recorded"
+            or receipt.get("kind") not in CADENCES or receipt.get("outcome") != "pass"
+            or not isinstance(receipt.get("producer"), dict)
+            or receipt["producer"].get("kind") != "agent"):
+        return
     tool_use = event.get("tool_use_id")
     if not isinstance(tool_use, str) or not tool_use:
-        raise Invalid("successful omd_review event has no tool identity")
+        raise Invalid("successful workflow review event has no tool identity")
     session, turn = identity(event)
     body = (
         json.dumps(
@@ -127,7 +137,7 @@ def record_review(event):
                 "session_id": session,
                 "turn_id": turn,
                 "tool_use_id": tool_use,
-                "cadence": arguments["cadence"],
+                "cadence": receipt["kind"],
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -184,7 +194,7 @@ def check_stop(event):
         json.dumps(
             {
                 "decision": "block",
-                "reason": "Every-turn OMD review is selected. Use $omd-review-policy:omd-review-cadence and run the native omd_review tool for the current candidate before ending this turn.",
+                "reason": "Every-turn OMD review is selected. Use $omd-review-policy:omd-review-cadence, request a milestone review with mod_omd_workflow_review and advance it to a passing receipt before ending this turn.",
             }
         )
     )

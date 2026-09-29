@@ -25,15 +25,16 @@
         "installed_contract_types_v1",
         "package_manager_v1",
         "service_contracts_v1",
+        "service_dispatch_v1",
+        "integration_receipts_v1",
+        "tool_result_fingerprints_v1",
         "source_use_v1",
         "state_migration_v1",
         "terminal_components_v1",
         "terminal_identity_v1",
-        "terminal_picker_theme_v1",
         "terminal_render_sites_v1",
         "terminal_rich_line_v1",
         "terminal_selection_v1",
-        "git_operations_v1",
         "transactional_reload_v1",
         "task_tool_exposure_v1",
         "virtual_reads_v1",
@@ -42,7 +43,17 @@
         "turn_evidence_v1",
         "service_requests_v1",
         "exec_v1",
+        "exec_output_artifacts_v1",
+        "guarded_exec_v1",
+        "package_text_assets_v1",
+        "workspace_access_v1",
         "workspace_fs_v1",
+        "workspace_snapshots_v1",
+        "snapshot_exec_v1",
+        "agent_parent_history_v1",
+        "agent_failures_v1",
+        "task_resume_v1",
+        "contract_scoped_restrictions_v1",
         "store_v1",
         "routes_v1",
         "stream_control_v1",
@@ -59,7 +70,7 @@
         "rust:omd/tests/integration.rs::mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries",
         "script:scripts/mod_compatibility.py"
       ],
-      "limitations": "Apple Silicon macOS on the pinned commit; the host reports its own release, package schema and state schema independently and does not qualify the full upstream workspace.",
+      "limitations": "Pinned Apple Silicon development host. The host is feature-agnostic and features are TypeScript mods; evidence is local and offline, and release qualification remains open.",
       "removal": "Select or reinstall the retained upstream executable; `OMD_MODE=upstream_direct` disables OMD task behaviour inside the custom binary."
     },
     {
@@ -69,12 +80,6 @@
       "owner": "OMD mod host (runtime/omd/src/mods.rs)",
       "version": "0.2.0-experimental.1",
       "supported_versions": [
-        "0.1.0-experimental.4",
-        "0.1.0-experimental.5",
-        "0.1.0-experimental.6",
-        "0.1.0-experimental.7",
-        "0.1.0-experimental.8",
-        "0.1.0-experimental.9",
         "0.2.0-experimental.1"
       ],
       "status": "supported",
@@ -83,7 +88,7 @@
         "rust:omd/tests/mods.rs::exclusive_decisions_require_a_replacement_registration_while_observers_compose",
         "node:typed module context callback"
       ],
-      "limitations": "Experimental and pre-1.0. Only the published rows are supported; `.4` is deprecated and no intervening or future version is promised.",
+      "limitations": "API 0.2 is experimental. API 0.1 admission and SDK declarations are retired in this development host; historical compatibility fixtures do not establish current support.",
       "removal": "Breaking stable changes need an API major with one stable OMD release of deprecation notice; each row has a finite support window in mods/COMPATIBILITY.md."
     },
     {
@@ -107,17 +112,17 @@
       "name": "omd_coordination",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_coordination)",
-      "version": "0.1.0-preview.4",
+      "version": "0.2.0-preview.1",
       "capabilities": [
         "agents",
         "commands",
         "context",
+        "fs.read",
         "lifecycle",
-        "recovery",
-        "routing",
+        "model",
         "services",
-        "state",
-        "task",
+        "sessions",
+        "store",
         "tools"
       ],
       "status": "supported",
@@ -127,8 +132,8 @@
         "fixture:coordination-task-entry/success",
         "fixture:coordination-broken/success"
       ],
-      "limitations": "Owns lead-policy and delegated-worker-context selection and exports bounded delegation preparation through the published service API; Rust still owns configured-route admission, context assembly and bounds, instructions, permissions, review, completion and accounting.",
-      "removal": "Disable it in the mod store; the manifest's native lead and worker-context policies resume without a state migration."
+      "limitations": "API 0.2 service and command own delegation choices. The generic host enforces route, permission, snapshot and ledger boundaries; reviewed workflow parity remains under qualification.",
+      "removal": "Disable the mod to remove its delegation policy; the generic host does not supply a hidden replacement policy."
     },
     {
       "id": "omd_recovery",
@@ -136,14 +141,18 @@
       "name": "omd_recovery",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_recovery)",
-      "version": "0.1.0-preview.2",
+      "version": "0.2.0-preview.1",
       "capabilities": [
+        "agents",
         "commands",
+        "fs.read",
         "interception",
         "lifecycle",
-        "recovery",
+        "middleware",
+        "model",
         "services",
-        "state",
+        "sessions",
+        "store",
         "tools"
       ],
       "status": "supported",
@@ -154,8 +163,8 @@
         "fixture:recovery/client-loss-resume",
         "fixture:recovery-broken/escalation"
       ],
-      "limitations": "Owns failure classification, eligible-tool, advisory-route and Contributor-outage fallback choices; Rust retains evidence, validation, limits, permissions, lifecycle, review, integration, interruption and resume.",
-      "removal": "Disable it in the mod store; native escalation and manifest-bounded outage fallback resume without a state migration."
+      "limitations": "API 0.2 mod chooses bounded escalation and outage fallback from structured host results. Live provider quality and full resume parity remain open.",
+      "removal": "Disable the mod to remove its recovery policy; generic host limits and contract restrictions remain."
     },
     {
       "id": "omd_workspace",
@@ -163,11 +172,11 @@
       "name": "omd_workspace",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_workspace)",
-      "version": "0.2.0-preview.2",
+      "version": "0.2.0-preview.3",
       "capabilities": [
         "commands",
         "lifecycle",
-        "state",
+        "store",
         "terminal"
       ],
       "status": "supported",
@@ -176,8 +185,8 @@
         "fixture:preview/success",
         "fixture:preview-broken/success"
       ],
-      "limitations": "Owns the exclusive terminal replacement while enabled; a second terminal claimant disables both and the host falls back to its native recovery panel.",
-      "removal": "Disable it in the mod store; the configured native theme and layout are restored."
+      "limitations": "API 0.2 mod supplies terminal components. Native terminal parity and feature-code retirement remain open.",
+      "removal": "Disable the mod to remove its layout; generic terminal controls remain."
     },
     {
       "id": "upstream_plugins",
@@ -240,50 +249,8 @@
         "rust:native/src/lib.rs::exact_lead_and_worker_markers_are_accepted",
         "python:test_pinned_bundle_matches_plugin_sources"
       ],
-      "limitations": "Explicitly installed and hash-trusted; skill selection is not a release default. PostToolUse covers successful host results only, so native lifecycle fallback retains failed, blocked, aborted and untrusted-hook outcomes without claiming rollback or retry.",
-      "removal": "Remove omd-guidance-hooks from Codex, then remove the oh-my-diff marketplace; native controlled-manifest guarantees and plain Codex behavior remain available."
-    },
-    {
-      "id": "omd_repository_tools",
-      "area": "native",
-      "name": "OMD repository graph and health plugin",
-      "extension_type": [
-        "plugin",
-        "skill",
-        "mcp"
-      ],
-      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
-      "version": "0.1.0",
-      "status": "opt_in",
-      "fixtures": [
-        "python:test_graph_snapshot_and_selection_are_repository_contained",
-        "python:test_health_exit_two_is_a_completed_finding_report",
-        "rust:omd/tests/graph.rs::regeneration_is_deterministic_and_detects_changed_missing_and_added_sources",
-        "rust:omd/tests/health.rs::one_shot_operator_writes_versioned_artifacts_and_blocks_introduced_findings",
-        "python:test_pinned_bundle_matches_plugin_sources"
-      ],
-      "limitations": "Explicitly installed and prompt-approved; repository artifacts are local and path-contained. Graph relationships remain bounded lexical evidence, the health guard never edits source, and the native `/graph` view remains the optional terminal navigator without a new mod.",
-      "removal": "Remove omd-repository-tools from Codex. The native graph, health binaries and `/graph` fallback remain available until the private OMD installation itself is removed."
-    },
-    {
-      "id": "omd_lsp_adapters",
-      "area": "native",
-      "name": "OMD five-language LSP adapter plugin",
-      "extension_type": [
-        "plugin",
-        "mcp"
-      ],
-      "owner": "OMD bundled Codex marketplace (plugins/bundled/oh-my-diff)",
-      "version": "0.1.0",
-      "status": "opt_in",
-      "fixtures": [
-        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary",
-        "python:test_unsupported_server_is_a_visible_non_success_fallback",
-        "rust:omd/src/lsp.rs::five_language_plugin_adapter_matrix_uses_native_sessions",
-        "python:test_pinned_bundle_matches_plugin_sources"
-      ],
-      "limitations": "Explicitly installed and prompt-approved. It installs no language server and owns only language-specific MCP commands and fallback presentation; server admission, synchronization, process bounds, edit validation, writes and cleanup stay in the native omd-lsp operator.",
-      "removal": "Remove omd-lsp-adapters from Codex. The repository preference and native omd_lsp fallback remain unchanged."
+      "limitations": "Explicitly installed and hash-trusted; skill selection is not a release default. PostToolUse records successful host results only. Its API 0.2 migration has local tests; live cadence and parity qualification remain open.",
+      "removal": "Remove omd-guidance-hooks from Codex and the marketplace. Generic host contracts enforce only a document the user selected."
     },
     {
       "id": "omd_review_policy",
@@ -304,8 +271,8 @@
         "python:test_pinned_bundle_matches_plugin_sources",
         "python:test_advisor_owns_completed_turn_cadence_without_manual_stop_guard"
       ],
-      "limitations": "Explicitly installed and hash-trusted. Skills select prompts and cadence, while the every-turn hook records only successful native review calls; findings, limits, final checks, reviewer separation, drift invalidation, integration and completion remain native. OMD_REVIEW_CADENCE_OWNER=advisor hands completed-turn cadence to the separately selected mod without changing native final review or blocking authority.",
-      "removal": "Remove omd-review-policy from Codex. The native omd_review tool, required final review and completion gate remain unchanged."
+      "limitations": "Explicitly installed and hash-trusted. Skills select prompts and cadence; hooks require a mod-owned review receipt when selected. Generic contracts enforce selected receipts and completion gates. Live review parity remains open.",
+      "removal": "Remove omd-review-policy from Codex; unselected review prompts and hook cadence stop, while any user-selected generic contract remains enforced."
     },
     {
       "id": "omd_application_bridges",
@@ -325,7 +292,7 @@
         "python:test_plugin_surface_scopes_each_adapter_and_keeps_control_separate",
         "python:test_pinned_bundle_matches_plugin_sources"
       ],
-      "limitations": "Explicitly installed, hash-trusted and default-off. The plugin exposes adapter-scoped tools and usage context only; the managed host retains endpoints, authentication, policy binding, limits, redaction, state admission and teardown.",
+      "limitations": "Explicitly installed, hash-trusted and default-off. Adapter tools use generic host permissions and explicit service grants; full API 0.2 provider acceptance remains open.",
       "removal": "Remove omd-application-bridges from Codex and disable application_bridge. The managed browser bundle and dormant adapter sources remain until the private OMD installation is removed."
     },
     {
@@ -363,7 +330,6 @@
       "status": "opt_in",
       "fixtures": [
         "python:test_pinned_v8_assets_reject_changed_inputs",
-        "python:test_default_install_target_is_removed_but_source_and_artifacts_remain",
         "rust:codex-code-mode-host/tests/stdio.rs"
       ],
       "limitations": "Experimental code mode requires explicit user configuration. JavaScript tool calls and optional managed Python stay under native permission, sandbox, process, output, cancellation and accounting controls. Python has no separate direct Codex tool API.",
@@ -375,14 +341,10 @@
       "name": "Pi resource adapter",
       "owner": "OMD mod host (runtime/omd/src/mods/pi.rs)",
       "version": "pi-0.74-resources-v2",
-      "status": "opt_in",
-      "fixtures": [
-        "rust:omd/tests/mods.rs::pi_nested_skills_honor_ignore_rules_and_frontmatter",
-        "rust:omd/tests/mods.rs::pi_prompt_expansion_matches_pi_0_74_oracle",
-        "rust:omd/tests/integration.rs::mods_and_upstream_pi_resources_coexist_without_capturing_each_other"
-      ],
-      "limitations": "Skills and prompts only, bounded by entry, depth and aggregate limits; symlinked or protected resources are refused and reported, never silently omitted.",
-      "removal": "Do not grant the `pi_resources` capability; discovery then fails closed for that package."
+      "status": "removed",
+      "fixtures": [],
+      "limitations": "The API 0.1 pi.discover/pi.expand host bridge is retired. The dormant parser helper remains in source pending native cleanup; no current host operation exposes it.",
+      "removal": "No active API 0.2 Pi resource bridge remains to disable."
     },
     {
       "id": "browser_bundle",
@@ -410,60 +372,60 @@
       "id": "lsp_rust",
       "area": "lsp",
       "name": "Rust language server adapter",
-      "owner": "OMD LSP plugin over native omd-lsp",
+      "owner": "omd_lsp_sync mod over process.* and workspace primitives",
       "version": [
         "rust-analyzer"
       ],
       "status": "opt_in",
       "fixtures": [
-        "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::unavailable_server_has_an_explicit_non_success_fallback",
-        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary"
+        "python:test_symbol_rename_and_code_action_apply_exact_text_scopes",
+        "python:test_failed_semantic_sync_restores_exact_backup",
+        "python:test_fake_server_requests_rename_changes_and_idle"
       ],
-      "limitations": "The plugin detects through the native operator and never installs a server; an absent server is a visible non-success fallback and edits stay repository-scoped and hash-bound.",
-      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
+      "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
+      "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
     },
     {
       "id": "lsp_typescript",
       "area": "lsp",
       "name": "TypeScript language server adapter",
-      "owner": "OMD LSP plugin over native omd-lsp",
+      "owner": "omd_lsp_sync mod over process.* and workspace primitives",
       "version": [
         "typescript-language-server",
         "vtsls"
       ],
       "status": "opt_in",
       "fixtures": [
-        "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::edit_scope_and_expected_hashes_fail_closed",
-        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary"
+        "python:test_semantic_reads_are_scoped_and_actions_are_discovery_only",
+        "python:test_failed_semantic_sync_restores_exact_backup",
+        "python:test_fake_server_requests_rename_changes_and_idle"
       ],
-      "limitations": "First detected candidate wins; no server version is pinned or installed by OMD.",
-      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
+      "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
+      "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
     },
     {
       "id": "lsp_javascript",
       "area": "lsp",
       "name": "JavaScript language server adapter",
-      "owner": "OMD LSP plugin over native omd-lsp",
+      "owner": "omd_lsp_sync mod over process.* and workspace primitives",
       "version": [
         "typescript-language-server",
         "vtsls"
       ],
       "status": "opt_in",
       "fixtures": [
-        "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::file_uri_round_trip_stays_in_repository",
-        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary"
+        "python:test_semantic_request_rejects_untracked_target_and_foreign_store",
+        "python:test_failed_semantic_sync_restores_exact_backup",
+        "python:test_fake_server_requests_rename_changes_and_idle"
       ],
-      "limitations": "Shares the TypeScript server candidates; a document whose language does not match its server is refused.",
-      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
+      "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
+      "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
     },
     {
       "id": "lsp_python",
       "area": "lsp",
       "name": "Python language server adapter",
-      "owner": "OMD LSP plugin over native omd-lsp",
+      "owner": "omd_lsp_sync mod over process.* and workspace primitives",
       "version": [
         "pyright-langserver",
         "pylsp",
@@ -471,29 +433,29 @@
       ],
       "status": "opt_in",
       "fixtures": [
-        "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::failed_post_edit_synchronization_rolls_back_filesystem_change",
-        "python:test_edit_command_preserves_exact_scope_hashes_and_native_failure"
+        "python:test_installed_python_server_synchronizes_open_change_close",
+        "python:test_failed_semantic_sync_restores_exact_backup",
+        "python:test_fake_server_requests_rename_changes_and_idle"
       ],
-      "limitations": "Candidate order is fixed and capability differences between the three servers are not normalised.",
-      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
+      "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
+      "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
     },
     {
       "id": "lsp_java",
       "area": "lsp",
       "name": "Java language server adapter",
-      "owner": "OMD LSP plugin over native omd-lsp",
+      "owner": "omd_lsp_sync mod over process.* and workspace primitives",
       "version": [
         "jdtls"
       ],
       "status": "opt_in",
       "fixtures": [
-        "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::installed_server_smoke_when_requested",
-        "python:test_unsupported_server_is_a_visible_non_success_fallback"
+        "python:test_code_action_apply_requires_exact_preview_and_rejects_deferred_edit",
+        "python:test_failed_semantic_sync_restores_exact_backup",
+        "python:test_fake_server_requests_rename_changes_and_idle"
       ],
-      "limitations": "The live smoke is opt-in and skipped when jdtls is absent; startup cost is bounded by the configured limits rather than tuned.",
-      "removal": "Remove omd-lsp-adapters or disable `semantic_lsp`; the native omd_lsp fallback remains available when enabled."
+      "limitations": "The mod detects servers through process.which and never installs one; an absent server is a visible non-success fallback, and edits stay repository-scoped, hash-bound and backed up.",
+      "removal": "Disable omd_lsp_sync; ordinary host editing is unaffected."
     },
     {
       "id": "bridge_browser",
@@ -576,14 +538,14 @@
       "name": "Application bridge capability",
       "owner": "OMD host (runtime/native)",
       "version": "policy schema 1, external SHA-256 bound policy",
-      "capability": "application_bridge",
       "status": "default_off",
       "fixtures": [
         "python:test_authorization_version_redaction_bounds_state_and_teardown",
         "python:test_bridge_launcher_uses_the_managed_node_runtime"
       ],
-      "limitations": "Development-only and off by default; native manifest admission and plugin startup fail if the external policy is missing or changed, state is pull-only and evidence is memory-only.",
-      "removal": "Remove omd-application-bridges and disable `application_bridge`; the wrapper never injects a replacement MCP server."
+      "limitations": "Development-only and off by default. Host configuration and plugin startup fail closed if the external policy is missing or changed; API 0.2 parity is under qualification.",
+      "removal": "Remove omd-application-bridges and disable `application_bridge`; the wrapper never injects a replacement MCP server.",
+      "plugin_setting": "application_bridge"
     },
     {
       "id": "provider_sidecars",
@@ -591,7 +553,7 @@
       "name": "Approved provider routes and local sidecars",
       "owner": "OMD host operations (runtime/native/src/mods)",
       "version": "host-approved service IDs only",
-      "capability": "sidecars",
+      "capability": "services",
       "operations": [
         "providers.register",
         "providers.unregister",
@@ -618,6 +580,38 @@
       "fixtures": [],
       "limitations": "The OMD-specific wrapper was reverted on 2026-09-16; no OMD account, pairing or compatibility claim is retained.",
       "removal": "Already removed from the runtime patch and private build; use the native Codex remote-control workflow supported by the installed version."
+    },
+    {
+      "id": "omd_workflow",
+      "area": "first_party_mod",
+      "name": "omd_workflow",
+      "extension_type": "mod",
+      "owner": "OMD first-party bundle (mods/first-party/omd_workflow)",
+      "version": "0.2.0-preview.1",
+      "capabilities": [
+        "agents",
+        "commands",
+        "context",
+        "contracts",
+        "exec",
+        "fs.read",
+        "fs.write",
+        "interception",
+        "lifecycle",
+        "middleware",
+        "model",
+        "services",
+        "sessions",
+        "store",
+        "tools"
+      ],
+      "status": "default_off",
+      "fixtures": [
+        "script:tests/workflow_mod.test.mjs",
+        "rust:omd/tests/generic_host.rs::contract_documents_gate_on_bound_receipts_and_detect_weaker_selections"
+      ],
+      "limitations": "Reviewed and solo schema-2 documents and policy use generic host gates. Evidence uses local scripted providers; live provider qualification remains open.",
+      "removal": "Disable the mod; the host retains only explicitly selected generic contract enforcement."
     }
   ],
   "boundaries": [
@@ -756,7 +750,7 @@
       ]
     },
     {
-      "id": "mixed_api_host_upgrade",
+      "id": "host_upgrade_negotiation",
       "components": [
         "omd_host",
         "mod_api",
@@ -765,29 +759,11 @@
       "boundaries": [
         "host_upgrade"
       ],
-      "result": "Packages on all four supported API rows activate together with per-package stability and feature negotiation; a package pinned to another host release is refused before activation, and a bumped state version keeps only that package inactive until its explicit migration runs.",
+      "result": "Packages on the supported API row activate with per-package stability and feature negotiation; a package pinned to another host release or API is refused before activation, and a bumped state version keeps only that package inactive until its explicit migration runs.",
       "evidence": [
-        "rust:omd/tests/integration.rs::mixed_api_mods_share_one_host_and_upgrade_independently",
+        "rust:omd/tests/mods.rs::migration_is_explicit_bounded_and_preserves_previous_state",
         "rust:omd/tests/mods.rs::incompatible_host_schema_api_and_features_are_rejected_before_activation",
         "script:scripts/mod_compatibility.py"
-      ]
-    },
-    {
-      "id": "pi_resource_coexistence",
-      "components": [
-        "pi_resources",
-        "upstream_plugins",
-        "mod_api"
-      ],
-      "boundaries": [
-        "upstream_plugin_coexistence",
-        "duplicate_tools"
-      ],
-      "result": "A mod reads upstream prompts and skills through the host without capturing them: project scope wins over user scope, mod commands stay namespaced, and a bare alias shared with a mod, a prompt or a built-in is withdrawn with a stated reason.",
-      "evidence": [
-        "rust:omd/tests/integration.rs::mods_and_upstream_pi_resources_coexist_without_capturing_each_other",
-        "rust:omd/tests/mods.rs::pi_and_native_discovery_preserve_project_precedence_without_trust",
-        "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique"
       ]
     },
     {
@@ -817,31 +793,11 @@
       "boundaries": [
         "upstream_plugin_coexistence"
       ],
-      "result": "Two explicit skills select intermediate and final native review prompts, and the every-turn PostToolUse/Stop lifecycle pair requires one successful native review only when selected; removing or distrusting the plugin cannot weaken the mandatory native final-review and completion gates.",
+      "result": "Explicit skills select review prompts; the selected hook requires a successful mod-owned review receipt. Generic contract gates still enforce their selected document independently.",
       "evidence": [
         "python:test_review_skills_cover_all_cadences_and_retain_native_authority",
-        "python:test_every_turn_stop_blocks_until_native_review_succeeds",
+        "python:test_every_turn_stop_blocks_until_mod_review_receipt_succeeds",
         "python:test_other_tools_and_unselected_policy_do_not_satisfy_or_enforce_cadence"
-      ]
-    },
-    {
-      "id": "repository_plugin_with_native_evidence",
-      "components": [
-        "omd_repository_tools",
-        "upstream_plugins",
-        "omd_host"
-      ],
-      "boundaries": [
-        "upstream_plugin_coexistence",
-        "optional_integration_isolation"
-      ],
-      "result": "The optional plugin runs a prompt-approved local MCP process, confines every artifact to the selected repository, delegates graph and health semantics to the retained version-bound Rust operators, and leaves native `/graph` plus ordinary host editing authoritative when the plugin is absent or removed.",
-      "evidence": [
-        "python:test_manifest_prompts_for_every_local_tool",
-        "python:test_symlinked_artifact_and_stale_graph_are_refused",
-        "python:test_health_exit_two_is_a_completed_finding_report",
-        "rust:omd/tests/graph.rs::one_versioned_graph_supports_both_views_and_evidence_selection",
-        "rust:omd/tests/health.rs::baseline_and_constraints_are_version_bound_and_tamper_evident"
       ]
     },
     {
@@ -908,20 +864,20 @@
         "lsp_javascript",
         "lsp_python",
         "lsp_java",
-        "omd_lsp_adapters",
         "omd_host"
       ],
       "boundaries": [
         "optional_integration_isolation"
       ],
-      "result": "Five prompt-approved plugin commands dispatch fixed language routes into the native boundary. The protocol matrix stays version and scope bound, an absent server remains a visible non-success fallback, and a failed post-edit synchronisation rolls the filesystem change back.",
+      "result": "One TypeScript mod manages separate Python, TypeScript/JavaScript, Rust and Java server sessions over process.*. Semantic reads are scope-checked, edits are exact-scope and hash-bound with a host backup, an absent server is a visible non-success fallback, and a failed post-edit synchronisation restores the backup.",
       "evidence": [
-        "python:test_each_tool_fixes_its_language_and_uses_the_native_boundary",
-        "python:test_unsupported_server_is_a_visible_non_success_fallback",
-        "rust:omd/src/lsp.rs::five_language_plugin_adapter_matrix_uses_native_sessions",
-        "rust:omd/src/lsp.rs::five_language_protocol_matrix_is_version_and_scope_bound",
-        "rust:omd/src/lsp.rs::unavailable_server_has_an_explicit_non_success_fallback",
-        "rust:omd/src/lsp.rs::failed_post_edit_synchronization_rolls_back_filesystem_change"
+        "python:test_symbol_rename_and_code_action_apply_exact_text_scopes",
+        "python:test_semantic_reads_are_scoped_and_actions_are_discovery_only",
+        "python:test_semantic_request_rejects_untracked_target_and_foreign_store",
+        "python:test_installed_python_server_synchronizes_open_change_close",
+        "python:test_code_action_apply_requires_exact_preview_and_rejects_deferred_edit",
+        "python:test_failed_semantic_sync_restores_exact_backup",
+        "python:test_fake_server_requests_rename_changes_and_idle"
       ]
     },
     {
@@ -938,8 +894,7 @@
       "result": "Both opt-in skill plugins are pinned in the same marketplace and install into an isolated Codex home without claiming a tool namespace. The artifact helper does not execute notebook cells; code execution uses the separate native host. Combined live task use remains untested.",
       "evidence": [
         "python:test_pinned_bundle_matches_plugin_sources",
-        "python:test_notebook_cell_and_figure_are_versioned_without_execution",
-        "python:test_default_install_target_is_removed_but_source_and_artifacts_remain"
+        "python:test_notebook_cell_and_figure_are_versioned_without_execution"
       ]
     },
     {
@@ -995,37 +950,33 @@
         "fixture:exercise/success",
         "script:scripts/mod_full_api_exercise.py"
       ]
+    },
+    {
+      "id": "reviewed_workflow_with_coordination",
+      "components": [
+        "omd_workflow",
+        "omd_coordination",
+        "omd_host"
+      ],
+      "boundaries": [
+        "shared_context_budget",
+        "shared_state_store"
+      ],
+      "result": "The workflow and coordination mods compose through generic host services, checked integration and completion with local scripted providers; live provider qualification remains open.",
+      "evidence": [
+        "script:tests/workflow_mod.test.mjs",
+        "script:tests/coordination_mod.test.mjs",
+        "rust:omd/tests/generic_host.rs::finding_receipt_replay_requires_explicit_independent_resolution"
+      ]
     }
   ],
   "regression": [
     {
-      "id": "deprecated_api_row",
-      "retained_for": [
-        "0.1.0-experimental.4"
-      ],
-      "case": "A package on the deprecated row activates only because that row is still published, and reports `deprecated` stability.",
-      "evidence": [
-        "rust:omd/tests/mods.rs::synthetic_deprecated_api_mod_activates_only_because_it_has_an_explicit_support_row",
-        "rust:omd/tests/integration.rs::mixed_api_mods_share_one_host_and_upgrade_independently"
-      ]
-    },
-    {
-      "id": "older_experimental_api",
-      "retained_for": [
-        "0.1.0-experimental.5"
-      ],
-      "case": "A package built against the older experimental API keeps activating on the current host with negotiated required and optional features.",
-      "evidence": [
-        "rust:omd/tests/mods.rs::synthetic_old_api_mod_activates_on_a_compatible_new_host",
-        "rust:omd/tests/integration.rs::mixed_api_mods_share_one_host_and_upgrade_independently"
-      ]
-    },
-    {
       "id": "current_api_composition",
       "retained_for": [
-        "0.1.0-experimental.6"
+        "0.2.0-experimental.1"
       ],
-      "case": "Composition, precedence and conflict handling on the current row: declared order, cycles, contested replacements and scope shadowing.",
+      "case": "Composition, precedence and conflict handling on the current API 0.2 row: declared order, cycles, contested replacements and scope shadowing.",
       "evidence": [
         "rust:omd/tests/mods.rs::composition_order_is_declared_dependencies_first_then_mod_id",
         "rust:omd/tests/mods.rs::a_dependency_cycle_is_rejected_before_activation_and_isolated",
@@ -1040,8 +991,7 @@
       "case": "Package-owned state survives a host upgrade only through an explicit migration, with a content-addressed backup and an interrupted-migration rollback.",
       "evidence": [
         "rust:omd/tests/mods.rs::migration_is_explicit_bounded_and_preserves_previous_state",
-        "rust:omd/tests/mods.rs::interrupted_migration_and_explicit_rollback_preserve_source_settings_and_state",
-        "rust:omd/tests/integration.rs::mixed_api_mods_share_one_host_and_upgrade_independently"
+        "rust:omd/tests/mods.rs::interrupted_migration_and_explicit_rollback_preserve_source_settings_and_state"
       ]
     },
     {

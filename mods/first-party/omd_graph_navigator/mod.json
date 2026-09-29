@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "id": "omd_graph_navigator",
+  "version": "0.2.0-preview.2",
+  "api": "0.2.0-experimental.1",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
+  "capabilities": ["commands", "services", "store", "terminal"],
+  "services": { "imports": [{ "name": "omd.repository_analysis", "version": "1.0.0" }] },
+  "compatibility": { "required_features": ["service_dispatch_v1", "terminal_lists_v1"] },
+  "settings_schema": {
+    "type": "object",
+    "properties": { "root": { "type": "string", "default": "" } },
+    "additionalProperties": false
+  }
+}

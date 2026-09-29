@@ -1,6 +1,7 @@
 mod agents;
 mod evidence;
 mod operations;
+mod snapshots;
 pub(crate) mod services;
 mod tools;
 mod view;
@@ -158,70 +159,6 @@ pub(crate) fn terminal_identity(runtime: &ModHost) -> Value {
         std::env::var("OMD_INSTALL_PROFILE").ok().as_deref(),
         "omd",
     )
-}
-
-pub(crate) fn git_command(
-    policy: codex_protocol::permissions::FileSystemSandboxPolicy,
-    cwd: std::path::PathBuf,
-    protected: Vec<std::path::PathBuf>,
-) -> impl Fn(Vec<String>) -> Result<std::process::Command, String> {
-    move |argv| {
-        #[cfg(target_os = "macos")]
-        {
-            use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
-            use codex_sandboxing::seatbelt::MACOS_PATH_TO_SEATBELT_EXECUTABLE;
-            use codex_sandboxing::seatbelt::create_seatbelt_command_args;
-            let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
-                command: argv,
-                file_system_sandbox_policy: &policy,
-                network_sandbox_policy:
-                    codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
-                sandbox_policy_cwd: &cwd,
-                enforce_managed_network: false,
-                managed_network: None,
-                environment_id: None,
-                network: None,
-                extra_allow_unix_sockets: &[],
-            })?;
-            codex_omd::git::sandboxed(
-                std::path::Path::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE),
-                args,
-                &protected,
-                &cwd,
-            )
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = (&policy, &cwd, &protected, argv);
-            Err("git_sandbox_unavailable".to_owned())
-        }
-    }
-}
-
-pub(crate) fn lifecycle_git(
-    allowed: bool,
-    repository: &std::path::Path,
-    protected: &[std::path::PathBuf],
-    policy: &codex_protocol::permissions::FileSystemSandboxPolicy,
-    request: codex_omd::ModHostCall,
-    active: &dyn Fn() -> bool,
-) -> std::io::Result<Value> {
-    if !allowed {
-        return Err(std::io::Error::other(
-            "host_operation_unavailable: git reads run in lifecycle events and commands",
-        ));
-    }
-    let command = git_command(policy.clone(), repository.to_path_buf(), protected.to_vec());
-    let access = codex_omd::git::GitAccess {
-        repository,
-        protected,
-        backups: None,
-        write: Err("git_write_requires_user_command"),
-        command: &command,
-        writable: &|_| false,
-    };
-    codex_omd::git::call(&access, &request.operation, request.arguments, active)
-        .map_err(std::io::Error::other)
 }
 
 fn event_fragments_scoped(
@@ -1012,7 +949,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             };
             let session = match parent_session {
                 Some(session) => session,
-                None => match self.host.open_session(thread) {
+                None => match self.host.open_session(thread, input.thread_store.get::<codex_extension_api::ResumedThread>().is_some()) {
                     Ok(session) => session,
                     Err(error) => {
                         self.views.diagnostic(
@@ -1048,7 +985,10 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 })
                 .await
                 .unwrap_or_default();
-                let resolved = contract::SessionContract::resolve(&self.host, &documents);
+                let mut resolved = contract::SessionContract::resolve(&self.host, &documents);
+                if let Err(error) = resolved.restore(&session.contract_state) {
+                    resolved.invalidate(error);
+                }
                 if let Ok(mut current) = session.contract.lock() {
                     *current = resolved;
                 }
@@ -1135,6 +1075,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 return;
             }
             self.agents.cleanup_session(&lead.session).await;
+            self.agents.cleanup_snapshots(lead.thread);
             self.services.cleanup_session(&lead.session).await;
             self.event(
                 "session",
@@ -1193,7 +1134,8 @@ impl ToolLifecycleContributor for Mods {
             let original_tool = input.tool_name.clone();
             let scope_agent_id = agent_id(input.thread_store);
             let arguments: Value = serde_json::from_str(arguments).map_err(|e| e.to_string())?;
-            let payload = json!({"tool":input.tool_name.to_string(),"arguments":arguments,"call_id":input.call_id});
+            let payload = json!({"tool":input.tool_name.to_string(),"arguments":arguments,"call_id":input.call_id,
+                "thread_id": input.thread_store.get::<Lead>().map(|lead| lead.thread.to_string())});
             let runtime = self.runtime.clone();
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
@@ -1281,7 +1223,10 @@ impl ToolLifecycleContributor for Mods {
             self.event(
                 "tool_result",
                 json!({"call_id": input.call_id, "agent_id":agent_id(input.thread_store),
-                    "tool": input.tool_name.to_string(), "outcome": format!("{:?}", input.outcome)}),
+                    "thread_id": lead.thread.to_string(), "tool": input.tool_name.to_string(),
+                    "outcome": format!("{:?}", input.outcome),
+                    "call_sha256": input.call_sha256, "result_sha256": input.result_sha256,
+                    "result_complete": input.result_sha256.is_some()}),
                 event_lead,
             )
             .await;

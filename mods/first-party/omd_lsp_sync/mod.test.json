@@ -6,7 +6,7 @@
     ]
   },
   "steps": [
-    {"type": "event", "event": "workspace_write", "payload": {"repository": "/repo", "call_id": "write-1", "tool": "apply_patch", "outcome": "Completed", "status": "observed", "changes": [{"path": "sample.py", "before": null, "after": "abc"}]}},
-    {"type": "invoke", "mod": "omd_lsp_sync", "event": "tool", "name": "status", "payload": {}, "expect": {"status": "fallback", "reason": "python_server_absent", "repository": "/repo", "documents": 0, "diagnostics": {}, "server": null}}
+    {"type": "event", "event": "workspace_change", "payload": {"repository": "/repo", "call_id": "write-1", "source": "tool", "status": "observed", "changes": [{"path": "sample.py", "before": null, "after": "abc"}]}},
+    {"type": "invoke", "mod": "omd_lsp_sync", "event": "tool", "name": "status", "payload": {}, "expect": {"adapters": {"python": {"status": "fallback", "reason": "python_server_absent", "repository": "/repo", "documents": 0, "diagnostics": {}, "server": null}, "typescript": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}, "rust": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}, "java": {"status": "idle", "reason": "", "repository": "", "documents": 0, "diagnostics": {}, "server": null}}}}
   ]
 }

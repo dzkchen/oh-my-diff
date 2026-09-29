@@ -36,7 +36,7 @@ def apply(checkout):
     for name, hashes in manifest["files"].items():
         if hashlib.sha256((checkout / name).read_bytes()).hexdigest() != hashes["after"]:
             raise ValueError("post-apply hash mismatch: " + name)
-    return "Applied and verified the pinned controlled-delegation patch"
+    return "Applied and verified the pinned runtime patch"
 
 
 def main():

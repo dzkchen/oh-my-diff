@@ -113,7 +113,7 @@ class UpstreamCandidateTests(unittest.TestCase):
         for name in git(checkout, "diff", "--cached", "--name-only").splitlines():
             before = subprocess.run(["git", "show", f"HEAD:{name}"], cwd=checkout, capture_output=True)
             files[name] = {"before": hashlib.sha256(before.stdout).hexdigest() if before.returncode == 0 else None, "after": sha(checkout / name)}
-        patch_name = "runtime/patches/controlled-contributor-1.0.0.patch"
+        patch_name = "runtime/patches/omd-1.0.0.patch"
         (self.repo / "runtime/patches").mkdir(parents=True)
         (self.repo / patch_name).write_bytes(patch)
         manifest = {"schema": 1, "upstream_commit": self.v1, "baseline": "normalize first", "patch": {"path": patch_name, "sha256": hashlib.sha256(patch).hexdigest()}, "files": files}

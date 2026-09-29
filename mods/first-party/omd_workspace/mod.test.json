@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "event",
+      "event": "terminal",
+      "payload": { "event": "idle", "ledger": { "thread_id": "fixture-thread", "cost": null } }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_workspace",
+      "event": "command",
+      "name": "layout",
+      "payload": "compact",
+      "expect": { "display": "workspace density is now compact" }
+    }
+  ]
+}

@@ -73,6 +73,7 @@ def main():
                 "OMD_MOD_BIN": str(engine),
                 "OMD_MOD_NODE": node,
                 "OMD_MOD_SDK_SPEC": f"file:{tarball}",
+                "OMD_MOD_TYPESCRIPT_SPEC": f"link:{ROOT / 'mods/node_modules/typescript'}",
             }
         )
         examples = work / "examples"

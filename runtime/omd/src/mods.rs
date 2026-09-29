@@ -1,10 +1,6 @@
 mod author;
 mod bridge;
 mod packages;
-mod pi;
-pub use pi::PiPrompt;
-pub use pi::parse_command_args;
-pub use pi::substitute_args;
 mod view;
 pub use view::MOD_KEY_LIMIT;
 pub use view::ModActivity;
@@ -17,13 +13,10 @@ pub use view::ModComponentAction;
 pub use view::ModDensity;
 pub use view::ModIcons;
 pub use view::ModKeyAction;
-pub use view::ModPanel;
-pub use view::ModPicker;
-pub use view::ModPickerLayout;
-pub use view::ModRenderSite;
 pub use view::ModListRow;
+pub use view::ModPanel;
+pub use view::ModRenderSite;
 pub use view::ModSelectOption;
-pub use view::valid_glyphs;
 pub use view::ModSelectionPolicy;
 pub use view::ModSelectionSource;
 pub use view::ModSidebarSide;
@@ -37,6 +30,7 @@ pub use view::ModViewPatch;
 pub use view::ModViewSnapshot;
 pub use view::mod_command_reference;
 pub use view::mod_key_name;
+pub use view::valid_glyphs;
 mod outcome;
 pub use outcome::ModCommandOutcome;
 pub use outcome::ModInputDecision;
@@ -53,11 +47,14 @@ use serde_json::Value;
 use serde_json::json;
 use sha2::Digest;
 use sha2::Sha256;
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::time::Instant;
 
 pub use package_manager::ModInstallRequest;
@@ -72,6 +69,69 @@ pub const CODEX_HOST_RELEASE: &str = "0.157.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.2.0-experimental.1";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
+pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
+
+#[derive(Default)]
+struct InvocationScope {
+    calls: Cell<usize>,
+    execution: Cell<Duration>,
+    receipt_bytes: Cell<usize>,
+    stack: RefCell<Vec<String>>,
+}
+
+struct InvocationFrame<'a>(&'a InvocationScope);
+
+impl Drop for InvocationFrame<'_> {
+    fn drop(&mut self) {
+        self.0.stack.borrow_mut().pop();
+    }
+}
+
+impl InvocationScope {
+    fn enter(&self, id: &str) -> Result<InvocationFrame<'_>> {
+        let mut stack = self.stack.borrow_mut();
+        if stack.len() >= MOD_SERVICE_DEPTH_LIMIT {
+            return Err(failure("service_depth_limit"));
+        }
+        if stack.iter().any(|item| item == id) {
+            return Err(failure("service_call_cycle"));
+        }
+        stack.push(id.to_owned());
+        Ok(InvocationFrame(self))
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        self.stack.borrow().iter().any(|item| item == id)
+    }
+
+    fn charge_execution(&self, elapsed: Duration) -> Result<()> {
+        let total = self.execution.get().saturating_add(elapsed);
+        self.execution.set(total);
+        if total > Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS) {
+            return Err(failure("callback_execution_budget"));
+        }
+        Ok(())
+    }
+
+    fn charge_call(&self) -> Result<()> {
+        let calls = self.calls.get();
+        if calls >= 32 {
+            return Err(failure("host_call_limit"));
+        }
+        self.calls.set(calls + 1);
+        Ok(())
+    }
+
+    fn charge_receipt(&self, bytes: usize) -> Result<()> {
+        let total = self.receipt_bytes.get().saturating_add(bytes);
+        if total > 131_072 {
+            return Err(failure("host_receipt_limit"));
+        }
+        self.receipt_bytes.set(total);
+        Ok(())
+    }
+}
+
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
 pub const INSTALLED_CONTRACT_TYPES_VERSION: u32 = 1;
@@ -82,15 +142,16 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "installed_contract_types_v1",
     "package_manager_v1",
     "service_contracts_v1",
+    "service_dispatch_v1",
+    "integration_receipts_v1",
+    "tool_result_fingerprints_v1",
     "source_use_v1",
     "state_migration_v1",
     "terminal_components_v1",
     "terminal_identity_v1",
-    "terminal_picker_theme_v1",
     "terminal_render_sites_v1",
     "terminal_rich_line_v1",
     "terminal_selection_v1",
-    "git_operations_v1",
     "transactional_reload_v1",
     "task_tool_exposure_v1",
     "virtual_reads_v1",
@@ -99,7 +160,17 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "turn_evidence_v1",
     "service_requests_v1",
     "exec_v1",
+    "exec_output_artifacts_v1",
+    "guarded_exec_v1",
+    "package_text_assets_v1",
+    "workspace_access_v1",
     "workspace_fs_v1",
+    "workspace_snapshots_v1",
+    "snapshot_exec_v1",
+    "agent_parent_history_v1",
+    "agent_failures_v1",
+    "task_resume_v1",
+    "contract_scoped_restrictions_v1",
     "store_v1",
     "routes_v1",
     "stream_control_v1",
@@ -112,9 +183,12 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
+    "exec.output_page",
     "workspace.read",
     "workspace.list",
     "workspace.stat",
+    "workspace.check_access",
+    "workspace.snapshot",
     "workspace.transaction",
     "workspace.backup",
     "workspace.restore",
@@ -130,6 +204,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "evidence.read",
     "sessions.list",
     "sessions.read",
+    "sessions.snapshot",
     "routes.list",
     "task.status",
     "task.complete",
@@ -154,79 +229,8 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "sidecars.status",
     "sidecars.stop",
 ];
-pub const LEGACY_MOD_HOST_OPERATIONS: &[&str] = &[
-    "task.status",
-    "routes.list",
-    "checkpoint.read",
-    "checkpoint.update",
-    "workers.presets",
-    "agents.spawn",
-    "agents.message",
-    "agents.cancel",
-    "agents.result",
-    "agents.wait",
-    "agents.list",
-    "workspace.integrate",
-    "workspace.read",
-    "workspace.transaction",
-    "workspace.request_rename",
-    "process.which",
-    "process.start",
-    "process.exchange",
-    "process.status",
-    "process.stop",
-    "review.request",
-    "review.result",
-    "review.wait",
-    "review.submit",
-    "review.cancel",
-    "review.run",
-    "review.complete",
-    "delegation.contribute",
-    "recovery.escalate",
-    "tools.exec",
-    "pi.discover",
-    "pi.expand",
-    "providers.unregister",
-    "providers.register",
-    "sidecars.invoke",
-    "sidecars.start",
-    "sidecars.status",
-    "sidecars.stop",
-    "workflow.status",
-    "workflow.restrict",
-    "git.status",
-    "git.log",
-    "git.diff",
-    "git.branches",
-    "git.switch_preview",
-    "git.stage",
-    "git.unstage",
-    "git.commit",
-    "git.discard",
-    "git.switch",
-    "evidence.read",
-    "sessions.list",
-    "sessions.read",
-    "knowledge.inspect",
-    "knowledge.retain",
-    "knowledge.propose",
-    "knowledge.approve",
-    "knowledge.remove",
-    "knowledge.reset",
-    "knowledge.snapshot",
-    "context.freeze",
-    "context.deliver",
-];
-pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
-    ("0.1.0-experimental.4", "deprecated", "2027-03-20"),
-    ("0.1.0-experimental.5", "experimental", "2027-03-20"),
-    ("0.1.0-experimental.6", "experimental", "2027-03-20"),
-    ("0.1.0-experimental.7", "experimental", "2027-03-20"),
-    ("0.1.0-experimental.8", "experimental", "2027-03-20"),
-    ("0.1.0-experimental.9", "experimental", "2027-03-20"),
-    (MOD_API_VERSION, "experimental", "2027-03-20"),
-];
+pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
+    &[(MOD_API_VERSION, "experimental", "2027-03-20")];
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",
@@ -249,37 +253,6 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "sessions",
     "contracts",
     "builtins",
-];
-pub const LEGACY_MOD_CAPABILITIES: &[&str] = &[
-    "context",
-    "tools",
-    "commands",
-    "lifecycle",
-    "state",
-    "task",
-    "agents",
-    "review",
-    "recovery",
-    "execution",
-    "interception",
-    "routing",
-    "terminal",
-    "providers",
-    "sidecars",
-    "compaction",
-    "pi_resources",
-    "input",
-    "workflow",
-    "middleware",
-    "services",
-    "workspace",
-    "process",
-    "git",
-    "turn_evidence",
-    "virtual_reads",
-    "sessions_read",
-    "knowledge_read",
-    "knowledge_write",
 ];
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -314,38 +287,6 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("tool_call", "middleware"),
     ("host_operation", "middleware"),
 ];
-pub const LEGACY_MOD_EVENTS: &[(&str, &str)] = &[
-    ("context", "context"),
-    ("migrate", "state"),
-    ("tool_before", "interception"),
-    ("tool_exposure", "tools"),
-    ("input", "input"),
-    ("routing", "routing"),
-    ("worker_context", "context"),
-    ("terminal", "terminal"),
-    ("selection", "terminal"),
-    ("compaction", "compaction"),
-    ("start", "lifecycle"),
-    ("idle", "lifecycle"),
-    ("stop", "lifecycle"),
-    ("resume", "lifecycle"),
-    ("tool_result", "lifecycle"),
-    ("workspace_write", "workspace"),
-    ("workspace_pre_rename", "workspace"),
-    ("turn_start", "lifecycle"),
-    ("turn_end", "lifecycle"),
-    ("compaction_start", "lifecycle"),
-    ("compaction_end", "lifecycle"),
-    ("agent_end", "lifecycle"),
-    ("workflow", "workflow"),
-    ("model_request", "middleware"),
-    ("response_stream", "middleware"),
-    ("prompt", "middleware"),
-    ("session", "middleware"),
-    ("agent", "middleware"),
-    ("tool_call", "middleware"),
-    ("host_operation", "middleware"),
-];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "tool_before",
     "routing",
@@ -355,15 +296,6 @@ pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "input",
     "list",
     "selection",
-];
-pub const LEGACY_MOD_REPLACEMENT_POINTS: &[&str] = &[
-    "tool_before",
-    "routing",
-    "worker_context",
-    "terminal",
-    "compaction",
-    "context",
-    "input",
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "model_request",
@@ -376,41 +308,6 @@ pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "host_operation",
 ];
 
-pub fn legacy_api(api: &str) -> bool {
-    api.starts_with("0.1.")
-}
-
-pub fn api_rank(api: &str) -> u32 {
-    if legacy_api(api) {
-        api.rsplit('.').next().and_then(|n| n.parse().ok()).unwrap_or(0)
-    } else {
-        100
-    }
-}
-
-pub fn capabilities_for(api: &str) -> &'static [&'static str] {
-    if legacy_api(api) { LEGACY_MOD_CAPABILITIES } else { MOD_CAPABILITIES }
-}
-
-pub fn events_for(api: &str) -> &'static [(&'static str, &'static str)] {
-    if legacy_api(api) { LEGACY_MOD_EVENTS } else { MOD_EVENTS }
-}
-
-pub fn replacements_for(api: &str) -> &'static [&'static str] {
-    if legacy_api(api) { LEGACY_MOD_REPLACEMENT_POINTS } else { MOD_REPLACEMENT_POINTS }
-}
-
-pub fn operations_for(api: &str) -> &'static [&'static str] {
-    if legacy_api(api) { LEGACY_MOD_HOST_OPERATIONS } else { MOD_HOST_OPERATIONS }
-}
-
-pub fn state_capability(api: &str) -> &'static str {
-    if legacy_api(api) { "state" } else { "store" }
-}
-
-pub fn contract_capability(api: &str) -> &'static str {
-    if legacy_api(api) { "workflow" } else { "contracts" }
-}
 pub const MOD_SCOPES: &[&str] = &["user", "project"];
 pub const MOD_ENVIRONMENT: &[&str] = &["crypto"];
 type Result<T> = io::Result<T>;
@@ -701,7 +598,7 @@ fn source_use(
             operation: operation.clone(),
             arguments: Value::Null,
         }
-        .capability(&package.api)?;
+        .capability()?;
         if !package
             .capabilities
             .iter()
@@ -724,10 +621,7 @@ fn source_use(
     for event in &registrations.events {
         if event == "tool_result" && package.capabilities.iter().any(|cap| cap == "middleware") {
             capabilities.insert("middleware".to_owned());
-        } else if let Some((_, capability)) = events_for(&package.api)
-            .iter()
-            .find(|(name, _)| name == event)
-        {
+        } else if let Some((_, capability)) = MOD_EVENTS.iter().find(|(name, _)| name == event) {
             capabilities.insert((*capability).to_owned());
         }
     }
@@ -738,7 +632,7 @@ fn source_use(
         capabilities.insert("commands".to_owned());
     }
     if !registrations.contracts.is_empty() {
-        capabilities.insert(contract_capability(&package.api).to_owned());
+        capabilities.insert("contracts".to_owned());
     }
     if !registrations.builtins.is_empty() {
         capabilities.insert("builtins".to_owned());
@@ -750,7 +644,7 @@ fn source_use(
         capabilities.insert("virtual_reads".to_owned());
     }
     if source.contains(".state.get(") || source.contains(".state.set(") {
-        capabilities.insert(state_capability(&package.api).to_owned());
+        capabilities.insert("store".to_owned());
     }
     for operation in &operations {
         capabilities.insert(
@@ -758,7 +652,7 @@ fn source_use(
                 operation: operation.clone(),
                 arguments: Value::Null,
             }
-            .capability(&package.api)?
+            .capability()?
             .to_owned(),
         );
     }
@@ -960,21 +854,16 @@ impl ModPackage {
             ));
         }
         if let Some(adapter) = self.adapter.as_deref()
-            && if legacy_api(&self.api) {
-                adapter != "pi-0.74-tools-commands-v1"
-            } else {
-                adapter == self.id
-                    || !self
-                        .dependencies
-                        .iter()
-                        .any(|dependency| dependency.id == adapter)
-            }
+            && (adapter == self.id
+                || !self
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.id == adapter))
         {
             return Err(failure("unsupported_adapter"));
         }
         if let Some(module) = &self.adapter_module
-            && (legacy_api(&self.api)
-                || !self.assets.contains(&module.entry)
+            && (!self.assets.contains(&module.entry)
                 || module.aliases.len() > 8
                 || module.aliases.iter().any(|(specifier, asset)| {
                     specifier.is_empty()
@@ -991,7 +880,7 @@ impl ModPackage {
             || self
                 .capabilities
                 .iter()
-                .any(|c| !capabilities_for(&self.api).contains(&c.as_str()))
+                .any(|c| !MOD_CAPABILITIES.contains(&c.as_str()))
         {
             return Err(failure("unsupported_or_duplicate_capability"));
         }
@@ -1069,9 +958,9 @@ impl ModPackage {
             || self.exec_environment.iter().any(|name| {
                 name.is_empty()
                     || name.len() > 64
-                    || !name
-                        .bytes()
-                        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+                    || !name.bytes().all(|byte| {
+                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
                     || name.as_bytes()[0].is_ascii_digit()
                     || crate::host::RESERVED_EXEC_ENVIRONMENT.contains(&name.as_str())
                     || crate::host::RESERVED_EXEC_PREFIXES
@@ -1431,6 +1320,7 @@ struct Loaded {
     package: ModPackage,
     selection: ModSelection,
     source: String,
+    assets: BTreeMap<String, Value>,
     adapter: Option<Value>,
     state: Value,
     registrations: Registrations,
@@ -1542,8 +1432,29 @@ impl ModHost {
         let adapters = Self::adapters(&selected);
         let mut next = BTreeMap::new();
         for (id, (selection, package, source)) in selected {
+            let assets = if package.assets.is_empty() {
+                BTreeMap::new()
+            } else {
+                let (_, _, hash, files) = store::package_with_assets(&selection.path)?;
+                if hash != selection.sha256 {
+                    return Err(failure(format!("untrusted_source: {}", package.id)));
+                }
+                if files.values().map(String::len).sum::<usize>() > 128 * 1024 {
+                    return Err(failure(format!(
+                        "package_text_asset_input_limit: {}",
+                        package.id
+                    )));
+                }
+                files
+                    .into_iter()
+                    .map(|(name, text)| {
+                        let sha256 = digest(text.as_bytes());
+                        (name, json!({"text": text, "sha256": sha256}))
+                    })
+                    .collect()
+            };
             let adapter = match package.adapter.as_deref() {
-                Some(name) if !legacy_api(&package.api) => Some(
+                Some(name) => Some(
                     adapters
                         .get(name)
                         .cloned()
@@ -1552,9 +1463,12 @@ impl ModHost {
                 _ => None,
             };
             let mut loaded = Loaded {
-                adapter: adapter.as_ref().and_then(|value| value.as_ref().ok().cloned()),
+                adapter: adapter
+                    .as_ref()
+                    .and_then(|value| value.as_ref().ok().cloned()),
                 package,
                 source,
+                assets,
                 selection,
                 state: Value::Null,
                 registrations: Registrations::default(),
@@ -1682,7 +1596,7 @@ impl ModHost {
                     || selection
                         .capabilities
                         .iter()
-                        .any(|c| !capabilities_for(&package.api).contains(&c.as_str()))
+                        .any(|c| !MOD_CAPABILITIES.contains(&c.as_str()))
                 {
                     return Err(failure(format!("capability_denied: {}", package.id)));
                 }
@@ -1968,42 +1882,14 @@ impl ModHost {
 
     fn validate_registrations(package: &ModPackage, registrations: &Registrations) -> Result<()> {
         let has = |cap: &str| package.capabilities.iter().any(|c| c == cap);
-        let rank = api_rank(&package.api);
-        let requires = |feature: &str| {
-            package
-                .compatibility
-                .required_features
-                .iter()
-                .any(|required| required == feature)
-        };
-        if has("turn_evidence") && (rank < 9 || !requires("turn_evidence_v1")) {
-            return Err(failure("turn_evidence_capability_or_version"));
-        }
-        if ["sessions_read", "knowledge_read", "knowledge_write"]
-            .iter()
-            .any(|cap| has(cap))
-            && (rank < 9 || !requires("scoped_data_v1"))
-        {
-            return Err(failure("scoped_data_requires_current_api_and_feature"));
-        }
-        if rank < 8
-            && (registrations.tools.iter().any(|tool| tool.task_scoped)
-                || registrations
-                    .events
-                    .iter()
-                    .any(|event| event == "tool_exposure"))
-        {
-            return Err(failure("task_tool_exposure_requires_current_api"));
-        }
-        let contract_capability = contract_capability(&package.api);
         if registrations.tools.len() > 16
             || registrations.commands.len() > 16
-            || registrations.events.len() > events_for(&package.api).len()
+            || registrations.events.len() > MOD_EVENTS.len()
             || (!registrations.tools.is_empty() && !has("tools"))
             || (!registrations.commands.is_empty() && !has("commands"))
-            || (!registrations.contracts.is_empty() && !has(contract_capability))
+            || (!registrations.contracts.is_empty() && !has("contracts"))
             || (!registrations.services.is_empty() && !has("services"))
-            || (!registrations.builtins.is_empty() && (legacy_api(&package.api) || !has("builtins")))
+            || (!registrations.builtins.is_empty() && !has("builtins"))
             || registrations.contracts.len() > 4
             || registrations.builtins.len() > 1
             || registrations.services.len() > 8
@@ -2018,17 +1904,9 @@ impl ModHost {
         resources::validate_registrations(package, &registrations.virtual_reads)?;
         let mut contract_ids = BTreeSet::new();
         for contract in &registrations.contracts {
-            let id = if legacy_api(&package.api) {
-                let contract: crate::WorkflowContract = serde_json::from_value(contract.clone())
-                    .map_err(|error| failure(format!("invalid_contract_registration: {error}")))?;
-                contract.validate().map_err(failure)?;
-                if contract.host_owned() {
-                    return Err(failure("invalid_or_duplicate_contract_registration"));
-                }
-                contract.id
-            } else {
-                crate::ContractDocument::parse(contract).map_err(failure)?.id
-            };
+            let id = crate::ContractDocument::parse(contract)
+                .map_err(failure)?
+                .id;
             if !contract_ids.insert(id) {
                 return Err(failure("invalid_or_duplicate_contract_registration"));
             }
@@ -2059,12 +1937,11 @@ impl ModHost {
         names.clear();
         for command in &registrations.commands {
             if let Some(cli) = &command.cli
-                && (api_rank(&package.api) < 9
-                    || !package
-                        .compatibility
-                        .required_features
-                        .iter()
-                        .any(|feature| feature == "plugin_dispatch_v1")
+                && (!package
+                    .compatibility
+                    .required_features
+                    .iter()
+                    .any(|feature| feature == "plugin_dispatch_v1")
                     || cli.is_empty()
                     || cli.len() > 64
                     || !cli.bytes().all(|byte| {
@@ -2072,9 +1949,9 @@ impl ModHost {
                             || byte.is_ascii_digit()
                             || matches!(byte, b'-' | b'_')
                     }))
-                {
-                    return Err(failure("cli_command_version_or_name_invalid"));
-                }
+            {
+                return Err(failure("cli_command_version_or_name_invalid"));
+            }
             if !identifier(&command.name)
                 || !names.insert(&command.name)
                 || command
@@ -2087,7 +1964,7 @@ impl ModHost {
         }
         names.clear();
         for event in &registrations.events {
-            let capability = events_for(&package.api)
+            let capability = MOD_EVENTS
                 .iter()
                 .find(|(name, _)| name == event)
                 .map(|(_, capability)| *capability)
@@ -2099,7 +1976,7 @@ impl ModHost {
             }
         }
         if registrations.replacements.iter().any(|point| {
-            !replacements_for(&package.api).contains(&point.as_str())
+            !MOD_REPLACEMENT_POINTS.contains(&point.as_str())
                 || !registrations.events.contains(point)
         }) {
             return Err(failure("invalid_replacement_point"));
@@ -2129,6 +2006,7 @@ impl ModHost {
             },
             &mut |_| {},
             None,
+            &InvocationScope::default(),
         )
     }
 
@@ -2183,8 +2061,79 @@ impl ModHost {
         payload: Value,
         active: impl Fn() -> bool,
         mut host: impl FnMut(ModHostCall) -> Result<Value>,
+        progress: impl FnMut(String),
+    ) -> Result<Value> {
+        self.invoke_scoped_streaming(
+            id,
+            generation,
+            event,
+            name,
+            payload,
+            active,
+            |caller, call| {
+                if caller != id {
+                    return Err(failure("service_provider_host_dispatch_unavailable"));
+                }
+                host(call)
+            },
+            progress,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn invoke_scoped_with(
+        &mut self,
+        id: &str,
+        generation: u64,
+        event: &str,
+        name: &str,
+        payload: Value,
+        active: impl Fn() -> bool,
+        host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+    ) -> Result<Value> {
+        self.invoke_scoped_streaming(id, generation, event, name, payload, active, host, |_| {})
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn invoke_scoped_streaming(
+        &mut self,
+        id: &str,
+        generation: u64,
+        event: &str,
+        name: &str,
+        payload: Value,
+        active: impl Fn() -> bool,
+        mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
         mut progress: impl FnMut(String),
     ) -> Result<Value> {
+        let scope = InvocationScope::default();
+        self.invoke_scoped_inner(
+            id,
+            generation,
+            event,
+            name,
+            payload,
+            &active,
+            &mut host,
+            &mut progress,
+            &scope,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn invoke_scoped_inner(
+        &mut self,
+        id: &str,
+        generation: u64,
+        event: &str,
+        name: &str,
+        payload: Value,
+        active: &dyn Fn() -> bool,
+        host: &mut dyn FnMut(&str, ModHostCall) -> Result<Value>,
+        progress: &mut dyn FnMut(String),
+        scope: &InvocationScope,
+    ) -> Result<Value> {
+        let _frame = scope.enter(id)?;
         if !active() {
             return Err(failure("callback_cancelled"));
         }
@@ -2219,10 +2168,7 @@ impl ModHost {
                         .registrations
                         .virtual_reads
                         .iter()
-                        .any(|reader| reader.scheme == name) =>
-                {
-                    
-                }
+                        .any(|reader| reader.scheme == name) => {}
                 "service"
                     if loaded.registrations.services.iter().any(|contract| {
                         contract
@@ -2245,16 +2191,21 @@ impl ModHost {
                 payload,
                 &active,
                 &mut |call| {
-                    let private = call.operation.starts_with("knowledge.")
-                        || call.operation.starts_with("sessions.")
-                        || call.operation.starts_with("context.")
+                    let private = call.operation.starts_with("sessions.")
                         || call.operation.starts_with("evidence.");
                     let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if private {Value::Null} else {call.arguments.clone()}});
-                    let _ = self.event_except("host_operation", before, id, &active);
+                    let _ = self.event_except("host_operation", before, id, active, scope);
                     let result = if call.operation == "mods.service" {
-                        self.call_service(id, generation, call.arguments.clone(), &active)
+                        self.call_service(
+                            id,
+                            generation,
+                            call.arguments.clone(),
+                            active,
+                            host,
+                            scope,
+                        )
                     } else {
-                        host(call.clone())
+                        host(id, call.clone())
                     };
                     let after = match &result {
                         Ok(value) => {
@@ -2264,11 +2215,12 @@ impl ModHost {
                             json!({"phase":"after","caller":id,"operation":call.operation,"error":if private {"private_operation_failed".to_owned()} else {error.to_string()}})
                         }
                     };
-                    let _ = self.event_except("host_operation", after, id, &active);
+                    let _ = self.event_except("host_operation", after, id, active, scope);
                     result
                 },
-                &mut progress,
+                progress,
                 virtual_time_ms,
+                scope,
             )?;
             if !active() {
                 return Err(failure("callback_cancelled"));
@@ -2283,7 +2235,7 @@ impl ModHost {
                     .iter()
                     .any(|registered| registered == point)
             };
-            if matches!(event, "routing" | "worker_context" | "compaction")
+            if matches!(event, "routing" | "compaction")
                 && !reply.value.is_null()
                 && !replaces(event)
             {
@@ -2299,23 +2251,7 @@ impl ModHost {
                     return Err(failure("context_limit"));
                 }
             }
-            if event == "worker_context" && !reply.value.is_null() {
-                let object = reply
-                    .value
-                    .as_object()
-                    .filter(|object| object.len() == 1)
-                    .ok_or_else(|| failure("invalid_worker_context_result"))?;
-                if object
-                    .get("mode")
-                    .and_then(Value::as_str)
-                    .is_none_or(|mode| {
-                        !["focused_brief", "shared_task_packet", "parent_history"].contains(&mode)
-                    })
-                {
-                    return Err(failure("invalid_worker_context_result"));
-                }
-            }
-            if event == "routing" && !reply.value.is_null() && !legacy_api(&loaded.package.api) {
+            if event == "routing" && !reply.value.is_null() {
                 let valid = reply.value.as_object().is_some_and(|object| {
                     object.len() == 1
                         && object
@@ -2323,25 +2259,6 @@ impl ModHost {
                             .and_then(Value::as_str)
                             .is_some_and(crate::resource_data::token)
                 });
-                if !valid {
-                    return Err(failure("invalid_routing_result"));
-                }
-            } else if event == "routing" && !reply.value.is_null() {
-                let valid = reply
-                    .value
-                    .as_str()
-                    .is_some_and(|route| ["sol", "astra"].contains(&route))
-                    || reply.value.as_object().is_some_and(|object| {
-                        object.len() == 2
-                            && object
-                                .get("route")
-                                .and_then(Value::as_str)
-                                .is_some_and(|route| ["sol", "astra"].contains(&route))
-                            && object
-                                .get("policy")
-                                .and_then(Value::as_str)
-                                .is_some_and(|policy| ["fixed", "task_entry"].contains(&policy))
-                    });
                 if !valid {
                     return Err(failure("invalid_routing_result"));
                 }
@@ -2355,10 +2272,8 @@ impl ModHost {
             if event == "terminal" && !reply.value.is_null() {
                 if replaces("terminal") {
                     ModView::parse(reply.value.clone())?;
-                } else if api_rank(&loaded.package.api) >= 8 {
-                    ModViewPatch::parse(reply.value.clone())?;
                 } else {
-                    return Err(failure("exclusive_replacement_registration_required"));
+                    ModViewPatch::parse(reply.value.clone())?;
                 }
             }
             if event == "input" {
@@ -2375,7 +2290,7 @@ impl ModHost {
                 return Err(failure("observe_only_event_returned_a_value"));
             }
             if reply.state != loaded.state {
-                if !loaded.package.capabilities.iter().any(|c| c == state_capability(&loaded.package.api)) {
+                if !loaded.package.capabilities.iter().any(|c| c == "store") {
                     return Err(failure("state_capability_denied"));
                 }
                 self.store.write_state(
@@ -2410,6 +2325,7 @@ impl ModHost {
                 let message = error.to_string();
                 if ![
                     "state_conflict",
+                    "callback_cancelled",
                     "host_receipt_limit",
                     "host_call_limit",
                     "callback_execution_budget",
@@ -2430,11 +2346,13 @@ impl ModHost {
         payload: Value,
         excluded: &str,
         active: &dyn Fn() -> bool,
+        scope: &InvocationScope,
     ) -> Vec<(String, Result<Value>)> {
         let ids: Vec<_> = self
             .active()
             .filter(|(id, loaded)| {
                 id.as_str() != excluded
+                    && !scope.contains(id)
                     && loaded
                         .registrations
                         .events
@@ -2445,8 +2363,17 @@ impl ModHost {
             .collect();
         ids.into_iter()
             .map(|id| {
-                let result =
-                    self.invoke_guarded(&id, self.generation, event, "", payload.clone(), active);
+                let result = self.invoke_scoped_inner(
+                    &id,
+                    self.generation,
+                    event,
+                    "",
+                    payload.clone(),
+                    active,
+                    &mut |_, _| Err(failure("observer_host_operation_unavailable")),
+                    &mut |_| {},
+                    scope,
+                );
                 (id, result)
             })
             .collect()
@@ -2458,6 +2385,8 @@ impl ModHost {
         generation: u64,
         arguments: Value,
         active: &dyn Fn() -> bool,
+        host: &mut dyn FnMut(&str, ModHostCall) -> Result<Value>,
+        scope: &InvocationScope,
     ) -> Result<Value> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -2511,8 +2440,16 @@ impl ModHost {
             .ok_or_else(|| failure("unknown_service_method"))?;
         validate_service_value(&call.input, &method.input)?;
         let qualified = format!("{}.{}", call.name, call.method);
-        let result = self.invoke_guarded(
-            &provider, generation, "service", &qualified, call.input, active,
+        let result = self.invoke_scoped_inner(
+            &provider,
+            generation,
+            "service",
+            &qualified,
+            call.input,
+            active,
+            host,
+            &mut |_| {},
+            scope,
         )?;
         validate_service_value(&result, &method.output)?;
         if serde_json::to_vec(&result)?.len() > 32_768 {
@@ -2565,11 +2502,7 @@ impl ModHost {
                 .filter(|object| object.len() == 1)
                 .ok_or_else(|| failure("invalid_model_request_result"))?;
             let selected = object
-                .get(if self.loaded.get(&id).is_some_and(|loaded| legacy_api(&loaded.package.api)) {
-                    "preset"
-                } else {
-                    "route"
-                })
+                .get("route")
                 .and_then(Value::as_str)
                 .ok_or_else(|| failure("invalid_model_request_result"))?;
             let preset = presets
@@ -2627,10 +2560,6 @@ impl ModHost {
                 continue;
             }
             if let Some(stop) = value.get("stop") {
-                let legacy = self
-                    .loaded
-                    .get(&id)
-                    .is_none_or(|loaded| legacy_api(&loaded.package.api));
                 let reason = stop
                     .get("reason")
                     .and_then(Value::as_str)
@@ -2641,15 +2570,14 @@ impl ModHost {
                         .and_then(Value::as_str)
                         .filter(|text| !text.trim().is_empty() && text.len() <= 4096)
                 });
-                let shape = value.as_object().is_some_and(|object| {
-                    object.keys().all(|key| key == "stop" || key == "retry")
-                }) && stop.as_object().is_some_and(|object| object.len() == 1)
-                    && value
-                        .get("retry")
-                        .is_none_or(|retry| retry.as_object().is_some_and(|object| object.len() == 1));
-                let error = if legacy {
-                    Some("stream_control_requires_current_api")
-                } else if !boundary {
+                let shape = value
+                    .as_object()
+                    .is_some_and(|object| object.keys().all(|key| key == "stop" || key == "retry"))
+                    && stop.as_object().is_some_and(|object| object.len() == 1)
+                    && value.get("retry").is_none_or(|retry| {
+                        retry.as_object().is_some_and(|object| object.len() == 1)
+                    });
+                let error = if !boundary {
                     Some("stream_control_requires_output_boundary")
                 } else if !shape || reason.is_none() || inject == Some(None) {
                     Some("invalid_stream_control")
@@ -2747,31 +2675,6 @@ impl ModHost {
             .collect()
     }
 
-    pub fn event_guarded_for_api(
-        &mut self,
-        event: &str,
-        payload: Value,
-        legacy: bool,
-        active: impl Fn() -> bool,
-    ) -> Vec<(String, Result<Value>)> {
-        let ids = self
-            .event_ids(event)
-            .into_iter()
-            .filter(|id| {
-                self.loaded
-                    .get(id)
-                    .is_some_and(|loaded| legacy_api(&loaded.package.api) == legacy)
-            })
-            .collect::<Vec<_>>();
-        ids.into_iter()
-            .map(|id| {
-                let result =
-                    self.invoke_guarded(&id, self.generation, event, "", payload.clone(), &active);
-                (id, result)
-            })
-            .collect()
-    }
-
     pub fn event_guarded_with(
         &mut self,
         event: &str,
@@ -2792,14 +2695,14 @@ impl ModHost {
         let ids = self.event_ids(event);
         ids.into_iter()
             .map(|id| {
-                let result = self.invoke_with(
+                let result = self.invoke_scoped_with(
                     &id,
                     self.generation,
                     event,
                     "",
                     payload(&id),
                     &active,
-                    |call| host(&id, call),
+                    &mut host,
                 );
                 (id, result)
             })
@@ -2879,10 +2782,16 @@ impl ModHost {
             components: serde_json::from_value(value).ok()?,
         };
         let view = ModView::parse(json!({"sites": {"dialog": site}})).ok()?;
-        view.sites.get("dialog").map(|site| (owner, site.components.clone()))
+        view.sites
+            .get("dialog")
+            .map(|site| (owner, site.components.clone()))
     }
 
-    pub fn selection_decision(&mut self, payload: Value, active: impl Fn() -> bool) -> Option<bool> {
+    pub fn selection_decision(
+        &mut self,
+        payload: Value,
+        active: impl Fn() -> bool,
+    ) -> Option<bool> {
         let owner = self.replacement_owner("selection")?;
         match self.invoke_guarded(&owner, self.generation, "selection", "", payload, active) {
             Ok(Value::Null) => Some(false),
@@ -3030,12 +2939,15 @@ impl ModHost {
     }
 
     pub fn grants(&self, id: &str) -> Option<ModGrants> {
-        self.loaded.get(id).filter(|m| m.error.is_none()).map(|m| ModGrants {
-            api: m.package.api.clone(),
-            source_sha256: m.selection.sha256.clone(),
-            capabilities: m.package.capabilities.clone(),
-            exec_environment: m.package.exec_environment.clone(),
-        })
+        self.loaded
+            .get(id)
+            .filter(|m| m.error.is_none())
+            .map(|m| ModGrants {
+                api: m.package.api.clone(),
+                source_sha256: m.selection.sha256.clone(),
+                capabilities: m.package.capabilities.clone(),
+                exec_environment: m.package.exec_environment.clone(),
+            })
     }
 
     /// The mod holding the exclusive replacement slot for a decision point.
@@ -3055,24 +2967,9 @@ impl ModHost {
         }
     }
 
-    pub fn contracts(&self) -> Vec<(crate::WorkflowContract, crate::PolicyOwner)> {
-        self.active()
-            .map(|(_, m)| m)
-            .filter(|m| legacy_api(&m.package.api))
-            .flat_map(|m| {
-                m.registrations.contracts.iter().filter_map(|contract| {
-                    serde_json::from_value(contract.clone())
-                        .ok()
-                        .map(|contract| (contract, Self::owner(m)))
-                })
-            })
-            .collect()
-    }
-
     pub fn contract_documents(&self) -> Vec<(crate::ContractDocument, crate::PolicyOwner)> {
         self.active()
             .map(|(_, m)| m)
-            .filter(|m| !legacy_api(&m.package.api))
             .flat_map(|m| {
                 m.registrations.contracts.iter().filter_map(|contract| {
                     crate::ContractDocument::parse(contract)
@@ -3180,9 +3077,9 @@ impl ModHost {
             "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
             "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
-            "tool_before": {"call_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable"},
+            "tool_before": {"call_id":"observe_only","thread_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable"},
             "tool_exposure": {"thread_id":"observe_only","checkpoint":"observe_only","available":"observe_only","enable":"alterable"},
-            "tool_result": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","outcome":"observe_only"},
+            "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
             "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
         })
     }

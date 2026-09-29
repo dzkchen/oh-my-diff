@@ -38,10 +38,11 @@ class TerminalModScenarioTests(unittest.TestCase):
 class TerminalModSourceTests(unittest.TestCase):
     def test_terminal_mods_declare_only_their_required_features_and_capabilities(self):
         expected = {
-            "omd_git": ({"commands", "git", "lifecycle", "state", "terminal"}, {"git_operations_v1"}),
-            "omd_logo": ({"terminal"}, {"terminal_identity_v1", "terminal_rich_line_v1"}),
-            "omd_model_picker": ({"terminal"}, {"terminal_picker_theme_v1"}),
-            "omd_selection_copy": ({"commands", "state", "terminal"}, {"terminal_selection_v1"}),
+            "omd_git": ({"commands", "exec", "fs.read", "fs.write", "store", "lifecycle", "terminal"},
+                        {"exec_v1", "guarded_exec_v1", "workspace_access_v1", "workspace_fs_v1", "terminal_lists_v1", "store_v1"}),
+            "omd_logo": ({"store", "terminal"}, {"terminal_render_sites_v1"}),
+            "omd_model_picker": ({"terminal"}, {"terminal_lists_v1"}),
+            "omd_selection_copy": ({"commands", "store", "terminal"}, {"terminal_lists_v1", "store_v1"}),
         }
         for mod, (capabilities, features) in expected.items():
             manifest = json.loads((ROOT / "mods/first-party" / mod / "mod.json").read_text())
@@ -49,16 +50,13 @@ class TerminalModSourceTests(unittest.TestCase):
                 self.assertEqual(set(manifest["capabilities"]), capabilities)
                 self.assertLessEqual(features, set(manifest["compatibility"]["required_features"]))
 
-    def test_git_sidebar_writes_only_through_fingerprinted_host_operations(self):
+    def test_git_sidebar_writes_use_guarded_host_execution_and_path_access(self):
         source = (ROOT / "mods/first-party/omd_git/index.ts").read_text()
-        for operation in ("git.stage", "git.unstage", "git.discard", "git.commit", "git.switch"):
-            calls = source.count(f"'{operation}'")
-            fingerprinted = source.count(f"'{operation}', {{")
-            with self.subTest(operation=operation):
-                self.assertGreaterEqual(calls, 1)
-                self.assertEqual(calls, fingerprinted)
-        self.assertNotIn("'git.discard', { paths: [entry", source)
-        self.assertIn("preview.fingerprint", source)
+        self.assertNotIn("'git.stage'", source)
+        self.assertIn("'exec.run'", source)
+        self.assertIn("guards, required_access: { write: paths }", source)
+        self.assertIn("'workspace.check_access'", source)
+        self.assertIn("'workspace.backup'", source)
 
 
 if __name__ == "__main__":

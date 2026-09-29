@@ -18,6 +18,16 @@ pub(super) struct WorkspaceAuthority {
     pub context: FileSystemSandboxContext,
 }
 
+fn local_context(profile: codex_protocol::models::PermissionProfile, cwd: PathUri) -> Result<FileSystemSandboxContext, String> {
+    let mut context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
+    context.user_home_dir = PathUri::from_host_native_path("~").ok();
+    context.temporary_directories = Some(match std::env::var_os("TMPDIR").filter(|path| !path.is_empty()) {
+        Some(path) => vec![PathUri::from(AbsolutePathBuf::from_absolute_path(PathBuf::from(path)).map_err(|e| e.to_string())?)],
+        None => Vec::new(),
+    });
+    Ok(context)
+}
+
 pub(super) async fn workspace_snapshot(lead: &crate::Lead) -> Result<codex_omd::Snapshot, String> {
     let authority = WorkspaceAuthority::for_lead(lead).await?;
     let approved = lead.host.config.approved_untracked.iter().cloned().collect();
@@ -331,10 +341,10 @@ impl WorkspaceAuthority {
             config.cwd.as_path(),
         )?
         .materialize_project_roots_with_workspace_roots(std::slice::from_ref(&config.cwd));
-        let context = FileSystemSandboxContext::from_permission_profile(
+        let context = local_context(
             profile.clone(),
             PathUri::from_abs_path(&config.cwd),
-        );
+        )?;
         Ok(Self {
             repository: host.repository.clone(),
             session_root: Some(config.codex_home.join("sessions").to_path_buf()),
@@ -442,6 +452,27 @@ mod tests {
     use codex_protocol::permissions::FileSystemPath;
     use codex_protocol::permissions::FileSystemSandboxEntry;
     use codex_protocol::permissions::NetworkSandboxPolicy;
+
+    #[test]
+    fn local_snapshot_authority_keeps_temporary_metadata_and_read_denials() {
+        use codex_protocol::permissions::FileSystemSpecialPath;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let absolute = AbsolutePathBuf::from_absolute_path_checked(&root).unwrap();
+        let cwd = PathUri::from_abs_path(&absolute);
+        let policy = FileSystemSandboxPolicy::restricted(vec![
+            FileSystemSandboxEntry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Root }, FileSystemAccessMode::Read),
+            FileSystemSandboxEntry::new(FileSystemPath::Path { path: cwd.clone() }, FileSystemAccessMode::Write),
+            FileSystemSandboxEntry::new(FileSystemPath::Special { value: FileSystemSpecialPath::Tmpdir }, FileSystemAccessMode::Write),
+            FileSystemSandboxEntry::new(FileSystemPath::Path { path: cwd.join("private").unwrap() }, FileSystemAccessMode::Deny),
+        ]);
+        let profile = PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
+        let context = local_context(profile, cwd).unwrap();
+        let authority = WorkspaceAuthority { repository: root.clone(), session_root: None, session_database: None, policy, context };
+        assert!(authority.readable(&root.join("source")));
+        assert!(!authority.readable(&root.join("private/secret")));
+        assert!(authority.writable(&root.join("source")));
+    }
 
     fn authority(repository: PathBuf, access: FileSystemAccessMode) -> WorkspaceAuthority {
         let absolute = AbsolutePathBuf::from_absolute_path_checked(&repository).unwrap();

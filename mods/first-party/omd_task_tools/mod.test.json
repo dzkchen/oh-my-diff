@@ -1,21 +1,221 @@
 {
   "schema": 1,
   "virtual_time_ms": 1000,
-  "settings": {"omd_task_tools": {"python_command": ["python3", "-m", "py_compile", "solution.py"]}},
+  "packages": [
+    "../omd_workflow"
+  ],
+  "settings": {
+    "omd_task_tools": {
+      "python_command": [
+        "python3",
+        "-m",
+        "py_compile",
+        "solution.py"
+      ]
+    }
+  },
   "host_operations": {
-    "tools.exec": [
-      {"result": {"exit_code": 0, "stdout": "Python tests passed"}},
-      {"result": {"exit_code": 0, "stdout": "TypeScript check passed"}}
+    "task.status": [
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      }
+    ],
+    "store.get": [
+      {
+        "result": {
+          "revision": 1,
+          "value": {
+            "schema": 1,
+            "objective": "Fix Python",
+            "acceptance_criteria": [
+              "Syntax passes"
+            ],
+            "acceptance": {
+              "reference": "fixture",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "remaining_work": [
+              "fix solution.py"
+            ],
+            "failed_hypotheses": [],
+            "status": "active",
+            "decisions": []
+          }
+        }
+      },
+      {
+        "result": {
+          "revision": 1,
+          "value": {
+            "schema": 1,
+            "objective": "Fix Python",
+            "acceptance_criteria": [
+              "Syntax passes"
+            ],
+            "acceptance": {
+              "reference": "fixture",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "remaining_work": [
+              "fix solution.py"
+            ],
+            "failed_hypotheses": [],
+            "status": "active",
+            "decisions": []
+          }
+        }
+      }
+    ],
+    "contract.status": [
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "reviewed_omd"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      },
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "reviewed_omd"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      }
+    ],
+    "exec.run": [
+      {
+        "result": {
+          "exit_code": 0,
+          "signal": null,
+          "stdout": "Python syntax passed",
+          "stderr": "",
+          "stdout_truncated": false,
+          "stderr_truncated": false,
+          "timed_out": false,
+          "duration_ms": 10,
+          "program": {
+            "path": "/usr/bin/python3",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      }
     ]
   },
   "steps": [
-    {"type": "status"},
-    {"type": "tool_exposure", "thread_id": "one", "payload": {"remaining_work": ["fix src/main.py"]}, "expect": ["mod_omd_task_tools_check_python"]},
-    {"type": "invoke", "mod": "omd_task_tools", "event": "tool", "name": "check_python", "payload": {}, "expect": {"exit_code": 0, "stdout": "Python tests passed"}},
-    {"type": "tool_exposure", "thread_id": "one", "payload": {"remaining_work": ["fix src/view.ts"]}, "expect": ["mod_omd_task_tools_check_typescript"]},
-    {"type": "invoke", "mod": "omd_task_tools", "event": "tool", "name": "check_typescript", "payload": {}, "expect": {"exit_code": 0, "stdout": "TypeScript check passed"}},
-    {"type": "tool_exposure", "thread_id": "one", "payload": {"remaining_work": ["write README"]}, "expect": []},
-    {"type": "reload"},
-    {"type": "tool_exposure", "thread_id": "one", "payload": {"remaining_work": ["fix src/lib.rs"]}, "expect": ["mod_omd_task_tools_check_rust"]}
+    {
+      "type": "tool_exposure",
+      "thread_id": "fixture-thread",
+      "payload": {},
+      "expect": [
+        "mod_omd_workflow_begin",
+        "mod_omd_workflow_checkpoint",
+        "mod_omd_workflow_acceptance",
+        "mod_omd_workflow_delegate",
+        "mod_omd_workflow_advance",
+        "mod_omd_workflow_cancel",
+        "mod_omd_workflow_check",
+        "mod_omd_workflow_review",
+        "mod_omd_workflow_self_verify",
+        "mod_omd_workflow_complete"
+      ]
+    },
+    {
+      "type": "event",
+      "event": "turn_start",
+      "payload": {
+        "turn_id": "first"
+      }
+    },
+    {
+      "type": "tool_exposure",
+      "thread_id": "fixture-thread",
+      "payload": {},
+      "expect": [
+        "mod_omd_workflow_begin",
+        "mod_omd_workflow_checkpoint",
+        "mod_omd_workflow_acceptance",
+        "mod_omd_workflow_delegate",
+        "mod_omd_workflow_advance",
+        "mod_omd_workflow_cancel",
+        "mod_omd_workflow_check",
+        "mod_omd_workflow_review",
+        "mod_omd_workflow_self_verify",
+        "mod_omd_workflow_complete",
+        "mod_omd_task_tools_check_python"
+      ]
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_task_tools",
+      "event": "tool",
+      "name": "check_python",
+      "payload": {},
+      "expect": {
+        "exit_code": 0,
+        "signal": null,
+        "stdout": "Python syntax passed",
+        "stderr": "",
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "timed_out": false,
+        "duration_ms": 10,
+        "program": {
+          "path": "/usr/bin/python3",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      }
+    },
+    {
+      "type": "tool_exposure",
+      "thread_id": "other-thread",
+      "payload": {},
+      "expect": [
+        "mod_omd_workflow_begin",
+        "mod_omd_workflow_checkpoint",
+        "mod_omd_workflow_acceptance",
+        "mod_omd_workflow_delegate",
+        "mod_omd_workflow_advance",
+        "mod_omd_workflow_cancel",
+        "mod_omd_workflow_check",
+        "mod_omd_workflow_review",
+        "mod_omd_workflow_self_verify",
+        "mod_omd_workflow_complete"
+      ]
+    }
   ]
 }

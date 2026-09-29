@@ -1,13 +1,13 @@
 # OMD session review
 
-Optional plugin `0.1.0-preview.1`, public mod API `.9`. The TypeScript component owns session selection, duplicate detection, classification and the report. The generic host supplies a read-only, repository-scoped session index and command dispatch. No report logic was added to Rust.
+Optional plugin component `0.2.0-preview.1`, public mod API `0.2.0-experimental.1`. The TypeScript component owns session selection, duplicate detection, classification and the report. The generic host supplies a read-only, repository-scoped session index and command dispatch. No report logic was added to Rust.
 
 ```sh
 codex plugin marketplace add /absolute/path/to/oh-my-diff/plugins/optional
 codex plugin add omd-session-review@oh-my-diff-optional
 omd-mod plugin-component PLUGIN_ROOT
 omd-mod inspect COMPONENT_PATH
-omd-mod trust STORE COMPONENT_PATH INSPECT_SHA256 commands,sessions_read
+omd-mod trust STORE COMPONENT_PATH INSPECT_SHA256 commands,sessions
 omd-mod enable STORE COMPONENT_PATH
 omd session-review --repo /absolute/project --store STORE --since 2026-09-01..2026-09-26
 ```
@@ -20,4 +20,4 @@ The end date is exclusive. Add `--session ID` for each selected session. Without
 
 By default the dispatcher uses the selected Codex home and current opt-out database. Use `--home PATH` for an explicitly selected home. If layered repository/system configuration redirects SQLite storage, supply its actual `--sqlite-home PATH`; unavailable or unknown privacy policy fails closed. No records are scanned when the component is disabled.
 
-Local acceptance uses pinned Codex `0.157.0`, Node `24.18.0` and synthetic sessions on Apple Silicon macOS. Both plugin installation/removal and real sandboxed dispatch pass. Personal sessions and real user productivity were not evaluated.
+Historical API 0.1 acceptance used pinned Codex `0.157.0`, Node `24.18.0` and synthetic sessions on Apple Silicon macOS, including plugin installation/removal and sandboxed dispatch. Current API 0.2 offline fixtures cover bounded selection, revision drift and fail-closed reports; personal sessions, live dispatch parity and real user productivity remain unqualified.

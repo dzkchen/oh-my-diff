@@ -57,8 +57,6 @@ the versioned cache directory.
 | `omd-guidance-hooks` | plugin with skills and hooks | Selected guidance and lifecycle reactions | Full OMD, inactive candidate |
 | `omd-review-policy` | plugin with skills and hook | Review cadence and final review prompts | Full OMD, inactive candidate |
 | `omd-application-bridges` | plugin with hook | Application diagnostics | On demand candidate |
-| `omd-repository-tools` | plugin with skill | Graph and code health evidence | On demand candidate |
-| `omd-lsp-adapters` | plugin | Five-language semantic operations | On demand candidate |
 | `omd-artifact-reading` | plugin with skill | Source-anchored artifact reading | On demand candidate |
 
 Each reviewed row records an extension type, capability, exact tested host

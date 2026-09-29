@@ -2,7 +2,7 @@
 
 These are local Apple Silicon candidate profiles for the active Codex `0.157.0`
 patch. They are not a public release or a qualified default. Build the patched
-`codex`, `omd-mod`, `omd`, `omd-graph`, `omd-health`, and `omd-lsp` executables from
+`codex`, `omd-mod`, `omd`, and `omd-contract` executables from
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
 SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
 and copy that archive to `/path/to/release/mod-api.tgz`. Use Node `24.18.0` from
@@ -51,31 +51,34 @@ patched build and separate writable installation directories:
 NODE_PATH="$(mise which node)"
 python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path/to/omd-bin install \
   --profile platform --binary /path/to/patched/codex --manager /path/to/patched/omd-mod \
+  --omd /path/to/patched/omd --omd-contract /path/to/patched/omd-contract \
   --author-archive /path/to/release/mod-api.tgz \
   --node "$NODE_PATH" --store /path/to/omd-mod-store
 ```
 
 `--profile platform` creates a store holding only the `omd_logo` presentation
-mod, enabled, and launches patched Codex with `OMD_MODE=platform`.
-User-selected, trusted mods can run without the controlled OMD task policy.
-For `--profile full`, use the same command with
-`--omd-graph`, `--omd-health`, and `--omd-lsp` pointing to matching patched
-executables. Full installs twelve current first-party candidate mods. A fresh
-Full store enables `omd_workspace`, `omd_logo`, and `omd_model_picker`.
-Claude, coordination, Git sidebar, LSP synchronization, recovery,
-selection-copy, typed tasks, advisor review and lead-requested research are installed but disabled. Advisor every-turn selection and the separate research preset require their own explicit host policy and allowance; installation does not activate either. Attaching an
+mod, enabled, and launches patched Codex with `OMD_MODE=omd`.
+User-selected, trusted mods can run without selecting a task workflow contract.
+`--profile full` installs twenty-one first-party candidate mods. A fresh Full store enables
+`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_model_picker`, and
+`omd_selection_copy`; without an enabled selection mod the host never copies on
+mouse release. Claude, coordination, Git sidebar, LSP synchronization, recovery,
+typed tasks, workflow, advisor review, lead-requested research, checks, graph
+navigation, guideline governance, Pi prompts, repository analysis, source
+knowledge and task tools are installed but disabled. Advisor every-turn selection and the separate research preset
+require their own explicit host policy and allowance; installation does not
+activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
-selections and adds newly bundled first-party packages disabled. Six curated plugin source packages are available in
+selections and adds newly bundled first-party packages disabled. Four curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
-started. Full includes inert `omd-graph`, `omd-health`, and `omd-lsp` launchers
-for the matching opt-in plugins. The deferred code-execution plugin, browser,
+started. The deferred code-execution plugin, browser,
 bridge service, external language servers, code-mode host, and sidecars are
 absent from the installed base profile.
 
 Enable the installed synchronization mod explicitly with
-`/path/to/omd-bin/omd-package mod enable omd_lsp_sync`. It currently claims
-Python files with an installed `pylsp`; other languages and absent servers
-report fallback. It discovers the executable without installing it, starts it
+`/path/to/omd-bin/omd-package mod enable omd_lsp_sync`. It claims Python,
+TypeScript, JavaScript, Rust and Java files whose server is installed; absent
+servers report fallback. It discovers the executable without installing it, starts it
 on demand, and sends document changes after observed OMD writes. Requested
 file renames use the mod's pre-rename handler and the host's exact transaction
 service. Platform-only users can install the same mod explicitly with
@@ -92,17 +95,16 @@ Inspect and switch the effective profile:
 Use `activate platform` for a platform installation. `direct` immediately
 selects upstream-style behavior inside the patched binary. `status` reports
 the installed profile, host mode, installed versus enabled mods, source hashes,
-mod errors, and staged plugins. The TUI `/omd` inspector shows the live mode
-and mod state. To disable a broken first-party Full mod:
+mod errors, and staged plugins. The Full profile's inspector mod supplies
+`/omd`; direct mode has no inspector. To disable a broken first-party Full mod:
 
 ```sh
 /path/to/omd-bin/omd-package mod disable omd_workspace
 ```
 
-Enable the Git sidebar or selection-copy policy with
-`/path/to/omd-bin/omd-package mod enable omd_git` or `... mod enable
-omd_selection_copy`. `mod disable omd_logo` removes the logo in either profile;
-the native `>_ OpenAI Codex | Oh My Diffed (vVERSION)` welcome line remains.
+Enable the Git sidebar with `/path/to/omd-bin/omd-package mod enable omd_git`;
+`mod disable omd_selection_copy` turns off copy-on-highlight. `mod disable omd_logo` removes the logo in either profile;
+the native `>_ OpenAI Codex (vVERSION)` session header remains.
 
 Git mutations also need an explicit permission-profile grant for the repository's
 Git metadata and affected files. Codex's default `.git` protection is respected;
@@ -110,37 +112,29 @@ enabling `omd_git` alone does not authorize writes. Run from the repository root
 Git hooks and filters keep the session's filesystem restrictions and have no
 network access through this local Git interface.
 
-Full OMD can explicitly select the controlled task contract with
-`activate controlled --manifest /path/to/task-manifest.json`. That manifest must
-name this installation's mod store and satisfy the native task authorization,
-limits, provider, repository, and evidence requirements. Coordination and
-recovery mods remain disabled until individually selected. Switching to
-`direct` or `full` clears the controlled manifest from the launcher.
-The current Meta Contributor worker needs standard Responses function-tool
-formatting (`use_responses_lite=false` and no custom patch tool in its model
-catalog entry). Declare any required read-only system toolchain paths in the
-task manifest. The bounded live task reached an `unverified` native completion
-receipt because the verifier could not inspect host-owned evidence. The local
-candidate now grants only the read-only completion verifier that evidence
-access, but this repair has not had a paid provider recheck. Controlled mode
-remains a development candidate.
+`OMD_CONTROLLED_MANIFEST` fails closed on the current host. Configure routes and grants in
+the mod store, trust and enable `omd_workflow`, and select the schema-2 contract
+with `omd-contract`. Enabling the mod does not select a contract or grant a
+provider. `omd_task_tools` requires the enabled `omd_workflow` service; the
+package command rejects a missing dependency and restores the prior selection.
+The earlier bounded live native-workflow task and its `unverified` receipt are
+historical evidence, not qualification of this mod-owned workflow. Batch 2.55
+has local synthetic coverage; installed-profile and live-provider qualification
+remain separate gates.
 
-The inactive `omd_typed_tasks` package can be enabled for a controlled task
+The inactive `omd_typed_tasks` package can be enabled for a task with a selected
+and initialized mod-owned workflow contract
 with `/path/to/omd-bin/omd-package mod enable omd_typed_tasks`. Its
-`task_types` setting declares each worker role, one host-authorized route,
-`read_search` or `workspace_edit` tools, and a bounded JSON result schema.
-`max_fan_out` is one through four. The mod requires a native task manifest with
-child delegation, limits, repository, checks, and review policy. It validates
-all sibling results before consuming any. Edit workers use isolated worktrees;
-the host checks and reviews the candidate and refuses conflicting parent edits
-before integration. Direct work remains available when the package is disabled
-or the selected contract forbids children. Local synthetic host checks cover
-siblings, edit integration, conflict, malformed and failed results, resume,
-disable, and broken-mod recovery. Real-model quality and public support remain
-separate release qualifications.
+`tasks` setting declares each worker role, one host-authorized route, tools,
+and a bounded JSON result schema. The mod validates all sibling results before
+advancing any editing result. Edit workers require configured checks and an
+authorized distinct review route; host integration remains separately gated.
+Direct work remains available when the package is disabled or the selected
+contract forbids children. Local Batch 2.55 runner coverage does not qualify
+real-model quality or public support.
 
 The Full profile includes an inactive `omd_claude_cli` mod. To use the official
-Claude CLI's logged-in `claude.ai` subscription for one controlled task, enable
+Claude CLI's logged-in `claude.ai` subscription for one bounded task, enable
 the mod and launch through its package command:
 
 ```sh
@@ -167,12 +161,11 @@ task files. Modding platform only includes no Claude route or assets.
 For a user mod in the platform profile, inspect its `mod.json` and source,
 then use the installed `artifacts/omd-mod` binary to inspect, trust its exact
 digest and declared capabilities, enable it in the store, and reload. The
-authoring and recovery details are in [mods/README.md](mods/README.md) and
-[mods/PREVIEW.md](mods/PREVIEW.md). A mod's `error` in status is a failure to
+authoring and recovery details are in [mods/README.md](mods/README.md). A mod's `error` in status is a failure to
 repair or disable, not evidence that its behavior ran successfully.
 
 An existing compatible store can be attached with `--attach-store` during a
-new installation. Full attach requires the same three package source digests
+new installation. Full attach checks the exact pinned package source digests
 and preserves each existing enabled or disabled choice. Use a separate prefix
 and launcher directory for a side-by-side candidate upgrade. Removal deletes
 only the managed launcher and installation prefix:
@@ -187,7 +180,13 @@ If you explicitly added the
 staged plugin marketplace to Codex, remove its plugins and run
 `codex plugin marketplace remove oh-my-diff` before uninstall; the installer
 refuses to leave a marketplace pointing at a removed directory. Local candidate qualification
-and package limits are recorded in `.docs/ROADMAP.md` and
-`runtime/lean-release-selection.json`.
+and package limits are recorded in `.docs/ROADMAP.md`.
 
-Both profiles include the generic `omd` extension-command dispatcher. Its launcher selects the installation's mod store; only explicitly trusted and enabled command exports are available. For example, `omd COMMAND --repo /absolute/project` routes to the selected extension. No session-review or memory behavior is built into this binary. Package installation and activation remain separate. The current host exposes API `.9` and continues to run supported `.8` packages with their exact declared API and source hashes preserved in the package locks.
+Both profiles include the generic `omd` extension-command dispatcher and the
+`omd-contract` selection tool. Their launchers select the installation's mod
+store; only explicitly trusted and enabled command exports are available. For
+example, `omd COMMAND --repo /absolute/project` routes to the selected
+extension. No session-review or memory behavior is built into this binary.
+Package installation and activation remain separate. The current host exposes
+API `0.2.0-experimental.1`; API 0.1 packages are historical compatibility
+fixtures and do not qualify as current package candidates.

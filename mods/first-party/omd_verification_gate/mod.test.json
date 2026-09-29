@@ -1,26 +1,280 @@
 {
   "schema": 1,
   "virtual_time_ms": 1000,
+  "packages": [
+    "../omd_workflow"
+  ],
   "host_operations": {
-    "workflow.status": [
-      {"result": {"provenance": {"contract": {"id": "omd_verification_gate"}}}},
-      {"result": {"provenance": {"contract": {"id": "omd_verification_gate"}}}},
-      {"result": {"provenance": {"contract": {"id": "omd_verification_gate"}}}}
+    "contract.status": [
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "omd_verification_gate"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      },
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "omd_verification_gate"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      },
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "omd_verification_gate"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      },
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "omd_verification_gate"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      },
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "omd_verification_gate"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      },
+      {
+        "result": {
+          "status": "active",
+          "active": {
+            "id": "omd_verification_gate"
+          },
+          "receipts": [],
+          "restrictions": []
+        }
+      }
     ],
-    "checkpoint.read": [
-      {"result": {"candidate_versions": [{"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}], "acceptance_criteria": ["tests"], "completed_acceptance": [{"criterion": "tests", "evidence": [{"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}},
-      {"result": {"candidate_versions": [{"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}], "acceptance_criteria": ["tests", "review"], "completed_acceptance": [{"criterion": "tests", "evidence": [{"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}},
-      {"result": {"candidate_versions": [{"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}], "acceptance_criteria": ["tests"], "completed_acceptance": [{"criterion": "tests", "evidence": [{"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}}
+    "task.status": [
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      },
+      {
+        "result": {
+          "ledger": {
+            "thread_id": "fixture-thread",
+            "cost": null
+          }
+        }
+      }
     ],
-    "workflow.restrict": [{"result": {"restrictions": [{"operation": "delegate"}, {"operation": "spawn_child_agent"}]}}]
+    "store.get": [
+      {
+        "result": {
+          "value": {
+            "schema": 1,
+            "objective": "Fix the requested task",
+            "acceptance_criteria": [
+              "tests"
+            ],
+            "acceptance": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "remaining_work": [
+              "tests"
+            ],
+            "failed_hypotheses": [],
+            "status": "active",
+            "decisions": [],
+            "completed_acceptance": {
+              "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "assessments": [
+                {
+                  "criterion": "tests",
+                  "verdict": "pass",
+                  "evidence": [
+                    "test output"
+                  ]
+                }
+              ]
+            },
+            "pending": null
+          },
+          "revision": 1
+        }
+      },
+      {
+        "result": {
+          "value": {
+            "schema": 1,
+            "objective": "Fix the requested task",
+            "acceptance_criteria": [
+              "tests",
+              "review"
+            ],
+            "acceptance": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "remaining_work": [
+              "tests"
+            ],
+            "failed_hypotheses": [],
+            "status": "active",
+            "decisions": [],
+            "completed_acceptance": {
+              "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "assessments": [
+                {
+                  "criterion": "tests",
+                  "verdict": "pass",
+                  "evidence": [
+                    "test output"
+                  ]
+                }
+              ]
+            },
+            "pending": null
+          },
+          "revision": 1
+        }
+      },
+      {
+        "result": {
+          "value": {
+            "schema": 1,
+            "objective": "Fix the requested task",
+            "acceptance_criteria": [
+              "tests"
+            ],
+            "acceptance": {
+              "reference": "fixture-evidence",
+              "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "remaining_work": [
+              "tests"
+            ],
+            "failed_hypotheses": [],
+            "status": "active",
+            "decisions": [],
+            "completed_acceptance": {
+              "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "assessments": [
+                {
+                  "criterion": "tests",
+                  "verdict": "pass",
+                  "evidence": [
+                    "test output"
+                  ]
+                }
+              ]
+            },
+            "pending": null
+          },
+          "revision": 1
+        }
+      }
+    ],
+    "workspace.snapshot": [
+      {
+        "result": {
+          "snapshot": {
+            "reference": "snapshot:fixture",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    ],
+    "contract.restrict": [
+      {
+        "result": {
+          "restrictions": [
+            "workspace.integrate"
+          ],
+          "scoped_restrictions": [
+            {
+              "operation": "agents.spawn",
+              "when": {
+                "/workspace": "isolated_worktree"
+              }
+            }
+          ]
+        }
+      }
+    ]
   },
   "steps": [
-    {"type": "invoke", "mod": "omd_verification_gate", "event": "tool", "name": "seal_candidate", "payload": {"candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "expect": {"restrictions": [{"operation": "delegate"}, {"operation": "spawn_child_agent"}]}},
-    {"type": "status"},
-    {"type": "reload"},
-    {"type": "invoke", "mod": "omd_verification_gate", "event": "tool", "name": "seal_candidate", "payload": {"candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "expect_error": "current candidate and all acceptance evidence are required before sealing"},
-    {"type": "reload"},
-    {"type": "invoke", "mod": "omd_verification_gate", "event": "tool", "name": "seal_candidate", "payload": {"candidate_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}, "expect_error": "current candidate and all acceptance evidence are required before sealing"},
-    {"type": "status"}
+    {
+      "type": "invoke",
+      "mod": "omd_verification_gate",
+      "event": "tool",
+      "name": "seal_candidate",
+      "payload": {
+        "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "restrictions": [
+          "workspace.integrate"
+        ],
+        "scoped_restrictions": [
+          {
+            "operation": "agents.spawn",
+            "when": {
+              "/workspace": "isolated_worktree"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_verification_gate",
+      "event": "tool",
+      "name": "seal_candidate",
+      "payload": {
+        "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect_error": "current complete acceptance assessments required before sealing"
+    },
+    {
+      "type": "reload"
+    },
+    {
+      "type": "invoke",
+      "mod": "omd_verification_gate",
+      "event": "tool",
+      "name": "seal_candidate",
+      "payload": {
+        "candidate_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "expect_error": "current complete acceptance assessments required before sealing"
+    }
   ]
 }

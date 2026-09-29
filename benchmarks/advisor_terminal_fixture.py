@@ -26,6 +26,7 @@ def visible(fd, output, text, seconds):
 
 
 def run(binary, node, inline):
+    raise RuntimeError("legacy advisor terminal fixture requires rebuilt OMD_MODE=omd host routes and mod selections; native terminal assertions are not current-host evidence")
     root, repo, home, manifest_path = fixture("advisor-inline" if inline else "advisor-fullscreen")
     requests = []
 

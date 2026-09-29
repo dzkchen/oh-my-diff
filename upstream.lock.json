@@ -16,8 +16,8 @@
   "lock_normalization": "155 source-less workspace package versions: 0.0.0 -> 0.157.0; external dependencies unchanged",
   "runtime_patches": [
     {
-      "path": "runtime/patches/controlled-contributor-0.157.0.patch",
-      "sha256": "cde089828baee318ec8086c43382e36dc045626cd3936840fc08c9f7b2509e51"
+      "path": "runtime/patches/omd-0.157.0.patch",
+      "sha256": "a9869dce19c381d8e81049b0385dff84a29cb871c783367a443d2215bc8c4c63"
     }
   ],
   "compatibility_evidence": ".docs/audits/upstream-pin-advance-20260925.md"

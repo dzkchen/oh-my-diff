@@ -195,3 +195,41 @@ test('official CLI auth probe uses the approved user identity', async () => {
     assert.doesNotThrow(() => checkCli(fake, '/opt/fixture-home', 'fixture'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('subscription sidecar retains failed attempts in its task request limit', { timeout: 15000 }, async () => {
+  const { spawn } = await import('node:child_process');
+  const { once } = await import('node:events');
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-bound-'));
+  const fake = join(root, 'claude');
+  const reserve = createServer();
+  await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
+  const port = reserve.address().port;
+  await new Promise(resolve => reserve.close(resolve));
+  await writeFile(fake, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.281 (Claude Code)"; elif [ "$1" = "auth" ]; then echo \'{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}\'; else exit 1; fi\n', { mode: 0o700 });
+  const token = 'local-fixture-token-without-account-access';
+  const child = spawn(process.execPath, [new URL('../mods/first-party/omd_claude_cli/transport.mjs', import.meta.url).pathname,
+    'serve', String(port), model, fake, root, 'fixture', '2'], { env: { PATH: '/usr/bin:/bin', HOME: root, USER: 'fixture',
+      OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready-fixture' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', bytes => { stderr += bytes; });
+  const exit = once(child, 'exit');
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 50 && !ready; attempt++) {
+      try { ready = (await fetch(`http://127.0.0.1:${port}/_omd/ready`)).ok; } catch {}
+      if (!ready) await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.ok(ready, stderr);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST',
+        headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(prompt) });
+      const text = await response.text();
+      assert.equal(response.status, attempt < 2 ? 200 : 429, text);
+      assert.match(text, attempt < 2 ? /response.failed/ : /claude_task_request_limit/);
+    }
+  } finally {
+    child.kill('SIGTERM');
+    await exit;
+    await rm(root, { recursive: true, force: true });
+  }
+});

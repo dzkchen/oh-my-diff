@@ -1,5 +1,5 @@
 use codex_omd::MOD_API_VERSION;
-const LEGACY_API: &str = "0.1.0-experimental.9";
+const CURRENT_API: &str = MOD_API_VERSION;
 use codex_omd::MOD_HOST_FEATURES;
 use codex_omd::MOD_PACKAGE_SCHEMA_VERSION;
 use codex_omd::MOD_STATE_STORAGE_SCHEMA_VERSION;
@@ -28,7 +28,7 @@ fn packaged(
     let path = root.join(directory);
     std::fs::create_dir(&path).unwrap();
     let mut manifest = json!({"schema":1,"id":id,"version":"1.0.0",
-        "api":LEGACY_API,"state_version":1,"capabilities":capabilities});
+        "api":CURRENT_API,"state_version":1,"capabilities":capabilities});
     if !requires.is_empty() {
         manifest["requires"] = json!(requires);
     }
@@ -51,7 +51,7 @@ fn service_package(
     let path = root.join(id);
     std::fs::create_dir(&path).unwrap();
     let manifest = json!({"schema":1,"id":id,"version":"1.0.0",
-        "api":LEGACY_API,"state_version":1,"capabilities":capabilities,
+        "api":CURRENT_API,"state_version":1,"capabilities":capabilities,
         "services":services});
     std::fs::write(
         path.join("mod.json"),
@@ -84,7 +84,7 @@ fn trust(store: &ModStore, path: &std::path::Path, capabilities: &[&str]) {
 
 fn trust_scoped(store: &ModStore, path: &std::path::Path, capabilities: &[&str], scope: &str) {
     let inspected = ModStore::inspect_package(path).unwrap();
-    let granted: Vec<String> = capabilities.iter().map(|s| s.to_string()).collect();
+    let granted: Vec<String> = capabilities.iter().map(|value| value.to_string()).collect();
     let sha256 = inspected["sha256"].as_str().unwrap();
     contended(|| store.trust(path.to_path_buf(), sha256, granted.clone(), scope));
     contended(|| store.enable(path, true));
@@ -123,7 +123,7 @@ const COUNTER: &str = "export default api => api.command('count', () => { api.st
 #[test]
 fn mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates() {
     let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return value; }); }";
-    let (temp, _, _) = fixture(source, &["commands", "state"]);
+    let (temp, _, _) = fixture(source, &["commands", "store"]);
     let mut first = host(&temp);
     let mut second = host(&temp);
     let invoke = |runtime: &mut ModHost, name: &str| {
@@ -148,7 +148,7 @@ fn mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates() {
 
 #[test]
 fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
-    let (temp, store, path) = fixture(COUNTER, &["commands", "state"]);
+    let (temp, store, path) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     let generation = runtime.generation();
     std::fs::write(
@@ -156,7 +156,7 @@ fn mod_reload_is_transactional_and_stale_calls_are_rejected() {
         "export default () => { throw new Error('broken') }",
     )
     .unwrap();
-    trust(&store, &path, &["commands", "state"]);
+    trust(&store, &path, &["commands", "store"]);
     assert!(runtime.reload().is_err());
     assert_eq!(
         runtime
@@ -203,7 +203,7 @@ fn mod_capabilities_source_tamper_and_symlinks_are_rejected() {
 
 #[test]
 fn mod_cancellation_discards_state_and_explicit_reload_recovers() {
-    let (temp, store, _) = fixture(COUNTER, &["commands", "state"]);
+    let (temp, store, _) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     let calls = AtomicUsize::new(0);
     let result = runtime.invoke_guarded(
@@ -288,7 +288,7 @@ fn mod_pending_callback_has_a_host_deadline() {
 
 #[test]
 fn mod_capability_revocation_survives_failed_reactivation() {
-    let (temp, _, _) = fixture(COUNTER, &["commands", "state"]);
+    let (temp, _, _) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     let path = temp.path().join("store/mods.json");
     let mut configuration: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -317,7 +317,7 @@ fn mod_capability_revocation_survives_failed_reactivation() {
 
 #[test]
 fn mod_duplicate_id_cannot_replace_an_active_package() {
-    let (temp, store, _) = fixture(COUNTER, &["commands", "state"]);
+    let (temp, store, _) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     let other = package(
         &temp.path().canonicalize().unwrap(),
@@ -354,8 +354,8 @@ fn mod_duplicate_id_cannot_replace_an_active_package() {
 
 #[test]
 fn native_host_bridge_preserves_once_only_effects_and_rust_capability_checks() {
-    let source = "export default api => api.command('run', () => { const a = api.host.call('task.status',null); api.state.set(a); return api.host.call('checkpoint.read',{a}); })";
-    let (temp, _, _) = fixture(source, &["commands", "state", "task"]);
+    let source = "export default api => api.command('run', () => { const a = api.host.call('task.status',null); api.state.set(a); return api.host.call('contract.status',{a}); })";
+    let (temp, _, _) = fixture(source, &["commands", "store", "agents", "contracts"]);
     let mut runtime = host(&temp);
     let mut calls = Vec::new();
     let value = runtime
@@ -373,20 +373,20 @@ fn native_host_bridge_preserves_once_only_effects_and_rust_capability_checks() {
         )
         .unwrap();
     assert_eq!(value, json!(2));
-    assert_eq!(calls, vec!["task.status", "checkpoint.read"]);
+    assert_eq!(calls, vec!["task.status", "contract.status"]);
     let state: Value = serde_json::from_slice(
         &std::fs::read(temp.path().join("store/state-fixture.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(state["value"], json!(1));
-    let (denied, _, _) = fixture(source, &["commands", "state"]);
+    let (denied, _, _) = fixture(source, &["commands", "store"]);
     assert!(activation_error(&denied, "fixture").contains("undeclared_operation_use"));
 }
 
 #[test]
 fn lifecycle_route_registration_resumes_across_two_host_calls() {
     let source = "export default api => api.on('turn_start', () => { const routes = api.host.call('routes.list', null); if (routes.length) api.host.call('providers.register', {id:'fixture'}); })";
-    let (temp, _, _) = fixture(source, &["lifecycle", "task", "providers"]);
+    let (temp, _, _) = fixture(source, &["lifecycle", "model"]);
     let mut runtime = host(&temp);
     let mut operations = Vec::new();
     let results = runtime.event_guarded_with(
@@ -420,7 +420,7 @@ fn lifecycle_route_registration_resumes_across_two_host_calls() {
 
 #[test]
 fn migration_is_explicit_bounded_and_preserves_previous_state() {
-    let (temp, store, path) = fixture(COUNTER, &["commands", "state"]);
+    let (temp, store, path) = fixture(COUNTER, &["commands", "store"]);
     let mut runtime = host(&temp);
     runtime
         .invoke(
@@ -445,7 +445,7 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
         .trust(
             path.clone(),
             &sha,
-            vec!["commands".into(), "state".into()],
+            vec!["commands".into(), "store".into()],
             "user",
         )
         .unwrap();
@@ -478,87 +478,21 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
 }
 
 #[test]
-fn synthetic_old_api_mod_activates_on_a_compatible_new_host() {
+fn retired_api_packages_are_rejected_before_trust_or_activation() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let path = package(
-        &root,
-        "old_mod",
-        "export default api => api.command('ping',()=>api.version)",
-        &["commands"],
-    );
-    let manifest_path = path.join("mod.json");
-    let mut manifest: Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["api"] = json!("0.1.0-experimental.5");
-    manifest["compatibility"] = json!({
-        "required_features":["transactional_reload_v1"],
-        "optional_features":["service_contracts_v1","future_optional_v1"]
-    });
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    trust(&store, &path, &["commands"]);
-    let mut runtime = host(&temp);
-    assert_eq!(
-        runtime
-            .invoke(
-                "old_mod",
-                runtime.generation(),
-                "command",
-                "ping",
-                Value::Null
-            )
-            .unwrap(),
-        json!(MOD_API_VERSION)
-    );
-    let status = &runtime.status()["mods"][0];
-    assert_eq!(status["api"], "0.1.0-experimental.5");
-    assert_eq!(status["api_stability"], "experimental");
-    assert_eq!(
-        status["negotiated_features"]["required"],
-        json!(["transactional_reload_v1"])
-    );
-    assert_eq!(
-        status["negotiated_features"]["optional_available"],
-        json!(["service_contracts_v1"])
-    );
-    assert_eq!(
-        status["negotiated_features"]["optional_unavailable"],
-        json!(["future_optional_v1"])
-    );
-}
-
-#[test]
-fn synthetic_deprecated_api_mod_activates_only_because_it_has_an_explicit_support_row() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let store = ModStore::create(root.join("store"), node()).unwrap();
-    let path = package(
-        &root,
-        "deprecated_mod",
-        "export default api => api.command('ping',()=>api.version)",
-        &["commands"],
-    );
-    let manifest_path = path.join("mod.json");
-    let mut manifest: Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["api"] = json!("0.1.0-experimental.4");
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    trust(&store, &path, &["commands"]);
-    let mut runtime = host(&temp);
-    assert_eq!(runtime.status()["mods"][0]["api_stability"], "deprecated");
-    assert_eq!(
-        runtime
-            .invoke(
-                "deprecated_mod",
-                runtime.generation(),
-                "command",
-                "ping",
-                Value::Null
-            )
-            .unwrap(),
-        json!(MOD_API_VERSION)
-    );
+    let path = package(&root, "retired", "export default () => {}", &[]);
+    for version in 4..=9 {
+        let retired = format!("0.1.0-experimental.{version}");
+        let manifest_path = path.join("mod.json");
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["api"] = json!(retired);
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let error = ModStore::inspect_package(&path).unwrap_err().to_string();
+        assert!(error.contains(&retired), "{error}");
+        assert!(error.contains(MOD_API_VERSION), "{error}");
+    }
 }
 
 #[test]
@@ -610,7 +544,7 @@ fn host_versions_and_storage_schemas_are_reported_independently() {
 
 #[test]
 fn interrupted_migration_and_explicit_rollback_preserve_source_settings_and_state() {
-    let (temp, store, path) = fixture(COUNTER, &["commands", "state"]);
+    let (temp, store, path) = fixture(COUNTER, &["commands", "store"]);
     store
         .settings(&path, [("label".into(), json!("kept"))].into())
         .unwrap();
@@ -646,7 +580,7 @@ fn interrupted_migration_and_explicit_rollback_preserve_source_settings_and_stat
         .trust(
             path.clone(),
             &sha,
-            vec!["commands".into(), "state".into()],
+            vec!["commands".into(), "store".into()],
             "user",
         )
         .unwrap();
@@ -671,7 +605,7 @@ fn interrupted_migration_and_explicit_rollback_preserve_source_settings_and_stat
         .trust(
             path.clone(),
             &sha,
-            vec!["commands".into(), "state".into()],
+            vec!["commands".into(), "store".into()],
             "user",
         )
         .unwrap();
@@ -711,7 +645,7 @@ fn interrupted_migration_and_explicit_rollback_preserve_source_settings_and_stat
         .trust(
             path.clone(),
             &sha,
-            vec!["commands".into(), "state".into()],
+            vec!["commands".into(), "store".into()],
             "user",
         )
         .unwrap();
@@ -742,7 +676,7 @@ fn interrupted_migration_and_explicit_rollback_preserve_source_settings_and_stat
 #[test]
 fn host_error_receipts_are_catchable_without_repeating_operations() {
     let source = "export default api => api.command('run', () => { let value; try { value = api.host.call('task.status'); } catch(e) { if (e instanceof Error) return {failed:true}; throw e; } return value; })";
-    let (temp, _, _) = fixture(source, &["commands", "task"]);
+    let (temp, _, _) = fixture(source, &["commands", "agents"]);
     let mut runtime = host(&temp);
     let mut calls = 0;
     assert_eq!(
@@ -768,7 +702,7 @@ fn host_error_receipts_are_catchable_without_repeating_operations() {
 #[test]
 fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
     let source = "export default api => api.command('run', arg => { if (arg === 'small') return 'ok'; api.host.call('task.status'); api.host.call('task.status'); return 'unreachable'; })";
-    let (temp, _, _) = fixture(source, &["commands", "task"]);
+    let (temp, _, _) = fixture(source, &["commands", "agents"]);
     let mut runtime = host(&temp);
     let generation = runtime.generation();
     let error = runtime
@@ -785,9 +719,15 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
     assert_eq!(error.to_string(), "host_receipt_limit");
     assert_eq!(
         runtime
-            .invoke_with("fixture", generation, "command", "run", json!("small"), || true, |_| {
-                Ok(Value::Null)
-            })
+            .invoke_with(
+                "fixture",
+                generation,
+                "command",
+                "run",
+                json!("small"),
+                || true,
+                |_| { Ok(Value::Null) }
+            )
             .unwrap(),
         json!("ok")
     );
@@ -795,16 +735,16 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
 
 #[test]
 fn exclusive_replacement_conflicts_fail_before_activation() {
-    let source = "export default api => api.replace('routing', () => 'sol')";
-    let (temp, store, _) = fixture(source, &["routing"]);
+    let source = "export default api => api.replace('routing', () => ({route:'sol'}))";
+    let (temp, store, _) = fixture(source, &["model"]);
     let mut runtime = host(&temp);
     let other = package(
         &temp.path().canonicalize().unwrap(),
         "other",
         source,
-        &["routing"],
+        &["model"],
     );
-    trust(&store, &other, &["routing"]);
+    trust(&store, &other, &["model"]);
     assert!(
         runtime
             .reload()
@@ -814,7 +754,7 @@ fn exclusive_replacement_conflicts_fail_before_activation() {
     );
     let results = runtime.event("routing", Value::Null);
     assert_eq!(results.len(), 1);
-    assert_eq!(*results[0].1.as_ref().unwrap(), json!("sol"));
+    assert_eq!(*results[0].1.as_ref().unwrap(), json!({"route":"sol"}));
 }
 
 #[test]
@@ -929,7 +869,7 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
 }
 
 #[test]
-fn terminal_components_compose_in_dependency_order_and_old_observers_remain_observe_only() {
+fn terminal_components_compose_in_dependency_order_and_observers_contribute_status() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store"), node()).unwrap();
@@ -959,10 +899,6 @@ fn terminal_components_compose_in_dependency_order_and_old_observers_remain_obse
         &["terminal"],
         &["workspace"],
     );
-    let manifest_path = theme.join("mod.json");
-    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["api"] = json!("0.1.0-experimental.8");
-    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     trust(&store, &theme, &["terminal"]);
     let mut runtime = host(&temp);
     let terminal = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
@@ -988,30 +924,22 @@ fn terminal_components_compose_in_dependency_order_and_old_observers_remain_obse
     assert_eq!(sidebar["components"][0]["id"], "focus_box");
     assert_eq!(sidebar["components"][0]["children"][1]["id"], "base_text");
 
-    let legacy = package(
+    let observer = package(
         &root,
-        "legacy",
-        "export default api => api.on('terminal',()=>({theme:{accent:81}}))",
+        "observer",
+        "export default api => api.on('terminal',()=>({status:['observer']}))",
         &["terminal"],
     );
-    let mut manifest: Value =
-        serde_json::from_slice(&std::fs::read(legacy.join("mod.json")).unwrap()).unwrap();
-    manifest["api"] = json!("0.1.0-experimental.6");
-    std::fs::write(
-        legacy.join("mod.json"),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
-    trust(&store, &legacy, &["terminal"]);
+    trust(&store, &observer, &["terminal"]);
     runtime.reload().unwrap();
     let terminal = runtime.terminal_view(json!({"event":"draw","checkpoint":null}), || true);
     assert!(
-        terminal
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.contains("legacy")
-                && diagnostic.contains("exclusive_replacement_registration_required"))
+        terminal.diagnostics.is_empty(),
+        "{:?}",
+        terminal.diagnostics
     );
+    assert!(terminal.contributors.contains(&"observer".to_owned()));
+    assert!(terminal.view.status.contains(&"observer".to_owned()));
 }
 
 #[test]
@@ -1135,6 +1063,79 @@ fn typed_services_are_host_routed_versioned_and_generate_installed_types() {
     assert!(types.contains("'example.echo@1.1.0'"));
     assert!(types.contains("echo(input: string): string"));
     assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
+}
+
+#[test]
+fn service_host_operations_keep_provider_identity_and_grants() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let contract = json!({"name":"example.owned","version":"1.0.0",
+        "methods":{"read":{"input":"null","output":"object"}}});
+    let provider = service_package(
+        &root,
+        "provider",
+        "export default api => api.provide({name:'example.owned',version:'1.0.0',methods:{read:{input:'null',output:'object'}}},{read:()=>api.host.call('store.get',{key:'owned'})})",
+        json!({"exports":[contract]}),
+        &["services", "store"],
+    );
+    let consumer = service_package(
+        &root,
+        "consumer",
+        "export default api => api.command('read',()=>api.services.call('example.owned','read',null))",
+        json!({"imports":[{"name":"example.owned","version":"1.0.0"}]}),
+        &["commands", "services"],
+    );
+    for source in [&provider, &consumer] {
+        let path = source.join("mod.json");
+        let mut manifest: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        manifest["api"] = json!(MOD_API_VERSION);
+        std::fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    }
+    trust(&store, &provider, &["services", "store"]);
+    trust(&store, &consumer, &["commands", "services"]);
+    let mut runtime = host(&temp);
+    let mut observed = Vec::new();
+    let result = runtime
+        .invoke_scoped_with(
+            "consumer",
+            runtime.generation(),
+            "command",
+            "read",
+            Value::Null,
+            || true,
+            |caller, call| {
+                observed.push(caller.to_owned());
+                assert_eq!(call.operation, "store.get");
+                assert_eq!(call.arguments, json!({"key":"owned"}));
+                Ok(json!({"value":"provider-owned"}))
+            },
+        )
+        .unwrap();
+    assert_eq!(result, json!({"value":"provider-owned"}));
+    assert_eq!(observed, ["provider"]);
+    assert_eq!(runtime.status()["service_calls"][0]["provider"], "provider");
+    let active = std::cell::Cell::new(true);
+    let cancelled = runtime
+        .invoke_scoped_with(
+            "consumer",
+            runtime.generation(),
+            "command",
+            "read",
+            Value::Null,
+            || active.get(),
+            |caller, _| {
+                assert_eq!(caller, "provider");
+                active.set(false);
+                Ok(json!({"value":"cancelled"}))
+            },
+        )
+        .unwrap_err();
+    assert!(
+        cancelled.to_string().contains("callback_cancelled"),
+        "{cancelled}"
+    );
+    assert_eq!(error_of(&runtime, "provider"), "");
 }
 
 #[test]
@@ -1283,7 +1284,7 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
 
 #[test]
 fn request_and_stream_middleware_preserve_authority_and_provenance() {
-    let source = "export default api => { api.middleware('model_request',()=>({preset:'astra'})); api.middleware('response_stream',event=>event.protected?null:{text:String(event.text).toUpperCase()}); api.middleware('tool_result',()=>({forged:true})); }";
+    let source = "export default api => { api.middleware('model_request',()=>({route:'astra'})); api.middleware('response_stream',event=>event.protected?null:{text:String(event.text).toUpperCase()}); api.middleware('tool_result',()=>({forged:true})); }";
     let (temp, _, _) = fixture(source, &["middleware"]);
     let mut runtime = host(&temp);
     let routed = runtime
@@ -1367,7 +1368,7 @@ fn task_scoped_tools_follow_owned_step_selection_and_fail_closed() {
 }
 
 #[test]
-fn task_scoped_tool_decisions_cannot_select_another_mod_and_old_api_stays_compatible() {
+fn task_scoped_tool_decisions_cannot_select_another_mod_or_hide_unscoped_tools() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store"), node()).unwrap();
@@ -1396,11 +1397,6 @@ fn task_scoped_tool_decisions_cannot_select_another_mod_and_old_api_stays_compat
         ),
         &["tools"],
     );
-    let old_manifest = old.join("mod.json");
-    let body = std::fs::read_to_string(&old_manifest)
-        .unwrap()
-        .replace(LEGACY_API, "0.1.0-experimental.7");
-    std::fs::write(old_manifest, body).unwrap();
     for path in [&first, &second, &old] {
         trust(&store, path, &["tools"]);
     }
@@ -1435,10 +1431,10 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     assert!(activation_error(&temp, "fixture").contains("undeclared_operation_use"));
     let (temp, _, _) = fixture(
         "export default api => api.command('idle',()=>null)",
-        &["commands", "task"],
+        &["commands", "agents"],
     );
     let status = host(&temp).status();
-    assert_eq!(status["mods"][0]["unused_grants"], json!(["task"]));
+    assert_eq!(status["mods"][0]["unused_grants"], json!(["agents"]));
     let policies = &status["field_policies"];
     assert_eq!(policies["response_stream"]["raw_usage"], "observe_only");
     assert_eq!(policies["model_request"]["effective"], "alterable");
@@ -1551,7 +1547,7 @@ fn command_descriptions_tool_labels_and_lifecycle_events_register() {
 #[test]
 fn tool_progress_is_forwarded_once_across_host_call_replay() {
     let source = "export default api => { api.tool({name:'work',description:'Work',parameters:{type:'object',properties:{}}}, () => { api.progress('started'); const status = api.host.call('task.status', null); api.progress('finished'); return status; }); api.command('bad', () => api.progress('nope')); }";
-    let (temp, _, _) = fixture(source, &["tools", "commands", "task"]);
+    let (temp, _, _) = fixture(source, &["tools", "commands", "agents"]);
     let mut runtime = host(&temp);
     let generation = runtime.generation();
     let mut updates = Vec::new();
@@ -1581,7 +1577,7 @@ fn tool_progress_is_forwarded_once_across_host_call_replay() {
 #[test]
 fn host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget() {
     let source = "export default api => api.tool({name:'work',description:'Work',parameters:{type:'object',properties:{}}}, () => { let seen = 0; for (let index = 0; index < 16; index += 1) { api.host.call('task.status', null); seen += 1; } return seen; })";
-    let (temp, _, path) = fixture(source, &["tools", "task"]);
+    let (temp, _, path) = fixture(source, &["tools", "agents"]);
     let manifest = path.join("mod.json");
     let mut package: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
     package["hook_budget_ms"] = json!(250);
@@ -1589,7 +1585,7 @@ fn host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget() {
     trust(
         &ModStore::open(temp.path().canonicalize().unwrap().join("store")).unwrap(),
         &path,
-        &["tools", "task"],
+        &["tools", "agents"],
     );
     let mut runtime = host(&temp);
     let generation = runtime.generation();
@@ -1613,145 +1609,13 @@ fn host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget() {
 }
 
 #[test]
-fn pi_nested_skills_honor_ignore_rules_and_frontmatter() {
+fn native_discovery_prefers_project_packages_without_trust() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let user = root.join("user");
     let project = root.join("project");
-    let skills = user.join("skills");
-    let write = |path: &std::path::Path, content: &str| {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, content).unwrap();
-    };
-    let skill = |description: &str| format!("---\ndescription: {description}\n---\nBody\n");
-    write(
-        &skills.join("root.md"),
-        "---\nname: root-skill\ndescription: Root file\n---\n",
-    );
-    write(&skills.join("group/alpha/SKILL.md"), &skill("Alpha skill"));
-    write(
-        &skills.join("group/alpha/nested/SKILL.md"),
-        &skill("Hidden below a skill root"),
-    );
-    write(
-        &skills.join("group/ignored/SKILL.md"),
-        &skill("Ignored by gitignore"),
-    );
-    write(&skills.join(".gitignore"), "group/ignored/\n");
-    write(&skills.join("group/.ignore"), "gamma\n");
-    write(
-        &skills.join("group/gamma/SKILL.md"),
-        &skill("Ignored by nested ignore"),
-    );
-    write(
-        &skills.join("group/.hidden/SKILL.md"),
-        &skill("Dot directory"),
-    );
-    write(
-        &skills.join("node_modules/pkg/SKILL.md"),
-        &skill("Dependency"),
-    );
-    write(&skills.join("group/beta/SKILL.md"), "No frontmatter\n");
-    write(
-        &skills.join("group/delta/SKILL.md"),
-        "---\nname: delta-renamed\ndescription: Delta\n---\n",
-    );
-    write(
-        &skills.join("group/deep/notes.md"),
-        &skill("Not a root file"),
-    );
-    write(
-        &project.join(".pi/prompts/review.md"),
-        "---\ndescription: Review a file\nargument-hint: <path> [mode]\n---\nReview $1 carefully\n$@\n",
-    );
-    write(
-        &project.join(".pi/prompts/plain.md"),
-        &format!("\n{}\nsecond line\n", "y".repeat(70)),
-    );
-    let catalog = ModStore::discover_pi(&user, &project).unwrap();
-    let mut names = catalog["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|r| {
-            format!(
-                "{}/{}",
-                r["kind"].as_str().unwrap(),
-                r["name"].as_str().unwrap()
-            )
-        })
-        .collect::<Vec<_>>();
-    names.sort();
-    assert_eq!(
-        names,
-        vec![
-            "prompts/plain",
-            "prompts/review",
-            "skills/alpha",
-            "skills/delta-renamed",
-            "skills/root-skill"
-        ]
-    );
-    assert!(
-        catalog["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["error"] == "pi_skill_description_required")
-    );
-    let (prompts, _) = ModStore::pi_prompts(&user, &project).unwrap();
-    let review = prompts.iter().find(|p| p.name == "review").unwrap();
-    assert_eq!(review.description, "Review a file");
-    assert_eq!(review.argument_hint.as_deref(), Some("<path> [mode]"));
-    assert_eq!(review.body, "Review $1 carefully\n$@");
-    let plain = prompts.iter().find(|p| p.name == "plain").unwrap();
-    assert_eq!(plain.description, format!("{}...", "y".repeat(60)));
-    assert_eq!(
-        ModStore::expand_pi_prompt(&user, &project, "review", "\"src/main.rs\" fast").unwrap()["text"],
-        json!("Review src/main.rs carefully\nsrc/main.rs fast")
-    );
-    assert!(ModStore::expand_pi_prompt(&user, &project, "missing", "").is_err());
-}
-
-#[test]
-fn pi_prompt_expansion_matches_pi_0_74_oracle() {
-    let oracle: Vec<Value> = serde_json::from_str(ORACLE).unwrap();
-    for case in oracle {
-        let parsed = codex_omd::parse_command_args(case["args"].as_str().unwrap());
-        assert_eq!(json!(parsed), case["parsed"], "{case}");
-        assert_eq!(
-            codex_omd::substitute_args(case["template"].as_str().unwrap(), &parsed),
-            case["expanded"].as_str().unwrap(),
-            "{case}"
-        );
-    }
-}
-
-const ORACLE: &str = r####"[{"template": "Review $1 then $2", "args": "a b", "parsed": ["a", "b"], "expanded": "Review a then b"}, {"template": "All: $@ / $ARGUMENTS", "args": "one \"two words\" 'three'", "parsed": ["one", "two words", "three"], "expanded": "All: one two words three / one two words three"}, {"template": "Slice ${@:2} and ${@:1:2} and ${@:0} and ${@:3:0}", "args": "a b c d", "parsed": ["a", "b", "c", "d"], "expanded": "Slice b c d and a b and a b c d and "}, {"template": "Missing $3 and $0 and $10", "args": "x y", "parsed": ["x", "y"], "expanded": "Missing  and  and "}, {"template": "Money $$1 and ${@:x} and ${@:2:y}", "args": "p q r", "parsed": ["p", "q", "r"], "expanded": "Money $p and ${@:x} and ${@:2:y}"}, {"template": "Special $@", "args": "$& $$ $` $' tail", "parsed": ["$&", "$$", "$`", "$ tail"], "expanded": "Special $@ $ Special  $ tail"}, {"template": "Nested ${@:1}", "args": "\"${@:2}\" z", "parsed": ["${@:2}", "z"], "expanded": "Nested ${@:2} z"}, {"template": "Tabs\t$1", "args": "a\tb  c", "parsed": ["a", "b", "c"], "expanded": "Tabs\ta"}, {"template": "Unclosed \"quote $1", "args": "\"a b", "parsed": ["a b"], "expanded": "Unclosed \"quote a b"}, {"template": "Arguments $ARGUMENTS$@", "args": "", "parsed": [], "expanded": "Arguments "}]"####;
-
-#[test]
-fn pi_and_native_discovery_preserve_project_precedence_without_trust() {
-    let temp = TempDir::new().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let user = root.join("user");
-    let project = root.join("project");
-    std::fs::create_dir_all(user.join("prompts")).unwrap();
-    std::fs::create_dir_all(project.join(".pi/prompts")).unwrap();
-    std::fs::write(user.join("prompts/review.md"), "user prompt").unwrap();
-    std::fs::write(project.join(".pi/prompts/review.md"), "project prompt").unwrap();
-    let catalog = ModStore::discover_pi(&user, &project).unwrap();
-    assert_eq!(catalog["resources"].as_array().unwrap().len(), 1);
-    assert_eq!(catalog["resources"][0]["content"], json!("project prompt"));
-    let outside = root.join("private");
-    std::fs::create_dir(&outside).unwrap();
-    std::fs::write(outside.join("secret.md"), "private content").unwrap();
-    std::os::unix::fs::symlink(&outside, project.join(".pi/skills")).unwrap();
-    let catalog = ModStore::discover_pi(&user, &project).unwrap();
-    assert_eq!(catalog["resources"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        catalog["diagnostics"][0]["error"],
-        json!("pi_symlink_unsupported")
-    );
+    std::fs::create_dir_all(&user).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
     package(&user, "shared", "export default () => {}", &[]);
     package(&project, "shared", "export default () => {}", &[]);
     let catalog = ModStore::discover(&user, &project).unwrap();
@@ -1764,7 +1628,7 @@ fn pi_and_native_discovery_preserve_project_precedence_without_trust() {
 fn disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation() {
     let (temp, store, path) = fixture(
         "export default api => api.command('run', () => api.host.call('task.status',null))",
-        &["commands", "task"],
+        &["commands", "agents"],
     );
     let mut runtime = host(&temp);
     let generation = runtime.generation();
@@ -1827,97 +1691,54 @@ fn native_schema_validation_applies_to_reload_before_activation() {
     assert_eq!(runtime.tools().len(), 1);
 }
 
-const WORKFLOW: &str = r#"export default api => {
-  api.contract({ schema: 1, id: 'paired_review', version: 1, requirements: {
-    delegation: false, child_agents: false, opposite_lead: true, escalation: true,
-    checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } });
-  api.on('workflow', event => { api.state.set(event); });
-}"#;
+const CONTRACT: &str = r#"export default api => api.contract({ schema: 2, id: 'paired_review', version: 1, description: 'Review', assurance: 'fixture-checked', gates: {} })"#;
 
 #[test]
-fn a_workflow_mod_registers_a_contract_it_cannot_select_or_weaken() {
-    let (temp, _, path) = fixture(WORKFLOW, &["workflow", "state"]);
-    let mut host = host(&temp);
-    let contracts = host.contracts();
+fn a_mod_registers_a_current_contract_document_with_package_provenance() {
+    let (temp, _, path) = fixture(CONTRACT, &["contracts"]);
+    let runtime = host(&temp);
+    let contracts = runtime.contract_documents();
     assert_eq!(contracts.len(), 1);
     let (contract, owner) = &contracts[0];
     assert_eq!(contract.id, "paired_review");
-    assert_eq!(
-        contract.assurance(),
-        codex_omd::AssuranceLabel::IndependentlyVerified
-    );
+    assert_eq!(contract.schema, 2);
     assert_eq!(owner.kind, codex_omd::OwnerKind::Mod);
     assert_eq!(owner.id, "fixture");
     assert_eq!(owner.source, path.display().to_string());
-
-    let mut catalog = codex_omd::ContractCatalog::bundled();
-    catalog.register(contract.clone(), owner.clone()).unwrap();
-    let selections = codex_omd::collect_selections(&catalog, None, None, None, None).unwrap();
-    let resolution = codex_omd::resolve_selection(selections.offers, None).unwrap();
-    assert_eq!(
-        resolution.effective.contract,
-        codex_omd::WorkflowContract::bundled_default()
-    );
-
-    let generation = host.generation();
-    host.invoke(
-        "fixture",
-        generation,
-        "workflow",
-        "",
-        json!({"contract": "reviewed_omd", "assurance": "independently_verified"}),
-    )
-    .unwrap();
 }
 
 #[test]
-fn a_registered_contract_may_not_redefine_a_bundled_contract_or_skip_its_capability() {
-    let forged = r#"export default api => api.contract({ schema: 1, id: 'solo_evidence', version: 1, requirements: {
-      delegation: true, child_agents: true, opposite_lead: true, escalation: true,
-      checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } })"#;
-    let (temp, _, _) = fixture(forged, &["workflow"]);
-    assert!(activation_error(&temp, "fixture").contains("redefines a bundled contract"));
-
-    let shadowed = r#"export default api => api.contract({ schema: 1, id: 'solo_evidence', version: 1, requirements: {
-      delegation: false, child_agents: false, opposite_lead: false, escalation: false,
-      checkpoints: true, milestone_review: false, final_review: 'self_review', completion: 'self_verified' } })"#;
-    let (temp, _, _) = fixture(shadowed, &["workflow"]);
-    assert!(
-        activation_error(&temp, "fixture").contains("invalid_or_duplicate_contract_registration")
-    );
-
-    let denied = r#"export default api => api.contract({ schema: 1, id: 'paired_review', version: 1, requirements: {
-      delegation: false, child_agents: false, opposite_lead: true, escalation: true,
-      checkpoints: true, milestone_review: true, final_review: 'separate', completion: 'adversarial_separate' } })"#;
-    let (temp, _, _) = fixture(denied, &["state"]);
+fn a_contract_registration_requires_the_current_capability() {
+    let (temp, _, _) = fixture(CONTRACT, &[]);
     assert!(activation_error(&temp, "fixture").contains("capability_denied"));
 }
 
 #[test]
-fn two_mods_may_not_own_the_same_workflow_contract() {
+fn two_mods_may_not_own_the_same_contract_document() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let store = ModStore::create(root.join("store"), node()).unwrap();
     for id in ["first", "second"] {
-        let path = package(&root, id, WORKFLOW, &["workflow", "state"]);
-        trust(&store, &path, &["workflow", "state"]);
+        let path = package(&root, id, CONTRACT, &["contracts"]);
+        trust(&store, &path, &["contracts"]);
     }
     let runtime = ModHost::open(root.join("store")).unwrap();
+    let status = runtime.status();
     for id in ["first", "second"] {
-        let error = runtime.status()["mods"]
+        let error = status["mods"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|m| m["id"] == id)
-            .and_then(|m| m["error"].as_str())
-            .unwrap_or_default()
-            .to_string();
+            .find(|mod_status| mod_status["id"] == id)
+            .unwrap()["error"]
+            .as_str()
+            .unwrap_or_default();
         assert!(
-            error.contains("workflow_replacement_conflict: paired_review claimed by first, second"),
+            error.contains("workflow_replacement_conflict"),
             "{id}: {error}"
         );
     }
-    assert!(runtime.contracts().is_empty());
+    assert!(runtime.contract_documents().is_empty());
 }
 
 #[test]
@@ -2079,7 +1900,7 @@ fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
         "user-copy",
         "shared",
         counter,
-        &["commands", "state"],
+        &["commands", "store"],
         &[],
     );
     let project = packaged(
@@ -2087,11 +1908,11 @@ fn project_scope_takes_precedence_over_user_scope_without_sharing_state() {
         "project-copy",
         "shared",
         &format!("{counter};\n"),
-        &["commands", "state"],
+        &["commands", "store"],
         &[],
     );
-    trust_scoped(&store, &user, &["commands", "state"], "user");
-    trust_scoped(&store, &project, &["commands", "state"], "project");
+    trust_scoped(&store, &user, &["commands", "store"], "user");
+    trust_scoped(&store, &project, &["commands", "store"], "project");
     let mut runtime = host(&temp);
     let status = runtime.status();
     assert_eq!(status["order"], json!(["shared"]));
@@ -2199,7 +2020,7 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
         "model":null,"provider":"p","reasoning":null});
     let (temp, _, _) = fixture(
         "export default api => api.on('routing', ({routes}) => routes[0].name)",
-        &["routing"],
+        &["model"],
     );
     let mut runtime = host(&temp);
     let error = runtime.event("routing", routes.clone())[0]
@@ -2213,13 +2034,13 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
     );
 
     let (temp, _, _) = fixture(
-        "export default api => api.replace('routing', ({routes}) => routes[0].name)",
-        &["routing"],
+        "export default api => api.replace('routing', ({routes}) => ({route:routes[0].name}))",
+        &["model"],
     );
     let mut runtime = host(&temp);
     assert_eq!(
         runtime.event("routing", routes)[0].1.as_ref().unwrap(),
-        &json!("sol")
+        &json!({"route":"sol"})
     );
     assert_eq!(
         runtime.replacement_owner("routing").as_deref(),
@@ -2229,18 +2050,18 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
     let routes = json!({"routes":[{"name":"sol","model":"m","provider":"p","reasoning":"medium"}],
         "model":null,"provider":"p","reasoning":null});
     let (temp, _, _) = fixture(
-        "export default api => api.replace('routing', () => ({route:'sol',policy:'task_entry'}))",
-        &["routing"],
+        "export default api => api.replace('routing', () => ({route:'sol'}))",
+        &["model"],
     );
     let mut runtime = host(&temp);
     assert_eq!(
         runtime.event("routing", routes)[0].1.as_ref().unwrap(),
-        &json!({"route":"sol","policy":"task_entry"})
+        &json!({"route":"sol"})
     );
 
     let (temp, _, _) = fixture(
-        "export default api => api.replace('routing', () => ({route:'unauthorized',policy:'fixed'}))",
-        &["routing"],
+        "export default api => api.replace('routing', () => ({preset:'unauthorized'}))",
+        &["model"],
     );
     let mut runtime = host(&temp);
     assert!(
@@ -2272,59 +2093,20 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
 }
 
 #[test]
-fn worker_context_is_exclusive_typed_and_failure_isolated() {
-    let payload = json!({
-        "available":["focused_brief","shared_task_packet","parent_history"],
-        "native_fallback":"focused_brief",
-        "active":"focused_brief"
-    });
+fn retired_worker_context_event_is_rejected() {
     let (temp, _, _) = fixture(
         "export default api => api.on('worker_context', () => ({mode:'parent_history'}))",
         &["context"],
     );
-    let mut runtime = host(&temp);
-    let results = runtime.event("worker_context", payload.clone());
-    assert!(!results.is_empty(), "{}", runtime.status());
-    assert!(
-        results[0]
-            .1
-            .as_ref()
-            .unwrap_err()
-            .to_string()
-            .contains("exclusive_replacement_registration_required")
-    );
-
+    assert!(activation_error(&temp, "fixture").contains("unsupported_event: worker_context"));
     let (temp, _, _) = fixture(
         "export default api => api.replace('worker_context', () => ({mode:'shared_task_packet'}))",
         &["context"],
     );
-    let mut runtime = host(&temp);
-    assert_eq!(
-        runtime.event("worker_context", payload.clone())[0]
-            .1
-            .as_ref()
-            .unwrap(),
-        &json!({"mode":"shared_task_packet"})
-    );
-    assert_eq!(
-        runtime.replacement_owner("worker_context").as_deref(),
-        Some("fixture")
-    );
-
-    let (temp, _, _) = fixture(
-        "export default api => api.replace('worker_context', () => ({mode:'unbounded'}))",
-        &["context"],
-    );
-    let mut runtime = host(&temp);
     assert!(
-        runtime.event("worker_context", payload)[0]
-            .1
-            .as_ref()
-            .unwrap_err()
-            .to_string()
-            .contains("invalid_worker_context_result")
+        activation_error(&temp, "fixture")
+            .contains("unsupported_replacement_point: worker_context")
     );
-    assert!(runtime.status()["mods"][0]["error"].is_string());
 }
 
 #[test]
@@ -2383,13 +2165,13 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
     let harness = package(
         &root,
         "harness",
-        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('checkpoint.update',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.replace('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
+        "export default api => { api.tool({name:'exercise',description:'exercise',parameters:{type:'object',properties:{}}},()=>{ const task=api.host.call('task.status',null); const agent=api.host.call('agents.spawn',{role:'worker',route:'sol',prompt:'offline'}); const result=api.host.call('agents.wait',{handle:agent.handle,consume:true}); const checkpoint=api.host.call('receipts.submit',{completed_acceptance:[],completed_steering:[],remaining_work:[],failed_hypotheses:[],candidate_versions:[],check_versions:[]}); return {task,agent,result,checkpoint}; }); api.command('clock',()=>Date.now()); api.command('ping',()=>{api.state.set(Number(api.state.get()??0)+1);return api.state.get()}); api.on('tool_result',()=>null); api.on('agent',()=>null); api.replace('terminal',()=>({title:'Offline UI',sites:{dialog:{components:[{type:'button',id:'ping_button',label:'Ping button',text:'Ping',action:{command:'harness:ping'}}]}},keybindings:{F2:{command:'harness:ping'}}})); }",
         &[
             "tools",
             "commands",
-            "task",
             "agents",
-            "state",
+            "contracts",
+            "store",
             "lifecycle",
             "middleware",
             "terminal",
@@ -2401,9 +2183,9 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
         &[
             "tools",
             "commands",
-            "task",
             "agents",
-            "state",
+            "contracts",
+            "store",
             "lifecycle",
             "middleware",
             "terminal",
@@ -2440,7 +2222,7 @@ fn engine_offline_runner_covers_virtual_time_mocks_services_streams_and_terminal
             "task.status":[{"result":{"status":"running"}}],
             "agents.spawn":[{"result":{"handle":"agent-1","route":"sol","permissions":"read_only"}}],
             "agents.wait":[{"result":{"status":"completed","text":"done","consumed":true}}],
-            "checkpoint.update":[{"result":{"saved":true}}]
+            "receipts.submit":[{"result":{"saved":true}}]
         },
         "steps":[
             {"type":"invoke","mod":"harness","event":"command","name":"clock","expect":1000},
@@ -2500,18 +2282,11 @@ fn offline_status_retains_conflicts_without_running_paid_work() {
 }
 
 #[test]
-fn rich_lines_width_bounds_picker_theme_and_selection_policy_are_bounded() {
-    let valid = json!({"theme":{"picker":{"layout":"compact","brand":"oh my diff"}},"selection":{"copy_on_release":true,"sources":["transcript","pager"],"min_chars":3},
+fn rich_lines_width_bounds_and_selection_policy_are_bounded() {
+    let valid = json!({"selection":{"copy_on_release":true,"sources":["transcript","pager"],"min_chars":3},
         "sites":{"header":{"components":[{"type":"box","id":"wide","label":"Wide","min_width":60,"max_width":500,"children":[
             {"type":"line","id":"mark","label":"Mark","spans":[{"text":"+ ","tone":"success"},{"text":"oh my diff","bold":true}]}]}]}}});
     let view = codex_omd::ModView::parse(valid.clone()).unwrap();
-    assert_eq!(
-        view.theme
-            .picker
-            .as_ref()
-            .and_then(|picker| picker.brand.as_deref()),
-        Some("oh my diff")
-    );
     assert!(view.selection.as_ref().is_some_and(|policy| {
         policy.copies(codex_omd::ModSelectionSource::Pager, 3)
             && !policy.copies(codex_omd::ModSelectionSource::Composer, 3)
@@ -2521,8 +2296,7 @@ fn rich_lines_width_bounds_picker_theme_and_selection_policy_are_bounded() {
         .map(|index| json!({"text": format!("{index}")}))
         .collect::<Vec<_>>();
     for invalid in [
-        json!({"theme":{"picker":{"layout":"compact","brand":"a brand name that is too long"}}}),
-        json!({"theme":{"picker":{"layout":"sideways"}}}),
+        json!({"theme":{"picker":{"layout":"compact"}}}),
         json!({"selection":{"min_chars":0}}),
         json!({"selection":{"min_chars":10001}}),
         json!({"selection":{"sources":["composer","composer"]}}),
@@ -2594,53 +2368,13 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
 }
 
 #[test]
-fn git_operations_require_the_git_capability_and_a_host_route() {
+fn retired_git_host_operations_are_rejected() {
     let source =
-        "export default api => api.command('probe', () => api.host.tryCall('git.status', null))";
-    let (temp, _store, _path) = fixture(source, &["commands"]);
-    let mut runtime = host(&temp);
-    let denied = runtime
-        .invoke_with(
-            "fixture",
-            runtime.generation(),
-            "command",
-            "probe",
-            Value::Null,
-            || true,
-            |_| Ok(json!({})),
-        )
-        .unwrap_err();
+        "export default api => api.command('probe', () => api.host.call('git.status', null))";
+    let (temp, _, _) = fixture(source, &["commands"]);
+    let error = activation_error(&temp, "fixture");
     assert!(
-        denied
-            .to_string()
-            .contains("undeclared_operation_use: git.status"),
-        "{denied}"
+        error.contains("unsupported_host_operation: git.status"),
+        "{error}"
     );
-    let (temp, _store, _path) = fixture(source, &["commands", "git"]);
-    let mut runtime = host(&temp);
-    let routed = runtime
-        .invoke_with(
-            "fixture",
-            runtime.generation(),
-            "command",
-            "probe",
-            Value::Null,
-            || true,
-            |call| {
-                assert_eq!(call.operation, "git.status");
-                Ok(json!({"entries": []}))
-            },
-        )
-        .unwrap();
-    assert_eq!(routed, json!({"ok": true, "value": {"entries": []}}));
-    let unrouted = runtime
-        .invoke(
-            "fixture",
-            runtime.generation(),
-            "command",
-            "probe",
-            Value::Null,
-        )
-        .unwrap();
-    assert_eq!(unrouted["ok"], false);
 }

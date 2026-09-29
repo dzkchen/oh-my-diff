@@ -1,4 +1,4 @@
-import type { ModAPI, ModelRequestEvent } from '../../api-0.1.d.ts';
+import type { ModAPI, ModelRequestEvent } from '../../api.d.ts';
 
 const provider = 'omd_claude_cli';
 const service = 'claude_cli';
@@ -193,6 +193,9 @@ export default function activate(api: ModAPI): void {
   const start = () => {
     const routes = api.host.call('routes.list', null);
     if (routes.some(route => route.provider === provider && route.model === model)) {
+      const previous = api.host.tryCall('sidecars.status', { id: service });
+      if (previous.ok && previous.value && typeof previous.value === 'object' && !Array.isArray(previous.value) && previous.value.running) return;
+      if (previous.ok) api.host.call('providers.unregister', { id: service });
       api.host.call('providers.register', { id: service });
     }
   };
@@ -200,9 +203,9 @@ export default function activate(api: ModAPI): void {
   api.command('claude_route', () => ({ display: `Claude CLI ${model}; subscription usage is account-metered` }));
   api.middleware('model_request', (event: ModelRequestEvent) => {
     if (event.effective.provider !== provider) return null;
-    const matching = event.authorized_presets.find(preset => preset.provider === provider && preset.model === model);
+    const matching = event.routes.find(route => route.provider === provider && route.model === model);
     if (!matching) throw new Error('claude_route_not_host_authorized');
     if (event.effective.model !== model) throw new Error('claude_route_conflicts_with_active_request');
-    return { preset: matching.name };
+    return { route: matching.name };
   });
 }

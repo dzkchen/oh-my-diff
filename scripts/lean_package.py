@@ -11,10 +11,10 @@ import tempfile
 
 try:
     from scripts import lean_release_lock as release
-    from scripts import private_lean_v1 as private
+    from scripts import install_support as private
 except ModuleNotFoundError:
     import lean_release_lock as release
-    import private_lean_v1 as private
+    import install_support as private
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,12 +128,9 @@ def install_archive(args):
             cwd=payload)
         command = [sys.executable, "-m", "scripts.lean_profiles", "--prefix", args.prefix,
                    "--bin-dir", args.bin_dir, "install", "--profile", args.profile,
-                   "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd",
+                   "--binary", payload / "artifacts/codex", "--manager", payload / "artifacts/omd-mod", "--omd", payload / "artifacts/omd", "--omd-contract", payload / "artifacts/omd-contract",
                    "--author-archive", payload / "artifacts/mod-api.tgz", "--node", args.node,
                    "--store", args.store]
-        if args.profile == "full":
-            for name in ("omd-graph", "omd-health", "omd-lsp"):
-                command.extend((f"--{name}", payload / "artifacts" / name))
         if args.attach_store:
             command.append("--attach-store")
         environment = os.environ.copy()
@@ -156,8 +153,7 @@ def source_build(args):
         environment["CARGO_TARGET_DIR"] = str(target)
         run("cargo", f"+{upstream['rust_toolchain']}", "build", "--locked", "--release",
             "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd",
-            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-graph", "--bin", "omd-health",
-            "--bin", "omd-lsp", cwd=checkout / "codex-rs", env=environment)
+            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", cwd=checkout / "codex-rs", env=environment)
         artifacts = Path(temporary) / "artifacts"
         artifacts.mkdir()
         for name in release.BINARIES:

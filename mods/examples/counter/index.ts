@@ -1,4 +1,4 @@
-import type { ModAPI } from '@oh-my-diff/mod-api/0.1';
+import type { ModAPI } from '@oh-my-diff/mod-api';
 export default function activate(api: ModAPI) {
   api.tool({ name: 'count', label: 'Counter', description: 'Increment this mod\'s persistent counter.',
     parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {

@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "id": "omd_debugger",
-  "version": "0.1.0-preview.2",
-  "api": "0.1.0-experimental.8",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Oh My Diff", "source": "plugins/optional/omd-debugger/mod" },
-  "capabilities": ["tools", "process", "state", "lifecycle"]
+  "capabilities": ["tools", "exec", "store", "lifecycle", "network"]
 }

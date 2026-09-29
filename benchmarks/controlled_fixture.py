@@ -27,6 +27,8 @@ def contract_plan(binary, choice):
 
 
 def run(binary, destination, scenario="success", context_policy="focused_brief", lead_policy="fixed", lead="sol", failure_class="edit", concise_user_updates=False, structured_worker_reports=False, reactive_rules=False, mod_node=None, mod_profile="counter"):
+    if scenario != "omd-off":
+        raise RuntimeError("legacy controlled fixture requires a rebuilt OMD_MODE=omd mod workflow, host routes, and assertions; historical native-workflow results cannot validate the current host")
     typed_profile = mod_profile.startswith("typed-")
     policy_mod = scenario != "omd-off" and mod_profile != "preview-inactive" and mod_profile.startswith(("preview", "coordination", "recovery", "conformance", "exercise"))
     candidate_profile = mod_profile in ("candidate", "candidate-static", "candidate-baseline", "candidate-ts", "candidate-static-ts", "candidate-baseline-ts")

@@ -16,13 +16,12 @@ import termios
 import time
 
 try:
-    from scripts import private_lean_v1 as private
+    from scripts import install_support as private
 except ModuleNotFoundError:
-    import private_lean_v1 as private
+    import install_support as private
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLS = ("omd-graph", "omd-health", "omd-lsp")
 
 
 def call(args, env):
@@ -42,6 +41,9 @@ def terminal(binary, repo, env, width, expected):
     os.close(slave)
     output = bytearray()
 
+    def visible(phrase, clean):
+        return re.sub(r"\s+", "", phrase) in re.sub(r"\s+", "", clean)
+
     def read_until(phrase, seconds):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
@@ -51,14 +53,15 @@ def terminal(binary, repo, env, width, expected):
                     output.extend(os.read(master, 65536))
                 except OSError:
                     break
-            if phrase in re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", output.decode(errors="replace")):
+            if visible(phrase, re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", output.decode(errors="replace"))):
                 return True
         return False
 
     try:
-        title = "Oh My Diffed" if width >= 40 else "OMD (v"
+        title = "OpenAI Codex"
         if not read_until(title, 8):
-            raise AssertionError("release terminal title was not visible")
+            clean = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", output.decode(errors="replace"))
+            raise AssertionError(f"release terminal title was not visible: {clean[-700:]}")
         os.write(master, b"/status")
         read_until("show current session configuration", 4)
         os.write(master, b"\r")
@@ -66,8 +69,8 @@ def terminal(binary, repo, env, width, expected):
             clean = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", output.decode(errors="replace"))
             raise AssertionError(f"release terminal status did not show {expected}: {clean[-700:]}")
         clean = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", output.decode(errors="replace"))
-        return {"width": width, "title_visible": title in clean,
-                "status_visible": expected in clean,
+        return {"width": width, "title_visible": visible(title, clean),
+                "status_visible": visible(expected, clean),
                 "trace_sha256": hashlib.sha256(output).hexdigest(),
                 "plain_excerpt": clean[-600:]}
     finally:
@@ -118,11 +121,8 @@ def run(artifact_dir, upstream, output):
             command = ["python3", "-m", "scripts.lean_profiles", "--prefix", prefix,
                        "--bin-dir", bin_dir]
             install = ["install", "--profile", profile, "--binary", artifact_dir / "codex",
-                       "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--author-archive", artifact_dir / "mod-api.tgz",
+                       "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--omd-contract", artifact_dir / "omd-contract", "--author-archive", artifact_dir / "mod-api.tgz",
                        "--node", node, "--store", store]
-            if profile == "full":
-                for name in TOOLS:
-                    install += [f"--{name}", artifact_dir / name]
             call(command + install, env)
             observations[profile] = terminal(bin_dir / "codex", repo, env, 80, expected)
             if profile == "full":

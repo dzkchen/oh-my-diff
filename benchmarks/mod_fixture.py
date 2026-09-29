@@ -605,15 +605,8 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
         capabilities.append("routing")
         setup = "api.replace('routing',({routes})=>routes.find(route=>route.name==='astra')?.name ?? routes[0].name);"
     if profile == "opaque":
-        capabilities += ["interception", "pi_resources"]
-        pi_user = destination / "pi-user"
-        (pi_user / "prompts").mkdir(parents=True)
-        secret = pi_user / "prompts/private.md"
-        manifest["mod_pi_user"] = str(pi_user)
-        body = (
-            "const resources=api.host.call('pi.discover',null); if(resources.resources.length || !resources.diagnostics.some(d=>d.error==='pi_protected_resource')) throw new Error('protected resource exposed'); "
-            + body
-        )
+        capabilities.append("interception")
+        secret = destination / "private.md"
         secret.write_text("MOD_OPAQUE_SECRET_MUST_REMAIN_PRIVATE")
         manifest["mod_secret_refs"] = {"opaque": str(secret)}
         setup = (

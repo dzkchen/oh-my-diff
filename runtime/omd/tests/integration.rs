@@ -1,5 +1,5 @@
 use codex_omd::MOD_API_VERSION;
-const LEGACY_API: &str = "0.1.0-experimental.9";
+const CURRENT_API: &str = MOD_API_VERSION;
 use codex_omd::ModHost;
 use codex_omd::ModStore;
 use codex_omd::OMD_HOST_RELEASE;
@@ -34,7 +34,7 @@ fn written(root: &Path, id: &str, source: &str, capabilities: &[&str], extra: Va
         std::fs::create_dir(&path).unwrap();
     }
     let mut manifest = json!({"schema":1,"id":id,"version":"1.0.0",
-        "api":LEGACY_API,"state_version":1,"capabilities":capabilities});
+        "api":CURRENT_API,"state_version":1,"capabilities":capabilities});
     for (key, value) in extra.as_object().into_iter().flatten() {
         manifest[key] = value.clone();
     }
@@ -383,7 +383,7 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
         &root,
         "worker",
         "export default api => api.tool({name:'work',description:'work',parameters:{type:'object',properties:{}}}, () => { api.progress('started'); const status = api.host.call('task.status', null); api.progress('finished'); return status; })",
-        &["tools", "task"],
+        &["tools", "agents"],
         json!({}),
     );
     let ui = written(
@@ -394,7 +394,7 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
         json!({}),
     );
     trust(&store, &stream, &["middleware"]);
-    trust(&store, &worker, &["tools", "task"]);
+    trust(&store, &worker, &["tools", "agents"]);
     trust(&store, &ui, &["terminal"]);
 
     let mut runtime = host(&temp);
@@ -451,155 +451,6 @@ fn reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_ne
 }
 
 #[test]
-fn mixed_api_mods_share_one_host_and_upgrade_independently() {
-    let temp = TempDir::new().unwrap();
-    let (root, store) = workspace(&temp);
-    let ping = "export default api => api.command('ping', () => api.version)";
-    let legacy = written(
-        &root,
-        "legacy",
-        ping,
-        &["commands"],
-        json!({"api":"0.1.0-experimental.4"}),
-    );
-    let middle = written(
-        &root,
-        "middle",
-        ping,
-        &["commands"],
-        json!({"api":"0.1.0-experimental.5",
-            "compatibility":{"required_features":["transactional_reload_v1"],
-                "optional_features":["future_optional_v1"]}}),
-    );
-    let current = written(
-        &root,
-        "current",
-        "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })",
-        &["commands", "state"],
-        json!({"compatibility":{"releases":[OMD_HOST_RELEASE]}}),
-    );
-    trust(&store, &legacy, &["commands"]);
-    trust(&store, &middle, &["commands"]);
-    trust(&store, &current, &["commands", "state"]);
-
-    let mut runtime = host(&temp);
-    assert_eq!(active(&runtime), ["current", "legacy", "middle"]);
-    let stability = |runtime: &ModHost, id: &str| {
-        runtime.status()["mods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["id"] == id)
-            .map(|entry| {
-                (
-                    entry["api"].as_str().unwrap().to_owned(),
-                    entry["api_stability"].as_str().unwrap().to_owned(),
-                )
-            })
-            .unwrap()
-    };
-    assert_eq!(
-        stability(&runtime, "legacy"),
-        ("0.1.0-experimental.4".to_string(), "deprecated".to_string())
-    );
-    assert_eq!(
-        stability(&runtime, "middle"),
-        (
-            "0.1.0-experimental.5".to_string(),
-            "experimental".to_string()
-        )
-    );
-    assert_eq!(
-        stability(&runtime, "current"),
-        (LEGACY_API.to_string(), "experimental".to_string())
-    );
-    let generation = runtime.generation();
-    for id in ["legacy", "middle"] {
-        assert_eq!(
-            runtime
-                .invoke(id, generation, "command", "ping", Value::Null)
-                .unwrap(),
-            json!(MOD_API_VERSION)
-        );
-    }
-    assert_eq!(
-        runtime
-            .invoke("current", generation, "command", "count", Value::Null)
-            .unwrap(),
-        json!(1)
-    );
-
-    let elsewhere = written(
-        &root,
-        "elsewhere",
-        ping,
-        &["commands"],
-        json!({"compatibility":{"releases":["0.0.9"]}}),
-    );
-    let refused = ModStore::inspect_package(&elsewhere)
-        .unwrap_err()
-        .to_string();
-    assert!(
-        refused.contains("this host is") && refused.contains(OMD_HOST_RELEASE),
-        "{refused}"
-    );
-
-    written(
-        &root,
-        "current",
-        "export default api => { api.on('migrate', ({from,to}) => api.state.set({count:api.state.get(),from,to})); api.command('count', () => api.state.get()); }",
-        &["commands", "state"],
-        json!({"state_version":2}),
-    );
-    trust(&store, &current, &["commands", "state"]);
-    assert!(
-        runtime
-            .reload()
-            .unwrap_err()
-            .to_string()
-            .contains("state_migration_required")
-    );
-
-    let mut upgraded = host(&temp);
-    assert!(
-        error_of(&upgraded, "current").contains("state_migration_required"),
-        "{}",
-        error_of(&upgraded, "current")
-    );
-    assert_eq!(active(&upgraded), ["legacy", "middle"]);
-    assert_eq!(
-        upgraded
-            .invoke(
-                "legacy",
-                upgraded.generation(),
-                "command",
-                "ping",
-                Value::Null
-            )
-            .unwrap(),
-        json!(MOD_API_VERSION)
-    );
-
-    contended(|| store.enable(&current, false));
-    contended(|| store.migrate(&current));
-    contended(|| store.enable(&current, true));
-    let mut migrated = host(&temp);
-    assert_eq!(active(&migrated), ["current", "legacy", "middle"]);
-    assert_eq!(
-        migrated
-            .invoke(
-                "current",
-                migrated.generation(),
-                "command",
-                "count",
-                Value::Null
-            )
-            .unwrap(),
-        json!({"count":1,"from":1,"to":2})
-    );
-}
-
-#[test]
 fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
@@ -607,14 +458,14 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
         &root,
         "alpha",
         "export default api => { api.on('context', () => ({text:'alpha'})); api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); }",
-        &["context", "commands", "state"],
+        &["context", "commands", "store"],
         json!({}),
     );
     let beta = written(
         &root,
         "beta",
         "export default api => { api.on('context', () => { throw new Error('beta failed') }); api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+10); return api.state.get(); }); }",
-        &["context", "commands", "state"],
+        &["context", "commands", "store"],
         json!({}),
     );
     let gamma = written(
@@ -624,8 +475,8 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
         &["context"],
         json!({}),
     );
-    trust(&store, &alpha, &["context", "commands", "state"]);
-    trust(&store, &beta, &["context", "commands", "state"]);
+    trust(&store, &alpha, &["context", "commands", "store"]);
+    trust(&store, &beta, &["context", "commands", "store"]);
     trust(&store, &gamma, &["context"]);
 
     let mut runtime = host(&temp);
@@ -671,52 +522,20 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
 }
 
 #[test]
-fn mods_and_upstream_pi_resources_coexist_without_capturing_each_other() {
+fn retired_pi_host_operations_are_rejected_before_activation() {
     let temp = TempDir::new().unwrap();
     let (root, store) = workspace(&temp);
-    let user = root.join("user");
-    let project = root.join("project");
-    std::fs::create_dir_all(user.join("prompts")).unwrap();
-    std::fs::create_dir_all(project.join(".pi/skills/review")).unwrap();
-    std::fs::write(user.join("prompts/ping.md"), "upstream prompt").unwrap();
-    std::fs::write(
-        project.join(".pi/skills/review/SKILL.md"),
-        "---\ndescription: Upstream skill\n---\nBody\n",
-    )
-    .unwrap();
     let reader = written(
         &root,
         "reader",
-        "export default api => { api.command('ping', () => 'mod'); api.command('resources', () => api.host.call('pi.discover', null).resources.map(resource => resource.kind + '/' + resource.name)); }",
-        &["commands", "pi_resources"],
+        "export default api => api.command('resources', () => api.host.call('pi.discover', null))",
+        &["commands"],
         json!({}),
     );
-    trust(&store, &reader, &["commands", "pi_resources"]);
-
-    let mut runtime = host(&temp);
-    let generation = runtime.generation();
-    let discovered = runtime
-        .invoke_with(
-            "reader",
-            generation,
-            "command",
-            "resources",
-            Value::Null,
-            || true,
-            |_| ModStore::discover_pi(&user, &project),
-        )
-        .unwrap();
-    assert_eq!(discovered, json!(["prompts/ping", "skills/review"]));
-    assert_eq!(
-        runtime
-            .invoke("reader", generation, "command", "ping", Value::Null)
-            .unwrap(),
-        json!("mod")
+    trust(&store, &reader, &["commands"]);
+    let error = error_of(&host(&temp), "reader");
+    assert!(
+        error.contains("unsupported_host_operation: pi.discover"),
+        "{error}"
     );
-    let commands: Vec<String> = runtime
-        .commands()
-        .into_iter()
-        .map(|(id, command)| format!("{id}:{}", command.name))
-        .collect();
-    assert_eq!(commands, ["reader:ping", "reader:resources"]);
 }

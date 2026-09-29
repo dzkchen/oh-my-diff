@@ -1,12 +1,34 @@
+use codex_omd::data_store::{DataStore, Origin, StoreProvenance};
 use codex_omd::scoped_data::ScopedDataHost;
 use codex_omd::{ModHost, ModStore};
 use serde_json::{Value, json};
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn dispatch(
+    data: &mut ScopedDataHost,
+    stored: &DataStore<'_>,
+    repo: &Path,
+    operation: &str,
+    arguments: Value,
+    readable: bool,
+) -> std::io::Result<Value> {
+    match operation {
+        "workspace.read" if readable => {
+            let bytes = fs::read(repo.join("fact.txt"))?;
+            Ok(
+                json!({"files":{"fact.txt":{"text":String::from_utf8(bytes.clone()).unwrap(),"sha256":codex_omd::resource_data::hash(&bytes)}}}),
+            )
+        }
+        "workspace.read" => Err(std::io::Error::other("workspace_read_denied")),
+        operation if operation.starts_with("store.") => stored.call(operation, arguments),
+        _ => data.call(operation, arguments, || true),
+    }
+}
+
 #[test]
-#[ignore = "worker presets were retired in Batch 2.5; Batch 2.55 moves the scoped-data example onto configured routes"]
 fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -62,6 +84,19 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
         hash.to_owned(),
     )
     .unwrap();
+    let repository_key = codex_omd::resource_data::hash(repo.as_os_str().as_encoded_bytes());
+    let stored = DataStore {
+        root: &store_path,
+        repository_key: &repository_key,
+        owner: "example_scoped_data",
+        provenance: StoreProvenance {
+            r#mod: "example_scoped_data".into(),
+            source_sha256: hash.to_owned(),
+            thread_id: Some("user-command".into()),
+            origin: Origin::UserCommand,
+            at: 1,
+        },
+    };
     let generation = host.generation();
     let retained = host
         .invoke_with(
@@ -71,10 +106,19 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
             "retain",
             Value::Null,
             || true,
-            |call| data.call(&call.operation, call.arguments, &|_| true, || true),
+            |call| {
+                dispatch(
+                    &mut data,
+                    &stored,
+                    &repo,
+                    &call.operation,
+                    call.arguments,
+                    true,
+                )
+            },
         )
         .unwrap();
-    assert_eq!(retained["id"], "fixture-fact");
+    assert_eq!(retained["revision"], 1);
     let frozen = host
         .invoke_with(
             "example_scoped_data",
@@ -83,7 +127,16 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
             "freeze",
             Value::Null,
             || true,
-            |call| data.call(&call.operation, call.arguments, &|_| true, || true),
+            |call| {
+                dispatch(
+                    &mut data,
+                    &stored,
+                    &repo,
+                    &call.operation,
+                    call.arguments,
+                    true,
+                )
+            },
         )
         .unwrap();
     assert_eq!(frozen["sha256"].as_str().unwrap().len(), 64);
@@ -95,22 +148,61 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
             "",
             json!({}),
             || true,
-            |call| data.call(&call.operation, call.arguments, &|_| true, || true),
+            |call| {
+                dispatch(
+                    &mut data,
+                    &stored,
+                    &repo,
+                    &call.operation,
+                    call.arguments,
+                    true,
+                )
+            },
         )
         .unwrap();
     assert!(context["text"].as_str().unwrap().contains("A scoped fact."));
-    let denied = host
-        .invoke_with(
-            "example_scoped_data",
-            generation,
-            "context",
-            "",
-            json!({}),
-            || true,
-            |call| data.call(&call.operation, call.arguments, &|_| false, || true),
-        )
-        .unwrap();
-    assert!(denied.is_null());
+    let snapshot = json!({"reference":codex_omd::resource_data::hash(b"snapshot"),"sha256":codex_omd::resource_data::hash(b"snapshot")});
+    let worker = host.invoke_with(
+        "example_scoped_data", generation, "tool", "worker", json!({}), || true,
+        |call| match call.operation.as_str() {
+            "workspace.snapshot" => Ok(json!({"snapshot":snapshot,"candidate_sha256":snapshot["sha256"]})),
+            "routes.list" => Ok(json!([{"name":"reviewer","roles":["worker"],"available":true}])),
+            "agents.spawn" => {
+                assert_eq!(call.arguments["workspace"], "read_only");
+                assert_eq!(call.arguments["snapshot"], snapshot);
+                Ok(json!({"handle":"fixture-worker","route":"reviewer","permissions":"read_only"}))
+            }
+            "agents.wait" => {
+                assert_eq!(call.arguments["consume"], true);
+                Ok(json!({"status":"completed","text":"A scoped fact.","consumed":true,
+                    "evidence":{"reference":"native-thread:fixture-worker","sha256":codex_omd::resource_data::hash(b"A scoped fact.")}}))
+            }
+            _ => dispatch(&mut data, &stored, &repo, &call.operation, call.arguments, true),
+        },
+    ).unwrap();
+    assert_eq!(worker["worker"]["status"], "completed");
+    let mut denied_calls = Vec::new();
+    let denied = host.invoke_with(
+        "example_scoped_data",
+        generation,
+        "command",
+        "retain",
+        Value::Null,
+        || true,
+        |call| {
+            denied_calls.push(call.operation.clone());
+            dispatch(
+                &mut data,
+                &stored,
+                &repo,
+                &call.operation,
+                call.arguments,
+                false,
+            )
+        },
+    );
+    assert!(denied.is_err());
+    assert_eq!(denied_calls, ["workspace.read"]);
     drop(host);
     let mut resumed = ModHost::open(store_path.clone()).unwrap();
     let mut data = ScopedDataHost::new(
@@ -131,7 +223,16 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
             "",
             json!({}),
             || true,
-            |call| data.call(&call.operation, call.arguments, &|_| true, || true),
+            |call| {
+                dispatch(
+                    &mut data,
+                    &stored,
+                    &repo,
+                    &call.operation,
+                    call.arguments,
+                    true,
+                )
+            },
         )
         .unwrap();
     assert!(context["text"].as_str().unwrap().contains("fixture-fact"));
@@ -159,13 +260,8 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     assert_eq!(result["sessions"], json!([]));
     store.enable(&component, false).unwrap();
     assert!(
-        data.call(
-            "context.deliver",
-            json!({"snapshot":frozen}),
-            &|_| true,
-            || true
-        )
-        .is_err()
+        data.call("evidence.read", json!({"reference":frozen}), || true)
+            .is_err()
     );
     assert!(!run().status.success());
     store.enable(&component, true).unwrap();
@@ -181,12 +277,7 @@ fn independent_component_uses_scoped_data_context_and_cli_dispatch() {
     .unwrap();
     assert!(
         changed_selection
-            .call(
-                "context.deliver",
-                json!({"snapshot":frozen}),
-                &|_| true,
-                || true
-            )
+            .call("evidence.read", json!({"reference":frozen}), || true)
             .is_err()
     );
     fs::write(component.join("index.ts"), "changed").unwrap();

@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../../../mods/api.d.ts';
+import type { Json, ModAPI } from '@oh-my-diff/mod-api';
 
 type Entry = Record<string, Json>;
 type State = {
@@ -171,7 +171,7 @@ export default function activate(api: ModAPI) {
     const started = api.host.tryCall('process.start', {
       session, name, path: binary.path, sha256: binary.sha256,
       arguments: ['-m', 'debugpy.adapter'],
-      transport: 'stdio_dap',
+      framing: 'content-length', network: 'loopback',
     });
     if (!started.ok) return { error: 'adapter_start_refused', adapter };
     state.adapter = adapter;

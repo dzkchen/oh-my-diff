@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "id": "omd_recovery",
-  "version": "0.1.0-preview.2",
-  "api": "0.1.0-experimental.8",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": {
@@ -10,18 +10,26 @@
     "source": "mods/first-party"
   },
   "capabilities": [
+    "agents",
     "commands",
     "interception",
     "lifecycle",
-    "recovery",
+    "model",
     "services",
-    "state",
-    "tools"
+    "sessions",
+    "store",
+    "fs.read",
+    "tools",
+    "middleware"
   ],
   "services": {
     "imports": [
       {
         "name": "omd.coordination",
+        "version": "1.0.0"
+      },
+      {
+        "name": "omd.workflow",
         "version": "1.0.0"
       }
     ]
@@ -31,19 +39,53 @@
     "properties": {
       "failure_policy": {
         "type": "string",
-        "enum": ["lead_asserted", "environment", "edit", "diagnosis", "model"],
+        "enum": [
+          "lead_asserted",
+          "environment",
+          "edit",
+          "diagnosis",
+          "model"
+        ],
         "default": "lead_asserted"
+      },
+      "allowed_failure_classes": {
+        "type": "array",
+        "default": ["environment", "edit", "diagnosis", "model"]
+      },
+      "evidence_bytes": {
+        "type": "number",
+        "default": 262144
       },
       "eligible_tools": {
         "type": "array",
-        "default": ["direct", "delegation", "advisory"]
+        "default": [
+          "direct",
+          "delegation",
+          "advisory"
+        ]
       },
       "outage_action": {
         "type": "string",
-        "enum": ["opposite_lead", "pause"],
+        "enum": [
+          "opposite_lead",
+          "pause"
+        ],
         "default": "opposite_lead"
+      },
+      "advisory_route": {
+        "type": "string",
+        "default": ""
       }
     },
     "additionalProperties": false
+  },
+  "compatibility": {
+    "required_features": [
+      "agent_parent_history_v1",
+      "workspace_snapshots_v1",
+      "routes_v1",
+      "store_v1",
+      "service_dispatch_v1"
+    ]
   }
 }

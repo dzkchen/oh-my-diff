@@ -1,9 +1,9 @@
-import type { ModAPI } from '@oh-my-diff/mod-api/0.1';
+import type { ModAPI } from '@oh-my-diff/mod-api';
 
 export default function activate(api: ModAPI) {
   api.middleware('model_request', event => {
-    const astra = event.authorized_presets.find(preset => preset.name === 'astra');
-    return astra ? { preset: astra.name } : null;
+    const astra = event.routes.find(route => route.name === 'astra' && route.available && route.billing === 'included_subscription');
+    return astra ? { route: astra.name } : null;
   });
   api.middleware('response_stream', event => {
     if (event.protected || event.text === null) return null;

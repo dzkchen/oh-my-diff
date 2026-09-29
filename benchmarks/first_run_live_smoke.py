@@ -3,14 +3,33 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import time
 
 from .gateway import Budget, Gateway
-from .mod_fixture import install
+from .mod_fixture import install, package_digest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def install_counter(destination, node):
+    source = ROOT / "mods/examples/counter"
+    package = destination / "counter"
+    shutil.copytree(source, package)
+    declared = (package / "mod.json").read_bytes()
+    body = (package / "index.ts").read_bytes()
+    manifest = json.loads(declared)
+    api = json.loads((ROOT / "mods/package.json").read_text())["version"]
+    if manifest["api"] != api:
+        raise ValueError("the platform arm requires the current counter mod API")
+    store = destination / "mod-store"
+    store.mkdir()
+    (store / "mods.json").write_text(json.dumps({"schema": 1, "revision": 0, "node": str(node.resolve()),
+                                                  "mods": [{"path": str(package), "sha256": package_digest(declared, body),
+                                                            "enabled": True, "capabilities": manifest["capabilities"], "settings": {}}]}))
+    return store
 
 
 def load_key():
@@ -75,10 +94,12 @@ def prepare(destination, node, port, token, arm):
            "CODEX_HOME": str(home), "CODEX_SQLITE_HOME": str(home),
            "NO_PROXY": "127.0.0.1,localhost", "TERM": "dumb",
            "OMD_GATEWAY_TOKEN": token}
-    if arm in ("platform", "full"):
+    if arm == "platform":
+        env.update(OMD_MODE="omd", OMD_MOD_STORE=str(install_counter(destination, node)))
+    elif arm == "full":
         selected = {}
-        install(destination, selected, node, "counter" if arm == "platform" else "workspace-only")
-        env.update(OMD_MODE="platform", OMD_MOD_STORE=selected["mods"])
+        install(destination, selected, node, "workspace-only")
+        env.update(OMD_MODE="omd", OMD_MOD_STORE=selected["mods"])
     else:
         env["OMD_MODE"] = "upstream_direct"
     return repo, home, env
@@ -108,9 +129,10 @@ def run(binary, output, arms, usd_exposure, max_requests):
         destination.mkdir()
         with Gateway({"omd_openai_api": route}, budget, destination) as gateway:
             repo, home, env = prepare(destination, node, gateway.port, gateway.token, arm)
+            tool = "mod_counter_count" if arm == "platform" else "mod_fixture_count"
             prompt = ("Fix solution.py so add returns the sum. Run /usr/bin/python3 -m unittest "
                       "test_solution.py. Preserve unrelated files. Before editing, search the "
-                      "available tools for mod_fixture_count and invoke it once if present.")
+                      f"available tools for {tool} and invoke it once if present.")
             arm_started = time.monotonic()
             process = subprocess.run([str(binary), "exec", "--json", "--skip-git-repo-check", prompt],
                                      cwd=repo, env=env, stdin=subprocess.DEVNULL,

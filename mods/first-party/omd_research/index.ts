@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../api-0.1.d.ts';
+import type { Json, ModAPI } from '../../api.d.ts';
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
@@ -12,9 +12,9 @@ export default function activate(api: ModAPI) {
     if (!object(value) || Object.keys(value).some(key => !['question', 'scope', 'brief', 'expected_sources', 'lead_read_minutes', 'brief_and_handoff_minutes', 'already_located'].includes(key)) || !text(value.question, 800) || !text(value.brief, 2000) || !Array.isArray(value.scope) || value.scope.length < 3 || value.scope.length > 12 || new Set(value.scope).size !== value.scope.length || value.scope.some(source => !local(source) && !url(source)) || !Number.isInteger(value.expected_sources) || Number(value.expected_sources) < 4 || Number(value.expected_sources) > 24 || typeof value.lead_read_minutes !== 'number' || typeof value.brief_and_handoff_minutes !== 'number' || !Number.isFinite(value.lead_read_minutes) || !Number.isFinite(value.brief_and_handoff_minutes) || value.brief_and_handoff_minutes <= 0 || value.lead_read_minutes <= 2 * value.brief_and_handoff_minutes || value.already_located !== false) return { status: 'not_admitted', reason: 'Read small, already located, or low-value sources directly. Research requires at least three explicit scopes, four expected sources and expected reading work exceeding twice the briefing and handoff estimate.' };
     const question = { question: value.question, scope: value.scope, brief: value.brief };
     if (encodeURIComponent(JSON.stringify(question)).replace(/%[0-9A-F]{2}|./g, 'x').length > 5500) return { status: 'not_admitted', reason: 'briefing_byte_limit; narrow the question and source packet' };
-    const presets = api.host.tryCall('workers.presets', null);
+    const presets = api.host.tryCall('routes.list', null);
     if (!presets.ok) return { status: 'denied', reason: presets.error };
-    const preset = presets.value.find(preset => preset.name === presetName && preset.model === 'gpt-6-luna' && preset.available && ['included_subscription', 'explicit_paid_api_grant'].includes(preset.billing));
+    const preset = presets.value.find(preset => preset.name === presetName && preset.model === 'gpt-6-luna' && preset.roles.includes('worker') && preset.available && ['included_subscription', 'explicit_paid_api_grant'].includes(preset.billing));
     if (!preset) return { status: 'denied', reason: 'No available host-authorized gpt-6-luna research preset using subscription access or a separate explicit paid-API grant. No fallback route was used.' };
     const allowed = ['exec_command', 'read', 'grep_files', 'list_dir', 'web_search'];
     const tools = preset.tools.filter(tool => allowed.includes(tool));

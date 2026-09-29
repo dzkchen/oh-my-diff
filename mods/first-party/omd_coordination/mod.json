@@ -1,19 +1,19 @@
 {
   "schema": 1,
   "id": "omd_coordination",
-  "version": "0.1.0-preview.4",
-  "api": "0.1.0-experimental.8",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "capabilities": [
     "agents",
     "commands",
     "context",
+    "fs.read",
     "lifecycle",
-    "recovery",
-    "routing",
+    "model",
     "services",
-    "state",
-    "task",
+    "sessions",
+    "store",
     "tools"
   ],
   "services": {
@@ -28,6 +28,12 @@
           }
         }
       }
+    ],
+    "imports": [
+      {
+        "name": "omd.workflow",
+        "version": "1.0.0"
+      }
     ]
   },
   "settings_schema": {
@@ -35,19 +41,43 @@
     "properties": {
       "lead_policy": {
         "type": "string",
-        "enum": ["sol", "astra", "task_entry"],
+        "enum": [
+          "sol",
+          "astra",
+          "task_entry"
+        ],
         "default": "task_entry"
       },
       "worker_context": {
         "type": "string",
-        "enum": ["focused", "focused_brief", "shared", "shared_task_packet", "inherit", "parent_history"],
+        "enum": [
+          "focused",
+          "focused_brief",
+          "shared",
+          "shared_task_packet",
+          "inherit",
+          "parent_history"
+        ],
         "default": "focused_brief"
+      },
+      "worker_context_max_bytes": {
+        "type": "number",
+        "default": 6000
       },
       "evidence": {
         "type": "array",
         "default": []
+      },
+      "investigation_route": {
+        "type": "string",
+        "default": "reviewer"
       }
     },
     "additionalProperties": false
+  },
+  "compatibility": {
+    "required_features": [
+      "service_dispatch_v1"
+    ]
   }
 }

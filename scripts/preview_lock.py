@@ -11,7 +11,7 @@ SCHEMA = 1
 PRODUCT = "oh-my-diff-private-preview-v1"
 NODE = "24.18.0"
 FILES = ("mod.json", "index.ts")
-PACKAGES = ("omd_coordination", "omd_recovery", "omd_workspace")
+PACKAGES = ("omd_coordination", "omd_recovery", "omd_workflow", "omd_workspace")
 
 
 def digest(path):
@@ -60,7 +60,6 @@ def build():
         "mod_api": api,
         "node": NODE,
         "types": {"path": "mods/api.d.ts", "sha256": digest(ROOT / "mods/api.d.ts")},
-        "guide": {"path": "mods/PREVIEW.md"},
         "packages": packages,
     }
 

@@ -10,19 +10,18 @@ import tempfile
 import time
 
 
-def sample(binary, mode, manifest_source):
+def sample(binary, mode, mod_store):
     with tempfile.TemporaryDirectory(prefix="lean-startup-", dir="/private/tmp") as directory:
         root = Path(directory)
         home = root / "home"
         home.mkdir()
         environment = os.environ.copy()
         environment.update({"CODEX_HOME": str(home), "CODEX_SQLITE_HOME": str(home), "OMD_MODE": mode})
-        if manifest_source:
-            manifest = json.loads(manifest_source.read_text())
-            manifest["evidence"] = str(root / "evidence")
-            manifest_path = root / "manifest.json"
-            manifest_path.write_text(json.dumps(manifest))
-            environment["OMD_CONTROLLED_MANIFEST"] = str(manifest_path)
+        environment.pop("OMD_CONTROLLED_MANIFEST", None)
+        if mod_store:
+            environment["OMD_MOD_STORE"] = str(mod_store)
+        else:
+            environment.pop("OMD_MOD_STORE", None)
         started = time.monotonic()
         process = subprocess.Popen([str(binary), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment, bufsize=0)
         try:
@@ -50,15 +49,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--upstream", type=Path, required=True)
     parser.add_argument("--omd", type=Path, required=True)
-    parser.add_argument("--enabled-manifest", type=Path, required=True)
+    parser.add_argument("--empty-mod-store", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=15)
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error("--repeats must be positive")
+    store = args.empty_mod_store.resolve(strict=True)
+    if not store.is_dir():
+        parser.error("--empty-mod-store must be an initialized mod store")
     arms = {
         "upstream": (args.upstream, "upstream_direct", None),
         "omd_direct": (args.omd, "upstream_direct", None),
-        "workspace_only": (args.omd, "enabled", args.enabled_manifest),
+        "omd_empty": (args.omd, "omd", store),
     }
     order = list(arms) * args.repeats
     random.Random(7).shuffle(order)

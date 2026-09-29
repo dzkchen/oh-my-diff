@@ -39,15 +39,15 @@ class ReviewPluginTests(unittest.TestCase):
         if enabled:
             environment.update(
                 {
-                    "OMD_MODE": "enabled",
-                    "OMD_CONTROLLED_MANIFEST": str(self.manifest),
+                    "OMD_MODE": "omd",
+                    "OMD_REVIEW_CONFIG": str(self.manifest),
                     "PLUGIN_DATA": str(self.root / "plugin-data"),
                     "PLUGIN_ROOT": str(PLUGIN),
                 }
             )
         else:
             environment.pop("OMD_MODE", None)
-            environment.pop("OMD_CONTROLLED_MANIFEST", None)
+            environment.pop("OMD_REVIEW_CONFIG", None)
         return subprocess.run(
             [sys.executable, str(HOOK)],
             input=json.dumps(event),
@@ -76,29 +76,25 @@ class ReviewPluginTests(unittest.TestCase):
         final = (PLUGIN / "skills/omd-final-review/SKILL.md").read_text()
         for name in ("stable_milestone", "risk_triggered", "every_turn"):
             self.assertIn(name, cadence)
-        self.assertIn("cadence `final`", final)
+        self.assertIn("final_review", final)
         for retained in ("ledger", "limits", "drift"):
             self.assertIn(retained, (cadence + final).lower())
 
-    def test_every_turn_stop_blocks_until_native_review_succeeds(self):
+    def test_every_turn_stop_blocks_until_mod_review_receipt_succeeds(self):
         stopped = self.run_hook(self.event("Stop"))
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
         self.assertEqual(json.loads(stopped.stdout)["decision"], "block")
         reviewed = self.run_hook(
             self.event(
                 "PostToolUse",
-                tool_name="omd_review",
+                tool_name="mod_omd_workflow_advance",
                 tool_use_id="call-1",
-                tool_input={
-                    "cadence": "every_turn",
-                    "candidate_sha256": "a" * 64,
-                    "stable": True,
-                },
+                tool_response={"status": "recorded", "receipt": {"kind": "milestone_review", "outcome": "pass", "producer": {"kind": "agent"}}},
             )
         )
         self.assertEqual(reviewed.returncode, 0, reviewed.stderr)
         marker = json.loads(self.marker().read_text())
-        self.assertEqual(marker["cadence"], "every_turn")
+        self.assertEqual(marker["cadence"], "milestone_review")
         allowed = self.run_hook(self.event("Stop"))
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
         self.assertEqual(allowed.stdout, "")
@@ -119,6 +115,16 @@ class ReviewPluginTests(unittest.TestCase):
         stopped = self.run_hook(self.event("Stop"))
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
         self.assertEqual(stopped.stdout, "")
+
+    def test_started_failed_or_lead_review_cannot_satisfy_cadence(self):
+        for result in ({"status": "running"},
+                       {"status": "recorded", "receipt": {"kind": "milestone_review", "outcome": "fail", "producer": {"kind": "agent"}}},
+                       {"status": "recorded", "receipt": {"kind": "milestone_review", "outcome": "pass", "producer": {"kind": "lead"}}},
+                       {"status": "recorded", "receipt": {"kind": "milestone_review", "outcome": "pass", "producer": "agent"}}):
+            response = self.run_hook(self.event("PostToolUse", tool_name="mod_omd_workflow_advance",
+                                               tool_use_id="incomplete", tool_response=result))
+            self.assertEqual(response.returncode, 0, response.stderr)
+            self.assertFalse(self.marker().exists())
 
     def test_truthy_manifest_values_do_not_activate_the_guard(self):
         self.manifest_value["capabilities"]["unified_review"] = 1
@@ -147,9 +153,9 @@ class ReviewPluginTests(unittest.TestCase):
         reviewed = self.run_hook(
             self.event(
                 "PostToolUse",
-                tool_name="omd_review",
+                tool_name="mod_omd_workflow_advance",
                 tool_use_id="call-1",
-                tool_input={"cadence": "stable_milestone"},
+                tool_response={"status": "recorded", "receipt": {"kind": "milestone_review", "outcome": "pass", "producer": {"kind": "agent"}}},
             )
         )
         self.assertEqual(reviewed.returncode, 0, reviewed.stderr)

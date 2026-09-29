@@ -5,6 +5,25 @@
   "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
-  "provenance": {"maintainer": "Example author", "source": "mods/examples"},
-  "capabilities": ["tools", "commands", "exec", "fs.read", "store", "contracts", "builtins", "middleware", "model", "terminal"]
+  "provenance": {
+    "maintainer": "Example author",
+    "source": "mods/examples"
+  },
+  "capabilities": [
+    "tools",
+    "commands",
+    "exec",
+    "fs.read",
+    "store",
+    "contracts",
+    "builtins",
+    "middleware",
+    "model",
+    "terminal"
+  ],
+  "compatibility": {
+    "required_features": [
+      "workspace_snapshots_v1"
+    ]
+  }
 }

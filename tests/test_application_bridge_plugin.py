@@ -50,8 +50,8 @@ class ApplicationBridgePluginTests(unittest.TestCase):
     def environment(self):
         return {
             **os.environ,
-            "OMD_MODE": "enabled",
-            "OMD_CONTROLLED_MANIFEST": str(self.manifest),
+            "OMD_MODE": "omd",
+            "OMD_BRIDGE_CONFIG": str(self.manifest),
             "PLUGIN_ROOT": str(PLUGIN),
             "PLUGIN_DATA": str(self.root / "plugin-data"),
         }
@@ -60,7 +60,7 @@ class ApplicationBridgePluginTests(unittest.TestCase):
         environment = self.environment()
         if not enabled:
             environment.pop("OMD_MODE", None)
-            environment.pop("OMD_CONTROLLED_MANIFEST", None)
+            environment.pop("OMD_BRIDGE_CONFIG", None)
         return subprocess.run(
             [sys.executable, str(HOOK)],
             input=json.dumps({"hook_event_name": name, "session_id": "session-1"}),
@@ -77,7 +77,7 @@ class ApplicationBridgePluginTests(unittest.TestCase):
         self.assertEqual(server["default_tools_approval_mode"], "prompt")
         self.assertEqual(
             set(server["env_vars"]),
-            {"OMD_MODE", "OMD_CONTROLLED_MANIFEST"},
+            {"OMD_MODE", "OMD_BRIDGE_CONFIG", "OMD_MOD_STORE"},
         )
 
     def test_launcher_requires_exact_enabled_external_policy(self):

@@ -1,5 +1,4 @@
-
-const LEGACY_API: &str = "0.1.0-experimental.9";
+const CURRENT_API: &str = codex_omd::MOD_API_VERSION;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModPackageGrant;
 use codex_omd::ModPackageSource;
@@ -27,7 +26,7 @@ fn mod_package(
             "schema":1,
             "id":id,
             "version":version,
-            "api":LEGACY_API,
+            "api":CURRENT_API,
             "entrypoint":"main.ts",
             "state_version":1,
             "license":"Apache-2.0",
@@ -79,6 +78,38 @@ fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
             BTreeMap::from([("mode".into(), json!("safe"))]),
         )]),
     }
+}
+
+#[test]
+fn installed_package_keeps_hash_bound_text_assets() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let package = mod_package(&root, "asset_fixture", "1.0.0", &["commands"], json!([]));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(package.join("mod.json")).unwrap()).unwrap();
+    manifest["assets"] = json!(["worker.mjs"]);
+    std::fs::write(
+        package.join("mod.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(package.join("worker.mjs"), "export default 1\n").unwrap();
+    let store = store(&temp);
+    let install = request(&package, &["commands"]);
+    let plan = store.package_plan(install.clone()).unwrap();
+    let lock = store.package_apply(install, &plan.confirmation).unwrap();
+    let cache = root
+        .join("store/package-cache/asset_fixture")
+        .join(&lock.packages["asset_fixture"].integrity);
+    assert_eq!(
+        std::fs::read_to_string(cache.join("worker.mjs")).unwrap(),
+        "export default 1\n"
+    );
+    std::fs::write(cache.join("worker.mjs"), "changed\n").unwrap();
+    assert!(
+        ModStore::inspect_package(&cache).unwrap()["sha256"]
+            != lock.packages["asset_fixture"].integrity
+    );
 }
 
 #[test]
@@ -271,7 +302,7 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
         serde_json::from_slice(&std::fs::read(package.join("mod.json")).unwrap()).unwrap();
     manifest["version"] = json!("1.1.0");
     manifest["state_version"] = json!(2);
-    manifest["capabilities"] = json!(["commands", "state"]);
+    manifest["capabilities"] = json!(["commands", "store"]);
     std::fs::write(
         package.join("mod.json"),
         serde_json::to_vec_pretty(&manifest).unwrap(),
@@ -296,7 +327,7 @@ fn local_updates_preview_preserve_edits_settings_and_rollback() {
             .to_string()
             .contains("source_changed")
     );
-    let mut update = request(&package, &["commands", "state"]);
+    let mut update = request(&package, &["commands", "store"]);
     update.settings.clear();
     let plan = store.package_plan(update.clone()).unwrap();
     assert_eq!(plan.action, "update");

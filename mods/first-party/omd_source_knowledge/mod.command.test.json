@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "store.get": [{ "result": null }],
+    "store.put": [{ "result": { "revision": 1 } }]
+  },
+  "steps": [
+    { "type": "invoke", "mod": "omd_source_knowledge", "event": "command", "name": "reset",
+      "payload": "{\"repository_identity\":\"fixture/repository\",\"expected_revision\":0,\"action\":{\"actor\":\"fixture-maintainer\",\"reason\":\"Explicit reset\"}}" }
+  ]
+}

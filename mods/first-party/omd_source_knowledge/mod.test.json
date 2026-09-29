@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "host_operations": {
+    "store.get": [{ "result": null }],
+    "workspace.snapshot": [
+      { "result": { "snapshot": { "reference": "fixture", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+      { "result": { "snapshot": { "reference": "fixture", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+    ],
+    "workspace.stat": [
+      { "result": { "files": { "src/config.txt": { "kind": "file", "size": 13, "mtime_ms": 1 } } } },
+      { "result": { "files": { "src/config.txt": { "kind": "file", "size": 13, "mtime_ms": 1,
+        "sha256": "dbea9325179efe46ea2add94f7b6b745ca983fabb208dc6d34aa064623d7ee23" } } } }
+    ],
+    "workspace.read": [{ "result": { "files": { "src/config.txt": { "text": "first\nsecond\n", "sha256": "dbea9325179efe46ea2add94f7b6b745ca983fabb208dc6d34aa064623d7ee23" } } } }],
+    "workspace.check_access": [{ "result": { "paths": ["src/config.txt"], "write": false } }],
+    "store.put": [{ "result": { "revision": 1 } }]
+  },
+  "steps": [
+    { "type": "invoke", "mod": "omd_source_knowledge", "event": "tool", "name": "retain_source",
+      "payload": { "repository_identity": "fixture/repository", "expected_revision": 0, "id": "source.fact", "task_id": "task-1",
+        "label": "Configuration source", "source": { "path": "src/config.txt", "start_line": 2, "end_line": 2 } } }
+  ]
+}

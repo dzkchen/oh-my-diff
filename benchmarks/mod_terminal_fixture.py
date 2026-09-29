@@ -19,6 +19,7 @@ MODELS = Path(__file__).parent / "fixtures/controlled-models.json"
 
 
 def fixture(label):
+    raise RuntimeError("legacy terminal fixture requires rebuilt OMD_MODE=omd host routes and mod selections; native terminal assertions are not current-host evidence")
     root = Path(tempfile.mkdtemp(prefix=f"omd-pty-{label}-", dir="/private/tmp"))
     repo = root / "repo"
     home = root / "home"
@@ -533,12 +534,6 @@ def run_extensions(inline=False):
         route["responses_url"] = url + "/responses"
     manifest["limits"]["requests"] = 40
     manifest["checkpoint"]["max_no_progress_calls"] = 16
-    pi_user = root / "pi-user"
-    (pi_user / "prompts").mkdir(parents=True)
-    (pi_user / "prompts/review.md").write_text(
-        "---\ndescription: Review a file\nargument-hint: <path>\n---\nPTY_PI_REVIEW $1 carefully\n"
-    )
-    manifest["mod_pi_user"] = str(pi_user)
     from benchmarks.mod_fixture import install
 
     install(root, manifest, NODE, "terminal")
@@ -587,10 +582,6 @@ def run_extensions(inline=False):
 
     checks["namespaced_command"] = command("/fixture:hello world", b"PTY_HELLO world")
     checks["bare_alias"] = command("/hello again", b"PTY_HELLO again")
-    os.write(master, b"\x15/pi:rev")
-    checks["pi_alias_conflict_visible"] = drain_until(master, output, b"bare /review unavailable", 5)
-    os.write(master, b"\x15")
-    drain(master, output, 0.3)
     checks["command_submit"] = command("/fixture:ask counting", b"PTY_DONE", 30)
     checks["activity_line"] = drain_until(master, output, b"Ran Fixture counter", 10)
     os.write(master, b"\x1bx")
@@ -602,14 +593,6 @@ def run_extensions(inline=False):
     while time.monotonic() < deadline and not any("PTY_KEY_SUBMIT" in json.dumps(r) for r in requests[before:]):
         drain(master, output, 0.3)
     checks["key_submit"] = any("PTY_KEY_SUBMIT" in json.dumps(r) for r in requests[before:])
-    before = len(requests)
-    command("/pi:review src/main.rs", b"PTY_PI_REVIEW", 15)
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline and not any("PTY_PI_REVIEW src/main.rs carefully" in json.dumps(r) for r in requests[before:]):
-        drain(master, output, 0.3)
-    checks["pi_prompt_expanded"] = any(
-        "PTY_PI_REVIEW src/main.rs carefully" in json.dumps(r) for r in requests[before:]
-    )
     os.write(master, b"\x14")
     checks["key_conflict_visible"] = drain_until(master, output, b"Mod keybinding Ctrl+t ignored", 10)
     drain(master, output, 0.5)

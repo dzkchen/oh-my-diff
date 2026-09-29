@@ -1,23 +1,22 @@
 {
   "schema": 1,
   "id": "omd_curated_memory",
-  "version": "0.1.0-preview.1",
-  "api": "0.1.0-experimental.9",
+  "version": "0.2.0-preview.1",
+  "api": "0.2.0-experimental.1",
   "state_version": 1,
   "license": "Apache-2.0",
   "capabilities": [
     "tools",
     "commands",
-    "state",
+    "store",
     "lifecycle",
     "context",
-    "turn_evidence",
-    "knowledge_read",
-    "knowledge_write"
+    "fs.read"
   ],
   "compatibility": {
     "required_features": [
-      "scoped_data_v1",
+      "store_v1",
+      "workspace_fs_v1",
       "turn_evidence_v1",
       "plugin_dispatch_v1"
     ]

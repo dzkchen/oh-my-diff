@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "omd_guideline_governance",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.1",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_guideline_governance" },
+  "capabilities": ["tools", "commands", "store", "fs.read"],
+  "environment": ["crypto"],
+  "compatibility": { "required_features": ["store_v1", "workspace_snapshots_v1"] }
+}

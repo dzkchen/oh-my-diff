@@ -15,8 +15,7 @@ pub(super) struct Views {
     state: Mutex<State>,
 }
 
-/// Keeps at most `limit` UTF-8 bytes, matching the byte bounds that
-/// `ModViewSnapshot::read` enforces on the persisted snapshot.
+/// Keeps at most `limit` UTF-8 bytes, matching `ModViewSnapshot::read`.
 fn visible(text: &str, limit: usize) -> String {
     let mut output = String::new();
     for character in text.chars().filter(|c| !c.is_control()) {

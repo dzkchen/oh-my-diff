@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::io::BufRead;
-use std::io::Read;
 use std::io::BufReader;
+use std::io::Read;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
@@ -77,7 +77,10 @@ fn read_framed(reader: &mut impl BufRead, framing: Framing) -> io::Result<Value>
             .take(4 * 1024 * 1024 + 1)
             .read_until(b'\n', &mut line)?;
         if read == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "process stopped"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "process stopped",
+            ));
         }
         if line.len() > 4 * 1024 * 1024 {
             return Err(io::Error::other("process message length invalid"));
@@ -290,7 +293,7 @@ impl ManagedProcesses {
                     #[serde(default)]
                     arguments: Vec<String>,
                     #[serde(default)]
-                    transport: Option<String>,
+                    environment: BTreeMap<String, String>,
                     #[serde(default)]
                     framing: Option<String>,
                     #[serde(default)]
@@ -306,17 +309,31 @@ impl ManagedProcesses {
                         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
                     || input.arguments.len() > 16
                     || input.arguments.iter().map(String::len).sum::<usize>() > 4096
+                    || input.environment.len() > 8
+                    || input.environment.iter().any(|(key, value)| {
+                        key.is_empty()
+                            || key.len() > 64
+                            || !key.bytes().all(|byte| {
+                                byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                            })
+                            || key.starts_with("CODEX_")
+                            || key.starts_with("OMD_")
+                            || key.starts_with("DYLD_")
+                            || key.starts_with("LD_")
+                            || matches!(key.as_str(), "HOME" | "PATH" | "TMPDIR" | "XDG_CACHE_HOME")
+                            || value.len() > 1024
+                            || value
+                                .bytes()
+                                .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
+                    })
                     || !matches!(
-                        input.transport.as_deref(),
-                        None | Some("stdio") | Some("stdio_dap")
+                        input.framing.as_deref(),
+                        None | Some("content-length") | Some("ndjson")
                     )
-                    || input.transport.is_some()
-                        && (input.framing.is_some() || input.network.is_some())
-                    || !matches!(input.framing.as_deref(), None | Some("content-length") | Some("ndjson"))
-                    || !matches!(input.network.as_deref(), None | Some("none") | Some("loopback"))
-                    || (input.transport.as_deref() == Some("stdio_dap")
-                        && (input.name != "python3"
-                            || input.arguments != ["-m", "debugpy.adapter"]))
+                    || !matches!(
+                        input.network.as_deref(),
+                        None | Some("none") | Some("loopback")
+                    )
                     || program(&input.name, repository).as_ref() != Some(&input.path)
                     || input
                         .path
@@ -366,16 +383,17 @@ impl ManagedProcesses {
                 )?;
                 let launched = (|| {
                     let scope = read_policy(policy, &scratch)?;
-                    let stdio_dap = input.transport.as_deref() == Some("stdio_dap")
-                        || input.network.as_deref() == Some("loopback");
+                    let loopback_network = input.network.as_deref() == Some("loopback");
                     let framing = if input.framing.as_deref() == Some("ndjson") {
                         Framing::Ndjson
                     } else {
                         Framing::ContentLength
                     };
                     let mut command = vec![input.path.to_string_lossy().into_owned()];
-                    command.extend(input.arguments);
-                    let loopback = stdio_dap.then(|| ManagedNetworkSandboxContext {
+                    command.extend(input.arguments.into_iter().map(|argument| {
+                        argument.replace("{process.home}", &scratch.to_string_lossy())
+                    }));
+                    let loopback = loopback_network.then(|| ManagedNetworkSandboxContext {
                         allow_local_binding: true,
                         ..Default::default()
                     });
@@ -384,7 +402,7 @@ impl ManagedProcesses {
                         file_system_sandbox_policy: &scope,
                         network_sandbox_policy: NetworkSandboxPolicy::Restricted,
                         sandbox_policy_cwd: repository,
-                        enforce_managed_network: stdio_dap,
+                        enforce_managed_network: loopback_network,
                         managed_network: loopback.as_ref(),
                         environment_id: None,
                         network: None,
@@ -400,6 +418,7 @@ impl ManagedProcesses {
                         .env("TMPDIR", &scratch)
                         .env("XDG_CACHE_HOME", &scratch)
                         .env("PYTHONDONTWRITEBYTECODE", "1")
+                        .envs(&input.environment)
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
                         .stderr(Stdio::null())
@@ -737,5 +756,45 @@ mod tests {
                 .unwrap_err(),
             "process_session_unavailable"
         );
+    }
+
+    #[test]
+    fn process_environment_rejects_host_overrides() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let found = processes
+            .call(
+                "fixture",
+                1,
+                &repository,
+                &policy,
+                "process.which",
+                json!({"names":["cat"]}),
+                || true,
+            )
+            .unwrap();
+        let cat = found["found"].as_array().unwrap().first().unwrap();
+        for environment in [
+            json!({"HOME":"/tmp"}),
+            json!({"DYLD_INSERT_LIBRARIES":"/tmp/injected.dylib"}),
+            json!({"CUSTOM_PATH":"line\nbreak"}),
+        ] {
+            assert_eq!(
+                processes
+                    .call(
+                        "fixture",
+                        1,
+                        &repository,
+                        &policy,
+                        "process.start",
+                        json!({"session":"rejected","name":"cat","path":cat["path"],"sha256":cat["sha256"],"environment":environment}),
+                        || true,
+                    )
+                    .unwrap_err(),
+                "process_program_or_arguments_invalid"
+            );
+        }
     }
 }

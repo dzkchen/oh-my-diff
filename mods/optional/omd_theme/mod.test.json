@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "steps": [
+    {
+      "type": "invoke",
+      "mod": "omd_theme",
+      "event": "terminal",
+      "name": "",
+      "payload": {"event": "idle", "ledger": null},
+      "expect": {
+        "foreground": 255,
+        "background": 235,
+        "theme": {
+          "accent": "#80d8ff",
+          "success": "#91e6aa",
+          "attention": "#ffe08a",
+          "failure": "#ff9b9b",
+          "diff_added": "#91e6aa",
+          "diff_removed": "#ff9b9b",
+          "muted": "#b4beca",
+          "user_message_background": "#303942",
+          "border": "plain",
+          "density": "comfortable",
+          "icons": "ascii",
+          "glyphs": {}
+        }
+      }
+    }
+  ]
+}

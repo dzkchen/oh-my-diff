@@ -6,44 +6,28 @@ import subprocess
 import tarfile
 
 try:
-    from scripts import private_lean_v1 as private
-    from scripts import claude_lock
-    from scripts import typed_tasks_lock
-    from scripts import lsp_sync_lock
-    from scripts import terminal_mods_lock
-    from scripts import batch2_lock
+    from scripts import install_support as private
+    from scripts import full_mods_lock
 except ModuleNotFoundError:
-    import private_lean_v1 as private
-    import claude_lock
-    import typed_tasks_lock
-    import lsp_sync_lock
-    import terminal_mods_lock
-    import batch2_lock
+    import install_support as private
+    import full_mods_lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/lean-release.lock.json"
-BINARIES = ("codex", "omd-mod", "omd", "omd-graph", "omd-health", "omd-lsp")
+BINARIES = ("codex", "omd-mod", "omd", "omd-contract")
 AUTHOR_ARCHIVE = "mod-api.tgz"
 SOURCES = (
     "scripts/lean_profiles.py", "scripts/lean_release_lock.py",
-    "scripts/lean_package.py", "scripts/private_lean_v1.py",
-    "scripts/preview_lock.py", "scripts/browser_bundle.py",
+    "scripts/lean_package.py", "scripts/install_support.py",
+    "scripts/preview_lock.py",
     "upstream.lock.json", "runtime/patches/manifest.json",
     "runtime/preview-v1.lock.json", "runtime/plugin-v1.lock.json",
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
     "mods/author/cli.mjs",
     "LEAN_PROFILES.md",
-    "scripts/claude_lock.py",
-    "runtime/claude-full.lock.json",
-    "scripts/typed_tasks_lock.py",
-    "runtime/typed-tasks-full.lock.json",
-    "scripts/lsp_sync_lock.py",
-    "runtime/lsp-sync-full.lock.json",
-    "scripts/terminal_mods_lock.py",
-    "runtime/terminal-mods-full.lock.json",
-    "scripts/batch2_lock.py", "runtime/batch2-full.lock.json",
-) + claude_lock.SOURCES + typed_tasks_lock.SOURCES + lsp_sync_lock.SOURCES + terminal_mods_lock.SOURCES + batch2_lock.SOURCES
+    "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
+) + full_mods_lock.sources()
 
 
 def sdk_sources():
@@ -106,21 +90,9 @@ def build(artifact_dir, package_mode=False):
     if private.digest(ROOT / patch["patch"]["path"]) != patch["patch"]["sha256"]:
         raise ValueError("active runtime patch hash mismatch")
     preview = private.preview_sources(private.preview_lock())
-    claude = claude_lock.load()
-    typed = typed_tasks_lock.load()
-    lsp = lsp_sync_lock.load()
-    terminal = terminal_mods_lock.load()
-    batch2 = batch2_lock.load()
-    if not package_mode and batch2 != batch2_lock.build():
-        raise ValueError("Batch 2 Full lock differs from pinned sources")
-    if not package_mode and terminal != terminal_mods_lock.build():
-        raise ValueError("terminal mod Full lock differs from pinned sources")
-    if not package_mode and claude != claude_lock.build():
-        raise ValueError("Claude Full lock differs from pinned sources")
-    if not package_mode and typed != typed_tasks_lock.build():
-        raise ValueError("typed task Full lock differs from pinned sources")
-    if not package_mode and lsp != lsp_sync_lock.build():
-        raise ValueError("LSP synchronization Full lock differs from pinned sources")
+    full = full_mods_lock.load()
+    if not package_mode and full != full_mods_lock.build():
+        raise ValueError("Full mod lock differs from pinned sources")
     index = json.loads((ROOT / "extensions/index.json").read_text())
     version = upstream["tag"].removeprefix("rust-v")
     if (index["release_pin"]["codex"] != version
@@ -167,14 +139,13 @@ def build(artifact_dir, package_mode=False):
         "node": preview["node"],
         "source_sha256": {name: private.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
-        "platform_tools": ["omd"],
+        "platform_tools": ["omd", "omd-contract"],
         "profiles": {
             "platform": {"first_party_installed": ["omd_logo"], "first_party_default_active": ["omd_logo"],
-                         "plugin_sources": [], "optional_tool_binaries": []},
-            "full": {"first_party_installed": sorted((*preview["packages"], claude["package"]["id"], typed["package"]["id"], lsp["package"]["id"], *terminal["packages"], *batch2["packages"])),
-                     "first_party_default_active": ["omd_logo", "omd_model_picker", "omd_workspace"],
-                     "plugin_sources": selected,
-                     "optional_tool_binaries": ["omd-graph", "omd-health", "omd-lsp"]},
+                         "plugin_sources": []},
+            "full": {"first_party_installed": sorted((*preview["packages"], *full["packages"])),
+                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace"],
+                     "plugin_sources": selected},
         },
         "qualification": "development package candidate; supported collection and default pending",
     }
