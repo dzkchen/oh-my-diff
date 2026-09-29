@@ -54,7 +54,7 @@ function fixture(overrides = {}, contract = 'reviewed_omd', findingLedger = {}) 
         return { revision };
       }
       case 'evidence.write': return { reference: `evidence:${digest(args.content)}`, sha256: digest(args.content) };
-      case 'workspace.snapshot': {
+      case 'workspace.snapshot': case 'workspace.fingerprint': {
         if (args.expected && args.expected !== candidate) throw new Error('snapshot_source_changed');
         return { snapshot: { reference: 'snapshot:fixture', sha256: candidate }, candidate_sha256: candidate };
       }
@@ -143,7 +143,7 @@ test('no-progress policy pauses repeated complete results and resumes only after
   const policySurface = { ...surface, replacements: ['tool_before'] };
   let modState = invoke('begin', { objective: 'Make the requested change', acceptance_criteria: [criterion] },
     run.host, { settings, surface: policySurface }).state;
-  const result = { thread_id: 'thread-1', agent_id: null, tool: 'exec_command', outcome: 'Completed { success: true }',
+  const result = { thread_id: 'thread-1', agent_id: null, tool: 'exec_command', outcome: 'succeeded',
     call_sha256: digest('same-call'), result_sha256: digest('same-output'), result_complete: true };
   const event = (name, payload) => {
     const reply = invoke('', payload, run.host, { event: name, settings, surface: policySurface, state: modState });
@@ -166,6 +166,25 @@ test('no-progress policy pauses repeated complete results and resumes only after
   assert.equal(event('tool_before', { tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'retry' }), null);
   event('tool_result', result);
   assert.equal(run.state.get('task.thread-1').value.calls[result.call_sha256].unchanged_calls, 1);
+});
+
+test('no-progress detection keeps pausing after many distinct calls by evicting the oldest observations', () => {
+  const run = fixture();
+  const settings = { check: { program: 'check', argv: [] }, max_no_progress_calls: 1 };
+  const options = { settings, surface: { ...surface, replacements: ['tool_before'] } };
+  let modState = invoke('begin', { objective: 'Make the requested change', acceptance_criteria: [criterion] }, run.host, options).state;
+  const entry = run.state.get('task.thread-1');
+  const seeded = Object.fromEntries(Array.from({ length: 128 }, (_, index) =>
+    [digest(`call-${index}`), { result_sha256: digest('output'), progress_revision: 1, unchanged_calls: 1 }]));
+  run.state.set('task.thread-1', { ...entry, value: { ...entry.value, calls: seeded } });
+  const result = { thread_id: 'thread-1', agent_id: null, tool: 'exec_command', outcome: 'succeeded',
+    call_sha256: digest('repeated-call'), result_sha256: digest('same-output'), result_complete: true };
+  for (let index = 0; index < 2; index++) modState = invoke('', result, run.host, { ...options, event: 'tool_result', state: modState }).state;
+  const task = run.state.get('task.thread-1').value;
+  assert.equal(task.status, 'paused');
+  assert.equal(Object.keys(task.calls).length, 128);
+  assert.equal(task.calls[digest('call-0')], undefined);
+  assert.equal(task.calls[result.call_sha256].unchanged_calls, 2);
 });
 
 test('checks bind execution to unchanged input and refuse stale or failed results', () => {

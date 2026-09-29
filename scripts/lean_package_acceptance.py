@@ -9,9 +9,9 @@ import tarfile
 import tempfile
 
 try:
-    from scripts import install_support as private
+    from scripts import install_support as support
 except ModuleNotFoundError:
-    import install_support as private
+    import install_support as support
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +43,7 @@ def run(archive, sha256, upstream, output):
                  session: '{"type":"preserve-session"}\n'}
         for path, content in files.items():
             path.write_text(content)
-        initial = {str(path.relative_to(home)): private.digest(path) for path in files}
+        initial = {str(path.relative_to(home)): support.digest(path) for path in files}
         environment = os.environ.copy()
         environment.update(CODEX_HOME=str(home), CODEX_SQLITE_HOME=str(home))
         environment["PATH"] = str(upstream.parent) + os.pathsep + environment.get("PATH", "")
@@ -89,12 +89,12 @@ def run(archive, sha256, upstream, output):
                                "author_tools": True, "direct_switch": True,
                                "optional_services_absent": True, "upstream_restore": True,
                                "store_preserved": True}
-        assert {str(path.relative_to(home)): private.digest(path) for path in files} == initial
+        assert {str(path.relative_to(home)): support.digest(path) for path in files} == initial
     with tarfile.open(archive, "r:xz") as packed:
         archive_lock = packed.extractfile("payload/runtime/lean-release.lock.json").read()
-    result = {"status": "pass", "archive_sha256": private.digest(archive),
+    result = {"status": "pass", "archive_sha256": support.digest(archive),
               "archive_release_lock_sha256": hashlib.sha256(archive_lock).hexdigest(),
-              "prebuilt_release_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
+              "prebuilt_release_lock_sha256": support.digest(ROOT / "runtime/lean-release.lock.json"),
               "checks": checks, "shared_state_preserved": True,
               "scope": "isolated Apple Silicon archive install; no provider or subscription request"}
     output.parent.mkdir(parents=True, exist_ok=True)

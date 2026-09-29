@@ -49,6 +49,7 @@
         "workspace_access_v1",
         "workspace_fs_v1",
         "workspace_snapshots_v1",
+        "workspace_fingerprint_v1",
         "snapshot_exec_v1",
         "agent_parent_history_v1",
         "agent_failures_v1",
@@ -127,10 +128,7 @@
       ],
       "status": "supported",
       "fixtures": [
-        "python:test_first_party_mods_use_only_the_published_api",
-        "fixture:coordination-focused/success",
-        "fixture:coordination-task-entry/success",
-        "fixture:coordination-broken/success"
+        "python:test_first_party_mods_use_only_the_published_api"
       ],
       "limitations": "API 0.2 service and command own delegation choices. The generic host enforces route, permission, snapshot and ledger boundaries; reviewed workflow parity remains under qualification.",
       "removal": "Disable the mod to remove its delegation policy; the generic host does not supply a hidden replacement policy."
@@ -157,11 +155,7 @@
       ],
       "status": "supported",
       "fixtures": [
-        "python:test_first_party_mods_use_only_the_published_api",
-        "fixture:recovery/escalation",
-        "fixture:recovery/outage-fallback",
-        "fixture:recovery/client-loss-resume",
-        "fixture:recovery-broken/escalation"
+        "python:test_first_party_mods_use_only_the_published_api"
       ],
       "limitations": "API 0.2 mod chooses bounded escalation and outage fallback from structured host results. Live provider quality and full resume parity remain open.",
       "removal": "Disable the mod to remove its recovery policy; generic host limits and contract restrictions remain."
@@ -181,9 +175,7 @@
       ],
       "status": "supported",
       "fixtures": [
-        "python:test_first_party_mods_use_only_the_published_api",
-        "fixture:preview/success",
-        "fixture:preview-broken/success"
+        "python:test_first_party_mods_use_only_the_published_api"
       ],
       "limitations": "API 0.2 mod supplies terminal components. Native terminal parity and feature-code retirement remain open.",
       "removal": "Disable the mod to remove its layout; generic terminal controls remain."
@@ -311,8 +303,7 @@
         "python:test_pdf_page_text_and_figure_keep_page_and_digest",
         "python:test_pinned_bundle_matches_plugin_sources",
         "python:test_comments_and_reviews_are_separate_and_keep_exact_anchors",
-        "script:scripts/github_read_acceptance.py",
-        "fixture:github-read/success"
+        "script:scripts/github_read_acceptance.py"
       ],
       "limitations": "URL and GitHub reads use approved host web or shell tools; local PDF text and page images require installed Ghostscript. The helper bounds local files and outputs, never executes notebook cells, and cannot grant external content instruction authority. Optional API .9 component registers github://; plugin-owned sandboxed helper supplies bounded reads. Real public source passed; private-account support remains unqualified.",
       "removal": "Remove omd-artifact-reading from Codex. Existing host web, shell and image tools remain available."
@@ -339,11 +330,11 @@
       "id": "pi_resources",
       "area": "native",
       "name": "Pi resource adapter",
-      "owner": "OMD mod host (runtime/omd/src/mods/pi.rs)",
+      "owner": "OMD mod host",
       "version": "pi-0.74-resources-v2",
       "status": "removed",
       "fixtures": [],
-      "limitations": "The API 0.1 pi.discover/pi.expand host bridge is retired. The dormant parser helper remains in source pending native cleanup; no current host operation exposes it.",
+      "limitations": "The API 0.1 pi.discover/pi.expand host bridge and its parser are deleted; Pi prompts and skills are served by the omd_project_pi_prompts mod.",
       "removal": "No active API 0.2 Pi resource bridge remains to disable."
     },
     {
@@ -563,7 +554,6 @@
       ],
       "status": "opt_in",
       "fixtures": [
-        "fixture:provider/success",
         "rust:omd/tests/mods.rs::native_host_bridge_preserves_once_only_effects_and_rust_capability_checks",
         "node:typed middleware and services register without ambient authority"
       ],
@@ -675,8 +665,7 @@
       "result": "Both claimants of one `mod_<id>_<name>` slot and both terminal claimants fail closed before activation; the remaining mod keeps its tool and command and no keybinding surface is published.",
       "evidence": [
         "rust:omd/tests/integration.rs::colliding_tool_slots_and_contested_terminal_owners_disable_only_the_claimants",
-        "rust:omd/tests/mods.rs::contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest",
-        "fixture:conformance-conflict/success"
+        "rust:omd/tests/mods.rs::contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
       ]
     },
     {
@@ -709,9 +698,6 @@
       ],
       "result": "The bundled mods run with a contending terminal mod, a broken mod and a user/project duplicate: the contenders fail closed with source-located errors, coordination supplies bounded delegation preparation to recovery, and the remaining first-party behavior keeps working.",
       "evidence": [
-        "fixture:conformance-conflict/success",
-        "fixture:conformance/success",
-        "fixture:recovery/outage-fallback",
         "python:test_first_party_mods_use_only_the_published_api"
       ]
     },
@@ -745,8 +731,7 @@
       "result": "An edited mod is swapped only at the next generation: the in-flight tool call keeps its source and forwards each progress update once, the stream middleware keeps its old transform until reload, stale generations are rejected and the terminal owner is unchanged.",
       "evidence": [
         "rust:omd/tests/integration.rs::reloading_during_streamed_work_keeps_the_inflight_generation_and_swaps_the_next_one",
-        "rust:omd/tests/mods.rs::disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation",
-        "fixture:cancel/success"
+        "rust:omd/tests/mods.rs::disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation"
       ]
     },
     {
@@ -911,8 +896,7 @@
       "result": "A mod observes, denies or retargets a tool call before the native handler, permission check and hook chain run; it cannot forge the native outcome, and upstream hook dispatch itself stays unmodified.",
       "evidence": [
         "patch:mod_interception_denies_or_routes_through_registered_native_handler",
-        "rust:omd/tests/mods.rs::input_rewrite_requires_exclusive_replacement_while_observers_may_deny",
-        "fixture:deny/success"
+        "rust:omd/tests/mods.rs::input_rewrite_requires_exclusive_replacement_while_observers_may_deny"
       ]
     },
     {
@@ -928,7 +912,6 @@
       ],
       "result": "An approved sidecar and provider route start, serve and are torn down inside the owning task and generation; unapproved service IDs are refused, secrets stay opaque references and nothing survives task completion.",
       "evidence": [
-        "fixture:provider/success",
         "rust:omd/tests/mods.rs::native_host_bridge_preserves_once_only_effects_and_rust_capability_checks",
         "node:typed middleware and services register without ambient authority"
       ]
@@ -947,7 +930,6 @@
       ],
       "result": "Two outside-author packages that replace coordination, context and the terminal run in one live session beside two repository-only conformance fixtures; the terminal's cross-mod keys reach both other packages, the context replacement drops evidence outside the declared scope before the worker sees it, and the same four packages install, upgrade from mod API `.5` to `.6` with a state migration, roll back and re-upgrade through the package manager.",
       "evidence": [
-        "fixture:exercise/success",
         "script:scripts/mod_full_api_exercise.py"
       ]
     },

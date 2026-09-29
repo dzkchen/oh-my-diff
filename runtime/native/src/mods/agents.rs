@@ -134,6 +134,33 @@ fn selected_history(
     Ok(records)
 }
 
+fn integration_receipt(
+    submitted_by: &str,
+    handle: &str,
+    acceptance_sha256: Option<&str>,
+    candidate_sha256: String,
+    evidence_sha256: String,
+) -> codex_omd::Receipt {
+    codex_omd::Receipt {
+        kind: "workspace_integration".into(),
+        candidate_sha256,
+        acceptance_sha256: acceptance_sha256.map(str::to_owned),
+        outcome: codex_omd::ReceiptOutcome::Pass,
+        evidence: codex_omd::resource_data::ResourceRef {
+            reference: format!("native-integration:{handle}"),
+            sha256: evidence_sha256,
+        },
+        producer: codex_omd::ReceiptProducer {
+            kind: codex_omd::ProducerKind::Integration,
+            handle: None,
+        },
+        findings: Vec::new(),
+        resolves: Vec::new(),
+        submitted_by: submitted_by.to_owned(),
+        at: operations::now(),
+    }
+}
+
 #[cfg(test)]
 mod history_tests {
     use super::*;
@@ -367,8 +394,11 @@ mod history_tests {
     }
 }
 
+type AgentSlot = Arc<tokio::sync::Mutex<Agent>>;
+
 pub(super) struct Agents {
-    records: Arc<tokio::sync::Mutex<BTreeMap<String, Agent>>>,
+    records: tokio::sync::Mutex<BTreeMap<String, AgentSlot>>,
+    spawning: Arc<std::sync::atomic::AtomicUsize>,
     snapshots: Mutex<snapshots::Snapshots>,
     notifier: Notifier,
 }
@@ -606,6 +636,14 @@ struct Admission {
     transferred: bool,
 }
 
+struct SpawnReservation(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for SpawnReservation {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 impl Drop for Admission {
     fn drop(&mut self) {
         if !self.transferred {
@@ -772,7 +810,8 @@ impl Agents {
         host: Arc<Host>,
     ) -> Self {
         Self {
-            records: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
+            records: tokio::sync::Mutex::new(BTreeMap::new()),
+            spawning: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             snapshots: Mutex::new(snapshots::Snapshots::default()),
             notifier: Notifier {
                 core,
@@ -797,20 +836,18 @@ impl Agents {
             resolves,
             evidence,
         } = claim;
-        let records = self.records.lock().await;
-        let agent = records
-            .get(handle)
-            .filter(|agent| {
-                agent_owned_by(
-                    &agent.mod_id,
-                    agent.generation,
-                    &agent.task,
-                    mod_id,
-                    generation,
-                    task,
-                )
-            })
-            .ok_or("unknown_or_foreign_agent")?;
+        let slot = self.slot(handle).await?;
+        let agent = slot.lock().await;
+        if !agent_owned_by(
+            &agent.mod_id,
+            agent.generation,
+            &agent.task,
+            mod_id,
+            generation,
+            task,
+        ) {
+            return Err("unknown_or_foreign_agent".into());
+        }
         separate_producer(
             agent
                 .workspace
@@ -846,6 +883,36 @@ impl Agents {
             )?;
         }
         Ok(())
+    }
+
+    async fn slot(&self, handle: &str) -> Result<AgentSlot, String> {
+        self.records
+            .lock()
+            .await
+            .get(handle)
+            .cloned()
+            .ok_or_else(|| "unknown_or_foreign_agent".to_owned())
+    }
+
+    async fn slots(&self) -> Vec<(String, AgentSlot)> {
+        self.records
+            .lock()
+            .await
+            .iter()
+            .map(|(id, slot)| (id.clone(), slot.clone()))
+            .collect()
+    }
+
+    async fn remove(&self, handle: &str, slot: &AgentSlot) -> bool {
+        let mut records = self.records.lock().await;
+        if records
+            .get(handle)
+            .is_some_and(|current| Arc::ptr_eq(current, slot))
+        {
+            records.remove(handle);
+            return true;
+        }
+        false
     }
 
     pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
@@ -1045,6 +1112,32 @@ impl Agents {
         cancelled: &Arc<AtomicBool>,
     ) -> Result<Value, String> {
         let input: snapshots::Capture = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let (snapshot, digest) = self.capture(lead, caller, &input, cancelled).await?;
+        self.snapshots
+            .lock()
+            .map_err(|_| "snapshot_lock_poisoned")?
+            .insert(caller, lead.thread, snapshot, digest)
+    }
+
+    pub(super) async fn fingerprint(
+        &self,
+        lead: &Lead,
+        caller: &operations::Caller<'_>,
+        value: Value,
+        cancelled: &Arc<AtomicBool>,
+    ) -> Result<Value, String> {
+        let input: snapshots::Capture = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let (_, digest) = self.capture(lead, caller, &input, cancelled).await?;
+        Ok(json!({"candidate_sha256": digest}))
+    }
+
+    async fn capture(
+        &self,
+        lead: &Lead,
+        caller: &operations::Caller<'_>,
+        input: &snapshots::Capture,
+        cancelled: &Arc<AtomicBool>,
+    ) -> Result<(codex_omd::Snapshot, String), String> {
         let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
         let protected = lead.host.protected_paths();
         let task = lead.session.task.clone();
@@ -1052,7 +1145,7 @@ impl Agents {
         if !active() {
             return Err("snapshot_cancelled".into());
         }
-        let snapshot = if let Some(handle) = input.agent {
+        let snapshot = if let Some(handle) = &input.agent {
             if !caller
                 .grants
                 .as_ref()
@@ -1061,15 +1154,14 @@ impl Agents {
                 return Err("capability_denied: agents".into());
             }
             let root = {
-                let records = self.records.lock().await;
-                let agent = records
-                    .get(&handle)
-                    .filter(|agent| {
-                        agent.mod_id == caller.id
-                            && agent.generation == caller.generation
-                            && Arc::ptr_eq(&agent.task, &lead.session.task)
-                    })
-                    .ok_or("unknown_or_foreign_agent")?;
+                let slot = self.slot(handle).await?;
+                let agent = slot.lock().await;
+                if !(agent.mod_id == caller.id
+                    && agent.generation == caller.generation
+                    && Arc::ptr_eq(&agent.task, &lead.session.task))
+                {
+                    return Err("unknown_or_foreign_agent".into());
+                }
                 if !agent.completed()? {
                     return Err("snapshot_agent_not_completed".into());
                 }
@@ -1106,32 +1198,27 @@ impl Agents {
         if !active() {
             return Err("snapshot_cancelled".into());
         }
+        let digest = snapshot.hash().map_err(|e| e.to_string())?;
         if input
             .expected
-            .is_some_and(|expected| snapshot.hash().ok().as_ref() != Some(&expected))
+            .as_ref()
+            .is_some_and(|expected| *expected != digest)
         {
             return Err("snapshot_source_changed".into());
         }
-        self.snapshots
-            .lock()
-            .map_err(|_| "snapshot_lock_poisoned")?
-            .insert(caller, lead.thread, snapshot)
+        Ok((snapshot, digest))
     }
 
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "Remove and shut down a handle without releasing it to a concurrent call"
+    )]
     async fn cleanup_where(&self, selected: impl Fn(&Agent) -> bool) {
-        let owned = {
-            let mut records = self.records.lock().await;
-            let keys = records
-                .iter()
-                .filter(|(_, agent)| selected(agent))
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|key| records.remove(&key))
-                .collect::<Vec<_>>()
-        };
-        for mut agent in owned {
-            agent.shutdown().await;
+        for (id, slot) in self.slots().await {
+            let mut agent = slot.lock().await;
+            if selected(&agent) && self.remove(&id, &slot).await {
+                agent.shutdown().await;
+            }
         }
     }
 
@@ -1147,12 +1234,12 @@ impl Agents {
             return Err("invalid_integration_request".into());
         }
         let _operation = operations::exclusive(&lead.session)?;
+        let slot = self.slot(&handle.handle).await?;
         let workspace = {
-            let mut records = self.records.lock().await;
-            let agent = records
-                .get_mut(&handle.handle)
-                .filter(|agent| agent.mod_id == caller.id && agent.generation == caller.generation)
-                .ok_or("unknown_or_foreign_agent")?;
+            let mut agent = slot.lock().await;
+            if agent.mod_id != caller.id || agent.generation != caller.generation {
+                return Err("unknown_or_foreign_agent".into());
+            }
             if !agent.consumed || !agent.completed()? {
                 return Err("agent_result_not_consumed_or_complete".into());
             }
@@ -1178,15 +1265,8 @@ impl Agents {
                 handle.acceptance_sha256.as_deref(),
             )
             .await;
-        if !matches!(&result, Ok(value) if value["status"] == "integrated")
-            && let Some(agent) = self
-                .records
-                .lock()
-                .await
-                .get_mut(&handle.handle)
-                .filter(|agent| agent.mod_id == caller.id && agent.generation == caller.generation)
-        {
-            agent.workspace = Some(workspace);
+        if !matches!(&result, Ok(value) if value["status"] == "integrated") {
+            slot.lock().await.workspace = Some(workspace);
         }
         result
     }
@@ -1212,17 +1292,16 @@ impl Agents {
             return Err("isolated_worker_change_limit".into());
         }
         let candidate_sha256 = proposed.hash().map_err(|e| e.to_string())?;
-        let missing = operations::gate(
+        let outcome = operations::gate(
             core,
             lead,
             codex_omd::Gate::Integrate,
             &candidate_sha256,
             acceptance_sha256,
         )?;
-        if !missing.is_empty() {
-            return Ok(
-                json!({"status":"refused","candidate_sha256":candidate_sha256,"missing":missing}),
-            );
+        if let Some(mut refusal) = outcome.refusal() {
+            refusal["candidate_sha256"] = json!(candidate_sha256);
+            return Ok(refusal);
         }
         let state = execution::ParentState::capture(
             host,
@@ -1251,6 +1330,20 @@ impl Agents {
         if reread.0 != paths || reread.1 != proposed {
             return Err("isolated_candidate_changed_before_apply".into());
         }
+        let receipt = |candidate_sha256: String, evidence_sha256: String| {
+            integration_receipt(
+                caller.id,
+                handle,
+                acceptance_sha256,
+                candidate_sha256,
+                evidence_sha256,
+            )
+        };
+        lead.session
+            .contract
+            .lock()
+            .map_err(|_| "contract_lock_poisoned")?
+            .admit(&receipt("0".repeat(64), "0".repeat(64)))?;
         let denied = host.protected_paths();
         let applied =
             execution::apply_candidate(host, task, &parent, &denied, &directory, &state, &merged)
@@ -1271,42 +1364,31 @@ impl Agents {
             return Err("integration_incomplete_inspect_session_evidence".into());
         }
         let parent_candidate_sha256 = contract::current_candidate(host)?;
-        let receipt = codex_omd::Receipt {
-            kind: "workspace_integration".into(),
-            candidate_sha256: parent_candidate_sha256.clone(),
-            acceptance_sha256: acceptance_sha256.map(str::to_owned),
-            outcome: codex_omd::ReceiptOutcome::Pass,
-            evidence: codex_omd::resource_data::ResourceRef {
-                reference: format!("native-integration:{handle}"),
-                sha256: evidence["sha256"]
-                    .as_str()
-                    .ok_or("integration_evidence_invalid")?
-                    .to_owned(),
-            },
-            producer: codex_omd::ReceiptProducer {
-                kind: codex_omd::ProducerKind::Integration,
-                handle: None,
-            },
-            findings: Vec::new(),
-            resolves: Vec::new(),
-            submitted_by: caller.id.to_owned(),
-            at: operations::now(),
-        };
-        lead.session
-            .contract
-            .lock()
-            .map_err(|_| "contract_lock_poisoned")?
-            .submit(receipt)?;
-        lead.session.persist_contract()?;
+        let recorded = evidence["sha256"]
+            .as_str()
+            .ok_or_else(|| "integration_evidence_invalid".to_owned())
+            .and_then(|evidence_sha256| {
+                lead.session
+                    .contract
+                    .lock()
+                    .map_err(|_| "contract_lock_poisoned".to_owned())?
+                    .submit(receipt(
+                        parent_candidate_sha256.clone(),
+                        evidence_sha256.to_owned(),
+                    ))
+            })
+            .and_then(|_| lead.session.persist_contract());
         scratch.cleanup()?;
-        Ok(
-            json!({"status":"integrated","candidate_sha256":candidate_sha256,"parent_candidate_sha256":parent_candidate_sha256,"changed_paths":changed,"evidence":evidence}),
-        )
+        let mut result = json!({"status":"integrated","candidate_sha256":candidate_sha256,"parent_candidate_sha256":parent_candidate_sha256,"changed_paths":changed,"evidence":evidence});
+        if let Err(error) = recorded {
+            result["receipt_error"] = json!(error);
+        }
+        Ok(result)
     }
 
     #[expect(
         clippy::await_holding_invalid_type,
-        reason = "Serialize handle transitions with native waits and cancellation"
+        reason = "Serialize one handle's transitions with its native waits and cancellation"
     )]
     pub(super) async fn call(
         &self,
@@ -1326,31 +1408,32 @@ impl Agents {
             }
             _ => {}
         }
-        let mut records = self.records.lock().await;
         if request.operation == "agents.list" {
-            return Ok(json!(
-                records
-                    .iter()
-                    .filter(|(_, a)| a.mod_id == caller.id && a.generation == caller.generation)
-                    .map(
-                        |(id, a)| json!({"handle":id,"finished":a.finished(),"consumed":a.consumed})
-                    )
-                    .collect::<Vec<_>>()
-            ));
+            let mut listed = Vec::new();
+            for (id, slot) in self.slots().await {
+                let agent = slot.lock().await;
+                if agent.mod_id == caller.id && agent.generation == caller.generation {
+                    listed.push(
+                        json!({"handle":id,"finished":agent.finished(),"consumed":agent.consumed}),
+                    );
+                }
+            }
+            return Ok(json!(listed));
         }
         let handle: Handle =
             serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
         if handle.acceptance_sha256.is_some() {
             return Err("acceptance_binding_requires_integration".into());
         }
-        let agent = records
-            .get_mut(&handle.handle)
-            .filter(|a| a.mod_id == caller.id && a.generation == caller.generation)
-            .ok_or("unknown_or_foreign_agent")?;
+        let slot = self.slot(&handle.handle).await?;
+        let mut agent = slot.lock().await;
+        if agent.mod_id != caller.id || agent.generation != caller.generation {
+            return Err("unknown_or_foreign_agent".into());
+        }
         match request.operation.as_str() {
             "agents.cancel" => {
                 agent.shutdown().await;
-                records.remove(&handle.handle);
+                self.remove(&handle.handle, &slot).await;
                 Ok(json!({"cancelled":true}))
             }
             "agents.message" => {
@@ -1479,10 +1562,6 @@ impl Agents {
         Ok((route.clone(), true))
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "Publish an admitted child atomically with cleanup ownership"
-    )]
     async fn spawn(
         &self,
         core: &Core,
@@ -1580,22 +1659,32 @@ impl Agents {
         let (route, configured) = self
             .route(core, lead, caller, &mut request, writable)
             .await?;
-        let mut records = self.records.lock().await;
-        if records.len() >= AGENT_LIMIT {
-            let spent = records
-                .iter()
-                .filter(|(_, agent)| {
-                    agent.finished() && agent.consumed && agent.workspace.is_none()
-                })
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            for id in spent {
-                records.remove(&id);
+        let _reservation = {
+            let mut records = self.records.lock().await;
+            let reserved = |records: &BTreeMap<String, AgentSlot>| {
+                records.len() + self.spawning.load(std::sync::atomic::Ordering::Acquire)
+            };
+            if reserved(&records) >= AGENT_LIMIT {
+                let spent = records
+                    .iter()
+                    .filter(|(_, slot)| {
+                        slot.try_lock().is_ok_and(|agent| {
+                            agent.finished() && agent.consumed && agent.workspace.is_none()
+                        })
+                    })
+                    .map(|(id, _)| id.clone())
+                    .collect::<Vec<_>>();
+                for id in spent {
+                    records.remove(&id);
+                }
+                if reserved(&records) >= AGENT_LIMIT {
+                    return Err("mod_agent_limit".into());
+                }
             }
-            if records.len() >= AGENT_LIMIT {
-                return Err("mod_agent_limit".into());
-            }
-        }
+            self.spawning
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            SpawnReservation(self.spawning.clone())
+        };
         let manager = host
             .manager
             .upgrade()
@@ -1630,24 +1719,30 @@ impl Agents {
                 return Err("agent_scratch_not_canonical".into());
             }
             let approved = host.config.approved_untracked.iter().cloned().collect();
-            let base = match &frozen {
-                Some(snapshot) => (**snapshot).clone(),
-                None => codex_omd::capture_tracked(
-                    &host.repository,
-                    &approved,
-                    host.config.snapshot_bytes,
-                )
-                .map_err(|e| e.to_string())?,
-            };
             let directory = session.scratch.join(format!("mod-agent-{thread_id}"));
-            let root =
-                match codex_omd::create_worktree(&base, &directory, host.config.snapshot_bytes) {
-                    Ok(root) => root,
-                    Err(error) => {
-                        let _ = codex_omd::cleanup_owned_directory(&session.scratch, &directory);
-                        return Err(error.to_string());
-                    }
+            let (repository, scratch, target, limit) = (
+                host.repository.clone(),
+                session.scratch.clone(),
+                directory.clone(),
+                host.config.snapshot_bytes,
+            );
+            let frozen = frozen.clone();
+            let (base, root) = tokio::task::spawn_blocking(move || {
+                let base = match frozen {
+                    Some(snapshot) => (*snapshot).clone(),
+                    None => codex_omd::capture_tracked(&repository, &approved, limit)
+                        .map_err(|e| e.to_string())?,
                 };
+                match codex_omd::create_worktree(&base, &target, limit) {
+                    Ok(root) => Ok((base, root)),
+                    Err(error) => {
+                        let _ = codex_omd::cleanup_owned_directory(&scratch, &target);
+                        Err(error.to_string())
+                    }
+                }
+            })
+            .await
+            .map_err(|e| e.to_string())??;
             let workspace = Workspace {
                 base,
                 root,
@@ -1748,7 +1843,7 @@ impl Agents {
         }
         if let Some((_, context)) = &resolution {
             config.developer_instructions = Some(format!(
-                "{}\nHost-verified resolution context: {}. Independently inspect the frozen candidate. Only if you verify a finding is fixed, include a top-level resolution_assertion object in your JSON result with exact fields outcome: pass, candidate_sha256, acceptance_sha256, and resolves: the verified fingerprint IDs. Omit the assertion when no finding is verified fixed.",
+                "{}\nHost-verified resolution context: {}.",
                 config.developer_instructions.take().unwrap_or_default(),
                 context
             ));
@@ -1939,9 +2034,9 @@ impl Agents {
             );
             notifier.agent_end(owning_mod, generation, payload, end_lead);
         });
-        records.insert(
+        self.records.lock().await.insert(
             id.clone(),
-            Agent {
+            Arc::new(tokio::sync::Mutex::new(Agent {
                 mod_id: caller.id.into(),
                 generation: caller.generation,
                 thread: spawned.thread,
@@ -1958,7 +2053,7 @@ impl Agents {
                     .map(|reference| (reference.sha256.clone(), Vec::new())),
                 evidence,
                 resolution: resolution.map(|(binding, _)| binding),
-            },
+            })),
         );
         admission.transferred = true;
         self.notifier.agent(

@@ -37,10 +37,46 @@ impl Restriction {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ContractStatus {
+    None,
+    Active,
+    #[default]
+    Unavailable,
+}
+
+pub(crate) enum GateOutcome {
+    Missing(Vec<codex_omd::ContractRequirement>),
+    Unresolved(Vec<String>),
+}
+
+impl GateOutcome {
+    pub(crate) fn event(&self, gate: Gate, candidate_sha256: &str) -> Value {
+        match self {
+            Self::Missing(missing) => json!({"gate": gate,
+                "outcome": if missing.is_empty() {"passed"} else {"refused"},
+                "missing": missing, "candidate_sha256": candidate_sha256}),
+            Self::Unresolved(outstanding) => json!({"gate": gate, "outcome": "refused",
+                "reason": "unresolved_blocking_findings", "outstanding_findings": outstanding,
+                "candidate_sha256": candidate_sha256}),
+        }
+    }
+
+    pub(crate) fn refusal(&self) -> Option<Value> {
+        match self {
+            Self::Missing(missing) if missing.is_empty() => None,
+            Self::Missing(missing) => Some(json!({"status": "refused", "missing": missing})),
+            Self::Unresolved(outstanding) => Some(json!({"status": "refused",
+                "reason": "unresolved_blocking_findings", "outstanding_findings": outstanding})),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
 pub(crate) struct SessionContract {
     active: Option<ContractDocument>,
-    status: String,
+    status: ContractStatus,
     provenance: Value,
     restrictions: BTreeSet<String>,
     scoped_restrictions: Vec<Restriction>,
@@ -50,7 +86,7 @@ pub(crate) struct SessionContract {
 
 impl SessionContract {
     pub(crate) fn invalidate(&mut self, error: String) {
-        self.status = "unavailable".into();
+        self.status = ContractStatus::Unavailable;
         self.provenance["error"] = json!(error);
     }
 
@@ -64,13 +100,15 @@ impl SessionContract {
         let registered = documents
             .iter()
             .any(|(document, _)| document.digest() == active.digest());
-        match (self.status.as_str(), registered) {
-            ("active", false) => {
+        match (self.status, registered) {
+            (ContractStatus::Active, false) => {
                 self.invalidate("contract_withdrawn".into());
                 true
             }
-            ("unavailable", true) if self.provenance["error"] == "contract_withdrawn" => {
-                self.status = "active".into();
+            (ContractStatus::Unavailable, true)
+                if self.provenance["error"] == "contract_withdrawn" =>
+            {
+                self.status = ContractStatus::Active;
                 if let Some(provenance) = self.provenance.as_object_mut() {
                     provenance.remove("error");
                 }
@@ -110,7 +148,7 @@ impl SessionContract {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Saved {
-            status: String,
+            status: ContractStatus,
             active: Option<ContractDocument>,
             provenance: Value,
             restrictions: BTreeSet<String>,
@@ -120,7 +158,7 @@ impl SessionContract {
             finding_ledger: codex_omd::FindingLedger,
         }
         let saved: Saved = serde_json::from_value(value).map_err(|error| error.to_string())?;
-        if !matches!(saved.status.as_str(), "active" | "none")
+        if saved.status == ContractStatus::Unavailable
             || saved.status != self.status
             || saved.active.as_ref().map(ContractDocument::digest)
                 != self.active.as_ref().map(ContractDocument::digest)
@@ -173,7 +211,7 @@ impl SessionContract {
             Ok(selections) => selections,
             Err(error) => {
                 return Self {
-                    status: "unavailable".into(),
+                    status: ContractStatus::Unavailable,
                     provenance: json!({"error": error}),
                     ..Self::default()
                 };
@@ -181,7 +219,7 @@ impl SessionContract {
         };
         match codex_omd::resolve_contract(documents, user.as_ref(), project.as_ref()) {
             codex_omd::ContractResolution::None => Self {
-                status: "none".into(),
+                status: ContractStatus::None,
                 ..Self::default()
             },
             codex_omd::ContractResolution::Active {
@@ -197,7 +235,7 @@ impl SessionContract {
                 contract
             }
             codex_omd::ContractResolution::Unavailable(error) => Self {
-                status: "unavailable".into(),
+                status: ContractStatus::Unavailable,
                 provenance: json!({"error": error}),
                 ..Self::default()
             },
@@ -209,7 +247,7 @@ impl SessionContract {
             restrictions: document.restrict.iter().cloned().collect(),
             scoped_restrictions: Vec::new(),
             provenance: json!({"source": source, "owner": owner, "digest": document.digest()}),
-            status: "active".into(),
+            status: ContractStatus::Active,
             active: Some(document),
             receipts: Vec::new(),
             finding_ledger: codex_omd::FindingLedger::new(),
@@ -217,7 +255,7 @@ impl SessionContract {
     }
 
     pub(crate) fn restricted(&self, operation: &str, arguments: &Value) -> Result<(), String> {
-        if self.status == "unavailable" {
+        if self.status == ContractStatus::Unavailable {
             return Err("contract_unavailable".into());
         }
         if self.restrictions.contains(operation)
@@ -238,7 +276,7 @@ impl SessionContract {
     }
 
     pub(crate) fn restrict(&mut self, arguments: Value) -> Result<Value, String> {
-        if self.status == "unavailable" {
+        if self.status == ContractStatus::Unavailable {
             return Err("contract_unavailable".into());
         }
         #[derive(Deserialize)]
@@ -275,8 +313,12 @@ impl SessionContract {
         )
     }
 
+    pub(crate) fn admit(&self, receipt: &Receipt) -> Result<(), String> {
+        self.clone().submit(receipt.clone()).map(|_| ())
+    }
+
     pub(crate) fn submit(&mut self, receipt: Receipt) -> Result<Value, String> {
-        if self.status == "unavailable" {
+        if self.status == ContractStatus::Unavailable {
             return Err("contract_unavailable".into());
         }
         receipt.validate()?;
@@ -304,20 +346,24 @@ impl SessionContract {
         gate: Gate,
         candidate_sha256: &str,
         acceptance_sha256: Option<&str>,
-    ) -> Result<Vec<codex_omd::ContractRequirement>, String> {
-        match (self.status.as_str(), &self.active) {
-            ("none", _) => Ok(Vec::new()),
-            ("active", Some(document)) => {
-                if gate == Gate::Complete {
-                    let outstanding = self.outstanding_findings();
-                    if !outstanding.is_empty() {
-                        return Err(format!(
-                            "unresolved_blocking_findings:{}",
-                            outstanding.join(",")
-                        ));
-                    }
+    ) -> Result<GateOutcome, String> {
+        match (self.status, &self.active) {
+            (ContractStatus::None, _) => Ok(GateOutcome::Missing(Vec::new())),
+            (ContractStatus::Active, Some(document)) => {
+                let outstanding = if gate == Gate::Complete {
+                    self.outstanding_findings()
+                } else {
+                    Vec::new()
+                };
+                if !outstanding.is_empty() {
+                    return Ok(GateOutcome::Unresolved(outstanding));
                 }
-                Ok(document.missing(gate, &self.receipts, candidate_sha256, acceptance_sha256))
+                Ok(GateOutcome::Missing(document.missing(
+                    gate,
+                    &self.receipts,
+                    candidate_sha256,
+                    acceptance_sha256,
+                )))
             }
             _ => Err(
                 "selected contract is unavailable; completion and integration fail closed".into(),
@@ -339,7 +385,7 @@ impl SessionContract {
         acceptance_sha256: &str,
         fingerprints: &[String],
     ) -> Result<Vec<codex_omd::FindingLedgerEntry>, String> {
-        if self.status != "active" || self.active.is_none() {
+        if self.status != ContractStatus::Active || self.active.is_none() {
             return Err("finding_resolution_contract_inactive".into());
         }
         if fingerprints.is_empty()
@@ -381,19 +427,67 @@ pub(crate) fn current_candidate(host: &Host) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    fn owner() -> codex_omd::PolicyOwner {
+        codex_omd::PolicyOwner {
+            id: "fixture".into(),
+            version: "1.0.0".into(),
+            source: "fixture".into(),
+            sha256: "0".repeat(64),
+        }
+    }
+
+    trait Missing {
+        fn missing(self) -> Result<Vec<codex_omd::ContractRequirement>, String>;
+    }
+
+    impl Missing for Result<GateOutcome, String> {
+        fn missing(self) -> Result<Vec<codex_omd::ContractRequirement>, String> {
+            match self? {
+                GateOutcome::Missing(missing) => Ok(missing),
+                GateOutcome::Unresolved(outstanding) => Err(outstanding.join(",")),
+            }
+        }
+    }
+
     fn document(value: Value) -> ContractDocument {
         ContractDocument::parse(&value).unwrap()
     }
 
     #[test]
+    fn admission_reports_a_full_contract_without_recording_the_probe() {
+        let active = document(
+            json!({"schema":2,"id":"checked","version":1,"description":"Checks",
+            "assurance":"checked","gates":{"complete":[{"receipt":"checks","bind":["candidate"]}]}}),
+        );
+        let mut contract = SessionContract::activate(active, owner(), "user");
+        let receipt = |index: usize| -> Receipt {
+            serde_json::from_value(json!({"kind":"checks","candidate_sha256":"a".repeat(64),
+            "outcome":"pass","evidence":{"reference":format!("fixture-{index}"),"sha256":"b".repeat(64)},
+            "producer":{"kind":"lead","handle":null},"submitted_by":"fixture","at":1}))
+            .unwrap()
+        };
+        contract.admit(&receipt(0)).unwrap();
+        assert!(contract.receipts.is_empty());
+        for index in 0..RECEIPT_LIMIT {
+            contract.submit(receipt(index)).unwrap();
+        }
+        assert_eq!(
+            contract.admit(&receipt(RECEIPT_LIMIT)).unwrap_err(),
+            "receipt_limit"
+        );
+        assert_eq!(contract.receipts.len(), RECEIPT_LIMIT);
+    }
+
+    #[test]
     fn no_selection_means_no_gate_and_restrictions_are_enforced() {
         let mut contract = SessionContract {
-            status: "none".into(),
+            status: ContractStatus::None,
             ..Default::default()
         };
         assert!(
             contract
                 .gate(Gate::Complete, &"a".repeat(64), None)
+                .missing()
                 .unwrap()
                 .is_empty()
         );
@@ -415,12 +509,12 @@ mod tests {
             json!({"schema":2,"id":"checked","version":1,"description":"Checks",
             "assurance":"checked","gates":{"complete":[{"receipt":"checks","bind":["candidate"]}]}}),
         );
-        let mut contract =
-            SessionContract::activate(active, codex_omd::PolicyOwner::bundled(), "user");
+        let mut contract = SessionContract::activate(active, owner(), "user");
         let candidate = "a".repeat(64);
         assert_eq!(
             contract
                 .gate(Gate::Complete, &candidate, None)
+                .missing()
                 .unwrap()
                 .len(),
             1
@@ -434,28 +528,33 @@ mod tests {
         assert!(
             contract
                 .gate(Gate::Complete, &candidate, None)
+                .missing()
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
             contract
                 .gate(Gate::Complete, &"c".repeat(64), None)
+                .missing()
                 .unwrap()
                 .len(),
             1
         );
-        let registered = [(
-            contract.active.clone().unwrap(),
-            codex_omd::PolicyOwner::bundled(),
-        )];
+        let registered = [(contract.active.clone().unwrap(), owner())];
         assert!(!contract.revalidate(&registered));
         assert!(contract.revalidate(&[]));
-        assert!(contract.gate(Gate::Complete, &candidate, None).is_err());
+        assert!(
+            contract
+                .gate(Gate::Complete, &candidate, None)
+                .missing()
+                .is_err()
+        );
         assert!(contract.submit(contract.receipts[0].clone()).is_err());
         assert!(contract.revalidate(&registered));
         assert!(
             contract
                 .gate(Gate::Complete, &candidate, None)
+                .missing()
                 .unwrap()
                 .is_empty()
         );
@@ -465,15 +564,21 @@ mod tests {
         assert_eq!(
             contract
                 .gate(Gate::Complete, &candidate, None)
+                .missing()
                 .unwrap()
                 .len(),
             1
         );
         let unavailable = SessionContract {
-            status: "unavailable".into(),
+            status: ContractStatus::Unavailable,
             ..Default::default()
         };
-        assert!(unavailable.gate(Gate::Integrate, &candidate, None).is_err());
+        assert!(
+            unavailable
+                .gate(Gate::Integrate, &candidate, None)
+                .missing()
+                .is_err()
+        );
     }
 
     #[test]
@@ -483,11 +588,7 @@ mod tests {
             "assurance":"checked","gates":{"complete":[{"receipt":"checks","bind":["candidate","acceptance"]}],
             "integrate":[{"receipt":"checks","bind":["candidate","acceptance"]}]}}),
         );
-        let mut before = SessionContract::activate(
-            definition.clone(),
-            codex_omd::PolicyOwner::bundled(),
-            "user",
-        );
+        let mut before = SessionContract::activate(definition.clone(), owner(), "user");
         let candidate = "a".repeat(64);
         let acceptance = "c".repeat(64);
         before
@@ -505,24 +606,25 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("contract.json");
         std::fs::write(&path, serde_json::to_vec(&before.status()).unwrap()).unwrap();
-        let mut after = SessionContract::activate(
-            definition.clone(),
-            codex_omd::PolicyOwner::bundled(),
-            "user",
-        );
+        let mut after = SessionContract::activate(definition.clone(), owner(), "user");
         after.restore(&path).unwrap();
         assert!(after.restricted("agents.spawn", &Value::Null).is_err());
         for gate in [Gate::Complete, Gate::Integrate] {
             assert!(
                 after
                     .gate(gate, &candidate, Some(&acceptance))
+                    .missing()
                     .unwrap()
                     .is_empty()
             );
-            assert_eq!(after.gate(gate, &candidate, None).unwrap().len(), 1);
+            assert_eq!(
+                after.gate(gate, &candidate, None).missing().unwrap().len(),
+                1
+            );
             assert_eq!(
                 after
                     .gate(gate, &candidate, Some(&"d".repeat(64)))
+                    .missing()
                     .unwrap()
                     .len(),
                 1
@@ -530,6 +632,7 @@ mod tests {
             assert_eq!(
                 after
                     .gate(gate, &"e".repeat(64), Some(&acceptance))
+                    .missing()
                     .unwrap()
                     .len(),
                 1
@@ -537,13 +640,13 @@ mod tests {
         }
         let mut changed = definition;
         changed.assurance = "changed".into();
-        let mut changed =
-            SessionContract::activate(changed, codex_omd::PolicyOwner::bundled(), "user");
+        let mut changed = SessionContract::activate(changed, owner(), "user");
         let error = changed.restore(&path).unwrap_err();
         changed.invalidate(error);
         assert!(
             changed
                 .gate(Gate::Complete, &candidate, Some(&acceptance))
+                .missing()
                 .is_err()
         );
         std::fs::write(&path, b"{").unwrap();
@@ -556,7 +659,7 @@ mod tests {
     #[test]
     fn argument_restrictions_are_monotone_and_survive_restart() {
         let mut contract = SessionContract {
-            status: "none".into(),
+            status: ContractStatus::None,
             ..Default::default()
         };
         contract.restrict(json!({"scoped":[{"operation":"agents.spawn","when":{"/workspace":"isolated_worktree"}},
@@ -583,7 +686,7 @@ mod tests {
                 .is_ok()
         );
         let mut restored = SessionContract {
-            status: "none".into(),
+            status: ContractStatus::None,
             ..Default::default()
         };
         restored.restore_value(contract.status()).unwrap();
@@ -613,8 +716,7 @@ mod tests {
     {
         let definition = document(json!({"schema":2,"id":"checked","version":1,
             "description":"Checks","assurance":"checked"}));
-        let mut contract =
-            SessionContract::activate(definition, codex_omd::PolicyOwner::bundled(), "user");
+        let mut contract = SessionContract::activate(definition, owner(), "user");
         let candidate = "a".repeat(64);
         let changed = "b".repeat(64);
         let acceptance = "c".repeat(64);
@@ -680,12 +782,14 @@ mod tests {
         assert!(
             contract
                 .gate(Gate::Complete, &changed, Some(&acceptance))
+                .missing()
                 .unwrap_err()
                 .contains("issue.one")
         );
         assert!(
             contract
                 .gate(Gate::Integrate, &changed, Some(&acceptance))
+                .missing()
                 .is_ok()
         );
         assert_eq!(
@@ -752,6 +856,7 @@ mod tests {
         assert!(
             contract
                 .gate(Gate::Complete, &changed, Some(&acceptance))
+                .missing()
                 .unwrap()
                 .is_empty()
         );
@@ -770,13 +875,7 @@ mod tests {
     fn finding_ledger_replays_on_restore_and_rejects_tampering() {
         let definition = document(json!({"schema":2,"id":"checked","version":1,
             "description":"Checks","assurance":"checked"}));
-        let make_contract = || {
-            SessionContract::activate(
-                definition.clone(),
-                codex_omd::PolicyOwner::bundled(),
-                "user",
-            )
-        };
+        let make_contract = || SessionContract::activate(definition.clone(), owner(), "user");
         let mut before = make_contract();
         before
             .submit(
@@ -795,6 +894,7 @@ mod tests {
         assert!(
             restored
                 .gate(Gate::Complete, &"d".repeat(64), Some(&"b".repeat(64)))
+                .missing()
                 .is_err()
         );
         let mut no_ledger = status.clone();
@@ -813,12 +913,13 @@ mod tests {
             "contract_finding_ledger_mismatch"
         );
         let mut none = SessionContract {
-            status: "none".into(),
+            status: ContractStatus::None,
             ..Default::default()
         };
         none.submit(before.receipts[0].clone()).unwrap();
         assert!(
             none.gate(Gate::Complete, &"d".repeat(64), None)
+                .missing()
                 .unwrap()
                 .is_empty()
         );

@@ -131,8 +131,8 @@ def profile_choice(args):
         with open("/dev/tty", "r+") as terminal:
             terminal.write("Oh My Diff 0.157.0 candidate\n"
                            "1) Modding platform only: patched Codex, mod manager, typed author tools; the OMD logo is installed and active.\n"
-                           "2) Full OMD: ten first-party mods; graph, health and LSP tools; six staged plugin sources.\n"
-                           "   The logo, model picker and workspace mods are active on a fresh install. Other mods require your explicit activation.\n"
+                           "2) Full OMD: every first-party mod and the staged plugin sources.\n"
+                           "   The inspector, logo, model picker, selection copy and workspace mods are active on a fresh install. Other mods require your explicit activation.\n"
                            "   Updates preserve selections and add newly bundled mods disabled.\n"
                            "Choose 1 or 2: ")
             terminal.flush()

@@ -120,14 +120,14 @@ export default function activate(api: ModAPI) {
       receipt.status = submitted.ok ? 'recorded' : 'denied';
       receipt.reason = submitted.ok ? '' : safe(submitted.error);
       receipt.ledger = submitted.ok ? submitted.value as unknown as Json : null;
-      receipt.present = api.host.tryCall('workspace.snapshot', { expected: receipt.candidate }).ok;
+      receipt.present = api.host.tryCall('workspace.fingerprint', { expected: receipt.candidate }).ok;
       api.host.tryCall('agents.cancel', { handle: event.handle });
       save(receipt);
     });
     api.on('context', event => {
       const receipt = prior();
       if (!receipt || receipt.thread !== event.thread_id || receipt.status !== 'recorded' || !receipt.findings.length) return null;
-      const current = api.host.tryCall('workspace.snapshot', { expected: receipt.candidate });
+      const current = api.host.tryCall('workspace.fingerprint', { expected: receipt.candidate });
       if (!current.ok) return null;
       const scoped = api.host.tryCall('evidence.read', { reference: receipt.reference, max_bytes: 1 });
       if (!scoped.ok) return null;

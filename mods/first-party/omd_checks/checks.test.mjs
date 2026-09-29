@@ -18,7 +18,7 @@ function run(payload, receipts = []) {
   return JSON.parse(result.stdout);
 }
 
-function replay(payload, entries, programs, stale = false) {
+function replay(payload, entries, programs, stale = false, truncated = false) {
   const receipts = [];
   const calls = [];
   for (let index = 0; index < 40; index++) {
@@ -27,14 +27,21 @@ function replay(payload, entries, programs, stale = false) {
     const call = output.host_call;
     calls.push(call);
     let value;
-    if (call.operation === 'workspace.snapshot') {
+    if (['workspace.snapshot', 'workspace.fingerprint'].includes(call.operation)) {
       if (call.arguments.expected && stale) receipts.push({ call, error: 'workspace_candidate_stale' });
       else receipts.push({ call, value: { snapshot: { reference: 'fixture', sha256: hash('a') }, candidate_sha256: hash('a') } });
       continue;
     }
-    if (call.operation === 'workspace.list') value = { entries: Object.entries(entries).map(([path, item]) => ({ path, kind: 'file', size: item.size, mtime_ms: 1 })), truncated: false };
+    if (call.operation === 'workspace.list') {
+      const prefix = call.arguments.path ? `${call.arguments.path}/` : '';
+      value = { entries: Object.entries(entries).filter(([path]) => path.startsWith(prefix)).map(([path, item]) => ({ path, kind: 'file', size: item.size, mtime_ms: 1 })), truncated };
+    }
     else if (call.operation === 'process.which') value = { found: programs.map(name => ({ name, path: `/bin/${name}`, sha256: hash('b') })) };
-    else if (call.operation === 'workspace.stat') value = { files: Object.fromEntries(call.arguments.paths.map(path => [path, { kind: 'file', size: entries[path].size, mtime_ms: 1, sha256: entries[path].sha256 }])) };
+    else if (call.operation === 'workspace.stat') {
+      assert.ok(call.arguments.paths.length <= 128);
+      value = { files: Object.fromEntries(call.arguments.paths.map(path => [path, entries[path]
+        ? { kind: 'file', size: entries[path].size, mtime_ms: 1, ...(call.arguments.hash ? { sha256: entries[path].sha256 } : {}) } : null])) };
+    }
     else assert.fail(`unexpected operation ${call.operation}`);
     receipts.push({ call, value });
   }
@@ -62,13 +69,37 @@ test('selects five languages and binds checks to relevant input digests and cand
   assert.deepEqual(first.output.value.checks[3].arguments, ['check', 'py/main.py']);
   assert.equal(first.output.value.checks[4].program, './gradlew');
   assert.ok(first.output.value.checks.every(check => check.candidate_sha256 === hash('a') && /^[0-9a-f]{64}$/.test(check.input_sha256)));
-  assert.equal(first.calls.at(-1).operation, 'workspace.snapshot');
+  assert.equal(first.calls.at(-1).operation, 'workspace.fingerprint');
   const irrelevant = replay({ paths }, { ...entries, 'notes.txt': { size: 11, sha256: hash('c') } }, ['cargo', 'pnpm', 'ruff']);
   assert.deepEqual(irrelevant.output.value.checks.map(check => check.input_sha256), first.output.value.checks.map(check => check.input_sha256));
   const relevant = replay({ paths }, { ...entries, 'pkg/Cargo.toml': { size: 11, sha256: hash('c') } }, ['cargo', 'pnpm', 'ruff']);
   assert.notEqual(relevant.output.value.checks[0].input_sha256, first.output.value.checks[0].input_sha256);
   const wrapper = replay({ paths }, { ...entries, gradlew: { size: 11, sha256: hash('c') } }, ['cargo', 'pnpm', 'ruff']);
   assert.notEqual(wrapper.output.value.checks[4].input_sha256, first.output.value.checks[4].input_sha256);
+});
+
+test('groups changed files by their enclosing project so every changed file is checked', () => {
+  const entries = {
+    'Cargo.toml': { size: 10, sha256: hash('1') },
+    'crates/a/Cargo.toml': { size: 10, sha256: hash('2') },
+    'crates/a/src/lib.rs': { size: 10, sha256: hash('3') },
+    'crates/b/Cargo.toml': { size: 10, sha256: hash('4') },
+    'crates/b/src/lib.rs': { size: 10, sha256: hash('5') },
+    'packages/a/tsconfig.json': { size: 10, sha256: hash('6') },
+    'packages/a/x.ts': { size: 10, sha256: hash('7') },
+    'packages/b/tsconfig.json': { size: 10, sha256: hash('8') },
+    'packages/b/y.ts': { size: 10, sha256: hash('9') },
+  };
+  const paths = ['crates/a/src/lib.rs', 'crates/b/src/lib.rs', 'packages/a/x.ts', 'packages/b/y.ts'];
+  const { output, calls } = replay({ paths }, entries, ['cargo', 'pnpm']);
+  assert.equal(output.error, undefined, output.error);
+  assert.deepEqual(output.value.checks.map(check => [check.working_directory, check.arguments.at(-1), check.scope]), [
+    ['crates/a', '--quiet', ['crates/a/src/lib.rs']],
+    ['crates/b', '--quiet', ['crates/b/src/lib.rs']],
+    ['', 'packages/a/tsconfig.json', ['packages/a/x.ts']],
+    ['', 'packages/b/tsconfig.json', ['packages/b/y.ts']],
+  ]);
+  assert.ok(calls.filter(call => call.operation === 'workspace.list').every(call => call.arguments.path && call.arguments.max_entries === undefined));
 });
 
 test('reports unsupported checks without implying success', () => {
@@ -85,11 +116,6 @@ test('rejects traversal, missing paths, truncated lists, and changed candidates'
   const entries = { 'main.py': { size: 10, sha256: hash('1') } };
   assert.match(replay({ paths: ['other.py'] }, entries, ['ruff']).output.error, /changed_source_missing/);
   assert.match(replay({ paths: ['main.py'] }, entries, ['ruff'], true).output.error, /workspace_candidate_stale/);
-  const first = run({ paths: ['main.py'] });
-  const second = run({ paths: ['main.py'] }, [{ call: first.host_call, value: { snapshot: { reference: 'fixture', sha256: hash('a') }, candidate_sha256: hash('a') } }]);
-  const third = run({ paths: ['main.py'] }, [
-    { call: first.host_call, value: { snapshot: { reference: 'fixture', sha256: hash('a') }, candidate_sha256: hash('a') } },
-    { call: second.host_call, value: { entries: [], truncated: true } },
-  ]);
-  assert.match(third.error, /check_input_listing_truncated/);
+  const rust = { 'Cargo.toml': { size: 10, sha256: hash('1') }, 'src/main.rs': { size: 10, sha256: hash('2') } };
+  assert.match(replay({ paths: ['src/main.rs'] }, rust, ['cargo'], false, true).output.error, /check_input_listing_truncated/);
 });

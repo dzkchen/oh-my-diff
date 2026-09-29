@@ -236,6 +236,33 @@ fn program_hash(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+fn stored_outputs(owner: &Path) -> Result<Vec<(std::time::SystemTime, PathBuf, u64)>, String> {
+    let mut stored = Vec::new();
+    let mut directories = vec![(owner.to_path_buf(), 0)];
+    while let Some((directory, depth)) = directories.pop() {
+        for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let metadata = entry.metadata().map_err(|error| error.to_string())?;
+            if metadata.file_type().is_symlink() {
+                return Err("exec_output_directory_invalid".into());
+            }
+            if metadata.is_dir() && depth < 2 {
+                directories.push((entry.path(), depth + 1));
+            } else if depth == 2
+                && metadata.is_file()
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "txt")
+            {
+                let modified = metadata.modified().map_err(|error| error.to_string())?;
+                stored.push((modified, entry.path(), metadata.len()));
+            }
+        }
+    }
+    Ok(stored)
+}
+
 impl Host<'_> {
     fn repository(&self) -> &Path {
         self.authority.repository()
@@ -287,6 +314,10 @@ impl Host<'_> {
     fn save_output(&self, caller: &Caller<'_>, bytes: &[u8]) -> Result<Value, String> {
         std::str::from_utf8(bytes).map_err(|_| "exec_output_artifact_utf8_required")?;
         let directory = self.output_directory(caller)?;
+        let owner = directory
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("exec_output_directory_invalid")?;
         let digest = sha256(bytes);
         let path = directory.join(format!("{digest}.txt"));
         let lock = fs::OpenOptions::new()
@@ -296,7 +327,7 @@ impl Host<'_> {
             .truncate(false)
             .mode(0o600)
             .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(directory.join(".outputs.lock"))
+            .open(owner.join(".outputs.lock"))
             .map_err(|error| error.to_string())?;
         lock.try_lock().map_err(|_| "exec_output_store_busy")?;
         if path.exists() {
@@ -312,31 +343,21 @@ impl Host<'_> {
                 return Err("exec_output_integrity_failed".into());
             }
         } else {
-            let mut stored = Vec::new();
-            for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
-                let entry = entry.map_err(|error| error.to_string())?;
-                let metadata = entry.metadata().map_err(|error| error.to_string())?;
-                if metadata.file_type().is_symlink() {
-                    return Err("exec_output_directory_invalid".into());
-                }
-                if entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension == "txt")
-                {
-                    let modified = metadata.modified().map_err(|error| error.to_string())?;
-                    stored.push((modified, entry.path(), metadata.len()));
-                }
-            }
+            let mut stored = stored_outputs(owner)?;
             stored.sort();
             let mut total: u64 = stored.iter().map(|(_, _, len)| len).sum();
             let mut oldest = stored.into_iter();
             while total.saturating_add(bytes.len() as u64) > EXEC_ARTIFACT_STORE_BYTES
                 || oldest.len() >= EXEC_ARTIFACT_STORE_COUNT
             {
-                let (_, path, len) = oldest.next().ok_or("exec_output_store_quota")?;
-                fs::remove_file(path).map_err(|error| error.to_string())?;
+                let (_, evicted, len) = oldest.next().ok_or("exec_output_store_quota")?;
+                fs::remove_file(&evicted).map_err(|error| error.to_string())?;
                 total -= len;
+                for parent in evicted.ancestors().skip(1).take(2) {
+                    if parent != directory && fs::remove_dir(parent).is_err() {
+                        break;
+                    }
+                }
             }
             let temporary = directory.join(format!(".{digest}.{}.tmp", now_ms()));
             let mut file = fs::OpenOptions::new()

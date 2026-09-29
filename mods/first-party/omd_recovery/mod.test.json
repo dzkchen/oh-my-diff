@@ -212,20 +212,6 @@
             "reasoning": "high",
             "billing": "included_subscription"
           }
-        ],
-        "authorized_presets": [
-          {
-            "name": "opposite",
-            "roles": [
-              "lead",
-              "worker"
-            ],
-            "available": true,
-            "provider": "fixture",
-            "model": "opposite",
-            "reasoning": "high",
-            "billing": "included_subscription"
-          }
         ]
       }
     },

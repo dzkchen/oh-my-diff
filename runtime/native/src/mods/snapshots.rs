@@ -3,14 +3,67 @@ use codex_omd::Snapshot;
 use codex_omd::resource_data::ResourceRef;
 use std::collections::BTreeSet;
 
-const SNAPSHOT_LIMIT: usize = 16;
+const SNAPSHOT_LIMIT: usize = 8;
 const SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+const SNAPSHOT_TOTAL_LIMIT: usize = 32;
+const SNAPSHOT_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 const EXECUTION_LIMIT: usize = 64;
+const EXECUTION_TOTAL_LIMIT: usize = 256;
 
-struct Stored {
+#[derive(Clone, PartialEq)]
+struct Scope {
     owner: String,
     generation: u64,
     thread: ThreadId,
+}
+
+impl Scope {
+    fn of(caller: &operations::Caller<'_>, thread: ThreadId) -> Self {
+        Self {
+            owner: caller.id.into(),
+            generation: caller.generation,
+            thread,
+        }
+    }
+}
+
+fn evict_oldest<T>(
+    entries: &mut BTreeMap<String, T>,
+    select: impl Fn(&T) -> bool,
+    sequence: impl Fn(&T) -> u64,
+) {
+    if let Some(oldest) = entries
+        .iter()
+        .filter(|(_, entry)| select(entry))
+        .min_by_key(|(_, entry)| sequence(entry))
+        .map(|(key, _)| key.clone())
+    {
+        entries.remove(&oldest);
+    }
+}
+
+fn heaviest<T>(
+    entries: &BTreeMap<String, T>,
+    scope: impl Fn(&T) -> &Scope,
+    weight: impl Fn(&T) -> usize,
+) -> Option<Scope> {
+    entries
+        .values()
+        .map(|entry| {
+            let owned = scope(entry);
+            let total = entries
+                .values()
+                .filter(|other| scope(other) == owned)
+                .map(&weight)
+                .sum::<usize>();
+            (total, owned)
+        })
+        .max_by_key(|(total, _)| *total)
+        .map(|(_, owned)| owned.clone())
+}
+
+struct Stored {
+    scope: Scope,
     source: String,
     snapshot: Arc<Snapshot>,
     digest: String,
@@ -26,10 +79,8 @@ pub(super) struct Snapshots {
 }
 
 struct Execution {
-    owner: String,
+    scope: Scope,
     source: String,
-    generation: u64,
-    thread: ThreadId,
     candidate: String,
     evidence: ResourceRef,
     passed: bool,
@@ -50,23 +101,37 @@ impl Snapshots {
         evidence: ResourceRef,
         result: &Value,
     ) {
-        if self.executions.len() >= EXECUTION_LIMIT
-            && let Some(oldest) = self
-                .executions
-                .iter()
-                .min_by_key(|(_, entry)| entry.sequence)
-                .map(|(key, _)| key.clone())
+        let scope = Scope::of(caller, thread);
+        self.executions.remove(&evidence.reference);
+        while self
+            .executions
+            .values()
+            .filter(|entry| entry.scope == scope)
+            .count()
+            >= EXECUTION_LIMIT
         {
-            self.executions.remove(&oldest);
+            evict_oldest(
+                &mut self.executions,
+                |entry| entry.scope == scope,
+                |entry| entry.sequence,
+            );
+        }
+        while self.executions.len() >= EXECUTION_TOTAL_LIMIT {
+            let Some(heaviest) = heaviest(&self.executions, |entry| &entry.scope, |_| 1) else {
+                break;
+            };
+            evict_oldest(
+                &mut self.executions,
+                |entry| entry.scope == heaviest,
+                |entry| entry.sequence,
+            );
         }
         let sequence = self.next();
         self.executions.insert(
             evidence.reference.clone(),
             Execution {
-                owner: caller.id.into(),
+                scope,
                 source: caller.source.into(),
-                generation: caller.generation,
-                thread,
                 candidate,
                 evidence,
                 passed: result["exit_code"] == 0
@@ -91,10 +156,8 @@ impl Snapshots {
             .executions
             .get(&evidence.reference)
             .filter(|record| {
-                record.owner == caller.id
+                record.scope == Scope::of(caller, thread)
                     && record.source == caller.source
-                    && record.generation == caller.generation
-                    && record.thread == thread
                     && record.candidate == candidate
                     && record.evidence.sha256 == evidence.sha256
             })
@@ -110,8 +173,8 @@ impl Snapshots {
         caller: &operations::Caller<'_>,
         thread: ThreadId,
         snapshot: Snapshot,
+        digest: String,
     ) -> Result<Value, String> {
-        let digest = snapshot.hash().map_err(|error| error.to_string())?;
         let reference = format!(
             "snapshot:{}",
             execution::hash(
@@ -138,30 +201,49 @@ impl Snapshots {
             if bytes > SNAPSHOT_BYTES {
                 return Err("snapshot_limit".into());
             }
-            while self.entries.len() >= SNAPSHOT_LIMIT
-                || bytes
-                    > SNAPSHOT_BYTES
-                        - self
-                            .entries
-                            .values()
-                            .map(|entry| entry.bytes)
-                            .sum::<usize>()
-            {
-                let oldest = self
-                    .entries
-                    .iter()
-                    .min_by_key(|(_, entry)| entry.sequence)
-                    .map(|(key, _)| key.clone())
-                    .ok_or("snapshot_limit")?;
-                self.entries.remove(&oldest);
+            let scope = Scope::of(caller, thread);
+            let usage = |entries: &BTreeMap<String, Stored>, select: &dyn Fn(&Stored) -> bool| {
+                entries
+                    .values()
+                    .filter(|entry| select(entry))
+                    .fold((0usize, 0usize), |(count, total), entry| {
+                        (count + 1, total + entry.bytes)
+                    })
+            };
+            loop {
+                let (count, used) = usage(&self.entries, &|entry| entry.scope == scope);
+                if count < SNAPSHOT_LIMIT && used + bytes <= SNAPSHOT_BYTES {
+                    break;
+                }
+                evict_oldest(
+                    &mut self.entries,
+                    |entry| entry.scope == scope,
+                    |entry| entry.sequence,
+                );
+            }
+            loop {
+                let (count, used) = usage(&self.entries, &|_| true);
+                if count < SNAPSHOT_TOTAL_LIMIT && used + bytes <= SNAPSHOT_TOTAL_BYTES {
+                    break;
+                }
+                let Some(heaviest) = heaviest(
+                    &self.entries,
+                    |entry| &entry.scope,
+                    |entry| entry.bytes.max(1),
+                ) else {
+                    break;
+                };
+                evict_oldest(
+                    &mut self.entries,
+                    |entry| entry.scope == heaviest,
+                    |entry| entry.sequence,
+                );
             }
             let sequence = self.next();
             self.entries.insert(
                 reference.clone(),
                 Stored {
-                    owner: caller.id.into(),
-                    generation: caller.generation,
-                    thread,
+                    scope,
                     source: caller.source.into(),
                     snapshot: Arc::new(snapshot),
                     digest: digest.clone(),
@@ -186,10 +268,7 @@ impl Snapshots {
             .entries
             .get(&reference.reference)
             .filter(|entry| {
-                entry.owner == caller.id
-                    && entry.generation == caller.generation
-                    && entry.thread == thread
-                    && entry.source == caller.source
+                entry.scope == Scope::of(caller, thread) && entry.source == caller.source
             })
             .ok_or("unknown_or_foreign_snapshot")?;
         if stored.digest != reference.sha256 {
@@ -199,15 +278,15 @@ impl Snapshots {
     }
 
     pub(super) fn remove_owner(&mut self, owner: &str, generation: u64) {
-        self.entries
-            .retain(|_, entry| entry.owner != owner || entry.generation != generation);
-        self.executions
-            .retain(|_, entry| entry.owner != owner || entry.generation != generation);
+        let owned = |scope: &Scope| scope.owner == owner && scope.generation == generation;
+        self.entries.retain(|_, entry| !owned(&entry.scope));
+        self.executions.retain(|_, entry| !owned(&entry.scope));
     }
 
     pub(super) fn remove_thread(&mut self, thread: ThreadId) {
-        self.entries.retain(|_, entry| entry.thread != thread);
-        self.executions.retain(|_, entry| entry.thread != thread);
+        self.entries.retain(|_, entry| entry.scope.thread != thread);
+        self.executions
+            .retain(|_, entry| entry.scope.thread != thread);
     }
 }
 
@@ -300,6 +379,16 @@ mod tests {
         }
     }
 
+    fn insert(
+        store: &mut Snapshots,
+        caller: &operations::Caller<'_>,
+        thread: ThreadId,
+        snapshot: Snapshot,
+    ) -> Result<Value, String> {
+        let digest = snapshot.hash().unwrap();
+        store.insert(caller, thread, snapshot, digest)
+    }
+
     fn caller(id: &str, source: &str, generation: u64) -> operations::Caller<'static> {
         operations::Caller {
             id: if id == "one" { "one" } else { "two" },
@@ -319,7 +408,7 @@ mod tests {
         let snapshot = Snapshot {
             files: BTreeMap::new(),
         };
-        let value = store.insert(&owner, thread, snapshot.clone()).unwrap();
+        let value = insert(&mut store, &owner, thread, snapshot.clone()).unwrap();
         let reference: ResourceRef = serde_json::from_value(value["snapshot"].clone()).unwrap();
         assert_eq!(*store.get(&owner, thread, &reference).unwrap(), snapshot);
         for stranger in [
@@ -355,8 +444,11 @@ mod tests {
                     },
                 )]),
             };
-            let inserted = store.insert(&owner, thread, snapshot.clone()).unwrap();
-            assert_eq!(store.insert(&owner, thread, snapshot).unwrap(), inserted);
+            let inserted = insert(&mut store, &owner, thread, snapshot.clone()).unwrap();
+            assert_eq!(
+                insert(&mut store, &owner, thread, snapshot).unwrap(),
+                inserted
+            );
             first.get_or_insert(inserted);
         }
         let first: ResourceRef =
@@ -365,11 +457,71 @@ mod tests {
         let empty = Snapshot {
             files: BTreeMap::new(),
         };
-        assert!(store.insert(&owner, thread, empty).is_ok());
+        assert!(insert(&mut store, &owner, thread, empty).is_ok());
         assert_eq!(store.entries.len(), SNAPSHOT_LIMIT);
         assert!(store.get(&owner, thread, &first).is_err());
         store.remove_thread(thread);
         assert!(store.entries.is_empty());
+    }
+
+    #[test]
+    fn one_owner_filling_its_quota_never_evicts_another_owners_snapshot_or_execution() {
+        let mut store = Snapshots::default();
+        let quiet = caller("one", "a", 1);
+        let busy = caller("two", "a", 1);
+        let thread = ThreadId::new();
+        let file = |number: usize| Snapshot {
+            files: BTreeMap::from([(
+                "file".into(),
+                codex_omd::File {
+                    bytes: number.to_le_bytes().to_vec(),
+                    executable: false,
+                },
+            )]),
+        };
+        let kept: ResourceRef = serde_json::from_value(
+            insert(&mut store, &quiet, thread, file(usize::MAX)).unwrap()["snapshot"].clone(),
+        )
+        .unwrap();
+        let candidate = "a".repeat(64);
+        let evidence = ResourceRef {
+            reference: "execution:quiet".into(),
+            sha256: "b".repeat(64),
+        };
+        let passed = json!({"exit_code":0,"signal":null,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false});
+        store.record_execution(&quiet, thread, candidate.clone(), evidence.clone(), &passed);
+        let threads = [
+            thread,
+            ThreadId::new(),
+            ThreadId::new(),
+            ThreadId::new(),
+            ThreadId::new(),
+        ];
+        for number in 0..64 {
+            let busy_thread = threads[number % threads.len()];
+            insert(&mut store, &busy, busy_thread, file(number)).unwrap();
+            for index in 0..8 {
+                let other = ResourceRef {
+                    reference: format!("execution:busy-{number}-{index}"),
+                    sha256: "d".repeat(64),
+                };
+                store.record_execution(&busy, busy_thread, candidate.clone(), other, &passed);
+            }
+        }
+        assert!(store.entries.len() <= SNAPSHOT_TOTAL_LIMIT);
+        assert!(store.executions.len() <= EXECUTION_TOTAL_LIMIT);
+        assert!(store.get(&quiet, thread, &kept).is_ok());
+        assert!(
+            store
+                .attest_execution(
+                    &quiet,
+                    thread,
+                    &candidate,
+                    &evidence,
+                    codex_omd::ReceiptOutcome::Pass
+                )
+                .is_ok()
+        );
     }
 
     #[test]

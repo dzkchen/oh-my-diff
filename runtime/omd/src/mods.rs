@@ -172,6 +172,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "workspace_access_v1",
     "workspace_fs_v1",
     "workspace_snapshots_v1",
+    "workspace_fingerprint_v1",
     "snapshot_exec_v1",
     "agent_parent_history_v1",
     "agent_failures_v1",
@@ -195,6 +196,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "workspace.stat",
     "workspace.check_access",
     "workspace.snapshot",
+    "workspace.fingerprint",
     "workspace.transaction",
     "workspace.backup",
     "workspace.restore",
@@ -1681,7 +1683,7 @@ impl ModHost {
         };
         let mut conflicts = contested("tool_name_conflict", tools);
         conflicts.extend(contested("replacement_conflict", points));
-        conflicts.extend(contested("workflow_replacement_conflict", contracts));
+        conflicts.extend(contested("contract_conflict", contracts));
         for (id, reason) in conflicts {
             if let Some(loaded) = next.get_mut(&id) {
                 fail(initial, loaded, failure(reason))?;
@@ -2478,9 +2480,9 @@ impl ModHost {
         mut payload: Value,
         active: impl Fn() -> bool,
     ) -> Result<Value> {
-        let presets = payload["authorized_presets"]
+        let routes = payload["routes"]
             .as_array()
-            .ok_or_else(|| failure("authorized_presets_required"))?
+            .ok_or_else(|| failure("routes_required"))?
             .clone();
         let mut effective = payload["effective"]
             .as_object()
@@ -2509,13 +2511,13 @@ impl ModHost {
                 .get("route")
                 .and_then(Value::as_str)
                 .ok_or_else(|| failure("invalid_model_request_result"))?;
-            let preset = presets
+            let route = routes
                 .iter()
-                .find(|preset| preset["name"].as_str() == Some(selected))
+                .find(|route| route["name"].as_str() == Some(selected))
                 .and_then(Value::as_object)
-                .ok_or_else(|| failure(format!("unauthorized_request_preset: {selected}")))?;
+                .ok_or_else(|| failure(format!("unauthorized_request_route: {selected}")))?;
             let previous = effective.get("name").cloned().unwrap_or(Value::Null);
-            effective = preset.clone();
+            effective = route.clone();
             if let Some(loaded) = self.loaded.get(&id) {
                 provenance.push(
                     json!({"order":order,"origin":id,"version":loaded.package.version,
@@ -2849,7 +2851,7 @@ impl ModHost {
     pub fn tools_for_step(
         &mut self,
         thread_id: Option<String>,
-        checkpoint: Value,
+        ledger: Value,
         active: impl Fn() -> bool,
     ) -> Vec<(String, u64, ModTool)> {
         let ids: Vec<String> = self
@@ -2883,8 +2885,7 @@ impl ModHost {
             {
                 continue;
             }
-            let payload =
-                json!({"thread_id":thread_id,"checkpoint":checkpoint,"available":available});
+            let payload = json!({"thread_id":thread_id,"ledger":ledger,"available":available});
             let result =
                 self.invoke_guarded(&id, self.generation, "tool_exposure", "", payload, &active);
             let selection = result.ok().and_then(|value| {
@@ -2963,7 +2964,6 @@ impl ModHost {
 
     fn owner(loaded: &Loaded) -> crate::PolicyOwner {
         crate::PolicyOwner {
-            kind: crate::OwnerKind::Mod,
             id: loaded.package.id.clone(),
             version: loaded.package.version.clone(),
             source: loaded.selection.path.display().to_string(),
@@ -3075,14 +3075,14 @@ impl ModHost {
 
     pub fn field_policies() -> Value {
         json!({
-            "model_request": {"request_id":"observe_only","scope":"observe_only","authorized_presets":"observe_only","original":"observe_only","effective":"alterable","provenance":"observe_only"},
+            "model_request": {"request_id":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","effective":"alterable","provenance":"observe_only"},
             "response_stream": {"kind":"observe_only","raw_sha256":"observe_only","raw_usage":"observe_only","opaque_reasoning":"observe_only","protected":"observe_only","text":"alterable","original":"observe_only","effective":"observe_only","provenance":"observe_only","fallback":"observe_only"},
             "prompt": {"thread_id":"observe_only","turn_id":"observe_only","original":"observe_only","effective":"replaceable","provenance":"observe_only"},
             "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
             "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
             "tool_before": {"call_id":"observe_only","thread_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable"},
-            "tool_exposure": {"thread_id":"observe_only","checkpoint":"observe_only","available":"observe_only","enable":"alterable"},
+            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
             "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
             "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
         })

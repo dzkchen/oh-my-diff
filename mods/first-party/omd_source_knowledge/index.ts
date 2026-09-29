@@ -219,11 +219,11 @@ async function retain(api: ModAPI, input: Json): Promise<Json> {
   const { state, store_revision } = await stored(api, repository_identity);
   if (value.expected_revision !== state.revision) throw new Error('knowledge_revision_stale');
   if (state.facts.length >= MAX_FACTS || used(state, id)) throw new Error('knowledge_fact_unavailable');
-  const before = api.host.call('workspace.snapshot', {});
+  const before = api.host.call('workspace.fingerprint', {});
   if (!SHA.test(before.candidate_sha256)) throw new Error('knowledge_candidate_invalid');
   const current = await source(api, source_anchor);
   if (!current.version) throw new Error(`knowledge_${current.reason}`);
-  api.host.call('workspace.snapshot', { expected: before.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
   const revision = state.revision + 1;
   const fact: Fact = { id, task_id, label, source: source_anchor, created_revision: revision, refreshed_revision: revision,
     status: 'fresh', version: current.version, reason: null };
@@ -243,7 +243,7 @@ async function retainEvidence(api: ModAPI, input: Json): Promise<Json> {
   const { state, store_revision } = await stored(api, repository_identity);
   revision(value.expected_revision, state.revision);
   if (state.evidence.length >= MAX_EVIDENCE || used(state, id)) throw new Error('knowledge_evidence_unavailable');
-  const before = api.host.call('workspace.snapshot', {});
+  const before = api.host.call('workspace.fingerprint', {});
   if (!SHA.test(before.candidate_sha256)) throw new Error('knowledge_candidate_invalid');
   const page = api.host.call('evidence.read', { reference: source, max_bytes: MAX_EVIDENCE_BYTES });
   if (page.reference.reference !== source.reference || page.reference.sha256 !== source.sha256 || page.cursor !== null
@@ -252,7 +252,7 @@ async function retainEvidence(api: ModAPI, input: Json): Promise<Json> {
   let retained_payload: Json;
   try { retained_payload = JSON.parse(page.text) as Json; } catch { throw new Error('knowledge_evidence_invalid'); }
   if (retained_payload === null || typeof retained_payload !== 'object') throw new Error('knowledge_evidence_invalid');
-  api.host.call('workspace.snapshot', { expected: before.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
   const next = state.revision + 1;
   const item: Evidence = { id, task_id, summary, kind, workspace_sha256: before.candidate_sha256, source,
     retained_payload, payload_sha256: await hashJson(retained_payload), retained_revision: next };
@@ -337,7 +337,7 @@ async function session(api: ModAPI, input: Json, inspect: boolean): Promise<Json
   const { state, store_revision } = await stored(api, repository_identity);
   if (mode === 'cold') return { schema: 2, mode, repository_identity, generation: state.generation, revision: state.revision,
     refreshed_fact_ids: [], invalidated_ids: [], facts: [], approved_lessons: [] } as Json;
-  const before = api.host.call('workspace.snapshot', {});
+  const before = api.host.call('workspace.fingerprint', {});
   if (!SHA.test(before.candidate_sha256)) throw new Error('knowledge_candidate_invalid');
   const facts: Fact[] = [];
   const refreshed: string[] = [];
@@ -361,7 +361,7 @@ async function session(api: ModAPI, input: Json, inspect: boolean): Promise<Json
     facts.push({ ...fact, status, version: current.version, reason: current.reason,
       refreshed_revision: changed ? state.revision + 1 : fact.refreshed_revision });
   }
-  api.host.call('workspace.snapshot', { expected: before.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
   const revision = state.revision + (refreshed.length ? 1 : 0);
   const visible = facts.filter(fact => inspect || fact.status === 'fresh');
   const approved_lessons = state.lessons.filter(lesson => (inspect || lesson.state === 'approved')

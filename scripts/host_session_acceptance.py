@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -39,13 +40,14 @@ export default function activate(api) {
     const wide = api.host.call('exec.run', { program: 'sh', argv: ['-c', "head -c 100000 /dev/zero | tr '\\\\0' x"] });
     const write = api.host.call('exec.run', { program: 'sh', argv: ['-c', 'printf tool > tool.txt'], write: true });
     const candidate = api.host.call('workspace.snapshot', {}).candidate_sha256;
+    const fingerprint = api.host.call('workspace.fingerprint', { expected: candidate }).candidate_sha256;
     const refused = api.host.call('task.complete', { candidate_sha256: candidate });
     const evidence = api.host.call('evidence.write', { media_type: 'application/json', content: { exit_code: write.exit_code } });
     api.host.call('receipts.submit', { kind: 'checks', candidate_sha256: candidate, outcome: 'pass', evidence });
     const completed = api.host.call('task.complete', { candidate_sha256: candidate });
     return { denied: error(denied), slow: slow.timed_out, detached: { timed_out: detached.timed_out, duration_ms: detached.duration_ms },
       wide: { preview: wide.stdout.length, bytes: wide.stdout_bytes, truncated: wide.stdout_truncated, preview_truncated: wide.stdout_preview_truncated },
-      write: write.exit_code, refused: refused.status, missing: refused.missing ?? [], completed: completed.status };
+      write: write.exit_code, fingerprint: fingerprint === candidate, refused: refused.status, missing: refused.missing ?? [], completed: completed.status };
   });
   api.tool({ name: 'store_check', description: 'Exercise store limits', parameters: empty }, () => {
     const big = api.host.tryCall('store.put', { key: 'big', value: 'x'.repeat(70000), expected_revision: null });
@@ -68,6 +70,32 @@ def run(argv, cwd, env=None):
     if result.returncode:
         raise RuntimeError(f'{argv[:3]}: {result.stderr[-3000:]}')
     return result.stdout
+
+AGENT_PROBE = '''export default function activate(api) {
+  api.tool({ name: 'run', description: 'Exercise owned agent handles', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
+    const spawn = () => api.host.call('agents.spawn', { role: 'probe', route: 'worker', prompt: 'Reply WORKER_OK.', workspace: 'read_only', tools: [] });
+    const first = spawn();
+    const second = spawn();
+    const listed = api.host.call('agents.list', null).map(agent => agent.handle).sort();
+    const cancelled = api.host.call('agents.cancel', { handle: second.handle }).cancelled;
+    let result = api.host.call('agents.wait', { handle: first.handle, consume: true });
+    for (let attempt = 0; attempt < 5 && result.status === 'running'; attempt++) result = api.host.call('agents.wait', { handle: first.handle, consume: true });
+    const remaining = api.host.call('agents.list', null);
+    const gone = api.host.tryCall('agents.result', { handle: second.handle });
+    return { listed: listed.length === 2 && listed.includes(first.handle) && listed.includes(second.handle), cancelled, status: result.status,
+      text: result.text, consumed: result.consumed, remaining: remaining.map(agent => [agent.handle === first.handle, agent.consumed]),
+      gone: gone.ok ? null : String(gone.error) };
+  });
+  api.tool({ name: 'integrate', description: 'Integrate an isolated writer', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
+    const writer = api.host.call('agents.spawn', { role: 'writer', route: 'worker', prompt: 'Create worker.txt.', workspace: 'isolated_worktree' });
+    let result = api.host.call('agents.wait', { handle: writer.handle, consume: true });
+    for (let attempt = 0; attempt < 5 && result.status === 'running'; attempt++) result = api.host.call('agents.wait', { handle: writer.handle, consume: true });
+    const integrated = api.host.call('workspace.integrate', { handle: writer.handle });
+    return { status: result.status, changed: result.changed_paths ?? [], integrated: integrated.status,
+      paths: integrated.changed_paths ?? [], receipt_error: integrated.receipt_error ?? null };
+  });
+}
+'''
 
 
 def package(root, name, capabilities, source):
@@ -336,7 +364,7 @@ def session(root, codex, manager, contract, cli, provider):
     assert check['denied'] == 'capability_denied: network', check
     assert check['slow'] is True and check['detached']['timed_out'] is True and check['detached']['duration_ms'] < 3000, check
     assert check['wide'] == {'preview': 65536, 'bytes': 100000, 'truncated': False, 'preview_truncated': True}, check
-    assert check['write'] == 0 and check['refused'] == 'refused' and check['missing'] and check['completed'] == 'completed', check
+    assert check['write'] == 0 and check['fingerprint'] is True and check['refused'] == 'refused' and check['missing'] and check['completed'] == 'completed', check
     assert results['store']['big'] == 'store_value_limit' and results['store']['stale'].startswith('store_revision_conflict'), results['store']
     assert results['second_retry'] and results['turn1_requests'] == results['third_stop'], results
     assert results['stopped_preserved'] and results['turn2'] == 'completed', results
@@ -356,6 +384,61 @@ def session(root, codex, manager, contract, cli, provider):
     return {'requests': requests, 'turns': [results['turn1'], results['turn2'], results['turn3']], 'check': check, 'store': results['store'],
             'withdrawn': results['withdrawn'], 'restored': results['restored'], 'workspace_changes': changes, 'websocket_attempts': 0,
             'observed_requests': requests}
+
+
+def agents(root, codex, manager, provider):
+    store = root / 'agent-store'
+    run([manager, 'init', store, shutil.which('node')], root)
+    install(manager, store, package(root, 'agent_probe', ['agents', 'fs.read', 'fs.write', 'tools'], AGENT_PROBE))
+    repository = (root / 'repository').resolve()
+    url = f'{provider.url}/responses'
+    grant = root / 'worker-grant.json'
+    grant.write_text(json.dumps({'schema': 1, 'paid_api_key': True, 'revocable': True, 'provider': 'fixture', 'model': 'fixture-lead',
+                                 'responses_url': url, 'repository': hashlib.sha256(str(repository).encode()).hexdigest()}))
+    (store / 'host.json').write_text(json.dumps({'schema': 1,
+        'limits': {'requests': 40, 'exposure_microusd': 100000, 'seconds': 600, 'concurrent_workers': 4, 'max_depth': 2},
+        'worker_limits': {'requests': 10, 'exposure_microusd': 50000, 'seconds': 300},
+        'routes': [{'name': 'worker', 'provider': 'fixture', 'model': 'fixture-lead', 'reasoning_effort': 'low', 'responses_url': url,
+                    'rates': {'input_microusd_per_million': 1, 'cached_microusd_per_million': 1, 'output_microusd_per_million': 1,
+                              'reservation_microusd': 1000, 'max_output_tokens': 1000, 'input_token_ceiling': 100000, 'included_subscription': False},
+                    'roles': ['worker'], 'mods': ['agent_probe'], 'grant': {'path': str(grant.resolve()), 'sha256': hashlib.sha256(grant.read_bytes()).hexdigest()}}]}))
+    home = root / 'codex-home-agents'
+    configure(root, home, provider, websockets=False)
+    first = len(provider.requests)
+    workers = []
+
+    def script(payload):
+        context = (payload.get('instructions') or '') + json.dumps(payload.get('input', []))
+        done = outputs(payload)
+        if 'Perform this bounded read-only role: probe.' in context:
+            workers.append(payload)
+            return message('WORKER_OK')
+        if 'Perform this bounded isolated-worktree role: writer.' in context:
+            workers.append(payload)
+            if 'write' not in done:
+                return {'type': 'function_call', 'id': 'write', 'call_id': 'write', 'name': 'exec_command',
+                        'arguments': json.dumps({'cmd': 'printf worker > worker.txt'})}
+            return message('WRITER_DONE')
+        if 'agents' not in done:
+            return tool(payload, 'mod_agent_probe_run', 'agents')
+        if 'integrate' not in done:
+            return tool(payload, 'mod_agent_probe_integrate', 'integrate')
+        return message(f'AGENTS_DONE {done["agents"]}')
+
+    provider.script = script
+    result = subprocess.run([str(codex), 'exec', '--skip-git-repo-check', '--json', '-C', str(repository), 'Run the agent probe.'],
+                            cwd=repository, env=environment(root, home, 'omd', store), stdin=subprocess.DEVNULL,
+                            text=True, capture_output=True, timeout=180)
+    (root / 'exec-agents.log').write_text(result.stdout + result.stderr)
+    assert result.returncode == 0 and 'AGENTS_DONE' in result.stdout, result.stdout[-3000:] + result.stderr[-3000:]
+    probe = next(json.loads(done['agents']) for payload in provider.requests[first:] for done in [outputs(payload)] if 'agents' in done)
+    assert probe == {'listed': True, 'cancelled': True, 'status': 'completed', 'text': 'WORKER_OK', 'consumed': True,
+                     'remaining': [[True, True]], 'gone': 'unknown_or_foreign_agent'}, probe
+    integration = next(json.loads(done['integrate']) for payload in provider.requests[first:] for done in [outputs(payload)] if 'integrate' in done)
+    assert integration == {'status': 'completed', 'changed': ['worker.txt'], 'integrated': 'integrated', 'paths': ['worker.txt'],
+                           'receipt_error': None}, integration
+    assert (repository / 'worker.txt').read_text() == 'worker', 'integrated file missing'
+    return {'requests': len(provider.requests) - first, 'worker_requests': len(workers), 'probe': probe, 'integration': integration}
 
 
 def main():
@@ -378,7 +461,8 @@ def main():
     provider = Provider(root)
     try:
         result = {'disabled_overhead': disabled_overhead(root, codex, manager, provider),
-                  'session': session(root, codex, manager, contract, cli, provider), 'paid_requests': 0}
+                  'session': session(root, codex, manager, contract, cli, provider),
+                  'agents': agents(root, codex, manager, provider), 'paid_requests': 0}
     finally:
         provider.server.shutdown()
         (root / 'provider-errors.json').write_text(json.dumps(provider.errors, indent=2))

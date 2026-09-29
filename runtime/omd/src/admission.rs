@@ -562,19 +562,14 @@ impl Task {
             external_routes: Mutex::new(BTreeSet::new()),
             worker_routes: Mutex::new(BTreeMap::new()),
         };
-        let uncertain = task.uncertain_requests()?;
-        {
-            let mut state = task
-                .state
-                .lock()
-                .map_err(|_| denied("task lock poisoned"))?;
-            if state.status == TaskStatus::Active {
-                task.record(
-                    &mut state,
-                    &serde_json::json!({"event": "task_paused", "reason": "abrupt_client_loss", "active_workers": [], "uncertain_operations": uncertain}),
-                )?;
-                state.status = TaskStatus::Paused;
-            }
+        let active = task
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?
+            .status
+            == TaskStatus::Active;
+        if active {
+            task.pause("abrupt_client_loss", task.uncertain_requests()?)?;
         }
         task.resume(reference)?;
         Ok(task)

@@ -328,11 +328,11 @@ impl ManagedProcesses {
                             || !key.bytes().all(|byte| {
                                 byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
                             })
-                            || key.starts_with("CODEX_")
-                            || key.starts_with("OMD_")
-                            || key.starts_with("DYLD_")
-                            || key.starts_with("LD_")
-                            || matches!(key.as_str(), "HOME" | "PATH" | "TMPDIR" | "XDG_CACHE_HOME")
+                            || codex_omd::host::RESERVED_EXEC_ENVIRONMENT.contains(&key.as_str())
+                            || codex_omd::host::RESERVED_EXEC_PREFIXES
+                                .iter()
+                                .any(|prefix| key.starts_with(prefix))
+                            || key == "XDG_CACHE_HOME"
                             || value.len() > 1024
                             || value
                                 .bytes()
@@ -764,6 +764,9 @@ mod tests {
         for environment in [
             json!({"HOME":"/tmp"}),
             json!({"DYLD_INSERT_LIBRARIES":"/tmp/injected.dylib"}),
+            json!({"NODE_OPTIONS":"--require=/tmp/injected.js"}),
+            json!({"GIT_CONFIG_GLOBAL":"/tmp/injected"}),
+            json!({"BASH_ENV":"/tmp/injected.sh"}),
             json!({"CUSTOM_PATH":"line\nbreak"}),
         ] {
             assert_eq!(

@@ -718,7 +718,19 @@ impl Snapshot {
     }
 
     pub fn hash(&self) -> io::Result<String> {
-        Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(self)?)))
+        struct Hasher(Sha256);
+        impl Write for Hasher {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0.update(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut hasher = Hasher(Sha256::new());
+        serde_json::to_writer(&mut hasher, self)?;
+        Ok(format!("{:x}", hasher.0.finalize()))
     }
 
     pub fn write_new(&self, root: &Path, max_bytes: usize) -> io::Result<()> {
@@ -975,6 +987,35 @@ pub fn cleanup_owned_directory(parent: &Path, directory: &Path) -> io::Result<()
 mod transaction_tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn streamed_snapshot_hash_matches_the_serialized_digest() {
+        let snapshot = Snapshot {
+            files: BTreeMap::from([
+                (
+                    "a.rs".into(),
+                    File {
+                        bytes: vec![0, 1, 255],
+                        executable: false,
+                    },
+                ),
+                (
+                    "bin/run".into(),
+                    File {
+                        bytes: b"#!/bin/sh\n".to_vec(),
+                        executable: true,
+                    },
+                ),
+            ]),
+        };
+        assert_eq!(
+            snapshot.hash().unwrap(),
+            format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&snapshot).unwrap())
+            )
+        );
+    }
 
     #[test]
     fn transaction_renames_and_updates_exact_scope() {

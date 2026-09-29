@@ -503,8 +503,7 @@
       },
       "evidence": [
         "rust:command_outcomes_and_input_decisions_are_validated",
-        "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique",
-        "terminal:namespaced_command"
+        "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique"
       ],
       "replace_note": null
     },
@@ -526,8 +525,7 @@
         "operations": []
       },
       "evidence": [
-        "rust:tool_progress_is_forwarded_once_across_host_call_replay",
-        "terminal:activity_line"
+        "rust:tool_progress_is_forwarded_once_across_host_call_replay"
       ],
       "replace_note": null
     },
@@ -618,7 +616,8 @@
           "workspace.backup",
           "workspace.restore",
           "workspace.request_rename",
-          "workspace.snapshot"
+          "workspace.snapshot",
+          "workspace.fingerprint"
         ]
       },
       "evidence": [
@@ -785,9 +784,7 @@
       },
       "evidence": [
         "patch:left_sidebar_header_progress_and_diagnostics_share_the_layout",
-        "patch:components_preserve_focus_scroll_and_values_across_redraw_and_resize",
-        "terminal:task_panel",
-        "terminal:customized_panels"
+        "patch:components_preserve_focus_scroll_and_values_across_redraw_and_resize"
       ],
       "replace_note": null
     },
@@ -809,9 +806,7 @@
         "operations": []
       },
       "evidence": [
-        "patch:theme_slots_map_indexed_and_rgb_colors",
-        "terminal:accent_color",
-        "terminal:user_message_background"
+        "patch:theme_slots_map_indexed_and_rgb_colors"
       ],
       "replace_note": null
     },
@@ -834,9 +829,7 @@
       },
       "evidence": [
         "patch:native_escape_and_cancel_keys_cannot_be_intercepted",
-        "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
-        "terminal:key_submit",
-        "terminal:key_conflict_visible"
+        "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views"
       ],
       "replace_note": null
     },
@@ -973,8 +966,7 @@
       "id": "failed_mod_isolation",
       "rule": "A mod that throws while activating, loses a capability, or is rejected by the store is disabled alone with a source-located error. Every other mod keeps running, its owned agents and services are cleaned up, and a healthy mod keeps its terminal view with the error panel inserted above it. The failure is reported to the user through that panel, `omd-mod status` and the persisted `mod-status.json`; a failure inside a callback is additionally reported to the model for that turn.",
       "evidence": [
-        "rust:a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error",
-        "terminal:mod_error_did_not_stop_the_host"
+        "rust:a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error"
       ]
     },
     {
@@ -982,9 +974,7 @@
       "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional \u2014 if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
       "evidence": [
         "rust:mod_reload_is_transactional_and_stale_calls_are_rejected",
-        "rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation",
-        "terminal:reload_applies_the_edit",
-        "terminal:session_preserved_across_reload"
+        "rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation"
       ]
     },
     {
@@ -992,16 +982,14 @@
       "rule": "Every callback is cancellable. Cancellation discards the callback's state write, cancels its owned agents and services, records the turn outcome, and leaves the terminal usable; an explicit reload recovers the mod.",
       "evidence": [
         "rust:mod_cancellation_discards_state_and_explicit_reload_recovers",
-        "rust:mod_pending_callback_has_a_host_deadline",
-        "terminal:cancelled_turn_recorded"
+        "rust:mod_pending_callback_has_a_host_deadline"
       ]
     },
     {
       "id": "streaming",
       "rule": "Mod tool progress streams into the live panel during the call and leaves one labelled activity line when it completes; replayed host calls never duplicate an update.",
       "evidence": [
-        "rust:tool_progress_is_forwarded_once_across_host_call_replay",
-        "terminal:activity_line"
+        "rust:tool_progress_is_forwarded_once_across_host_call_replay"
       ]
     },
     {
@@ -1026,7 +1014,7 @@
     "Native workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace integrity, durable evidence and final acceptance.",
     "Raw history rewriting, arbitrary compaction engines, custom prompts for provider-side remote compaction.",
     "Raw terminal escape sequences, arbitrary widgets or DOM/canvas access, overriding native key bindings, transcript mutation, and clipboard authorization bypass.",
-    "Arbitrary provider compatibility, runtime imports other than the documented Pi `typebox` shim, and any second scheduler or uncontrolled execution path.",
+    "Arbitrary provider compatibility, runtime imports other than adapter-declared aliases, and any second scheduler or uncontrolled execution path.",
     "Mod-to-mod calls: `requires` declares presence and order only; mods never call each other or share state."
   ]
 }

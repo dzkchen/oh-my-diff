@@ -42,6 +42,7 @@
       "workspace_access_v1",
       "workspace_fs_v1",
       "workspace_snapshots_v1",
+      "workspace_fingerprint_v1",
       "snapshot_exec_v1",
       "agent_parent_history_v1",
       "agent_failures_v1",

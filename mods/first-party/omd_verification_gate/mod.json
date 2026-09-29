@@ -19,7 +19,7 @@
   "compatibility": {
     "required_features": [
       "contracts_v2",
-      "workspace_snapshots_v1",
+      "workspace_fingerprint_v1",
       "contract_scoped_restrictions_v1",
       "service_dispatch_v1"
     ]

@@ -1293,7 +1293,7 @@ fn request_and_stream_middleware_preserve_authority_and_provenance() {
     let routed = runtime
         .model_request(
             json!({"request_id":"r1","scope":{"kind":"main"},
-                "authorized_presets":[{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},{"name":"astra","model":"a","provider":"openai","reasoning":"high"}],
+                "routes":[{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},{"name":"astra","model":"a","provider":"openai","reasoning":"high"}],
                 "original":{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},
                 "effective":{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},"provenance":[]}),
             || true,
@@ -1330,7 +1330,7 @@ fn task_scoped_tools_follow_owned_step_selection_and_fail_closed() {
       const parameters = {type:'object',properties:{}};
       api.tool({name:'always',description:'Always available',parameters},()=>true);
       api.tool({name:'inspect',description:'Inspect this task',parameters,task_scoped:true},()=>true);
-      api.on('tool_exposure',event=>({enable:event.checkpoint?.kind==='inspect'?['inspect']:[]}));
+      api.on('tool_exposure',event=>({enable:event.ledger?.kind==='inspect'?['inspect']:[]}));
     }"#;
     let (temp, _, _) = fixture(source, &["tools"]);
     let mut runtime = host(&temp);
@@ -1705,7 +1705,6 @@ fn a_mod_registers_a_current_contract_document_with_package_provenance() {
     let (contract, owner) = &contracts[0];
     assert_eq!(contract.id, "paired_review");
     assert_eq!(contract.schema, 2);
-    assert_eq!(owner.kind, codex_omd::OwnerKind::Mod);
     assert_eq!(owner.id, "fixture");
     assert_eq!(owner.source, path.display().to_string());
 }
@@ -1736,10 +1735,7 @@ fn two_mods_may_not_own_the_same_contract_document() {
             .unwrap()["error"]
             .as_str()
             .unwrap_or_default();
-        assert!(
-            error.contains("workflow_replacement_conflict"),
-            "{id}: {error}"
-        );
+        assert!(error.contains("contract_conflict"), "{id}: {error}");
     }
     assert!(runtime.contract_documents().is_empty());
 }

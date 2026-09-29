@@ -60,7 +60,7 @@ pub(super) fn event_allows(event: &str, operation: &str) -> bool {
                         | "routes.list"
                         | "task.status"
                         | "contract.status"
-                        | "workspace.snapshot"
+                        | "workspace.fingerprint"
                 ))
 }
 
@@ -89,8 +89,8 @@ async fn authority(lead: &Lead, call: Option<&ToolCall<'_>>) -> Result<Workspace
     }
 }
 
-pub(super) fn exclusive(session: &Session) -> Result<OperationGuard<'_>, String> {
-    acquire_workspace_operation(&session.operation, &session.repository_identity)
+pub(super) fn exclusive(session: &Session) -> Result<OperationGuard, String> {
+    acquire_workspace_operation(&session.repository_identity)
 }
 
 fn needs_exclusive_workspace(operation: &str, arguments: &Value) -> bool {
@@ -102,14 +102,13 @@ fn needs_exclusive_workspace(operation: &str, arguments: &Value) -> bool {
                 || arguments.get("required_access").is_some())
 }
 
-fn workspace_guard<'a>(
+fn workspace_guard(
     operation: &str,
     arguments: &Value,
-    active: &'a AtomicBool,
     repository_identity: &str,
-) -> Result<Option<OperationGuard<'a>>, String> {
+) -> Result<Option<OperationGuard>, String> {
     needs_exclusive_workspace(operation, arguments)
-        .then(|| acquire_workspace_operation(active, repository_identity))
+        .then(|| acquire_workspace_operation(repository_identity))
         .transpose()
 }
 
@@ -229,19 +228,15 @@ pub(super) fn gate(
     gate: codex_omd::Gate,
     candidate_sha256: &str,
     acceptance_sha256: Option<&str>,
-) -> Result<Vec<codex_omd::ContractRequirement>, String> {
-    let missing = lead
+) -> Result<contract::GateOutcome, String> {
+    let outcome = lead
         .session
         .contract
         .lock()
         .map_err(|_| "contract_lock_poisoned")?
         .gate(gate, candidate_sha256, acceptance_sha256)?;
-    notify_contract(
-        core,
-        json!({"gate": gate, "outcome": if missing.is_empty() {"passed"} else {"refused"},
-            "missing": missing, "candidate_sha256": candidate_sha256}),
-    );
-    Ok(missing)
+    notify_contract(core, outcome.event(gate, candidate_sha256));
+    Ok(outcome)
 }
 
 async fn complete(core: &Core, lead: &Lead, arguments: Value) -> Result<Value, String> {
@@ -261,43 +256,22 @@ async fn complete(core: &Core, lead: &Lead, arguments: Value) -> Result<Value, S
     if current != input.candidate_sha256 {
         return Err("candidate_changed: the workspace no longer matches candidate_sha256".into());
     }
-    let contract = lead
-        .session
-        .contract
-        .lock()
-        .map_err(|_| "contract_lock_poisoned")?;
-    let missing = match contract.gate(
+    let outcome = gate(
+        core,
+        lead,
         codex_omd::Gate::Complete,
         &current,
         input.acceptance_sha256.as_deref(),
-    ) {
-        Ok(missing) => missing,
-        Err(error) if error.starts_with("unresolved_blocking_findings:") => {
-            let outstanding = error
-                .trim_start_matches("unresolved_blocking_findings:")
-                .split(',')
-                .collect::<Vec<_>>();
-            notify_contract(
-                core,
-                json!({"gate":"complete","outcome":"refused","reason":"unresolved_blocking_findings",
-                    "outstanding_findings":outstanding,"candidate_sha256":current}),
-            );
-            return Ok(
-                json!({"status":"refused","reason":"unresolved_blocking_findings",
-                "outstanding_findings":outstanding}),
-            );
-        }
-        Err(error) => return Err(error),
-    };
-    notify_contract(
-        core,
-        json!({"gate":"complete","outcome":if missing.is_empty() {"passed"} else {"refused"},
-            "missing":missing,"candidate_sha256":current}),
-    );
-    if !missing.is_empty() {
-        return Ok(json!({"status": "refused", "missing": missing}));
+    )?;
+    if let Some(refusal) = outcome.refusal() {
+        return Ok(refusal);
     }
-    let status = contract.status();
+    let status = lead
+        .session
+        .contract
+        .lock()
+        .map_err(|_| "contract_lock_poisoned")?
+        .status();
     lead.session.evidence(
         &format!("completion-{current}-{}.json", now()),
         &json!({"candidate_sha256": current, "contract": status}),
@@ -342,7 +316,6 @@ pub(super) async fn dispatch(
         let _guard = workspace_guard(
             &operation,
             &request.arguments,
-            &lead.session.operation,
             &lead.session.repository_identity,
         )?;
         let authority = authority(lead, call).await?;
@@ -433,11 +406,11 @@ pub(super) async fn dispatch(
     if operation.starts_with("agents.")
         || matches!(
             operation.as_str(),
-            "workspace.integrate" | "workspace.snapshot"
+            "workspace.integrate" | "workspace.snapshot" | "workspace.fingerprint"
         )
     {
         let scoped = match (operation.as_str(), call) {
-            ("agents.spawn" | "workspace.snapshot", Some(call)) => {
+            ("agents.spawn" | "workspace.snapshot" | "workspace.fingerprint", Some(call)) => {
                 let authority = WorkspaceAuthority::for_call(lead, call).await?;
                 Some(Lead {
                     permission_profile: Arc::new(std::sync::Mutex::new(
@@ -453,6 +426,12 @@ pub(super) async fn dispatch(
             return core
                 .agents
                 .snapshot(lead, &caller, request.arguments, cancelled)
+                .await;
+        }
+        if operation == "workspace.fingerprint" {
+            return core
+                .agents
+                .fingerprint(lead, &caller, request.arguments, cancelled)
                 .await;
         }
         let repository = host.repository.clone();
@@ -522,10 +501,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let repository = temp.path().to_str().unwrap();
         let write = json!({"program":"sh","write":true});
-        let first = AtomicBool::new(false);
-        let second = AtomicBool::new(false);
         assert!(
-            workspace_guard("exec.run", &json!({"program":"sh"}), &first, repository)
+            workspace_guard("exec.run", &json!({"program":"sh"}), repository)
                 .unwrap()
                 .is_none()
         );
@@ -533,7 +510,6 @@ mod tests {
             workspace_guard(
                 "exec.run",
                 &json!({"program":"sh","write":true,"snapshot":{"sha256":"x"}}),
-                &first,
                 repository
             )
             .unwrap()
@@ -543,9 +519,8 @@ mod tests {
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         std::thread::scope(|scope| {
             let write = &write;
-            let first = &first;
             scope.spawn(move || {
-                let _guard = workspace_guard("exec.run", write, first, repository)
+                let _guard = workspace_guard("exec.run", write, repository)
                     .unwrap()
                     .unwrap();
                 held_tx.send(()).unwrap();
@@ -553,14 +528,14 @@ mod tests {
             });
             held_rx.recv().unwrap();
             assert!(
-                workspace_guard("workspace.restore", &json!({}), &second, repository)
+                workspace_guard("workspace.restore", &json!({}), repository)
                     .err()
                     .unwrap()
                     .contains("workspace_operation_active")
             );
             release_tx.send(()).unwrap();
         });
-        let _guard = workspace_guard("exec.run", &write, &second, repository)
+        let _guard = workspace_guard("exec.run", &write, repository)
             .unwrap()
             .unwrap();
     }

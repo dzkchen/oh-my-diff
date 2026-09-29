@@ -7,5 +7,6 @@
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
   "capabilities": ["lifecycle", "exec", "store", "tools", "fs.read", "fs.write"],
+  "exec_environment": ["RUSTUP_HOME"],
   "compatibility": { "required_features": ["exec_v1", "workspace_fs_v1", "framed_process_v1", "store_v1"] }
 }

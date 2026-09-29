@@ -23,6 +23,7 @@
     "required_features": [
       "turn_evidence_v1",
       "workspace_snapshots_v1",
+      "workspace_fingerprint_v1",
       "contracts_v2"
     ]
   },

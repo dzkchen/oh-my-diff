@@ -3996,22 +3996,6 @@ index 4b41740f8..60892472c 100644
                  })
                  .await;
          }
-diff --git a/codex-rs/ext/omd/.DS_Store b/codex-rs/ext/omd/.DS_Store
-new file mode 100644
-index 0000000000000000000000000000000000000000..704ea24f1ba381d61c23ff7f711e39c315b46b30
-GIT binary patch
-literal 6148
-zcmeHKJ5B>J5S<}GETTzC>4u6b;sPdGPLK<rBnXPEHX@;S#TDQ}NR(WL7V*Y2khNIR
-zAR!`VB>UO(-F?#9J4D2jyTzDjL_`&aAj_ghMBQuJGiNcf<QPxqZL`YS-T?FeOCZlV
-zpf%mne0kk{{>PWCrD^MWwrpq6R1fzDPbX*3=UwaK8|&((ll3qljP_|mSE#w6bx~7n
-zg|%CkD80U&=DMBurrp-=_bBRX1)rS(XTTY72L3k#xU)s7BSoK`0cXG&_+&uNhkzj%
-z4U=L%IxyuH062s?3)a$0NK7z{hDi|?2x}-%L)lsk)^O;9`9;H|sNuxce6UsiXkIv1
-zNB)rAiKC*=&VVyeGBD8XNbdg&d@{SzvzKq-J7>Td_z43%tf%z^8SHNTl1uK|fN_Z-
-rB7R905Uh)z0BqzOInGA42U)`}8YV@_BKjN-^dEsth)>SIFEH>9n>|9X
-
-literal 0
-HcmV?d00001
-
 diff --git a/codex-rs/ext/omd/BUILD.bazel b/codex-rs/ext/omd/BUILD.bazel
 new file mode 100644
 index 000000000..6c44c5e1a
@@ -4063,10 +4047,10 @@ index 000000000..3c8554a4c
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..73d398fbc
+index 000000000..42db24a76
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,869 @@
+@@ -0,0 +1,865 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -4336,14 +4320,10 @@ index 000000000..73d398fbc
 +                    "tools":[],"available":true})
 +            }));
 +        }
-+        let presets = routes
-+            .iter()
-+            .map(|route| json!({"name":route["name"],"model":route["model"],"provider":route["provider"],"reasoning":route["reasoning"]}))
-+            .collect::<Vec<_>>();
 +        let payload = json!({"request_id":request_id,"scope":{"thread_id":thread,
 +            "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
 +            "kind":if account.owner == "lead" {"main"} else {"subagent"}},
-+            "authorized_presets":presets,"routes":routes,"original":original,"effective":original,"provenance":[]});
++            "routes":routes,"original":original,"effective":original,"provenance":[]});
 +        let effective = match Self::middleware(
 +            &mods,
 +            &self.3,
@@ -5717,10 +5697,10 @@ index 000000000..ad823f056
 +}
 diff --git a/codex-rs/ext/omd/src/contract.rs b/codex-rs/ext/omd/src/contract.rs
 new file mode 100644
-index 000000000..3e510c527
+index 000000000..a995c1a7c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/contract.rs
-@@ -0,0 +1,826 @@
+@@ -0,0 +1,927 @@
 +use super::*;
 +use codex_omd::ContractDocument;
 +use codex_omd::Gate;
@@ -5760,10 +5740,46 @@ index 000000000..3e510c527
 +    }
 +}
 +
-+#[derive(Default)]
++#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub(crate) enum ContractStatus {
++    None,
++    Active,
++    #[default]
++    Unavailable,
++}
++
++pub(crate) enum GateOutcome {
++    Missing(Vec<codex_omd::ContractRequirement>),
++    Unresolved(Vec<String>),
++}
++
++impl GateOutcome {
++    pub(crate) fn event(&self, gate: Gate, candidate_sha256: &str) -> Value {
++        match self {
++            Self::Missing(missing) => json!({"gate": gate,
++                "outcome": if missing.is_empty() {"passed"} else {"refused"},
++                "missing": missing, "candidate_sha256": candidate_sha256}),
++            Self::Unresolved(outstanding) => json!({"gate": gate, "outcome": "refused",
++                "reason": "unresolved_blocking_findings", "outstanding_findings": outstanding,
++                "candidate_sha256": candidate_sha256}),
++        }
++    }
++
++    pub(crate) fn refusal(&self) -> Option<Value> {
++        match self {
++            Self::Missing(missing) if missing.is_empty() => None,
++            Self::Missing(missing) => Some(json!({"status": "refused", "missing": missing})),
++            Self::Unresolved(outstanding) => Some(json!({"status": "refused",
++                "reason": "unresolved_blocking_findings", "outstanding_findings": outstanding})),
++        }
++    }
++}
++
++#[derive(Clone, Default)]
 +pub(crate) struct SessionContract {
 +    active: Option<ContractDocument>,
-+    status: String,
++    status: ContractStatus,
 +    provenance: Value,
 +    restrictions: BTreeSet<String>,
 +    scoped_restrictions: Vec<Restriction>,
@@ -5773,7 +5789,7 @@ index 000000000..3e510c527
 +
 +impl SessionContract {
 +    pub(crate) fn invalidate(&mut self, error: String) {
-+        self.status = "unavailable".into();
++        self.status = ContractStatus::Unavailable;
 +        self.provenance["error"] = json!(error);
 +    }
 +
@@ -5787,13 +5803,15 @@ index 000000000..3e510c527
 +        let registered = documents
 +            .iter()
 +            .any(|(document, _)| document.digest() == active.digest());
-+        match (self.status.as_str(), registered) {
-+            ("active", false) => {
++        match (self.status, registered) {
++            (ContractStatus::Active, false) => {
 +                self.invalidate("contract_withdrawn".into());
 +                true
 +            }
-+            ("unavailable", true) if self.provenance["error"] == "contract_withdrawn" => {
-+                self.status = "active".into();
++            (ContractStatus::Unavailable, true)
++                if self.provenance["error"] == "contract_withdrawn" =>
++            {
++                self.status = ContractStatus::Active;
 +                if let Some(provenance) = self.provenance.as_object_mut() {
 +                    provenance.remove("error");
 +                }
@@ -5833,7 +5851,7 @@ index 000000000..3e510c527
 +        #[derive(Deserialize)]
 +        #[serde(deny_unknown_fields)]
 +        struct Saved {
-+            status: String,
++            status: ContractStatus,
 +            active: Option<ContractDocument>,
 +            provenance: Value,
 +            restrictions: BTreeSet<String>,
@@ -5843,7 +5861,7 @@ index 000000000..3e510c527
 +            finding_ledger: codex_omd::FindingLedger,
 +        }
 +        let saved: Saved = serde_json::from_value(value).map_err(|error| error.to_string())?;
-+        if !matches!(saved.status.as_str(), "active" | "none")
++        if saved.status == ContractStatus::Unavailable
 +            || saved.status != self.status
 +            || saved.active.as_ref().map(ContractDocument::digest)
 +                != self.active.as_ref().map(ContractDocument::digest)
@@ -5896,7 +5914,7 @@ index 000000000..3e510c527
 +            Ok(selections) => selections,
 +            Err(error) => {
 +                return Self {
-+                    status: "unavailable".into(),
++                    status: ContractStatus::Unavailable,
 +                    provenance: json!({"error": error}),
 +                    ..Self::default()
 +                };
@@ -5904,7 +5922,7 @@ index 000000000..3e510c527
 +        };
 +        match codex_omd::resolve_contract(documents, user.as_ref(), project.as_ref()) {
 +            codex_omd::ContractResolution::None => Self {
-+                status: "none".into(),
++                status: ContractStatus::None,
 +                ..Self::default()
 +            },
 +            codex_omd::ContractResolution::Active {
@@ -5920,7 +5938,7 @@ index 000000000..3e510c527
 +                contract
 +            }
 +            codex_omd::ContractResolution::Unavailable(error) => Self {
-+                status: "unavailable".into(),
++                status: ContractStatus::Unavailable,
 +                provenance: json!({"error": error}),
 +                ..Self::default()
 +            },
@@ -5932,7 +5950,7 @@ index 000000000..3e510c527
 +            restrictions: document.restrict.iter().cloned().collect(),
 +            scoped_restrictions: Vec::new(),
 +            provenance: json!({"source": source, "owner": owner, "digest": document.digest()}),
-+            status: "active".into(),
++            status: ContractStatus::Active,
 +            active: Some(document),
 +            receipts: Vec::new(),
 +            finding_ledger: codex_omd::FindingLedger::new(),
@@ -5940,7 +5958,7 @@ index 000000000..3e510c527
 +    }
 +
 +    pub(crate) fn restricted(&self, operation: &str, arguments: &Value) -> Result<(), String> {
-+        if self.status == "unavailable" {
++        if self.status == ContractStatus::Unavailable {
 +            return Err("contract_unavailable".into());
 +        }
 +        if self.restrictions.contains(operation)
@@ -5961,7 +5979,7 @@ index 000000000..3e510c527
 +    }
 +
 +    pub(crate) fn restrict(&mut self, arguments: Value) -> Result<Value, String> {
-+        if self.status == "unavailable" {
++        if self.status == ContractStatus::Unavailable {
 +            return Err("contract_unavailable".into());
 +        }
 +        #[derive(Deserialize)]
@@ -5998,8 +6016,12 @@ index 000000000..3e510c527
 +        )
 +    }
 +
++    pub(crate) fn admit(&self, receipt: &Receipt) -> Result<(), String> {
++        self.clone().submit(receipt.clone()).map(|_| ())
++    }
++
 +    pub(crate) fn submit(&mut self, receipt: Receipt) -> Result<Value, String> {
-+        if self.status == "unavailable" {
++        if self.status == ContractStatus::Unavailable {
 +            return Err("contract_unavailable".into());
 +        }
 +        receipt.validate()?;
@@ -6027,20 +6049,24 @@ index 000000000..3e510c527
 +        gate: Gate,
 +        candidate_sha256: &str,
 +        acceptance_sha256: Option<&str>,
-+    ) -> Result<Vec<codex_omd::ContractRequirement>, String> {
-+        match (self.status.as_str(), &self.active) {
-+            ("none", _) => Ok(Vec::new()),
-+            ("active", Some(document)) => {
-+                if gate == Gate::Complete {
-+                    let outstanding = self.outstanding_findings();
-+                    if !outstanding.is_empty() {
-+                        return Err(format!(
-+                            "unresolved_blocking_findings:{}",
-+                            outstanding.join(",")
-+                        ));
-+                    }
++    ) -> Result<GateOutcome, String> {
++        match (self.status, &self.active) {
++            (ContractStatus::None, _) => Ok(GateOutcome::Missing(Vec::new())),
++            (ContractStatus::Active, Some(document)) => {
++                let outstanding = if gate == Gate::Complete {
++                    self.outstanding_findings()
++                } else {
++                    Vec::new()
++                };
++                if !outstanding.is_empty() {
++                    return Ok(GateOutcome::Unresolved(outstanding));
 +                }
-+                Ok(document.missing(gate, &self.receipts, candidate_sha256, acceptance_sha256))
++                Ok(GateOutcome::Missing(document.missing(
++                    gate,
++                    &self.receipts,
++                    candidate_sha256,
++                    acceptance_sha256,
++                )))
 +            }
 +            _ => Err(
 +                "selected contract is unavailable; completion and integration fail closed".into(),
@@ -6062,7 +6088,7 @@ index 000000000..3e510c527
 +        acceptance_sha256: &str,
 +        fingerprints: &[String],
 +    ) -> Result<Vec<codex_omd::FindingLedgerEntry>, String> {
-+        if self.status != "active" || self.active.is_none() {
++        if self.status != ContractStatus::Active || self.active.is_none() {
 +            return Err("finding_resolution_contract_inactive".into());
 +        }
 +        if fingerprints.is_empty()
@@ -6104,19 +6130,67 @@ index 000000000..3e510c527
 +mod tests {
 +    use super::*;
 +
++    fn owner() -> codex_omd::PolicyOwner {
++        codex_omd::PolicyOwner {
++            id: "fixture".into(),
++            version: "1.0.0".into(),
++            source: "fixture".into(),
++            sha256: "0".repeat(64),
++        }
++    }
++
++    trait Missing {
++        fn missing(self) -> Result<Vec<codex_omd::ContractRequirement>, String>;
++    }
++
++    impl Missing for Result<GateOutcome, String> {
++        fn missing(self) -> Result<Vec<codex_omd::ContractRequirement>, String> {
++            match self? {
++                GateOutcome::Missing(missing) => Ok(missing),
++                GateOutcome::Unresolved(outstanding) => Err(outstanding.join(",")),
++            }
++        }
++    }
++
 +    fn document(value: Value) -> ContractDocument {
 +        ContractDocument::parse(&value).unwrap()
 +    }
 +
 +    #[test]
++    fn admission_reports_a_full_contract_without_recording_the_probe() {
++        let active = document(
++            json!({"schema":2,"id":"checked","version":1,"description":"Checks",
++            "assurance":"checked","gates":{"complete":[{"receipt":"checks","bind":["candidate"]}]}}),
++        );
++        let mut contract = SessionContract::activate(active, owner(), "user");
++        let receipt = |index: usize| -> Receipt {
++            serde_json::from_value(json!({"kind":"checks","candidate_sha256":"a".repeat(64),
++            "outcome":"pass","evidence":{"reference":format!("fixture-{index}"),"sha256":"b".repeat(64)},
++            "producer":{"kind":"lead","handle":null},"submitted_by":"fixture","at":1}))
++            .unwrap()
++        };
++        contract.admit(&receipt(0)).unwrap();
++        assert!(contract.receipts.is_empty());
++        for index in 0..RECEIPT_LIMIT {
++            contract.submit(receipt(index)).unwrap();
++        }
++        assert_eq!(
++            contract.admit(&receipt(RECEIPT_LIMIT)).unwrap_err(),
++            "receipt_limit"
++        );
++        assert_eq!(contract.receipts.len(), RECEIPT_LIMIT);
++    }
++
++    #[test]
 +    fn no_selection_means_no_gate_and_restrictions_are_enforced() {
 +        let mut contract = SessionContract {
-+            status: "none".into(),
++            status: ContractStatus::None,
 +            ..Default::default()
 +        };
 +        assert!(
 +            contract
 +                .gate(Gate::Complete, &"a".repeat(64), None)
++                .missing()
 +                .unwrap()
 +                .is_empty()
 +        );
@@ -6138,12 +6212,12 @@ index 000000000..3e510c527
 +            json!({"schema":2,"id":"checked","version":1,"description":"Checks",
 +            "assurance":"checked","gates":{"complete":[{"receipt":"checks","bind":["candidate"]}]}}),
 +        );
-+        let mut contract =
-+            SessionContract::activate(active, codex_omd::PolicyOwner::bundled(), "user");
++        let mut contract = SessionContract::activate(active, owner(), "user");
 +        let candidate = "a".repeat(64);
 +        assert_eq!(
 +            contract
 +                .gate(Gate::Complete, &candidate, None)
++                .missing()
 +                .unwrap()
 +                .len(),
 +            1
@@ -6157,28 +6231,33 @@ index 000000000..3e510c527
 +        assert!(
 +            contract
 +                .gate(Gate::Complete, &candidate, None)
++                .missing()
 +                .unwrap()
 +                .is_empty()
 +        );
 +        assert_eq!(
 +            contract
 +                .gate(Gate::Complete, &"c".repeat(64), None)
++                .missing()
 +                .unwrap()
 +                .len(),
 +            1
 +        );
-+        let registered = [(
-+            contract.active.clone().unwrap(),
-+            codex_omd::PolicyOwner::bundled(),
-+        )];
++        let registered = [(contract.active.clone().unwrap(), owner())];
 +        assert!(!contract.revalidate(&registered));
 +        assert!(contract.revalidate(&[]));
-+        assert!(contract.gate(Gate::Complete, &candidate, None).is_err());
++        assert!(
++            contract
++                .gate(Gate::Complete, &candidate, None)
++                .missing()
++                .is_err()
++        );
 +        assert!(contract.submit(contract.receipts[0].clone()).is_err());
 +        assert!(contract.revalidate(&registered));
 +        assert!(
 +            contract
 +                .gate(Gate::Complete, &candidate, None)
++                .missing()
 +                .unwrap()
 +                .is_empty()
 +        );
@@ -6188,15 +6267,21 @@ index 000000000..3e510c527
 +        assert_eq!(
 +            contract
 +                .gate(Gate::Complete, &candidate, None)
++                .missing()
 +                .unwrap()
 +                .len(),
 +            1
 +        );
 +        let unavailable = SessionContract {
-+            status: "unavailable".into(),
++            status: ContractStatus::Unavailable,
 +            ..Default::default()
 +        };
-+        assert!(unavailable.gate(Gate::Integrate, &candidate, None).is_err());
++        assert!(
++            unavailable
++                .gate(Gate::Integrate, &candidate, None)
++                .missing()
++                .is_err()
++        );
 +    }
 +
 +    #[test]
@@ -6206,11 +6291,7 @@ index 000000000..3e510c527
 +            "assurance":"checked","gates":{"complete":[{"receipt":"checks","bind":["candidate","acceptance"]}],
 +            "integrate":[{"receipt":"checks","bind":["candidate","acceptance"]}]}}),
 +        );
-+        let mut before = SessionContract::activate(
-+            definition.clone(),
-+            codex_omd::PolicyOwner::bundled(),
-+            "user",
-+        );
++        let mut before = SessionContract::activate(definition.clone(), owner(), "user");
 +        let candidate = "a".repeat(64);
 +        let acceptance = "c".repeat(64);
 +        before
@@ -6228,24 +6309,25 @@ index 000000000..3e510c527
 +        let directory = tempfile::tempdir().unwrap();
 +        let path = directory.path().join("contract.json");
 +        std::fs::write(&path, serde_json::to_vec(&before.status()).unwrap()).unwrap();
-+        let mut after = SessionContract::activate(
-+            definition.clone(),
-+            codex_omd::PolicyOwner::bundled(),
-+            "user",
-+        );
++        let mut after = SessionContract::activate(definition.clone(), owner(), "user");
 +        after.restore(&path).unwrap();
 +        assert!(after.restricted("agents.spawn", &Value::Null).is_err());
 +        for gate in [Gate::Complete, Gate::Integrate] {
 +            assert!(
 +                after
 +                    .gate(gate, &candidate, Some(&acceptance))
++                    .missing()
 +                    .unwrap()
 +                    .is_empty()
 +            );
-+            assert_eq!(after.gate(gate, &candidate, None).unwrap().len(), 1);
++            assert_eq!(
++                after.gate(gate, &candidate, None).missing().unwrap().len(),
++                1
++            );
 +            assert_eq!(
 +                after
 +                    .gate(gate, &candidate, Some(&"d".repeat(64)))
++                    .missing()
 +                    .unwrap()
 +                    .len(),
 +                1
@@ -6253,6 +6335,7 @@ index 000000000..3e510c527
 +            assert_eq!(
 +                after
 +                    .gate(gate, &"e".repeat(64), Some(&acceptance))
++                    .missing()
 +                    .unwrap()
 +                    .len(),
 +                1
@@ -6260,13 +6343,13 @@ index 000000000..3e510c527
 +        }
 +        let mut changed = definition;
 +        changed.assurance = "changed".into();
-+        let mut changed =
-+            SessionContract::activate(changed, codex_omd::PolicyOwner::bundled(), "user");
++        let mut changed = SessionContract::activate(changed, owner(), "user");
 +        let error = changed.restore(&path).unwrap_err();
 +        changed.invalidate(error);
 +        assert!(
 +            changed
 +                .gate(Gate::Complete, &candidate, Some(&acceptance))
++                .missing()
 +                .is_err()
 +        );
 +        std::fs::write(&path, b"{").unwrap();
@@ -6279,7 +6362,7 @@ index 000000000..3e510c527
 +    #[test]
 +    fn argument_restrictions_are_monotone_and_survive_restart() {
 +        let mut contract = SessionContract {
-+            status: "none".into(),
++            status: ContractStatus::None,
 +            ..Default::default()
 +        };
 +        contract.restrict(json!({"scoped":[{"operation":"agents.spawn","when":{"/workspace":"isolated_worktree"}},
@@ -6306,7 +6389,7 @@ index 000000000..3e510c527
 +                .is_ok()
 +        );
 +        let mut restored = SessionContract {
-+            status: "none".into(),
++            status: ContractStatus::None,
 +            ..Default::default()
 +        };
 +        restored.restore_value(contract.status()).unwrap();
@@ -6336,8 +6419,7 @@ index 000000000..3e510c527
 +    {
 +        let definition = document(json!({"schema":2,"id":"checked","version":1,
 +            "description":"Checks","assurance":"checked"}));
-+        let mut contract =
-+            SessionContract::activate(definition, codex_omd::PolicyOwner::bundled(), "user");
++        let mut contract = SessionContract::activate(definition, owner(), "user");
 +        let candidate = "a".repeat(64);
 +        let changed = "b".repeat(64);
 +        let acceptance = "c".repeat(64);
@@ -6403,12 +6485,14 @@ index 000000000..3e510c527
 +        assert!(
 +            contract
 +                .gate(Gate::Complete, &changed, Some(&acceptance))
++                .missing()
 +                .unwrap_err()
 +                .contains("issue.one")
 +        );
 +        assert!(
 +            contract
 +                .gate(Gate::Integrate, &changed, Some(&acceptance))
++                .missing()
 +                .is_ok()
 +        );
 +        assert_eq!(
@@ -6475,6 +6559,7 @@ index 000000000..3e510c527
 +        assert!(
 +            contract
 +                .gate(Gate::Complete, &changed, Some(&acceptance))
++                .missing()
 +                .unwrap()
 +                .is_empty()
 +        );
@@ -6493,13 +6578,7 @@ index 000000000..3e510c527
 +    fn finding_ledger_replays_on_restore_and_rejects_tampering() {
 +        let definition = document(json!({"schema":2,"id":"checked","version":1,
 +            "description":"Checks","assurance":"checked"}));
-+        let make_contract = || {
-+            SessionContract::activate(
-+                definition.clone(),
-+                codex_omd::PolicyOwner::bundled(),
-+                "user",
-+            )
-+        };
++        let make_contract = || SessionContract::activate(definition.clone(), owner(), "user");
 +        let mut before = make_contract();
 +        before
 +            .submit(
@@ -6518,6 +6597,7 @@ index 000000000..3e510c527
 +        assert!(
 +            restored
 +                .gate(Gate::Complete, &"d".repeat(64), Some(&"b".repeat(64)))
++                .missing()
 +                .is_err()
 +        );
 +        let mut no_ledger = status.clone();
@@ -6536,12 +6616,13 @@ index 000000000..3e510c527
 +            "contract_finding_ledger_mismatch"
 +        );
 +        let mut none = SessionContract {
-+            status: "none".into(),
++            status: ContractStatus::None,
 +            ..Default::default()
 +        };
 +        none.submit(before.receipts[0].clone()).unwrap();
 +        assert!(
 +            none.gate(Gate::Complete, &"d".repeat(64), None)
++                .missing()
 +                .unwrap()
 +                .is_empty()
 +        );
@@ -6549,10 +6630,10 @@ index 000000000..3e510c527
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 000000000..b167671f0
+index 000000000..a5fe999ee
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,515 @@
+@@ -0,0 +1,548 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -7067,13 +7148,46 @@ index 000000000..b167671f0
 +        assert!(output.status.success(), "{:?}", output);
 +        assert_eq!(output.stdout, b"sandbox-ok");
 +    }
++
++    #[test]
++    fn protected_host_paths_stay_unreadable_even_under_an_unrestricted_session() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap();
++        let repository = root.join("repo");
++        let protected = root.join("omd-data");
++        std::fs::create_dir(&repository).unwrap();
++        std::fs::create_dir(&protected).unwrap();
++        std::fs::write(protected.join("secret"), "host-only").unwrap();
++        let output = crate::generic_host::sandboxed_command(
++            &FileSystemSandboxPolicy::unrestricted(),
++            &repository,
++            std::slice::from_ref(&protected),
++            vec![
++                "/bin/sh".into(),
++                "-c".into(),
++                "if cat \"$1\"; then exit 19; fi; printf sandbox-ok".into(),
++                "check".into(),
++                protected.join("secret").display().to_string(),
++            ],
++            &codex_omd::host::ExecAccess {
++                write: false,
++                loopback: false,
++                scratch: &repository,
++            },
++        )
++        .unwrap()
++        .output()
++        .unwrap();
++        assert!(output.status.success(), "{:?}", output);
++        assert_eq!(output.stdout, b"sandbox-ok");
++    }
 +}
 diff --git a/codex-rs/ext/omd/src/generic_host.rs b/codex-rs/ext/omd/src/generic_host.rs
 new file mode 100644
-index 000000000..b87d094a1
+index 000000000..94e49b75a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/generic_host.rs
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,271 @@
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_omd::data_store::Origin;
@@ -7214,7 +7328,7 @@ index 000000000..b87d094a1
 +            let literal = serde_json::to_string(&path.to_string_lossy())
 +                .map_err(|error| error.to_string())?;
 +            args[1].push_str(&format!(
-+                "\n(deny file-write* (literal {literal}) (subpath {literal}))"
++                "\n(deny file-read* file-write* (literal {literal}) (subpath {literal}))"
 +            ));
 +        }
 +    }
@@ -7242,6 +7356,17 @@ index 000000000..b87d094a1
 +            .any(|capability| capability == "network")
 +    {
 +        return Err("capability_denied: network".into());
++    }
++    if fields
++        .get("environment")
++        .and_then(Value::as_object)
++        .is_some_and(|environment| {
++            environment
++                .keys()
++                .any(|name| !grants.exec_environment.contains(name))
++        })
++    {
++        return Err("exec_environment_undeclared".into());
 +    }
 +    Ok(())
 +}
@@ -7307,12 +7432,39 @@ index 000000000..b87d094a1
 +        request.arguments,
 +    )
 +}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    #[test]
++    fn process_environment_names_must_be_declared_by_the_manifest() {
++        let grants = codex_omd::ModGrants {
++            api: "0.2.0-experimental.1".into(),
++            source_sha256: "a".repeat(64),
++            capabilities: vec!["exec".into()],
++            exec_environment: vec!["RUSTUP_HOME".into()],
++        };
++        let start = |environment: Value| codex_omd::ModHostCall {
++            operation: "process.start".into(),
++            arguments: json!({"session":"s","environment":environment}),
++        };
++        assert!(
++            process_request_allowed(Some(&grants), &start(json!({"RUSTUP_HOME":"/r"}))).is_ok()
++        );
++        assert_eq!(
++            process_request_allowed(Some(&grants), &start(json!({"UNDECLARED":"1"}))).unwrap_err(),
++            "exec_environment_undeclared"
++        );
++    }
++}
 diff --git a/codex-rs/ext/omd/src/ledger.rs b/codex-rs/ext/omd/src/ledger.rs
 new file mode 100644
-index 000000000..1ea18208f
+index 000000000..e69c3124f
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/ledger.rs
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,124 @@
 +use super::*;
 +use std::path::Path;
 +
@@ -7355,18 +7507,6 @@ index 000000000..1ea18208f
 +            Task::open(limits, directory, Some(&thread.to_string())).map_err(|e| e.to_string())
 +        }
 +        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-+            let prefix = format!("{thread}-");
-+            if resumed
-+                && std::fs::read_dir(sessions)
-+                    .map_err(|e| e.to_string())?
-+                    .any(|entry| {
-+                        entry.is_ok_and(|entry| {
-+                            entry.file_name().to_string_lossy().starts_with(&prefix)
-+                        })
-+                    })
-+            {
-+                return Err("legacy_ledger_requires_explicit_migration".into());
-+            }
 +            let task = Task::create(limits, directory.clone()).map_err(|e| e.to_string())?;
 +            persist(
 +                &directory,
@@ -7430,13 +7570,20 @@ index 000000000..1ea18208f
 +    }
 +
 +    #[test]
-+    fn legacy_and_symlink_ledgers_never_reset_allowance() {
++    fn session_evidence_directories_do_not_block_a_resumed_thread_in_another_repository() {
 +        let temp = tempfile::tempdir().unwrap();
 +        let root = temp.path().canonicalize().unwrap();
 +        let thread = ThreadId::new();
-+        std::fs::create_dir(root.join(format!("{thread}-old"))).unwrap();
-+        assert!(open(&root, "repository", thread, limits(), true).is_err());
-+        assert!(!root.join(format!("ledger-repository-{thread}")).exists());
++        drop(open(&root, "first", thread, limits(), false).unwrap());
++        std::fs::create_dir(root.join(format!("{thread}-1-{}", ThreadId::new()))).unwrap();
++        assert!(open(&root, "second", thread, limits(), true).is_ok());
++        assert!(root.join(format!("ledger-second-{thread}")).is_dir());
++    }
++
++    #[test]
++    fn symlinked_ledgers_never_reset_allowance() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap();
 +        let other = ThreadId::new();
 +        std::os::unix::fs::symlink(&root, root.join(format!("ledger-repository-{other}"))).unwrap();
 +        assert!(open(&root, "repository", other, limits(), true).is_err());
@@ -7444,10 +7591,10 @@ index 000000000..1ea18208f
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..5357aff19
+index 000000000..007442522
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,505 @@
+@@ -0,0 +1,487 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -7524,7 +7671,6 @@ index 000000000..5357aff19
 +    scratch: PathBuf,
 +    contract: std::sync::Mutex<contract::SessionContract>,
 +    contract_state: PathBuf,
-+    operation: std::sync::atomic::AtomicBool,
 +    processes: Arc<managed_process::ManagedProcesses>,
 +    data: mods::DataScope,
 +}
@@ -7539,8 +7685,7 @@ index 000000000..5357aff19
 +    permission_profile: Arc<std::sync::Mutex<codex_protocol::models::PermissionProfile>>,
 +}
 +
-+struct OperationGuard<'a> {
-+    operation: &'a std::sync::atomic::AtomicBool,
++struct OperationGuard {
 +    repository_identity: String,
 +}
 +
@@ -7548,34 +7693,22 @@ index 000000000..5357aff19
 +    std::sync::Mutex<std::collections::BTreeSet<String>>,
 +> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
 +
-+impl Drop for OperationGuard<'_> {
++impl Drop for OperationGuard {
 +    fn drop(&mut self) {
-+        self.operation
-+            .store(false, std::sync::atomic::Ordering::Release);
 +        if let Ok(mut active) = WORKSPACE_OPERATIONS.lock() {
 +            active.remove(&self.repository_identity);
 +        }
 +    }
 +}
 +
-+fn acquire_workspace_operation<'a>(
-+    operation: &'a std::sync::atomic::AtomicBool,
-+    repository_identity: &str,
-+) -> Result<OperationGuard<'a>, String> {
-+    use std::sync::atomic::Ordering;
-+    if operation.swap(true, Ordering::AcqRel) {
-+        return Err("workspace_operation_active: another integrate, restore, rename or transaction is running".into());
-+    }
-+    let mut active = WORKSPACE_OPERATIONS.lock().map_err(|_| {
-+        operation.store(false, Ordering::Release);
-+        "workspace_operation_lock_poisoned"
-+    })?;
++fn acquire_workspace_operation(repository_identity: &str) -> Result<OperationGuard, String> {
++    let mut active = WORKSPACE_OPERATIONS
++        .lock()
++        .map_err(|_| "workspace_operation_lock_poisoned")?;
 +    if !active.insert(repository_identity.to_owned()) {
-+        operation.store(false, Ordering::Release);
 +        return Err("workspace_operation_active: another integrate, restore, rename or transaction is running".into());
 +    }
 +    Ok(OperationGuard {
-+        operation,
 +        repository_identity: repository_identity.to_owned(),
 +    })
 +}
@@ -7722,7 +7855,6 @@ index 000000000..5357aff19
 +                "contract-{}-{thread}.json",
 +                self.repository_identity
 +            )),
-+            operation: std::sync::atomic::AtomicBool::new(false),
 +            processes: Arc::new(managed_process::ManagedProcesses::default()),
 +            data: mods::DataScope::default(),
 +            evidence,
@@ -7915,14 +8047,11 @@ index 000000000..5357aff19
 +
 +    #[test]
 +    fn workspace_operation_guard_excludes_other_sessions_in_same_repository() {
-+        let first = std::sync::atomic::AtomicBool::new(false);
-+        let second = std::sync::atomic::AtomicBool::new(false);
-+        let held = acquire_workspace_operation(&first, "repo-a").unwrap();
-+        assert!(acquire_workspace_operation(&first, "repo-a").is_err());
-+        assert!(acquire_workspace_operation(&second, "repo-a").is_err());
-+        assert!(acquire_workspace_operation(&second, "repo-b").is_ok());
++        let held = acquire_workspace_operation("repo-a").unwrap();
++        assert!(acquire_workspace_operation("repo-a").is_err());
++        assert!(acquire_workspace_operation("repo-b").is_ok());
 +        drop(held);
-+        assert!(acquire_workspace_operation(&second, "repo-a").is_ok());
++        assert!(acquire_workspace_operation("repo-a").is_ok());
 +    }
 +
 +    #[test]
@@ -7955,10 +8084,10 @@ index 000000000..5357aff19
 +}
 diff --git a/codex-rs/ext/omd/src/managed_process.rs b/codex-rs/ext/omd/src/managed_process.rs
 new file mode 100644
-index 000000000..f66e1bc43
+index 000000000..f805d7feb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/managed_process.rs
-@@ -0,0 +1,782 @@
+@@ -0,0 +1,785 @@
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -8289,11 +8418,11 @@ index 000000000..f66e1bc43
 +                            || !key.bytes().all(|byte| {
 +                                byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
 +                            })
-+                            || key.starts_with("CODEX_")
-+                            || key.starts_with("OMD_")
-+                            || key.starts_with("DYLD_")
-+                            || key.starts_with("LD_")
-+                            || matches!(key.as_str(), "HOME" | "PATH" | "TMPDIR" | "XDG_CACHE_HOME")
++                            || codex_omd::host::RESERVED_EXEC_ENVIRONMENT.contains(&key.as_str())
++                            || codex_omd::host::RESERVED_EXEC_PREFIXES
++                                .iter()
++                                .any(|prefix| key.starts_with(prefix))
++                            || key == "XDG_CACHE_HOME"
 +                            || value.len() > 1024
 +                            || value
 +                                .bytes()
@@ -8725,6 +8854,9 @@ index 000000000..f66e1bc43
 +        for environment in [
 +            json!({"HOME":"/tmp"}),
 +            json!({"DYLD_INSERT_LIBRARIES":"/tmp/injected.dylib"}),
++            json!({"NODE_OPTIONS":"--require=/tmp/injected.js"}),
++            json!({"GIT_CONFIG_GLOBAL":"/tmp/injected"}),
++            json!({"BASH_ENV":"/tmp/injected.sh"}),
 +            json!({"CUSTOM_PATH":"line\nbreak"}),
 +        ] {
 +            assert_eq!(
@@ -8743,10 +8875,10 @@ index 000000000..f66e1bc43
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..73e4d3ad7
+index 000000000..2c3abecaa
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1431 @@
+@@ -0,0 +1,1447 @@
 +mod agents;
 +mod evidence;
 +mod operations;
@@ -8817,6 +8949,22 @@ index 000000000..73e4d3ad7
 +    thread
 +        .get::<Lead>()
 +        .and_then(|lead| (lead.owner != "lead").then(|| lead.owner.clone()))
++}
++
++fn tool_outcome(outcome: codex_extension_api::ToolCallOutcome) -> &'static str {
++    use codex_extension_api::ToolCallOutcome;
++    match outcome {
++        ToolCallOutcome::Completed { success: true } => "succeeded",
++        ToolCallOutcome::Completed { success: false } => "unsuccessful",
++        ToolCallOutcome::Blocked => "blocked",
++        ToolCallOutcome::Failed {
++            handler_executed: true,
++        } => "failed",
++        ToolCallOutcome::Failed {
++            handler_executed: false,
++        } => "failed_before_handler",
++        ToolCallOutcome::Aborted => "aborted",
++    }
 +}
 +
 +fn thread_id(thread: &ExtensionData) -> Option<String> {
@@ -10132,14 +10280,14 @@ index 000000000..73e4d3ad7
 +                    .and_then(|turn| turn.evidence.as_mut())
 +                && cursor.tools.len() < 128
 +            {
-+                cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":format!("{:?}",input.outcome)}));
++                cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":tool_outcome(input.outcome)}));
 +            }
 +            let event_lead = (lead.owner == "lead").then_some(&*lead);
 +            self.event(
 +                "tool_result",
 +                json!({"call_id": input.call_id, "agent_id":agent_id(input.thread_store),
 +                    "thread_id": lead.thread.to_string(), "tool": input.tool_name.to_string(),
-+                    "outcome": format!("{:?}", input.outcome),
++                    "outcome": tool_outcome(input.outcome),
 +                    "call_sha256": input.call_sha256, "result_sha256": input.result_sha256,
 +                    "result_complete": input.result_sha256.is_some()}),
 +                event_lead,
@@ -10180,10 +10328,10 @@ index 000000000..73e4d3ad7
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..8cd511cea
+index 000000000..ef0626034
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,1973 @@
+@@ -0,0 +1,2068 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -10318,6 +10466,33 @@ index 000000000..8cd511cea
 +        return Err("history_call_or_output_missing".into());
 +    }
 +    Ok(records)
++}
++
++fn integration_receipt(
++    submitted_by: &str,
++    handle: &str,
++    acceptance_sha256: Option<&str>,
++    candidate_sha256: String,
++    evidence_sha256: String,
++) -> codex_omd::Receipt {
++    codex_omd::Receipt {
++        kind: "workspace_integration".into(),
++        candidate_sha256,
++        acceptance_sha256: acceptance_sha256.map(str::to_owned),
++        outcome: codex_omd::ReceiptOutcome::Pass,
++        evidence: codex_omd::resource_data::ResourceRef {
++            reference: format!("native-integration:{handle}"),
++            sha256: evidence_sha256,
++        },
++        producer: codex_omd::ReceiptProducer {
++            kind: codex_omd::ProducerKind::Integration,
++            handle: None,
++        },
++        findings: Vec::new(),
++        resolves: Vec::new(),
++        submitted_by: submitted_by.to_owned(),
++        at: operations::now(),
++    }
 +}
 +
 +#[cfg(test)]
@@ -10553,8 +10728,11 @@ index 000000000..8cd511cea
 +    }
 +}
 +
++type AgentSlot = Arc<tokio::sync::Mutex<Agent>>;
++
 +pub(super) struct Agents {
-+    records: Arc<tokio::sync::Mutex<BTreeMap<String, Agent>>>,
++    records: tokio::sync::Mutex<BTreeMap<String, AgentSlot>>,
++    spawning: Arc<std::sync::atomic::AtomicUsize>,
 +    snapshots: Mutex<snapshots::Snapshots>,
 +    notifier: Notifier,
 +}
@@ -10792,6 +10970,14 @@ index 000000000..8cd511cea
 +    transferred: bool,
 +}
 +
++struct SpawnReservation(Arc<std::sync::atomic::AtomicUsize>);
++
++impl Drop for SpawnReservation {
++    fn drop(&mut self) {
++        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
++    }
++}
++
 +impl Drop for Admission {
 +    fn drop(&mut self) {
 +        if !self.transferred {
@@ -10958,7 +11144,8 @@ index 000000000..8cd511cea
 +        host: Arc<Host>,
 +    ) -> Self {
 +        Self {
-+            records: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
++            records: tokio::sync::Mutex::new(BTreeMap::new()),
++            spawning: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
 +            snapshots: Mutex::new(snapshots::Snapshots::default()),
 +            notifier: Notifier {
 +                core,
@@ -10983,20 +11170,18 @@ index 000000000..8cd511cea
 +            resolves,
 +            evidence,
 +        } = claim;
-+        let records = self.records.lock().await;
-+        let agent = records
-+            .get(handle)
-+            .filter(|agent| {
-+                agent_owned_by(
-+                    &agent.mod_id,
-+                    agent.generation,
-+                    &agent.task,
-+                    mod_id,
-+                    generation,
-+                    task,
-+                )
-+            })
-+            .ok_or("unknown_or_foreign_agent")?;
++        let slot = self.slot(handle).await?;
++        let agent = slot.lock().await;
++        if !agent_owned_by(
++            &agent.mod_id,
++            agent.generation,
++            &agent.task,
++            mod_id,
++            generation,
++            task,
++        ) {
++            return Err("unknown_or_foreign_agent".into());
++        }
 +        separate_producer(
 +            agent
 +                .workspace
@@ -11032,6 +11217,36 @@ index 000000000..8cd511cea
 +            )?;
 +        }
 +        Ok(())
++    }
++
++    async fn slot(&self, handle: &str) -> Result<AgentSlot, String> {
++        self.records
++            .lock()
++            .await
++            .get(handle)
++            .cloned()
++            .ok_or_else(|| "unknown_or_foreign_agent".to_owned())
++    }
++
++    async fn slots(&self) -> Vec<(String, AgentSlot)> {
++        self.records
++            .lock()
++            .await
++            .iter()
++            .map(|(id, slot)| (id.clone(), slot.clone()))
++            .collect()
++    }
++
++    async fn remove(&self, handle: &str, slot: &AgentSlot) -> bool {
++        let mut records = self.records.lock().await;
++        if records
++            .get(handle)
++            .is_some_and(|current| Arc::ptr_eq(current, slot))
++        {
++            records.remove(handle);
++            return true;
++        }
++        false
 +    }
 +
 +    pub(super) async fn cleanup_owned(&self, mod_id: &str, generation: u64) {
@@ -11231,6 +11446,32 @@ index 000000000..8cd511cea
 +        cancelled: &Arc<AtomicBool>,
 +    ) -> Result<Value, String> {
 +        let input: snapshots::Capture = serde_json::from_value(value).map_err(|e| e.to_string())?;
++        let (snapshot, digest) = self.capture(lead, caller, &input, cancelled).await?;
++        self.snapshots
++            .lock()
++            .map_err(|_| "snapshot_lock_poisoned")?
++            .insert(caller, lead.thread, snapshot, digest)
++    }
++
++    pub(super) async fn fingerprint(
++        &self,
++        lead: &Lead,
++        caller: &operations::Caller<'_>,
++        value: Value,
++        cancelled: &Arc<AtomicBool>,
++    ) -> Result<Value, String> {
++        let input: snapshots::Capture = serde_json::from_value(value).map_err(|e| e.to_string())?;
++        let (_, digest) = self.capture(lead, caller, &input, cancelled).await?;
++        Ok(json!({"candidate_sha256": digest}))
++    }
++
++    async fn capture(
++        &self,
++        lead: &Lead,
++        caller: &operations::Caller<'_>,
++        input: &snapshots::Capture,
++        cancelled: &Arc<AtomicBool>,
++    ) -> Result<(codex_omd::Snapshot, String), String> {
 +        let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
 +        let protected = lead.host.protected_paths();
 +        let task = lead.session.task.clone();
@@ -11238,7 +11479,7 @@ index 000000000..8cd511cea
 +        if !active() {
 +            return Err("snapshot_cancelled".into());
 +        }
-+        let snapshot = if let Some(handle) = input.agent {
++        let snapshot = if let Some(handle) = &input.agent {
 +            if !caller
 +                .grants
 +                .as_ref()
@@ -11247,15 +11488,14 @@ index 000000000..8cd511cea
 +                return Err("capability_denied: agents".into());
 +            }
 +            let root = {
-+                let records = self.records.lock().await;
-+                let agent = records
-+                    .get(&handle)
-+                    .filter(|agent| {
-+                        agent.mod_id == caller.id
-+                            && agent.generation == caller.generation
-+                            && Arc::ptr_eq(&agent.task, &lead.session.task)
-+                    })
-+                    .ok_or("unknown_or_foreign_agent")?;
++                let slot = self.slot(handle).await?;
++                let agent = slot.lock().await;
++                if !(agent.mod_id == caller.id
++                    && agent.generation == caller.generation
++                    && Arc::ptr_eq(&agent.task, &lead.session.task))
++                {
++                    return Err("unknown_or_foreign_agent".into());
++                }
 +                if !agent.completed()? {
 +                    return Err("snapshot_agent_not_completed".into());
 +                }
@@ -11292,32 +11532,27 @@ index 000000000..8cd511cea
 +        if !active() {
 +            return Err("snapshot_cancelled".into());
 +        }
++        let digest = snapshot.hash().map_err(|e| e.to_string())?;
 +        if input
 +            .expected
-+            .is_some_and(|expected| snapshot.hash().ok().as_ref() != Some(&expected))
++            .as_ref()
++            .is_some_and(|expected| *expected != digest)
 +        {
 +            return Err("snapshot_source_changed".into());
 +        }
-+        self.snapshots
-+            .lock()
-+            .map_err(|_| "snapshot_lock_poisoned")?
-+            .insert(caller, lead.thread, snapshot)
++        Ok((snapshot, digest))
 +    }
 +
++    #[expect(
++        clippy::await_holding_invalid_type,
++        reason = "Remove and shut down a handle without releasing it to a concurrent call"
++    )]
 +    async fn cleanup_where(&self, selected: impl Fn(&Agent) -> bool) {
-+        let owned = {
-+            let mut records = self.records.lock().await;
-+            let keys = records
-+                .iter()
-+                .filter(|(_, agent)| selected(agent))
-+                .map(|(id, _)| id.clone())
-+                .collect::<Vec<_>>();
-+            keys.into_iter()
-+                .filter_map(|key| records.remove(&key))
-+                .collect::<Vec<_>>()
-+        };
-+        for mut agent in owned {
-+            agent.shutdown().await;
++        for (id, slot) in self.slots().await {
++            let mut agent = slot.lock().await;
++            if selected(&agent) && self.remove(&id, &slot).await {
++                agent.shutdown().await;
++            }
 +        }
 +    }
 +
@@ -11333,12 +11568,12 @@ index 000000000..8cd511cea
 +            return Err("invalid_integration_request".into());
 +        }
 +        let _operation = operations::exclusive(&lead.session)?;
++        let slot = self.slot(&handle.handle).await?;
 +        let workspace = {
-+            let mut records = self.records.lock().await;
-+            let agent = records
-+                .get_mut(&handle.handle)
-+                .filter(|agent| agent.mod_id == caller.id && agent.generation == caller.generation)
-+                .ok_or("unknown_or_foreign_agent")?;
++            let mut agent = slot.lock().await;
++            if agent.mod_id != caller.id || agent.generation != caller.generation {
++                return Err("unknown_or_foreign_agent".into());
++            }
 +            if !agent.consumed || !agent.completed()? {
 +                return Err("agent_result_not_consumed_or_complete".into());
 +            }
@@ -11364,15 +11599,8 @@ index 000000000..8cd511cea
 +                handle.acceptance_sha256.as_deref(),
 +            )
 +            .await;
-+        if !matches!(&result, Ok(value) if value["status"] == "integrated")
-+            && let Some(agent) = self
-+                .records
-+                .lock()
-+                .await
-+                .get_mut(&handle.handle)
-+                .filter(|agent| agent.mod_id == caller.id && agent.generation == caller.generation)
-+        {
-+            agent.workspace = Some(workspace);
++        if !matches!(&result, Ok(value) if value["status"] == "integrated") {
++            slot.lock().await.workspace = Some(workspace);
 +        }
 +        result
 +    }
@@ -11398,17 +11626,16 @@ index 000000000..8cd511cea
 +            return Err("isolated_worker_change_limit".into());
 +        }
 +        let candidate_sha256 = proposed.hash().map_err(|e| e.to_string())?;
-+        let missing = operations::gate(
++        let outcome = operations::gate(
 +            core,
 +            lead,
 +            codex_omd::Gate::Integrate,
 +            &candidate_sha256,
 +            acceptance_sha256,
 +        )?;
-+        if !missing.is_empty() {
-+            return Ok(
-+                json!({"status":"refused","candidate_sha256":candidate_sha256,"missing":missing}),
-+            );
++        if let Some(mut refusal) = outcome.refusal() {
++            refusal["candidate_sha256"] = json!(candidate_sha256);
++            return Ok(refusal);
 +        }
 +        let state = execution::ParentState::capture(
 +            host,
@@ -11437,6 +11664,20 @@ index 000000000..8cd511cea
 +        if reread.0 != paths || reread.1 != proposed {
 +            return Err("isolated_candidate_changed_before_apply".into());
 +        }
++        let receipt = |candidate_sha256: String, evidence_sha256: String| {
++            integration_receipt(
++                caller.id,
++                handle,
++                acceptance_sha256,
++                candidate_sha256,
++                evidence_sha256,
++            )
++        };
++        lead.session
++            .contract
++            .lock()
++            .map_err(|_| "contract_lock_poisoned")?
++            .admit(&receipt("0".repeat(64), "0".repeat(64)))?;
 +        let denied = host.protected_paths();
 +        let applied =
 +            execution::apply_candidate(host, task, &parent, &denied, &directory, &state, &merged)
@@ -11457,42 +11698,31 @@ index 000000000..8cd511cea
 +            return Err("integration_incomplete_inspect_session_evidence".into());
 +        }
 +        let parent_candidate_sha256 = contract::current_candidate(host)?;
-+        let receipt = codex_omd::Receipt {
-+            kind: "workspace_integration".into(),
-+            candidate_sha256: parent_candidate_sha256.clone(),
-+            acceptance_sha256: acceptance_sha256.map(str::to_owned),
-+            outcome: codex_omd::ReceiptOutcome::Pass,
-+            evidence: codex_omd::resource_data::ResourceRef {
-+                reference: format!("native-integration:{handle}"),
-+                sha256: evidence["sha256"]
-+                    .as_str()
-+                    .ok_or("integration_evidence_invalid")?
-+                    .to_owned(),
-+            },
-+            producer: codex_omd::ReceiptProducer {
-+                kind: codex_omd::ProducerKind::Integration,
-+                handle: None,
-+            },
-+            findings: Vec::new(),
-+            resolves: Vec::new(),
-+            submitted_by: caller.id.to_owned(),
-+            at: operations::now(),
-+        };
-+        lead.session
-+            .contract
-+            .lock()
-+            .map_err(|_| "contract_lock_poisoned")?
-+            .submit(receipt)?;
-+        lead.session.persist_contract()?;
++        let recorded = evidence["sha256"]
++            .as_str()
++            .ok_or_else(|| "integration_evidence_invalid".to_owned())
++            .and_then(|evidence_sha256| {
++                lead.session
++                    .contract
++                    .lock()
++                    .map_err(|_| "contract_lock_poisoned".to_owned())?
++                    .submit(receipt(
++                        parent_candidate_sha256.clone(),
++                        evidence_sha256.to_owned(),
++                    ))
++            })
++            .and_then(|_| lead.session.persist_contract());
 +        scratch.cleanup()?;
-+        Ok(
-+            json!({"status":"integrated","candidate_sha256":candidate_sha256,"parent_candidate_sha256":parent_candidate_sha256,"changed_paths":changed,"evidence":evidence}),
-+        )
++        let mut result = json!({"status":"integrated","candidate_sha256":candidate_sha256,"parent_candidate_sha256":parent_candidate_sha256,"changed_paths":changed,"evidence":evidence});
++        if let Err(error) = recorded {
++            result["receipt_error"] = json!(error);
++        }
++        Ok(result)
 +    }
 +
 +    #[expect(
 +        clippy::await_holding_invalid_type,
-+        reason = "Serialize handle transitions with native waits and cancellation"
++        reason = "Serialize one handle's transitions with its native waits and cancellation"
 +    )]
 +    pub(super) async fn call(
 +        &self,
@@ -11512,31 +11742,32 @@ index 000000000..8cd511cea
 +            }
 +            _ => {}
 +        }
-+        let mut records = self.records.lock().await;
 +        if request.operation == "agents.list" {
-+            return Ok(json!(
-+                records
-+                    .iter()
-+                    .filter(|(_, a)| a.mod_id == caller.id && a.generation == caller.generation)
-+                    .map(
-+                        |(id, a)| json!({"handle":id,"finished":a.finished(),"consumed":a.consumed})
-+                    )
-+                    .collect::<Vec<_>>()
-+            ));
++            let mut listed = Vec::new();
++            for (id, slot) in self.slots().await {
++                let agent = slot.lock().await;
++                if agent.mod_id == caller.id && agent.generation == caller.generation {
++                    listed.push(
++                        json!({"handle":id,"finished":agent.finished(),"consumed":agent.consumed}),
++                    );
++                }
++            }
++            return Ok(json!(listed));
 +        }
 +        let handle: Handle =
 +            serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
 +        if handle.acceptance_sha256.is_some() {
 +            return Err("acceptance_binding_requires_integration".into());
 +        }
-+        let agent = records
-+            .get_mut(&handle.handle)
-+            .filter(|a| a.mod_id == caller.id && a.generation == caller.generation)
-+            .ok_or("unknown_or_foreign_agent")?;
++        let slot = self.slot(&handle.handle).await?;
++        let mut agent = slot.lock().await;
++        if agent.mod_id != caller.id || agent.generation != caller.generation {
++            return Err("unknown_or_foreign_agent".into());
++        }
 +        match request.operation.as_str() {
 +            "agents.cancel" => {
 +                agent.shutdown().await;
-+                records.remove(&handle.handle);
++                self.remove(&handle.handle, &slot).await;
 +                Ok(json!({"cancelled":true}))
 +            }
 +            "agents.message" => {
@@ -11665,10 +11896,6 @@ index 000000000..8cd511cea
 +        Ok((route.clone(), true))
 +    }
 +
-+    #[expect(
-+        clippy::await_holding_invalid_type,
-+        reason = "Publish an admitted child atomically with cleanup ownership"
-+    )]
 +    async fn spawn(
 +        &self,
 +        core: &Core,
@@ -11766,22 +11993,32 @@ index 000000000..8cd511cea
 +        let (route, configured) = self
 +            .route(core, lead, caller, &mut request, writable)
 +            .await?;
-+        let mut records = self.records.lock().await;
-+        if records.len() >= AGENT_LIMIT {
-+            let spent = records
-+                .iter()
-+                .filter(|(_, agent)| {
-+                    agent.finished() && agent.consumed && agent.workspace.is_none()
-+                })
-+                .map(|(id, _)| id.clone())
-+                .collect::<Vec<_>>();
-+            for id in spent {
-+                records.remove(&id);
++        let _reservation = {
++            let mut records = self.records.lock().await;
++            let reserved = |records: &BTreeMap<String, AgentSlot>| {
++                records.len() + self.spawning.load(std::sync::atomic::Ordering::Acquire)
++            };
++            if reserved(&records) >= AGENT_LIMIT {
++                let spent = records
++                    .iter()
++                    .filter(|(_, slot)| {
++                        slot.try_lock().is_ok_and(|agent| {
++                            agent.finished() && agent.consumed && agent.workspace.is_none()
++                        })
++                    })
++                    .map(|(id, _)| id.clone())
++                    .collect::<Vec<_>>();
++                for id in spent {
++                    records.remove(&id);
++                }
++                if reserved(&records) >= AGENT_LIMIT {
++                    return Err("mod_agent_limit".into());
++                }
 +            }
-+            if records.len() >= AGENT_LIMIT {
-+                return Err("mod_agent_limit".into());
-+            }
-+        }
++            self.spawning
++                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
++            SpawnReservation(self.spawning.clone())
++        };
 +        let manager = host
 +            .manager
 +            .upgrade()
@@ -11816,24 +12053,30 @@ index 000000000..8cd511cea
 +                return Err("agent_scratch_not_canonical".into());
 +            }
 +            let approved = host.config.approved_untracked.iter().cloned().collect();
-+            let base = match &frozen {
-+                Some(snapshot) => (**snapshot).clone(),
-+                None => codex_omd::capture_tracked(
-+                    &host.repository,
-+                    &approved,
-+                    host.config.snapshot_bytes,
-+                )
-+                .map_err(|e| e.to_string())?,
-+            };
 +            let directory = session.scratch.join(format!("mod-agent-{thread_id}"));
-+            let root =
-+                match codex_omd::create_worktree(&base, &directory, host.config.snapshot_bytes) {
-+                    Ok(root) => root,
-+                    Err(error) => {
-+                        let _ = codex_omd::cleanup_owned_directory(&session.scratch, &directory);
-+                        return Err(error.to_string());
-+                    }
++            let (repository, scratch, target, limit) = (
++                host.repository.clone(),
++                session.scratch.clone(),
++                directory.clone(),
++                host.config.snapshot_bytes,
++            );
++            let frozen = frozen.clone();
++            let (base, root) = tokio::task::spawn_blocking(move || {
++                let base = match frozen {
++                    Some(snapshot) => (*snapshot).clone(),
++                    None => codex_omd::capture_tracked(&repository, &approved, limit)
++                        .map_err(|e| e.to_string())?,
 +                };
++                match codex_omd::create_worktree(&base, &target, limit) {
++                    Ok(root) => Ok((base, root)),
++                    Err(error) => {
++                        let _ = codex_omd::cleanup_owned_directory(&scratch, &target);
++                        Err(error.to_string())
++                    }
++                }
++            })
++            .await
++            .map_err(|e| e.to_string())??;
 +            let workspace = Workspace {
 +                base,
 +                root,
@@ -11934,7 +12177,7 @@ index 000000000..8cd511cea
 +        }
 +        if let Some((_, context)) = &resolution {
 +            config.developer_instructions = Some(format!(
-+                "{}\nHost-verified resolution context: {}. Independently inspect the frozen candidate. Only if you verify a finding is fixed, include a top-level resolution_assertion object in your JSON result with exact fields outcome: pass, candidate_sha256, acceptance_sha256, and resolves: the verified fingerprint IDs. Omit the assertion when no finding is verified fixed.",
++                "{}\nHost-verified resolution context: {}.",
 +                config.developer_instructions.take().unwrap_or_default(),
 +                context
 +            ));
@@ -12125,9 +12368,9 @@ index 000000000..8cd511cea
 +            );
 +            notifier.agent_end(owning_mod, generation, payload, end_lead);
 +        });
-+        records.insert(
++        self.records.lock().await.insert(
 +            id.clone(),
-+            Agent {
++            Arc::new(tokio::sync::Mutex::new(Agent {
 +                mod_id: caller.id.into(),
 +                generation: caller.generation,
 +                thread: spawned.thread,
@@ -12144,7 +12387,7 @@ index 000000000..8cd511cea
 +                    .map(|reference| (reference.sha256.clone(), Vec::new())),
 +                evidence,
 +                resolution: resolution.map(|(binding, _)| binding),
-+            },
++            })),
 +        );
 +        admission.transferred = true;
 +        self.notifier.agent(
@@ -12378,10 +12621,10 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..d55ec5fe6
+index 000000000..6b5a22556
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,567 @@
+@@ -0,0 +1,542 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -12444,7 +12687,7 @@ index 000000000..d55ec5fe6
 +                        | "routes.list"
 +                        | "task.status"
 +                        | "contract.status"
-+                        | "workspace.snapshot"
++                        | "workspace.fingerprint"
 +                ))
 +}
 +
@@ -12473,8 +12716,8 @@ index 000000000..d55ec5fe6
 +    }
 +}
 +
-+pub(super) fn exclusive(session: &Session) -> Result<OperationGuard<'_>, String> {
-+    acquire_workspace_operation(&session.operation, &session.repository_identity)
++pub(super) fn exclusive(session: &Session) -> Result<OperationGuard, String> {
++    acquire_workspace_operation(&session.repository_identity)
 +}
 +
 +fn needs_exclusive_workspace(operation: &str, arguments: &Value) -> bool {
@@ -12486,14 +12729,13 @@ index 000000000..d55ec5fe6
 +                || arguments.get("required_access").is_some())
 +}
 +
-+fn workspace_guard<'a>(
++fn workspace_guard(
 +    operation: &str,
 +    arguments: &Value,
-+    active: &'a AtomicBool,
 +    repository_identity: &str,
-+) -> Result<Option<OperationGuard<'a>>, String> {
++) -> Result<Option<OperationGuard>, String> {
 +    needs_exclusive_workspace(operation, arguments)
-+        .then(|| acquire_workspace_operation(active, repository_identity))
++        .then(|| acquire_workspace_operation(repository_identity))
 +        .transpose()
 +}
 +
@@ -12613,19 +12855,15 @@ index 000000000..d55ec5fe6
 +    gate: codex_omd::Gate,
 +    candidate_sha256: &str,
 +    acceptance_sha256: Option<&str>,
-+) -> Result<Vec<codex_omd::ContractRequirement>, String> {
-+    let missing = lead
++) -> Result<contract::GateOutcome, String> {
++    let outcome = lead
 +        .session
 +        .contract
 +        .lock()
 +        .map_err(|_| "contract_lock_poisoned")?
 +        .gate(gate, candidate_sha256, acceptance_sha256)?;
-+    notify_contract(
-+        core,
-+        json!({"gate": gate, "outcome": if missing.is_empty() {"passed"} else {"refused"},
-+            "missing": missing, "candidate_sha256": candidate_sha256}),
-+    );
-+    Ok(missing)
++    notify_contract(core, outcome.event(gate, candidate_sha256));
++    Ok(outcome)
 +}
 +
 +async fn complete(core: &Core, lead: &Lead, arguments: Value) -> Result<Value, String> {
@@ -12645,43 +12883,22 @@ index 000000000..d55ec5fe6
 +    if current != input.candidate_sha256 {
 +        return Err("candidate_changed: the workspace no longer matches candidate_sha256".into());
 +    }
-+    let contract = lead
-+        .session
-+        .contract
-+        .lock()
-+        .map_err(|_| "contract_lock_poisoned")?;
-+    let missing = match contract.gate(
++    let outcome = gate(
++        core,
++        lead,
 +        codex_omd::Gate::Complete,
 +        &current,
 +        input.acceptance_sha256.as_deref(),
-+    ) {
-+        Ok(missing) => missing,
-+        Err(error) if error.starts_with("unresolved_blocking_findings:") => {
-+            let outstanding = error
-+                .trim_start_matches("unresolved_blocking_findings:")
-+                .split(',')
-+                .collect::<Vec<_>>();
-+            notify_contract(
-+                core,
-+                json!({"gate":"complete","outcome":"refused","reason":"unresolved_blocking_findings",
-+                    "outstanding_findings":outstanding,"candidate_sha256":current}),
-+            );
-+            return Ok(
-+                json!({"status":"refused","reason":"unresolved_blocking_findings",
-+                "outstanding_findings":outstanding}),
-+            );
-+        }
-+        Err(error) => return Err(error),
-+    };
-+    notify_contract(
-+        core,
-+        json!({"gate":"complete","outcome":if missing.is_empty() {"passed"} else {"refused"},
-+            "missing":missing,"candidate_sha256":current}),
-+    );
-+    if !missing.is_empty() {
-+        return Ok(json!({"status": "refused", "missing": missing}));
++    )?;
++    if let Some(refusal) = outcome.refusal() {
++        return Ok(refusal);
 +    }
-+    let status = contract.status();
++    let status = lead
++        .session
++        .contract
++        .lock()
++        .map_err(|_| "contract_lock_poisoned")?
++        .status();
 +    lead.session.evidence(
 +        &format!("completion-{current}-{}.json", now()),
 +        &json!({"candidate_sha256": current, "contract": status}),
@@ -12726,7 +12943,6 @@ index 000000000..d55ec5fe6
 +        let _guard = workspace_guard(
 +            &operation,
 +            &request.arguments,
-+            &lead.session.operation,
 +            &lead.session.repository_identity,
 +        )?;
 +        let authority = authority(lead, call).await?;
@@ -12817,11 +13033,11 @@ index 000000000..d55ec5fe6
 +    if operation.starts_with("agents.")
 +        || matches!(
 +            operation.as_str(),
-+            "workspace.integrate" | "workspace.snapshot"
++            "workspace.integrate" | "workspace.snapshot" | "workspace.fingerprint"
 +        )
 +    {
 +        let scoped = match (operation.as_str(), call) {
-+            ("agents.spawn" | "workspace.snapshot", Some(call)) => {
++            ("agents.spawn" | "workspace.snapshot" | "workspace.fingerprint", Some(call)) => {
 +                let authority = WorkspaceAuthority::for_call(lead, call).await?;
 +                Some(Lead {
 +                    permission_profile: Arc::new(std::sync::Mutex::new(
@@ -12837,6 +13053,12 @@ index 000000000..d55ec5fe6
 +            return core
 +                .agents
 +                .snapshot(lead, &caller, request.arguments, cancelled)
++                .await;
++        }
++        if operation == "workspace.fingerprint" {
++            return core
++                .agents
++                .fingerprint(lead, &caller, request.arguments, cancelled)
 +                .await;
 +        }
 +        let repository = host.repository.clone();
@@ -12906,10 +13128,8 @@ index 000000000..d55ec5fe6
 +        let temp = tempfile::tempdir().unwrap();
 +        let repository = temp.path().to_str().unwrap();
 +        let write = json!({"program":"sh","write":true});
-+        let first = AtomicBool::new(false);
-+        let second = AtomicBool::new(false);
 +        assert!(
-+            workspace_guard("exec.run", &json!({"program":"sh"}), &first, repository)
++            workspace_guard("exec.run", &json!({"program":"sh"}), repository)
 +                .unwrap()
 +                .is_none()
 +        );
@@ -12917,7 +13137,6 @@ index 000000000..d55ec5fe6
 +            workspace_guard(
 +                "exec.run",
 +                &json!({"program":"sh","write":true,"snapshot":{"sha256":"x"}}),
-+                &first,
 +                repository
 +            )
 +            .unwrap()
@@ -12927,9 +13146,8 @@ index 000000000..d55ec5fe6
 +        let (release_tx, release_rx) = std::sync::mpsc::channel();
 +        std::thread::scope(|scope| {
 +            let write = &write;
-+            let first = &first;
 +            scope.spawn(move || {
-+                let _guard = workspace_guard("exec.run", write, first, repository)
++                let _guard = workspace_guard("exec.run", write, repository)
 +                    .unwrap()
 +                    .unwrap();
 +                held_tx.send(()).unwrap();
@@ -12937,14 +13155,14 @@ index 000000000..d55ec5fe6
 +            });
 +            held_rx.recv().unwrap();
 +            assert!(
-+                workspace_guard("workspace.restore", &json!({}), &second, repository)
++                workspace_guard("workspace.restore", &json!({}), repository)
 +                    .err()
 +                    .unwrap()
 +                    .contains("workspace_operation_active")
 +            );
 +            release_tx.send(()).unwrap();
 +        });
-+        let _guard = workspace_guard("exec.run", &write, &second, repository)
++        let _guard = workspace_guard("exec.run", &write, repository)
 +            .unwrap()
 +            .unwrap();
 +    }
@@ -13585,23 +13803,76 @@ index 000000000..ae0c96a44
 +}
 diff --git a/codex-rs/ext/omd/src/mods/snapshots.rs b/codex-rs/ext/omd/src/mods/snapshots.rs
 new file mode 100644
-index 000000000..24f770f86
+index 000000000..4945b07ef
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/snapshots.rs
-@@ -0,0 +1,517 @@
+@@ -0,0 +1,669 @@
 +use super::*;
 +use codex_omd::Snapshot;
 +use codex_omd::resource_data::ResourceRef;
 +use std::collections::BTreeSet;
 +
-+const SNAPSHOT_LIMIT: usize = 16;
++const SNAPSHOT_LIMIT: usize = 8;
 +const SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
++const SNAPSHOT_TOTAL_LIMIT: usize = 32;
++const SNAPSHOT_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 +const EXECUTION_LIMIT: usize = 64;
++const EXECUTION_TOTAL_LIMIT: usize = 256;
 +
-+struct Stored {
++#[derive(Clone, PartialEq)]
++struct Scope {
 +    owner: String,
 +    generation: u64,
 +    thread: ThreadId,
++}
++
++impl Scope {
++    fn of(caller: &operations::Caller<'_>, thread: ThreadId) -> Self {
++        Self {
++            owner: caller.id.into(),
++            generation: caller.generation,
++            thread,
++        }
++    }
++}
++
++fn evict_oldest<T>(
++    entries: &mut BTreeMap<String, T>,
++    select: impl Fn(&T) -> bool,
++    sequence: impl Fn(&T) -> u64,
++) {
++    if let Some(oldest) = entries
++        .iter()
++        .filter(|(_, entry)| select(entry))
++        .min_by_key(|(_, entry)| sequence(entry))
++        .map(|(key, _)| key.clone())
++    {
++        entries.remove(&oldest);
++    }
++}
++
++fn heaviest<T>(
++    entries: &BTreeMap<String, T>,
++    scope: impl Fn(&T) -> &Scope,
++    weight: impl Fn(&T) -> usize,
++) -> Option<Scope> {
++    entries
++        .values()
++        .map(|entry| {
++            let owned = scope(entry);
++            let total = entries
++                .values()
++                .filter(|other| scope(other) == owned)
++                .map(&weight)
++                .sum::<usize>();
++            (total, owned)
++        })
++        .max_by_key(|(total, _)| *total)
++        .map(|(_, owned)| owned.clone())
++}
++
++struct Stored {
++    scope: Scope,
 +    source: String,
 +    snapshot: Arc<Snapshot>,
 +    digest: String,
@@ -13617,10 +13888,8 @@ index 000000000..24f770f86
 +}
 +
 +struct Execution {
-+    owner: String,
++    scope: Scope,
 +    source: String,
-+    generation: u64,
-+    thread: ThreadId,
 +    candidate: String,
 +    evidence: ResourceRef,
 +    passed: bool,
@@ -13641,23 +13910,37 @@ index 000000000..24f770f86
 +        evidence: ResourceRef,
 +        result: &Value,
 +    ) {
-+        if self.executions.len() >= EXECUTION_LIMIT
-+            && let Some(oldest) = self
-+                .executions
-+                .iter()
-+                .min_by_key(|(_, entry)| entry.sequence)
-+                .map(|(key, _)| key.clone())
++        let scope = Scope::of(caller, thread);
++        self.executions.remove(&evidence.reference);
++        while self
++            .executions
++            .values()
++            .filter(|entry| entry.scope == scope)
++            .count()
++            >= EXECUTION_LIMIT
 +        {
-+            self.executions.remove(&oldest);
++            evict_oldest(
++                &mut self.executions,
++                |entry| entry.scope == scope,
++                |entry| entry.sequence,
++            );
++        }
++        while self.executions.len() >= EXECUTION_TOTAL_LIMIT {
++            let Some(heaviest) = heaviest(&self.executions, |entry| &entry.scope, |_| 1) else {
++                break;
++            };
++            evict_oldest(
++                &mut self.executions,
++                |entry| entry.scope == heaviest,
++                |entry| entry.sequence,
++            );
 +        }
 +        let sequence = self.next();
 +        self.executions.insert(
 +            evidence.reference.clone(),
 +            Execution {
-+                owner: caller.id.into(),
++                scope,
 +                source: caller.source.into(),
-+                generation: caller.generation,
-+                thread,
 +                candidate,
 +                evidence,
 +                passed: result["exit_code"] == 0
@@ -13682,10 +13965,8 @@ index 000000000..24f770f86
 +            .executions
 +            .get(&evidence.reference)
 +            .filter(|record| {
-+                record.owner == caller.id
++                record.scope == Scope::of(caller, thread)
 +                    && record.source == caller.source
-+                    && record.generation == caller.generation
-+                    && record.thread == thread
 +                    && record.candidate == candidate
 +                    && record.evidence.sha256 == evidence.sha256
 +            })
@@ -13701,8 +13982,8 @@ index 000000000..24f770f86
 +        caller: &operations::Caller<'_>,
 +        thread: ThreadId,
 +        snapshot: Snapshot,
++        digest: String,
 +    ) -> Result<Value, String> {
-+        let digest = snapshot.hash().map_err(|error| error.to_string())?;
 +        let reference = format!(
 +            "snapshot:{}",
 +            execution::hash(
@@ -13729,30 +14010,49 @@ index 000000000..24f770f86
 +            if bytes > SNAPSHOT_BYTES {
 +                return Err("snapshot_limit".into());
 +            }
-+            while self.entries.len() >= SNAPSHOT_LIMIT
-+                || bytes
-+                    > SNAPSHOT_BYTES
-+                        - self
-+                            .entries
-+                            .values()
-+                            .map(|entry| entry.bytes)
-+                            .sum::<usize>()
-+            {
-+                let oldest = self
-+                    .entries
-+                    .iter()
-+                    .min_by_key(|(_, entry)| entry.sequence)
-+                    .map(|(key, _)| key.clone())
-+                    .ok_or("snapshot_limit")?;
-+                self.entries.remove(&oldest);
++            let scope = Scope::of(caller, thread);
++            let usage = |entries: &BTreeMap<String, Stored>, select: &dyn Fn(&Stored) -> bool| {
++                entries
++                    .values()
++                    .filter(|entry| select(entry))
++                    .fold((0usize, 0usize), |(count, total), entry| {
++                        (count + 1, total + entry.bytes)
++                    })
++            };
++            loop {
++                let (count, used) = usage(&self.entries, &|entry| entry.scope == scope);
++                if count < SNAPSHOT_LIMIT && used + bytes <= SNAPSHOT_BYTES {
++                    break;
++                }
++                evict_oldest(
++                    &mut self.entries,
++                    |entry| entry.scope == scope,
++                    |entry| entry.sequence,
++                );
++            }
++            loop {
++                let (count, used) = usage(&self.entries, &|_| true);
++                if count < SNAPSHOT_TOTAL_LIMIT && used + bytes <= SNAPSHOT_TOTAL_BYTES {
++                    break;
++                }
++                let Some(heaviest) = heaviest(
++                    &self.entries,
++                    |entry| &entry.scope,
++                    |entry| entry.bytes.max(1),
++                ) else {
++                    break;
++                };
++                evict_oldest(
++                    &mut self.entries,
++                    |entry| entry.scope == heaviest,
++                    |entry| entry.sequence,
++                );
 +            }
 +            let sequence = self.next();
 +            self.entries.insert(
 +                reference.clone(),
 +                Stored {
-+                    owner: caller.id.into(),
-+                    generation: caller.generation,
-+                    thread,
++                    scope,
 +                    source: caller.source.into(),
 +                    snapshot: Arc::new(snapshot),
 +                    digest: digest.clone(),
@@ -13777,10 +14077,7 @@ index 000000000..24f770f86
 +            .entries
 +            .get(&reference.reference)
 +            .filter(|entry| {
-+                entry.owner == caller.id
-+                    && entry.generation == caller.generation
-+                    && entry.thread == thread
-+                    && entry.source == caller.source
++                entry.scope == Scope::of(caller, thread) && entry.source == caller.source
 +            })
 +            .ok_or("unknown_or_foreign_snapshot")?;
 +        if stored.digest != reference.sha256 {
@@ -13790,15 +14087,15 @@ index 000000000..24f770f86
 +    }
 +
 +    pub(super) fn remove_owner(&mut self, owner: &str, generation: u64) {
-+        self.entries
-+            .retain(|_, entry| entry.owner != owner || entry.generation != generation);
-+        self.executions
-+            .retain(|_, entry| entry.owner != owner || entry.generation != generation);
++        let owned = |scope: &Scope| scope.owner == owner && scope.generation == generation;
++        self.entries.retain(|_, entry| !owned(&entry.scope));
++        self.executions.retain(|_, entry| !owned(&entry.scope));
 +    }
 +
 +    pub(super) fn remove_thread(&mut self, thread: ThreadId) {
-+        self.entries.retain(|_, entry| entry.thread != thread);
-+        self.executions.retain(|_, entry| entry.thread != thread);
++        self.entries.retain(|_, entry| entry.scope.thread != thread);
++        self.executions
++            .retain(|_, entry| entry.scope.thread != thread);
 +    }
 +}
 +
@@ -13891,6 +14188,16 @@ index 000000000..24f770f86
 +        }
 +    }
 +
++    fn insert(
++        store: &mut Snapshots,
++        caller: &operations::Caller<'_>,
++        thread: ThreadId,
++        snapshot: Snapshot,
++    ) -> Result<Value, String> {
++        let digest = snapshot.hash().unwrap();
++        store.insert(caller, thread, snapshot, digest)
++    }
++
 +    fn caller(id: &str, source: &str, generation: u64) -> operations::Caller<'static> {
 +        operations::Caller {
 +            id: if id == "one" { "one" } else { "two" },
@@ -13910,7 +14217,7 @@ index 000000000..24f770f86
 +        let snapshot = Snapshot {
 +            files: BTreeMap::new(),
 +        };
-+        let value = store.insert(&owner, thread, snapshot.clone()).unwrap();
++        let value = insert(&mut store, &owner, thread, snapshot.clone()).unwrap();
 +        let reference: ResourceRef = serde_json::from_value(value["snapshot"].clone()).unwrap();
 +        assert_eq!(*store.get(&owner, thread, &reference).unwrap(), snapshot);
 +        for stranger in [
@@ -13946,8 +14253,11 @@ index 000000000..24f770f86
 +                    },
 +                )]),
 +            };
-+            let inserted = store.insert(&owner, thread, snapshot.clone()).unwrap();
-+            assert_eq!(store.insert(&owner, thread, snapshot).unwrap(), inserted);
++            let inserted = insert(&mut store, &owner, thread, snapshot.clone()).unwrap();
++            assert_eq!(
++                insert(&mut store, &owner, thread, snapshot).unwrap(),
++                inserted
++            );
 +            first.get_or_insert(inserted);
 +        }
 +        let first: ResourceRef =
@@ -13956,11 +14266,71 @@ index 000000000..24f770f86
 +        let empty = Snapshot {
 +            files: BTreeMap::new(),
 +        };
-+        assert!(store.insert(&owner, thread, empty).is_ok());
++        assert!(insert(&mut store, &owner, thread, empty).is_ok());
 +        assert_eq!(store.entries.len(), SNAPSHOT_LIMIT);
 +        assert!(store.get(&owner, thread, &first).is_err());
 +        store.remove_thread(thread);
 +        assert!(store.entries.is_empty());
++    }
++
++    #[test]
++    fn one_owner_filling_its_quota_never_evicts_another_owners_snapshot_or_execution() {
++        let mut store = Snapshots::default();
++        let quiet = caller("one", "a", 1);
++        let busy = caller("two", "a", 1);
++        let thread = ThreadId::new();
++        let file = |number: usize| Snapshot {
++            files: BTreeMap::from([(
++                "file".into(),
++                codex_omd::File {
++                    bytes: number.to_le_bytes().to_vec(),
++                    executable: false,
++                },
++            )]),
++        };
++        let kept: ResourceRef = serde_json::from_value(
++            insert(&mut store, &quiet, thread, file(usize::MAX)).unwrap()["snapshot"].clone(),
++        )
++        .unwrap();
++        let candidate = "a".repeat(64);
++        let evidence = ResourceRef {
++            reference: "execution:quiet".into(),
++            sha256: "b".repeat(64),
++        };
++        let passed = json!({"exit_code":0,"signal":null,"timed_out":false,"stdout_truncated":false,"stderr_truncated":false});
++        store.record_execution(&quiet, thread, candidate.clone(), evidence.clone(), &passed);
++        let threads = [
++            thread,
++            ThreadId::new(),
++            ThreadId::new(),
++            ThreadId::new(),
++            ThreadId::new(),
++        ];
++        for number in 0..64 {
++            let busy_thread = threads[number % threads.len()];
++            insert(&mut store, &busy, busy_thread, file(number)).unwrap();
++            for index in 0..8 {
++                let other = ResourceRef {
++                    reference: format!("execution:busy-{number}-{index}"),
++                    sha256: "d".repeat(64),
++                };
++                store.record_execution(&busy, busy_thread, candidate.clone(), other, &passed);
++            }
++        }
++        assert!(store.entries.len() <= SNAPSHOT_TOTAL_LIMIT);
++        assert!(store.executions.len() <= EXECUTION_TOTAL_LIMIT);
++        assert!(store.get(&quiet, thread, &kept).is_ok());
++        assert!(
++            store
++                .attest_execution(
++                    &quiet,
++                    thread,
++                    &candidate,
++                    &evidence,
++                    codex_omd::ReceiptOutcome::Pass
++                )
++                .is_ok()
++        );
 +    }
 +
 +    #[test]
@@ -15178,24 +15548,6 @@ index ae509a4a7..fc82a6cfe 100644
  }
  
  // These legacy constructors intentionally preserve the infallible behavior of `create_client`.
-diff --git a/codex-rs/omd/.DS_Store b/codex-rs/omd/.DS_Store
-new file mode 100644
-index 0000000000000000000000000000000000000000..bedafe1c2e6841295e7822bd616021ecc5d0a88f
-GIT binary patch
-literal 6148
-zcmeHKy-EW?5S}%s1Vv0Bpje%il||H6I77rj!6Gl9NhB6`+>wi5B`4Sl_FBegu(lI?
-z2_L~n@SEM`+{-0kB@$*}_q&^)ow<+fY?g>r>$=}0su58YgV9^YG)36Xqa+JfQwJ)&
-zMnWN7QW_4LoszdGgaKjTzcIjjw~9S`Ll+d0vwwSWlsLtfe4@DB?uK!f<9Cnmo;LU1
-z52vja#r<FTC0EVPM9vDOG^8GPliad)|A{Qt;@0r+wsV{A>l$+FPv)|<kgv}DkCtcz
-z7KStcAESQS3%hX~qOlbXZaL$|*2kpXE$U!<HL*n%7I#UR<>MCk()i*67f~SED`wqd
-zb5gwZanb75@cepua%PBe;@t|Sd${?@d*u8gbHxDvv?0|MgE9*P!hkT4Gr;}9$6yRB
-zW(IZZz@)DLKo4pyc-Chr&}RiOu$UQy2BJ(T(1a>`#ZV?3df)m57Bhn;oRrRtb!=v3
-zZzxJ<hu+ujqymF73j@MHk%5YNt?~JPH2eNv43altKp2=S29($Cv|IQjd$yK7j?Y>j
-s;~ay9{W60(1d~0E^#dQp8yH$(^Z5Z7Sj-GU1Cc)hng*GKfj?#78$`B=#sB~S
-
-literal 0
-HcmV?d00001
-
 diff --git a/codex-rs/omd/BUILD.bazel b/codex-rs/omd/BUILD.bazel
 new file mode 100644
 index 000000000..718e22cef
@@ -15267,28 +15619,12 @@ index 000000000..82e68d714
 +first-party mods installed the host runs as modded Codex with no feature
 +behavior; `scripts/check_native_ownership.py` fails if a native operation,
 +event, capability or host configuration field names a feature.
-diff --git a/codex-rs/omd/src/.DS_Store b/codex-rs/omd/src/.DS_Store
-new file mode 100644
-index 0000000000000000000000000000000000000000..f94e8c90af7cee4294438159906377d50920728f
-GIT binary patch
-literal 6148
-zcmeHK!AitH3{AE@6uj)w<NU&cA22Qz#OwZm)`BZ+w+rG;Wd6n<@t{|~VL!x|WOQ3C
-z9z`U9nKzS6lJ=EOW{8NF_w9mcPDB-&Aj@DvL_KMm<;7xTiLqE+_uXzH#NSoPvlrCR
-zEp0b9!{>kAA1qy8*UhGHpsB9j*87W-m(!uO{lU6h52Au4NJ$;_)Y9E3<LtE@+J-qF
-z9-p@7mh;oM>knC{?4!Jed|wx5z!`7`oB?M*8L(<Z)sgez3^)VMz!wH&e+X!TF=H~+
-ztplB20f2IJRl!)#n!q3mV9b~dp@Fcu0?n246@$$k`jFSfjLFd4i8V9g<jfzJ7tSYL
-z4!WE;8hY;xI0It_3Y*TQ{-5Djn!MzXU3}&YI0OHT0WRxRy~Io9+WPJFq}B$sOEeK#
-rmt+9JSW7WbOED(0j~uJf>_Nt`$BfBPqKIDIfqoEBLcDVZeu05^V?{!&
-
-literal 0
-HcmV?d00001
-
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 000000000..1a1f04a37
+index 000000000..a68a257f0
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1384 @@
+@@ -0,0 +1,1379 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -15853,19 +16189,14 @@ index 000000000..1a1f04a37
 +            external_routes: Mutex::new(BTreeSet::new()),
 +            worker_routes: Mutex::new(BTreeMap::new()),
 +        };
-+        let uncertain = task.uncertain_requests()?;
-+        {
-+            let mut state = task
-+                .state
-+                .lock()
-+                .map_err(|_| denied("task lock poisoned"))?;
-+            if state.status == TaskStatus::Active {
-+                task.record(
-+                    &mut state,
-+                    &serde_json::json!({"event": "task_paused", "reason": "abrupt_client_loss", "active_workers": [], "uncertain_operations": uncertain}),
-+                )?;
-+                state.status = TaskStatus::Paused;
-+            }
++        let active = task
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?
++            .status
++            == TaskStatus::Active;
++        if active {
++            task.pause("abrupt_client_loss", task.uncertain_requests()?)?;
 +        }
 +        task.resume(reference)?;
 +        Ok(task)
@@ -18750,10 +19081,10 @@ index 000000000..9e60df418
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..cb541e864
+index 000000000..6df8239a6
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1241 @@
+@@ -0,0 +1,1262 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -18992,6 +19323,33 @@ index 000000000..cb541e864
 +    Ok(format!("{:x}", hasher.finalize()))
 +}
 +
++fn stored_outputs(owner: &Path) -> Result<Vec<(std::time::SystemTime, PathBuf, u64)>, String> {
++    let mut stored = Vec::new();
++    let mut directories = vec![(owner.to_path_buf(), 0)];
++    while let Some((directory, depth)) = directories.pop() {
++        for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
++            let entry = entry.map_err(|error| error.to_string())?;
++            let metadata = entry.metadata().map_err(|error| error.to_string())?;
++            if metadata.file_type().is_symlink() {
++                return Err("exec_output_directory_invalid".into());
++            }
++            if metadata.is_dir() && depth < 2 {
++                directories.push((entry.path(), depth + 1));
++            } else if depth == 2
++                && metadata.is_file()
++                && entry
++                    .path()
++                    .extension()
++                    .is_some_and(|extension| extension == "txt")
++            {
++                let modified = metadata.modified().map_err(|error| error.to_string())?;
++                stored.push((modified, entry.path(), metadata.len()));
++            }
++        }
++    }
++    Ok(stored)
++}
++
 +impl Host<'_> {
 +    fn repository(&self) -> &Path {
 +        self.authority.repository()
@@ -19043,6 +19401,10 @@ index 000000000..cb541e864
 +    fn save_output(&self, caller: &Caller<'_>, bytes: &[u8]) -> Result<Value, String> {
 +        std::str::from_utf8(bytes).map_err(|_| "exec_output_artifact_utf8_required")?;
 +        let directory = self.output_directory(caller)?;
++        let owner = directory
++            .parent()
++            .and_then(Path::parent)
++            .ok_or("exec_output_directory_invalid")?;
 +        let digest = sha256(bytes);
 +        let path = directory.join(format!("{digest}.txt"));
 +        let lock = fs::OpenOptions::new()
@@ -19052,7 +19414,7 @@ index 000000000..cb541e864
 +            .truncate(false)
 +            .mode(0o600)
 +            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-+            .open(directory.join(".outputs.lock"))
++            .open(owner.join(".outputs.lock"))
 +            .map_err(|error| error.to_string())?;
 +        lock.try_lock().map_err(|_| "exec_output_store_busy")?;
 +        if path.exists() {
@@ -19068,31 +19430,21 @@ index 000000000..cb541e864
 +                return Err("exec_output_integrity_failed".into());
 +            }
 +        } else {
-+            let mut stored = Vec::new();
-+            for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
-+                let entry = entry.map_err(|error| error.to_string())?;
-+                let metadata = entry.metadata().map_err(|error| error.to_string())?;
-+                if metadata.file_type().is_symlink() {
-+                    return Err("exec_output_directory_invalid".into());
-+                }
-+                if entry
-+                    .path()
-+                    .extension()
-+                    .is_some_and(|extension| extension == "txt")
-+                {
-+                    let modified = metadata.modified().map_err(|error| error.to_string())?;
-+                    stored.push((modified, entry.path(), metadata.len()));
-+                }
-+            }
++            let mut stored = stored_outputs(owner)?;
 +            stored.sort();
 +            let mut total: u64 = stored.iter().map(|(_, _, len)| len).sum();
 +            let mut oldest = stored.into_iter();
 +            while total.saturating_add(bytes.len() as u64) > EXEC_ARTIFACT_STORE_BYTES
 +                || oldest.len() >= EXEC_ARTIFACT_STORE_COUNT
 +            {
-+                let (_, path, len) = oldest.next().ok_or("exec_output_store_quota")?;
-+                fs::remove_file(path).map_err(|error| error.to_string())?;
++                let (_, evicted, len) = oldest.next().ok_or("exec_output_store_quota")?;
++                fs::remove_file(&evicted).map_err(|error| error.to_string())?;
 +                total -= len;
++                for parent in evicted.ancestors().skip(1).take(2) {
++                    if parent != directory && fs::remove_dir(parent).is_err() {
++                        break;
++                    }
++                }
 +            }
 +            let temporary = directory.join(format!(".{digest}.{}.tmp", now_ms()));
 +            let mut file = fs::OpenOptions::new()
@@ -19997,10 +20349,10 @@ index 000000000..cb541e864
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..ed75af226
+index 000000000..e3023da1e
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,146 @@
 +mod admission;
 +mod builtins;
 +mod contract_document;
@@ -20058,7 +20410,6 @@ index 000000000..ed75af226
 +pub use mode::RuntimeMode;
 +pub use mode::effective_mode;
 +pub use mode::effective_mode_from;
-+pub use owner::OwnerKind;
 +pub use owner::PolicyOwner;
 +pub use workspace::File;
 +pub use workspace::Fingerprint;
@@ -20280,7 +20631,7 @@ index 000000000..e1d28e163
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..afe9fda01
+index 000000000..9e147e7c8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,3130 @@
@@ -20458,6 +20809,7 @@ index 000000000..afe9fda01
 +    "workspace_access_v1",
 +    "workspace_fs_v1",
 +    "workspace_snapshots_v1",
++    "workspace_fingerprint_v1",
 +    "snapshot_exec_v1",
 +    "agent_parent_history_v1",
 +    "agent_failures_v1",
@@ -20481,6 +20833,7 @@ index 000000000..afe9fda01
 +    "workspace.stat",
 +    "workspace.check_access",
 +    "workspace.snapshot",
++    "workspace.fingerprint",
 +    "workspace.transaction",
 +    "workspace.backup",
 +    "workspace.restore",
@@ -21967,7 +22320,7 @@ index 000000000..afe9fda01
 +        };
 +        let mut conflicts = contested("tool_name_conflict", tools);
 +        conflicts.extend(contested("replacement_conflict", points));
-+        conflicts.extend(contested("workflow_replacement_conflict", contracts));
++        conflicts.extend(contested("contract_conflict", contracts));
 +        for (id, reason) in conflicts {
 +            if let Some(loaded) = next.get_mut(&id) {
 +                fail(initial, loaded, failure(reason))?;
@@ -22764,9 +23117,9 @@ index 000000000..afe9fda01
 +        mut payload: Value,
 +        active: impl Fn() -> bool,
 +    ) -> Result<Value> {
-+        let presets = payload["authorized_presets"]
++        let routes = payload["routes"]
 +            .as_array()
-+            .ok_or_else(|| failure("authorized_presets_required"))?
++            .ok_or_else(|| failure("routes_required"))?
 +            .clone();
 +        let mut effective = payload["effective"]
 +            .as_object()
@@ -22795,13 +23148,13 @@ index 000000000..afe9fda01
 +                .get("route")
 +                .and_then(Value::as_str)
 +                .ok_or_else(|| failure("invalid_model_request_result"))?;
-+            let preset = presets
++            let route = routes
 +                .iter()
-+                .find(|preset| preset["name"].as_str() == Some(selected))
++                .find(|route| route["name"].as_str() == Some(selected))
 +                .and_then(Value::as_object)
-+                .ok_or_else(|| failure(format!("unauthorized_request_preset: {selected}")))?;
++                .ok_or_else(|| failure(format!("unauthorized_request_route: {selected}")))?;
 +            let previous = effective.get("name").cloned().unwrap_or(Value::Null);
-+            effective = preset.clone();
++            effective = route.clone();
 +            if let Some(loaded) = self.loaded.get(&id) {
 +                provenance.push(
 +                    json!({"order":order,"origin":id,"version":loaded.package.version,
@@ -23135,7 +23488,7 @@ index 000000000..afe9fda01
 +    pub fn tools_for_step(
 +        &mut self,
 +        thread_id: Option<String>,
-+        checkpoint: Value,
++        ledger: Value,
 +        active: impl Fn() -> bool,
 +    ) -> Vec<(String, u64, ModTool)> {
 +        let ids: Vec<String> = self
@@ -23169,8 +23522,7 @@ index 000000000..afe9fda01
 +            {
 +                continue;
 +            }
-+            let payload =
-+                json!({"thread_id":thread_id,"checkpoint":checkpoint,"available":available});
++            let payload = json!({"thread_id":thread_id,"ledger":ledger,"available":available});
 +            let result =
 +                self.invoke_guarded(&id, self.generation, "tool_exposure", "", payload, &active);
 +            let selection = result.ok().and_then(|value| {
@@ -23249,7 +23601,6 @@ index 000000000..afe9fda01
 +
 +    fn owner(loaded: &Loaded) -> crate::PolicyOwner {
 +        crate::PolicyOwner {
-+            kind: crate::OwnerKind::Mod,
 +            id: loaded.package.id.clone(),
 +            version: loaded.package.version.clone(),
 +            source: loaded.selection.path.display().to_string(),
@@ -23361,14 +23712,14 @@ index 000000000..afe9fda01
 +
 +    pub fn field_policies() -> Value {
 +        json!({
-+            "model_request": {"request_id":"observe_only","scope":"observe_only","authorized_presets":"observe_only","original":"observe_only","effective":"alterable","provenance":"observe_only"},
++            "model_request": {"request_id":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","effective":"alterable","provenance":"observe_only"},
 +            "response_stream": {"kind":"observe_only","raw_sha256":"observe_only","raw_usage":"observe_only","opaque_reasoning":"observe_only","protected":"observe_only","text":"alterable","original":"observe_only","effective":"observe_only","provenance":"observe_only","fallback":"observe_only"},
 +            "prompt": {"thread_id":"observe_only","turn_id":"observe_only","original":"observe_only","effective":"replaceable","provenance":"observe_only"},
 +            "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
 +            "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
 +            "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
 +            "tool_before": {"call_id":"observe_only","thread_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable"},
-+            "tool_exposure": {"thread_id":"observe_only","checkpoint":"observe_only","available":"observe_only","enable":"alterable"},
++            "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
 +            "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
 +            "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
 +        })
@@ -23920,10 +24271,10 @@ index 000000000..0a39e68a7
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..df28219d4
+index 000000000..281af7bf8
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,181 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -23940,9 +24291,11 @@ index 000000000..df28219d4
 +        let operation = self.operation.as_str();
 +        match operation {
 +            "exec.run" | "exec.output_page" => Ok("exec"),
-+            "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.snapshot" => {
-+                Ok("fs.read")
-+            }
++            "workspace.read"
++            | "workspace.list"
++            | "workspace.stat"
++            | "workspace.snapshot"
++            | "workspace.fingerprint" => Ok("fs.read"),
 +            "workspace.check_access" => Ok(if self.arguments["write"] == true {
 +                "fs.write"
 +            } else {
@@ -26112,10 +26465,10 @@ index 000000000..3d156d888
 +}
 diff --git a/codex-rs/omd/src/mods/runner.mjs b/codex-rs/omd/src/mods/runner.mjs
 new file mode 100644
-index 000000000..99e46ae04
+index 000000000..7296182da
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/runner.mjs
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,227 @@
 +import { stripTypeScriptTypes } from 'node:module';
 +import { createContext, SourceTextModule } from 'node:vm';
 +
@@ -26155,7 +26508,6 @@ index 000000000..99e46ae04
 +const serviceHandlers = new Map();
 +const virtualReaders = new Map();
 +const updates = [];
-+let submitted = null;
 +let state = structuredCloneFallback(request.state);
 +let activating = true;
 +let pending = null;
@@ -26278,44 +26630,7 @@ index 000000000..99e46ae04
 +  }),
 +  unsupported(operation) { throw new Error('unsupported_operation: ' + operation); },
 +});
-+function unsupportedPi(name) { throw new Error('unsupported_pi_operation: ' + name); }
-+function piText(content) {
-+  if (typeof content === 'string') return content;
-+  if (!Array.isArray(content) || content.some(c => c?.type !== 'text' || typeof c.text !== 'string')) unsupportedPi('non_text_content');
-+  return content.map(c => c.text).join('\\n');
-+}
-+const piContext = new Proxy(Object.freeze({ hasUI: false }), {
-+  get(target, key) { if (key in target) return target[key]; return unsupportedPi('context.' + String(key)); },
-+});
-+const pi = new Proxy(Object.freeze({
-+  registerTool(spec) {
-+    for (const key of Object.keys(spec)) if (!['name','label','description','parameters','execute'].includes(key)) unsupportedPi('tool.' + key);
-+    const definition = {name:spec.name,description:spec.description,parameters:spec.parameters};
-+    if (spec.label !== undefined) definition.label = spec.label;
-+    api.tool(definition, async args => {
-+      let last = null;
-+      const onUpdate = partial => { last = piText(partial?.content); api.progress(last); };
-+      const result = await spec.execute('omd:' + request.name, args, undefined, onUpdate, piContext);
-+      if (!Array.isArray(result?.content) || result.content.some(c => c.type !== 'text' || typeof c.text !== 'string')) unsupportedPi('non_text_tool_result');
-+      return last === null ? result : { ...result, last_update: last };
-+    });
-+  },
-+  registerCommand(name, options) {
-+    for (const key of Object.keys(options)) if (!['description','handler'].includes(key)) unsupportedPi('command.' + key);
-+    api.command(name, async args => {
-+      if (typeof args !== 'string') throw new Error('pi_command_requires_string');
-+      const value = await options.handler(args, piContext);
-+      return submitted === null ? (value ?? null) : { submit: submitted };
-+    }, options.description === undefined ? {} : { description: options.description });
-+  },
-+  sendUserMessage(content, options) {
-+    if (activating || request.event !== 'command') unsupportedPi('sendUserMessage outside command');
-+    if (options !== undefined) unsupportedPi('sendUserMessage.options');
-+    if (submitted !== null) unsupportedPi('multiple_user_messages');
-+    submitted = piText(content);
-+  },
-+}), { get(target,key) { if (key in target) return target[key]; return unsupportedPi(String(key)); } });
-+globalThis.__omd = { api, pi, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, updates,
++globalThis.__omd = { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, updates,
 +  state: () => state, request, calls,
 +  pending: () => pending, ready: () => { activating = false; }, suspension };
 +`;
@@ -26345,24 +26660,6 @@ index 000000000..99e46ae04
 +  context.__adapt = adapt;
 +  await mod.link(async specifier => {
 +    if (aliases.has(specifier)) return aliases.get(specifier);
-+    if (request.adapter === 'pi-0.74-tools-commands-v1' && specifier === 'typebox') {
-+      const types = new SourceTextModule(`
-+        const optional = new WeakSet();
-+        export const Type = Object.freeze({
-+          String: (options = {}) => ({...options,type:'string'}),
-+          Number: (options = {}) => ({...options,type:'number'}),
-+          Integer: (options = {}) => ({...options,type:'integer'}),
-+          Boolean: (options = {}) => ({...options,type:'boolean'}),
-+          Literal: value => ({const:value,type:typeof value}),
-+          Array: (items,options = {}) => ({...options,type:'array',items}),
-+          Union: anyOf => ({anyOf}),
-+          Optional: schema => { const result = {...schema}; optional.add(result); return result; },
-+          Object: (properties,options = {}) => ({additionalProperties:false,...options,type:'object',properties,required:Object.keys(properties).filter(k=>!optional.has(properties[k]))}),
-+        });
-+      `, { context });
-+      await types.link(() => { throw new Error('unsupported_import'); });
-+      return types;
-+    }
 +    throw new Error(`unsupported_import: ${specifier}; use type-only SDK imports and a self-contained module`);
 +  });
 +  await mod.evaluate({ timeout: request.hook_budget_ms });
@@ -26370,7 +26667,7 @@ index 000000000..99e46ae04
 +  const dispatch = new SourceTextModule(`
 +    const { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, request } = globalThis.__omd;
 +    if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
-+    const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : request.adapter === "pi-0.74-tools-commands-v1" ? globalThis.__omd.pi : api;
++    const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
 +    await globalThis.__activate(activation);
 +    globalThis.__omd.ready();
 +    let value = null;
@@ -28040,42 +28337,20 @@ index 000000000..494aa8710
 +}
 diff --git a/codex-rs/omd/src/owner.rs b/codex-rs/omd/src/owner.rs
 new file mode 100644
-index 000000000..e2fcab5a5
+index 000000000..257d49d33
 --- /dev/null
 +++ b/codex-rs/omd/src/owner.rs
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,11 @@
 +use serde::Deserialize;
 +use serde::Serialize;
-+use sha2::Digest;
-+use sha2::Sha256;
-+
-+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-+#[serde(rename_all = "snake_case")]
-+pub enum OwnerKind {
-+    Bundled,
-+    Mod,
-+}
 +
 +#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 +#[serde(deny_unknown_fields)]
 +pub struct PolicyOwner {
-+    pub kind: OwnerKind,
 +    pub id: String,
 +    pub version: String,
 +    pub source: String,
 +    pub sha256: String,
-+}
-+
-+impl PolicyOwner {
-+    pub fn bundled() -> Self {
-+        Self {
-+            kind: OwnerKind::Bundled,
-+            id: "oh-my-diff".into(),
-+            version: crate::PINNED_UPSTREAM.into(),
-+            source: "bundled native host".into(),
-+            sha256: format!("{:x}", Sha256::digest(crate::PINNED_UPSTREAM.as_bytes())),
-+        }
-+    }
 +}
 diff --git a/codex-rs/omd/src/plugin_component.rs b/codex-rs/omd/src/plugin_component.rs
 new file mode 100644
@@ -29368,10 +29643,10 @@ index 000000000..2b4fccce5
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 000000000..e58ca64a5
+index 000000000..16e85ed86
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1225 @@
+@@ -0,0 +1,1266 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -30092,7 +30367,19 @@ index 000000000..e58ca64a5
 +    }
 +
 +    pub fn hash(&self) -> io::Result<String> {
-+        Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(self)?)))
++        struct Hasher(Sha256);
++        impl Write for Hasher {
++            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++                self.0.update(bytes);
++                Ok(bytes.len())
++            }
++            fn flush(&mut self) -> io::Result<()> {
++                Ok(())
++            }
++        }
++        let mut hasher = Hasher(Sha256::new());
++        serde_json::to_writer(&mut hasher, self)?;
++        Ok(format!("{:x}", hasher.0.finalize()))
 +    }
 +
 +    pub fn write_new(&self, root: &Path, max_bytes: usize) -> io::Result<()> {
@@ -30349,6 +30636,35 @@ index 000000000..e58ca64a5
 +mod transaction_tests {
 +    use super::*;
 +    use std::cell::Cell;
++
++    #[test]
++    fn streamed_snapshot_hash_matches_the_serialized_digest() {
++        let snapshot = Snapshot {
++            files: BTreeMap::from([
++                (
++                    "a.rs".into(),
++                    File {
++                        bytes: vec![0, 1, 255],
++                        executable: false,
++                    },
++                ),
++                (
++                    "bin/run".into(),
++                    File {
++                        bytes: b"#!/bin/sh\n".to_vec(),
++                        executable: true,
++                    },
++                ),
++            ]),
++        };
++        assert_eq!(
++            snapshot.hash().unwrap(),
++            format!(
++                "{:x}",
++                Sha256::digest(serde_json::to_vec(&snapshot).unwrap())
++            )
++        );
++    }
 +
 +    #[test]
 +    fn transaction_renames_and_updates_exact_scope() {
@@ -30990,10 +31306,10 @@ index 000000000..330b7bc69
 +}
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..4382f7dd6
+index 000000000..b0b5042b3
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,1545 @@
+@@ -0,0 +1,1597 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -31085,6 +31401,15 @@ index 000000000..4382f7dd6
 +        exec_environment: environment,
 +        origin,
 +        thread: Some("thread-1"),
++    }
++}
++
++fn owner() -> PolicyOwner {
++    PolicyOwner {
++        id: "fixture".into(),
++        version: "1.0.0".into(),
++        source: "fixture".into(),
++        sha256: "0".repeat(64),
 +    }
 +}
 +
@@ -31207,6 +31532,52 @@ index 000000000..4382f7dd6
 +        )
 +        .unwrap();
 +    assert_eq!(last["text"], "artifact-128");
++}
++
++#[test]
++fn exec_output_quota_spans_every_thread_and_source_of_a_mod() {
++    let (_temp, _repository, data, authority) = setup();
++    let active = || true;
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        active: &active,
++        record_changes: false,
++    };
++    let capabilities = strings(&["exec"]);
++    let threads: Vec<String> = (0..130).map(|index| format!("thread-{index}")).collect();
++    let run = |index: usize| {
++        let owner = Caller {
++            id: "spanning",
++            thread: Some(&threads[index]),
++            ..caller(&capabilities, &[], Origin::Tool)
++        };
++        host.call(
++            &owner,
++            "exec.run",
++            json!({"program":"printf", "argv":[format!("artifact-{index}")], "output_artifact":true}),
++        )
++        .unwrap();
++    };
++    run(0);
++    std::thread::sleep(std::time::Duration::from_millis(20));
++    for index in 1..130 {
++        run(index);
++    }
++    let owner = std::fs::read_dir(data.join("exec-output"))
++        .unwrap()
++        .next()
++        .unwrap()
++        .unwrap()
++        .path()
++        .join("spanning");
++    let stored = std::fs::read_dir(&owner)
++        .unwrap()
++        .filter_map(Result::ok)
++        .filter(|entry| entry.path().is_dir())
++        .count();
++    assert_eq!(stored, 128);
++    assert!(!owner.join("thread-0").exists());
 +}
 +
 +#[test]
@@ -32112,10 +32483,7 @@ index 000000000..4382f7dd6
 +        "solo",
 +        json!({"complete":[{"receipt":"review","producer":"lead"}]}),
 +    );
-+    let documents = vec![
-+        (strict.clone(), PolicyOwner::bundled()),
-+        (solo.clone(), PolicyOwner::bundled()),
-+    ];
++    let documents = vec![(strict.clone(), owner()), (solo.clone(), owner())];
 +    let pick = |key: &str, digest: Option<String>| ContractSelection {
 +        schema: 2,
 +        contract: Some(key.into()),
@@ -33087,10 +33455,10 @@ index 000000000..c0e95eb24
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..13f3b306d
+index 000000000..3748d64ef
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2383 @@
+@@ -0,0 +1,2379 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -34386,7 +34754,7 @@ index 000000000..13f3b306d
 +    let routed = runtime
 +        .model_request(
 +            json!({"request_id":"r1","scope":{"kind":"main"},
-+                "authorized_presets":[{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},{"name":"astra","model":"a","provider":"openai","reasoning":"high"}],
++                "routes":[{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},{"name":"astra","model":"a","provider":"openai","reasoning":"high"}],
 +                "original":{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},
 +                "effective":{"name":"sol","model":"s","provider":"openai","reasoning":"medium"},"provenance":[]}),
 +            || true,
@@ -34423,7 +34791,7 @@ index 000000000..13f3b306d
 +      const parameters = {type:'object',properties:{}};
 +      api.tool({name:'always',description:'Always available',parameters},()=>true);
 +      api.tool({name:'inspect',description:'Inspect this task',parameters,task_scoped:true},()=>true);
-+      api.on('tool_exposure',event=>({enable:event.checkpoint?.kind==='inspect'?['inspect']:[]}));
++      api.on('tool_exposure',event=>({enable:event.ledger?.kind==='inspect'?['inspect']:[]}));
 +    }"#;
 +    let (temp, _, _) = fixture(source, &["tools"]);
 +    let mut runtime = host(&temp);
@@ -34798,7 +35166,6 @@ index 000000000..13f3b306d
 +    let (contract, owner) = &contracts[0];
 +    assert_eq!(contract.id, "paired_review");
 +    assert_eq!(contract.schema, 2);
-+    assert_eq!(owner.kind, codex_omd::OwnerKind::Mod);
 +    assert_eq!(owner.id, "fixture");
 +    assert_eq!(owner.source, path.display().to_string());
 +}
@@ -34829,10 +35196,7 @@ index 000000000..13f3b306d
 +            .unwrap()["error"]
 +            .as_str()
 +            .unwrap_or_default();
-+        assert!(
-+            error.contains("workflow_replacement_conflict"),
-+            "{id}: {error}"
-+        );
++        assert!(error.contains("contract_conflict"), "{id}: {error}");
 +    }
 +    assert!(runtime.contract_documents().is_empty());
 +}

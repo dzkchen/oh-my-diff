@@ -20,7 +20,7 @@ export type VirtualReadRequest = { uri: string; cursor?: string; expected_revisi
 export type VirtualReadResponse = { canonical_uri: string; canonical_url: string; identity: string; revision: string; text: string; anchors: string[]; cursor: string | null; truncated: boolean };
 export type SessionSummary = { session_id: string; task_id: string; parent_id: string | null; timestamp: string; revision: string; handle: string; history_mode: string; inherited_history: boolean; incomplete_tail: boolean };
 export type SessionRecord = { session_id: string; turn_id: string; item: number; role: 'user' | 'assistant'; text: string; truncated: boolean; redacted: boolean; timestamp: string | null; untrusted: true };
-export type Ledger = { thread_id: string; cost: Json | null };
+export type Ledger = { thread_id: string; cwd: string; cost: Json | null };
 export type Context = { thread_id: string; turn_id: string; ledger: Ledger };
 export type ContextResult = { text: string };
 export type Agent = { handle: string; route: string; permissions: 'read_only' | 'isolated_worktree'; parent_history?: { sha256: string; bytes: number; items: number; revision: number } | null };
@@ -98,11 +98,12 @@ export interface HostOperations {
   'workspace.stat': { arguments: { paths: string[]; hash?: boolean }; result: { files: Record<string, FileStat | null> } };
   'workspace.check_access': { arguments: { paths: string[]; write?: boolean }; result: { paths: string[]; write: boolean } };
   'workspace.snapshot': { arguments: { agent?: string; expected?: string }; result: { snapshot: ResourceRef; candidate_sha256: string } };
+  'workspace.fingerprint': { arguments: { agent?: string; expected?: string }; result: { candidate_sha256: string } };
   'workspace.transaction': { arguments: { expected: Record<string, Fingerprint>; writes?: Record<string, string>; deletes?: string[]; renames?: { old: string; new: string }[]; backup?: boolean }; result: { files: Record<string, string | null>; backup: ResourceRef | null } };
   'workspace.backup': { arguments: { expected: Record<string, Fingerprint> }; result: { backup: ResourceRef } };
   'workspace.restore': { arguments: { backup: ResourceRef; expected: Record<string, Fingerprint> }; result: { files: Record<string, string | null> } };
   'workspace.request_rename': { arguments: { old: string; new: string }; result: { status: 'renamed'; files: Record<string, string | null> } | { status: 'fallback'; reason: string } };
-  'workspace.integrate': { arguments: { handle: string; acceptance_sha256?: string }; result: { status: 'integrated'; candidate_sha256: string; changed_paths: string[]; evidence: HostEvidence } | { status: 'refused'; candidate_sha256: string; missing: ContractRequirement[] } };
+  'workspace.integrate': { arguments: { handle: string; acceptance_sha256?: string }; result: { status: 'integrated'; candidate_sha256: string; parent_candidate_sha256: string; changed_paths: string[]; evidence: HostEvidence; receipt_error?: string } | { status: 'refused'; candidate_sha256: string; missing: ContractRequirement[] } };
   'store.get': { arguments: { key: string; scope?: StoreScope }; result: { value: Json; revision: number; provenance: StoreProvenance } | null };
   'store.put': { arguments: { key: string; value: Json; expected_revision: number | null; scope?: StoreScope }; result: { revision: number } };
   'store.delete': { arguments: { key: string; expected_revision: number; scope?: StoreScope }; result: { deleted: boolean } };
@@ -154,7 +155,7 @@ export interface Events {
   resume: { input: Json; output: void };
   idle: { input: Json; output: void };
   stop: { input: Json; output: void };
-  tool_result: { input: { call_id: string; agent_id: string | null; thread_id: string | null; tool: string; outcome: string; call_sha256: string | null; result_sha256: string | null; result_complete: boolean }; output: void };
+  tool_result: { input: { call_id: string; agent_id: string | null; thread_id: string | null; tool: string; outcome: 'succeeded' | 'unsuccessful' | 'blocked' | 'failed' | 'failed_before_handler' | 'aborted'; call_sha256: string | null; result_sha256: string | null; result_complete: boolean }; output: void };
   workspace_change: { input: { repository: string; source: 'tool' | 'transaction' | 'exec' | 'rescan'; call_id: string | null; changes: { path: string; before: string | null; after: string | null }[]; status: 'observed' | 'unavailable'; reason?: string | null }; output: void };
   workspace_pre_rename: { input: { repository: string; old: string; new: string; expected: Record<string, string | null> }; output: { status: 'ready'; expected: Record<string, string | null>; writes: Record<string, string> } | { status: 'fallback'; reason: string } | void };
   turn_start: { input: { turn_id: string }; output: void };
@@ -162,7 +163,8 @@ export interface Events {
   compaction_start: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
   compaction_end: { input: { turn_id: string; trigger: 'manual' | 'auto' }; output: void };
   agent_end: { input: { handle: string; role: string; status: 'completed' | 'failed'; error?: string; failure?: AgentFailure | null; text?: string; sha256?: string }; output: void };
-  contract: { input: { gate: 'complete' | 'integrate'; outcome: 'passed' | 'refused'; missing: ContractRequirement[]; candidate_sha256: string }; output: void };
+  contract: { input: { gate: 'complete' | 'integrate'; outcome: 'passed' | 'refused'; missing: ContractRequirement[]; candidate_sha256: string }
+    | { gate: 'complete'; outcome: 'refused'; reason: 'unresolved_blocking_findings'; outstanding_findings: string[]; candidate_sha256: string }; output: void };
   model_request: { input: ModelRequestEvent; output: { route: string } | null };
   response_stream: { input: ResponseStreamEvent; output: StreamDecision };
   prompt: { input: { thread_id: string; turn_id: string; original: string; effective: string; provenance: Json[] }; output: void };

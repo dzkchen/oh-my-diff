@@ -54,10 +54,10 @@ const api={
   provide(){},
   tool(spec,handler){handlers.set(spec.name,handler)},
   host:{call(operation,args){
-    if(operation==='workspace.snapshot') {
+    if(operation==='workspace.fingerprint') {
       if(args?.expected&&args.expected!==request.candidate) throw Error('analysis_candidate_stale');
       for(const [name,digest] of observed) if(sha(readFileSync(pathFor(name)))!==digest) throw Error('analysis_source_stale');
-      return {candidate_sha256:request.candidate,snapshot:null};
+      return {candidate_sha256:request.candidate};
     }
     if(operation==='workspace.list') return listing(args.path||'',args.max_entries||20000);
     if(operation==='workspace.read') return files(args.paths,true,false);

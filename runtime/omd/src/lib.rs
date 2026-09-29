@@ -55,7 +55,6 @@ pub use mode::PINNED_UPSTREAM;
 pub use mode::RuntimeMode;
 pub use mode::effective_mode;
 pub use mode::effective_mode_from;
-pub use owner::OwnerKind;
 pub use owner::PolicyOwner;
 pub use workspace::File;
 pub use workspace::Fingerprint;

@@ -267,14 +267,10 @@ impl ResponseObserver for Accounts {
                     "tools":[],"available":true})
             }));
         }
-        let presets = routes
-            .iter()
-            .map(|route| json!({"name":route["name"],"model":route["model"],"provider":route["provider"],"reasoning":route["reasoning"]}))
-            .collect::<Vec<_>>();
         let payload = json!({"request_id":request_id,"scope":{"thread_id":thread,
             "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
             "kind":if account.owner == "lead" {"main"} else {"subagent"}},
-            "authorized_presets":presets,"routes":routes,"original":original,"effective":original,"provenance":[]});
+            "routes":routes,"original":original,"effective":original,"provenance":[]});
         let effective = match Self::middleware(
             &mods,
             &self.3,

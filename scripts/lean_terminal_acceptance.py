@@ -16,9 +16,9 @@ import termios
 import time
 
 try:
-    from scripts import install_support as private
+    from scripts import install_support as support
 except ModuleNotFoundError:
-    import install_support as private
+    import install_support as support
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,8 +132,8 @@ def run(artifact_dir, upstream, output):
             observations[f"{profile}_direct"] = terminal(bin_dir / "codex", repo, env, 80,
                                                            "upstream-style direct")
             call(command + ["uninstall"], env)
-    result = {"status": "pass", "candidate_lock_sha256": private.digest(ROOT / "runtime/lean-release.lock.json"),
-              "artifact_sha256": private.digest(artifact_dir / "codex"),
+    result = {"status": "pass", "candidate_lock_sha256": support.digest(ROOT / "runtime/lean-release.lock.json"),
+              "artifact_sha256": support.digest(artifact_dir / "codex"),
               "checks": observations,
               "scope": "isolated local PTY title and status with an inactive loopback provider; no model request"}
     output.parent.mkdir(parents=True, exist_ok=True)

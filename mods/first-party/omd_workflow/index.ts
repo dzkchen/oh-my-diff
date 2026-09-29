@@ -15,6 +15,12 @@ const sha256 = (value: unknown): value is string => typeof value === 'string' &&
 const object = (value: unknown): value is Record<string, Json> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
 const strings = (value: unknown, count: number, size: number): value is string[] => Array.isArray(value) && value.length <= count && value.every(item => text(item, size)) && new Set(value).size === value.length;
+const parseCheckpoint = (value: unknown): Checkpoint | null =>
+  object(value) && value.schema === 1 && text(value.objective, 4096) && strings(value.acceptance_criteria, 16, 512)
+    && value.acceptance_criteria.length > 0 && object(value.acceptance) && sha256(value.acceptance.sha256)
+    && strings(value.remaining_work, 32, 512) && strings(value.failed_hypotheses, 32, 512)
+    && text(value.status, 64) && Array.isArray(value.decisions)
+    && (value.calls === undefined || object(value.calls)) ? value as unknown as Checkpoint : null;
 const requirement = (receipt: string, producer: ContractRequirement['producer'] = 'lead', bind: ContractRequirement['bind'] = ['candidate', 'acceptance']): ContractRequirement => ({ receipt, producer, bind, blocking_findings: 'reject' });
 const REVIEWED: ContractDocument = {
   schema: 2, id: 'reviewed_omd', version: 1, description: 'Delegated integration, checkpoint, milestone review, exact-candidate checks, independent final review and adversarial verification',
@@ -95,10 +101,9 @@ export default function activate(api: ModAPI) {
   const key = () => `task.${api.host.call('task.status', null).ledger.thread_id}`;
   const read = () => {
     const entry = api.host.call('store.get', { key: key() });
-    if (!entry || !object(entry.value) || entry.value.schema !== 1 || !text(entry.value.objective, 4096)
-        || !strings(entry.value.acceptance_criteria, 16, 512) || !entry.value.acceptance_criteria.length
-        || !object(entry.value.acceptance)) throw new Error('begin_task_first');
-    return { ...entry, value: entry.value as unknown as Checkpoint };
+    const value = parseCheckpoint(entry?.value);
+    if (!entry || !value) throw new Error('begin_task_first');
+    return { ...entry, value };
   };
   const save = (entry: ReturnType<typeof read>, value: Checkpoint) => {
     api.host.call('store.put', { key: key(), expected_revision: entry.revision, value: value as unknown as Json });
@@ -216,7 +221,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       api.state.set({ ...leads, [thread]: { ...(object(leads[thread]) ? leads[thread] : {}), no_progress_paused: false } });
     }
     if (['reviewed_omd', 'solo_evidence'].includes(contract.active?.id ?? '')) {
-      const candidate = api.host.call('workspace.snapshot', {});
+      const candidate = api.host.call('workspace.fingerprint', {});
       const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: 'Workflow checkpoint', content: saved as unknown as Json });
       api.host.call('receipts.submit', { kind: 'checkpoint', candidate_sha256: candidate.candidate_sha256,
         acceptance_sha256: saved.acceptance.sha256, outcome: 'pass', evidence });
@@ -248,17 +253,17 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     api.on('tool_result', event => {
       if (!object(event) || event.agent_id !== null || typeof event.thread_id !== 'string'
           || !sha256(event.call_sha256) || !sha256(event.result_sha256) || event.result_complete !== true
-          || event.outcome !== 'Completed { success: true }'
+          || event.outcome !== 'succeeded'
           || ['wait_agent', 'write_stdin', 'wait'].includes(String(event.tool))) return;
       const entry = api.host.call('store.get', { key: `task.${event.thread_id}` });
-      if (!entry || !object(entry.value) || entry.value.status !== 'active') return;
-      const task = entry.value as unknown as Checkpoint;
+      const task = parseCheckpoint(entry?.value);
+      if (!entry || task?.status !== 'active') return;
       const prior = task.calls?.[event.call_sha256];
       const unchanged = prior?.result_sha256 === event.result_sha256 && prior.progress_revision === (task.progress_revision ?? 1);
       const count = unchanged ? prior.unchanged_calls + 1 : 1;
-      const calls = { ...task.calls, [event.call_sha256]: { result_sha256: event.result_sha256,
-        progress_revision: task.progress_revision ?? 1, unchanged_calls: count } };
-      if (Object.keys(calls).length > 128) throw new Error('no_progress_call_cache_limit');
+      const retained = Object.entries(task.calls ?? {}).filter(([call]) => call !== event.call_sha256).slice(-127);
+      const calls = Object.fromEntries([...retained, [event.call_sha256, { result_sha256: event.result_sha256,
+        progress_revision: task.progress_revision ?? 1, unchanged_calls: count }]]);
       const status = count > noProgressLimit ? 'paused' : task.status;
       api.host.call('store.put', { key: `task.${event.thread_id}`, expected_revision: entry.revision,
         value: { ...task, calls, status, decisions: count >= noProgressLimit
@@ -289,7 +294,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     const reviewer = route('review_route', 'reviewer');
     if (target.provider === reviewer.provider && target.model === reviewer.model) throw new Error('separate_review_model_required');
     const delegation: Delegation = { brief: input.brief, parent_history: input.parent_history === true, outage_action: input.outage_action === 'opposite_lead' ? 'opposite_lead' : 'pause',
-      route: target, reviewer, base_sha256: api.host.call('workspace.snapshot', {}).candidate_sha256 };
+      route: target, reviewer, base_sha256: api.host.call('workspace.fingerprint', {}).candidate_sha256 };
     if (delegation.outage_action === 'opposite_lead') {
       const thread = api.host.call('task.status', null).ledger.thread_id;
       const state = api.state.get();
@@ -322,7 +327,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     const next: Delegation = retry ? { ...previous, fingerprint } : { ...previous, route: previous.fallback!, reviewer: previous.original_lead!, fingerprint };
     currentRoute(next.route);
     currentRoute(next.reviewer);
-    api.host.call('workspace.snapshot', { expected: previous.base_sha256 });
+    api.host.call('workspace.fingerprint', { expected: previous.base_sha256 });
     api.host.call('agents.cancel', { handle: pending.handle });
     save(entry, { ...entry.value, pending: null, status: 'admitting', outage_retries: 1,
       outage_fallbacks: retry ? (entry.value.outage_fallbacks ?? 0) : 1,
@@ -416,7 +421,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     const entry = read();
     const verdict = review(input.review, entry.value.acceptance_criteria);
     if (verdict.assessments.some(item => item.verdict !== 'pass') || verdict.findings.some(item => item.severity === 'blocking')) throw new Error('acceptance_not_complete');
-    const snapshot = api.host.call('workspace.snapshot', { expected: input.candidate_sha256 });
+    const snapshot = api.host.call('workspace.fingerprint', { expected: input.candidate_sha256 });
     const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: 'Acceptance assessments', content: verdict as unknown as Json });
     return save(entry, { ...entry.value, completed_acceptance: { candidate_sha256: snapshot.candidate_sha256, assessments: verdict.assessments, evidence } }) as unknown as Json;
   });
@@ -458,7 +463,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['self_review', 'self_verification'] }, candidate_sha256: { type: 'string' }, review: { type: 'object' } }, required: ['kind', 'candidate_sha256', 'review'], additionalProperties: false } }, input => {
     if (selected().active?.id !== 'solo_evidence' || !object(input) || !['self_review', 'self_verification'].includes(String(input.kind)) || !text(input.candidate_sha256, 64)) throw new Error('solo_verification_required');
     const task = read().value;
-    const candidate = api.host.call('workspace.snapshot', { expected: input.candidate_sha256 });
+    const candidate = api.host.call('workspace.fingerprint', { expected: input.candidate_sha256 });
     const verdict = review(input.review, task.acceptance_criteria);
     const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: String(input.kind), content: verdict as unknown as Json });
     return receipt(String(input.kind), candidate.candidate_sha256, task, evidence, verdict) as unknown as Json;
@@ -467,7 +472,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
     selected();
     const entry = read();
-    const candidate = api.host.call('workspace.snapshot', {});
+    const candidate = api.host.call('workspace.fingerprint', {});
     if (entry.value.completed_acceptance?.candidate_sha256 !== candidate.candidate_sha256) throw new Error('record_current_acceptance_assessments_first');
     const result = api.host.call('task.complete', { candidate_sha256: candidate.candidate_sha256, acceptance_sha256: entry.value.acceptance.sha256 });
     if (result.status === 'completed') save(entry, { ...entry.value, status: 'completed', remaining_work: [] });

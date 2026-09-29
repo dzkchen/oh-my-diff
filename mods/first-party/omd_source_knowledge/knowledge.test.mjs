@@ -59,7 +59,7 @@ function fixture(files = {}) {
           saved = call.arguments.value;
           revision++;
           value = { revision };
-        } else if (call.operation === 'workspace.snapshot') {
+        } else if (['workspace.snapshot', 'workspace.fingerprint'].includes(call.operation)) {
           if (stale && call.arguments.expected) {
             receipts.push({ call, error: 'workspace_candidate_stale' });
             continue;

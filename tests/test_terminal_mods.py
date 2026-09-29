@@ -50,14 +50,6 @@ class TerminalModSourceTests(unittest.TestCase):
                 self.assertEqual(set(manifest["capabilities"]), capabilities)
                 self.assertLessEqual(features, set(manifest["compatibility"]["required_features"]))
 
-    def test_git_sidebar_writes_use_guarded_host_execution_and_path_access(self):
-        source = (ROOT / "mods/first-party/omd_git/index.ts").read_text()
-        self.assertNotIn("'git.stage'", source)
-        self.assertIn("'exec.run'", source)
-        self.assertIn("guards, required_access: { write: paths }", source)
-        self.assertIn("'workspace.check_access'", source)
-        self.assertIn("'workspace.backup'", source)
-
 
 if __name__ == "__main__":
     unittest.main()

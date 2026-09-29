@@ -201,13 +201,9 @@
         }
       }
     ],
-    "workspace.snapshot": [
+    "workspace.fingerprint": [
       {
         "result": {
-          "snapshot": {
-            "reference": "snapshot:fixture",
-            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
           "candidate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       }

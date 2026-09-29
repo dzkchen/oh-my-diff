@@ -53,7 +53,7 @@ function fixture(files = {}) {
         const call = output.host_call;
         calls.push(call);
         let value;
-        if (call.operation === 'workspace.snapshot') {
+        if (['workspace.snapshot', 'workspace.fingerprint'].includes(call.operation)) {
           if (stale && call.arguments.expected) { receipts.push({ call, error: 'workspace_candidate_stale' }); continue; }
           value = { snapshot: { reference: 'fixture', sha256: candidate }, candidate_sha256: candidate };
         } else if (call.operation === 'workspace.stat') value = { files: Object.fromEntries(call.arguments.paths.map(path => {

@@ -512,4 +512,37 @@ mod tests {
         assert!(output.status.success(), "{:?}", output);
         assert_eq!(output.stdout, b"sandbox-ok");
     }
+
+    #[test]
+    fn protected_host_paths_stay_unreadable_even_under_an_unrestricted_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let repository = root.join("repo");
+        let protected = root.join("omd-data");
+        std::fs::create_dir(&repository).unwrap();
+        std::fs::create_dir(&protected).unwrap();
+        std::fs::write(protected.join("secret"), "host-only").unwrap();
+        let output = crate::generic_host::sandboxed_command(
+            &FileSystemSandboxPolicy::unrestricted(),
+            &repository,
+            std::slice::from_ref(&protected),
+            vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "if cat \"$1\"; then exit 19; fi; printf sandbox-ok".into(),
+                "check".into(),
+                protected.join("secret").display().to_string(),
+            ],
+            &codex_omd::host::ExecAccess {
+                write: false,
+                loopback: false,
+                scratch: &repository,
+            },
+        )
+        .unwrap()
+        .output()
+        .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        assert_eq!(output.stdout, b"sandbox-ok");
+    }
 }

@@ -66,10 +66,10 @@ const api = {
   tool(spec, handler) { handlers.set(spec.name, handler); },
   command() {},
   host: { call(operation, input) {
-    if (operation === 'workspace.snapshot') {
+    if (operation === 'workspace.fingerprint') {
       const current = candidate();
       if (current !== initial || input?.expected && input.expected !== initial) throw Error('pi_user_source_stale');
-      return { candidate_sha256: initial, snapshot: null };
+      return { candidate_sha256: initial };
     }
     if (operation === 'workspace.list') return listing(input.path, input.recursive === true, input.max_entries || 1024);
     if (operation === 'workspace.stat') return { files: Object.fromEntries(input.paths.map(name => [name, stat(name, input.hash === true)])) };

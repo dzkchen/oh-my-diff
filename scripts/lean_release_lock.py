@@ -6,10 +6,10 @@ import subprocess
 import tarfile
 
 try:
-    from scripts import install_support as private
+    from scripts import install_support as support
     from scripts import full_mods_lock
 except ModuleNotFoundError:
-    import install_support as private
+    import install_support as support
     import full_mods_lock
 
 
@@ -47,9 +47,9 @@ SOURCES = tuple(sorted(set(SOURCES) | set(sdk_sources())))
 
 
 def selected_plugins(index, package_mode):
-    lock = private.plugin_lock()
+    lock = support.plugin_lock()
     source = ROOT / lock["source"]
-    if private.digest(ROOT / lock["guide"]["path"]) != lock["guide"]["sha256"]:
+    if support.digest(ROOT / lock["guide"]["path"]) != lock["guide"]["sha256"]:
         raise ValueError("pinned bundled plugin guide changed")
     selected = sorted(package["id"] for package in index["packages"]
                       if package["extension_type"] == "plugin"
@@ -65,13 +65,13 @@ def selected_plugins(index, package_mode):
     if actual != expected:
         raise ValueError("selected plugin source inventory changed")
     for name in expected:
-        if private.digest(source / name) != lock["files"][name]:
+        if support.digest(source / name) != lock["files"][name]:
             raise ValueError(f"selected plugin source changed: {name}")
     marketplace = json.loads((source / ".agents/plugins/marketplace.json").read_text())
     listed = {entry["name"] for entry in marketplace["plugins"]}
     if marketplace.get("name") != lock["marketplace"] or not set(selected) <= listed:
         raise ValueError("selected plugin marketplace changed")
-    if not package_mode and private.digest(source / ".agents/plugins/marketplace.json") != lock["files"][".agents/plugins/marketplace.json"]:
+    if not package_mode and support.digest(source / ".agents/plugins/marketplace.json") != lock["files"][".agents/plugins/marketplace.json"]:
         raise ValueError("pinned bundled plugin marketplace changed")
     if package_mode and (listed != set(selected) or any(
             name.startswith("plugins/") and name.split("/")[1] not in selected for name in
@@ -87,9 +87,9 @@ def selected_plugins(index, package_mode):
 def build(artifact_dir, package_mode=False):
     upstream = json.loads((ROOT / "upstream.lock.json").read_text())
     patch = json.loads((ROOT / "runtime/patches/manifest.json").read_text())
-    if private.digest(ROOT / patch["patch"]["path"]) != patch["patch"]["sha256"]:
+    if support.digest(ROOT / patch["patch"]["path"]) != patch["patch"]["sha256"]:
         raise ValueError("active runtime patch hash mismatch")
-    preview = private.preview_sources(private.preview_lock())
+    preview = support.preview_sources(support.preview_lock())
     full = full_mods_lock.load()
     if not package_mode and full != full_mods_lock.build():
         raise ValueError("Full mod lock differs from pinned sources")
@@ -106,7 +106,7 @@ def build(artifact_dir, package_mode=False):
         if not path.is_file() or "arm64" not in subprocess.check_output(
                 ["file", "-b", str(path)], text=True):
             raise ValueError(f"missing Apple Silicon release artifact: {name}")
-        artifacts[name] = {"sha256": private.digest(path), "bytes": path.stat().st_size}
+        artifacts[name] = {"sha256": support.digest(path), "bytes": path.stat().st_size}
     archive = artifact_dir / AUTHOR_ARCHIVE
     if not archive.is_file():
         raise ValueError("missing packed mod author SDK")
@@ -123,8 +123,8 @@ def build(artifact_dir, package_mode=False):
     for name, source in expected_sdk.items():
         if files[name] != source.read_bytes():
             raise ValueError(f"packed mod author source differs: {name}")
-    artifacts[AUTHOR_ARCHIVE] = {"sha256": private.digest(archive), "bytes": archive.stat().st_size}
-    if private.binary_identity(artifact_dir / "codex")["version"] != f"codex-cli {version}":
+    artifacts[AUTHOR_ARCHIVE] = {"sha256": support.digest(archive), "bytes": archive.stat().st_size}
+    if support.binary_identity(artifact_dir / "codex")["version"] != f"codex-cli {version}":
         raise ValueError("release binary does not match the active upstream pin")
     return {
         "schema": 1,
@@ -137,7 +137,7 @@ def build(artifact_dir, package_mode=False):
         "runtime_patch_sha256": patch["patch"]["sha256"],
         "mod_api": preview["mod_api"],
         "node": preview["node"],
-        "source_sha256": {name: private.digest(ROOT / name) for name in SOURCES},
+        "source_sha256": {name: support.digest(ROOT / name) for name in SOURCES},
         "artifacts": artifacts,
         "platform_tools": ["omd", "omd-contract"],
         "profiles": {

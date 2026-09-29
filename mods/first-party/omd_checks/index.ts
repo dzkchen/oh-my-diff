@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '../../api.d.ts';
+import type { FileStat, Json, ModAPI } from '../../api.d.ts';
 
 type Language = 'rust' | 'typescript' | 'javascript' | 'python' | 'java';
 type Check = { language: Language; program: string; program_sha256: string | null; arguments: string[]; working_directory: string; scope: string[]; input_sha256: string; candidate_sha256: string };
@@ -30,15 +30,21 @@ function validPath(value: unknown): value is string {
     && value.split('/').every(part => part.length > 0 && part !== '.' && part !== '..' && part !== '.git');
 }
 
-function ancestor(path: string, name: string, files: Set<string>): string | null {
-  const parts = path.split('/');
-  parts.pop();
-  while (true) {
-    const prefix = parts.length ? `${parts.join('/')}/` : '';
-    if (files.has(`${prefix}${name}`)) return parts.join('/');
-    if (!parts.length) return null;
-    parts.pop();
-  }
+const ROOT_CONFIG: Partial<Record<Language, string>> = { rust: 'Cargo.toml', typescript: 'tsconfig.json', javascript: 'tsconfig.json' };
+const STAT_BATCH = 64;
+const INPUT_FILE_LIMIT = 4096;
+const INPUT_BYTE_LIMIT = 32 * 1024 * 1024;
+
+type Command = { program: string; program_sha256: string | null; arguments: string[]; working_directory: string };
+type Program = { path: string; sha256: string };
+
+function directories(path: string): string[] {
+  const parts = path.split('/').slice(0, -1);
+  return Array.from({ length: parts.length + 1 }, (_, depth) => parts.slice(0, parts.length - depth).join('/'));
+}
+
+function within(directory: string, name: string): string {
+  return directory ? `${directory}/${name}` : name;
 }
 
 async function digest(entries: [string, string][]): Promise<string> {
@@ -47,21 +53,15 @@ async function digest(entries: [string, string][]): Promise<string> {
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function command(kind: Language, scope: string[], files: Set<string>, programs: Map<string, { path: string; sha256: string }>): { program: string; program_sha256: string | null; arguments: string[]; working_directory: string } | string {
+function command(kind: Language, root: string, scope: string[], present: (path: string) => boolean, programs: Map<string, Program>): Command | string {
   const installed = (name: string) => programs.get(name);
   if (kind === 'rust') {
     const cargo = installed('cargo');
-    const directory = ancestor(scope[0], 'Cargo.toml', files);
-    return cargo && directory !== null
-      ? { program: cargo.path, program_sha256: cargo.sha256, arguments: ['check', '--quiet'], working_directory: directory }
-      : 'cargo or a repository Cargo.toml is unavailable';
+    return cargo ? { program: cargo.path, program_sha256: cargo.sha256, arguments: ['check', '--quiet'], working_directory: root } : 'cargo is not installed';
   }
   if (kind === 'typescript' || kind === 'javascript') {
     const pnpm = installed('pnpm');
-    const directory = ancestor(scope[0], 'tsconfig.json', files);
-    return pnpm && directory !== null
-      ? { program: pnpm.path, program_sha256: pnpm.sha256, arguments: ['exec', 'tsc', '--noEmit', '--pretty', 'false', '-p', `${directory ? `${directory}/` : ''}tsconfig.json`], working_directory: '' }
-      : 'pnpm or a repository tsconfig.json is unavailable';
+    return pnpm ? { program: pnpm.path, program_sha256: pnpm.sha256, arguments: ['exec', 'tsc', '--noEmit', '--pretty', 'false', '-p', within(root, 'tsconfig.json')], working_directory: '' } : 'pnpm is not installed';
   }
   if (kind === 'python') {
     for (const name of ['pyright', 'mypy', 'ruff']) {
@@ -70,8 +70,8 @@ function command(kind: Language, scope: string[], files: Set<string>, programs: 
     }
     return 'pyright, mypy, and ruff are not installed';
   }
-  if (files.has('gradlew')) return { program: './gradlew', program_sha256: null, arguments: ['compileJava'], working_directory: '' };
-  if (files.has('mvnw')) return { program: './mvnw', program_sha256: null, arguments: ['-q', '-DskipTests', 'compile'], working_directory: '' };
+  if (present('gradlew')) return { program: './gradlew', program_sha256: null, arguments: ['compileJava'], working_directory: '' };
+  if (present('mvnw')) return { program: './mvnw', program_sha256: null, arguments: ['-q', '-DskipTests', 'compile'], working_directory: '' };
   for (const [name, args] of [['gradle', ['compileJava']], ['mvn', ['-q', '-DskipTests', 'compile']]] as const) {
     const program = installed(name);
     if (program) return { program: program.path, program_sha256: program.sha256, arguments: [...args], working_directory: '' };
@@ -80,48 +80,74 @@ function command(kind: Language, scope: string[], files: Set<string>, programs: 
 }
 
 export default function activate(api: ModAPI) {
+  const stat = (paths: string[], hash: boolean): Map<string, FileStat | null> => {
+    const found = new Map<string, FileStat | null>();
+    const unique = [...new Set(paths)];
+    for (let index = 0; index < unique.length; index += STAT_BATCH) {
+      const batch = unique.slice(index, index + STAT_BATCH);
+      const files = api.host.call('workspace.stat', { paths: batch, hash }).files;
+      for (const path of batch) found.set(path, files[path] ?? null);
+    }
+    return found;
+  };
+  const inputs = (kind: Language, root: string, scope: string[], configs: string[]): string[] => {
+    if (kind === 'python') return [...scope, ...configs];
+    const listed = api.host.call('workspace.list', { path: root, recursive: true, include_ignored: false });
+    if (listed.truncated) throw new Error('check_input_listing_truncated');
+    const names = new Set(CONFIG[kind]);
+    const found = listed.entries.filter(entry => entry.kind === 'file' && validPath(entry.path)
+      && (language(entry.path) === kind || names.has(entry.path.split('/').at(-1) ?? ''))).map(entry => entry.path);
+    return [...found, ...configs];
+  };
+
   api.tool({ name: 'select', description: 'Select bounded, source-bound intermediate checks for changed repository files without running them.',
     parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'], additionalProperties: false } }, async input => {
     const raw = input !== null && typeof input === 'object' && !Array.isArray(input) ? input.paths : null;
     if (!Array.isArray(raw) || raw.length === 0 || raw.length > 128 || !raw.every(validPath)) throw new Error('changed_paths_invalid');
     const paths = [...new Set(raw as string[])];
     if (paths.some(path => !language(path))) throw new Error('unsupported_source_path');
-    const before = api.host.call('workspace.snapshot', {});
-    const listed = api.host.call('workspace.list', { recursive: true, include_ignored: false, max_entries: 2048 });
-    if (listed.truncated) throw new Error('check_input_listing_truncated');
-    const files = new Set(listed.entries.filter(entry => entry.kind === 'file' && validPath(entry.path)).map(entry => entry.path));
-    if (paths.some(path => !files.has(path))) throw new Error('changed_source_missing');
+    const before = api.host.call('workspace.fingerprint', {});
+    const configCandidates = paths.flatMap(path => directories(path).flatMap(directory => CONFIG[language(path)!].map(name => within(directory, name))));
+    const stats = stat([...paths, ...configCandidates], false);
+    if (paths.some(path => stats.get(path)?.kind !== 'file')) throw new Error('changed_source_missing');
+    const present = (path: string) => stats.get(path)?.kind === 'file';
     const found = api.host.call('process.which', { names: ['cargo', 'pnpm', 'pyright', 'mypy', 'ruff', 'gradle', 'mvn'] });
     const programs = new Map(found.found.filter(item => SHA256.test(item.sha256)).map(item => [item.name, { path: item.path, sha256: item.sha256 }]));
     const checks: Check[] = [];
     const unsupported: Unsupported[] = [];
     for (const kind of LANGUAGE_ORDER) {
-      const scope = paths.filter(path => language(path) === kind).sort();
-      if (!scope.length) continue;
-      const selected = command(kind, scope, files, programs);
-      if (typeof selected === 'string') {
-        unsupported.push({ language: kind, reason: selected, fallback: FALLBACK });
-        continue;
+      const groups = new Map<string, string[]>();
+      for (const path of paths.filter(path => language(path) === kind).sort()) {
+        const marker = ROOT_CONFIG[kind];
+        const root = marker ? directories(path).find(directory => present(within(directory, marker))) : '';
+        if (root === undefined) {
+          unsupported.push({ language: kind, reason: `no ${marker} encloses ${path}`, fallback: FALLBACK });
+          continue;
+        }
+        groups.set(root, [...(groups.get(root) ?? []), path]);
       }
-      const names = new Set(CONFIG[kind]);
-      const relevant = [...files].filter(path => language(path) === kind || names.has(path.split('/').at(-1) ?? '')).sort();
-      if (relevant.length > 1024) throw new Error('check_inputs_exceed_file_limit');
-      const hashed: [string, string][] = [];
-      let bytes = 0;
-      for (let index = 0; index < relevant.length; index += 64) {
-        const batch = relevant.slice(index, index + 64);
-        const stat = api.host.call('workspace.stat', { paths: batch, hash: true });
-        for (const path of batch) {
-          const file = stat.files[path];
+      for (const [root, scope] of groups) {
+        const selected = command(kind, root, scope, present, programs);
+        if (typeof selected === 'string') {
+          unsupported.push({ language: kind, reason: selected, fallback: FALLBACK });
+          continue;
+        }
+        const configs = scope.flatMap(path => directories(path).flatMap(directory => CONFIG[kind].map(name => within(directory, name)))).filter(present);
+        const relevant = [...new Set(inputs(kind, root, scope, configs))].sort();
+        if (relevant.length > INPUT_FILE_LIMIT) throw new Error('check_inputs_exceed_file_limit');
+        const hashed = stat(relevant, true);
+        let bytes = 0;
+        const entries: [string, string][] = relevant.map(path => {
+          const file = hashed.get(path);
           if (!file || file.kind !== 'file' || !file.sha256 || !SHA256.test(file.sha256)) throw new Error('check_input_stale');
           bytes += file.size;
-          if (bytes > 8 * 1024 * 1024) throw new Error('check_inputs_exceed_byte_limit');
-          hashed.push([path, file.sha256]);
-        }
+          if (bytes > INPUT_BYTE_LIMIT) throw new Error('check_inputs_exceed_byte_limit');
+          return [path, file.sha256];
+        });
+        checks.push({ language: kind, ...selected, scope, input_sha256: await digest(entries), candidate_sha256: before.candidate_sha256 });
       }
-      checks.push({ language: kind, ...selected, scope, input_sha256: await digest(hashed), candidate_sha256: before.candidate_sha256 });
     }
-    api.host.call('workspace.snapshot', { expected: before.candidate_sha256 });
+    api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
     return { checks, unsupported, candidate_sha256: before.candidate_sha256 } as Json;
   });
 }

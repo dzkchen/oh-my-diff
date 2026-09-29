@@ -22,7 +22,7 @@ export default function activate(api: ModAPI) {
     const assessments = acceptance.assessments;
     if (task.pending || acceptance.candidate_sha256 !== candidate || !Array.isArray(criteria) || !criteria.length || !Array.isArray(assessments)
         || assessments.length !== criteria.length || !criteria.every(criterion => assessments.some(item => object(item).criterion === criterion && object(item).verdict === 'pass'))) throw new Error('current complete acceptance assessments required before sealing');
-    api.host.call('workspace.snapshot', { expected: candidate });
+    api.host.call('workspace.fingerprint', { expected: candidate });
     return api.host.call('contract.restrict', { operations: ['workspace.integrate'], scoped: [{ operation: 'agents.spawn', when: { '/workspace': 'isolated_worktree' } }],
       reason: `Candidate ${candidate} entered final verification` });
   });

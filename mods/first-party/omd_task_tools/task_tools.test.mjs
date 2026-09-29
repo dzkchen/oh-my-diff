@@ -46,7 +46,7 @@ test('refreshes task-scoped exposure from workflow status and rechecks before ex
   const check = replay('tool', {}, initial.output.state, ['fix src/main.py'], { python_command: ['python3', '-m', 'py_compile', 'solution.py'] }, 'check_python');
   assert.equal(check.output.value.exit_code, 0);
   assert.deepEqual(check.calls.at(-1), { operation: 'exec.run', arguments: { program: 'python3', argv: ['-m', 'py_compile', 'solution.py'], write: true, timeout_ms: 120000, max_output_bytes: 65_536 } });
-  const changed = replay('tool_result', { call_id: 'a', tool: 'mod_omd_workflow_checkpoint', outcome: 'Completed' }, initial.output.state, ['fix src/view.ts']);
+  const changed = replay('tool_result', { call_id: 'a', tool: 'mod_omd_workflow_checkpoint', outcome: 'succeeded' }, initial.output.state, ['fix src/view.ts']);
   assert.deepEqual(changed.output.state, { one: ['typescript'] });
   assert.deepEqual(run('tool_exposure', { thread_id: 'one', available: ['check_python', 'check_typescript', 'check_rust'] }, changed.output.state).value, { enable: ['check_typescript'] });
   assert.deepEqual(run('tool_exposure', { thread_id: 'other', available: ['check_python', 'check_typescript', 'check_rust'] }, changed.output.state).value, { enable: [] });
@@ -54,7 +54,7 @@ test('refreshes task-scoped exposure from workflow status and rechecks before ex
 
 test('missing workflow clears exposure and stale selected tools refuse execution', () => {
   const prior = { one: ['python'] };
-  const unavailable = replay('tool_result', { call_id: 'a', tool: 'mod_omd_workflow_checkpoint', outcome: 'Completed' }, prior, [], {}, '', true);
+  const unavailable = replay('tool_result', { call_id: 'a', tool: 'mod_omd_workflow_checkpoint', outcome: 'succeeded' }, prior, [], {}, '', true);
   assert.deepEqual(unavailable.output.state, {});
   assert.deepEqual(run('tool_exposure', { thread_id: 'one', available: ['check_python'] }, unavailable.output.state).value, { enable: [] });
   const stale = replay('tool', {}, prior, ['write README'], {}, 'check_python');

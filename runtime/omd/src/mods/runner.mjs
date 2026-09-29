@@ -37,7 +37,6 @@ registrations.virtual_reads = [];
 const serviceHandlers = new Map();
 const virtualReaders = new Map();
 const updates = [];
-let submitted = null;
 let state = structuredCloneFallback(request.state);
 let activating = true;
 let pending = null;
@@ -160,44 +159,7 @@ const api = Object.freeze({
   }),
   unsupported(operation) { throw new Error('unsupported_operation: ' + operation); },
 });
-function unsupportedPi(name) { throw new Error('unsupported_pi_operation: ' + name); }
-function piText(content) {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content) || content.some(c => c?.type !== 'text' || typeof c.text !== 'string')) unsupportedPi('non_text_content');
-  return content.map(c => c.text).join('\\n');
-}
-const piContext = new Proxy(Object.freeze({ hasUI: false }), {
-  get(target, key) { if (key in target) return target[key]; return unsupportedPi('context.' + String(key)); },
-});
-const pi = new Proxy(Object.freeze({
-  registerTool(spec) {
-    for (const key of Object.keys(spec)) if (!['name','label','description','parameters','execute'].includes(key)) unsupportedPi('tool.' + key);
-    const definition = {name:spec.name,description:spec.description,parameters:spec.parameters};
-    if (spec.label !== undefined) definition.label = spec.label;
-    api.tool(definition, async args => {
-      let last = null;
-      const onUpdate = partial => { last = piText(partial?.content); api.progress(last); };
-      const result = await spec.execute('omd:' + request.name, args, undefined, onUpdate, piContext);
-      if (!Array.isArray(result?.content) || result.content.some(c => c.type !== 'text' || typeof c.text !== 'string')) unsupportedPi('non_text_tool_result');
-      return last === null ? result : { ...result, last_update: last };
-    });
-  },
-  registerCommand(name, options) {
-    for (const key of Object.keys(options)) if (!['description','handler'].includes(key)) unsupportedPi('command.' + key);
-    api.command(name, async args => {
-      if (typeof args !== 'string') throw new Error('pi_command_requires_string');
-      const value = await options.handler(args, piContext);
-      return submitted === null ? (value ?? null) : { submit: submitted };
-    }, options.description === undefined ? {} : { description: options.description });
-  },
-  sendUserMessage(content, options) {
-    if (activating || request.event !== 'command') unsupportedPi('sendUserMessage outside command');
-    if (options !== undefined) unsupportedPi('sendUserMessage.options');
-    if (submitted !== null) unsupportedPi('multiple_user_messages');
-    submitted = piText(content);
-  },
-}), { get(target,key) { if (key in target) return target[key]; return unsupportedPi(String(key)); } });
-globalThis.__omd = { api, pi, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, updates,
+globalThis.__omd = { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, updates,
   state: () => state, request, calls,
   pending: () => pending, ready: () => { activating = false; }, suspension };
 `;
@@ -227,24 +189,6 @@ try {
   context.__adapt = adapt;
   await mod.link(async specifier => {
     if (aliases.has(specifier)) return aliases.get(specifier);
-    if (request.adapter === 'pi-0.74-tools-commands-v1' && specifier === 'typebox') {
-      const types = new SourceTextModule(`
-        const optional = new WeakSet();
-        export const Type = Object.freeze({
-          String: (options = {}) => ({...options,type:'string'}),
-          Number: (options = {}) => ({...options,type:'number'}),
-          Integer: (options = {}) => ({...options,type:'integer'}),
-          Boolean: (options = {}) => ({...options,type:'boolean'}),
-          Literal: value => ({const:value,type:typeof value}),
-          Array: (items,options = {}) => ({...options,type:'array',items}),
-          Union: anyOf => ({anyOf}),
-          Optional: schema => { const result = {...schema}; optional.add(result); return result; },
-          Object: (properties,options = {}) => ({additionalProperties:false,...options,type:'object',properties,required:Object.keys(properties).filter(k=>!optional.has(properties[k]))}),
-        });
-      `, { context });
-      await types.link(() => { throw new Error('unsupported_import'); });
-      return types;
-    }
     throw new Error(`unsupported_import: ${specifier}; use type-only SDK imports and a self-contained module`);
   });
   await mod.evaluate({ timeout: request.hook_budget_ms });
@@ -252,7 +196,7 @@ try {
   const dispatch = new SourceTextModule(`
     const { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, request } = globalThis.__omd;
     if (typeof globalThis.__activate !== 'function') throw new Error('default_export_required');
-    const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : request.adapter === "pi-0.74-tools-commands-v1" ? globalThis.__omd.pi : api;
+    const activation = typeof globalThis.__adapt === 'function' ? await globalThis.__adapt(api) : api;
     await globalThis.__activate(activation);
     globalThis.__omd.ready();
     let value = null;

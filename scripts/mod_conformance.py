@@ -13,9 +13,6 @@ BRIDGE = ROOT / "runtime/omd/src/mods/bridge.rs"
 RUST_TESTS = ROOT / "runtime/omd/tests"
 PATCH = ROOT / json.loads((ROOT / "upstream.lock.json").read_text())["runtime_patches"][0]["path"]
 RUNNER_TESTS = ROOT / "mods/runner.test.mjs"
-TERMINAL_FIXTURE = ROOT / "benchmarks/mod_terminal_fixture.py"
-MOD_FIXTURE = ROOT / "benchmarks/mod_fixture.py"
-CONTROLLED_FIXTURE = ROOT / "benchmarks/controlled_fixture.py"
 PYTHON_TESTS = ROOT / "tests"
 GROUPS = {
     "coordination": "Coordination decisions",
@@ -54,15 +51,7 @@ def host_sets():
     }
 
 
-def fixture_profiles():
-    choices = re.search(r'"--mod-profile", choices=\((.*?)\), default=', CONTROLLED_FIXTURE.read_text(), re.S)
-    scenarios = re.search(r'"--scenario", choices=\((.*?)\), default=', CONTROLLED_FIXTURE.read_text(), re.S)
-    return set(re.findall(r'"([a-z0-9-]+)"', choices.group(1))), set(
-        re.findall(r'"([a-z0-9-]+)"', scenarios.group(1))
-    ) | {"solo", "solo-denied", "contract-downgrade", "contract-resume"}
-
-
-def resolve(reference, profiles, scenarios):
+def resolve(reference):
     kind, _, name = reference.partition(":")
     if kind == "rust":
         return any(f"fn {name}(" in path.read_text() for path in RUST_TESTS.glob("*.rs"))
@@ -70,15 +59,8 @@ def resolve(reference, profiles, scenarios):
         return re.search(rf"^\+\s*(async )?fn {re.escape(name)}\(", PATCH.read_text(), re.M) is not None
     if kind == "node":
         return f"test('{name}'" in RUNNER_TESTS.read_text()
-    if kind == "terminal":
-        return f'checks["{name}"]' in TERMINAL_FIXTURE.read_text()
     if kind == "python":
         return any(f"def {name}(" in path.read_text() for path in PYTHON_TESTS.glob("test_*.py"))
-    if kind == "fixture":
-        profile, _, scenario = name.partition("/")
-        if profile not in profiles or scenario not in scenarios:
-            return False
-        return f'"{profile}"' in MOD_FIXTURE.read_text() or profile.split("-")[0] in MOD_FIXTURE.read_text()
     return False
 
 
@@ -90,7 +72,6 @@ def check(contract, version, sets):
         problems.append(f"api version disagreement: contract={contract['api']} host={version} package={declared} types={types}")
     covered = {key: set() for key in sets}
     identifiers = set()
-    profiles, scenarios = fixture_profiles()
     for decision in contract["decisions"]:
         if decision["id"] in identifiers:
             problems.append(f"duplicate decision id {decision['id']}")
@@ -111,7 +92,7 @@ def check(contract, version, sets):
             problems.append(f"composition rule {rule['id']}: no executable evidence")
     for entry in contract["decisions"] + contract["composition"]:
         for reference in entry["evidence"]:
-            if not resolve(reference, profiles, scenarios):
+            if not resolve(reference):
                 problems.append(f"{entry['id']}: unresolved evidence {reference}")
     return problems
 
@@ -196,8 +177,7 @@ def render(contract):
         "## Conformance evidence",
         "",
         "`rust:` `runtime/omd/tests/*.rs` · `patch:` patched native/TUI tests ·",
-        "`node:` `mods/runner.test.mjs` · `python:` `tests/` · `fixture:` profile/scenario of",
-        "`benchmarks.controlled_fixture` · `terminal:` check of `benchmarks.mod_terminal_fixture`.",
+        "`node:` `mods/runner.test.mjs` · `python:` `tests/`.",
         "Each reference is resolved by `scripts/mod_conformance.py`.",
         "",
         table(

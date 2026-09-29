@@ -219,13 +219,13 @@ function expected(input: Record<string, Json>, revision: number): void {
 }
 
 function snapshot(api: ModAPI): string {
-  const value = api.host.call('workspace.snapshot', {}).candidate_sha256;
+  const value = api.host.call('workspace.fingerprint', {}).candidate_sha256;
   if (!SHA.test(value)) throw new Error('guideline_candidate_invalid');
   return value;
 }
 
 function fresh(api: ModAPI, candidate: string): void {
-  api.host.call('workspace.snapshot', { expected: candidate });
+  api.host.call('workspace.fingerprint', { expected: candidate });
 }
 
 function checkEvidence(api: ModAPI, items: Evidence[]): void {

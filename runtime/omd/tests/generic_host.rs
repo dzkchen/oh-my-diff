@@ -92,6 +92,15 @@ fn caller<'a>(capabilities: &'a [String], environment: &'a [String], origin: Ori
     }
 }
 
+fn owner() -> PolicyOwner {
+    PolicyOwner {
+        id: "fixture".into(),
+        version: "1.0.0".into(),
+        source: "fixture".into(),
+        sha256: "0".repeat(64),
+    }
+}
+
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| value.to_string()).collect()
 }
@@ -211,6 +220,52 @@ fn exec_output_store_evicts_oldest_artifacts_instead_of_failing() {
         )
         .unwrap();
     assert_eq!(last["text"], "artifact-128");
+}
+
+#[test]
+fn exec_output_quota_spans_every_thread_and_source_of_a_mod() {
+    let (_temp, _repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec"]);
+    let threads: Vec<String> = (0..130).map(|index| format!("thread-{index}")).collect();
+    let run = |index: usize| {
+        let owner = Caller {
+            id: "spanning",
+            thread: Some(&threads[index]),
+            ..caller(&capabilities, &[], Origin::Tool)
+        };
+        host.call(
+            &owner,
+            "exec.run",
+            json!({"program":"printf", "argv":[format!("artifact-{index}")], "output_artifact":true}),
+        )
+        .unwrap();
+    };
+    run(0);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    for index in 1..130 {
+        run(index);
+    }
+    let owner = std::fs::read_dir(data.join("exec-output"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path()
+        .join("spanning");
+    let stored = std::fs::read_dir(&owner)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .count();
+    assert_eq!(stored, 128);
+    assert!(!owner.join("thread-0").exists());
 }
 
 #[test]
@@ -1116,10 +1171,7 @@ fn contract_selection_pins_digests_applies_the_project_floor_and_fails_closed() 
         "solo",
         json!({"complete":[{"receipt":"review","producer":"lead"}]}),
     );
-    let documents = vec![
-        (strict.clone(), PolicyOwner::bundled()),
-        (solo.clone(), PolicyOwner::bundled()),
-    ];
+    let documents = vec![(strict.clone(), owner()), (solo.clone(), owner())];
     let pick = |key: &str, digest: Option<String>| ContractSelection {
         schema: 2,
         contract: Some(key.into()),

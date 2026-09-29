@@ -10,5 +10,5 @@
   "assets": ["pi_user_cli.mjs"],
   "settings_schema": { "type": "object", "properties": { "user_agent_dir": { "type": "string" } }, "additionalProperties": false },
   "environment": ["crypto"],
-  "compatibility": { "required_features": ["workspace_fs_v1", "workspace_snapshots_v1", "package_text_assets_v1", "exec_output_artifacts_v1"] }
+  "compatibility": { "required_features": ["workspace_fs_v1", "workspace_fingerprint_v1", "package_text_assets_v1", "exec_output_artifacts_v1"] }
 }

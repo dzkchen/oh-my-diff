@@ -8,5 +8,5 @@
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_checks" },
   "capabilities": ["tools", "fs.read", "exec"],
   "environment": ["crypto"],
-  "compatibility": { "required_features": ["workspace_fs_v1", "workspace_snapshots_v1", "exec_v1"] }
+  "compatibility": { "required_features": ["workspace_fs_v1", "workspace_fingerprint_v1", "exec_v1"] }
 }

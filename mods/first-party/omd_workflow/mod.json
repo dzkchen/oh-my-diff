@@ -26,6 +26,7 @@
     "required_features": [
       "contracts_v2",
       "workspace_snapshots_v1",
+      "workspace_fingerprint_v1",
       "store_v1",
       "routes_v1",
       "snapshot_exec_v1",

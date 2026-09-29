@@ -6,10 +6,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from scripts import mod_conformance  # noqa: E402
-
 MATRIX = ROOT / "integration/matrix.json"
 DOCUMENT = ROOT / "INTEGRATION.md"
 AREAS = {
@@ -57,7 +53,7 @@ def sources():
     }
 
 
-def resolve(reference, profiles, scenarios):
+def resolve(reference):
     kind, _, name = reference.partition(":")
     if kind == "rust":
         path, _, function = name.partition("::")
@@ -70,9 +66,6 @@ def resolve(reference, profiles, scenarios):
         return f"test('{name}'" in (ROOT / "mods/runner.test.mjs").read_text()
     if kind == "python":
         return any(f"def {name}(" in path.read_text() for path in (ROOT / "tests").glob("test_*.py"))
-    if kind == "fixture":
-        profile, _, scenario = name.partition("/")
-        return profile in profiles and scenario in scenarios
     if kind == "script":
         return (ROOT / name).exists()
     return False
@@ -168,7 +161,6 @@ def check(matrix):
         if capability and capability not in source["capabilities"]:
             problems.append(f"{component['id']}: {capability} is not a mod capability")
 
-    profiles, scenarios = mod_conformance.fixture_profiles()
     boundaries = {boundary["id"] for boundary in matrix["boundaries"]}
     for boundary in matrix["boundaries"]:
         if not boundary.get("title") or not boundary.get("shared_resource"):
@@ -206,7 +198,7 @@ def check(matrix):
 
     for entry in matrix["combinations"] + matrix["regression"]:
         for reference in entry["evidence"]:
-            if not resolve(reference, profiles, scenarios):
+            if not resolve(reference):
                 problems.append(f"{entry['id']}: unresolved evidence {reference}")
 
     untested = set()
@@ -348,8 +340,7 @@ def render(matrix):
         "## Reproducing the evidence",
         "",
         "`rust:` a test in the pinned runtime crates · `patch:` a test added by the shipped runtime",
-        "patch · `node:` `mods/runner.test.mjs` · `python:` `tests/` · `fixture:` profile/scenario of",
-        "`benchmarks.controlled_fixture` · `script:` a repository checker.",
+        "patch · `node:` `mods/runner.test.mjs` · `python:` `tests/` · `script:` a repository checker.",
         "",
         "```sh",
     ]

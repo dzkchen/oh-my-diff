@@ -74,7 +74,6 @@ pub(crate) struct Session {
     scratch: PathBuf,
     contract: std::sync::Mutex<contract::SessionContract>,
     contract_state: PathBuf,
-    operation: std::sync::atomic::AtomicBool,
     processes: Arc<managed_process::ManagedProcesses>,
     data: mods::DataScope,
 }
@@ -89,8 +88,7 @@ pub(crate) struct Lead {
     permission_profile: Arc<std::sync::Mutex<codex_protocol::models::PermissionProfile>>,
 }
 
-struct OperationGuard<'a> {
-    operation: &'a std::sync::atomic::AtomicBool,
+struct OperationGuard {
     repository_identity: String,
 }
 
@@ -98,34 +96,22 @@ static WORKSPACE_OPERATIONS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::BTreeSet<String>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
 
-impl Drop for OperationGuard<'_> {
+impl Drop for OperationGuard {
     fn drop(&mut self) {
-        self.operation
-            .store(false, std::sync::atomic::Ordering::Release);
         if let Ok(mut active) = WORKSPACE_OPERATIONS.lock() {
             active.remove(&self.repository_identity);
         }
     }
 }
 
-fn acquire_workspace_operation<'a>(
-    operation: &'a std::sync::atomic::AtomicBool,
-    repository_identity: &str,
-) -> Result<OperationGuard<'a>, String> {
-    use std::sync::atomic::Ordering;
-    if operation.swap(true, Ordering::AcqRel) {
-        return Err("workspace_operation_active: another integrate, restore, rename or transaction is running".into());
-    }
-    let mut active = WORKSPACE_OPERATIONS.lock().map_err(|_| {
-        operation.store(false, Ordering::Release);
-        "workspace_operation_lock_poisoned"
-    })?;
+fn acquire_workspace_operation(repository_identity: &str) -> Result<OperationGuard, String> {
+    let mut active = WORKSPACE_OPERATIONS
+        .lock()
+        .map_err(|_| "workspace_operation_lock_poisoned")?;
     if !active.insert(repository_identity.to_owned()) {
-        operation.store(false, Ordering::Release);
         return Err("workspace_operation_active: another integrate, restore, rename or transaction is running".into());
     }
     Ok(OperationGuard {
-        operation,
         repository_identity: repository_identity.to_owned(),
     })
 }
@@ -272,7 +258,6 @@ impl Host {
                 "contract-{}-{thread}.json",
                 self.repository_identity
             )),
-            operation: std::sync::atomic::AtomicBool::new(false),
             processes: Arc::new(managed_process::ManagedProcesses::default()),
             data: mods::DataScope::default(),
             evidence,
@@ -465,14 +450,11 @@ mod tests {
 
     #[test]
     fn workspace_operation_guard_excludes_other_sessions_in_same_repository() {
-        let first = std::sync::atomic::AtomicBool::new(false);
-        let second = std::sync::atomic::AtomicBool::new(false);
-        let held = acquire_workspace_operation(&first, "repo-a").unwrap();
-        assert!(acquire_workspace_operation(&first, "repo-a").is_err());
-        assert!(acquire_workspace_operation(&second, "repo-a").is_err());
-        assert!(acquire_workspace_operation(&second, "repo-b").is_ok());
+        let held = acquire_workspace_operation("repo-a").unwrap();
+        assert!(acquire_workspace_operation("repo-a").is_err());
+        assert!(acquire_workspace_operation("repo-b").is_ok());
         drop(held);
-        assert!(acquire_workspace_operation(&second, "repo-a").is_ok());
+        assert!(acquire_workspace_operation("repo-a").is_ok());
     }
 
     #[test]

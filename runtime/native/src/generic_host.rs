@@ -138,7 +138,7 @@ fn sandboxed_seatbelt(
             let literal = serde_json::to_string(&path.to_string_lossy())
                 .map_err(|error| error.to_string())?;
             args[1].push_str(&format!(
-                "\n(deny file-write* (literal {literal}) (subpath {literal}))"
+                "\n(deny file-read* file-write* (literal {literal}) (subpath {literal}))"
             ));
         }
     }
@@ -166,6 +166,17 @@ pub(crate) fn process_request_allowed(
             .any(|capability| capability == "network")
     {
         return Err("capability_denied: network".into());
+    }
+    if fields
+        .get("environment")
+        .and_then(Value::as_object)
+        .is_some_and(|environment| {
+            environment
+                .keys()
+                .any(|name| !grants.exec_environment.contains(name))
+        })
+    {
+        return Err("exec_environment_undeclared".into());
     }
     Ok(())
 }
@@ -230,4 +241,31 @@ pub(crate) fn call(
         &request.operation,
         request.arguments,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn process_environment_names_must_be_declared_by_the_manifest() {
+        let grants = codex_omd::ModGrants {
+            api: "0.2.0-experimental.1".into(),
+            source_sha256: "a".repeat(64),
+            capabilities: vec!["exec".into()],
+            exec_environment: vec!["RUSTUP_HOME".into()],
+        };
+        let start = |environment: Value| codex_omd::ModHostCall {
+            operation: "process.start".into(),
+            arguments: json!({"session":"s","environment":environment}),
+        };
+        assert!(
+            process_request_allowed(Some(&grants), &start(json!({"RUSTUP_HOME":"/r"}))).is_ok()
+        );
+        assert_eq!(
+            process_request_allowed(Some(&grants), &start(json!({"UNDECLARED":"1"}))).unwrap_err(),
+            "exec_environment_undeclared"
+        );
+    }
 }

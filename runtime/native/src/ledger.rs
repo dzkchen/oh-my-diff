@@ -40,18 +40,6 @@ pub(crate) fn open(
             Task::open(limits, directory, Some(&thread.to_string())).map_err(|e| e.to_string())
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let prefix = format!("{thread}-");
-            if resumed
-                && std::fs::read_dir(sessions)
-                    .map_err(|e| e.to_string())?
-                    .any(|entry| {
-                        entry.is_ok_and(|entry| {
-                            entry.file_name().to_string_lossy().starts_with(&prefix)
-                        })
-                    })
-            {
-                return Err("legacy_ledger_requires_explicit_migration".into());
-            }
             let task = Task::create(limits, directory.clone()).map_err(|e| e.to_string())?;
             persist(
                 &directory,
@@ -115,13 +103,20 @@ mod tests {
     }
 
     #[test]
-    fn legacy_and_symlink_ledgers_never_reset_allowance() {
+    fn session_evidence_directories_do_not_block_a_resumed_thread_in_another_repository() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let thread = ThreadId::new();
-        std::fs::create_dir(root.join(format!("{thread}-old"))).unwrap();
-        assert!(open(&root, "repository", thread, limits(), true).is_err());
-        assert!(!root.join(format!("ledger-repository-{thread}")).exists());
+        drop(open(&root, "first", thread, limits(), false).unwrap());
+        std::fs::create_dir(root.join(format!("{thread}-1-{}", ThreadId::new()))).unwrap();
+        assert!(open(&root, "second", thread, limits(), true).is_ok());
+        assert!(root.join(format!("ledger-second-{thread}")).is_dir());
+    }
+
+    #[test]
+    fn symlinked_ledgers_never_reset_allowance() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
         let other = ThreadId::new();
         std::os::unix::fs::symlink(&root, root.join(format!("ledger-repository-{other}"))).unwrap();
         assert!(open(&root, "repository", other, limits(), true).is_err());

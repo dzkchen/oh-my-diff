@@ -34,7 +34,7 @@ native work.
 | Capability | Grants |
 | --- | --- |
 | `exec` | `exec.run`, `process.*`, `sidecars.*` |
-| `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, read-only `workspace.check_access`, `workspace.snapshot`, the `workspace_change` event |
+| `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, read-only `workspace.check_access`, `workspace.snapshot`, `workspace.fingerprint`, the `workspace_change` event |
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
 | `model` | `routes.list`, `providers.*`, the `routing` event |
@@ -144,9 +144,16 @@ while a mod subscribes, is bounded to 20,000 files and 128 MiB, and reports
 `{snapshot: ResourceRef, candidate_sha256}`. It freezes the current tracked and
 approved-untracked files, or a completed owned agent's workspace (`agents` is
 also required). `expected` rejects a changed candidate. References are bound to
-the caller, package source, generation and thread; the registry holds at most
-16 snapshots and 64 MiB, deduplicates identical captures, and clears on owner
-cleanup or session stop. Snapshots do not authorize reading denied paths.
+the caller, package source, generation and thread. Each mod generation and
+thread holds at most 8 snapshots and 64 MiB, the host at most 32 and 256 MiB;
+a full host evicts the oldest snapshot of the largest holder. Identical captures
+are deduplicated, and the registry clears on owner cleanup or session stop.
+Snapshots do not authorize reading denied paths.
+
+`workspace.fingerprint {agent?, expected?}` takes the same arguments and
+permissions and returns only `{candidate_sha256}`, the digest `workspace.snapshot`
+would report. It stores nothing, so use it to check freshness; it is also
+available in the `context` event, where `workspace.snapshot` is not.
 
 `exec.run` accepts `snapshot` to run against a private copy of frozen input.
 Normal command, filesystem and cancellation permissions still apply. It may
@@ -155,7 +162,8 @@ result includes `candidate_sha256` and host-recorded `evidence`. Submit that
 reference with `receipts.submit {execution: true, ...}` for a `host` producer;
 the host verifies ownership, candidate, reference and outcome. A successful
 receipt requires exit zero, no signal or timeout, and untruncated output. Each
-session holds at most 64 execution records.
+mod generation and thread holds at most 64 execution records, the host at most
+256.
 
 ### Durable data: `store.*` and evidence
 
@@ -236,7 +244,10 @@ the current workspace against the `complete` gate and returns `completed` or
 `refused` with the missing requirements; `workspace.integrate` checks the
 `integrate` gate against the agent's candidate (`candidate_sha256` from
 `agents.result`) and records an integration receipt tied to the resulting parent
-candidate and the supplied acceptance digest. An unavailable selection fails
+candidate and the supplied acceptance digest. It refuses before touching the
+parent when the contract cannot hold another receipt; if the receipt cannot be
+recorded after the files are applied, the result is still `integrated` and
+carries `receipt_error`. An unavailable selection fails
 closed. Old `workflow.json` selections are not imported. `contract.restrict`
 only narrows operations for the rest of the session.
 
@@ -286,8 +297,10 @@ worker limits; `evidence` delivers a stored evidence reference to the agent.
 always `read_only`, its result identifies the captured candidate, and it cannot
 be integrated as an edit. Permissions are rechecked when the agent starts.
 `agents.message`, `agents.wait` (at most 30 s), `agents.result`,
-`agents.cancel` and `agents.list` address only the caller's handles. Agents
-live until cancelled, the mod is disabled or fails, or the session stops.
+`agents.cancel` and `agents.list` address only the caller's handles. Calls on
+one handle run in order; a wait on one handle does not block calls on another.
+The host holds at most 16 agents, counting spawns in progress. Agents live
+until cancelled, the mod is disabled or fails, or the session stops.
 
 `parent_history: true` additionally requires `sessions` and delivers frozen
 parent conversation records including visible tool calls and outputs. It
@@ -309,8 +322,7 @@ the structured protocol error. Mods own retry policy; the host owns admission.
 Explicit thread resume reopens the same task ledger, preserving requests,
 exposure, observed lead usage and uncertain in-flight requests. Repository,
 thread identity, original limits and saved journal must validate. Implicit
-reopening, changed limits, completed tasks and unmigrated legacy journals are
-refused. Agent handles and snapshot handles do not survive process restart;
+reopening, changed limits and completed tasks are refused. Agent handles and snapshot handles do not survive process restart;
 mods must reconcile saved pending work without silently spawning replacements.
 
 ### Framed processes
@@ -441,17 +453,16 @@ Additional trusted packages are listed in `packages`, enabling provider/consumer
 and conflict fixtures without shared globals or ambient authority.
 
 API `.8` adds `task_scoped: true` on `api.tool` and the `tool_exposure` event.
-Before each sampling step, the event receives the host checkpoint, thread ID,
+Before each sampling step, the event receives the host `ledger`, thread ID,
 and only the current mod's optional tool names. It returns `{enable: [...]}`
 for a subset of those names. A missing or failed decision exposes none of that
 mod's optional tools; an invalid or foreign name disables the mod with a visible
 error. Ordinary registered tools and every native tool keep their existing
-exposure. The checkpoint is capped at 16 KiB; a larger record appears as `null`
-and selects no checkpoint-dependent tools. A tool still executes through native
+exposure. A tool still executes through native
 permission, cancellation, accounting, and workflow gates. Context contributors
 can attach a bounded subordinate fragment for the same task without replacing
 base instructions. In an offline scenario, `{"type":"tool_exposure", "payload":
-{...checkpoint...}}` records the exact names registered for that step.
+{...ledger...}}` records the exact names registered for that step.
 
 ## Typed worker and workspace operations
 

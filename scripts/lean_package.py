@@ -11,10 +11,10 @@ import tempfile
 
 try:
     from scripts import lean_release_lock as release
-    from scripts import install_support as private
+    from scripts import install_support as support
 except ModuleNotFoundError:
     import lean_release_lock as release
-    import install_support as private
+    import install_support as support
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,8 +25,8 @@ def run(*arguments, cwd=None, env=None):
 
 
 def copy_sources(destination):
-    plugin = private.plugin_sources()
-    preview = private.preview_sources(private.preview_lock())
+    plugin = support.plugin_sources()
+    preview = support.preview_sources(support.preview_lock())
     index = json.loads((ROOT / "extensions/index.json").read_text())
     selected = {package["id"] for package in index["packages"]
                 if package["extension_type"] == "plugin"
@@ -45,7 +45,7 @@ def copy_sources(destination):
         shutil.copy2(source, target)
     marketplace = json.loads((ROOT / plugin["source"] / ".agents/plugins/marketplace.json").read_text())
     marketplace["plugins"] = [entry for entry in marketplace["plugins"] if entry["name"] in selected]
-    private.atomic_text(destination / plugin["source"] / ".agents/plugins/marketplace.json",
+    support.atomic_text(destination / plugin["source"] / ".agents/plugins/marketplace.json",
                         json.dumps(marketplace, indent=2) + "\n")
 
 
@@ -67,15 +67,15 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
         payload.mkdir()
         copy_sources(payload)
         if source_rebuild:
-            private.atomic_text(payload / "runtime/lean-release.lock.json", expected)
+            support.atomic_text(payload / "runtime/lean-release.lock.json", expected)
         binaries = payload / "artifacts"
         binaries.mkdir()
         for name in release.BINARIES + (release.AUTHOR_ARCHIVE,):
             shutil.copy2(artifact_dir / name, binaries / name)
         files = {path.relative_to(payload).as_posix():
-                 {"sha256": private.digest(path), "bytes": path.stat().st_size}
+                 {"sha256": support.digest(path), "bytes": path.stat().st_size}
                  for path in payload.rglob("*") if path.is_file()}
-        private.atomic_text(payload / "package-manifest.json",
+        support.atomic_text(payload / "package-manifest.json",
                             json.dumps({"schema": 1, "files": files}, indent=2, sort_keys=True) + "\n")
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(destination, "w:xz") as archive:
@@ -86,12 +86,12 @@ def archive_payload(artifact_dir, destination, source_rebuild=False):
                 info.mtime = 0
                 with path.open("rb") as source:
                     archive.addfile(info, source)
-    return {"archive": str(destination), "sha256": private.digest(destination),
+    return {"archive": str(destination), "sha256": support.digest(destination),
             "bytes": destination.stat().st_size, "files": len(files)}
 
 
 def checked_extract(archive_path, expected, destination):
-    if private.digest(archive_path) != expected:
+    if support.digest(archive_path) != expected:
         raise ValueError("prebuilt package SHA-256 mismatch")
     with tarfile.open(archive_path, "r:xz") as archive:
         members = archive.getmembers()
@@ -110,14 +110,14 @@ def checked_extract(archive_path, expected, destination):
         raise ValueError("prebuilt package inventory mismatch")
     for name, details in expected_files.items():
         path = payload / name
-        if path.stat().st_size != details["bytes"] or private.digest(path) != details["sha256"]:
+        if path.stat().st_size != details["bytes"] or support.digest(path) != details["sha256"]:
             raise ValueError(f"prebuilt package file changed: {name}")
     return payload
 
 
 def install_archive(args):
     archive_path = Path(args.archive).resolve()
-    upstream = private.binary_identity(args.upstream)
+    upstream = support.binary_identity(args.upstream)
     expected_version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
     if upstream["version"] != f"codex-cli {expected_version}":
         raise ValueError("upstream fallback does not match package pin")
@@ -164,7 +164,7 @@ def source_build(args):
         install_args = argparse.Namespace(**{**vars(args), "archive": archive, "sha256": packed["sha256"]})
         install_archive(install_args)
         print(json.dumps({"source_package": packed,
-                          "artifact_sha256": {name: private.digest(artifacts / name)
+                          "artifact_sha256": {name: support.digest(artifacts / name)
                                               for name in release.BINARIES}}, indent=2))
 
 

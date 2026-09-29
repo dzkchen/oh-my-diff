@@ -70,6 +70,22 @@ fn agent_id(thread: &ExtensionData) -> Option<String> {
         .and_then(|lead| (lead.owner != "lead").then(|| lead.owner.clone()))
 }
 
+fn tool_outcome(outcome: codex_extension_api::ToolCallOutcome) -> &'static str {
+    use codex_extension_api::ToolCallOutcome;
+    match outcome {
+        ToolCallOutcome::Completed { success: true } => "succeeded",
+        ToolCallOutcome::Completed { success: false } => "unsuccessful",
+        ToolCallOutcome::Blocked => "blocked",
+        ToolCallOutcome::Failed {
+            handler_executed: true,
+        } => "failed",
+        ToolCallOutcome::Failed {
+            handler_executed: false,
+        } => "failed_before_handler",
+        ToolCallOutcome::Aborted => "aborted",
+    }
+}
+
 fn thread_id(thread: &ExtensionData) -> Option<String> {
     thread.get::<Lead>().map(|lead| lead.thread.to_string())
 }
@@ -1383,14 +1399,14 @@ impl ToolLifecycleContributor for Mods {
                     .and_then(|turn| turn.evidence.as_mut())
                 && cursor.tools.len() < 128
             {
-                cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":format!("{:?}",input.outcome)}));
+                cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":tool_outcome(input.outcome)}));
             }
             let event_lead = (lead.owner == "lead").then_some(&*lead);
             self.event(
                 "tool_result",
                 json!({"call_id": input.call_id, "agent_id":agent_id(input.thread_store),
                     "thread_id": lead.thread.to_string(), "tool": input.tool_name.to_string(),
-                    "outcome": format!("{:?}", input.outcome),
+                    "outcome": tool_outcome(input.outcome),
                     "call_sha256": input.call_sha256, "result_sha256": input.result_sha256,
                     "result_complete": input.result_sha256.is_some()}),
                 event_lead,

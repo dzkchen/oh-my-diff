@@ -143,14 +143,13 @@ deterministic and composable; the added control per decision is:
 - Native workflow-contract enforcement, permissions, spending grants, cancellation, provider credentials, workspace integrity, durable evidence and final acceptance.
 - Raw history rewriting, arbitrary compaction engines, custom prompts for provider-side remote compaction.
 - Raw terminal escape sequences, arbitrary widgets or DOM/canvas access, overriding native key bindings, transcript mutation, and clipboard authorization bypass.
-- Arbitrary provider compatibility, runtime imports other than the documented Pi `typebox` shim, and any second scheduler or uncontrolled execution path.
+- Arbitrary provider compatibility, runtime imports other than adapter-declared aliases, and any second scheduler or uncontrolled execution path.
 - Mod-to-mod calls: `requires` declares presence and order only; mods never call each other or share state.
 
 ## Conformance evidence
 
 `rust:` `runtime/omd/tests/*.rs` · `patch:` patched native/TUI tests ·
-`node:` `mods/runner.test.mjs` · `python:` `tests/` · `fixture:` profile/scenario of
-`benchmarks.controlled_fixture` · `terminal:` check of `benchmarks.mod_terminal_fixture`.
+`node:` `mods/runner.test.mjs` · `python:` `tests/`.
 Each reference is resolved by `scripts/mod_conformance.py`.
 
 | Decision or rule | Executable evidence |
@@ -171,8 +170,8 @@ Each reference is resolved by `scripts/mod_conformance.py`.
 | tool.registration | `rust:native_schema_validation_applies_to_reload_before_activation` · `rust:tool_progress_is_forwarded_once_across_host_call_replay` |
 | tool.task_exposure | `rust:task_scoped_tools_follow_owned_step_selection_and_fail_closed` |
 | tool.interception | `rust:exclusive_replacement_conflicts_fail_before_activation` |
-| tool.commands | `rust:command_outcomes_and_input_decisions_are_validated` · `patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique` · `terminal:namespaced_command` |
-| tool.progress | `rust:tool_progress_is_forwarded_once_across_host_call_replay` · `terminal:activity_line` |
+| tool.commands | `rust:command_outcomes_and_input_decisions_are_validated` · `patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique` |
+| tool.progress | `rust:tool_progress_is_forwarded_once_across_host_call_replay` |
 | shared.virtual_read | `patch:common_read_keeps_local_and_virtual_authority_separate` · `patch:independent_provider_revision_and_disabled_recovery` |
 | tool.exec | `rust:exec_run_bounds_program_environment_output_time_and_authority` · `rust:exec_output_artifact_is_paged_and_bound_to_the_caller` · `rust:exec_guards_recheck_output_before_a_write` · `rust:workspace_access_checks_named_paths_and_guarded_write_authority` · `rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters` · `patch:execution_receipts_reject_forged_bindings_and_false_success` |
 | tool.workspace | `rust:workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions` · `patch:workspace_read_and_transaction_obey_effective_permissions` · `patch:write_observation_hides_denied_paths` · `patch:pre_rename_plan_applies_companion_write_and_move` · `patch:snapshots_are_owner_source_generation_thread_and_digest_bound` · `patch:snapshots_deduplicate_and_evict_the_oldest_until_session_cleanup` · `patch:capture_requires_current_permissions_and_preserves_frozen_bytes` |
@@ -181,9 +180,9 @@ Each reference is resolved by `scripts/mod_conformance.py`.
 | tool.builtins | `rust:builtin_controls_protect_recovery_commands` · `rust:registration_primitives_need_their_capability_and_withdraw_on_disable_or_with_no_mods` · `patch:disabled_collaboration_modes_clamp_to_default_at_turn_start` · `patch:builtin_controls_hide_commands_and_disable_modes_but_never_recovery` |
 | tool.kernels_and_adapters | `patch:kernel_command_requires_an_unchanged_bounded_driver` · `patch:disabled_kernel_does_not_start_a_worker` · `rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters` |
 | terminal.view | `patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer` · `rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status` · `rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` |
-| terminal.panels | `patch:left_sidebar_header_progress_and_diagnostics_share_the_layout` · `patch:components_preserve_focus_scroll_and_values_across_redraw_and_resize` · `terminal:task_panel` · `terminal:customized_panels` |
-| terminal.theme | `patch:theme_slots_map_indexed_and_rgb_colors` · `terminal:accent_color` · `terminal:user_message_background` |
-| terminal.keybindings | `patch:native_escape_and_cancel_keys_cannot_be_intercepted` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `terminal:key_submit` · `terminal:key_conflict_visible` |
+| terminal.panels | `patch:left_sidebar_header_progress_and_diagnostics_share_the_layout` · `patch:components_preserve_focus_scroll_and_values_across_redraw_and_resize` |
+| terminal.theme | `patch:theme_slots_map_indexed_and_rgb_colors` |
+| terminal.keybindings | `patch:native_escape_and_cancel_keys_cannot_be_intercepted` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` |
 | terminal.rendering | `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` · `patch:focus_flow_compacts_only_successful_agent_output` |
 | terminal.identity_and_rich_presentation | `rust:rich_lines_width_bounds_and_selection_policy_are_bounded` · `rust:terminal_identity_reports_profile_mode_and_mod_counts` · `patch:width_bounded_boxes_and_styled_lines_follow_the_header_width` · `patch:owned_fullscreen_draws_mod_header_and_sidebar_beside_the_transcript` |
 | terminal.lists_and_selection | `rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters` · `patch:list_rows_follow_the_selected_value_and_glyphs_and_placeholder_stay_bounded` · `patch:selection_policy_gates_the_native_release_copy` |
@@ -193,9 +192,9 @@ Each reference is resolved by `scripts/mod_conformance.py`.
 | conflict_before_activation | `rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest` |
 | dependencies_and_cycles | `rust:a_dependency_cycle_is_rejected_before_activation_and_isolated` · `rust:an_unavailable_dependency_disables_only_the_dependent_chain` |
 | user_project_precedence | `rust:project_scope_takes_precedence_over_user_scope_without_sharing_state` · `rust:two_selections_of_one_id_in_the_same_scope_both_fail_closed` |
-| failed_mod_isolation | `rust:a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error` · `terminal:mod_error_did_not_stop_the_host` |
-| reload | `rust:mod_reload_is_transactional_and_stale_calls_are_rejected` · `rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation` · `terminal:reload_applies_the_edit` · `terminal:session_preserved_across_reload` |
-| cancellation | `rust:mod_cancellation_discards_state_and_explicit_reload_recovers` · `rust:mod_pending_callback_has_a_host_deadline` · `terminal:cancelled_turn_recorded` |
-| streaming | `rust:tool_progress_is_forwarded_once_across_host_call_replay` · `terminal:activity_line` |
+| failed_mod_isolation | `rust:a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error` |
+| reload | `rust:mod_reload_is_transactional_and_stale_calls_are_rejected` · `rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation` |
+| cancellation | `rust:mod_cancellation_discards_state_and_explicit_reload_recovers` · `rust:mod_pending_callback_has_a_host_deadline` |
+| streaming | `rust:tool_progress_is_forwarded_once_across_host_call_replay` |
 | limits | `rust:host_call_replay_is_not_charged_against_the_per_evaluation_hook_budget` · `rust:mod_context_is_bounded_and_callback_failure_is_isolated` · `rust:mod_pending_callback_has_a_host_deadline` · `rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views` |
 | first_party_parity | `python:test_first_party_mods_use_only_the_published_api` |

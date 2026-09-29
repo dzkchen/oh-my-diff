@@ -33,7 +33,7 @@ function replay(name, payload, files, saved = null, stale = false, event = 'tool
     const call = output.host_call;
     calls.push(call);
     let value;
-    if (call.operation === 'workspace.snapshot') {
+    if (['workspace.snapshot', 'workspace.fingerprint'].includes(call.operation)) {
       if (call.arguments.expected && stale) {
         receipts.push({ call, error: 'workspace_candidate_stale' });
         continue;
@@ -251,7 +251,7 @@ test('cold and repeated graph requests keep listing, reads, and source bounds ex
     assert.equal(request.output.error, undefined, request.output.error);
     assert.equal(request.calls.filter(call => call.operation === 'workspace.list').length, 1);
     assert.equal(request.calls.filter(call => call.operation === 'workspace.read').length, 2);
-    assert.equal(request.calls.filter(call => call.operation === 'workspace.snapshot').length, 3);
+    assert.equal(request.calls.filter(call => ['workspace.snapshot', 'workspace.fingerprint'].includes(call.operation)).length, 3);
   }
   const overflow = Object.fromEntries(Array.from({ length: 4097 }, (_, index) => [`src/file_${index}.py`, 'def work():\n    pass\n']));
   const denied = replay('graph', graphInput, overflow);
@@ -266,7 +266,7 @@ test('live-source service search and select use double listing, hash checks and 
   assert.equal(search.output.value.provenance.validation, 'double_list_and_hash');
   assert.equal(search.output.value.page_size, 32);
   assert.ok(search.output.value.rows.some(row => row.id === 'symbol:src/lib.rs:3:entry'));
-  assert.equal(search.calls.filter(call => call.operation === 'workspace.snapshot').length, 0);
+  assert.equal(search.calls.filter(call => ['workspace.snapshot', 'workspace.fingerprint'].includes(call.operation)).length, 0);
   assert.equal(search.calls.filter(call => call.operation === 'workspace.list').length, 2);
   assert.equal(search.calls.filter(call => call.operation === 'workspace.stat').length, 1);
   const selected = replay('omd.repository_analysis.select', { node_id: 'symbol:src/lib.rs:3:entry',

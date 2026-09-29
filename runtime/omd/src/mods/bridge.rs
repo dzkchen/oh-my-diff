@@ -14,9 +14,11 @@ impl ModHostCall {
         let operation = self.operation.as_str();
         match operation {
             "exec.run" | "exec.output_page" => Ok("exec"),
-            "workspace.read" | "workspace.list" | "workspace.stat" | "workspace.snapshot" => {
-                Ok("fs.read")
-            }
+            "workspace.read"
+            | "workspace.list"
+            | "workspace.stat"
+            | "workspace.snapshot"
+            | "workspace.fingerprint" => Ok("fs.read"),
             "workspace.check_access" => Ok(if self.arguments["write"] == true {
                 "fs.write"
             } else {

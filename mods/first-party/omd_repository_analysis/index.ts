@@ -86,7 +86,7 @@ function compare(left: string, right: string): number {
 }
 
 async function sources(api: ModAPI, root: string): Promise<{ files: Source[]; candidate: string; unsupported: string[] }> {
-  const before = api.host.call('workspace.snapshot', {});
+  const before = api.host.call('workspace.fingerprint', {});
   if (!SHA.test(before.candidate_sha256)) throw new Error('candidate_digest_invalid');
   const listing = api.host.call('workspace.list', { path: root, recursive: true, include_ignored: false, max_entries: 20000 });
   if (listing.truncated) throw new Error('analysis_listing_truncated');
@@ -115,7 +115,7 @@ async function sources(api: ModAPI, root: string): Promise<{ files: Source[]; ca
       files.push({ path: entry.path, language: language(entry.path)!, sha256: file.sha256, bytes: readSize, text: file.text });
     }
   }
-  api.host.call('workspace.snapshot', { expected: before.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
   return { files, candidate: before.candidate_sha256, unsupported: [] };
 }
 
@@ -529,7 +529,7 @@ async function baseline(api: ModAPI, input: Json): Promise<Json> {
     source_digest: current.source_digest, constraints_sha256: await hashJson(approved as unknown as Json), observations: await observations(current, approved, bodies),
     checks: bodies.filter(item => item.test).map(({ key, path, name, assertions, skipped, evidence }) => ({ key, path, name, assertions, skipped, evidence })) };
   const saved: Baseline = { ...body, integrity_sha256: await hashJson(body as unknown as Json) };
-  api.host.call('workspace.snapshot', { expected: current.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: current.candidate_sha256 });
   api.host.call('store.put', { key, scope: 'repository', expected_revision: null, value: saved as unknown as Json });
   return { baseline: saved, candidate_sha256: current.candidate_sha256, unsupported_languages: current.unsupported_languages } as Json;
 }
@@ -563,7 +563,7 @@ async function check(api: ModAPI, input: Json): Promise<Json> {
   const bodies = await bodySignatures(current, files);
   const prior = new Set(saved.observations.map(item => item.fingerprint));
   const results = await observations(current, approved, bodies, saved.checks);
-  api.host.call('workspace.snapshot', { expected: current.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: current.candidate_sha256 });
   const findings = results.map(item => ({ ...item, origin: prior.has(item.fingerprint) ? 'existing_debt' : 'introduced',
     repair: item.evidence && approved.repair_scope.some(prefix => under(item.evidence!.path, prefix)) ? 'authorized_scope_metadata' : 'requires_authorization' }));
   return { schema: 1, generator: GENERATOR, repository_identity: identity, baseline_revision: saved.revision, baseline_source_digest: saved.source_digest,
@@ -592,7 +592,7 @@ async function select(api: ModAPI, input: Json): Promise<Json> {
     source_digest: current.source_digest, candidate_sha256: current.candidate_sha256, nodes, relationships,
     coverage: current.coverage.filter(item => paths.has(item.path)), guidance: 'Verify inferred and unknown relationships against source before relying on them.' };
   if (bytes(JSON.stringify(packet)).length > 32 * 1024) throw new Error('analysis_selection_limit');
-  api.host.call('workspace.snapshot', { expected: current.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: current.candidate_sha256 });
   return packet as Json;
 }
 
@@ -740,7 +740,7 @@ async function html(api: ModAPI, input: Json): Promise<Json> {
   })();`;
   const document = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Oh My Diff repository graph</title><style>body{font:14px system-ui;margin:2rem;max-width:90rem;background:#101318;color:#e8edf2}a{color:#8de3c2}button,input,select,textarea{font:inherit}button,input,select{padding:.4rem}button{cursor:pointer}label{display:inline-flex;gap:.35rem;align-items:center;margin:.3rem}table{border-collapse:collapse;width:100%}td,th{border:1px solid #657381;padding:.35rem;text-align:left;overflow-wrap:anywhere}tr:nth-child(even){background:#1b242d}tr[hidden]{display:none}.node{border:0;background:none;color:#8de3c2;text-align:left}textarea{width:100%;min-height:6rem}#related{max-height:12rem;overflow:auto}#diagram{width:100%;height:280px;border:1px solid #657381}@media(max-width:760px){body{margin:.6rem}table{font-size:12px}}</style><body data-source-digest="${current.source_digest}"><h1>Repository graph</h1><p>Source digest: <code>${current.source_digest}</code>; revision: ${escapeHtml(current.revision)}. Extracted imports are source-linked; inferred calls and unknown targets require verification.</p><label>Search <input id="search" type="search"></label><label>Confidence <select id="confidence"><option value="">All</option><option>extracted</option><option>inferred</option><option>unknown</option></select></label><label>Node <select id="node"><option value="">Select a node</option>${nodeOptions}</select></label><button id="clear" type="button">Clear node</button><p id="count"></p><h2 id="focus"></h2><svg id="diagram" viewBox="0 0 640 280" role="img" aria-label="Selected node neighborhood"></svg><ol id="related"></ol><button id="copy" type="button">Copy neighborhood evidence</button><textarea id="evidence" aria-label="Copyable neighborhood evidence" hidden readonly></textarea><table><thead><tr><th>From</th><th>Relationship</th><th>To</th><th>Confidence</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table><script>${behavior}</script></body></html>`;
   if (bytes(document).length > ((api as ModAPI & { artifact_output?: boolean }).artifact_output ? 16 * 1024 * 1024 : 64 * 1024)) throw new Error('analysis_html_limit');
-  api.host.call('workspace.snapshot', { expected: current.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: current.candidate_sha256 });
   return { html: document, source_digest: current.source_digest, candidate_sha256: current.candidate_sha256 } as Json;
 }
 
@@ -756,14 +756,14 @@ function runAnalysis(api: ModAPI, request: { tool: string; input: Json; candidat
     stdin: source.text, timeout_ms: 120_000, ...options });
   if (result.exit_code !== 0 || result.timed_out || result.stdout_truncated || result.stderr_truncated || options.output_artifact && !result.output_artifact)
     throw new Error(`analysis_process_failed: ${result.stderr.slice(-800)}`);
-  api.host.call('workspace.snapshot', { expected: request.candidate });
+  api.host.call('workspace.fingerprint', { expected: request.candidate });
   return result;
 }
 
 async function artifactReport(api: ModAPI, input: Json, kind: 'graph' | 'html'): Promise<Json> {
   common(input);
   if (kind === 'html') expectedDigest(input);
-  const candidate = api.host.call('workspace.snapshot', {}).candidate_sha256;
+  const candidate = api.host.call('workspace.fingerprint', {}).candidate_sha256;
   const result = runAnalysis(api, { tool: kind, input, candidate, raw_html: kind === 'html' },
     { max_output_bytes: 16 * 1024 * 1024, output_artifact: true });
   const found = kind === 'graph' ? result.stdout.match(/"source_digest":"([0-9a-f]{64})"/) : null;
@@ -775,7 +775,7 @@ async function artifactReport(api: ModAPI, input: Json, kind: 'graph' | 'html'):
 async function largeSelect(api: ModAPI, input: Json): Promise<Json> {
   common(input);
   expectedDigest(input);
-  const candidate = api.host.call('workspace.snapshot', {}).candidate_sha256;
+  const candidate = api.host.call('workspace.fingerprint', {}).candidate_sha256;
   return JSON.parse(runAnalysis(api, { tool: 'select', input, candidate }, { max_output_bytes: 32 * 1024 }).stdout) as Json;
 }
 
@@ -785,7 +785,7 @@ export default function activate(api: ModAPI) {
     constraints: { type: 'object' }, expected_source_digest: { type: 'string' }, node_ids: { type: 'array', items: { type: 'string' } } }, required: ['repository_identity', 'revision'], additionalProperties: false };
   api.tool({ name: 'graph', description: 'Build a bounded five-language source graph with extracted, inferred, and unknown relationships.', parameters }, async input => {
     const result = await build(api, input);
-    api.host.call('workspace.snapshot', { expected: result.candidate_sha256 });
+    api.host.call('workspace.fingerprint', { expected: result.candidate_sha256 });
     return result as Json;
   });
   api.tool({ name: 'graph_artifact', description: 'Build a large source graph with a hash-bound paged output artifact.', parameters }, input => artifactReport(api, input, 'graph'));

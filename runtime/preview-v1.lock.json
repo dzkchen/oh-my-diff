@@ -70,10 +70,10 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "90d1e2941eedb87871a0f8df99151e13fe7f9dacbf9dcfbd830ac2d5f20100f2",
-        "mod.json": "8e937d022b4ca17bac00ef6c7ed9b58af20d416f261abf4344d4671d900e873e"
+        "index.ts": "028404e3b6b5f8cfd06d06f90bbf28b1d25d0a45539d5fdceb06fefecc9aa6a3",
+        "mod.json": "8d0fbb04490e2396c2f4d5cb585b240181275a0e8fe472ac39896c824c3d6be9"
       },
-      "package_sha256": "88f604641c9bb8d2e10890720ff4f75b777ca2d8bab8670b9deec900fbe08f00",
+      "package_sha256": "e7def77aaa3496a7d82a7b2773ddde5f464cb28e7c491bc2fca9ba054a0cd8fb",
       "source": "mods/first-party/omd_workflow",
       "version": "0.2.0-preview.1"
     },
@@ -99,6 +99,6 @@
   "schema": 1,
   "types": {
     "path": "mods/api.d.ts",
-    "sha256": "65ea569fa723e1c8bb748f37bd21b69874ac172a98d509c116281ead35505c41"
+    "sha256": "06e43bfac88f5da6362f3056a427f299261e5c30faff30fe41a055aa4d381379"
   }
 }

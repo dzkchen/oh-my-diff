@@ -218,11 +218,11 @@ async function discoverSkills(api: ModAPI): Promise<{ resources: Skill[]; diagno
 }
 
 async function discoverPrompts(api: ModAPI): Promise<{ resources: Prompt[]; diagnostics: Json[]; candidate_sha256: string }> {
-  const before = api.host.call('workspace.snapshot', {});
+  const before = api.host.call('workspace.fingerprint', {});
   if (!SHA.test(before.candidate_sha256)) throw new Error('pi_candidate_invalid');
   const stat = api.host.call('workspace.stat', { paths: [ROOT] }).files[ROOT];
   if (stat === null) {
-    api.host.call('workspace.snapshot', { expected: before.candidate_sha256 });
+    api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
     return { resources: [], diagnostics: [], candidate_sha256: before.candidate_sha256 };
   }
   if (stat?.kind !== 'dir') throw new Error('pi_prompt_root_unavailable');
@@ -260,7 +260,7 @@ async function discoverPrompts(api: ModAPI): Promise<{ resources: Prompt[]; diag
       || final[item.path]?.sha256 !== files[item.path]?.sha256) throw new Error('pi_source_stale');
   }
   resources.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-  api.host.call('workspace.snapshot', { expected: before.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
   const result = { resources, diagnostics, candidate_sha256: before.candidate_sha256 };
   if (utf8(JSON.stringify(result)).length > MAX_RESULT_BYTES) throw new Error('pi_resource_aggregate_limit');
   return result;
@@ -270,7 +270,7 @@ async function discover(api: ModAPI): Promise<{ resources: Resource[]; diagnosti
   const prompts = await discoverPrompts(api);
   const skills = await discoverSkills(api);
   const user = await userResources(api, 'discover', {});
-  api.host.call('workspace.snapshot', { expected: prompts.candidate_sha256 });
+  api.host.call('workspace.fingerprint', { expected: prompts.candidate_sha256 });
   const selected = new Map<string, Resource>();
   for (const resource of user?.resources || []) selected.set(`${resource.kind}/${resource.name}`, resource);
   for (const resource of [...prompts.resources, ...skills.resources]) selected.set(`${resource.kind}/${resource.name}`, resource);
@@ -373,7 +373,7 @@ async function expand(api: ModAPI, input: Json): Promise<Json> {
   if (!prompt) {
     const user = await userResources(api, 'expand', input);
     if (!user || user.error === 'pi_prompt_not_found') throw new Error('pi_prompt_not_found');
-    api.host.call('workspace.snapshot', { expected: catalog.candidate_sha256 });
+    api.host.call('workspace.fingerprint', { expected: catalog.candidate_sha256 });
     return { ...user, candidate_sha256: catalog.candidate_sha256 };
   }
   const text = substitute(prompt.content, parseArgs(args));
