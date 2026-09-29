@@ -54,6 +54,32 @@ impl SessionContract {
         self.provenance["error"] = json!(error);
     }
 
+    pub(crate) fn revalidate(
+        &mut self,
+        documents: &[(ContractDocument, codex_omd::PolicyOwner)],
+    ) -> bool {
+        let Some(active) = &self.active else {
+            return false;
+        };
+        let registered = documents
+            .iter()
+            .any(|(document, _)| document.digest() == active.digest());
+        match (self.status.as_str(), registered) {
+            ("active", false) => {
+                self.invalidate("contract_withdrawn".into());
+                true
+            }
+            ("unavailable", true) if self.provenance["error"] == "contract_withdrawn" => {
+                self.status = "active".into();
+                if let Some(provenance) = self.provenance.as_object_mut() {
+                    provenance.remove("error");
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn restore(&mut self, path: &std::path::Path) -> Result<(), String> {
         use std::io::Read;
         use std::os::unix::fs::MetadataExt;
@@ -417,6 +443,21 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+        let registered = [(
+            contract.active.clone().unwrap(),
+            codex_omd::PolicyOwner::bundled(),
+        )];
+        assert!(!contract.revalidate(&registered));
+        assert!(contract.revalidate(&[]));
+        assert!(contract.gate(Gate::Complete, &candidate, None).is_err());
+        assert!(contract.submit(contract.receipts[0].clone()).is_err());
+        assert!(contract.revalidate(&registered));
+        assert!(
+            contract
+                .gate(Gate::Complete, &candidate, None)
+                .unwrap()
+                .is_empty()
         );
         let mut failed = contract.receipts[0].clone();
         failed.outcome = codex_omd::ReceiptOutcome::Fail;

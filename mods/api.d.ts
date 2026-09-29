@@ -74,7 +74,7 @@ export type CommandResult = Json | { display?: string; insert?: string; submit?:
 export type CompactionDecision = number | { threshold?: number; prompt?: string } | null;
 export type InputDecision = null | { text: string } | { deny: string };
 
-export type ExecResult = { exit_code: number | null; signal: string | null; stdout: string; stdout_sha256: string; stdout_bytes: number; output_artifact: ResourceRef | null; stderr: string; stdout_truncated: boolean; stdout_preview_truncated: boolean; stderr_truncated: boolean; timed_out: boolean; duration_ms: number; program: { path: string; sha256: string }; guards_verified: number };
+export type ExecResult = { exit_code: number | null; signal: string | null; stdout: string; stdout_sha256: string; stdout_bytes: number; output_artifact: ResourceRef | null; stderr: string; stdout_truncated: boolean; stdout_preview_truncated: boolean; stderr_truncated: boolean; stderr_preview_truncated: boolean; timed_out: boolean; duration_ms: number; program: { path: string; sha256: string }; guards_verified: number };
 export type ExecGuard = { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdout_sha256: string };
 export type Fingerprint = string | { size: number; mtime_ms: number } | null;
 export type FileStat = { kind: 'file' | 'dir' | 'symlink'; size: number; mtime_ms: number; sha256?: string };
@@ -107,7 +107,7 @@ export interface HostOperations {
   'store.put': { arguments: { key: string; value: Json; expected_revision: number | null; scope?: StoreScope }; result: { revision: number } };
   'store.delete': { arguments: { key: string; expected_revision: number; scope?: StoreScope }; result: { deleted: boolean } };
   'store.list': { arguments: { prefix?: string; cursor?: string; limit?: number; scope?: StoreScope }; result: { keys: { key: string; revision: number; bytes: number; provenance: StoreProvenance }[]; cursor: string | null } };
-  'store.export': { arguments: { scope?: StoreScope }; result: ResourceRef };
+  'store.export': { arguments: { scope?: StoreScope; cursor?: string }; result: { schema: 1; owner: string; scope: StoreScope; generation: number; entries: Record<string, { value: Json; revision: number; provenance: StoreProvenance }>; cursor: string | null } };
   'store.reset': { arguments: { expected_generation: number; scope?: StoreScope }; result: { generation: number } };
   'evidence.write': { arguments: { media_type: 'application/json' | 'text/plain'; content: Json; label?: string }; result: ResourceRef };
   'evidence.read': { arguments: { reference: ResourceRef; cursor?: number; max_bytes?: number }; result: { reference: ResourceRef; text: string; cursor: number | null; bytes: number } };

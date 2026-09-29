@@ -124,13 +124,19 @@ impl InvocationScope {
 
     fn charge_receipt(&self, bytes: usize) -> Result<()> {
         let total = self.receipt_bytes.get().saturating_add(bytes);
-        if total > 131_072 {
+        if total > HOST_RECEIPT_BYTES {
             return Err(failure("host_receipt_limit"));
         }
         self.receipt_bytes.set(total);
         Ok(())
     }
+
+    fn receipt_room(&self) -> usize {
+        HOST_RECEIPT_BYTES.saturating_sub(self.receipt_bytes.get())
+    }
 }
+
+pub const HOST_RECEIPT_BYTES: usize = 131_072;
 
 pub const MOD_PACKAGE_SCHEMA_VERSION: u32 = 1;
 pub const MOD_STATE_STORAGE_SCHEMA_VERSION: u32 = 1;
@@ -2327,11 +2333,12 @@ impl ModHost {
                     "state_conflict",
                     "callback_cancelled",
                     "host_receipt_limit",
+                    "host_result_limit",
                     "host_call_limit",
                     "callback_execution_budget",
                 ]
                 .iter()
-                .any(|transient| message.starts_with(transient))
+                .any(|transient| message.trim_start_matches("Error: ").starts_with(transient))
                 {
                     current.error = Some(message);
                 }

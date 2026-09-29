@@ -12,7 +12,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 pub const KEY_BYTES: usize = 256;
-pub const VALUE_BYTES: usize = 256 * 1024;
+pub const VALUE_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 2;
 pub const SCOPE_BYTES: usize = 16 * 1024 * 1024;
 pub const KEY_LIMIT: usize = 4096;
 const LIST_LIMIT: usize = 256;
@@ -278,10 +278,29 @@ impl DataStore<'_> {
                         "generation": document.generation}))
                 })
             }
-            "store.export" => self.with_document(&input.scope, false, |document| {
-                Ok(json!({"schema": 1, "owner": self.owner, "scope": input.scope,
-                    "generation": document.generation, "entries": document.entries}))
-            }),
+            "store.export" => {
+                self.with_document(&input.scope, false, |document| {
+                    let mut entries = serde_json::Map::new();
+                    let mut bytes = 0;
+                    let mut cursor = Value::Null;
+                    for (name, entry) in document.entries.iter().filter(|(name, _)| {
+                        input.cursor.as_ref().is_none_or(|cursor| *name > cursor)
+                    }) {
+                        let value = serde_json::to_value(entry)?;
+                        let size = name.len() + serde_json::to_vec(&value)?.len();
+                        if !entries.is_empty() && bytes + size > VALUE_BYTES {
+                            cursor = json!(entries.keys().next_back());
+                            break;
+                        }
+                        bytes += size;
+                        entries.insert(name.clone(), value);
+                    }
+                    Ok(
+                        json!({"schema": 1, "owner": self.owner, "scope": input.scope,
+                    "generation": document.generation, "entries": entries, "cursor": cursor}),
+                    )
+                })
+            }
             "store.reset" => {
                 let expected = input
                     .expected_generation

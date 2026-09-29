@@ -175,6 +175,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                         grants: host_call.grants,
                         generation,
                         origin: codex_omd::data_store::Origin::Tool,
+                        record_changes: false,
                     },
                     Some(&nested),
                     host_call.request,

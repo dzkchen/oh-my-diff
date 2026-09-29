@@ -50,6 +50,7 @@ pub(super) struct Caller<'a> {
     pub grants: Option<ModGrants>,
     pub generation: u64,
     pub origin: Origin,
+    pub record_changes: bool,
 }
 
 pub(super) fn event_allows(event: &str, operation: &str) -> bool {
@@ -349,7 +350,7 @@ pub(super) async fn dispatch(
         let authority = authority(lead, call).await?;
         let (root, protected) = (host.root.clone(), host.protected_paths());
         let (id, thread) = (caller.id.to_owned(), lead.thread.to_string());
-        let (grants, origin) = (caller.grants, caller.origin);
+        let (grants, origin, record) = (caller.grants, caller.origin, caller.record_changes);
         return tokio::task::spawn_blocking(move || {
             crate::generic_host::call(
                 grants,
@@ -361,6 +362,7 @@ pub(super) async fn dispatch(
                 Some(&thread),
                 request,
                 &active,
+                record,
             )
         })
         .await
@@ -453,7 +455,23 @@ pub(super) async fn dispatch(
                 .snapshot(lead, &caller, request.arguments, cancelled)
                 .await;
         }
-        return core.agents.call(core, lead, &caller, request).await;
+        let repository = host.repository.clone();
+        let before = if operation == "workspace.integrate" && caller.record_changes {
+            tokio::task::spawn_blocking(move || codex_omd::change_baseline(&repository))
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            None
+        };
+        let result = core.agents.call(core, lead, &caller, request).await;
+        if let (Some(before), Ok(_)) = (before, &result) {
+            let repository = host.repository.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                codex_omd::record_workspace_change(&repository, "transaction", before)
+            })
+            .await;
+        }
+        return result;
     }
     if operation.starts_with("providers.") || operation.starts_with("sidecars.") {
         return core

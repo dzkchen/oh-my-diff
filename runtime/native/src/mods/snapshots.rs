@@ -307,6 +307,7 @@ mod tests {
             generation,
             grants: None,
             origin: codex_omd::data_store::Origin::Event,
+            record_changes: false,
         }
     }
 

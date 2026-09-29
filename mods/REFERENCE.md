@@ -19,6 +19,12 @@ without mods. `OMD_MODE=platform`, `OMD_MODE=enabled` and
 The [`release_check` example](examples/release_check) is an independent
 author package that uses only this surface.
 
+Each callback replays its host calls, so their arguments and results share a
+128 KiB transport budget per callback. A result that would exceed the remaining
+budget becomes a `host_result_limit` error the mod can catch; the operation has
+still run. Primitive limits below keep single results inside that budget; page
+or use artifacts for larger data.
+
 ### Capabilities
 
 Capabilities name authority classes. A call or registration outside the
@@ -60,8 +66,15 @@ be canonical and outside the repository; `sha256` pins the resolved file. `cwd`
 is repository-relative. The environment starts empty except `PATH`, a private
 `HOME`/`TMPDIR`, `TERM=dumb`, locale variables, the declared `exec_environment`
 names and `env` entries limited to those names. The default timeout is 10 s and
-the ceiling 120 s; stdout and stderr keep at most 1 MiB each and report
-truncation; at most 4 runs per repository are concurrent. Without `write` the
+the ceiling 120 s; the host captures at most 1 MiB of stdout and of stderr and
+reports `stdout_truncated`/`stderr_truncated`; `stdout_sha256` and `stdout_bytes`
+cover the captured stdout. The returned `stdout` and `stderr` are previews of at
+most 64 KiB and 16 KiB so the result fits a callback's host-call transport;
+`stdout_preview_truncated`/`stderr_preview_truncated` report a shortened
+preview. Use `output_artifact` for complete output. Output draining shares the
+command's deadline and cancellation, so a descendant that keeps a pipe open
+cannot hold the call past its timeout. At most 4 runs per repository are
+concurrent. Without `write` the
 repository is read-only; with `network: "loopback"` only local binding is
 allowed. Cancellation kills the process group and returns `exec_cancelled`.
 The result is `{exit_code, signal, stdout, stdout_sha256, stderr,
@@ -114,9 +127,18 @@ outside the repository and returns a `ResourceRef`. `workspace.backup
 {expected}` and `workspace.restore {backup, expected}` save and restore up to
 256 files (64 MiB) under the same preconditions. Transactions and restores are
 exclusive per repository within the host. `workspace_change {repository, source, call_id, changes,
-status, reason}` is delivered after a tool call changes readable files; the
-host scans only while a mod subscribes, is bounded to 20,000 files and
-128 MiB, and reports `unavailable` instead of partial coverage.
+status, reason}` is delivered after a tool call changes readable files
+(`source: "tool"`, with `call_id`), and after a `workspace.transaction`,
+`workspace.restore` or `workspace.integrate` (`"transaction"`) or a writing
+`exec.run` (`"exec"`) performed by a slash command or lifecycle callback.
+Host operations inside a tool call are covered by that tool's single
+notification, and writes made by a `workspace_change` callback are not
+re-announced. Command and callback changes are delivered when the originating
+callback finishes, or at the next turn or tool boundary for slash commands. If
+more than 64 unannounced changes accumulate, subscribers receive one
+`source: "rescan"`, `unavailable` notification instead. The host scans only
+while a mod subscribes, is bounded to 20,000 files and 128 MiB, and reports
+`unavailable` instead of partial coverage.
 
 `workspace.snapshot {agent?, expected?}` requires `fs.read` and returns
 `{snapshot: ResourceRef, candidate_sha256}`. It freezes the current tracked and
@@ -140,9 +162,13 @@ session holds at most 64 execution records.
 `store.get/put/delete/list/export/reset` operate on a per-mod namespace with
 `repository` (default) or `user` scope. `put` and `delete` require the current
 `expected_revision` (`null` to create); a stale revision fails. Keys are at
-most 256 bytes, values 256 KiB, a scope 16 MiB and 4,096 keys; `list` pages
-256 keys. Every record carries host-attested provenance `{mod, source_sha256,
-thread_id, origin, at}`. `reset` needs the current generation. `evidence.write
+most 256 bytes, values 64 KiB, a scope 16 MiB and 4,096 keys; `list` pages
+256 keys and `export {scope?, cursor?}` pages entries in at most 64 KiB, returning
+`{schema, owner, scope, generation, entries, cursor}`. Every record carries
+host-attested provenance `{mod, source_sha256, thread_id, origin, at}`. `reset`
+needs the current generation. Outside a session, `omd store export|reset --mod
+ID [--repo PATH] [--store PATH] [--scope repository|user]` exports the complete
+namespace or resets it without running any mod code. `evidence.write
 {media_type, content, label?}` stores content-addressed evidence and returns a
 `ResourceRef`; `evidence.read` reads it back in bounded pages.
 
@@ -163,16 +189,20 @@ repository, provider, model and URL are rechecked on every request.
 Every lead and native sub-agent request is observed and recorded in the
 session ledger (`task.status`, the `ledger` field of `context` and `terminal`
 events). Limits are enforced only on mod-initiated agents, and on the lead
-when its model matches a configured lead route with rates.
+when its model matches a configured lead route with rates. OMD sessions use the
+observed HTTP Responses transport; WebSocket transport is disabled for their
+threads and refused if any request would use it.
 
 ### Stream control
 
 A `response_stream` middleware may return `{stop: {reason}}` or `{stop:
 {reason}, retry: {inject}}` only for an event with `boundary: true` (a
-completed output item). The host stops that response, drops the unfinished
-item, optionally adds `inject` as lower-priority developer context and retries
-under the same turn, at most twice per sampling request. Older APIs and
-non-boundary events cannot stop a stream.
+completed output item). The host keeps that completed item in the
+transcript, records a developer note that a mod stopped the response, ends the
+response, optionally adds `inject` as lower-priority developer context and
+retries under the same turn and admission, at most twice per turn across all
+of its sampling requests. Older APIs and non-boundary events cannot stop a
+stream.
 
 ### Built-in controls
 
@@ -195,8 +225,11 @@ STORE REPOSITORY ID@VERSION`; `omd-contract require` records a project floor in
 that changes a registered document makes the selection unavailable instead of
 silently weakening it; a weaker selection needs the confirmation printed by
 `omd-contract plan`. With no selection nothing is gated. `receipts.submit`
-records a receipt with a host-attested producer (`agent` must be a completed
-agent handle owned by the caller). Only a successful `workspace.integrate` can
+records a receipt with a host-attested producer. `agent` must be a completed,
+read-only agent handle owned by the caller in the same session, spawned on a
+snapshot of the receipt's candidate; `evidence` must be that agent's result
+reference, and a claimed `acceptance_sha256` must equal the evidence the agent
+was given. An isolated-worktree agent cannot attest its own candidate. Only a successful `workspace.integrate` can
 record an `integration` producer; an execution receipt cannot impersonate one.
 `task.complete {candidate_sha256, acceptance_sha256?}` checks
 the current workspace against the `complete` gate and returns `completed` or
@@ -233,6 +266,11 @@ all predicates must match. For example, restricting `agents.spawn` when
 `"/workspace"` equals `"isolated_worktree"` leaves read-only agents available.
 There are at most 64 rules with 1–8 scalar predicates each. Restrictions are
 monotone, and saved rules are validated again on restart.
+
+The host rechecks the selected document at each turn start and after a mod
+fails: if no active mod still registers the same document digest, the contract
+becomes unavailable (`contract_withdrawn`) and completion, integration and
+receipts fail closed until the same document is registered again.
 
 Contract receipts and restrictions survive restart in protected session state.
 The selected document and owner must still match; invalid state fails closed.

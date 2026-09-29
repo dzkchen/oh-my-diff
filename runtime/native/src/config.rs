@@ -67,8 +67,6 @@ pub(crate) struct HostConfig {
     #[serde(default)]
     pub protected: Vec<PathBuf>,
     #[serde(default)]
-    pub check_command: Vec<String>,
-    #[serde(default)]
     pub toolchain_reads: Vec<PathBuf>,
     #[serde(default = "snapshot_bytes")]
     pub snapshot_bytes: usize,
@@ -128,7 +126,6 @@ impl Default for HostConfig {
             services: Vec::new(),
             secret_refs: BTreeMap::new(),
             protected: Vec::new(),
-            check_command: Vec::new(),
             toolchain_reads: Vec::new(),
             snapshot_bytes: snapshot_bytes(),
             max_request_bytes: max_request_bytes(),
@@ -165,7 +162,6 @@ impl HostConfig {
             || self.routes.len() > 32
             || self.snapshot_bytes == 0
             || self.max_request_bytes == 0
-            || self.check_command.len() > 64
             || self.protected.len() > 32
             || self.approved_untracked.len() > 256
             || self.protected.iter().any(|path| !external(path))

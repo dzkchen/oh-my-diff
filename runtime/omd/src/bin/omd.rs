@@ -57,11 +57,86 @@ fn database(
     Ok(sqlite.join("state_5.sqlite"))
 }
 
+fn store(args: &[String]) -> io::Result<Value> {
+    let usage = || {
+        io::Error::other(
+            "usage: omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user]",
+        )
+    };
+    let (action, rest) = args.split_first().ok_or_else(usage)?;
+    if action != "export" && action != "reset" {
+        return Err(usage());
+    }
+    let mut id = None;
+    let mut repository = None;
+    let mut root = std::env::var_os(codex_omd::MOD_STORE_ENV).map(PathBuf::from);
+    let mut scope = "repository".to_owned();
+    let mut remaining = rest.iter();
+    while let Some(argument) = remaining.next() {
+        let value = remaining.next().ok_or_else(usage)?;
+        match argument.as_str() {
+            "--mod" => id = Some(value.clone()),
+            "--repo" => repository = Some(PathBuf::from(value).canonicalize()?),
+            "--store" => root = Some(PathBuf::from(value)),
+            "--scope" => scope = value.clone(),
+            _ => return Err(usage()),
+        }
+    }
+    let id = id.ok_or_else(usage)?;
+    let root = root
+        .ok_or_else(|| io::Error::other("explicit_mod_store_required"))?
+        .canonicalize()?;
+    let key = match (&repository, scope.as_str()) {
+        (Some(repository), "repository") => codex_omd::host::repository_key(repository),
+        (None, "repository") => return Err(io::Error::other("explicit_repository_required")),
+        _ => String::new(),
+    };
+    let data = codex_omd::data_store::DataStore {
+        root: &root,
+        repository_key: &key,
+        owner: &id,
+        provenance: codex_omd::data_store::StoreProvenance {
+            r#mod: id.clone(),
+            source_sha256: String::new(),
+            thread_id: None,
+            origin: codex_omd::data_store::Origin::Cli,
+            at: 0,
+        },
+    };
+    let mut exported = data.call("store.export", json!({"scope": scope}))?;
+    while !exported["cursor"].is_null() {
+        let page = data.call(
+            "store.export",
+            json!({"scope": scope, "cursor": exported["cursor"]}),
+        )?;
+        if let (Some(entries), Some(more)) = (
+            exported["entries"].as_object_mut(),
+            page["entries"].as_object(),
+        ) {
+            entries.extend(more.clone());
+        }
+        exported["cursor"] = page["cursor"].clone();
+    }
+    if let Some(exported) = exported.as_object_mut() {
+        exported.remove("cursor");
+    }
+    if action == "export" {
+        return Ok(exported);
+    }
+    data.call(
+        "store.reset",
+        json!({"scope": scope, "expected_generation": exported["generation"]}),
+    )
+}
+
 fn run(args: Vec<String>) -> io::Result<Value> {
     if args.is_empty() || args[0] == "--help" {
         return Ok(
-            json!({"usage":"omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS]","commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here."}),
+            json!({"usage":"omd COMMAND --repo PATH [--store PATH] [--home PATH] [--sqlite-home PATH] [ARGS] | omd store export|reset --mod ID [--repo PATH] [--store PATH] [--scope repository|user]","commands":"Only explicitly enabled extensions with a CLI export may run. Model requests and process execution are unavailable here. `omd store` exports or resets one mod's namespaced store without running mod code."}),
         );
+    }
+    if args[0] == "store" {
+        return store(&args[1..]);
     }
     if args.len() > 128 || args.iter().map(String::len).sum::<usize>() > 8192 {
         return Err(io::Error::other("command_argument_limit"));
@@ -246,6 +321,56 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn store_recovery_exports_and_resets_one_mod_without_running_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let repository = root.join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        let key = codex_omd::host::repository_key(&repository);
+        codex_omd::data_store::DataStore {
+            root: &root,
+            repository_key: &key,
+            owner: "stuck",
+            provenance: codex_omd::data_store::StoreProvenance {
+                r#mod: "stuck".into(),
+                source_sha256: "a".repeat(64),
+                thread_id: None,
+                origin: codex_omd::data_store::Origin::Tool,
+                at: 0,
+            },
+        }
+        .call(
+            "store.put",
+            json!({"key":"state","value":"x".repeat(40_000),"expected_revision":null}),
+        )
+        .unwrap();
+        let args = |action: &str| {
+            [
+                "store",
+                action,
+                "--mod",
+                "stuck",
+                "--repo",
+                repository.to_str().unwrap(),
+                "--store",
+                root.to_str().unwrap(),
+            ]
+            .map(str::to_owned)
+            .to_vec()
+        };
+        let exported = run(args("export")).unwrap();
+        assert_eq!(exported["entries"]["state"]["revision"], 1);
+        assert!(exported.get("cursor").is_none());
+        assert_eq!(run(args("reset")).unwrap()["generation"], 2);
+        assert!(
+            run(args("export")).unwrap()["entries"]
+                .as_object()
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn session_database_selection_honors_config_profile_and_explicit_scope() {

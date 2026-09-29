@@ -716,7 +716,10 @@ fn callback_budget_errors_fail_the_call_without_disabling_the_mod() {
             |_| Ok(json!({"text": "x".repeat(140_000)})),
         )
         .unwrap_err();
-    assert_eq!(error.to_string(), "host_receipt_limit");
+    assert!(
+        error.to_string().starts_with("Error: host_result_limit"),
+        "{error}"
+    );
     assert_eq!(
         runtime
             .invoke_with(

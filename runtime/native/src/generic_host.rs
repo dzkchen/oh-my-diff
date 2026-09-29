@@ -185,6 +185,7 @@ pub(crate) fn call(
     thread: Option<&str>,
     request: codex_omd::ModHostCall,
     active: &dyn Fn() -> bool,
+    record_changes: bool,
 ) -> Result<Value, String> {
     let grants = runtime_grants.ok_or("host_caller_inactive")?;
     let authority = NativeAuthority {
@@ -195,6 +196,7 @@ pub(crate) fn call(
         authority: &authority,
         data_root,
         active,
+        record_changes,
     }
     .call(
         &Caller {

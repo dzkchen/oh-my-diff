@@ -73,15 +73,24 @@ pub(crate) fn admit(
 }
 
 pub(crate) fn reject_unobserved_transport(
-    headers: Option<&http::HeaderMap>,
+    headers: &http::HeaderMap,
 ) -> Result<(), crate::error::ApiError> {
     let thread = headers
-        .and_then(|headers| headers.get("thread-id"))
+        .get("thread-id")
         .and_then(|value| value.to_str().ok());
     if OBSERVER
         .get()
         .is_some_and(|observer| observer.requires_observation(thread))
     {
+        return Err(crate::error::ApiError::InvalidRequest {
+            message: "local OMD request policy requires observed HTTP Responses transport".into(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn reject_websocket_transport() -> Result<(), crate::error::ApiError> {
+    if OBSERVER.get().is_some() {
         return Err(crate::error::ApiError::InvalidRequest {
             message: "local OMD request policy requires observed HTTP Responses transport".into(),
         });

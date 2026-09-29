@@ -20,6 +20,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
@@ -54,6 +55,8 @@ pub const RESERVED_EXEC_PREFIXES: &[&str] = &[
 pub const EXEC_DEFAULT_TIMEOUT_MS: u64 = 10_000;
 pub const EXEC_MAX_TIMEOUT_MS: u64 = 120_000;
 pub const EXEC_OUTPUT_BYTES: usize = 1024 * 1024;
+pub const EXEC_INLINE_STDOUT_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 2;
+pub const EXEC_INLINE_STDERR_BYTES: usize = crate::mods::HOST_RECEIPT_BYTES / 8;
 pub const EXEC_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
 pub const EXEC_ARTIFACT_PAGE_BYTES: usize = 16 * 1024;
 const EXEC_ARTIFACT_STORE_BYTES: u64 = 64 * 1024 * 1024;
@@ -92,6 +95,7 @@ pub struct Host<'a> {
     pub authority: &'a dyn Authority,
     pub data_root: &'a Path,
     pub active: &'a dyn Fn() -> bool,
+    pub record_changes: bool,
 }
 
 pub fn served(operation: &str) -> bool {
@@ -455,6 +459,26 @@ impl Host<'_> {
         if !(self.active)() {
             return Err("host_operation_cancelled".into());
         }
+        let source = match operation {
+            "workspace.transaction" | "workspace.restore" => Some("transaction"),
+            "exec.run" if arguments["write"] == true => Some("exec"),
+            _ => None,
+        }
+        .filter(|_| self.record_changes);
+        let before = source.and_then(|_| crate::change_baseline(self.repository()));
+        let result = self.dispatch(caller, operation, arguments);
+        if let (Some(source), Some(before), Ok(_)) = (source, before, &result) {
+            crate::record_workspace_change(self.repository(), source, before);
+        }
+        result
+    }
+
+    fn dispatch(
+        &self,
+        caller: &Caller<'_>,
+        operation: &str,
+        arguments: Value,
+    ) -> Result<Value, String> {
         match operation {
             "exec.run" => self.exec(caller, arguments),
             "exec.output_page" => self.output_page(caller, arguments),
@@ -746,22 +770,23 @@ impl Host<'_> {
             });
         }
         let bounded = |pipe: Option<Box<dyn Read + Send>>, bound: usize| {
-            std::thread::spawn(move || {
-                let mut kept = Vec::new();
-                let mut truncated = false;
+            let output = Arc::new(Mutex::new((Vec::new(), false)));
+            let shared = output.clone();
+            let reader = std::thread::spawn(move || {
                 if let Some(mut pipe) = pipe {
                     let mut chunk = [0_u8; 8192];
                     while let Ok(read) = pipe.read(&mut chunk) {
                         if read == 0 {
                             break;
                         }
-                        let room = bound.saturating_sub(kept.len());
-                        kept.extend_from_slice(&chunk[..read.min(room)]);
-                        truncated |= read > room;
+                        let Ok(mut output) = shared.lock() else { break };
+                        let room = bound.saturating_sub(output.0.len());
+                        output.0.extend_from_slice(&chunk[..read.min(room)]);
+                        output.1 |= read > room;
                     }
                 }
-                (kept, truncated)
-            })
+            });
+            (reader, output)
         };
         let stdout = bounded(
             child
@@ -802,8 +827,24 @@ impl Host<'_> {
         if let Some(pid) = rustix::process::Pid::from_raw(child.0.id() as i32) {
             let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
         }
-        let (stdout, stdout_truncated) = stdout.join().map_err(|_| "exec_output_failed")?;
-        let (stderr, stderr_truncated) = stderr.join().map_err(|_| "exec_output_failed")?;
+        while !(stdout.0.is_finished() && stderr.0.is_finished()) {
+            if !(self.active)() {
+                return Err("exec_cancelled".into());
+            }
+            if started.elapsed() >= timeout {
+                timed_out = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let drained = |output: &Mutex<(Vec<u8>, bool)>| {
+            output
+                .lock()
+                .map(|output| output.clone())
+                .map_err(|_| "exec_output_failed")
+        };
+        let (stdout, stdout_truncated) = drained(&stdout.1)?;
+        let (stderr, stderr_truncated) = drained(&stderr.1)?;
         if input.output_artifact && stdout_truncated {
             return Err("exec_output_artifact_limit".into());
         }
@@ -812,11 +853,12 @@ impl Host<'_> {
         } else {
             None
         };
-        let visible_stdout = if input.output_artifact {
-            &stdout[..stdout.len().min(4096)]
+        let visible_stdout = &stdout[..stdout.len().min(if input.output_artifact {
+            4096
         } else {
-            &stdout
-        };
+            EXEC_INLINE_STDOUT_BYTES
+        })];
+        let visible_stderr = &stderr[..stderr.len().min(EXEC_INLINE_STDERR_BYTES)];
         let signal = status.and_then(|status| {
             use std::os::unix::process::ExitStatusExt;
             status.signal().map(|signal| signal.to_string())
@@ -828,10 +870,11 @@ impl Host<'_> {
             "stdout_sha256": sha256(&stdout),
             "stdout_bytes": stdout.len(),
             "output_artifact": output_artifact,
-            "stderr": String::from_utf8_lossy(&stderr),
+            "stderr": String::from_utf8_lossy(visible_stderr),
             "stdout_truncated": stdout_truncated,
-            "stdout_preview_truncated": input.output_artifact && stdout.len() > visible_stdout.len(),
+            "stdout_preview_truncated": stdout.len() > visible_stdout.len(),
             "stderr_truncated": stderr_truncated,
+            "stderr_preview_truncated": stderr.len() > visible_stderr.len(),
             "timed_out": timed_out,
             "duration_ms": started.elapsed().as_millis() as u64,
             "program": {"path": program, "sha256": digest},

@@ -488,6 +488,71 @@ impl WorkspaceIndex {
     }
 }
 
+pub const INDEX_FILES: usize = 20_000;
+pub const INDEX_BYTES: usize = 128 * 1024 * 1024;
+const RECORDED_CHANGES: usize = 64;
+
+pub struct RecordedChange {
+    pub source: &'static str,
+    pub changes: Result<Vec<WorkspaceChange>, String>,
+}
+
+static OBSERVED: std::sync::Mutex<BTreeSet<PathBuf>> = std::sync::Mutex::new(BTreeSet::new());
+static RECORDED: std::sync::Mutex<BTreeMap<PathBuf, Vec<RecordedChange>>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+pub fn observe_workspace_changes(repository: &Path, observed: bool) {
+    if let Ok(mut repositories) = OBSERVED.lock() {
+        if observed {
+            repositories.insert(repository.to_path_buf());
+        } else {
+            repositories.remove(repository);
+        }
+    }
+}
+
+pub fn change_baseline(repository: &Path) -> Option<io::Result<WorkspaceIndex>> {
+    OBSERVED
+        .lock()
+        .is_ok_and(|repositories| repositories.contains(repository))
+        .then(|| WorkspaceIndex::capture(repository, INDEX_FILES, INDEX_BYTES))
+}
+
+pub fn record_workspace_change(
+    repository: &Path,
+    source: &'static str,
+    before: io::Result<WorkspaceIndex>,
+) {
+    let changes = before
+        .and_then(|before| {
+            WorkspaceIndex::capture(repository, INDEX_FILES, INDEX_BYTES)
+                .map(|after| before.changed(&after))
+        })
+        .map_err(|error| error.to_string());
+    if changes.as_ref().is_ok_and(Vec::is_empty) {
+        return;
+    }
+    if let Ok(mut recorded) = RECORDED.lock() {
+        let queue = recorded.entry(repository.to_path_buf()).or_default();
+        if queue.len() < RECORDED_CHANGES {
+            queue.push(RecordedChange { source, changes });
+        } else {
+            *queue = vec![RecordedChange {
+                source: "rescan",
+                changes: Err("workspace_change_queue_limit".into()),
+            }];
+        }
+    }
+}
+
+pub fn take_workspace_changes(repository: &Path) -> Vec<RecordedChange> {
+    RECORDED
+        .lock()
+        .ok()
+        .and_then(|mut recorded| recorded.remove(repository))
+        .unwrap_or_default()
+}
+
 fn safe_path(root: &Path, name: &str) -> io::Result<PathBuf> {
     let path = Path::new(name);
     if name.is_empty()

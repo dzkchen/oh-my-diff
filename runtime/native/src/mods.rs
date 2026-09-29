@@ -346,13 +346,28 @@ fn publish(runtime: &mut ModHost, host: &Host, views: &view::Views, event: &str,
     }
 }
 
+fn refresh_contract(runtime: &ModHost, session: &Session) {
+    let documents = runtime.contract_documents();
+    if session
+        .contract
+        .lock()
+        .is_ok_and(|mut contract| contract.revalidate(&documents))
+    {
+        let _ = session.persist_contract();
+    }
+}
+
 impl Core {
     async fn cleanup_failed(&self, lead: Option<&Lead>) {
         let runtime = self.runtime.clone();
+        let session = lead.map(|lead| lead.session.clone());
         let failed = tokio::task::spawn_blocking(move || {
             let Ok(runtime) = runtime.lock() else {
                 return Vec::new();
             };
+            if let Some(session) = &session {
+                refresh_contract(&runtime, session);
+            }
             runtime.status()["mods"]
                 .as_array()
                 .into_iter()
@@ -404,6 +419,7 @@ impl Core {
             let Ok(mut runtime) = runtime.lock() else {
                 return Vec::new();
             };
+            codex_omd::observe_workspace_changes(&host.repository, runtime.has_event("workspace_change"));
             let facts = facts(&runtime);
             let mut fragments = event_fragments_scoped(
                 &mut runtime,
@@ -445,6 +461,7 @@ impl Core {
                             grants: call.grants,
                             generation,
                             origin: codex_omd::data_store::Origin::Event,
+                            record_changes: event != "workspace_change",
                         },
                         None,
                         call.request,
@@ -458,7 +475,62 @@ impl Core {
         }
         let fragments = job.await.unwrap_or_default();
         self.cleanup_failed(lead).await;
+        if let Some(lead) = lead {
+            self.publish_workspace_changes(lead).await;
+        }
         fragments
+    }
+
+    fn workspace_change<'a>(
+        &'a self,
+        lead: &'a Lead,
+        source: &'a str,
+        call_id: Option<&'a str>,
+        changes: Result<Vec<codex_omd::WorkspaceChange>, String>,
+    ) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            let (status, changes, reason) = match changes {
+                Ok(changes)
+                    if changes.len() > 128
+                        || changes.iter().map(|change| change.path.len()).sum::<usize>() > 16_000 =>
+                {
+                    ("unavailable", Vec::new(), Some("workspace_change_batch_limit".to_owned()))
+                }
+                Ok(changes) if changes.is_empty() => return,
+                Ok(changes) => match crate::workspace_operations::WorkspaceAuthority::for_lead(lead)
+                    .await
+                    .and_then(|authority| authority.visible_changes(changes))
+                {
+                    Ok(changes) if changes.is_empty() => return,
+                    Ok(changes) => ("observed", changes, None),
+                    Err(_) => (
+                        "unavailable",
+                        Vec::new(),
+                        Some("workspace_change_scope_unavailable".to_owned()),
+                    ),
+                },
+                Err(error) => ("unavailable", Vec::new(), Some(error)),
+            };
+            self.event(
+                "workspace_change",
+                json!({"repository":self.host.repository,"source":source,"call_id":call_id,
+                    "changes":changes,"status":status,"reason":reason}),
+                (lead.owner == "lead").then_some(lead),
+            )
+            .await;
+        })
+    }
+
+    fn publish_workspace_changes<'a>(&'a self, lead: &'a Lead) -> ExtensionFuture<'a, ()> {
+        Box::pin(async move {
+            if lead.owner != "lead" {
+                return;
+            }
+            for recorded in codex_omd::take_workspace_changes(&self.host.repository) {
+                self.workspace_change(lead, recorded.source, None, recorded.changes)
+                    .await;
+            }
+        })
     }
 }
 
@@ -655,6 +727,7 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
                 FileSystemAccessMode::Deny,
             ));
         }
+        config.model_provider.supports_websockets = false;
         let mut filesystem = profile.file_system_sandbox_policy();
         filesystem.preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
         let protected = PermissionProfile::from_runtime_permissions(
@@ -854,12 +927,20 @@ impl TurnLifecycleContributor for Mods {
                 return;
             };
             let runtime = self.runtime.clone();
+            let session = lead.session.clone();
+            let session_repository = self.host.repository.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 if let Ok(mut runtime) = runtime.lock() {
                     runtime.turn_boundary();
+                    refresh_contract(&runtime, &session);
+                    codex_omd::observe_workspace_changes(
+                        &session_repository,
+                        runtime.has_event("workspace_change"),
+                    );
                 }
             })
             .await;
+            self.publish_workspace_changes(&lead).await;
             let evidence = evidence::begin(&self.core, &lead).await;
             if let Ok(mut turns) = self.turns.lock() {
                 turns.insert(
@@ -1097,23 +1178,21 @@ impl ToolLifecycleContributor for Mods {
                 return;
             }
             let runtime = self.runtime.clone();
-            let observed = tokio::task::spawn_blocking(move || {
-                runtime.lock().is_ok_and(|runtime| {
-                    runtime.has_event("workspace_write") || runtime.has_event("workspace_change")
-                })
-            })
-            .await
-            .unwrap_or(false);
-            if !observed {
-                return;
-            }
             let repository = self.host.repository.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
-                codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
-                    .map_err(|error| error.to_string())
+                let observed = runtime
+                    .lock()
+                    .is_ok_and(|runtime| runtime.has_event("workspace_change"));
+                codex_omd::observe_workspace_changes(&repository, observed);
+                codex_omd::change_baseline(&repository)
             })
             .await
-            .unwrap_or_else(|error| Err(error.to_string()));
+            .ok()
+            .flatten()
+            .map(|snapshot| snapshot.map_err(|error| error.to_string()));
+            let Some(snapshot) = snapshot else {
+                return;
+            };
             if let Ok(mut before) = self.workspace_before.lock() {
                 before.insert(input.call_id.to_owned(), snapshot);
             }
@@ -1235,61 +1314,23 @@ impl ToolLifecycleContributor for Mods {
                 .lock()
                 .ok()
                 .and_then(|mut snapshots| snapshots.remove(input.call_id));
-            let Some(before) = before else {
-                return;
-            };
-            let repository = self.host.repository.clone();
-            let after = tokio::task::spawn_blocking(move || {
-                codex_omd::WorkspaceIndex::capture(&repository, 20_000, 128 * 1024 * 1024)
-                    .map_err(|error| error.to_string())
-            })
-            .await
-            .unwrap_or_else(|error| Err(error.to_string()));
-            let (status, changes, reason) = match (before, after) {
-                (Ok(before), Ok(after)) => {
-                    let changes = before.changed(&after);
-                    if changes.len() > 128
-                        || changes.iter().map(|change| change.path.len()).sum::<usize>() > 16_000
-                    {
-                        ("unavailable", Vec::new(), Some("workspace_change_batch_limit".to_owned()))
-                    } else {
-                        ("observed", changes, None)
-                    }
-                }
-                (Err(error), _) | (_, Err(error)) => ("unavailable", Vec::new(), Some(error)),
-            };
-            let (status, changes, reason) = if status == "observed" && !changes.is_empty() {
-                match crate::workspace_operations::WorkspaceAuthority::for_lead(&lead).await {
-                    Ok(authority) => match authority.visible_changes(changes) {
-                        Ok(changes) => (status, changes, reason),
-                        Err(error) => ("unavailable", Vec::new(), Some(error)),
-                    },
-                    Err(_) => (
-                        "unavailable",
-                        Vec::new(),
-                        Some("workspace_change_scope_unavailable".to_owned()),
-                    ),
-                }
-            } else {
-                (status, changes, reason)
-            };
-            if status == "unavailable" || !changes.is_empty() {
-                self.event(
-                    "workspace_change",
-                    json!({"repository":self.host.repository,"source":"tool","call_id":input.call_id,
-                        "changes":changes,"status":status,"reason":reason}),
-                    event_lead,
-                )
-                .await;
-                self.event(
-                    "workspace_write",
-                    json!({"repository":self.host.repository,"call_id":input.call_id,
-                        "tool":input.tool_name.to_string(),"outcome":format!("{:?}", input.outcome),
-                        "changes":changes,"status":status,"reason":reason}),
-                    event_lead,
-                )
-                .await;
+            if let Some(before) = before {
+                let repository = self.host.repository.clone();
+                let changes = tokio::task::spawn_blocking(move || {
+                    let after = codex_omd::WorkspaceIndex::capture(
+                        &repository,
+                        codex_omd::INDEX_FILES,
+                        codex_omd::INDEX_BYTES,
+                    )
+                    .map_err(|error| error.to_string());
+                    before.and_then(|before| after.map(|after| before.changed(&after)))
+                })
+                .await
+                .unwrap_or_else(|error| Err(error.to_string()));
+                self.workspace_change(&lead, "tool", Some(input.call_id), changes)
+                    .await;
             }
+            self.publish_workspace_changes(&lead).await;
         })
     }
 }

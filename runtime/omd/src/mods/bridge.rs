@@ -155,15 +155,23 @@ pub(super) fn run(
         }
         scope.charge_call()?;
         let result = host(call.clone());
-        let receipt = match result {
+        let mut receipt = match result {
             Ok(value) => json!({"call": call, "value": value}),
             Err(error) => {
                 json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
             }
         };
+        let bytes = serde_json::to_vec(&receipt)?.len();
+        let room = scope
+            .receipt_room()
+            .min(HOST_RECEIPT_BYTES.saturating_sub(serde_json::to_vec(&receipts)?.len()));
+        if bytes > room {
+            receipt = json!({"call": call, "error": format!(
+                "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
+        }
         expected.push(call.clone());
         receipts.push(receipt);
-        if serde_json::to_vec(&receipts)?.len() > 131_072 {
+        if serde_json::to_vec(&receipts)?.len() > HOST_RECEIPT_BYTES {
             return Err(failure("host_receipt_limit"));
         }
         scope.charge_receipt(serde_json::to_vec(receipts.last().unwrap())?.len())?;

@@ -139,6 +139,25 @@ mod history_tests {
     use super::*;
 
     #[test]
+    fn receipt_agents_are_read_only_and_bound_to_the_acceptance_they_received() {
+        let acceptance = "a".repeat(64);
+        assert!(separate_producer(false, Some(&acceptance), Some(&acceptance)).is_ok());
+        assert!(separate_producer(false, None, None).is_ok());
+        assert_eq!(
+            separate_producer(true, Some(&acceptance), Some(&acceptance)).unwrap_err(),
+            "receipt_agent_produced_candidate"
+        );
+        assert_eq!(
+            separate_producer(false, None, Some(&acceptance)).unwrap_err(),
+            "receipt_agent_acceptance_mismatch"
+        );
+        assert_eq!(
+            separate_producer(false, Some(&"b".repeat(64)), Some(&acceptance)).unwrap_err(),
+            "receipt_agent_acceptance_mismatch"
+        );
+    }
+
+    #[test]
     fn receipt_agent_identity_requires_the_same_task_even_for_the_same_mod_generation() {
         let root = tempfile::tempdir().unwrap();
         let limits = codex_omd::Limits {
@@ -405,6 +424,7 @@ impl Notifier {
                                 grants,
                                 generation,
                                 origin: codex_omd::data_store::Origin::Event,
+                                record_changes: true,
                             },
                             None,
                             call,
@@ -427,6 +447,8 @@ impl Notifier {
                 lead.ledger(),
                 || lead.session.task.check_active().is_ok(),
             );
+            drop(runtime);
+            handle.block_on(core.publish_workspace_changes(&lead));
         });
     }
 }
@@ -443,6 +465,7 @@ struct Agent {
     worker: String,
     workspace: Option<Workspace>,
     candidate: Option<(String, Vec<String>)>,
+    evidence: Option<String>,
     resolution: Option<ResolutionBinding>,
 }
 
@@ -467,6 +490,20 @@ struct ResolutionAssertion {
     candidate_sha256: String,
     acceptance_sha256: String,
     resolves: Vec<String>,
+}
+
+fn separate_producer(
+    integrable: bool,
+    supplied: Option<&str>,
+    acceptance_sha256: Option<&str>,
+) -> Result<(), String> {
+    if integrable {
+        return Err("receipt_agent_produced_candidate".into());
+    }
+    if acceptance_sha256.is_some_and(|acceptance| supplied != Some(acceptance)) {
+        return Err("receipt_agent_acceptance_mismatch".into());
+    }
+    Ok(())
 }
 
 fn validate_resolution_assertion(
@@ -768,6 +805,14 @@ impl Agents {
                 )
             })
             .ok_or("unknown_or_foreign_agent")?;
+        separate_producer(
+            agent
+                .workspace
+                .as_ref()
+                .is_some_and(|workspace| workspace.integrable),
+            agent.evidence.as_deref(),
+            acceptance_sha256,
+        )?;
         if !agent.completed()? {
             return Err("receipt_agent_not_completed".into());
         }
@@ -956,7 +1001,7 @@ impl Agents {
             let result = crate::generic_host::call(grants, &workspace, &host.root, host.protected_paths(),
                 &id, origin, Some(&thread.to_string()), codex_omd::ModHostCall {
                     operation: "exec.run".into(), arguments: arguments.clone(),
-                }, &active)?;
+                }, &active, false)?;
             let paths = snapshot.files.keys().cloned().collect();
             if codex_omd::Snapshot::capture(&root, &paths, host.config.snapshot_bytes).map_err(|e| e.to_string())? != *snapshot {
                 return Err("snapshot_execution_changed_source".into());
@@ -1698,6 +1743,7 @@ impl Agents {
                 context
             ));
         }
+        let evidence = request.evidence.as_ref().map(|reference| reference.sha256.clone());
         if let Some(reference) = request.evidence.take() {
             let authority = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await?;
             let delivered = tokio::task::spawn_blocking(scoped_resource(
@@ -1900,6 +1946,7 @@ impl Agents {
                     .snapshot
                     .as_ref()
                     .map(|reference| (reference.sha256.clone(), Vec::new())),
+                evidence,
                 resolution: resolution.map(|(binding, _)| binding),
             },
         );

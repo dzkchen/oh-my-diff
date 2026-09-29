@@ -105,6 +105,7 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let capabilities = strings(&["exec"]);
     let owner = caller(&capabilities, &[], Origin::Tool);
@@ -180,6 +181,7 @@ fn exec_output_store_evicts_oldest_artifacts_instead_of_failing() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let capabilities = strings(&["exec"]);
     let owner = Caller {
@@ -220,6 +222,7 @@ fn exec_guards_recheck_output_before_a_write() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let capabilities = strings(&["exec", "fs.write"]);
     let writer = caller(&capabilities, &[], Origin::Tool);
@@ -284,6 +287,7 @@ fn exec_guards_fail_closed_on_command_failure_and_truncation() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let capabilities = strings(&["exec", "fs.write"]);
     let writer = caller(&capabilities, &[], Origin::Tool);
@@ -320,6 +324,7 @@ fn workspace_access_checks_named_paths_and_guarded_write_authority() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let write_capabilities = strings(&["exec", "fs.write"]);
     let reader_capabilities = strings(&["exec", "fs.read"]);
@@ -394,6 +399,7 @@ fn exec_run_bounds_program_environment_output_time_and_authority() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let capabilities = strings(&["exec"]);
     let environment = strings(&["OMD_EXEC_FIXTURE_NAME"]);
@@ -488,6 +494,27 @@ fn exec_run_bounds_program_environment_output_time_and_authority() {
         .unwrap();
     assert_eq!(slow["timed_out"], true);
     assert!(slow["duration_ms"].as_u64().unwrap() < 4000);
+    let started = std::time::Instant::now();
+    let detached = host
+        .call(
+            &reader,
+            "exec.run",
+            json!({"program":"sh","argv":["-c","perl -e 'setpgrp(0,0); sleep 5' & sleep 0.1; exit 0"],"timeout_ms":300}),
+        )
+        .unwrap();
+    assert_eq!(detached["timed_out"], true);
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    let wide = host
+        .call(
+            &reader,
+            "exec.run",
+            json!({"program":"sh","argv":["-c","head -c 100000 /dev/zero | tr '\\0' x"]}),
+        )
+        .unwrap();
+    assert_eq!(wide["stdout"].as_str().unwrap().len(), 65_536);
+    assert_eq!(wide["stdout_bytes"], 100_000);
+    assert_eq!(wide["stdout_truncated"], false);
+    assert_eq!(wide["stdout_preview_truncated"], true);
 
     let writer_capabilities = strings(&["exec", "fs.write", "network"]);
     let writer = caller(&writer_capabilities, &[], Origin::UserCommand);
@@ -520,6 +547,7 @@ fn exec_run_bounds_program_environment_output_time_and_authority() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let started = std::time::Instant::now();
     assert_eq!(
@@ -542,7 +570,9 @@ fn workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: true,
     };
+    codex_omd::observe_workspace_changes(&repository, true);
     std::fs::create_dir(repository.join("secret")).unwrap();
     std::fs::write(repository.join("secret/key"), "k").unwrap();
     let capabilities = strings(&["fs.read", "fs.write"]);
@@ -625,6 +655,17 @@ fn workspace_listing_stat_backup_and_restore_respect_scope_and_preconditions() {
         .unwrap();
     assert!(!repository.join("README.md").exists());
     assert_eq!(changed["backup"]["sha256"].as_str().unwrap().len(), 64);
+    let recorded = codex_omd::take_workspace_changes(&repository);
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].source, "transaction");
+    let paths = recorded[0]
+        .changes
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|change| change.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["README.md", "new.md"]);
     let new_hash = changed["files"]["new.md"].clone();
     let stale = host
         .call(
@@ -679,6 +720,7 @@ fn store_is_namespaced_compare_and_set_with_host_attested_provenance() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let capabilities = strings(&["store"]);
     let tool = caller(&capabilities, &[], Origin::Tool);
@@ -767,6 +809,22 @@ fn store_is_namespaced_compare_and_set_with_host_attested_provenance() {
     );
     let exported = host.call(&tool, "store.export", json!({})).unwrap();
     assert_eq!(exported["entries"].as_object().unwrap().len(), 4);
+    assert!(exported["cursor"].is_null());
+    for key in ["wide/1", "wide/2"] {
+        host.call(
+            &tool,
+            "store.put",
+            json!({"key":key,"value":"x".repeat(40_000),"expected_revision":null}),
+        )
+        .unwrap();
+    }
+    let first = host.call(&tool, "store.export", json!({})).unwrap();
+    let rest = host
+        .call(&tool, "store.export", json!({"cursor":first["cursor"]}))
+        .unwrap();
+    assert_eq!(first["entries"].as_object().unwrap().len(), 5);
+    assert_eq!(rest["entries"].as_object().unwrap().len(), 1);
+    assert!(rest["cursor"].is_null());
     assert_eq!(
         host.call(&tool, "store.reset", json!({"expected_generation":9}))
             .unwrap_err(),
@@ -805,6 +863,23 @@ fn store_is_namespaced_compare_and_set_with_host_attested_provenance() {
         host.call(&tool, "store.get", json!({"key":"bad\\key"}))
             .unwrap_err(),
         "store_key_invalid"
+    );
+    let inactive = || false;
+    let cancelled = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &inactive,
+        record_changes: false,
+    };
+    assert_eq!(
+        cancelled
+            .call(
+                &tool,
+                "store.put",
+                json!({"key":"late","value":1,"expected_revision":null})
+            )
+            .unwrap_err(),
+        "host_operation_cancelled"
     );
 }
 
@@ -1215,6 +1290,7 @@ fn outside_author_uses_owned_asset_and_paged_exec_output() {
         authority: &authority,
         data_root: &data,
         active: &active,
+        record_changes: false,
     };
     let result = runtime
         .invoke_with(

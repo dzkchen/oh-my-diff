@@ -21,7 +21,7 @@ Binaries:
 
 - `omd-mod` — install, trust, enable, test and inspect mod packages.
 - `omd-contract` — select or inspect a schema-2 contract document.
-- `omd` — run an enabled extension's CLI export outside a session.
+- `omd` — run an enabled extension's CLI export outside a session, or `omd store export|reset --mod ID` to recover one mod's store without running mod code.
 
 `omd-mod` with no arguments prints its commands. With no
 first-party mods installed the host runs as modded Codex with no feature
