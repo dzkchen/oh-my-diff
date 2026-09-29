@@ -138,8 +138,6 @@ pub use mods::ModRange;
 pub use mods::ModRenderSite;
 pub use mods::ModSelectOption;
 pub use mods::ModSelection;
-pub use mods::ModSelectionPolicy;
-pub use mods::ModSelectionSource;
 pub use mods::ModSidebarSide;
 pub use mods::ModSiteMode;
 pub use mods::ModSpan;

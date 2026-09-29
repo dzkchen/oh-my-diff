@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.157.0",
-  "commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d"
+  "tag": "rust-v0.159.1",
+  "commit": "8e68a98ef03cdde76d2e6800791ebdf1b3b95b24"
  },
  "requests": {
   "account/gatewayOAuth/read": {
@@ -397,6 +397,7 @@
     "cursor",
     "detail",
     "limit",
+    "serverName",
     "threadId"
    ]
   },
@@ -1425,6 +1426,7 @@
   "apps",
   "apps._default",
   "auto_review",
+  "auto_review.circuit_break_action",
   "auto_review.experimental_policy_template",
   "auto_review.extra_policy",
   "auto_review.policy",
@@ -1504,6 +1506,8 @@
   "otel",
   "otel.environment",
   "otel.exporter",
+  "otel.log_agent_responses",
+  "otel.log_guardian_assessments",
   "otel.log_user_prompt",
   "otel.metrics_exporter",
   "otel.span_attributes",
@@ -1594,6 +1598,7 @@
   "features.cwd_relative_turn_diffs",
   "features.daemon_auto_start",
   "features.default_mode_request_user_input",
+  "features.defer_mailbox_preemption",
   "features.deferred_executor",
   "features.deferred_tool_world_state",
   "features.enable_fanout",
@@ -1616,6 +1621,7 @@
   "features.in_app_dictation",
   "features.in_app_local_automation",
   "features.in_app_updates",
+  "features.instant_interrupt",
   "features.item_ids",
   "features.js_repl",
   "features.js_repl_tools_only",
@@ -1780,6 +1786,7 @@
   "tui.alternate_screen",
   "tui.animations",
   "tui.auto_recap",
+  "tui.copy_on_select",
   "tui.disable_paste_burst",
   "tui.effects",
   "tui.fullscreen_transcript",
@@ -1794,6 +1801,7 @@
   "tui.raw_output_mode",
   "tui.rendering",
   "tui.resume_cwd",
+  "tui.right_click_paste",
   "tui.screen_reader_detection_done",
   "tui.session_picker_view",
   "tui.show_server_version_notice",

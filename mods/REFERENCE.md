@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.4` on OMD `0.1.0` and Codex `0.157.0`. The package's
+`0.2.0-experimental.4` on OMD `0.1.0` and Codex `0.159.1`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
 historical and do not load in the current host; the later .9 reference sections
 remain only as migration evidence. A store also generates `active-host.d.ts` and
@@ -46,7 +46,7 @@ native work.
 | `sessions` | `sessions.list`, `sessions.read`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins` |
-| `terminal` | `terminal`, `list`, `selection` and `selection_result` events; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `terminal.import_file`, `terminal.open`, `terminal.prompt` |
+| `terminal` | `terminal` and `list` events; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `terminal.import_file`, `terminal.open`, `terminal.prompt` |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification` |
 | `approvals` | the `approval` middleware and `approval_result`; `app_server_request` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, the `channel` and `timer` events |
@@ -344,12 +344,10 @@ private scratch directory, for tools that do not honor the `HOME` environment.
 `environment` supplies at most eight explicit, bounded variables to that
 process. The host rejects its own reserved variables and loader overrides.
 
-### Terminal lists, selection, insert, placeholder and glyphs
+### Terminal lists, insert, placeholder and glyphs
 
 `api.replace('list', event)` renders built-in pickers as components; the host
-keeps keyboard handling and the chosen action. `api.replace('selection',
-event)` returns `{copy: true}` to copy a transcript, composer or pager
-selection; `selection_result` reports the outcome. Components accept an
+keeps keyboard handling and the chosen action. Components accept an
 `{insert}` action. A terminal view may set `placeholder` and
 `theme.glyphs` (2–4 printable ASCII characters mapped to the same number of
 characters; width-changing mappings are ignored).
@@ -778,7 +776,7 @@ separate review, trust, and enablement. Plugin installation does not activate
 the mod or install Python or debugpy. The local on-demand marketplace is not
 part of either release installation profile.
 
-## Terminal identity, rich lines, picker and selection
+## Terminal identity, rich lines and picker
 
 Terminal views are drawn on Codex's alternate screen, including its default
 fullscreen transcript; inline `--no-alt-screen` sessions keep only status
@@ -799,15 +797,8 @@ comfortable density.
 `api.replace('list', event)`. The host keeps selection actions, session state,
 keyboard handling and native fallback when the mod is absent or fails.
 
-`terminal_selection_v1` adds a view or patch `selection` policy
-`{copy_on_release, sources, min_chars}` for released mouse drags in the
-transcript, composer and transcript pager; one mod may set it. Native performs
-the single fail-closed clipboard write. Without a policy or a `selection`
-replacement the host never copies on release. Subscribers to the observe-only
-`selection` event receive `{source, chars, lines, copied, reason?}` after each
-release, never the selected text; `reason` is `policy_off`, `too_short`,
-`clipboard_unavailable` or `clipboard_failed`. Keyboard selection keeps native
-copy keys.
+Copy-on-select and right-click paste are Codex settings (`tui.copy_on_select`,
+`tui.right_click_paste`); mods change them through `config.write`.
 
 ## Git operations
 

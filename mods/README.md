@@ -1,6 +1,6 @@
 # TypeScript mods
 
-The current pinned Codex `0.157.0` OMD host exposes API
+The current pinned Codex `0.159.1` OMD host exposes API
 `0.2.0-experimental.4` on Apple Silicon macOS and Node `24.18.0`. Mods are
 editable, hash-approved TypeScript packages. The API remains experimental;
 local author and host fixtures do not complete independent preview feedback or

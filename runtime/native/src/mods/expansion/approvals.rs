@@ -103,15 +103,10 @@ impl ApprovalGateContributor for Mods {
 
     fn on_approval_result<'a>(&'a self, input: ApprovalResultInput<'a>) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
-            let owner = self
-                .expansion
-                .gates
-                .lock()
-                .ok()
-                .and_then(|mut gates| {
-                    let index = gates.iter().position(|(call, _)| call == input.call_id)?;
-                    gates.remove(index).map(|(_, owner)| owner)
-                });
+            let owner = self.expansion.gates.lock().ok().and_then(|mut gates| {
+                let index = gates.iter().position(|(call, _)| call == input.call_id)?;
+                gates.remove(index).map(|(_, owner)| owner)
+            });
             if !self.expansion.approval_result.load(Ordering::Acquire) {
                 return;
             }

@@ -2281,24 +2281,15 @@ fn offline_status_retains_conflicts_without_running_paid_work() {
 }
 
 #[test]
-fn rich_lines_width_bounds_and_selection_policy_are_bounded() {
-    let valid = json!({"selection":{"copy_on_release":true,"sources":["transcript","pager"],"min_chars":3},
-        "sites":{"header":{"components":[{"type":"box","id":"wide","label":"Wide","min_width":60,"max_width":500,"children":[
+fn rich_lines_and_boxes_are_bounded() {
+    let valid = json!({"sites":{"header":{"components":[{"type":"box","id":"wide","label":"Wide","min_width":60,"max_width":500,"children":[
             {"type":"line","id":"mark","label":"Mark","spans":[{"text":"+ ","tone":"success"},{"text":"oh my diff","bold":true}]}]}]}}});
-    let view = codex_omd::ModView::parse(valid.clone()).unwrap();
-    assert!(view.selection.as_ref().is_some_and(|policy| {
-        policy.copies(codex_omd::ModSelectionSource::Pager, 3)
-            && !policy.copies(codex_omd::ModSelectionSource::Composer, 3)
-            && !policy.copies(codex_omd::ModSelectionSource::Transcript, 2)
-    }));
+    codex_omd::ModView::parse(valid).unwrap();
     let spans = (0..13)
         .map(|index| json!({"text": format!("{index}")}))
         .collect::<Vec<_>>();
     for invalid in [
         json!({"theme":{"picker":{"layout":"compact"}}}),
-        json!({"selection":{"min_chars":0}}),
-        json!({"selection":{"min_chars":10001}}),
-        json!({"selection":{"sources":["composer","composer"]}}),
         json!({"sites":{"header":{"components":[{"type":"box","id":"b","label":"B","min_width":70,"max_width":60}]}}}),
         json!({"sites":{"header":{"components":[{"type":"box","id":"b","label":"B","min_width":0}]}}}),
         json!({"sites":{"header":{"components":[{"type":"line","id":"l","label":"L","spans":spans}]}}}),
@@ -2311,22 +2302,6 @@ fn rich_lines_width_bounds_and_selection_policy_are_bounded() {
             "{invalid}"
         );
     }
-    let mut view = codex_omd::ModView::default();
-    let mut sites = std::collections::BTreeSet::new();
-    let mut completed_tools = false;
-    codex_omd::ModViewPatch::parse(json!({"selection":{"copy_on_release":false}}))
-        .unwrap()
-        .apply(&mut view, &mut sites, &mut completed_tools)
-        .unwrap();
-    let conflict = codex_omd::ModViewPatch::parse(json!({"selection":{"min_chars":2}}))
-        .unwrap()
-        .apply(&mut view, &mut sites, &mut completed_tools)
-        .unwrap_err();
-    assert!(conflict.to_string().contains("terminal_selection_conflict"));
-    assert_eq!(
-        view.selection.map(|policy| policy.copy_on_release),
-        Some(false)
-    );
 }
 
 #[test]

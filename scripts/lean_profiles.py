@@ -26,7 +26,7 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
-DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace")
+DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace")
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo",)
 HOST_TOOLS = ("omd", "omd-contract")

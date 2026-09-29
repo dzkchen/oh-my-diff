@@ -144,7 +144,7 @@ def build(artifact_dir, package_mode=False):
             "platform": {"first_party_installed": ["omd_logo"], "first_party_default_active": ["omd_logo"],
                          "plugin_sources": []},
             "full": {"first_party_installed": sorted((*preview["packages"], *full["packages"])),
-                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace"],
+                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace"],
                      "plugin_sources": selected},
         },
         "qualification": "development package candidate; supported collection and default pending",

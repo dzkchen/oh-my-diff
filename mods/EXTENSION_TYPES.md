@@ -35,7 +35,6 @@ contains only the packages labeled `bundled` below.
 | `omd_verification_gate@0.2.0-preview.1` | `mod` | `mods/first-party/omd_verification_gate` | Registers an explicitly selected native workflow contract and asks the host to restrict delegation when an exact candidate enters final verification. |
 | `omd_logo@0.2.0-preview.1` | `mod` | `mods/first-party/omd_logo` | Draws the Oh My Diff wordmark and launch status into the terminal header from the read-only launch identity. |
 | `omd_model_picker@0.2.0-preview.1` | `mod` | `mods/first-party/omd_model_picker` | Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence. |
-| `omd_selection_copy@0.2.0-preview.1` | `mod` | `mods/first-party/omd_selection_copy` | Sets the live copy-on-highlight policy and reports each release result in the terminal status. |
 | `omd_git@0.2.0-preview.1` | `mod` | `mods/first-party/omd_git` | Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations. |
 | `omd_lsp_sync@0.2.0-preview.1` | `mod` | `mods/first-party/omd_lsp_sync` | Owns live language-server synchronization and rename/edit planning through generic host process and workspace operations. |
 | `omd_advisor@0.2.0-preview.1` | `mod` | `mods/first-party/omd_advisor` | Owns completed-turn scheduling, independent review prompts, typed result validation, deduplication and selected-context presentation through public accounted review primitives. |

@@ -251,6 +251,7 @@ pub fn denied(message: impl ToString) -> TransportError {
         url: None,
         headers: None,
         body: Some(format!("local OMD request policy: {}", message.to_string())),
+        retry_after: None,
     }
 }
 

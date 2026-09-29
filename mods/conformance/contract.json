@@ -874,7 +874,7 @@
         "operations": []
       },
       "evidence": [
-        "rust:rich_lines_width_bounds_and_selection_policy_are_bounded",
+        "rust:rich_lines_and_boxes_are_bounded",
         "rust:terminal_identity_reports_profile_mode_and_mod_counts",
         "patch:width_bounded_boxes_and_styled_lines_follow_the_header_width",
         "patch:owned_fullscreen_draws_mod_header_and_sidebar_beside_the_transcript"
@@ -882,35 +882,31 @@
       "replace_note": "presentation fields in the terminal view or patch"
     },
     {
-      "id": "terminal.lists_and_selection",
+      "id": "terminal.lists",
       "group": "terminal",
-      "decision": "Built-in lists, selection copy, insert, placeholder and glyphs",
-      "observe": "`selection_result` reports the copy outcome",
+      "decision": "Built-in lists, insert, placeholder and glyphs",
+      "observe": "none",
       "alter": "components may `{insert}` text; a view may set `placeholder` and width-preserving `theme.glyphs`",
-      "replace": "list, selection",
-      "timing": "on render; on a completed terminal selection",
-      "ownership": "mod: rows, spans and the copy decision; host: keyboard handling, the chosen action, clipboard and width checks",
+      "replace": "list",
+      "timing": "on render",
+      "ownership": "mod: rows and spans; host: keyboard handling, the chosen action and width checks",
       "limits": "search input keeps native rendering; width-changing glyphs are ignored; one owner per replacement point",
-      "native": "native plugins cannot restyle built-in pickers or selection copy",
+      "native": "native plugins cannot restyle built-in pickers",
       "covers": {
         "capabilities": [
           "terminal"
         ],
         "events": [
-          "list",
-          "selection",
-          "selection_result"
+          "list"
         ],
         "replacements": [
-          "list",
-          "selection"
+          "list"
         ],
         "operations": []
       },
       "evidence": [
         "rust:current_api_packages_use_authority_classes_builtins_contracts_and_adapters",
-        "patch:list_rows_follow_the_selected_value_and_glyphs_and_placeholder_stay_bounded",
-        "patch:selection_policy_gates_the_native_release_copy"
+        "patch:list_rows_follow_the_selected_value_and_glyphs_and_placeholder_stay_bounded"
       ],
       "replace_note": "exclusive"
     },

@@ -37,8 +37,6 @@ pub struct ModView {
     #[serde(default)]
     pub tool_template: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection: Option<ModSelectionPolicy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<ModLayout>,
@@ -73,8 +71,6 @@ pub struct ModViewPatch {
     pub message_template: Option<String>,
     #[serde(default)]
     pub tool_template: Option<String>,
-    #[serde(default)]
-    pub selection: Option<ModSelectionPolicy>,
     #[serde(default)]
     pub placeholder: Option<String>,
     #[serde(default)]
@@ -254,47 +250,6 @@ impl ModBackdrop {
                         .is_none_or(|fallback| ascii(&fallback.ascii))
             }
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum ModSelectionSource {
-    Transcript,
-    Composer,
-    Pager,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ModSelectionPolicy {
-    #[serde(default = "copy_on_release_default")]
-    pub copy_on_release: bool,
-    #[serde(default)]
-    pub sources: Vec<ModSelectionSource>,
-    #[serde(default = "min_chars_default")]
-    pub min_chars: u32,
-}
-
-fn copy_on_release_default() -> bool {
-    true
-}
-
-fn min_chars_default() -> u32 {
-    1
-}
-
-impl ModSelectionPolicy {
-    fn valid(&self) -> bool {
-        (1..=10_000).contains(&self.min_chars)
-            && self.sources.len() <= 3
-            && self.sources.iter().collect::<BTreeSet<_>>().len() == self.sources.len()
-    }
-
-    pub fn copies(&self, source: ModSelectionSource, chars: usize) -> bool {
-        self.copy_on_release
-            && (self.sources.is_empty() || self.sources.contains(&source))
-            && chars >= self.min_chars as usize
     }
 }
 
@@ -1390,10 +1345,6 @@ impl ModViewPatch {
                 .as_ref()
                 .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
             || patch
-                .selection
-                .as_ref()
-                .is_some_and(|policy| !policy.valid())
-            || patch
                 .placeholder
                 .as_ref()
                 .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80))
@@ -1512,12 +1463,6 @@ impl ModViewPatch {
             *completed_tools_owner = true;
             target.completed_tools = mode;
         }
-        if let Some(selection) = self.selection {
-            if target.selection.is_some() {
-                return Err(failure("terminal_selection_conflict"));
-            }
-            target.selection = Some(selection);
-        }
         if let Some(placeholder) = self.placeholder {
             if target.placeholder.is_some() {
                 return Err(failure("terminal_placeholder_conflict"));
@@ -1566,10 +1511,6 @@ impl ModView {
                 .syntax
                 .as_ref()
                 .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
-            || view
-                .selection
-                .as_ref()
-                .is_some_and(|policy| !policy.valid())
             || view
                 .placeholder
                 .as_ref()

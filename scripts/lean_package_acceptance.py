@@ -72,7 +72,7 @@ def run(archive, sha256, upstream, output):
             else:
                 assert set(status["installed_tools"]) == {"omd", "omd-contract"}
                 assert len([item for item in status["packages"] if item["installed"]]) == 13
-                assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace"]
+                assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace"]
                 assert len(status["plugin_bundle"]["plugins"]) == 4
                 disabled = call([bin_dir / "omd-package", "mod", "disable", "omd_workspace"], environment)
                 assert not next(item for item in disabled["packages"]

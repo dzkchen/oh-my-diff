@@ -247,23 +247,6 @@
       "source": "mods/first-party/omd_research",
       "version": "0.2.0-preview.1"
     },
-    "omd_selection_copy": {
-      "api": "0.2.0-experimental.4",
-      "capabilities": [
-        "commands",
-        "store",
-        "terminal"
-      ],
-      "extension_type": "mod",
-      "files": {
-        "index.ts": "30e75c56ddf35e6c000b08cc97d7ddd36e9ceb1b3a491a23251de6adc8d3b2d0",
-        "mod.json": "c6a0873b6d1a36611b7d2999916d9ecbf33b0357d1dc8eae82c28cc69e52fd4d"
-      },
-      "id": "omd_selection_copy",
-      "package_sha256": "6ac9104c5a6b001d8207d6b5a1281556bec9eb12ccfaf6a36f924c2c0256a2f8",
-      "source": "mods/first-party/omd_selection_copy",
-      "version": "0.2.0-preview.1"
-    },
     "omd_source_knowledge": {
       "api": "0.2.0-experimental.4",
       "capabilities": [

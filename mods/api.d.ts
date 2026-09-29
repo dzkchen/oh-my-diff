@@ -78,10 +78,6 @@ export interface TerminalTheme {
   diff_added?: ThemeColor; diff_removed?: ThemeColor; muted?: ThemeColor; border?: 'plain' | 'rounded' | 'double'; density?: 'compact' | 'comfortable'; icons?: 'unicode' | 'ascii';
   glyphs?: Record<string, string>;
 }
-export type TerminalSelectionSource = 'transcript' | 'composer' | 'pager';
-export type TerminalSelectionEvent = { source: TerminalSelectionSource; chars: number; lines: number };
-export type TerminalSelectionDecision = { copy: true } | null;
-export type TerminalSelectionResult = { source: TerminalSelectionSource; chars: number; lines: number; copied: boolean; reason?: 'declined' | 'clipboard_unavailable' | 'clipboard_failed' };
 export type TerminalListEvent = { view_id: string; title: string; subtitle: string | null; width: number; items: { label: string; description: string | null; current: boolean; disabled: boolean; order: number }[]; selected: number | null };
 export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number } };
 export interface TerminalView {
@@ -216,8 +212,6 @@ export interface Events {
   tool_exposure: { input: { thread_id: string | null; ledger: Ledger | null; available: string[] }; output: { enable: string[] } };
   terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity }; output: TerminalView | TerminalPatch | null };
   list: { input: TerminalListEvent; output: TerminalComponent[] | null };
-  selection: { input: TerminalSelectionEvent; output: TerminalSelectionDecision };
-  selection_result: { input: TerminalSelectionResult; output: void };
   start: { input: Json; output: void };
   resume: { input: { thread_id: string; last_turn: { turn_id: string; status: 'completed' | 'interrupted' | 'failed' | 'in_progress' } | null; restarted: boolean }; output: void };
   idle: { input: Json; output: void };
@@ -268,7 +262,7 @@ export interface ModAPI {
   readonly services: { call<T extends Json = Json>(name: string, method: string, input?: Json): T };
   on<K extends keyof Events>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   middleware<K extends 'model_request' | 'response_stream' | 'prompt' | 'session' | 'agent' | 'tool_call' | 'tool_result' | 'host_operation' | 'approval'>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
-  replace<K extends 'context' | 'routing' | 'compaction' | 'tool_before' | 'terminal' | 'input' | 'list' | 'selection' | 'tool_output' | 'tool_batch' | 'tool_specs' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  replace<K extends 'context' | 'routing' | 'compaction' | 'tool_before' | 'terminal' | 'input' | 'list' | 'tool_output' | 'tool_batch' | 'tool_specs' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   contract(document: ContractDocument): void;
   builtins(controls: BuiltinControls): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;

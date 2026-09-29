@@ -1396,7 +1396,6 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         "export default api => { api.builtins({commands:{hide:['plan']},modes:{disable:['plan']}}); \
          api.contract({schema:2,id:'fixture',version:1,description:'Fixture gate',assurance:'checked',gates:{complete:[{receipt:'checks',bind:['candidate']}]}}); \
          api.replace('list', event => [{type:'list',id:'rows',label:'Rows',rows:event.items.map((item, index) => ({value:String(index),label:item.label})),action:{command:'modern:pick'}}]); \
-         api.replace('selection', event => event.chars >= 3 ? {copy:true} : null); \
          api.command('run', () => { api.state.set({ran:true}); const out = api.host.call('exec.run', {program:'sh', argv:['-c','true']}); return api.host.call('store.put', {key:'k', value:out.exit_code, expected_revision:null}); }); }",
         &[],
     );
@@ -1473,16 +1472,6 @@ fn current_api_packages_use_authority_classes_builtins_contracts_and_adapters() 
         .list_view(json!({"view_id":"model","title":"Model","subtitle":null,"width":80,"items":[{"label":"a","description":null,"current":true,"disabled":false,"order":0}],"selected":0}), || true)
         .unwrap();
     assert_eq!(listed.0, "modern");
-    assert!(
-        runtime
-            .selection_decision(json!({"source":"transcript","chars":5,"lines":1}), || true)
-            .unwrap()
-    );
-    assert!(
-        !runtime
-            .selection_decision(json!({"source":"transcript","chars":1,"lines":1}), || true)
-            .unwrap()
-    );
     let mut calls = Vec::new();
     let result = runtime
         .invoke_with(

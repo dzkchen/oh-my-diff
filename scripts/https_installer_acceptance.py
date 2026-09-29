@@ -102,7 +102,7 @@ def run(archive, upstream, output):
             assert first["profile"]["installed_tools"] == []
             assert [item["id"] for item in first["profile"]["packages"] if item["installed"]] == ["omd_logo"]
             assert (bin_dir / "codex").is_symlink()
-            assert subprocess.check_output([bin_dir / "codex", "--version"], env=env, text=True).strip() == "codex-cli 0.157.0"
+            assert subprocess.check_output([bin_dir / "codex", "--version"], env=env, text=True).strip() == "codex-cli 0.159.1"
             unavailable = command(*fixed, "--profile", "full", "--asset-url", f"{url}/missing",
                                   "--asset-sha256", digest(archive), ok=False)
             assert "404" in unavailable
@@ -115,7 +115,7 @@ def run(archive, upstream, output):
             assert full["installed"] == "full"
             full_status = command("status", *fixed)["profile"]
             assert full_status["profile"] == "full"
-            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_selection_copy", "omd_workspace"}
+            assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace"}
             assert not full_status["plugin_bundle"]["installed_by_candidate"]
             assert len(full_status["plugin_bundle"]["plugins"]) == 4
             previous_link = install_root / "previous"

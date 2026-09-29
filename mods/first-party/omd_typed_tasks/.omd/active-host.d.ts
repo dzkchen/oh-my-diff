@@ -1,5 +1,5 @@
 export type ActiveHostRelease = '0.1.0';
-export type ActiveCodexRelease = '0.157.0';
+export type ActiveCodexRelease = '0.159.1';
 export type ActiveModApi = '0.1.0-experimental.8';
 export type ActivePackageSchema = 1;
 export type ActiveStateStorageSchema = 1;

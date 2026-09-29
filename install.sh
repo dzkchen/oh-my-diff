@@ -99,13 +99,13 @@ def upstream_binary(args, current):
         filtered = environment(Path("/nonexistent/codex"), args.bin_dir)["PATH"]
         found = shutil.which("codex", path=filtered)
         if not found:
-            fail("A pinned upstream Codex 0.157.0 executable is required; pass --upstream /path/to/codex")
+            fail("A pinned upstream Codex 0.159.1 executable is required; pass --upstream /path/to/codex")
         path = Path(found).resolve()
     if path.name != "codex" or not path.is_file() or not os.access(path, os.X_OK):
         fail("--upstream must name an executable called codex")
     version = run([path, "--version"]).strip()
-    if version != "codex-cli 0.157.0":
-        fail(f"upstream Codex 0.157.0 is required; found {version}")
+    if version != "codex-cli 0.159.1":
+        fail(f"upstream Codex 0.159.1 is required; found {version}")
     identity = {"path": str(path), "sha256": digest(path), "version": version}
     if current and receipt(current)["upstream"] != identity:
         fail("upstream fallback changed; the current installation remains active")
@@ -129,10 +129,10 @@ def profile_choice(args):
         return args.profile
     try:
         with open("/dev/tty", "r+") as terminal:
-            terminal.write("Oh My Diff 0.157.0 candidate\n"
+            terminal.write("Oh My Diff 0.159.1 candidate\n"
                            "1) Modding platform only: patched Codex, mod manager, typed author tools; the OMD logo is installed and active.\n"
                            "2) Full OMD: every first-party mod and the staged plugin sources.\n"
-                           "   The inspector, logo, model picker, selection copy and workspace mods are active on a fresh install. Other mods require your explicit activation.\n"
+                           "   The inspector, logo, model picker and workspace mods are active on a fresh install. Other mods require your explicit activation.\n"
                            "   Updates preserve selections and add newly bundled mods disabled.\n"
                            "Choose 1 or 2: ")
             terminal.flush()

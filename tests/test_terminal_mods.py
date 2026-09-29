@@ -7,7 +7,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODS = ("omd_git", "omd_logo", "omd_model_picker", "omd_selection_copy")
+MODS = ("omd_git", "omd_logo", "omd_model_picker")
 
 
 def manage(manager, *arguments):
@@ -42,7 +42,6 @@ class TerminalModSourceTests(unittest.TestCase):
                         {"exec_v1", "guarded_exec_v1", "workspace_access_v1", "workspace_fs_v1", "terminal_lists_v1", "store_v1"}),
             "omd_logo": ({"store", "terminal"}, {"terminal_render_sites_v1"}),
             "omd_model_picker": ({"terminal"}, {"terminal_lists_v1"}),
-            "omd_selection_copy": ({"commands", "store", "terminal"}, {"terminal_lists_v1", "store_v1"}),
         }
         for mod, (capabilities, features) in expected.items():
             manifest = json.loads((ROOT / "mods/first-party" / mod / "mod.json").read_text())

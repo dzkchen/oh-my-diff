@@ -26,8 +26,6 @@ pub use view::ModPanel;
 pub use view::ModRange;
 pub use view::ModRenderSite;
 pub use view::ModSelectOption;
-pub use view::ModSelectionPolicy;
-pub use view::ModSelectionSource;
 pub use view::ModSidebarSide;
 pub use view::ModSiteMode;
 pub use view::ModSpan;
@@ -77,7 +75,7 @@ pub use package_manager::ModPackageSource;
 pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
 
-pub const CODEX_HOST_RELEASE: &str = "0.157.0";
+pub const CODEX_HOST_RELEASE: &str = "0.159.1";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
 pub const MOD_API_VERSION: &str = "0.2.0-experimental.4";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
@@ -169,7 +167,6 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_identity_v1",
     "terminal_render_sites_v1",
     "terminal_rich_line_v1",
-    "terminal_selection_v1",
     "transactional_reload_v1",
     "task_tool_exposure_v1",
     "virtual_reads_v1",
@@ -350,8 +347,6 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("routing", "model"),
     ("terminal", "terminal"),
     ("list", "terminal"),
-    ("selection", "terminal"),
-    ("selection_result", "terminal"),
     ("compaction", "compaction"),
     ("start", "lifecycle"),
     ("idle", "lifecycle"),
@@ -397,7 +392,6 @@ pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "context",
     "input",
     "list",
-    "selection",
     "tool_output",
     "tool_batch",
     "tool_specs",
@@ -3158,19 +3152,6 @@ impl ModHost {
         view.sites
             .get("dialog")
             .map(|site| (owner, site.components.clone()))
-    }
-
-    pub fn selection_decision(
-        &mut self,
-        payload: Value,
-        active: impl Fn() -> bool,
-    ) -> Option<bool> {
-        let owner = self.replacement_owner("selection")?;
-        match self.invoke_guarded(&owner, self.generation, "selection", "", payload, active) {
-            Ok(Value::Null) => Some(false),
-            Ok(value) if value == json!({"copy": true}) => Some(true),
-            _ => Some(false),
-        }
     }
 
     pub fn turn_boundary(&mut self) {

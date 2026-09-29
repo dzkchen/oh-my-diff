@@ -1,6 +1,6 @@
 # Local lean candidate profiles
 
-These are local Apple Silicon candidate profiles for the active Codex `0.157.0`
+These are local Apple Silicon candidate profiles for the active Codex `0.159.1`
 patch. They are not a public release or a qualified default. Build the patched
 `codex`, `omd-mod`, `omd`, and `omd-contract` executables from
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
@@ -59,10 +59,9 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 `--profile platform` creates a store holding only the `omd_logo` presentation
 mod, enabled, and launches patched Codex with `OMD_MODE=omd`.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs twenty-one first-party candidate mods. A fresh Full store enables
-`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_model_picker`, and
-`omd_selection_copy`; without an enabled selection mod the host never copies on
-mouse release. Claude, coordination, Git sidebar, LSP synchronization, recovery,
+`--profile full` installs twenty first-party candidate mods. A fresh Full store enables
+`omd_inspector`, `omd_workspace`, `omd_logo` and `omd_model_picker`; Codex's
+`tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
 navigation, guideline governance, Pi prompts, repository analysis, source
 knowledge and task tools are installed but disabled. Advisor every-turn selection and the separate research preset
@@ -103,7 +102,7 @@ mod errors, and staged plugins. The Full profile's inspector mod supplies
 ```
 
 Enable the Git sidebar with `/path/to/omd-bin/omd-package mod enable omd_git`;
-`mod disable omd_selection_copy` turns off copy-on-highlight. `mod disable omd_logo` removes the logo in either profile;
+`mod disable omd_logo` removes the logo in either profile;
 the native `>_ OpenAI Codex (vVERSION)` session header remains.
 
 Git mutations also need an explicit permission-profile grant for the repository's

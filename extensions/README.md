@@ -52,7 +52,6 @@ the versioned cache directory.
 | `omd_workspace` | mod | Live terminal task workspace | Full OMD, possible small default after qualification |
 | `omd_logo` | mod | Oh My Diff terminal logo and launch status | Both profiles, active by default |
 | `omd_model_picker` | mod | Compact `/model` and reasoning picker presentation | Full OMD, active by default |
-| `omd_selection_copy` | mod | Copy-on-highlight policy and status | Full OMD, installed inactive |
 | `omd_git` | mod | Git sidebar with confirmed source-control actions | Full OMD, installed inactive |
 | `omd-guidance-hooks` | plugin with skills and hooks | Selected guidance and lifecycle reactions | Full OMD, inactive candidate |
 | `omd-review-policy` | plugin with skills and hook | Review cadence and final review prompts | Full OMD, inactive candidate |

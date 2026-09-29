@@ -291,14 +291,6 @@
       "why_mod": "Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence."
     },
     {
-      "path": "mods/first-party/omd_selection_copy",
-      "id": "omd_selection_copy",
-      "version": "0.2.0-preview.1",
-      "extension_type": "mod",
-      "role": "candidate",
-      "why_mod": "Sets the live copy-on-highlight policy and reports each release result in the terminal status."
-    },
-    {
       "path": "mods/first-party/omd_git",
       "id": "omd_git",
       "version": "0.2.0-preview.1",

@@ -8,8 +8,8 @@ import { join } from 'node:path';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const surface = {
-  events: { terminal: 'terminal', list: 'terminal', selection: 'terminal', selection_result: 'terminal', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle' },
-  replacements: ['terminal', 'list', 'selection'], middleware: [], state: 'store', contracts: 'contracts',
+  events: { terminal: 'terminal', list: 'terminal', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle' },
+  replacements: ['terminal', 'list'], middleware: [], state: 'store', contracts: 'contracts',
 };
 const source = name => readFileSync(new URL(`./${name === 'omd_theme' ? 'optional' : 'first-party'}/${name}/index.ts`, import.meta.url), 'utf8');
 function run(name, input) {
@@ -50,24 +50,6 @@ test('optional theme owns width-preserving Unicode input glyphs', () => {
   assert.deepEqual(ascii.value.theme.glyphs, {});
   const unicode = run('omd_theme', { capabilities: ['terminal'], settings: { symbols: 'unicode' }, event: 'terminal', payload });
   assert.deepEqual(unicode.value.theme.glyphs, { '===': '≡  ', '->': '→ ', '<=': '≤ ' });
-});
-
-test('copy-on-highlight checks source and length before host clipboard action', () => {
-  const capabilities = ['terminal', 'commands', 'store'];
-  const state = run('omd_selection_copy', { capabilities, event: 'command', name: 'policy', payload: 'sources composer,pager' }).state;
-  const limited = run('omd_selection_copy', { capabilities, state, event: 'command', name: 'policy', payload: 'min 5' }).state;
-  assert.equal(run('omd_selection_copy', { capabilities, state: limited, event: 'selection', payload: { source: 'transcript', chars: 8, lines: 1 } }).value, null);
-  assert.equal(run('omd_selection_copy', { capabilities, state: limited, event: 'selection', payload: { source: 'composer', chars: 4, lines: 1 } }).value, null);
-  assert.deepEqual(run('omd_selection_copy', { capabilities, state: limited, event: 'selection', payload: { source: 'composer', chars: 5, lines: 1 } }).value, { copy: true });
-  const reported = run('omd_selection_copy', { capabilities, state: limited, event: 'selection_result', payload: { source: 'composer', chars: 5, lines: 1, copied: false, reason: 'clipboard_failed' } });
-  assert.equal(reported.state.last, 'copy failed');
-  const tooShort = run('omd_selection_copy', { capabilities, state: limited, event: 'selection_result', payload: { source: 'composer', chars: 4, lines: 1, copied: false, reason: 'declined' } });
-  assert.equal(tooShort.state.last, 'copy too short');
-  assert.match(tooShort.state.detail, /too short.*composer/);
-  const offHere = run('omd_selection_copy', { capabilities, state: limited, event: 'selection_result', payload: { source: 'transcript', chars: 8, lines: 1, copied: false, reason: 'declined' } });
-  assert.equal(offHere.state.last, 'copy off here');
-  const unclear = run('omd_selection_copy', { capabilities, state: limited, event: 'selection_result', payload: { source: 'composer', chars: 8, lines: 1, copied: false, reason: 'declined' } });
-  assert.equal(unclear.state.last, 'copy skipped');
 });
 
 test('logo compacts after a completed turn while workspace uses the current ledger', () => {

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/full-mods.lock.json"
 PACKAGES = ("omd_advisor", "omd_checks", "omd_claude_cli", "omd_git", "omd_graph_navigator", "omd_guideline_governance",
             "omd_inspector", "omd_logo", "omd_lsp_sync", "omd_model_picker", "omd_project_pi_prompts",
-            "omd_repository_analysis", "omd_research", "omd_selection_copy", "omd_source_knowledge", "omd_task_tools",
+            "omd_repository_analysis", "omd_research", "omd_source_knowledge", "omd_task_tools",
             "omd_typed_tasks")
 
 

@@ -1,8 +1,8 @@
 {
  "schema": 1,
  "upstream": {
-  "tag": "rust-v0.157.0",
-  "commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d"
+  "tag": "rust-v0.159.1",
+  "commit": "8e68a98ef03cdde76d2e6800791ebdf1b3b95b24"
  },
  "routes": {
   "app.request": "Q1 `app.request`: invoke this pinned app-server client request on the session's own app-server connection. `class` is the required capability; `contexts` limits where it may be called (`user` = a user-invoked command, key or component action; `event` = lifecycle or notification handlers); `confirm` requires a native confirmation naming the mod; `scope` binds thread arguments to threads the caller may see; `refuse` lists parameters a mod may not set; `root` parameters must name the session root or one of its worktrees; `route_fields` must match a configured route; `keys` names the config keys the call writes, checked against `authority_config`.",
@@ -832,6 +832,7 @@
     "cursor",
     "detail",
     "limit",
+    "serverName",
     "threadId"
    ]
   },
@@ -2165,6 +2166,9 @@
   "config_key:auto_review": {
    "exclude": "authority_config"
   },
+  "config_key:auto_review.circuit_break_action": {
+   "exclude": "authority_config"
+  },
   "config_key:auto_review.experimental_policy_template": {
    "exclude": "authority_config"
   },
@@ -2369,6 +2373,9 @@
   "config_key:features.default_mode_request_user_input": {
    "route": "config.write"
   },
+  "config_key:features.defer_mailbox_preemption": {
+   "route": "config.write"
+  },
   "config_key:features.deferred_executor": {
    "route": "config.write"
   },
@@ -2463,6 +2470,9 @@
    "route": "config.write"
   },
   "config_key:features.in_app_updates": {
+   "route": "config.write"
+  },
+  "config_key:features.instant_interrupt": {
    "route": "config.write"
   },
   "config_key:features.item_ids": {
@@ -3002,6 +3012,12 @@
   "config_key:otel.exporter": {
    "exclude": "authority_config"
   },
+  "config_key:otel.log_agent_responses": {
+   "exclude": "authority_config"
+  },
+  "config_key:otel.log_guardian_assessments": {
+   "exclude": "authority_config"
+  },
   "config_key:otel.log_user_prompt": {
    "exclude": "authority_config"
   },
@@ -3179,6 +3195,9 @@
   "config_key:tui.auto_recap": {
    "route": "config.write"
   },
+  "config_key:tui.copy_on_select": {
+   "route": "config.write"
+  },
   "config_key:tui.disable_paste_burst": {
    "route": "config.write"
   },
@@ -3219,6 +3238,9 @@
    "route": "config.write"
   },
   "config_key:tui.resume_cwd": {
+   "route": "config.write"
+  },
+  "config_key:tui.right_click_paste": {
    "route": "config.write"
   },
   "config_key:tui.screen_reader_detection_done": {
@@ -3614,6 +3636,14 @@
   "extension_trait:McpServerContributor": {
    "route": "mod.api",
    "via": "plugin MCP components"
+  },
+  "extension_trait:ModelRequestContributor": {
+   "route": "mod.event",
+   "via": "model_request"
+  },
+  "extension_trait:ModelResponseInterceptor": {
+   "route": "mod.event",
+   "via": "response_stream"
   },
   "extension_trait:ResponseItemInjector": {
    "exclude": "transcript_integrity"
