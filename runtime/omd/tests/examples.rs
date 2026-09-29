@@ -22,6 +22,13 @@ const HOST_FEATURES: &[&str] = &[
     "model_complete_v1",
     "history_v1",
     "terminal_pty_v1",
+    "dynamic_tools_v1",
+    "timers_v1",
+    "terminal_input_v1",
+    "terminal_style_v1",
+    "completion_arguments_v1",
+    "terminal_editor_v1",
+    "pty_programs_v1",
 ];
 
 #[test]

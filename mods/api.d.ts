@@ -2,7 +2,8 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
-  | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer';
+  | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
+  | 'pty' | 'history' | 'outputs';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -29,7 +30,12 @@ export type AgentFailure = { category: 'transport' | 'rate_limit' | 'authorizati
 export type AgentResult = { status: 'running' } | { status: 'failed'; error: string; failure?: AgentFailure | null } | { status: 'completed'; text: string; consumed: boolean; evidence: ResourceRef; candidate_sha256?: string; changed_paths?: string[] };
 
 export type Letter = 'a'|'b'|'c'|'d'|'e'|'f'|'g'|'h'|'i'|'j'|'k'|'l'|'m'|'n'|'o'|'p'|'q'|'r'|'s'|'t'|'u'|'v'|'w'|'x'|'y'|'z';
-export type KeyName = 'F2'|'F3'|'F4'|'F5'|'F6'|'F7'|'F8'|'F9'|'F10'|'F11'|'F12' | `Ctrl+${Exclude<Letter, 'c'|'d'|'z'|'h'|'i'|'j'|'m'>}` | `Alt+${Letter}`;
+export type FunctionKey = 'F2'|'F3'|'F4'|'F5'|'F6'|'F7'|'F8'|'F9'|'F10'|'F11'|'F12';
+export type KeymapKey = FunctionKey | `Ctrl+${Exclude<Letter, 'c'|'d'|'z'|'h'|'i'|'j'|'m'>}` | `Alt+${Letter}`;
+export type Digit = '0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9';
+export type NamedKey = 'Up'|'Down'|'Left'|'Right'|'Home'|'End'|'PageUp'|'PageDown'|'Delete'|'Insert'|'Tab'|'Enter'|'Esc'|'Backspace'|'Space';
+export type KeyModifiers = 'Ctrl+' | 'Alt+' | 'Ctrl+Alt+' | 'Ctrl+Shift+' | 'Alt+Shift+' | 'Ctrl+Alt+Shift+';
+export type KeyName = FunctionKey | `${KeyModifiers}${Letter | Digit | NamedKey}` | `Shift+${NamedKey}`;
 export type KeyAction = string | { insert: string } | { submit: string } | { command: string; args?: string } | { focus: string } | { copy: string; label: string };
 export type ThemeColor = number | `#${string}`;
 export type Panel = { title: string; lines: string[] };
@@ -37,7 +43,7 @@ export type TerminalTone = 'normal' | 'accent' | 'success' | 'attention' | 'fail
 export type TerminalCommandAction = { command: string; args?: string };
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string } | { insert: string };
 export type TerminalSelectOption = { value: string; label: string };
-export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean };
+export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
 export type TerminalListRow = { value: string; spans: TerminalSpan[]; label: string };
 export type TerminalComponent =
   | { type: 'box'; id: string; label: string; title?: string; children?: TerminalComponent[]; min_width?: number; max_width?: number }
@@ -49,7 +55,7 @@ export type TerminalComponent =
   | { type: 'list'; id: string; label: string; rows: TerminalListRow[]; selected?: string; height?: number; action: TerminalCommandAction }
   | { type: 'markdown'; id: string; label: string; text: string }
   | { type: 'code'; id: string; label: string; text: string; language?: string }
-  | { type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; children?: TerminalComponent[] }
+  | { type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean; children?: TerminalComponent[] }
   | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[] }
   | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction }
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
@@ -107,10 +113,10 @@ export type ContractStatus = { status: 'none' | 'active' | 'unavailable'; active
 
 export type InvocationContext = 'user' | 'event';
 export type AppRoute = { method: string; class: Capability; contexts: InvocationContext[]; confirm: boolean };
-export type CredentialProfile = { id: string; label: string; kind: 'chatgpt' | 'api_key' | 'provider' | 'command' | 'secret'; provider: string | null; origin: string | null; status: 'ready' | 'unknown'; default: boolean };
-export type HistoryItem = { index: number; type: string; role: string | null; call_id: string | null; editable: boolean; text: string | null; bytes: number };
+export type CredentialProfile = { id: string; label: string; kind: 'chatgpt' | 'api_key' | 'provider' | 'secret'; provider: string | null; origin: string | null; status: 'ready' | 'not_enrolled'; default: boolean };
+export type HistoryItem = { index: number; type: string; role: string | null; call_id: string | null; editable: boolean; images: number; text: string | null; bytes: number };
 export type HistoryEdit = { drop?: number[]; replace?: { index: number; text: string }[]; insert?: { before: number; role: 'user' | 'developer'; text: string }[] };
-export type PtyRequest = { action: 'start'; session: string; cwd?: string } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
+export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
 export type TurnActivity = {
   turn_id: string; started_at: string | null; ended_at: string | null;
   outcome: 'completed' | 'aborted' | 'error' | 'interrupted' | 'running' | 'unknown'; reason: string | null; unrecorded_end: boolean;
@@ -177,6 +183,10 @@ export interface HostOperations {
   'workspace.watch': { arguments: { paths: string[]; recursive?: boolean; debounce_ms?: number }; result: { watch_id: string } };
   'workspace.unwatch': { arguments: { watch_id: string }; result: { stopped: boolean } };
   'events.publish': { arguments: { channel: string; data: Json; correlation?: string }; result: { delivered: number; dropped: number } };
+  'events.schedule': { arguments: { key: string; delay_ms: number }; result: { key: string; delay_ms: number } };
+  'events.cancel': { arguments: { key: string }; result: { cancelled: boolean } };
+  'tools.define': { arguments: { name: string; description: string; parameters: Json; label?: string }; result: { name: string; effective_at: 'next_request' } };
+  'tools.undefine': { arguments: { name: string }; result: { removed: boolean } };
   'credentials.list': { arguments: null; result: CredentialProfile[] };
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key' | 'provider'; label: string; provider?: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
@@ -185,13 +195,13 @@ export interface HostOperations {
   'terminal.show_thread': { arguments: { thread_id: string }; result: { shown: boolean } };
   'terminal.import_file': { arguments: { path: string; max_bytes?: number }; result: ResourceRef | Declined };
   'composer.read': { arguments: null; result: { text: string; cursor: number; attachments: { kind: 'image'; label: string }[] } };
-  'composer.write': { arguments: { text?: string; insert?: string; attach?: ({ path: string } | { image: ResourceRef })[] }; result: { text: string; cursor: number } };
+  'composer.write': { arguments: { text?: string; insert?: string; attach?: { image: ResourceRef }[] }; result: { text: string; cursor: number } };
   'builtins.invoke': { arguments: { command: string; args?: string } | { action: KeymapAction }; result: { invoked: boolean } };
   'packages.list': { arguments: null; result: { packages: PackageState[]; generation: number } };
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; conflicts: string[] } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
-  'terminal.open': { arguments: { url: string } | { path: string }; result: { opened: true } | Declined };
+  'terminal.open': { arguments: { url: string } | { path: string } | { path: string; line?: number; editor: true }; result: { opened: true } | Declined };
   'terminal.prompt': { arguments: { kind: 'confirm'; title: string; message: string } | { kind: 'text'; title: string; message: string; masked?: boolean }; result: { status: 'accepted'; value?: string } | Declined };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };
   'model.complete': { arguments: { route: string; prompt: string; timeout_ms?: number }; result: { text: string } };
@@ -233,20 +243,21 @@ export interface Events {
   app_server_request: { input: { method: string; request_id: Json; phase: 'requested' | 'resolved'; params: Json; resolution: Json }; output: void };
   approval: { input: { id: string; kind: 'exec' | 'stdin' | 'execve' | 'patch' | 'mcp_tool' | 'network' | 'permissions'; thread_id: string; turn_id: string | null; agent_id: string | null; host_decision: 'ask' | 'skip'; policy: string; details: Json }; output: null | { deny: string } | { ask: string } };
   approval_result: { input: { id: string; kind: string; decision: 'approved' | 'approved_for_session' | 'amended' | 'denied' | 'aborted' | 'timed_out'; source: 'user' | 'guardian' | 'hook' | 'mod' | 'policy'; mod?: string }; output: void };
-  tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; bytes: number; exit_code: number | null; original: ResourceRef | null }; output: null | { text: string; keep_original?: boolean } | { append: string } };
-  completion: { input: { kind: 'mention'; query: string; candidates: { path: string; score: number }[] }; output: null | { items: { path: string }[] } };
+  tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; tail: string | null; bytes: number; original: ResourceRef | null }; output: null | { text: string } | { append: string } };
+  completion: { input: { kind: 'mention'; query: string; candidates: { path: string; score: number }[] } | { kind: 'argument'; command: string; query: string; line: string }; output: null | { items: { path: string }[] } | { items: { insert: string }[] } };
   history: { input: { thread_id: string; agent_id: string | null; model: string | null; items: HistoryItem[] }; output: null | HistoryEdit };
   tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json }[] } };
   tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: { name: string; description: string; parameters: Json }[] }; output: null | { hide?: string[]; describe?: Record<string, { description?: string; parameters?: Json }> } };
-  process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit'; exit_code: number | null; signal: string | null }; output: void };
+  process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
+  timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string }; output: void };
+  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'key'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; key?: KeyName | string | null; text?: string | null }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
 }
-export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeyName | null> };
+export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 export interface ModAPI {
-  readonly version: '0.2.0-experimental.3';
+  readonly version: '0.2.0-experimental.4';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: {
@@ -262,6 +273,7 @@ export interface ModAPI {
   builtins(controls: BuiltinControls): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;
   tool(spec: ToolSpec, handler: (arguments_: Json) => Json | Promise<Json>): void;
+  dynamicTools(handler: (call: { name: string; arguments: Json }) => Json | Promise<Json>): void;
   virtualRead(definition: { scheme: string; version: string }, handler: (request: VirtualReadRequest) => VirtualReadResponse | Promise<VirtualReadResponse>): void;
   command(name: string, handler: (arguments_: Json) => CommandResult | Promise<CommandResult>, options?: { description?: string; cli?: string }): void;
   progress(text: string): void;

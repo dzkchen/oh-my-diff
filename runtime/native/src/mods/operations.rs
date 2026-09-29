@@ -454,7 +454,10 @@ pub(super) async fn dispatch(
         } else {
             None
         };
-        let result = core.agents.call(core, lead, &caller, request).await;
+        let result = core
+            .agents
+            .call(core, lead, &caller, request, cancelled)
+            .await;
         if let (Some(before), Ok(_)) = (before, &result) {
             let repository = host.repository.clone();
             let _ = tokio::task::spawn_blocking(move || {

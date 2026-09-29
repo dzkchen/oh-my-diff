@@ -2,9 +2,11 @@ use super::*;
 use codex_extension_api::ToolOutputContributor;
 use codex_extension_api::ToolOutputInput;
 
-const EVENT_TEXT_BYTES: usize = 64 * 1024;
+use codex_extension_api::TOOL_OUTPUT_FEEDBACK_BYTES;
+
+const HEAD_BYTES: usize = 48 * 1024;
+const TAIL_BYTES: usize = 16 * 1024;
 const APPEND_BYTES: usize = 4096;
-const FEEDBACK_BYTES: usize = 16_384;
 
 fn bounded(text: &str, limit: usize) -> &str {
     if text.len() <= limit {
@@ -15,6 +17,17 @@ fn bounded(text: &str, limit: usize) -> &str {
         end -= 1;
     }
     &text[..end]
+}
+
+fn tail(text: &str, limit: usize) -> Option<&str> {
+    if text.len() <= HEAD_BYTES {
+        return None;
+    }
+    let mut start = text.len() - limit;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    Some(&text[start..])
 }
 
 async fn original(
@@ -58,17 +71,7 @@ async fn original(
 fn decision(value: Value) -> Result<Option<String>, String> {
     match value {
         Value::Null => Ok(None),
-        Value::Object(object)
-            if object
-                .keys()
-                .all(|key| key == "text" || key == "keep_original") =>
-        {
-            if object
-                .get("keep_original")
-                .is_some_and(|keep| !keep.is_boolean())
-            {
-                return Err("invalid_tool_output_decision".into());
-            }
+        Value::Object(object) if object.len() == 1 => {
             let text = object
                 .get("text")
                 .and_then(Value::as_str)
@@ -94,6 +97,10 @@ fn append(value: Value) -> Result<Option<String>, String> {
 }
 
 impl ToolOutputContributor for Mods {
+    fn replacing(&self, _thread_store: &ExtensionData) -> bool {
+        self.expansion.tool_output_active()
+    }
+
     fn replace_tool_output<'a>(
         &'a self,
         input: ToolOutputInput<'a>,
@@ -127,16 +134,15 @@ impl ToolOutputContributor for Mods {
             let arguments = input
                 .arguments
                 .map(|raw| {
-                    serde_json::from_str::<Value>(raw).unwrap_or_else(|_| {
-                        Value::String(bounded(raw, EVENT_TEXT_BYTES).to_owned())
-                    })
+                    serde_json::from_str::<Value>(raw)
+                        .unwrap_or_else(|_| Value::String(bounded(raw, HEAD_BYTES).to_owned()))
                 })
                 .unwrap_or(Value::Null);
             let payload = |text: &str, original: Value| {
                 json!({"call_id": input.call_id, "tool": input.tool_name.to_string(),
                     "arguments": arguments, "success": input.success,
-                    "text": bounded(text, EVENT_TEXT_BYTES), "bytes": text.len(),
-                    "exit_code": null, "original": original})
+                    "text": bounded(text, HEAD_BYTES), "tail": tail(text, TAIL_BYTES),
+                    "bytes": text.len(), "original": original})
             };
             let diagnostic = |message: String| {
                 self.views
@@ -186,26 +192,24 @@ impl ToolOutputContributor for Mods {
                     continue;
                 };
                 match result.and_then(append) {
-                    Ok(Some(extra)) if appended.len() + extra.len() <= FEEDBACK_BYTES => {
+                    Ok(Some(extra))
+                        if appended.len() + extra.len() + 2 <= TOOL_OUTPUT_FEEDBACK_BYTES =>
+                    {
                         appended.push_str("\n\n");
                         appended.push_str(&extra);
                     }
                     Ok(Some(_)) => diagnostic(format!(
-                        "{id}: feedback over the {FEEDBACK_BYTES}-byte budget dropped"
+                        "{id}: feedback over the {TOOL_OUTPUT_FEEDBACK_BYTES}-byte budget dropped"
                     )),
                     Ok(None) => {}
                     Err(error) => diagnostic(format!("{id}: {error}; feedback dropped")),
                 }
             }
             if !appended.is_empty() {
-                let combined = format!("{}{appended}", text.as_deref().unwrap_or(input.text));
-                if combined.len() <= codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES {
-                    text = Some(combined);
-                } else {
-                    diagnostic(
-                        "feedback dropped: the tool output is too large to extend".to_owned(),
-                    );
-                }
+                text = Some(format!(
+                    "{}{appended}",
+                    text.as_deref().unwrap_or(input.text)
+                ));
             }
             if let Some(text) = &text {
                 activity::output_replaced(

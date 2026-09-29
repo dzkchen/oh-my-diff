@@ -16,7 +16,7 @@ function packageFile(name, file) {
 
 function run(name, event, payload = null, state = null, settings = {}, capabilities = null, command = '') {
   const manifest = JSON.parse(readFileSync(packageFile(name, 'mod.json'), 'utf8'));
-  assert.equal(manifest.api, '0.2.0-experimental.3');
+  assert.equal(manifest.api, '0.2.0-experimental.4');
   const source = readFileSync(packageFile(name, 'index.ts'), 'utf8');
   const result = spawnSync(process.execPath,
     ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],

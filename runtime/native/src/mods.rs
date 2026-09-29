@@ -181,7 +181,7 @@ pub(crate) fn terminal_identity(runtime: &ModHost) -> Value {
 }
 
 fn event_fragments_scoped(
-    runtime: &mut ModHost,
+    runtime: &Mutex<ModHost>,
     event: &str,
     payload: Value,
     private: BTreeMap<String, Value>,
@@ -192,10 +192,11 @@ fn event_fragments_scoped(
     let mut fragments = Vec::new();
     let mut remaining_bytes = 6144;
     let assembler = (event == "context")
-        .then(|| runtime.replacement_owner("context"))
+        .then(|| runtime.lock().ok()?.replacement_owner("context"))
         .flatten();
     let mut replaced: Vec<String> = Vec::new();
-    for (id, result) in runtime.event_scoped_with(
+    for (id, result) in codex_omd::event_shared(
+        runtime,
         event,
         |id| {
             let mut value = payload.clone();
@@ -447,23 +448,35 @@ impl Core {
         let cancelled = Arc::new(AtomicBool::new(false));
         let _cancellation = Cancellation(cancelled.clone());
         let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
-        let generation = self.runtime.lock().ok().map(|runtime| runtime.generation());
-        if let (Some(lead), Some(generation)) = (lead, generation) {
-            lead.session.processes.cleanup_stale(generation);
+        let current = self.runtime.lock().ok().map(|runtime| {
+            let sources = runtime
+                .owners()
+                .into_iter()
+                .map(|(id, owner)| (id, owner.sha256))
+                .collect::<BTreeMap<_, _>>();
+            (runtime.generation(), sources)
+        });
+        let generation = current.as_ref().map(|(generation, _)| *generation);
+        if let Some((generation, sources)) = &current {
+            expansion::retain_sources(self, sources);
+            if let Some(lead) = lead {
+                lead.session.processes.cleanup_stale(*generation);
+            }
         }
         let ledger = lead.map(Lead::ledger).unwrap_or(Value::Null);
         let flag = cancelled.clone();
         let job = tokio::task::spawn_blocking(move || {
-            let Ok(mut runtime) = runtime.lock() else {
+            let Some(facts) = runtime.lock().ok().map(|runtime| {
+                codex_omd::observe_workspace_changes(
+                    &host.repository,
+                    runtime.has_event("workspace_change"),
+                );
+                facts(&runtime)
+            }) else {
                 return Vec::new();
             };
-            codex_omd::observe_workspace_changes(
-                &host.repository,
-                runtime.has_event("workspace_change"),
-            );
-            let facts = facts(&runtime);
             let mut fragments = event_fragments_scoped(
-                &mut runtime,
+                &runtime,
                 event,
                 payload,
                 private,
@@ -481,6 +494,9 @@ impl Core {
                     })
                 },
             );
+            let Ok(mut runtime) = runtime.lock() else {
+                return fragments;
+            };
             publish(&mut runtime, &host, &views, event, ledger, || {
                 !flag.load(Ordering::Acquire)
             });
@@ -1443,6 +1459,17 @@ impl ToolLifecycleContributor for Mods {
         })
     }
 
+    fn on_command_end<'a>(
+        &'a self,
+        input: codex_extension_api::CommandEndInput<'a>,
+    ) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            if let Some(lead) = input.thread_store.get::<Lead>() {
+                expansion::command_ended(&self.core, &lead, input.call_id, input.exit_code);
+            }
+        })
+    }
+
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
             let Some(lead) = input.thread_store.get::<Lead>() else {
@@ -1462,9 +1489,7 @@ impl ToolLifecycleContributor for Mods {
                 &lead,
                 input.call_id,
                 &input.tool_name.to_string(),
-                &format!("{:?}", input.outcome),
-                &[],
-                "tool",
+                tool_outcome(input.outcome),
             );
             let event_lead = (lead.owner == "lead").then_some(&*lead);
             self.event(

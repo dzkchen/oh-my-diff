@@ -158,4 +158,14 @@ fn dependency_trees_preview_every_grant_and_install_as_confirmed() {
     apply(&store, &preview.control).unwrap();
     let installed = list(&store).unwrap();
     assert_eq!(installed["packages"].as_array().unwrap().len(), 2);
+    fixture_package(
+        &root,
+        "dependent_mod",
+        &["commands", "network"],
+        json!([{"id": "library_mod", "version": "^1.0.0"}]),
+    );
+    let update =
+        super::preview(&store, json!({"action": "update", "id": "dependent_mod"})).unwrap();
+    assert_eq!(update.public["grants_added"], json!(["network"]));
+    apply(&store, &update.control).unwrap();
 }

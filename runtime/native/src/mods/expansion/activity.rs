@@ -3,6 +3,7 @@ use codex_omd::turn_activity::ActivityRecord;
 use codex_omd::turn_activity::TurnActivityLog;
 
 const EXEC_TOOLS: &[&str] = &["shell", "shell_command", "local_shell", "exec_command"];
+const LIVE_COMMANDS: usize = 1024;
 const HASH_BYTES: u64 = 8 * 1024 * 1024;
 
 pub(in crate::mods) fn now() -> String {
@@ -112,7 +113,12 @@ pub(in crate::mods) fn tool_started(
         tool: tool.to_owned(),
         at: now(),
     });
-    if EXEC_TOOLS.contains(&tool) {
+    if EXEC_TOOLS.contains(&tool) && core.expansion.recording.load(Ordering::Acquire) {
+        if let Ok(mut commands) = core.expansion.commands.lock()
+            && commands.len() < LIVE_COMMANDS
+        {
+            commands.insert(call_id.to_owned());
+        }
         let arguments = arguments
             .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
             .unwrap_or(Value::Null);
@@ -132,8 +138,6 @@ pub(in crate::mods) fn tool_finished(
     call_id: &str,
     tool: &str,
     outcome: &str,
-    changes: &[Value],
-    source: &str,
 ) {
     record(core, lead, |turn| ActivityRecord::ToolFinished {
         turn_id: turn.to_owned(),
@@ -141,14 +145,27 @@ pub(in crate::mods) fn tool_finished(
         at: now(),
         outcome: outcome.to_owned(),
     });
-    if EXEC_TOOLS.contains(&tool) && tool != "exec_command" {
-        record(core, lead, |_| ActivityRecord::ProcessExited {
+    if (tool != "exec_command" || outcome != "succeeded")
+        && let Ok(mut commands) = core.expansion.commands.lock()
+    {
+        commands.remove(call_id);
+    }
+}
+
+pub(in crate::mods) fn command_ended(core: &Core, lead: &Lead, call_id: &str, exit_code: i32) {
+    if let Ok(mut commands) = core.expansion.commands.lock() {
+        commands.remove(call_id);
+    }
+    if lead.owner != "lead" || !core.expansion.recording.load(Ordering::Acquire) {
+        return;
+    }
+    if let Some(log) = log(lead) {
+        let _ = log.append(&ActivityRecord::ProcessExited {
             id: call_id.to_owned(),
-            exit_code: None,
+            exit_code: Some(exit_code),
             at: now(),
         });
     }
-    files(core, lead, changes, source);
 }
 
 pub(in crate::mods) fn files(core: &Core, lead: &Lead, changes: &[Value], source: &str) {
@@ -269,10 +286,16 @@ pub(in crate::mods) async fn read(
     let running = running_turn(core, lead);
     let recording = core.expansion.recording.load(Ordering::Acquire);
     let processes = lead.session.processes.clone();
+    let commands = core
+        .expansion
+        .commands
+        .lock()
+        .map(|commands| commands.clone())
+        .unwrap_or_default();
     tokio::task::spawn_blocking(move || {
-        let live = |id: &str| {
-            let (owner, session) = id.split_once('/')?;
-            processes.running(owner, session)
+        let live = |id: &str| match id.split_once('/') {
+            Some((owner, session)) => processes.running(owner, session),
+            None => Some(commands.contains(id)),
         };
         let mut value = log
             .read(input.turn_id.as_deref(), last, running.as_deref(), &live)

@@ -106,7 +106,7 @@ test('independent workspace mod uses public read and transaction calls', () => {
   const source = readFileSync(new URL('./examples/workspace/index.ts', import.meta.url), 'utf8');
   const capabilities = ['fs.read', 'fs.write', 'tools', 'store'];
   const payload = { old_path: 'src/old.ts', new_path: 'src/new.ts', rewrites: { 'src/index.ts': "export * from './new';\n" } };
-  const first = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload });
+  const first = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload });
   assert.deepEqual(first.host_call, { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } });
   const read = { files: {
     'src/old.ts': { text: 'export const value = 1;\n', sha256: 'old-sha' },
@@ -114,22 +114,22 @@ test('independent workspace mod uses public read and transaction calls', () => {
     'src/index.ts': { text: "export * from './old';\n", sha256: 'index-sha' },
   } };
   const receipts = [{ call: first.host_call, value: read }];
-  const second = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts });
+  const second = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts });
   assert.deepEqual(second.host_call, { operation: 'workspace.transaction', arguments: {
     expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' },
     writes: payload.rewrites, renames: [{ old: 'src/old.ts', new: 'src/new.ts' }],
   } });
   const result = { files: { 'src/old.ts': null, 'src/new.ts': 'old-sha', 'src/index.ts': 'updated-sha' } };
-  const final = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
+  const final = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'tool', name: 'move', payload, receipts: [...receipts, { call: second.host_call, value: result }] });
   assert.deepEqual(final.value, result);
-  const observed = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
+  const observed = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload: { status: 'observed', changes: [{ path: 'src/index.ts', before: 'index-sha', after: 'updated-sha' }] } });
   assert.equal(observed.state.last_write.status, 'observed');
   const renameEvent = { repository: '/tmp/project', old: 'src/old.ts', new: 'src/new.ts', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null } };
-  const proposed = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
+  const proposed = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_pre_rename', payload: renameEvent, settings: { companions: ['src/index.ts'] }, receipts: [{ call: { operation: 'workspace.read', arguments: { paths: ['src/old.ts', 'src/new.ts', 'src/index.ts'] } }, value: read }] });
   assert.deepEqual(proposed.value, { status: 'ready', expected: { 'src/old.ts': 'old-sha', 'src/new.ts': null, 'src/index.ts': 'index-sha' }, writes: { 'src/index.ts': "export * from './new';\n" } });
-  const requested = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
+  const requested = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'tool', name: 'request_rename', payload: { old: 'src/old.ts', new: 'src/new.ts' } });
   assert.deepEqual(requested.host_call, { operation: 'workspace.request_rename', arguments: { old: 'src/old.ts', new: 'src/new.ts' } });
-  assert.match(run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
+  assert.match(run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities: ['tools', 'store'] }).error, /capability_denied: fs.read/);
 });
 test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
   const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
@@ -175,7 +175,7 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
   const replay = (event, payload, state = null) => {
     const receipts = [];
     for (let index = 0; index < 24; index++) {
-      const output = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event, payload, state, receipts, hook_budget_ms: 500 });
+      const output = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event, payload, state, receipts, hook_budget_ms: 500 });
       assert.equal(output.error, undefined, output.error);
       if (!output.host_call) return output;
       receipts.push({ call: output.host_call, value: server(output.host_call) });
@@ -207,19 +207,19 @@ test('LSP mod reports an absent server and leaves the write event recoverable', 
   const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
   const capabilities = ['lifecycle', 'exec', 'store', 'tools', 'fs.read', 'fs.write'];
   const payload = { repository: '/tmp/project', call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'sample.py', before: null, after: 'sha' }] };
-  const first = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload });
+  const first = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload });
   assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
   const receipts = [{ call: first.host_call, value: null }];
-  const marker = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
+  const marker = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
   receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
+  const discovery = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] } });
-  const absent = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts: [...receipts, { call: discovery.host_call, value: { found: [] } }] });
+  const absent = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts: [...receipts, { call: discovery.host_call, value: { found: [] } }] });
   assert.equal(absent.error, undefined);
   assert.equal(absent.state.servers.python.status, 'fallback');
   assert.equal(absent.state.servers.python.reason, 'python_server_absent');
-  const broken = run('export default api => { api.on("workspace_change", () => { throw new Error("broken") }); }', { api: '0.2.0-experimental.3', surface: currentSurface, capabilities: ['fs.read'], event: 'workspace_change', payload });
+  const broken = run('export default api => { api.on("workspace_change", () => { throw new Error("broken") }); }', { api: '0.2.0-experimental.4', surface: currentSurface, capabilities: ['fs.read'], event: 'workspace_change', payload });
   assert.match(broken.error, /broken/);
 });
 test('LSP mod retains pre-0.2 Python state when another adapter is first to update', () => {
@@ -227,15 +227,15 @@ test('LSP mod retains pre-0.2 Python state when another adapter is first to upda
   const capabilities = ['lifecycle', 'exec', 'store', 'tools', 'fs.read', 'fs.write'];
   const state = { repository: '/tmp/project', running: true, next_id: 4, capabilities: {}, documents: { 'sample.py': { sha256: 'old-sha', version: 2 } }, diagnostics: {}, status: 'synced', reason: '' };
   const payload = { repository: '/tmp/project', call_id: 'ts-write', source: 'tool', status: 'observed', changes: [{ path: 'sample.ts', before: null, after: 'new-sha' }] };
-  const first = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload, state });
+  const first = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload, state });
   assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
   const receipts = [{ call: first.host_call, value: null }];
-  const marker = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
+  const marker = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
   receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const discovery = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
+  const discovery = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['typescript-language-server', 'vtsls'] } });
-  const absent = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload, state,
+  const absent = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload, state,
     receipts: [...receipts, { call: discovery.host_call, value: { found: [] } }] });
   assert.equal(absent.state.servers.python.documents['sample.py'].version, 2);
   assert.equal(absent.state.servers.python.server, 'pylsp');
@@ -279,7 +279,7 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
   const receipts = [];
   let result;
   for (let index = 0; index < 28; index++) {
-    result = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts, hook_budget_ms: 500 });
+    result = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts, hook_budget_ms: 500 });
     assert.equal(result.error, undefined, result.error);
     if (!result.host_call) break;
     receipts.push({ call: result.host_call, value: server(result.host_call) });
@@ -292,7 +292,7 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
   assert.equal(result.state.servers.typescript.documents['src/helper.js'].version, 1);
   assert.equal(result.state.servers.rust.documents['src/main.rs'].version, 1);
   assert.equal(result.state.servers.java.documents['src/Main.java'].version, 1);
-  const cross = run(source, { api: '0.2.0-experimental.3', surface: currentSurface, capabilities, event: 'workspace_pre_rename',
+  const cross = run(source, { api: '0.2.0-experimental.4', surface: currentSurface, capabilities, event: 'workspace_pre_rename',
     payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
   assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
 });

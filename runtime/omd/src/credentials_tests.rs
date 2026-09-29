@@ -42,10 +42,20 @@ fn profiles_get_private_homes_and_one_default() {
 fn removing_the_default_promotes_another_and_returns_the_home_to_clear() {
     let (_temp, profiles) = profiles();
     profiles.create("a", "chatgpt", None).unwrap();
+    profiles
+        .create_secret("site", "https://example.com", "vault")
+        .unwrap();
     profiles.create("b", "chatgpt", None).unwrap();
     let home = profiles.remove("p1").unwrap().unwrap();
     assert!(home.ends_with("credentials/p1"));
-    assert!(profiles.list().unwrap()[0].default);
+    let listed = profiles.list().unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|p| (p.id.as_str(), p.default))
+            .collect::<Vec<_>>(),
+        [("p2", false), ("p3", true)]
+    );
     assert_eq!(profiles.remove("p1").unwrap(), None);
     assert!(profiles.home("p1").is_err());
 }
@@ -140,7 +150,13 @@ fn secrets_are_origin_bound_and_readable_only_by_their_owner() {
         .unwrap();
     assert!(!secret.default);
     assert!(profiles.owned_secret(&secret.id, "vault").is_err());
+    assert_eq!(
+        profiles.visible("vault").unwrap()[0]["status"],
+        "not_enrolled"
+    );
     profiles.store_secret(&secret.id, "hunter2").unwrap();
+    assert_eq!(profiles.visible("vault").unwrap()[0]["status"], "ready");
+    assert!(profiles.visible("other").unwrap().is_empty());
     assert_eq!(
         profiles.owned_secret(&secret.id, "vault").unwrap()["value"],
         "hunter2"

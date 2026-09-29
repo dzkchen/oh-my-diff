@@ -29,6 +29,7 @@ if (Number.isSafeInteger(request.virtual_time_ms)) {
 }
 const handlers = new Map();
 const tools = new Map();
+let dynamicTools = null;
 const commands = new Map();
 const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [] };
 const surface = request.surface;
@@ -127,6 +128,13 @@ const api = Object.freeze({
     for (const name of Object.keys(contract.methods)) unique(serviceHandlers, contract.name + '.' + name, handlers[name]);
     registrations.services.push(structuredCloneFallback(contract));
   },
+  dynamicTools(handler) {
+    requireCapability('tools');
+    if (!activating) throw new Error('dynamic_tools_registration_outside_activation');
+    if (dynamicTools || typeof handler !== 'function') throw new Error('conflict: dynamicTools');
+    dynamicTools = handler;
+    registrations.dynamic_tools = true;
+  },
   tool(spec, handler) {
     requireCapability('tools');
     unique(tools, spec.name, handler);
@@ -160,7 +168,7 @@ const api = Object.freeze({
   }),
   unsupported(operation) { throw new Error('unsupported_operation: ' + operation); },
 });
-globalThis.__omd = { api, handlers, tools, commands, serviceHandlers, virtualReaders, registrations, updates,
+globalThis.__omd = { api, handlers, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
   state: () => state, request, calls,
   pending: () => pending, ready: () => { activating = false; }, suspension };
 `;
@@ -203,7 +211,7 @@ try {
     let value = null;
     try {
     if (request.event !== 'inspect') {
-      const handler = request.event === 'tool' ? tools.get(request.name)
+      const handler = request.event === 'tool' ? tools.get(request.name) ?? globalThis.__omd.dynamicTool(request.name)
         : request.event === 'command' ? commands.get(request.name)
         : request.event === 'virtual_read' ? virtualReaders.get(request.name)
         : request.event === 'service' ? serviceHandlers.get(request.name) : handlers.get(request.event);

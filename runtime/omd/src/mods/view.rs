@@ -401,6 +401,8 @@ pub enum ModComponent {
         #[serde(default)]
         scroll: u16,
         #[serde(default)]
+        keys: bool,
+        #[serde(default)]
         children: Vec<ModComponent>,
     },
     Dialog {
@@ -493,7 +495,7 @@ pub struct ModListRow {
     pub spans: Vec<ModSpan>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModSpan {
     pub text: String,
@@ -501,6 +503,14 @@ pub struct ModSpan {
     pub tone: ModTone,
     #[serde(default)]
     pub bold: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<ModColor>,
 }
 
 impl ModComponent {
@@ -824,19 +834,58 @@ fn component_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
+pub const MOD_NAMED_KEYS: &[&str] = &[
+    "Up",
+    "Down",
+    "Left",
+    "Right",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Delete",
+    "Insert",
+    "Tab",
+    "Enter",
+    "Esc",
+    "Backspace",
+    "Space",
+];
+
 pub fn mod_key_name(key: &str) -> bool {
-    let function = key
+    let mut parts = key.split('+').collect::<Vec<_>>();
+    let Some(base) = parts.pop() else {
+        return false;
+    };
+    let order = ["Ctrl", "Alt", "Shift"];
+    let ordered = parts
+        .iter()
+        .map(|modifier| order.iter().position(|known| known == modifier))
+        .collect::<Option<Vec<_>>>()
+        .is_some_and(|positions| positions.windows(2).all(|pair| pair[0] < pair[1]));
+    let function = base
         .strip_prefix('F')
         .and_then(|number| number.parse::<u8>().ok())
-        .is_some_and(|number| (2..=12).contains(&number) && key == format!("F{number}"));
-    let letter = |rest: Option<&str>| {
-        rest.is_some_and(|rest| rest.len() == 1 && rest.bytes().all(|b| b.is_ascii_lowercase()))
-    };
+        .is_some_and(|number| (2..=12).contains(&number) && base == format!("F{number}"));
+    let character = base.len() == 1
+        && base
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    let named = MOD_NAMED_KEYS.contains(&base);
+    let modified = parts.iter().any(|modifier| *modifier != "Shift");
     let reserved = [
-        "Ctrl+c", "Ctrl+d", "Ctrl+z", "Ctrl+h", "Ctrl+i", "Ctrl+j", "Ctrl+m",
+        "Ctrl+c",
+        "Ctrl+d",
+        "Ctrl+z",
+        "Ctrl+h",
+        "Ctrl+i",
+        "Ctrl+j",
+        "Ctrl+m",
+        "Shift+Tab",
     ];
-    !reserved.contains(&key)
-        && (function || letter(key.strip_prefix("Ctrl+")) || letter(key.strip_prefix("Alt+")))
+    ordered
+        && !reserved.contains(&key)
+        && (function || modified && (character || named) || parts == ["Shift"] && named)
 }
 
 pub fn mod_command_reference(value: &str) -> bool {
@@ -1265,6 +1314,7 @@ fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<
                 title,
                 collapsed,
                 scroll,
+                keys,
                 children,
             } => vec![ModComponent::Pane {
                 id,
@@ -1272,6 +1322,7 @@ fn replace_slot(components: Vec<ModComponent>, current: &[ModComponent]) -> Vec<
                 title,
                 collapsed,
                 scroll,
+                keys,
                 children: replace_slot(children, current),
             }],
             ModComponent::Dialog {

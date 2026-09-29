@@ -90,8 +90,10 @@ impl ApprovalGateContributor for Mods {
                 ),
             };
             if let (Some(owner), Ok(mut gates)) = (owner, self.expansion.gates.lock()) {
-                if gates.len() >= 256 {
-                    gates.clear();
+                if gates.len() >= 256
+                    && let Some(oldest) = gates.keys().next().cloned()
+                {
+                    gates.remove(&oldest);
                 }
                 gates.insert(input.call_id.to_owned(), owner);
             }

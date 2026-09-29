@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 use std::sync::mpsc;
 
 fn fixture() -> (tempfile::TempDir, WorkspaceWatches) {
@@ -11,6 +12,7 @@ fn fixture() -> (tempfile::TempDir, WorkspaceWatches) {
         Arc::new(FileWatcher::new().unwrap()),
         root.clone(),
         vec![root.join("store")],
+        Default::default(),
     )
     .unwrap();
     (dir, watches)
@@ -32,7 +34,7 @@ async fn external_changes_are_reported_relative_to_the_root() {
     let (dir, watches) = fixture();
     let (sink, rx) = channel_sink();
     let id = watches
-        .watch("m", &["src".to_owned()], true, Some(50), sink)
+        .watch("m", "sha", &["src".to_owned()], true, Some(50), sink)
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     std::fs::write(dir.path().join("src/a.txt"), "x").unwrap();
@@ -54,7 +56,7 @@ async fn paths_outside_git_and_protected_areas_are_refused() {
         let (sink, _rx) = channel_sink();
         assert!(
             watches
-                .watch("m", &[path.to_owned()], false, None, sink)
+                .watch("m", "sha", &[path.to_owned()], false, None, sink)
                 .is_err(),
             "{path}"
         );
@@ -62,35 +64,36 @@ async fn paths_outside_git_and_protected_areas_are_refused() {
     let (sink, _rx) = channel_sink();
     assert!(
         watches
-            .watch("m", &["src".to_owned()], false, Some(10), sink)
+            .watch("m", "sha", &["src".to_owned()], false, Some(10), sink)
             .is_err()
     );
     let (sink, _rx) = channel_sink();
-    assert!(watches.watch("m", &[], false, None, sink).is_err());
+    assert!(watches.watch("m", "sha", &[], false, None, sink).is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn watches_are_limited_per_mod_and_released_together() {
+async fn watches_are_limited_per_mod_and_released_with_their_source() {
     let (_dir, watches) = fixture();
-    for _ in 0..WATCHES_PER_MOD {
+    for _ in 0..codex_omd::mod_limits::ModLimits::default().watches_per_mod {
         let (sink, _rx) = channel_sink();
         watches
-            .watch("m", &["src".to_owned()], false, None, sink)
+            .watch("m", "sha", &["src".to_owned()], false, None, sink)
             .unwrap();
     }
     let (sink, _rx) = channel_sink();
     assert!(
         watches
-            .watch("m", &["src".to_owned()], false, None, sink.clone())
+            .watch("m", "sha", &["src".to_owned()], false, None, sink.clone())
             .is_err()
     );
     assert!(
         watches
-            .watch("other", &["src".to_owned()], false, None, sink)
+            .watch("other", "sha", &["src".to_owned()], false, None, sink)
             .is_ok()
     );
+    watches.retain_sources(&BTreeMap::from([("other".to_owned(), "sha".to_owned())]));
     assert_eq!(
-        (watches.unwatch_all("m"), watches.unwatch_all("m")),
-        (WATCHES_PER_MOD, 0)
+        (watches.unwatch_all("m"), watches.unwatch_all("other")),
+        (0, 1)
     );
 }

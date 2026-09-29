@@ -120,6 +120,7 @@ pub fn fork_thread_data(root: &Path, from: &str, to: &str) -> io::Result<bool> {
 }
 
 pub fn remove_thread_data(root: &Path, thread: &str) -> io::Result<bool> {
+    crate::turn_activity::TurnActivityLog::open(&root.join("turn-activity"), thread)?.remove()?;
     let directory = thread_directory(root, thread)?;
     match fs::symlink_metadata(&directory) {
         Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&directory).map(|()| true),

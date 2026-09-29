@@ -2,10 +2,10 @@
   "schema": 1,
   "id": "edit_diagnostics",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.3",
+  "api": "0.2.0-experimental.4",
   "state_version": 1,
   "license": "Apache-2.0",
-  "capabilities": ["interception"],
+  "capabilities": ["outputs"],
   "compatibility": {
     "required_features": ["tool_feedback_v1"]
   }

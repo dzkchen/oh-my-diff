@@ -137,27 +137,26 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
             let _cancellation = Cancellation(cancelled.clone());
             let (label, tool_name) = (self.label(), self.name());
             core.views.progress(&core.host, &label, "Running");
-            let (views, host, progress_label) =
+            let (views, host_info, progress_label) =
                 (core.views.clone(), core.host.clone(), label.clone());
             let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
             let flag = cancelled.clone();
             let job = tokio::task::spawn_blocking(move || {
-                let mut runtime = runtime
-                    .lock()
-                    .map_err(|_| std::io::Error::other("mod runtime poisoned"))?;
-                let facts = facts(&runtime);
-                runtime.invoke_tool(
-                    &id,
-                    generation,
-                    &name,
-                    payload,
-                    || !flag.load(Ordering::Acquire),
-                    |caller, request| {
-                        forward(&requests, &facts, caller, request, &|| {
-                            !flag.load(Ordering::Acquire)
-                        })
-                    },
-                    |update| views.progress(&host, &progress_label, &update),
+                let poisoned = || std::io::Error::other("mod runtime poisoned");
+                let facts = facts(&*runtime.lock().map_err(|_| poisoned())?);
+                let active = || !flag.load(Ordering::Acquire);
+                let host =
+                    |caller: &str, request| forward(&requests, &facts, caller, request, &active);
+                let progress =
+                    |update: String| views.progress(&host_info, &progress_label, &update);
+                if id.is_empty() {
+                    return runtime
+                        .lock()
+                        .map_err(|_| poisoned())?
+                        .invoke_tool(&id, generation, &name, payload, active, host, progress);
+                }
+                codex_omd::invoke_shared(
+                    &runtime, &id, generation, "tool", &name, payload, active, host, progress,
                 )
             });
             let mut ordinal = 0u32;

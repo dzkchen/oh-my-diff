@@ -1,6 +1,6 @@
 export type ActiveHostRelease = '0.1.0';
 export type ActiveCodexRelease = '0.157.0';
-export type ActiveModApi = '0.2.0-experimental.3';
+export type ActiveModApi = '0.2.0-experimental.4';
 export type ActivePackageSchema = 1;
 export type ActiveStateStorageSchema = 1;
 export type ActiveCapability = 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal' | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins';

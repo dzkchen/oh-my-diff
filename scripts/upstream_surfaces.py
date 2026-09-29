@@ -12,6 +12,8 @@ TABLE = ROOT / "scripts/upstream_routes.json"
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 PROTOCOL = "codex-rs/app-server-protocol/src/protocol/common.rs"
 PROTOCOL_TYPES = "codex-rs/protocol/src/protocol.rs"
+PROTOCOL_ROOT = "codex-rs/app-server-protocol/src/protocol"
+PARAMS = re.compile(r'"([^"]+)"\s*\{\s*params:\s*([^\n]*),\n')
 MACROS = {
     "client_request_definitions": "app_request",
     "server_request_definitions": "app_server_request",
@@ -142,6 +144,57 @@ def macro_entries(text, macro):
     return out
 
 
+def camel(name):
+    head, *rest = name.split("_")
+    return head + "".join(part.title() for part in rest)
+
+
+def struct_fields(sources, name, depth=0):
+    for text in sources:
+        alias = re.search(r"\bpub type " + re.escape(name) + r"\s*=\s*([^;]+);", text)
+        if alias:
+            names = [n for n in IDENT.findall(alias.group(1)) if n != "Option"]
+            return struct_fields(sources, names[-1], depth + 1) if names and depth < 4 else []
+        match = re.search(r"\bpub struct " + re.escape(name) + r"\b[^{;(]*([{;(])", text)
+        if not match:
+            continue
+        if match.group(1) != "{":
+            return []
+        head = text[text.rfind("}", 0, match.start()) + 1:match.start()]
+        camel_case = re.search(r'rename_all\s*=\s*"camelCase"', head) is not None
+        fields = []
+        for item in items(block(text, match.end() - 1)):
+            attributes, rest = strip_attributes(item)
+            found = re.match(r"(?:pub(?:\([^)]*\))?\s+)?(?:r#)?(\w+)\s*:\s*(.+)", rest, re.S)
+            if not found:
+                continue
+            serde = " ".join(a for a in attributes if a.startswith("#[serde"))
+            if re.search(r"\bskip(?:_deserializing)?\b", serde):
+                continue
+            if re.search(r"\bflatten\b", serde):
+                inner = IDENT.findall(found.group(2))
+                nested = struct_fields(sources, inner[-1], depth + 1) if inner and depth < 4 else None
+                fields.extend(nested or [])
+                continue
+            renamed = re.search(r'\brename\s*=\s*"([^"]+)"', serde)
+            field = found.group(1)
+            fields.append(renamed.group(1) if renamed else camel(field) if camel_case else field)
+        return sorted(set(fields))
+    return None
+
+
+def request_params(checkout, protocol):
+    root = checkout / PROTOCOL_ROOT
+    sources = [path.read_text() for path in sorted(root.rglob("*.rs"))] if root.is_dir() else []
+    match = re.search(r"client_request_definitions!\s*\{", protocol)
+    out = {}
+    for found in PARAMS.finditer(block(protocol, match.end() - 1) if match else ""):
+        kind = re.sub(r"#\[[^\]]*\]", "", found.group(2))
+        names = [name for name in IDENT.findall(kind) if name not in ("v1", "v2", "Option")]
+        out[found.group(1)] = struct_fields(sources, names[-1]) if names else []
+    return out
+
+
 def read(checkout, relative):
     path = checkout / relative
     return path.read_text() if path.is_file() else None
@@ -194,9 +247,11 @@ def extract(checkout):
     if protocol is None:
         missing.append(PROTOCOL)
     else:
+        params = request_params(checkout, protocol)
         for macro, kind in MACROS.items():
             for method, variant, experimental in macro_entries(protocol, macro):
-                found.append(surface(kind, method, PROTOCOL, variant=variant, experimental=experimental))
+                extra = {"params": params.get(method)} if kind == "app_request" else {}
+                found.append(surface(kind, method, PROTOCOL, variant=variant, experimental=experimental, **extra))
         match = re.search(r"client_notification_definitions!\s*\{", protocol)
         if match:
             for item in items(block(protocol, match.end() - 1)):
@@ -295,6 +350,7 @@ def check(checkout, table):
     ids = {s["id"] for s in surfaces}
     unrouted = []
     invalid = []
+    drift = []
     counts = {}
     for entry in surfaces:
         decision = resolve(table, entry["id"])
@@ -305,6 +361,11 @@ def check(checkout, table):
         if bool(route) == bool(reason) or (route and route not in table["routes"]) or (reason and reason not in table["exclusions"]):
             invalid.append(entry["id"])
             continue
+        if entry["kind"] == "app_request" and route == "app.request":
+            known = set(decision.get("fields", [])) | set(decision.get("refuse", []))
+            unknown = sorted(set(entry.get("params") or []) - known)
+            if entry.get("params") is None or unknown:
+                drift.append({"id": entry["id"], "fields": unknown if entry.get("params") is not None else None})
         bucket = counts.setdefault(entry["kind"], {"surfaces": 0, "routed": 0, "excluded": 0})
         bucket["surfaces"] += 1
         bucket["routed" if route else "excluded"] += 1
@@ -316,9 +377,10 @@ def check(checkout, table):
         "by_kind": dict(sorted(counts.items())),
         "unrouted": [{"id": e["id"], "source": e["source"]} for e in unrouted],
         "invalid": invalid,
+        "param_drift": drift,
         "removed_upstream": removed,
         "missing_sources": missing,
-        "gap": len(unrouted) + len(invalid) + len(missing),
+        "gap": len(unrouted) + len(invalid) + len(drift) + len(missing),
     }
 
 
@@ -328,7 +390,7 @@ def host_table(table):
         kind, name = surface_id.split(":", 1)
         route = entry.get("route")
         if kind == "app_request" and route == "app.request":
-            requests[name] = {k: entry[k] for k in ("class", "contexts", "confirm", "scope", "refuse", "root", "route_fields", "keys") if k in entry}
+            requests[name] = {k: entry[k] for k in ("class", "contexts", "confirm", "scope", "fields", "root", "route_fields", "keys") if k in entry}
         elif kind == "app_notification" and route == "app.notification":
             notifications.append(name)
         elif kind == "app_server_request" and route in ("approval", "app.server_request"):

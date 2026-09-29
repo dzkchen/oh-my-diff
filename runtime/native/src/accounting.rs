@@ -254,6 +254,85 @@ pub fn denied(message: impl ToString) -> TransportError {
     }
 }
 
+impl Accounts {
+    fn request_route(
+        &self,
+        mods: &Mutex<codex_omd::ModHost>,
+        account: &Account,
+        thread: &str,
+        value: &Value,
+    ) -> Result<Option<RequestRoute>, TransportError> {
+        let request_id = format!("mod-request-{}", self.2.fetch_add(1, Ordering::Relaxed) + 1);
+        let original = json!({"name": account.route.clone().unwrap_or_else(|| "session".into()),
+            "model": value.get("model").cloned().unwrap_or(Value::Null),
+            "provider": account.provider,
+            "reasoning": value.pointer("/reasoning/effort").cloned().unwrap_or(Value::Null),
+            "roles": [if account.owner == "lead" {"lead"} else {"worker"}],
+            "billing": if account.rates.as_ref().is_none_or(|rates| rates.included_subscription) {"included_subscription"} else {"explicit_paid_api_grant"},
+            "tools": [], "available": true, "credential": account.credential});
+        let mut routes = vec![original.clone()];
+        if account.owner == "lead" {
+            routes.extend(account.lead_routes.iter().map(|route| {
+                json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
+                    "roles":["lead"],"billing":if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
+                    "tools":[],"available":true,"credential":route.credential})
+            }));
+        }
+        let payload = json!({"request_id":request_id,"scope":{"thread_id":thread,
+            "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
+            "kind":if account.owner == "lead" {"main"} else {"subagent"}},
+            "routes":routes,"original":original,"effective":original,"provenance":[]});
+        let effective = match Self::middleware(
+            mods,
+            &self.3,
+            !account.owner.starts_with("mod-"),
+            "model_request",
+            |runtime| runtime.model_request(payload, || account.task.check_active().is_ok()),
+        )? {
+            Hook::Ran(effective) => effective.map_err(denied)?,
+            Hook::Absent => return Ok(None),
+            Hook::Skipped(reason) => {
+                Self::record_middleware(
+                    account,
+                    &json!({"kind":"middleware_skipped","hook":"model_request","request_id":request_id,"reason":reason}),
+                )?;
+                return Ok(None);
+            }
+        };
+        if effective["provenance"]
+            .as_array()
+            .is_some_and(|provenance| !provenance.is_empty())
+        {
+            Self::record_middleware(account, &json!({"kind":"model_request","value":effective}))?;
+        }
+        let selected = effective["effective"]["name"].as_str().unwrap_or_default();
+        if selected == original["name"].as_str().unwrap_or_default() {
+            return Ok(None);
+        }
+        account
+            .lead_routes
+            .iter()
+            .find(|route| route.name == selected)
+            .filter(|_| account.owner == "lead")
+            .cloned()
+            .map(Some)
+            .ok_or_else(|| denied("mod selected a route that is not configured for this thread"))
+    }
+}
+
+fn switch_route(
+    request: &mut Request,
+    value: &mut Value,
+    account: &mut Account,
+    route: &RequestRoute,
+) -> Result<(), TransportError> {
+    mark_route(request, &route.name)?;
+    value["model"] = route.model.clone().into();
+    value["reasoning"]["effort"] = route.reasoning.clone().into();
+    account.rates = account.rates.as_ref().map(|_| route.rates.clone());
+    Ok(())
+}
+
 impl ResponseObserver for Accounts {
     fn prepare(
         &self,
@@ -283,6 +362,7 @@ impl ResponseObserver for Accounts {
                 .as_bytes(),
         )
         .map_err(denied)?;
+        let mut edited = false;
         if account.owner == "lead"
             && let Some(selected) = crate::mods::take_route_selection(&thread)
             && let Some(route) = account
@@ -291,17 +371,16 @@ impl ResponseObserver for Accounts {
                 .find(|route| route.name == selected)
                 .cloned()
         {
-            value["model"] = route.model.clone().into();
-            value["reasoning"]["effort"] = route.reasoning.clone().into();
-            *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
-            account.credential = route.credential.clone();
-            mark_route(request, &route.name)?;
+            switch_route(request, &mut value, &mut account, &route)?;
+            account.credential = route.credential;
             account.route = Some(route.name);
+            edited = true;
         }
-        if let Some(mods) = self.mods()
+        let mods = self.mods();
+        if let Some(mods) = &mods
             && let Some(items) = value["input"].as_array().cloned()
             && let Hook::Ran(result) = Self::middleware(
-                &mods,
+                mods,
                 &self.3,
                 !account.owner.starts_with("mod-"),
                 "history",
@@ -312,24 +391,24 @@ impl ResponseObserver for Accounts {
                 },
             )?
         {
-            let edited = result
+            let history = result
                 .map_err(|error| error.to_string())
                 .and_then(|decision| match decision {
                     None => Ok(None),
                     Some((owner, edit)) => serde_json::from_value(edit)
                         .map_err(|error| format!("history_edit_invalid: {error}"))
                         .and_then(|edit| codex_omd::history::apply(&items, edit))
-                        .map(|edited| Some((owner, edited))),
+                        .map(|history| Some((owner, history))),
                 });
-            match edited {
-                Ok(Some((owner, edited))) => {
+            match history {
+                Ok(Some((owner, history))) => {
                     Self::record_middleware(
                         &account,
                         &json!({"kind": "history", "owner": owner,
-                        "items_before": items.len(), "items_after": edited.len()}),
+                        "items_before": items.len(), "items_after": history.len()}),
                     )?;
-                    value["input"] = Value::Array(edited);
-                    *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
+                    value["input"] = Value::Array(history);
+                    edited = true;
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -339,6 +418,12 @@ impl ResponseObserver for Accounts {
                     )?;
                 }
             }
+        }
+        if let Some(mods) = &mods
+            && let Some(route) = self.request_route(mods, &account, &thread, &value)?
+        {
+            switch_route(request, &mut value, &mut account, &route)?;
+            edited = true;
         }
         if let Some(rates) = account
             .rates
@@ -350,67 +435,10 @@ impl ResponseObserver for Accounts {
             }
             value["max_output_tokens"] = rates.max_output_tokens.into();
             value["service_tier"] = "default".into();
+            edited = true;
+        }
+        if edited {
             *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
-        }
-        let Some(mods) = self.mods() else {
-            return Ok(());
-        };
-        let request_id = format!("mod-request-{}", self.2.fetch_add(1, Ordering::Relaxed) + 1);
-        let original = json!({"name": account.route.clone().unwrap_or_else(|| "session".into()),
-            "model": value.get("model").cloned().unwrap_or(Value::Null),
-            "provider": account.provider,
-            "reasoning": value.pointer("/reasoning/effort").cloned().unwrap_or(Value::Null),
-            "roles": [if account.owner == "lead" {"lead"} else {"worker"}],
-            "billing": if account.rates.as_ref().is_none_or(|rates| rates.included_subscription) {"included_subscription"} else {"explicit_paid_api_grant"},
-            "tools": [], "available": true, "credential": account.credential});
-        let mut routes = vec![original.clone()];
-        if account.owner == "lead" {
-            routes.extend(account.lead_routes.iter().map(|route| {
-                json!({"name":route.name,"model":route.model,"provider":route.provider,"reasoning":route.reasoning,
-                    "roles":["lead"],"billing":if route.rates.included_subscription {"included_subscription"} else {"explicit_paid_api_grant"},
-                    "tools":[],"available":true,"credential":route.credential})
-            }));
-        }
-        let payload = json!({"request_id":request_id,"scope":{"thread_id":thread,
-            "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
-            "kind":if account.owner == "lead" {"main"} else {"subagent"}},
-            "routes":routes,"original":original,"effective":original,"provenance":[]});
-        let effective = match Self::middleware(
-            &mods,
-            &self.3,
-            !account.owner.starts_with("mod-"),
-            "model_request",
-            |runtime| runtime.model_request(payload, || account.task.check_active().is_ok()),
-        )? {
-            Hook::Ran(effective) => effective.map_err(denied)?,
-            Hook::Absent => return Ok(()),
-            Hook::Skipped(reason) => {
-                return Self::record_middleware(
-                    &account,
-                    &json!({"kind":"middleware_skipped","hook":"model_request","request_id":request_id,"reason":reason}),
-                );
-            }
-        };
-        let selected = effective["effective"]["name"].as_str().unwrap_or_default();
-        if selected != original["name"].as_str().unwrap_or_default() {
-            let route = account
-                .lead_routes
-                .iter()
-                .find(|route| route.name == selected)
-                .filter(|_| account.owner == "lead")
-                .ok_or_else(|| {
-                    denied("mod selected a route that is not configured for this thread")
-                })?;
-            mark_route(request, &route.name)?;
-            value["model"] = route.model.clone().into();
-            value["reasoning"]["effort"] = route.reasoning.clone().into();
-            *body = Some(EncodedJsonBody::encode(&value).map_err(denied)?);
-        }
-        if effective["provenance"]
-            .as_array()
-            .is_some_and(|provenance| !provenance.is_empty())
-        {
-            Self::record_middleware(&account, &json!({"kind":"model_request","value":effective}))?;
         }
         Ok(())
     }

@@ -41,7 +41,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
         .starts_with("client_surface_unavailable")
     );
     let registration = register(Arc::new(Echo));
-    assert!(available());
+    assert!(hub().surface.is_some());
     let value = call(
         "m",
         "app.request",
@@ -83,7 +83,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     let replaced = register(Arc::new(Silent));
     drop(registration);
     assert!(
-        available(),
+        hub().surface.is_some(),
         "a stale registration must not remove its replacement"
     );
     let receiver = submit(
@@ -97,7 +97,7 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     .unwrap();
     assert_eq!(wait(receiver, &|| false).unwrap_err(), "callback_cancelled");
     drop(replaced);
-    assert!(!available());
+    assert!(hub().surface.is_none());
 
     let woken = Arc::new(AtomicUsize::new(0));
     let counter = woken.clone();

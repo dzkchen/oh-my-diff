@@ -78,6 +78,10 @@ pub(crate) struct HostConfig {
     pub approved_untracked: Vec<String>,
     #[serde(default)]
     pub contract: ContractSelectionConfig,
+    #[serde(default)]
+    pub editor: Vec<String>,
+    #[serde(default)]
+    pub mod_limits: codex_omd::mod_limits::ModLimits,
 }
 
 fn schema() -> u32 {
@@ -133,6 +137,8 @@ impl Default for HostConfig {
             max_request_bytes: max_request_bytes(),
             approved_untracked: Vec::new(),
             contract: ContractSelectionConfig::default(),
+            editor: Vec::new(),
+            mod_limits: Default::default(),
         }
     }
 }
@@ -161,6 +167,11 @@ impl HostConfig {
         };
         let mut names = std::collections::BTreeSet::new();
         if self.schema != 1
+            || self.editor.len() > 16
+            || self
+                .editor
+                .iter()
+                .any(|arg| arg.is_empty() || arg.len() > 1024)
             || self.routes.len() > 32
             || self.snapshot_bytes == 0
             || self.max_request_bytes == 0

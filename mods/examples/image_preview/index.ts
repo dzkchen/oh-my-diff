@@ -11,6 +11,12 @@ export default function activate(api: ModAPI) {
     const opened = api.host.call('terminal.open', { url: String(url) });
     return { display: 'opened' in opened ? 'Opened in the browser' : 'Open declined' };
   });
+  api.command('edit', target => {
+    const text = String(target);
+    const [, path, line] = /^(.*?)(?::(\d+))?(?::\d+)?$/.exec(text) ?? [text, text];
+    const opened = api.host.call('terminal.open', { path, line: Number(line) || 1, editor: true });
+    return { display: 'opened' in opened ? 'Opened in your editor' : 'Open declined' };
+  });
   api.on('terminal', () => {
     const image = api.state.get() as ResourceRef | null;
     if (!image) return null;

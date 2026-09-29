@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.3` on OMD `0.1.0` and Codex `0.157.0`. The package's
+`0.2.0-experimental.4` on OMD `0.1.0` and Codex `0.157.0`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
 historical and do not load in the current host; the later .9 reference sections
 remain only as migration evidence. A store also generates `active-host.d.ts` and
@@ -33,12 +33,15 @@ native work.
 
 | Capability | Grants |
 | --- | --- |
-| `exec` | `exec.run`, `process.*`, `sidecars.*`, `terminal.pty`, the `process_event` event |
-| `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, read-only `workspace.check_access`, `workspace.snapshot`, `workspace.fingerprint`, the `workspace_change` event |
+| `exec` | `exec.run`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
+| `pty` | `terminal.pty` (a writable pane also needs `fs.write`) |
+| `history` | the `history` replacement |
+| `outputs` | the `tool_output` replacement and observers |
+| `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, read-only `workspace.check_access`, `workspace.snapshot`, `workspace.fingerprint`, `workspace.watch`, the `workspace_change` event; `app.request fuzzyFileSearch*` |
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
-| `model` | `routes.list`, `routes.select`, `providers.*`, `model.complete`, the `routing` event |
-| `agents` | `agents.*`, `task.status`, `workspace.integrate` |
+| `model` | `routes.list`, `routes.select`, `providers.*`, the `routing` event |
+| `agents` | `agents.*`, `model.complete`, `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
 | `sessions` | `sessions.list`, `sessions.read`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
@@ -46,11 +49,12 @@ native work.
 | `terminal` | `terminal`, `list`, `selection` and `selection_result` events; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `terminal.import_file`, `terminal.open`, `terminal.prompt` |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification` |
 | `approvals` | the `approval` middleware and `approval_result`; `app_server_request` |
-| `events` | `events.publish` and the `channel` event |
+| `events` | `events.publish`, `events.schedule`, `events.cancel`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, the `completion` replacement |
 | `packages` | `packages.list`, `packages.preview`, `packages.apply`, `packages.reload` |
-| `context`, `tools`, `commands`, `lifecycle`, `input`, `interception`, `compaction`, `middleware`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
+| `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, the `tool_specs` replacement |
+| `context`, `commands`, `lifecycle`, `input`, `interception`, `compaction`, `middleware`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
@@ -366,7 +370,7 @@ capabilities.
 
 ## Batch 2.6 host primitives
 
-API `0.2.0-experimental.3` adds these generic primitives; `.1` and `.2`
+API `0.2.0-experimental.4` adds these generic primitives; `.1`, `.2` and `.3`
 packages keep loading. Each advertises a host feature a package can require.
 With no mod registered for a primitive the host allocates nothing for it and
 changes no decision. Mapping from pinned upstream surfaces to these routes, and
@@ -377,12 +381,18 @@ the recorded exclusions, live in `scripts/upstream_routes.json`;
 
 `app.request {method, params}` sends a method listed by `app.routes`. Each route
 names a capability class, allowed contexts (`user` commands or `event`
-callbacks), whether a native confirmation is needed and the thread scope. The
-host refuses authority fields (approval policy, sandbox, permissions, config,
-roots, environments, dynamic tools, base instructions, service tier) and allows
-`model` only as a configured route; `thread/start` must use the session root
-or one of its `git worktree list` entries. Turn-starting methods run only from
-user contexts; `turn/steer` runs from events into a running turn.
+callbacks), whether a native confirmation is needed and the thread scope. Each
+route lists the parameter fields it accepts; any other non-null field is refused,
+so authority fields (approval policy, sandbox, permissions, config, roots,
+environments, dynamic tools, base instructions, service tier) and fields added
+by a later upstream stay closed until reviewed. `model` is allowed only as a
+configured route; `thread/start` and `fuzzyFileSearch` roots must be the session
+root or one of its `git worktree list` entries. Thread-scoped methods reach the
+current thread and threads the mod itself started or forked. Local image and
+audio inputs must be `{resource}` references; raw paths are refused.
+Turn-starting methods run only from user contexts; `turn/steer` runs from
+events into a running turn; `mcpServer/tool/call` asks for a native
+confirmation on every call.
 `command/exec`, `process/*`, `fs/*`, `thread/shellCommand`,
 `thread/inject_items` and credential flows are excluded. Declare
 `subscriptions.app` in the manifest to receive `app_notification` (deltas
@@ -401,13 +411,15 @@ A mod can never approve, and a failing middleware counts as `ask`.
 ### Tool output, feedback, batches and specs
 
 - `replace('tool_output')` (`tool_output_v1`) returns `{text}` of at most
-  64 KiB before upstream truncation and history recording. The owner receives
+  64 KiB before upstream truncation and history recording. Handlers receive the
+  first 48 KiB as `text`, the last 16 KiB as `tail` when the output is longer,
+  and the total `bytes`. Image and audio items appear as `[image]` and
+  `[audio]` markers, and a replacement drops them. The owner receives
   `original`, a readable evidence reference; originals rotate per mod, newest
   256 kept.
 - `on('tool_output')` observers (`tool_feedback_v1`) return `{append}` of at
-  most 4 KiB, 16 KiB per call in total, added after any replacement. Observers
-  receive `original: null`. If the combined text would exceed 64 KiB the
-  feedback is dropped with a diagnostic.
+  most 4 KiB, 16 KiB per call in total, added after any replacement at any
+  output size. Observers receive `original: null`.
 - `replace('tool_batch')` (`tool_batch_v1`) may merge parallel-safe calls of
   one response into one call of a tool the mod registered; the merged call runs
   through ordinary admission and approvals, and results fan out by call id.
@@ -422,14 +434,23 @@ namespace; subscribers declare channel patterns and receive `channel` events
 (256 events / 1 MiB per subscriber). `process.start {notify: ['output','exit']}`
 delivers coalesced `process_event`s. `workspace.watch {paths, recursive?,
 debounce_ms?}` reports external edits as `workspace_change` with source
-`external` (16 watches per mod, ignored and protected paths excluded).
+`external` (16 watches per mod, ignored and protected paths excluded). Watches
+and timers end when their mod is disabled or its source changes, and each
+delivery runs in the thread that registered it. `process_event` exits carry
+only the session; read the exit status with `process.status`.
+`events.schedule {key, delay_ms}` (`timers_v1`) delivers one `timer` event
+`{key}` to the calling mod after 1 s to 24 h; scheduling a key again replaces
+it, `events.cancel {key}` stops it, 16 timers per mod. A timer never starts a
+turn.
 
 ### Credentials, secrets and routes (`credentials_v1`, `secrets_v1`)
 
-`credentials.list` returns profiles without secret material.
+`credentials.list` returns profiles without secret material, with `status`
+`ready` once enrolled; secrets are listed only to the mod that owns them.
 `credentials.request` opens native flows from user contexts: ChatGPT sign-in,
 masked API-key entry, refresh and removal, and `{kind: 'secret', label,
-origin}` for an origin-bound secret owned by the calling mod. Route entries
+origin}` for an origin-bound secret owned by the calling mod. A mod can remove
+only its own secrets, and the confirmation names the profile's kind and label. Route entries
 may name a `credential`; its token replaces the request's authorization after
 upstream auth, and a missing or expired credential blocks the request.
 `routes.select {route, scope}` applies a configured route at the next request
@@ -444,7 +465,9 @@ mod runtime or the model.
 when the thread is deleted and kept when it is archived. `resume` carries
 `last_turn` and `restarted`. `turns.activity {turn_id?, last?}` reads turn
 outcomes, tool calls, processes and file changes for the current thread,
-recorded only while an enabled mod holds `sessions`.
+recorded only while an enabled mod holds `sessions`. Commands record their exit
+code when they finish, including commands that outlive their tool call; the log
+is removed when the thread is deleted.
 
 ### Terminal surface (`terminal_surface_v1`, `terminal_media_v1`, `terminal_prompt_v1`, `terminal_pty_v1`)
 
@@ -453,21 +476,37 @@ and mod-named sites (`mod/site`), plus an ASCII or image `backdrop` (off over
 SSH, multiplexers, `NO_COLOR`, reduced motion and narrow terminals).
 Components add `document` (up to 100,000 lines with anchors, selection and
 find), `diff`, `image` (truecolor half-block cells, alt text under
-`NO_COLOR`) and `terminal` (a PTY session). `component_event`, `view` and
-`focus` report interaction. Operations:
+`NO_COLOR`) and `terminal` (a PTY session). Spans accept `fg` and `bg` theme
+colors, `italic` and `underline` (`terminal_style_v1`). A `pane` with
+`keys: true` (`terminal_input_v1`) forwards every key while focused as
+`component_event {kind: 'key', key, text}`; Ctrl+] leaves it. View
+`keybindings` accept `Ctrl+`, `Alt+` and `Shift+` combinations of letters,
+digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
+terminal control keys and Shift+Tab; a binding that collides with a native key
+is ignored with a warning. `component_event`, `view` and `focus` report
+interaction. Operations:
 
 - `terminal.notify {title, body?}` uses the configured notification method
   with a focus condition and a 2 s rate limit.
 - `terminal.show_thread`, `terminal.import_file` (confirmed, at most 8 MiB),
-  `composer.read` and `composer.write` (text and image attachments).
+  `composer.read` and `composer.write` (text and `{image}` resource
+  attachments). The import confirmation shows the resolved path.
 - `terminal.open {url} | {path}` opens an http(s) URL or an existing HTML,
-  Markdown, text, PDF or image file after a native confirmation.
+  Markdown, text, PDF or image file after a native confirmation;
+  `{path, line?, editor: true}` (`terminal_editor_v1`) opens a workspace file in
+  the argv the user sets as `editor` in `host.json`, with `{path}` and `{line}`
+  substituted.
 - `terminal.prompt {kind: 'confirm' | 'text', title, message, masked?}` asks
   the user; mods never answer prompts.
 - `terminal.pty {action: 'start' | 'write' | 'read' | 'stop', session}`
   starts an interactive shell from a user command after confirmation, in the
-  session sandbox without network (macOS), up to four panes, reachable only by
-  the owning mod. A focused `terminal` component receives keys; Ctrl+] leaves it.
+  session sandbox without network (macOS) with a scratch `HOME`. `start` may
+  name a `program`, `argv` and `sha256` (`pty_programs_v1`); `write: true`
+  lets the pane write the workspace and needs `fs.write`. The confirmation
+  names the program, write access and that the mod can type into the pane.
+  Sessions belong to the calling mod (four per mod, sixteen in all), render
+  only in views that mod owns or contributes to, and stop when it unloads. A
+  focused `terminal` component receives keys; Ctrl+] leaves it.
 - `builtins.invoke {command} | {action}` runs a built-in command or key action
   from user contexts; `api.builtins({keys, commands: {replace}})` overlays key
   bindings (never `approval.*`) and routes a built-in command to a mod command.
@@ -477,7 +516,10 @@ find), `diff`, `image` (truecolor half-block cells, alt text under
 `replace('completion')` receives each `@` mention query with up to 200
 upstream candidates and returns `{items: [{path}]}` in the order to show.
 Paths must be workspace-relative. Without an owner upstream ranking is used;
-stale results are dropped.
+stale results are dropped. While the user types arguments to a mod command
+(`completion_arguments_v1`) the owner receives `{kind: 'argument', command,
+query, line}` and returns `{items: [{insert}]}`; the list opens only when it
+has items.
 
 ### One-shot model calls (`model_complete_v1`)
 
@@ -485,16 +527,19 @@ stale results are dropped.
 completion on a configured worker route under the task's admission, ledger
 and allowance and returns `{text}`. Prompts are at most 8 KiB, the timeout at
 most 300 s, and completions count against agent limits. It is available in
-event and tool callbacks during a task.
+event and tool callbacks during a task, ends with the callback when it is
+cancelled, and does not block other mods' hooks while it waits.
 
 ### Model-bound history (`history_v1`)
 
 `replace('history')` receives a bounded view of each model request's items
 (`index`, `type`, `role`, `call_id`, `editable`, a 2 KiB text preview and byte
-size) and may return `{drop?, replace?, insert?}`. Only text messages and tool
-outputs can be replaced; a reasoning item can be dropped only together with the
-item it precedes; call and output items are dropped as pairs; the last item
-(the current input) is kept; inserts are `user` or `developer` text. The
+size and `images` count) and may return `{drop?, replace?, insert?}`. Messages,
+tool outputs and tool call arguments can be replaced; replacing a message with
+images keeps only the new text. A reasoning item can be dropped only together
+with the item it precedes and an insert cannot separate them; call and output
+items are dropped as pairs; the last item (the current input) is kept; inserts
+are `user` or `developer` text. The
 transcript and resume data are unchanged, each applied edit is recorded, and an
 invalid edit or failing mod keeps the original request.
 
@@ -509,7 +554,25 @@ enable and disable packages from local directories, pinned Git revisions and
 curated index releases; `index` resolves dependencies. `apply` runs from user
 contexts after a native confirmation naming every new grant, dependencies as
 `id:capability`, and applies exactly the confirmed plan or refuses if the
-package or lock changed. `/omd` stays the native recovery path.
+package or lock changed. An update resolves dependencies through the index the
+package came from and previews the capabilities it adds. `packages.reload`
+reports the pending generation; changes take effect at the next safe boundary.
+`/omd` stays the native recovery path.
+
+### Dynamic tools (`dynamic_tools_v1`)
+
+`api.dynamicTools(handler)` lets a mod define tools at run time:
+`tools.define {name, description, parameters}` adds or replaces one (at most
+64 per mod, names distinct from its static tools) and `tools.undefine {name}`
+removes it. Definitions take effect at the next model request, reach the
+handler as `{name, arguments}`, run from native event and tool callbacks, and
+reset when the mod reloads.
+
+### Host limits
+
+`host.json` may set `mod_limits` for `watches_per_mod` (up to 64),
+`paths_per_watch` (256), `timers_per_mod` (64), `pty_panes_per_mod` (8) and
+`completion_items` (1000); defaults are 16, 32, 16, 4 and 200.
 
 ### Streaming providers
 

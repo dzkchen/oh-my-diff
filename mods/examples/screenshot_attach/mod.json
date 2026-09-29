@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "screenshot_attach",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.3",
+  "api": "0.2.0-experimental.4",
   "state_version": 1,
   "license": "Apache-2.0",
   "capabilities": [

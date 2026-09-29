@@ -14,7 +14,7 @@ const surface = {
 const source = name => readFileSync(new URL(`./${name === 'omd_theme' ? 'optional' : 'first-party'}/${name}/index.ts`, import.meta.url), 'utf8');
 function run(name, input) {
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source: source(name), filename: 'index.ts', api: '0.2.0-experimental.3', surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input }),
+    input: JSON.stringify({ source: source(name), filename: 'index.ts', api: '0.2.0-experimental.4', surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input }),
     encoding: 'utf8', timeout: 5000,
   });
   assert.ifError(result.error);
@@ -479,7 +479,7 @@ test('graph navigator uses live source service and rejects stale or mismatched e
   assert.equal(selected.state.open, false);
   assert.deepEqual(selected.calls.map(item => item.operation), ['mods.service']);
   const stale = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source: source('omd_graph_navigator'), filename: 'index.ts', api: '0.2.0-experimental.3', surface, capabilities,
+    input: JSON.stringify({ source: source('omd_graph_navigator'), filename: 'index.ts', api: '0.2.0-experimental.4', surface, capabilities,
       settings: {}, state: opened.state, event: 'command', name: 'search', payload: 'entry', receipts: [
         { call: call('search', { query: 'entry', page: 0, root: '', expected_source_digest: digest }), error: 'analysis_source_digest_stale' },
       ] }), encoding: 'utf8', timeout: 5000,

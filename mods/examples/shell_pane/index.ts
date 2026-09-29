@@ -6,6 +6,13 @@ export default function activate(api: ModAPI) {
     api.state.set('status' in started ? null : 'shell');
     return { display: 'status' in started ? 'Shell declined' : 'Shell pane opened; Tab focuses it, Ctrl+] leaves it' };
   });
+  api.command('run', line => {
+    const [program, ...argv] = String(line).trim().split(/\s+/);
+    if (!program) return { display: 'Usage: /run PROGRAM [ARGS]' };
+    const started = api.host.call('terminal.pty', { action: 'start', session: 'shell', program, argv });
+    api.state.set('status' in started ? null : 'shell');
+    return { display: 'status' in started ? 'Run declined' : `${program} opened in the pane` };
+  });
   api.command('shell_stop', () => {
     api.host.call('terminal.pty', { action: 'stop', session: 'shell' });
     api.state.set(null);

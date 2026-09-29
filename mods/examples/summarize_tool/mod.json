@@ -2,10 +2,10 @@
   "schema": 1,
   "id": "summarize_tool",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.3",
+  "api": "0.2.0-experimental.4",
   "state_version": 1,
   "license": "Apache-2.0",
-  "capabilities": ["tools", "model"],
+  "capabilities": ["tools", "agents"],
   "compatibility": {
     "required_features": ["model_complete_v1"]
   }

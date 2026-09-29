@@ -1595,3 +1595,23 @@ fn registration_primitives_need_their_capability_and_withdraw_on_disable_or_with
     assert!(reloaded.builtin_controls().is_empty());
     assert!(reloaded.contract_documents().is_empty());
 }
+
+#[test]
+fn writable_pty_panes_also_need_workspace_write_authority() {
+    let call = |arguments: Value| codex_omd::ModHostCall {
+        operation: "terminal.pty".into(),
+        arguments,
+    };
+    assert_eq!(
+        call(json!({"action": "start", "session": "s"}))
+            .capabilities()
+            .unwrap(),
+        ["pty"]
+    );
+    assert_eq!(
+        call(json!({"action": "start", "session": "s", "write": true}))
+            .capabilities()
+            .unwrap(),
+        ["pty", "fs.write"]
+    );
+}

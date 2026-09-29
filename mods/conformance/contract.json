@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "api": "0.2.0-experimental.3",
+  "api": "0.2.0-experimental.4",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {
@@ -819,7 +819,7 @@
       "replace": "terminal",
       "timing": "inline and fullscreen while the mod view is active",
       "ownership": "host: native keymap, modal input, focus, pointer dispatch, clipboard authorization and cancellation keys",
-      "limits": "active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M and cancellation remain native",
+      "limits": "Ctrl, Alt and Shift combinations of letters, digits, F2–F12 and named keys; active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M, Shift+Tab and cancellation remain native",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -919,11 +919,11 @@
       "group": "coordination",
       "decision": "Pinned app-server requests and notifications",
       "observe": "`app_notification` and `app_server_request` for subscribed methods, with coalesced and dropped counts",
-      "alter": "`app.request` sends a routed method; authority fields are refused and thread, root and model fields are checked",
+      "alter": "`app.request` sends a routed method; only each route's listed fields are accepted, and thread, root and model fields are checked",
       "replace": null,
       "timing": "user commands and event callbacks; turn-starting methods only from user contexts",
       "ownership": "mod: which routed method; host: the route table, per-method class, contexts, confirmation and thread scope",
-      "limits": "only methods in `app.routes`; `command/exec`, `process/*`, `fs/*`, `thread/shellCommand` and credential flows are excluded; the in-process app-server only (`client_surface_unavailable` otherwise); 256 events / 1 MiB per mod queue",
+      "limits": "only methods in `app.routes`; thread-scoped methods reach the current thread and threads the mod started or forked; local media paths are refused; `mcpServer/tool/call` is confirmed per call; `command/exec`, `process/*`, `fs/*`, `thread/shellCommand` and credential flows are excluded; the in-process app-server only (`client_surface_unavailable` otherwise); 256 events / 1 MiB per mod queue",
       "native": "hooks cannot call the app-server or observe its notifications",
       "covers": {
         "capabilities": [
@@ -981,6 +981,31 @@
       "replace_note": null
     },
     {
+      "id": "tool.dynamic",
+      "group": "tool",
+      "decision": "Runtime tool definitions",
+      "observe": "calls to defined tools reach the `api.dynamicTools` handler as `{name, arguments}`",
+      "alter": "`tools.define` adds or replaces a model-visible tool and `tools.undefine` removes it",
+      "replace": null,
+      "timing": "at the next model request",
+      "ownership": "mod: tool definitions and results; host: schema validation, exposure and admission",
+      "limits": "64 per mod; names distinct from the mod's static tools; native event and tool callbacks only; cleared when the mod reloads",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": [
+          "tools.define",
+          "tools.undefine"
+        ]
+      },
+      "evidence": [
+        "patch:dynamic_tools_are_defined_invoked_and_removed_by_their_mod"
+      ],
+      "replace_note": null
+    },
+    {
       "id": "tool.output",
       "group": "tool",
       "decision": "Tool-output replacement and composable feedback",
@@ -989,10 +1014,12 @@
       "replace": "tool_output (exclusive)",
       "timing": "after the handler returns, before upstream truncation and history recording",
       "ownership": "mod: model-visible text; host: call id, status, the retrievable original and the ledger hashes",
-      "limits": "replacement and combined text ≤ 64 KiB, else the original is kept with a diagnostic; originals rotate per mod (newest 256)",
+      "limits": "replacement ≤ 64 KiB; handlers see the first 48 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers; originals rotate per mod (newest 256)",
       "native": "PostToolUse hooks can add feedback but cannot keep a retrievable original or compose with a replacement",
       "covers": {
-        "capabilities": [],
+        "capabilities": [
+          "outputs"
+        ],
         "events": [
           "tool_output"
         ],
@@ -1003,7 +1030,8 @@
       },
       "evidence": [
         "patch:tool_output_owner_replaces_text_observers_append_and_original_stays_readable",
-        "patch:tool_output_without_owner_is_not_offered"
+        "patch:tool_output_without_owner_is_not_offered",
+        "patch:tool_output_contributor_replaces_model_visible_text_within_limit"
       ],
       "replace_note": null
     },
@@ -1064,12 +1092,12 @@
       "id": "context.events",
       "group": "context_recovery",
       "decision": "Channels, process events and workspace watches",
-      "observe": "`channel`, `process_event` and external `workspace_change`",
-      "alter": "`events.publish` to a namespaced channel; `workspace.watch` bounded paths",
+      "observe": "`channel`, `process_event`, `timer` and external `workspace_change`",
+      "alter": "`events.publish` to a namespaced channel; `workspace.watch` bounded paths; `events.schedule` and `events.cancel` keyed timers for the calling mod",
       "replace": null,
       "timing": "background delivery at safe points",
       "ownership": "mod: subscriptions and payloads; host: namespaces, queues, watch roots and debounce",
-      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches per mod; protected and ignored paths excluded",
+      "limits": "256 events / 1 MiB per subscriber, drop-oldest with counts; 16 watches and 16 timers per mod (configurable); timers from 1 s to 24 h never start a turn; watches and timers end when the mod unloads or changes; protected and ignored paths excluded",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [
@@ -1077,20 +1105,24 @@
         ],
         "events": [
           "channel",
-          "process_event"
+          "process_event",
+          "timer"
         ],
         "replacements": [],
         "operations": [
           "events.publish",
           "workspace.watch",
-          "workspace.unwatch"
+          "workspace.unwatch",
+          "events.schedule",
+          "events.cancel"
         ]
       },
       "evidence": [
         "patch:publishers_are_namespaced_and_subscribers_filter_by_pattern",
         "patch:slow_subscribers_drop_oldest_and_see_the_count",
         "patch:external_changes_are_reported_relative_to_the_root",
-        "patch:channel_events_reach_subscribers_in_order"
+        "patch:channel_events_reach_subscribers_in_order",
+        "patch:watches_are_limited_per_mod_and_released_with_their_source"
       ],
       "replace_note": null
     },
@@ -1103,7 +1135,7 @@
       "replace": null,
       "timing": "user contexts for credential flows; next safe request boundary for routes",
       "ownership": "mod: which profile or route; host: storage, sign-in, injection and expiry",
-      "limits": "secrets and tokens never reach the mod runtime or the model; a missing or expired credential blocks the request",
+      "limits": "secrets and tokens never reach the mod runtime or the model; secrets are listed to and removable by their owner only; a missing or expired credential blocks the request",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [
@@ -1154,7 +1186,7 @@
       "id": "terminal.surface",
       "group": "terminal",
       "decision": "Layout, notifications, composer and built-in actions",
-      "observe": "`component_event`, `view` and `focus`",
+      "observe": "`component_event` (including keys from focused `keys: true` panes), `view` and `focus`",
       "alter": "`terminal.notify`, `terminal.show_thread`, `terminal.import_file`, `composer.read`/`write` and `builtins.invoke`",
       "replace": null,
       "timing": "user commands; composer writes and imports from user contexts",
@@ -1196,7 +1228,7 @@
       "replace": null,
       "timing": "user contexts; changes apply at the next boundary",
       "ownership": "mod: request; host: previewed plan, confirmation, trust and lock",
-      "limits": "the confirmed plan is applied as previewed; a changed package or lock refuses; `/omd` stays the native recovery",
+      "limits": "the confirmed plan is applied as previewed; updates resolve dependencies from their index and preview added grants; a changed package or lock refuses; `/omd` stays the native recovery",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [
@@ -1213,7 +1245,8 @@
       },
       "evidence": [
         "patch:install_enable_disable_and_remove_through_previewed_controls",
-        "patch:stale_previews_and_invalid_requests_are_refused"
+        "patch:stale_previews_and_invalid_requests_are_refused",
+        "patch:dependency_trees_preview_every_grant_and_install_as_confirmed"
       ],
       "replace_note": null
     },
@@ -1222,7 +1255,7 @@
       "group": "terminal",
       "decision": "Composer mention completion",
       "observe": "`completion` with the query and upstream candidates",
-      "alter": "reorder, filter or add workspace-relative paths",
+      "alter": "reorder, filter or add workspace-relative paths; suggest mod command arguments",
       "replace": "completion (exclusive)",
       "timing": "each `@` query result",
       "ownership": "mod: ranking; host: the popup, insertion and stale-result filtering",
@@ -1273,14 +1306,16 @@
       "group": "terminal",
       "decision": "Interactive shell panes",
       "observe": "`terminal.pty` read returns the screen text",
-      "alter": "start (user context, confirmed), write, read and stop a sandboxed shell rendered by `terminal` components",
+      "alter": "start (user context, confirmed) a sandboxed shell or named program, then write, read and stop it; panes render in `terminal` components",
       "replace": null,
       "timing": "while the pane runs",
       "ownership": "mod: session and input; host: sandbox, PTY, rendering and key routing",
-      "limits": "four panes; the session sandbox without network; only the owning mod can reach a session; Ctrl+] leaves a focused pane",
+      "limits": "four panes per mod and sixteen in all; workspace writes need `fs.write` and are named in the confirmation; the session sandbox without network and a scratch HOME; panes render only in views the owner contributes to and stop when it unloads; Ctrl+] leaves a focused pane",
       "native": "no native equivalent",
       "covers": {
-        "capabilities": [],
+        "capabilities": [
+          "pty"
+        ],
         "events": [],
         "replacements": [],
         "operations": [
@@ -1288,7 +1323,8 @@
         ]
       },
       "evidence": [
-        "patch:pty_output_renders_and_sessions_stay_owner_scoped"
+        "patch:pty_output_renders_and_sessions_stay_owner_scoped",
+        "rust:writable_pty_panes_also_need_workspace_write_authority"
       ],
       "replace_note": null
     },
@@ -1301,7 +1337,7 @@
       "replace": null,
       "timing": "event and tool callbacks during a task",
       "ownership": "mod: prompt and route; host: admission, ledger, allowance and cancellation",
-      "limits": "prompt ≤ 8 KiB; ≤ 300 s; counts against agent limits; unknown routes are refused",
+      "limits": "prompt ≤ 8 KiB; ≤ 300 s and ends with a cancelled callback; needs `agents`; counts against agent limits; unknown routes are refused",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -1321,14 +1357,16 @@
       "group": "context_recovery",
       "decision": "Model-bound history view",
       "observe": "`history` with a bounded view of the request items",
-      "alter": "drop, replace or insert text items in the request only",
+      "alter": "drop, replace or insert items in the request only; replace message text (dropping images), tool outputs and call arguments",
       "replace": "history (exclusive)",
       "timing": "each model request, before admission accounting",
       "ownership": "mod: which items; host: validation, transcript and provenance",
-      "limits": "the transcript is unchanged; reasoning items are only dropped together with the item they precede; call/output pairs stay whole; the current input is kept; failures keep the original history",
+      "limits": "the transcript is unchanged; reasoning items are only dropped together with, and never separated from, the item they precede; call/output pairs stay whole; the current input is kept; failures keep the original history",
       "native": "no native equivalent",
       "covers": {
-        "capabilities": [],
+        "capabilities": [
+          "history"
+        ],
         "events": [
           "history"
         ],
@@ -1339,7 +1377,8 @@
       },
       "evidence": [
         "patch:edits_fold_text_drop_paired_calls_and_insert_notes_without_touching_protected_items",
-        "patch:unsafe_edits_are_refused"
+        "patch:unsafe_edits_are_refused",
+        "patch:call_arguments_and_image_messages_can_be_rewritten"
       ],
       "replace_note": null
     }

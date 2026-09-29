@@ -88,6 +88,13 @@ impl TurnActivityLog {
         })
     }
 
+    pub fn remove(&self) -> io::Result<()> {
+        match fs::remove_file(&self.path) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
+    }
+
     pub fn append(&self, record: &ActivityRecord) -> io::Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;

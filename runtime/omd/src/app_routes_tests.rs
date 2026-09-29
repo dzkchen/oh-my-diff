@@ -108,6 +108,7 @@ fn authority_fields_are_refused_but_null_is_absent() {
         "permissions",
         "toolOutput",
         "serviceTier",
+        "futureAuthority",
     ] {
         assert_eq!(
             f.code(
@@ -343,6 +344,19 @@ fn queue_bounds_bytes_but_keeps_the_newest_event() {
             .unwrap()
             .starts_with('y')
     );
+    for _ in 0..8 {
+        queue.push(
+            "item/agentMessage/delta",
+            json!({"threadId": "t", "itemId": "i", "delta": "z".repeat(20)}),
+        );
+    }
+    let drained = queue.drain();
+    assert!(
+        drained
+            .iter()
+            .all(|event| event.params["delta"].as_str().unwrap().len() <= 64)
+    );
+    assert!(drained[0].dropped > 0);
 }
 
 #[test]

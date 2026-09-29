@@ -428,15 +428,13 @@ impl Notifier {
             let Some(core) = notifier.core.upgrade() else {
                 return;
             };
-            let Ok(mut runtime) = notifier.runtime.lock() else {
-                return;
+            let ownership = match notifier.runtime.lock() {
+                Ok(runtime) if runtime.registered(&mod_id, "agent_end") => facts(&runtime),
+                _ => return,
             };
-            if !runtime.registered(&mod_id, "agent_end") {
-                return;
-            }
-            let ownership = facts(&runtime);
             let cancelled = Arc::new(AtomicBool::new(false));
-            if let Err(error) = runtime.invoke_scoped_with(
+            if let Err(error) = codex_omd::invoke_shared(
+                &notifier.runtime,
                 &mod_id,
                 generation,
                 "agent_end",
@@ -463,6 +461,7 @@ impl Notifier {
                         ))
                         .map_err(std::io::Error::other)
                 },
+                |_| {},
             ) {
                 notifier.views.diagnostic(
                     &notifier.host,
@@ -470,6 +469,9 @@ impl Notifier {
                     Some(format!("{mod_id}: agent_end failed: {error}")),
                 );
             }
+            let Ok(mut runtime) = notifier.runtime.lock() else {
+                return;
+            };
             publish(
                 &mut runtime,
                 &notifier.host,
@@ -1405,6 +1407,7 @@ impl Agents {
         lead: &Lead,
         caller: &operations::Caller<'_>,
         request: codex_omd::ModHostCall,
+        cancelled: &AtomicBool,
     ) -> Result<Value, String> {
         lead.session
             .task
@@ -1412,7 +1415,11 @@ impl Agents {
             .map_err(|e| e.to_string())?;
         match request.operation.as_str() {
             "agents.spawn" => return self.spawn(core, lead, caller, request.arguments).await,
-            "model.complete" => return self.complete(core, lead, caller, request.arguments).await,
+            "model.complete" => {
+                return self
+                    .complete(core, lead, caller, request.arguments, cancelled)
+                    .await;
+            }
             "workspace.integrate" => {
                 return self.integrate(core, lead, caller, request.arguments).await;
             }
@@ -1471,9 +1478,14 @@ impl Agents {
                         .map_err(|e| e.to_string())?
                         .0
                         .min(Duration::from_secs(30));
-                    if let Some(job) = &mut agent.job
-                        && let Ok(result) = tokio::time::timeout(deadline, job).await
-                    {
+                    let waited = match &mut agent.job {
+                        Some(job) => tokio::select! {
+                            result = tokio::time::timeout(deadline, job) => result.ok(),
+                            () = until_cancelled(cancelled) => return Err("callback_cancelled".into()),
+                        },
+                        None => None,
+                    };
+                    if let Some(result) = waited {
                         agent.job = None;
                         if let Err(error) = result {
                             *agent.result.lock().map_err(|_| "agent_result_poisoned")? =
@@ -1582,6 +1594,7 @@ impl Agents {
         lead: &Lead,
         caller: &operations::Caller<'_>,
         value: Value,
+        cancelled: &AtomicBool,
     ) -> Result<Value, String> {
         let request: Complete = serde_json::from_value(value).map_err(|e| e.to_string())?;
         let spawned = self
@@ -1608,7 +1621,11 @@ impl Agents {
                 request.timeout_ms.unwrap_or(120_000).min(300_000),
             ));
         if let Some(job) = &mut agent.job {
-            match tokio::time::timeout(deadline, job).await {
+            let waited = tokio::select! {
+                result = tokio::time::timeout(deadline, job) => result.map_err(|_| "model_complete_timeout"),
+                () = until_cancelled(cancelled) => Err("callback_cancelled"),
+            };
+            match waited {
                 Ok(result) => {
                     agent.job = None;
                     if let Err(error) = result {
@@ -1616,11 +1633,11 @@ impl Agents {
                             Some(Err(error.to_string()));
                     }
                 }
-                Err(_) => {
+                Err(reason) => {
                     agent.shutdown().await;
                     drop(agent);
                     self.remove(&handle, &slot).await;
-                    return Err("model_complete_timeout".into());
+                    return Err(reason.into());
                 }
             }
         }
@@ -2147,5 +2164,11 @@ impl Agents {
             json!({"handle":id,"route":request.route,"permissions":if writable {"isolated_worktree"} else {"read_only"},
                 "parent_history": history.map(|(_, provenance)| provenance)}),
         )
+    }
+}
+
+async fn until_cancelled(cancelled: &AtomicBool) {
+    while !cancelled.load(Ordering::Acquire) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }

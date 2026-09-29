@@ -12,6 +12,7 @@ use operations::Caller;
 use std::collections::BTreeSet;
 use std::sync::atomic::AtomicU64;
 
+pub(super) use activity::command_ended;
 pub(super) use activity::files;
 pub(super) use activity::resume_payload;
 pub(super) use activity::tool_finished;
@@ -21,6 +22,7 @@ pub(super) use activity::turn_started;
 pub(super) use delivery::lead_started;
 pub(super) use delivery::process_started;
 pub(super) use delivery::release_owner;
+pub(super) use delivery::retain_sources;
 pub(super) use tool_batch::tool_before_payload;
 
 const CORE_OPERATIONS: &[&str] = &[
@@ -34,7 +36,13 @@ const CORE_OPERATIONS: &[&str] = &[
     "packages.list",
     "packages.preview",
     "packages.reload",
+    "tools.define",
+    "tools.undefine",
+    "events.schedule",
+    "events.cancel",
 ];
+
+type Timers = BTreeMap<(String, String), (String, tokio::task::JoinHandle<()>)>;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -46,6 +54,8 @@ pub(super) struct State {
     tool_batch: AtomicBool,
     gates: Mutex<BTreeMap<String, String>>,
     current: Mutex<Option<LeadHandle>>,
+    leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
+    commands: Mutex<std::collections::HashSet<String>>,
     running: Mutex<BTreeMap<String, String>>,
     restarted: Mutex<BTreeMap<String, bool>>,
     watches: Mutex<Option<Arc<crate::workspace_watch::WorkspaceWatches>>>,
@@ -54,6 +64,8 @@ pub(super) struct State {
     wake: Arc<tokio::sync::Notify>,
     delivery: Mutex<Option<Delivery>>,
     pending: Mutex<std::collections::VecDeque<delivery::Pending>>,
+    dropped: AtomicU64,
+    timers: Mutex<Timers>,
     core: std::sync::OnceLock<std::sync::Weak<Core>>,
 }
 
@@ -107,6 +119,10 @@ impl State {
             .and_then(LeadHandle::upgrade)
     }
 
+    fn lead(&self, thread: ThreadId) -> Option<Lead> {
+        self.leads.lock().ok()?.get(&thread)?.upgrade()
+    }
+
     fn refresh(&self, runtime: &ModHost) -> bool {
         self.tool_output
             .store(runtime.has_event("tool_output"), Ordering::Release);
@@ -140,9 +156,10 @@ pub(super) fn served(operation: &str) -> bool {
 }
 
 pub(super) fn event_allows(event: &str, operation: &str) -> bool {
-    matches!(event, "process_event" | "channel" | "approval_result")
-        || event == "tool_output"
-            && matches!(operation, "evidence.read" | "store.get" | "store.list")
+    matches!(
+        event,
+        "process_event" | "channel" | "approval_result" | "timer"
+    ) || event == "tool_output" && matches!(operation, "evidence.read" | "store.get" | "store.list")
 }
 
 type HostFn<'a> = &'a mut dyn FnMut(&str, ModHostCall) -> std::io::Result<Value>;
@@ -151,7 +168,7 @@ pub(super) async fn run<T: Send + 'static>(
     core: &Core,
     lead: &Lead,
     event: &'static str,
-    job: impl FnOnce(&mut ModHost, HostFn<'_>, &dyn Fn() -> bool) -> T + Send + 'static,
+    job: impl FnOnce(&Mutex<ModHost>, HostFn<'_>, &dyn Fn() -> bool) -> T + Send + 'static,
 ) -> Option<T> {
     let runtime = core.runtime.clone();
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -160,9 +177,11 @@ pub(super) async fn run<T: Send + 'static>(
     let generation = Arc::new(AtomicU64::new(0));
     let (flag, current) = (cancelled.clone(), generation.clone());
     let handle = tokio::task::spawn_blocking(move || {
-        let mut runtime = runtime.lock().ok()?;
-        current.store(runtime.generation(), Ordering::Release);
-        let facts = facts(&runtime);
+        let facts = {
+            let runtime = runtime.lock().ok()?;
+            current.store(runtime.generation(), Ordering::Release);
+            facts(&runtime)
+        };
         let active = || !flag.load(Ordering::Acquire);
         let mut host = |id: &str, request: ModHostCall| {
             if !operations::event_allows(event, &request.operation) {
@@ -173,7 +192,7 @@ pub(super) async fn run<T: Send + 'static>(
             }
             forward(&requests, &facts, id, request, &active)
         };
-        Some(job(&mut runtime, &mut host, &active))
+        Some(job(&runtime, &mut host, &active))
     });
     while let Some(call) = receiver.recv().await {
         let value = operations::dispatch(
@@ -208,15 +227,25 @@ pub(super) async fn invoke_one(
     payload: Value,
 ) -> Option<Result<Value, String>> {
     run(core, lead, event, move |runtime, host, active| {
-        if !runtime.registered(&id, event) {
-            return Ok(Value::Null);
-        }
-        let generation = runtime.generation();
-        runtime
-            .invoke_with(&id, generation, event, "", payload, active, |call| {
-                host(&id, call)
-            })
-            .map_err(|error| error.to_string())
+        let generation = {
+            let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+            if !runtime.registered(&id, event) {
+                return Ok(Value::Null);
+            }
+            runtime.generation()
+        };
+        codex_omd::invoke_shared(
+            runtime,
+            &id,
+            generation,
+            event,
+            "",
+            payload,
+            active,
+            host,
+            |_| {},
+        )
+        .map_err(|error| error.to_string())
     })
     .await
 }
@@ -236,32 +265,39 @@ pub(super) async fn dispatch(
     };
     match request.operation.as_str() {
         "app.routes" => Ok(codex_omd::app_routes::routes()),
-        "workspace.watch" => delivery::watch(core, lead, caller.id, request.arguments),
+        "workspace.watch" => delivery::watch(core, lead, caller, request.arguments),
         "workspace.unwatch" => delivery::unwatch(core, caller.id, &request.arguments),
         "events.publish" => delivery::publish(core, caller.id, request.arguments),
+        "events.schedule" => delivery::schedule(core, lead, caller, request.arguments),
+        "events.cancel" => delivery::cancel(core, caller.id, &request.arguments),
         "turns.activity" => activity::read(core, lead, request.arguments).await,
         "routes.select" => select_route(lead, caller.id, request.arguments),
+        "tools.define" | "tools.undefine" => {
+            let mut runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+            if request.operation == "tools.define" {
+                runtime.define_tool(caller.id, caller.generation, request.arguments)
+            } else {
+                runtime.undefine_tool(caller.id, &request.arguments)
+            }
+            .map_err(|error| error.to_string())
+        }
         "credentials.list" => {
+            let caller = caller.id.to_owned();
             blocking(Box::new(move || {
-                let profiles = codex_omd::credentials::CredentialProfiles::open(&host.root)
-                    .and_then(|profiles| profiles.list())
-                    .map_err(|error| error.to_string())?;
-                Ok(Value::Array(
-                    profiles
-                        .into_iter()
-                        .map(|profile| {
-                            json!({"id": profile.id, "label": profile.label, "kind": profile.kind,
-                                "provider": profile.provider, "origin": profile.origin, "status": "unknown", "default": profile.default})
-                        })
-                        .collect(),
-                ))
+                codex_omd::credentials::CredentialProfiles::open(&host.root)
+                    .and_then(|profiles| profiles.visible(&caller))
+                    .map(Value::Array)
+                    .map_err(|error| error.to_string())
             }))
             .await
         }
         "packages.list" | "packages.preview" | "packages.reload" => {
             let operation = request.operation.clone();
             let arguments = request.arguments;
-            blocking(Box::new(move || packages(&host.root, &operation, arguments))).await
+            blocking(Box::new(move || {
+                packages(&host.root, &operation, arguments)
+            }))
+            .await
         }
         _ => surface(lead, caller, request, cancelled).await,
     }
@@ -369,51 +405,45 @@ async fn surface(
         Origin::Tool | Origin::Event => InvocationContext::Event,
     };
     let thread = lead.thread.to_string();
-    let confirm = if request.operation == "app.request" {
-        let grants = caller.grants.as_ref().ok_or("host_caller_inactive")?;
-        let method = request.arguments["method"]
-            .as_str()
-            .ok_or("app_params_invalid: method")?;
-        let capabilities = grants.capabilities.iter().cloned().collect::<BTreeSet<_>>();
-        let routes = lead
-            .host
-            .config
-            .routes
-            .iter()
-            .filter(|route| route.roles.contains(&config::RouteRole::Lead))
-            .map(|route| (route.model.clone(), route.provider.clone()))
-            .collect::<Vec<_>>();
-        let route = codex_omd::app_routes::authorize(
-            method,
-            &request.arguments["params"],
-            &codex_omd::app_routes::AppCaller {
-                capabilities: &capabilities,
-                context,
-                current_thread: Some(&thread),
-                visible_threads: &BTreeSet::new(),
-                roots: &codex_omd::app_routes::session_roots(&lead.host.repository),
-                routes: &routes,
-            },
-        )
-        .map_err(|error| error.to_string())?;
-        route
-            .confirm
-            .then(|| format!("Mod {} requests {method}.", caller.id))
-    } else {
-        None
-    };
+    let capabilities = caller
+        .grants
+        .as_ref()
+        .map(|grants| grants.capabilities.clone())
+        .ok_or("host_caller_inactive")?;
+    let routes = lead
+        .host
+        .config
+        .routes
+        .iter()
+        .filter(|route| route.roles.contains(&config::RouteRole::Lead))
+        .map(|route| (route.model.clone(), route.provider.clone()))
+        .collect::<Vec<_>>();
+    let repository = lead.host.repository.clone();
     let (id, operation) = (caller.id.to_owned(), request.operation);
     let arguments = request.arguments;
     let cancelled = cancelled.clone();
     tokio::task::spawn_blocking(move || {
+        let active = || !cancelled.load(Ordering::Acquire);
+        if operation == "app.request" {
+            return codex_omd::client_surface::app_request(
+                &id,
+                &capabilities,
+                context,
+                Some(&thread),
+                &repository,
+                &routes,
+                arguments,
+                &active,
+            );
+        }
         codex_omd::client_surface::call(
             &id,
             &operation,
             arguments,
             context,
             Some(&thread),
-            confirm,
-            &|| !cancelled.load(Ordering::Acquire),
+            None,
+            &active,
         )
     })
     .await

@@ -5,11 +5,13 @@ const DELIVERIES_PER_ROUND: usize = 64;
 
 pub(in crate::mods) enum Pending {
     Process {
+        thread: ThreadId,
         owner: String,
         session: String,
         bytes: Option<usize>,
     },
     Watch {
+        thread: ThreadId,
         owner: String,
         watch: String,
         paths: Vec<String>,
@@ -18,28 +20,38 @@ pub(in crate::mods) enum Pending {
         event: &'static str,
         payload: Value,
     },
+    Timer {
+        thread: ThreadId,
+        owner: String,
+        key: String,
+    },
 }
 
 pub(super) fn push(state: &State, pending: Pending) {
     if let Ok(mut queue) = state.pending.lock() {
         if let (
             Pending::Process {
+                thread,
                 owner,
                 session,
                 bytes: Some(bytes),
             },
             Some(Pending::Process {
+                thread: last_thread,
                 owner: last_owner,
                 session: last_session,
                 bytes: Some(total),
             }),
         ) = (&pending, queue.back_mut())
+            && thread == last_thread
             && owner == last_owner
             && session == last_session
         {
             *total = total.saturating_add(*bytes);
         } else if queue.len() < 1024 {
             queue.push_back(pending);
+        } else {
+            state.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
     state.wake.notify_one();
@@ -55,6 +67,10 @@ pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Optio
     }
     if let Ok(mut current) = state.current.lock() {
         *current = Some(LeadHandle::new(lead));
+    }
+    if let Ok(mut leads) = state.leads.lock() {
+        leads.retain(|_, handle| handle.session.strong_count() > 0);
+        leads.insert(lead.thread, LeadHandle::new(lead));
     }
     let weak = Arc::downgrade(core);
     let handle = LeadHandle::new(lead);
@@ -73,6 +89,7 @@ pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Optio
                 push(
                     &core.expansion,
                     Pending::Process {
+                        thread: handle.thread,
                         owner: notice.owner,
                         session: notice.session,
                         bytes: notice.output_bytes,
@@ -137,9 +154,17 @@ fn ensure_delivery(core: &Arc<Core>) {
 }
 
 pub(super) async fn deliver(core: &Arc<Core>) -> bool {
-    let Some(lead) = core.expansion.current() else {
-        return false;
-    };
+    let dropped = core.expansion.dropped.swap(0, Ordering::Relaxed);
+    if dropped > 0 {
+        core.views.diagnostic(
+            &core.host,
+            "delivery",
+            Some(format!(
+                "{dropped} background events dropped at the queue limit"
+            )),
+        );
+    }
+    let current = core.expansion.current();
     let mut budget = DELIVERIES_PER_ROUND;
     while budget > 0 {
         let next = core
@@ -154,23 +179,31 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
         budget -= 1;
         match next {
             Pending::Process {
+                thread,
                 owner,
                 session,
                 bytes,
             } => {
+                let Some(lead) = core.expansion.lead(thread) else {
+                    continue;
+                };
                 let payload = match bytes {
                     Some(bytes) => json!({"session": session, "kind": "output", "bytes": bytes}),
                     None => {
-                        json!({"session": session, "kind": "exit", "exit_code": null, "signal": null})
+                        json!({"session": session, "kind": "exit"})
                     }
                 };
                 invoke_one(core, &lead, owner, "process_event", payload).await;
             }
             Pending::Watch {
+                thread,
                 owner,
                 watch,
                 paths,
             } => {
+                let Some(lead) = core.expansion.lead(thread) else {
+                    continue;
+                };
                 let changes = super::activity::external_changes(core, &lead, &paths).await;
                 if changes.is_empty() {
                     continue;
@@ -180,10 +213,19 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
                 invoke_one(core, &lead, owner, "workspace_change", payload).await;
             }
             Pending::Broadcast { event, payload } => {
-                core.event(event, payload, Some(&lead)).await;
+                core.event(event, payload, current.as_ref()).await;
+            }
+            Pending::Timer { thread, owner, key } => {
+                let Some(lead) = core.expansion.lead(thread) else {
+                    continue;
+                };
+                invoke_one(core, &lead, owner, "timer", json!({"key": key})).await;
             }
         }
     }
+    let Some(lead) = current else {
+        return budget == 0;
+    };
     let ids = sync_bus(core);
     for id in ids {
         if budget == 0 {
@@ -264,7 +306,7 @@ pub(in crate::mods) fn publish(
 pub(in crate::mods) fn watch(
     core: &Core,
     lead: &Lead,
-    caller: &str,
+    caller: &Caller<'_>,
     arguments: Value,
 ) -> Result<Value, String> {
     #[derive(Deserialize)]
@@ -296,6 +338,7 @@ pub(in crate::mods) fn watch(
                         Arc::new(watcher),
                         lead.host.repository.clone(),
                         lead.host.protected_paths(),
+                        lead.host.config.mod_limits,
                     )
                     .map_err(|error| error.to_string())?,
                 );
@@ -310,13 +353,14 @@ pub(in crate::mods) fn watch(
         .get()
         .cloned()
         .ok_or("watch_unavailable: no session")?;
-    let owner = caller.to_owned();
+    let (owner, thread) = (caller.id.to_owned(), lead.thread);
     let sink: crate::workspace_watch::ChangeSink =
         Arc::new(move |watch: &str, paths: Vec<String>| {
             if let Some(core) = weak.upgrade() {
                 push(
                     &core.expansion,
                     Pending::Watch {
+                        thread,
                         owner: owner.clone(),
                         watch: watch.to_owned(),
                         paths,
@@ -326,7 +370,8 @@ pub(in crate::mods) fn watch(
         });
     let id = watches
         .watch(
-            caller,
+            caller.id,
+            caller.source,
             &input.paths,
             input.recursive,
             input.debounce_ms,
@@ -357,6 +402,95 @@ pub(in crate::mods) fn unwatch(
         .as_ref()
         .is_some_and(|watches| watches.unwatch(caller, id));
     Ok(json!({"stopped": stopped}))
+}
+
+pub(in crate::mods) fn schedule(
+    core: &Core,
+    lead: &Lead,
+    caller: &Caller<'_>,
+    arguments: Value,
+) -> Result<Value, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        key: String,
+        delay_ms: u64,
+    }
+    let input: Input = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+    if input.key.is_empty()
+        || input.key.len() > 64
+        || !(1_000..=86_400_000).contains(&input.delay_ms)
+    {
+        return Err("timer_invalid".into());
+    }
+    let weak = core
+        .expansion
+        .core
+        .get()
+        .cloned()
+        .ok_or("timer_unavailable: no session")?;
+    let mut timers = core
+        .expansion
+        .timers
+        .lock()
+        .map_err(|_| "timer_state_poisoned")?;
+    timers.retain(|_, (_, task)| !task.is_finished());
+    let slot = (caller.id.to_owned(), input.key.clone());
+    if !timers.contains_key(&slot)
+        && timers
+            .keys()
+            .filter(|(owner, _)| owner == caller.id)
+            .count()
+            >= lead.host.config.mod_limits.bounded().timers_per_mod
+    {
+        return Err("timer_limit".into());
+    }
+    let (owner, key, thread) = (caller.id.to_owned(), input.key.clone(), lead.thread);
+    let task = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(input.delay_ms)).await;
+        if let Some(core) = weak.upgrade() {
+            push(&core.expansion, Pending::Timer { thread, owner, key });
+        }
+    });
+    if let Some((_, previous)) = timers.insert(slot, (caller.source.to_owned(), task)) {
+        previous.abort();
+    }
+    Ok(json!({"key": input.key, "delay_ms": input.delay_ms}))
+}
+
+pub(in crate::mods) fn cancel(
+    core: &Core,
+    caller: &str,
+    arguments: &Value,
+) -> Result<Value, String> {
+    let key = arguments["key"].as_str().ok_or("timer_invalid")?;
+    let removed = core
+        .expansion
+        .timers
+        .lock()
+        .map_err(|_| "timer_state_poisoned")?
+        .remove(&(caller.to_owned(), key.to_owned()));
+    if let Some((_, task)) = &removed {
+        task.abort();
+    }
+    Ok(json!({"cancelled": removed.is_some()}))
+}
+
+pub(in crate::mods) fn retain_sources(core: &Core, sources: &BTreeMap<String, String>) {
+    if let Ok(mut timers) = core.expansion.timers.lock() {
+        timers.retain(|(owner, _), (source, task)| {
+            let keep = sources.get(owner) == Some(source);
+            if !keep {
+                task.abort();
+            }
+            keep
+        });
+    }
+    if let Ok(watches) = core.expansion.watches.lock()
+        && let Some(watches) = watches.as_ref()
+    {
+        watches.retain_sources(sources);
+    }
 }
 
 pub(in crate::mods) fn release_owner(core: &Core, owner: &str) {

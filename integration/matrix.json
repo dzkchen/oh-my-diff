@@ -4,7 +4,7 @@
   "release": {
     "codex": "0.157.0",
     "omd": "0.1.0",
-    "mod_api": "0.2.0-experimental.3",
+    "mod_api": "0.2.0-experimental.4",
     "package_schema": 1,
     "upstream_tag": "rust-v0.157.0",
     "upstream_commit": "00c972ed5d6ff6499317fd41b7f23605b8e6850d",
@@ -83,7 +83,14 @@
         "terminal_prompt_v1",
         "model_complete_v1",
         "history_v1",
-        "terminal_pty_v1"
+        "terminal_pty_v1",
+        "dynamic_tools_v1",
+        "timers_v1",
+        "terminal_input_v1",
+        "terminal_style_v1",
+        "completion_arguments_v1",
+        "terminal_editor_v1",
+        "pty_programs_v1"
       ],
       "status": "supported",
       "fixtures": [
@@ -99,11 +106,12 @@
       "area": "host",
       "name": "Public TypeScript mod API",
       "owner": "OMD mod host (runtime/omd/src/mods.rs)",
-      "version": "0.2.0-experimental.3",
+      "version": "0.2.0-experimental.4",
       "supported_versions": [
         "0.2.0-experimental.1",
         "0.2.0-experimental.2",
-        "0.2.0-experimental.3"
+        "0.2.0-experimental.3",
+        "0.2.0-experimental.4"
       ],
       "status": "supported",
       "fixtures": [
@@ -978,7 +986,7 @@
     {
       "id": "current_api_composition",
       "retained_for": [
-        "0.2.0-experimental.3"
+        "0.2.0-experimental.4"
       ],
       "case": "Composition, precedence and conflict handling on the current API 0.2 row: declared order, cycles, contested replacements and scope shadowing.",
       "evidence": [

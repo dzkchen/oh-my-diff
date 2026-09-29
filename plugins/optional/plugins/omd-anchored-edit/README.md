@@ -1,6 +1,6 @@
 # OMD anchored edits
 
-Optional plugin component `0.2.0-preview.1`, public mod API `0.2.0-experimental.3`. The TypeScript component owns anchor validation, unique matching, line scope and replacement construction. The host provides ordinary reads and authorized compare-and-swap transactions. No anchor behavior was added to Rust.
+Optional plugin component `0.2.0-preview.1`, public mod API `0.2.0-experimental.4`. The TypeScript component owns anchor validation, unique matching, line scope and replacement construction. The host provides ordinary reads and authorized compare-and-swap transactions. No anchor behavior was added to Rust.
 
 Install the plugin from the repository's optional marketplace in the Codex home you explicitly choose:
 

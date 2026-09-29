@@ -91,6 +91,7 @@ contains only the packages labeled `bundled` below.
 | `read_batcher@1.0.0` | `mod` | `mods/examples/read_batcher` | Merges parallel-safe tool calls of one live response into a single call. |
 | `screenshot_attach@1.0.0` | `mod` | `mods/examples/screenshot_attach` | Writes binary evidence and attaches it to the live composer. |
 | `shell_pane@1.0.0` | `mod` | `mods/examples/shell_pane` | Runs a sandboxed interactive shell rendered inside a live terminal pane. |
+| `status_tools@1.0.0` | `mod` | `mods/examples/status_tools` | Defines a model-visible tool at run time and refreshes its answer from a keyed timer. |
 | `site_vault@1.0.0` | `mod` | `mods/examples/site_vault` | Enrolls origin-bound secrets through native prompts and hands them only to its sidecars. |
 | `summarize_tool@1.0.0` | `mod` | `mods/examples/summarize_tool` | Runs one-shot completions on configured worker routes under live admission and the ledger. |
 | `tool_guide@1.0.0` | `mod` | `mods/examples/tool_guide` | Re-describes model-visible tool specs per route when the live tool router is built. |

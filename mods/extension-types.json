@@ -515,6 +515,14 @@
       "why_mod": "Runs a sandboxed interactive shell rendered inside a live terminal pane."
     },
     {
+      "path": "mods/examples/status_tools",
+      "id": "status_tools",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Defines a model-visible tool at run time and refreshes its answer from a keyed timer."
+    },
+    {
       "path": "mods/examples/site_vault",
       "id": "site_vault",
       "version": "1.0.0",

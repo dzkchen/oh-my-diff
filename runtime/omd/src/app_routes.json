@@ -10,13 +10,18 @@
    "contexts": [
     "user",
     "event"
-   ]
+   ],
+   "fields": []
   },
   "account/rateLimits/read": {
    "class": "account",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "excludeResetCreditDetails",
+    "supportsLunaReserve"
    ]
   },
   "account/read": {
@@ -24,6 +29,9 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "refreshToken"
    ]
   },
   "account/usage/read": {
@@ -31,6 +39,9 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "threadId"
    ]
   },
   "account/workspaceMessages/read": {
@@ -38,13 +49,18 @@
    "contexts": [
     "user",
     "event"
-   ]
+   ],
+   "fields": []
   },
   "app/installed": {
    "class": "inventory",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "forceRefresh",
+    "threadId"
    ]
   },
   "app/list": {
@@ -52,6 +68,12 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "forceRefetch",
+    "limit",
+    "threadId"
    ]
   },
   "app/read": {
@@ -59,6 +81,11 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "appIds",
+    "includeTools",
+    "threadId"
    ]
   },
   "collaborationMode/list": {
@@ -66,7 +93,8 @@
    "contexts": [
     "user",
     "event"
-   ]
+   ],
+   "fields": []
   },
   "config/batchWrite": {
    "class": "config.write",
@@ -74,8 +102,10 @@
     "user"
    ],
    "confirm": true,
-   "refuse": [
-    "filePath"
+   "fields": [
+    "edits",
+    "expectedVersion",
+    "reloadUserConfig"
    ],
    "keys": "edits[].keyPath"
   },
@@ -83,13 +113,18 @@
    "class": "packages",
    "contexts": [
     "user"
-   ]
+   ],
+   "fields": []
   },
   "config/read": {
    "class": "config",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cwd",
+    "includeLayers"
    ],
    "root": [
     "cwd"
@@ -101,8 +136,11 @@
     "user"
    ],
    "confirm": true,
-   "refuse": [
-    "filePath"
+   "fields": [
+    "expectedVersion",
+    "keyPath",
+    "mergeStrategy",
+    "value"
    ],
    "keys": "keyPath"
   },
@@ -111,13 +149,17 @@
    "contexts": [
     "user",
     "event"
-   ]
+   ],
+   "fields": []
   },
   "environment/info": {
    "class": "inventory",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "environmentId"
    ]
   },
   "environment/status": {
@@ -125,6 +167,9 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "environmentId"
    ]
   },
   "experimentalFeature/enablement/set": {
@@ -133,6 +178,9 @@
     "user"
    ],
    "confirm": true,
+   "fields": [
+    "enablement"
+   ],
    "keys": "enablement{}"
   },
   "experimentalFeature/list": {
@@ -140,6 +188,11 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "limit",
+    "threadId"
    ]
   },
   "externalAgentConfig/detect": {
@@ -147,6 +200,14 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cwds",
+    "includeHome",
+    "maxSessionAgeDays",
+    "maxSessions",
+    "migrationSource",
+    "source"
    ]
   },
   "externalAgentConfig/import": {
@@ -154,18 +215,79 @@
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "migrationItems",
+    "migrationSource",
+    "providerId",
+    "source"
+   ]
   },
   "externalAgentConfig/import/readHistories": {
    "class": "packages",
    "contexts": [
     "user"
-   ]
+   ],
+   "fields": []
   },
   "externalAgentConfig/import/recordHistory": {
    "class": "packages",
    "contexts": [
     "user"
+   ],
+   "fields": [
+    "itemTypeResults",
+    "providerId"
+   ]
+  },
+  "fuzzyFileSearch": {
+   "class": "fs.read",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": [
+    "cancellationToken",
+    "query",
+    "roots"
+   ],
+   "root": [
+    "roots"
+   ]
+  },
+  "fuzzyFileSearch/sessionStart": {
+   "class": "fs.read",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": [
+    "roots",
+    "sessionId"
+   ],
+   "root": [
+    "roots"
+   ]
+  },
+  "fuzzyFileSearch/sessionStop": {
+   "class": "fs.read",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": [
+    "sessionId"
+   ]
+  },
+  "fuzzyFileSearch/sessionUpdate": {
+   "class": "fs.read",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "fields": [
+    "query",
+    "sessionId"
    ]
   },
   "hooks/list": {
@@ -173,6 +295,9 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cwds"
    ]
   },
   "marketplace/add": {
@@ -180,27 +305,46 @@
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "refName",
+    "source",
+    "sparsePaths"
+   ]
   },
   "marketplace/remove": {
    "class": "packages",
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "marketplaceName"
+   ]
   },
   "marketplace/upgrade": {
    "class": "packages",
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "marketplaceName"
+   ]
   },
   "mcpServer/event/stream/start": {
    "class": "network",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "_meta",
+    "arguments",
+    "name",
+    "server",
+    "subscriptionId",
+    "threadId"
    ]
   },
   "mcpServer/event/stream/stop": {
@@ -208,6 +352,9 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "subscriptionId"
    ]
   },
   "mcpServer/resource/read": {
@@ -215,6 +362,29 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "connectorId",
+    "originCallId",
+    "server",
+    "target",
+    "threadId",
+    "uri"
+   ]
+  },
+  "mcpServer/tool/call": {
+   "class": "exec",
+   "contexts": [
+    "user",
+    "event"
+   ],
+   "confirm": true,
+   "scope": "current",
+   "fields": [
+    "arguments",
+    "server",
+    "threadId",
+    "tool"
    ]
   },
   "mcpServerStatus/list": {
@@ -222,6 +392,12 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "detail",
+    "limit",
+    "threadId"
    ]
   },
   "memory/reset": {
@@ -229,13 +405,17 @@
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": []
   },
   "memory/status": {
    "class": "sessions",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "minConsolidatedThreads"
    ]
   },
   "model/list": {
@@ -243,6 +423,11 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "includeHidden",
+    "limit"
    ]
   },
   "modelProvider/capabilities/read": {
@@ -250,13 +435,19 @@
    "contexts": [
     "user",
     "event"
-   ]
+   ],
+   "fields": []
   },
   "permissionProfile/list": {
    "class": "inventory",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "cwd",
+    "limit"
    ],
    "root": [
     "cwd"
@@ -267,13 +458,23 @@
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "installAttemptId",
+    "marketplacePath",
+    "pluginName",
+    "remoteMarketplaceName"
+   ]
   },
   "plugin/installed": {
    "class": "inventory",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cwds",
+    "installSuggestionPluginNames"
    ]
   },
   "plugin/list": {
@@ -281,6 +482,11 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cwds",
+    "forceRefetch",
+    "marketplaceKinds"
    ]
   },
   "plugin/read": {
@@ -288,12 +494,20 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "marketplacePath",
+    "pluginName",
+    "remoteMarketplaceName"
    ]
   },
   "plugin/reconcile": {
    "class": "packages",
    "contexts": [
     "user"
+   ],
+   "fields": [
+    "reason"
    ]
   },
   "plugin/search": {
@@ -301,6 +515,13 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "cwds",
+    "limit",
+    "scope",
+    "searchTerm"
    ]
   },
   "plugin/skill/read": {
@@ -308,6 +529,11 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "remoteMarketplaceName",
+    "remotePluginId",
+    "skillName"
    ]
   },
   "plugin/uninstall": {
@@ -315,12 +541,21 @@
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "pluginId"
+   ]
   },
   "project/create": {
    "class": "threads",
    "contexts": [
     "user"
+   ],
+   "fields": [
+    "idempotencyKey",
+    "metadata",
+    "name",
+    "roots"
    ]
   },
   "project/delete": {
@@ -328,26 +563,46 @@
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "projectId"
+   ]
   },
   "project/import": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "idempotencyKey",
+    "metadata",
+    "name",
+    "roots",
+    "threads"
+   ]
   },
   "project/list": {
    "class": "sessions",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "limit",
+    "sortDirection",
+    "sortKey"
    ]
   },
   "project/move": {
    "class": "threads",
    "contexts": [
     "user"
+   ],
+   "fields": [
+    "beforeProjectId",
+    "projectId"
    ]
   },
   "project/read": {
@@ -355,12 +610,21 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "projectId"
    ]
   },
   "project/update": {
    "class": "threads",
    "contexts": [
     "user"
+   ],
+   "fields": [
+    "metadata",
+    "name",
+    "projectId",
+    "roots"
    ]
   },
   "remoteControl/status/read": {
@@ -368,40 +632,59 @@
    "contexts": [
     "user",
     "event"
-   ]
+   ],
+   "fields": []
   },
   "review/start": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "delivery",
+    "target",
+    "threadId"
+   ]
   },
   "rollout/compress": {
    "class": "threads",
    "contexts": [
     "user"
-   ]
+   ],
+   "fields": []
   },
   "skills/config/write": {
    "class": "packages",
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "enabled",
+    "name",
+    "path"
+   ]
   },
   "skills/extraRoots/set": {
    "class": "packages",
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "extraRoots"
+   ]
   },
   "skills/list": {
    "class": "inventory",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cwds",
+    "forceReload"
    ]
   },
   "thread/archive": {
@@ -409,14 +692,23 @@
    "contexts": [
     "user"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "threadId"
+   ]
   },
   "thread/attachment/add": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "attachmentType",
+    "identityKey",
+    "payload",
+    "threadId"
+   ]
   },
   "thread/attachment/list": {
    "class": "sessions",
@@ -424,14 +716,24 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "cursor",
+    "limit",
+    "threadId"
+   ]
   },
   "thread/attachment/remove": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "attachmentType",
+    "identityKey",
+    "threadId"
+   ]
   },
   "thread/backgroundTerminals/clean": {
    "class": "threads",
@@ -439,7 +741,10 @@
     "user",
     "event"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "threadId"
+   ]
   },
   "thread/backgroundTerminals/list": {
    "class": "sessions",
@@ -447,7 +752,12 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "cursor",
+    "limit",
+    "threadId"
+   ]
   },
   "thread/backgroundTerminals/terminate": {
    "class": "threads",
@@ -455,7 +765,11 @@
     "user",
     "event"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "processId",
+    "threadId"
+   ]
   },
   "thread/compact/start": {
    "class": "threads",
@@ -463,7 +777,10 @@
     "user",
     "event"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "threadId"
+   ]
   },
   "thread/delete": {
    "class": "threads",
@@ -471,7 +788,10 @@
     "user"
    ],
    "confirm": true,
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "threadId"
+   ]
   },
   "thread/fork": {
    "class": "threads",
@@ -479,16 +799,19 @@
     "user"
    ],
    "scope": "visible",
-   "refuse": [
-    "serviceTier",
-    "runtimeWorkspaceRoots",
-    "approvalPolicy",
-    "approvalsReviewer",
-    "sandbox",
-    "permissions",
-    "config",
-    "baseInstructions",
-    "path"
+   "fields": [
+    "beforeTurnId",
+    "cwd",
+    "deferGoalContinuation",
+    "developerInstructions",
+    "ephemeral",
+    "excludeTurns",
+    "lastTurnId",
+    "model",
+    "modelProvider",
+    "serdeJson",
+    "threadId",
+    "threadSource"
    ],
    "root": [
     "cwd"
@@ -503,7 +826,10 @@
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "threadId"
+   ]
   },
   "thread/goal/get": {
    "class": "sessions",
@@ -511,14 +837,23 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "threadId"
+   ]
   },
   "thread/goal/set": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "objective",
+    "status",
+    "threadId",
+    "tokenBudget"
+   ]
   },
   "thread/items/list": {
    "class": "sessions",
@@ -526,13 +861,37 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "cursor",
+    "limit",
+    "sortDirection",
+    "threadId",
+    "turnId"
+   ]
   },
   "thread/list": {
    "class": "sessions",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "ancestorThreadId",
+    "archived",
+    "cursor",
+    "cwd",
+    "limit",
+    "modelProviders",
+    "originators",
+    "parentThreadId",
+    "projectId",
+    "searchTerm",
+    "sectionId",
+    "sortDirection",
+    "sortKey",
+    "sourceKinds",
+    "useStateDbOnly"
    ],
    "root": [
     "cwd"
@@ -543,6 +902,10 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "limit"
    ]
   },
   "thread/memoryMode/set": {
@@ -550,7 +913,11 @@
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "mode",
+    "threadId"
+   ]
   },
   "thread/metadata/update": {
    "class": "threads",
@@ -558,7 +925,13 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "daybreakEnabled",
+    "gitInfo",
+    "projectId",
+    "threadId"
+   ]
   },
   "thread/name/set": {
    "class": "threads",
@@ -566,14 +939,23 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "name",
+    "threadId"
+   ]
   },
   "thread/queue/add": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "clientUserMessageId",
+    "input",
+    "threadId"
+   ]
   },
   "thread/queue/delete": {
    "class": "threads",
@@ -581,7 +963,11 @@
     "user",
     "event"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "queuedSubmissionId",
+    "threadId"
+   ]
   },
   "thread/queue/list": {
    "class": "sessions",
@@ -589,28 +975,46 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "cursor",
+    "limit",
+    "threadId"
+   ]
   },
   "thread/queue/reorder": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "queuedSubmissionIds",
+    "threadId"
+   ]
   },
   "thread/queue/start": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "queuedSubmissionId",
+    "threadId"
+   ]
   },
   "thread/queue/update": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "input",
+    "queuedSubmissionId",
+    "threadId"
+   ]
   },
   "thread/read": {
    "class": "sessions",
@@ -618,14 +1022,19 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "includeTurns",
+    "threadId"
+   ]
   },
   "thread/realtime/listVoices": {
    "class": "inventory",
    "contexts": [
     "user",
     "event"
-   ]
+   ],
+   "fields": []
   },
   "thread/resume": {
    "class": "threads",
@@ -633,17 +1042,16 @@
     "user"
    ],
    "scope": "visible",
-   "refuse": [
-    "serviceTier",
-    "runtimeWorkspaceRoots",
-    "approvalPolicy",
-    "approvalsReviewer",
-    "sandbox",
-    "permissions",
-    "config",
-    "baseInstructions",
-    "history",
-    "path"
+   "fields": [
+    "cwd",
+    "developerInstructions",
+    "excludeTurns",
+    "initialTurnsPage",
+    "model",
+    "modelProvider",
+    "personality",
+    "serdeJson",
+    "threadId"
    ],
    "root": [
     "cwd"
@@ -659,13 +1067,26 @@
     "user"
    ],
    "confirm": true,
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "beforeTurnId",
+    "threadId"
+   ]
   },
   "thread/search": {
    "class": "sessions",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "archived",
+    "cursor",
+    "limit",
+    "searchTerm",
+    "sortDirection",
+    "sortKey",
+    "sourceKinds"
    ]
   },
   "thread/searchOccurrences": {
@@ -673,6 +1094,12 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "limit",
+    "searchTerm",
+    "threadId"
    ]
   },
   "thread/section/move": {
@@ -680,6 +1107,11 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "beforeThreadId",
+    "sectionId",
+    "threadId"
    ]
   },
   "thread/settings/update": {
@@ -688,12 +1120,16 @@
     "user"
    ],
    "scope": "current",
-   "refuse": [
-    "approvalPolicy",
-    "approvalsReviewer",
-    "sandboxPolicy",
-    "permissions",
-    "serviceTier"
+   "fields": [
+    "collaborationMode",
+    "cwd",
+    "disabledPluginIds",
+    "effort",
+    "model",
+    "multiAgentMode",
+    "personality",
+    "summary",
+    "threadId"
    ],
    "root": [
     "cwd"
@@ -708,21 +1144,20 @@
     "user"
    ],
    "scope": "root",
-   "refuse": [
-    "serviceTier",
-    "runtimeWorkspaceRoots",
-    "approvalPolicy",
-    "approvalsReviewer",
-    "sandbox",
-    "permissions",
-    "config",
-    "baseInstructions",
-    "allowProviderModelFallback",
-    "environments",
-    "dynamicTools",
-    "selectedCapabilityRoots",
-    "mockExperimentalField",
-    "experimentalRawEvents"
+   "fields": [
+    "cwd",
+    "daybreakEnabled",
+    "developerInstructions",
+    "ephemeral",
+    "historyMode",
+    "model",
+    "modelProvider",
+    "multiAgentMode",
+    "personality",
+    "projectId",
+    "serviceName",
+    "sessionStartSource",
+    "threadSource"
    ],
    "root": [
     "cwd"
@@ -738,7 +1173,12 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "cursor",
+    "limit",
+    "threadId"
+   ]
   },
   "thread/turns/list": {
    "class": "sessions",
@@ -746,20 +1186,34 @@
     "user",
     "event"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "cursor",
+    "itemsView",
+    "limit",
+    "sortDirection",
+    "threadId"
+   ]
   },
   "thread/unarchive": {
    "class": "threads",
    "contexts": [
     "user"
    ],
-   "scope": "visible"
+   "scope": "visible",
+   "fields": [
+    "threadId"
+   ]
   },
   "threadSection/create": {
    "class": "threads",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "appearance",
+    "name"
    ]
   },
   "threadSection/delete": {
@@ -767,13 +1221,20 @@
    "contexts": [
     "user"
    ],
-   "confirm": true
+   "confirm": true,
+   "fields": [
+    "sectionId"
+   ]
   },
   "threadSection/list": {
    "class": "sessions",
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "cursor",
+    "limit"
    ]
   },
   "threadSection/update": {
@@ -781,6 +1242,11 @@
    "contexts": [
     "user",
     "event"
+   ],
+   "fields": [
+    "appearance",
+    "name",
+    "sectionId"
    ]
   },
   "turn/interrupt": {
@@ -789,7 +1255,11 @@
     "user",
     "event"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "threadId",
+    "turnId"
+   ]
   },
   "turn/settings/update": {
    "class": "threads",
@@ -798,9 +1268,12 @@
     "event"
    ],
    "scope": "current",
-   "refuse": [
-    "approvalsReviewer",
-    "serviceTier"
+   "fields": [
+    "effort",
+    "model",
+    "summary",
+    "threadId",
+    "turnId"
    ],
    "route_fields": [
     "model"
@@ -812,17 +1285,22 @@
     "user"
    ],
    "scope": "current",
-   "refuse": [
-    "toolOutput",
-    "environments",
-    "runtimeWorkspaceRoots",
-    "approvalPolicy",
-    "approvalsReviewer",
-    "sandboxPolicy",
-    "permissions",
-    "serviceTier",
-    "serviceTierForTurn",
-    "cyberAccessProgram"
+   "fields": [
+    "additionalContext",
+    "clientUserMessageId",
+    "collaborationMode",
+    "cwd",
+    "disabledPluginIds",
+    "effort",
+    "input",
+    "model",
+    "multiAgentMode",
+    "outputSchema",
+    "personality",
+    "responsesapiClientMetadata",
+    "summary",
+    "threadId",
+    "turnTrigger"
    ],
    "root": [
     "cwd"
@@ -837,7 +1315,15 @@
     "user",
     "event"
    ],
-   "scope": "current"
+   "scope": "current",
+   "fields": [
+    "additionalContext",
+    "clientUserMessageId",
+    "expectedTurnId",
+    "input",
+    "responsesapiClientMetadata",
+    "threadId"
+   ]
   }
  },
  "notifications": [

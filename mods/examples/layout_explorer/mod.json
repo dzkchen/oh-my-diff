@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "layout_explorer",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.3",
+  "api": "0.2.0-experimental.4",
   "state_version": 1,
   "license": "Apache-2.0",
   "capabilities": [
@@ -12,7 +12,9 @@
   ],
   "compatibility": {
     "required_features": [
-      "terminal_surface_v1"
+      "terminal_surface_v1",
+      "terminal_input_v1",
+      "terminal_style_v1"
     ]
   }
 }

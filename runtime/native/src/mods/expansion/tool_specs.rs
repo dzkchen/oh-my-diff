@@ -59,12 +59,16 @@ pub(super) fn parse(value: Value) -> Result<Option<ToolSpecAdjustment>, String> 
 }
 
 impl ToolSpecContributor for Mods {
+    fn adjusting(&self, thread_store: &ExtensionData) -> bool {
+        self.expansion.tool_specs.load(Ordering::Acquire) && lead_thread(thread_store)
+    }
+
     fn adjust_tool_specs(
         &self,
         thread_store: &ExtensionData,
         specs: &[ToolSpecView],
     ) -> Option<ToolSpecAdjustment> {
-        if !self.expansion.tool_specs.load(Ordering::Acquire) {
+        if !self.adjusting(thread_store) {
             return None;
         }
         let lead = thread_store.get::<Lead>()?;

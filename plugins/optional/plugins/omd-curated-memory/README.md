@@ -1,6 +1,6 @@
 # Curated project memory
 
-This opt-in plugin owns memory tools, deterministic curation, the end-of-session report and live recall policy through API `0.2.0-experimental.3`. Repository-scoped `store.*` keeps records with revision checks and host provenance; `workspace.read` and `evidence.read` revalidate sources before reuse. The feature has no package-specific Rust route.
+This opt-in plugin owns memory tools, deterministic curation, the end-of-session report and live recall policy through API `0.2.0-experimental.4`. Repository-scoped `store.*` keeps records with revision checks and host provenance; `workspace.read` and `evidence.read` revalidate sources before reuse. The feature has no package-specific Rust route.
 
 Install from the optional repository marketplace, inspect `omd-mod plugin-component PLUGIN_ROOT`, then inspect/trust/enable its component with the capabilities in `mod/mod.json`. Use the same external mod store for the host and `omd` CLI. Installation and selection are separate; neither install profile activates this package. `enabled:false` registers no tools or callbacks. The selected component's default supports on-demand local tools, with live recall, turn capture and curation hook all off.
 

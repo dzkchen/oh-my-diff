@@ -137,13 +137,13 @@ async fn tool_output_owner_replaces_text_observers_append_and_original_stays_rea
     let Some(fixture) = fixture(&[
         Package {
             id: "budget",
-            capabilities: &["interception", "store"],
+            capabilities: &["outputs", "store"],
             manifest: Value::Null,
             source: "export default function (api) {\n  api.replace('tool_output', event => event.bytes > 4\n    ? { text: `trimmed ${event.bytes} ${event.tool} ${event.arguments.path} ${typeof event.original}` }\n    : null);\n}\n",
         },
         Package {
             id: "lint",
-            capabilities: &["interception"],
+            capabilities: &["outputs"],
             manifest: Value::Null,
             source: "export default function (api) {\n  api.on('tool_output', event => event.text.startsWith('trimmed') && event.original === null ? { append: 'lint: ok' } : null);\n}\n",
         },
@@ -303,12 +303,19 @@ async fn turn_activity_records_only_while_a_sessions_mod_is_enabled() {
         "shell",
         Some(r#"{"command":["ls","-a"]}"#),
     );
-    activity::tool_finished(
+    activity::tool_started(
         core,
         lead,
-        "c1",
-        "shell",
-        "Completed",
+        "c2",
+        "exec_command",
+        Some(r#"{"cmd":"sleep 9"}"#),
+    );
+    activity::command_ended(core, lead, "c1", 0);
+    activity::tool_finished(core, lead, "c1", "shell", "succeeded");
+    activity::tool_finished(core, lead, "c2", "exec_command", "succeeded");
+    activity::files(
+        core,
+        lead,
         &[json!({"path": "a.txt", "before": null, "after": "h1"})],
         "tool",
     );
@@ -317,9 +324,16 @@ async fn turn_activity_records_only_while_a_sessions_mod_is_enabled() {
         .unwrap();
     let turn = &turns["turns"][0];
     assert_eq!(turn["outcome"], "running");
-    assert_eq!(turn["tool_calls"][0]["outcome"], "Completed");
+    assert_eq!(turn["tool_calls"][0]["outcome"], "succeeded");
     assert_eq!(turn["processes"][0]["command"], "ls -a");
-    assert_eq!(turn["processes"][0]["running"], false);
+    assert_eq!(
+        (
+            &turn["processes"][0]["running"],
+            &turn["processes"][0]["exit_code"]
+        ),
+        (&json!(false), &json!(0))
+    );
+    assert_eq!(turn["processes"][1]["running"], true);
     assert_eq!(turn["files"][0]["path"], "a.txt");
     activity::turn_ended(core, lead, "completed", None);
     let turns = activity::read(core, lead, Value::Null).await.unwrap();
@@ -673,7 +687,9 @@ fn tool_before_payload_carries_schema_raw_arguments_and_batch_position() {
 #[test]
 fn process_output_notices_coalesce_per_session_and_keep_exit_order() {
     let state = State::default();
+    let thread = ThreadId::new();
     let output = |session: &str, bytes| delivery::Pending::Process {
+        thread,
         owner: "m".into(),
         session: session.into(),
         bytes,
@@ -761,7 +777,7 @@ async fn event_context_refuses_user_only_app_methods_before_the_client() {
 async fn model_completions_use_only_configured_worker_routes() {
     let Some(fixture) = fixture(&[Package {
         id: "summarizer",
-        capabilities: &["model"],
+        capabilities: &["agents"],
         manifest: Value::Null,
         source: "export default function () {}\n",
     }]) else {
@@ -803,4 +819,97 @@ async fn model_completions_use_only_configured_worker_routes() {
     assert_eq!(unknown, "provider_not_registered_or_stopped");
     let malformed = run(json!({"prompt": "x"})).await.unwrap_err();
     assert!(malformed.contains("route"), "{malformed}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dynamic_tools_are_defined_invoked_and_removed_by_their_mod() {
+    let Some(fixture) = fixture(&[Package {
+        id: "bridge",
+        capabilities: &["tools", "events"],
+        manifest: Value::Null,
+        source: "export default function (api) {\n  api.dynamicTools(call => ({ called: call.name, arguments: call.arguments }));\n}\n",
+    }]) else {
+        return;
+    };
+    let (core, lead) = (&fixture.core, &fixture.lead);
+    let (generation, grants) = {
+        let runtime = core.runtime.lock().unwrap();
+        (runtime.generation(), runtime.grants("bridge"))
+    };
+    let caller = Caller {
+        id: "bridge",
+        source: "",
+        grants,
+        generation,
+        origin: Origin::Event,
+        record_changes: false,
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let call = |operation: &str, arguments: Value| {
+        let caller = Caller {
+            grants: caller.grants.clone(),
+            ..caller
+        };
+        let request = ModHostCall {
+            operation: operation.into(),
+            arguments,
+        };
+        let cancelled = cancelled.clone();
+        async move { dispatch(core, lead, &caller, request, &cancelled).await }
+    };
+    let schema = json!({"type": "object", "properties": {"q": {"type": "string"}}, "additionalProperties": false});
+    call(
+        "tools.define",
+        json!({"name": "search", "description": "Search.", "parameters": schema}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        call(
+            "tools.define",
+            json!({"name": "Bad-Name", "description": "x", "parameters": schema})
+        )
+        .await
+        .is_err()
+    );
+    let listed = core.runtime.lock().unwrap().tools();
+    assert!(
+        listed
+            .iter()
+            .any(|(id, _, tool)| id == "bridge" && tool.name == "search")
+    );
+    let value = codex_omd::invoke_shared(
+        &core.runtime,
+        "bridge",
+        generation,
+        "tool",
+        "search",
+        json!({"q": "x"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected_host_call")),
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(value, json!({"called": "search", "arguments": {"q": "x"}}));
+    assert_eq!(
+        call("tools.undefine", json!({"name": "search"}))
+            .await
+            .unwrap()["removed"],
+        true
+    );
+    assert!(
+        !core
+            .runtime
+            .lock()
+            .unwrap()
+            .tools()
+            .iter()
+            .any(|(_, _, tool)| tool.name == "search")
+    );
+    assert!(
+        call("events.schedule", json!({"key": "k", "delay_ms": 10}))
+            .await
+            .unwrap_err()
+            .contains("timer_invalid")
+    );
 }

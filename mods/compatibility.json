@@ -5,7 +5,7 @@
     "codex": "0.157.0",
     "omd": "0.1.0",
     "stability": "experimental",
-    "current_api": "0.2.0-experimental.3",
+    "current_api": "0.2.0-experimental.4",
     "package_schemas": [
       1
     ],
@@ -76,7 +76,14 @@
       "terminal_prompt_v1",
       "model_complete_v1",
       "history_v1",
-      "terminal_pty_v1"
+      "terminal_pty_v1",
+      "dynamic_tools_v1",
+      "timers_v1",
+      "terminal_input_v1",
+      "terminal_style_v1",
+      "completion_arguments_v1",
+      "terminal_editor_v1",
+      "pty_programs_v1"
     ]
   },
   "apis": [
@@ -94,6 +101,12 @@
     },
     {
       "version": "0.2.0-experimental.3",
+      "stability": "experimental",
+      "support_until": "2027-03-20",
+      "service_imports": "exact or compatible caret range"
+    },
+    {
+      "version": "0.2.0-experimental.4",
       "stability": "experimental",
       "support_until": "2027-03-20",
       "service_imports": "exact or compatible caret range"

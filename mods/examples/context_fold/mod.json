@@ -2,10 +2,10 @@
   "schema": 1,
   "id": "context_fold",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.3",
+  "api": "0.2.0-experimental.4",
   "state_version": 1,
   "license": "Apache-2.0",
-  "capabilities": ["context"],
+  "capabilities": ["history"],
   "compatibility": {
     "required_features": ["history_v1"]
   }

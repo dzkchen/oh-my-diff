@@ -5,7 +5,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 pub const PROFILE_LIMIT: usize = 32;
-const KINDS: &[&str] = &["chatgpt", "api_key", "provider", "command"];
+const KINDS: &[&str] = &["chatgpt", "api_key", "provider"];
 pub const SECRET_BYTES: usize = 4096;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -158,6 +158,28 @@ impl CredentialProfiles {
         self.with_index(false, |index| Ok(index.profiles.clone()))
     }
 
+    pub fn visible(&self, caller: &str) -> io::Result<Vec<serde_json::Value>> {
+        Ok(self
+            .list()?
+            .iter()
+            .filter(|profile| profile.kind != "secret" || profile.owner.as_deref() == Some(caller))
+            .map(|profile| self.public(profile))
+            .collect())
+    }
+
+    pub fn public(&self, profile: &CredentialProfile) -> serde_json::Value {
+        let file = if profile.kind == "secret" {
+            "secret"
+        } else {
+            "auth.json"
+        };
+        let ready = fs::symlink_metadata(self.root.join(&profile.id).join(file))
+            .is_ok_and(|metadata| metadata.is_file());
+        serde_json::json!({"id": profile.id, "label": profile.label, "kind": profile.kind,
+            "provider": profile.provider, "origin": profile.origin,
+            "status": if ready { "ready" } else { "not_enrolled" }, "default": profile.default})
+    }
+
     pub fn home(&self, id: &str) -> io::Result<PathBuf> {
         let known =
             self.with_index(false, |index| Ok(index.profiles.iter().any(|p| p.id == id)))?;
@@ -238,8 +260,10 @@ impl CredentialProfiles {
             let before = index.profiles.len();
             let was_default = index.profiles.iter().any(|p| p.id == id && p.default);
             index.profiles.retain(|p| p.id != id);
-            if was_default && let Some(first) = index.profiles.first_mut() {
-                first.default = true;
+            if was_default
+                && let Some(next) = index.profiles.iter_mut().find(|p| p.kind != "secret")
+            {
+                next.default = true;
             }
             Ok(index.profiles.len() != before)
         })?;

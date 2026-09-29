@@ -101,40 +101,34 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             let source = arguments
                 .source
                 .ok_or_else(|| failure("package_source_required"))?;
-            let mut request = ModInstallRequest {
-                offline: matches!(source, ModPackageSource::Local { .. }),
-                source,
-                index: arguments.index,
-                scope: arguments.scope,
-                activate: false,
-                trust: ModPackageTrust::default(),
-                settings: BTreeMap::new(),
-            };
-            request.trust.packages = store
-                .package_requirements(request.clone())?
-                .packages
-                .into_iter()
-                .map(|package| (package.id, package.trust))
-                .collect();
-            let plan = store.package_plan(request.clone())?;
+            let (request, plan) =
+                requested(store, source, arguments.index, arguments.scope, false)?;
             (plan.root.clone(), Some(request), Some(plan))
         }
         "update" => {
             let package = locked(&arguments.id)?;
-            let request = ModInstallRequest {
-                source: package.source.clone(),
-                index: None,
-                scope: package.scope.clone(),
-                activate: package.enabled,
-                offline: false,
-                trust: ModPackageTrust {
-                    packages: BTreeMap::from([(package.id.clone(), package.trust.clone())]),
-                },
-                settings: BTreeMap::from([(package.id.clone(), package.settings.clone())]),
-            };
-            let plan = store
-                .package_plan(request.clone())
-                .map_err(|error| failure(format!("package_update_unavailable: {error}")))?;
+            let index = arguments.index.or_else(|| {
+                std::iter::once(&package.source)
+                    .chain(
+                        package
+                            .dependencies
+                            .iter()
+                            .filter_map(|dependency| lock.packages.get(&dependency.id))
+                            .map(|dependency| &dependency.source),
+                    )
+                    .find_map(|source| match source {
+                        ModPackageSource::Package { index, .. } => Some(index.clone()),
+                        _ => None,
+                    })
+            });
+            let (request, plan) = requested(
+                store,
+                package.source.clone(),
+                index,
+                package.scope.clone(),
+                package.enabled,
+            )
+            .map_err(|error| failure(format!("package_update_unavailable: {error}")))?;
             (package.id, Some(request), Some(plan))
         }
         "remove" => {
@@ -192,7 +186,6 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
         "id": id,
         "changes": plan.as_ref().map(|plan| plan.changes.clone()).unwrap_or_else(|| json!({"enabled": arguments.action == "enable"})),
         "grants_added": grants_added,
-        "conflicts": [],
     });
     Ok(PackagePreview {
         public,
@@ -204,6 +197,32 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             generation: lock.revision,
         },
     })
+}
+
+fn requested(
+    store: &ModStore,
+    source: ModPackageSource,
+    index: Option<PathBuf>,
+    scope: String,
+    activate: bool,
+) -> io::Result<(ModInstallRequest, crate::ModPackagePlan)> {
+    let mut request = ModInstallRequest {
+        offline: matches!(source, ModPackageSource::Local { .. }),
+        source,
+        index,
+        scope,
+        activate,
+        trust: ModPackageTrust::default(),
+        settings: BTreeMap::new(),
+    };
+    request.trust.packages = store
+        .package_requirements(request.clone())?
+        .packages
+        .into_iter()
+        .map(|package| (package.id, package.trust))
+        .collect();
+    let plan = store.package_plan(request.clone())?;
+    Ok((request, plan))
 }
 
 pub fn apply(store: &ModStore, control: &PackageControl) -> io::Result<Value> {

@@ -44,7 +44,7 @@ impl ModHostCall {
                 .ok_or_else(|| failure("app_method_unrouted")),
             "app.routes" => Ok("inventory"),
             "workspace.watch" | "workspace.unwatch" => Ok("fs.read"),
-            "events.publish" => Ok("events"),
+            "events.publish" | "events.schedule" | "events.cancel" => Ok("events"),
             "credentials.list" | "credentials.request" => Ok("credentials"),
             "routes.select" => Ok("model"),
             "turns.activity" => Ok("sessions"),
@@ -53,8 +53,9 @@ impl ModHostCall {
             | "terminal.import_file"
             | "terminal.open"
             | "terminal.prompt" => Ok("terminal"),
-            "terminal.pty" => Ok("exec"),
-            "model.complete" => Ok("model"),
+            "terminal.pty" => Ok("pty"),
+            "model.complete" => Ok("agents"),
+            "tools.define" | "tools.undefine" => Ok("tools"),
             "composer.read" | "composer.write" => Ok("composer"),
             "builtins.invoke" => Ok("builtins"),
             "packages.list" | "packages.preview" | "packages.apply" | "packages.reload" => {
@@ -73,6 +74,17 @@ impl ModHostCall {
                 self.operation
             ))),
         }
+    }
+
+    pub fn capabilities(&self) -> Result<Vec<&'static str>> {
+        let primary = self.capability()?;
+        Ok(
+            if self.operation == "terminal.pty" && self.arguments["write"] == true {
+                vec![primary, "fs.write"]
+            } else {
+                vec![primary]
+            },
+        )
     }
 }
 
@@ -162,7 +174,7 @@ pub(super) fn run(
         if expected.len() >= 32 {
             return Err(failure("host_call_limit"));
         }
-        let capability = call.capability()?;
+        let capabilities = call.capabilities()?;
         if call.operation.starts_with("context.")
             && !loaded
                 .package
@@ -172,8 +184,11 @@ pub(super) fn run(
         {
             return Err(failure("capability_denied: context"));
         }
-        if !loaded.package.capabilities.iter().any(|c| c == capability) {
-            return Err(failure(format!("capability_denied: {capability}")));
+        if let Some(missing) = capabilities
+            .iter()
+            .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
+        {
+            return Err(failure(format!("capability_denied: {missing}")));
         }
         if !active() {
             return Err(failure("callback_cancelled"));

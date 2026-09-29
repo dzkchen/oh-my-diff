@@ -11,13 +11,12 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-pub(crate) const WATCHES_PER_MOD: usize = 16;
-pub(crate) const PATHS_PER_WATCH: usize = 32;
 pub(crate) const DEBOUNCE_MS: (u64, u64, u64) = (50, 200, 10_000);
 
 pub(crate) type ChangeSink = Arc<dyn Fn(&str, Vec<String>) + Send + Sync>;
 
 struct Watch {
+    source: String,
     _registration: WatchRegistration,
     task: tokio::task::JoinHandle<()>,
 }
@@ -34,6 +33,7 @@ pub(crate) struct WorkspaceWatches {
     protected: Vec<PathBuf>,
     watches: Mutex<BTreeMap<(String, String), Watch>>,
     next: Mutex<u64>,
+    limits: codex_omd::mod_limits::ModLimits,
 }
 
 fn relative(root: &Path, path: &Path) -> Option<String> {
@@ -49,6 +49,7 @@ impl WorkspaceWatches {
         watcher: Arc<FileWatcher>,
         root: PathBuf,
         protected: Vec<PathBuf>,
+        limits: codex_omd::mod_limits::ModLimits,
     ) -> io::Result<Self> {
         let root = root.canonicalize()?;
         Ok(Self {
@@ -57,6 +58,7 @@ impl WorkspaceWatches {
             protected,
             watches: Mutex::new(BTreeMap::new()),
             next: Mutex::new(0),
+            limits: limits.bounded(),
         })
     }
 
@@ -87,15 +89,17 @@ impl WorkspaceWatches {
         Ok(resolved)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn watch(
         &self,
         owner: &str,
+        source: &str,
         paths: &[String],
         recursive: bool,
         debounce_ms: Option<u64>,
         sink: ChangeSink,
     ) -> io::Result<String> {
-        if paths.is_empty() || paths.len() > PATHS_PER_WATCH {
+        if paths.is_empty() || paths.len() > self.limits.paths_per_watch {
             return Err(io::Error::other("watch_paths_invalid"));
         }
         let debounce = debounce_ms.unwrap_or(DEBOUNCE_MS.1);
@@ -110,7 +114,9 @@ impl WorkspaceWatches {
             .watches
             .lock()
             .map_err(|_| io::Error::other("watch_state_poisoned"))?;
-        if watches.keys().filter(|(mod_id, _)| mod_id == owner).count() >= WATCHES_PER_MOD {
+        if watches.keys().filter(|(mod_id, _)| mod_id == owner).count()
+            >= self.limits.watches_per_mod
+        {
             return Err(io::Error::other("watch_limit"));
         }
         let id = {
@@ -150,6 +156,7 @@ impl WorkspaceWatches {
         watches.insert(
             (owner.to_owned(), id.clone()),
             Watch {
+                source: source.to_owned(),
                 _registration: registration,
                 task,
             },
@@ -161,6 +168,12 @@ impl WorkspaceWatches {
         self.watches
             .lock()
             .is_ok_and(|mut watches| watches.remove(&(owner.to_owned(), id.to_owned())).is_some())
+    }
+
+    pub(crate) fn retain_sources(&self, sources: &BTreeMap<String, String>) {
+        if let Ok(mut watches) = self.watches.lock() {
+            watches.retain(|(owner, _), watch| sources.get(owner) == Some(&watch.source));
+        }
     }
 
     pub(crate) fn unwatch_all(&self, owner: &str) -> usize {

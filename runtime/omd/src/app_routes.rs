@@ -46,7 +46,7 @@ pub struct AppRoute {
     #[serde(default)]
     pub scope: Option<ThreadScope>,
     #[serde(default)]
-    pub refuse: Vec<String>,
+    pub fields: Vec<String>,
     #[serde(default)]
     pub root: Vec<String>,
     #[serde(default)]
@@ -77,6 +77,20 @@ pub fn class(capability: &str) -> bool {
         .requests
         .values()
         .any(|route| route.class == capability)
+}
+
+pub fn classes_named_in(source: &str) -> Option<BTreeSet<&'static str>> {
+    let named: BTreeSet<_> = TABLE
+        .requests
+        .iter()
+        .filter(|(method, _)| {
+            ['\'', '"', '`']
+                .iter()
+                .any(|quote| source.contains(&format!("{quote}{method}{quote}")))
+        })
+        .map(|(_, route)| route.class.as_str())
+        .collect();
+    (!named.is_empty()).then_some(named)
 }
 
 pub fn routes() -> Value {
@@ -169,10 +183,9 @@ pub fn authorize(
         Value::Null => &serde_json::Map::new(),
         _ => return Err(denied("app_params_invalid", "params must be an object")),
     };
-    if let Some(field) = route
-        .refuse
+    if let Some((field, _)) = object
         .iter()
-        .find(|field| object.get(field.as_str()).is_some_and(|v| !v.is_null()))
+        .find(|(field, value)| !value.is_null() && !route.fields.contains(field))
     {
         return Err(denied("app_param_refused", field));
     }
@@ -216,8 +229,12 @@ fn check_thread(
 }
 
 fn check_root(value: &Value, roots: &[PathBuf]) -> io::Result<()> {
-    let Value::String(path) = value else {
-        return Err(denied("app_root_invalid", "path must be a string"));
+    let path = match value {
+        Value::Array(paths) if !paths.is_empty() && paths.len() <= 16 => {
+            return paths.iter().try_for_each(|path| check_root(path, roots));
+        }
+        Value::String(path) => path,
+        _ => return Err(denied("app_root_invalid", "path must be a string")),
     };
     let Some(session) = roots.first() else {
         return Err(denied("app_root_invalid", "no session root"));
@@ -376,12 +393,13 @@ impl NotificationQueue {
             .and_then(Value::as_str)
             .map(str::to_owned);
         if let Some((last, size)) = self.events.back_mut()
-            && let Some(merged) = coalesce(last, method, &params)
+            && let Some(next) = coalescible(last, method, &params)
+            && *size + next.len() <= self.max_bytes
+            && let Some(Value::String(delta)) = last.params.get_mut("delta")
         {
-            let grown = merged.to_string().len();
-            self.bytes = self.bytes - *size + grown;
-            *size = grown;
-            last.params = merged;
+            delta.push_str(next);
+            *size += next.len();
+            self.bytes += next.len();
             last.coalesced += 1;
         } else {
             let size = method.len() + params.to_string().len();
@@ -425,7 +443,7 @@ impl NotificationQueue {
     }
 }
 
-fn coalesce(last: &AppNotification, method: &str, params: &Value) -> Option<Value> {
+fn coalescible<'a>(last: &AppNotification, method: &str, params: &'a Value) -> Option<&'a str> {
     if last.method != method || !(method.ends_with("/delta") || method.ends_with("Delta")) {
         return None;
     }
@@ -443,11 +461,8 @@ fn coalesce(last: &AppNotification, method: &str, params: &Value) -> Option<Valu
     {
         return None;
     }
-    let mut merged = last.params.clone();
-    let previous = last.params.get("delta")?.as_str()?;
-    let next = params.get("delta")?.as_str()?;
-    merged["delta"] = Value::String(format!("{previous}{next}"));
-    Some(merged)
+    last.params.get("delta")?.as_str()?;
+    params.get("delta")?.as_str()
 }
 
 #[cfg(test)]

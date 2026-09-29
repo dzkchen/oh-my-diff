@@ -188,5 +188,5 @@ store; only explicitly trusted and enabled command exports are available. For
 example, `omd COMMAND --repo /absolute/project` routes to the selected
 extension. No session-review or memory behavior is built into this binary.
 Package installation and activation remain separate. The current host exposes
-API `0.2.0-experimental.3`; API 0.1 packages are historical compatibility
+API `0.2.0-experimental.4`; API 0.1 packages are historical compatibility
 fixtures and do not qualify as current package candidates.

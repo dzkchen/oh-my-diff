@@ -110,10 +110,6 @@ pub fn wake() {
     }
 }
 
-pub fn available() -> bool {
-    hub().surface.is_some()
-}
-
 pub fn submit(
     caller: &str,
     operation: &str,
@@ -162,6 +158,73 @@ pub fn wait(
             }
         }
     }
+}
+
+const VISIBLE_THREADS: usize = 256;
+
+static VISIBLE: Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>> =
+    Mutex::new(std::collections::BTreeMap::new());
+
+#[allow(clippy::too_many_arguments)]
+pub fn app_request(
+    caller: &str,
+    capabilities: &[String],
+    context: InvocationContext,
+    thread: Option<&str>,
+    repository: &std::path::Path,
+    routes: &[(String, String)],
+    arguments: Value,
+    active: &dyn Fn() -> bool,
+) -> Result<Value, String> {
+    let method = arguments["method"]
+        .as_str()
+        .ok_or("app_params_invalid: method")?
+        .to_owned();
+    let roots = crate::app_routes::route(&method)
+        .filter(|route| !route.root.is_empty())
+        .map(|_| crate::app_routes::session_roots(repository))
+        .unwrap_or_default();
+    let visible = VISIBLE
+        .lock()
+        .map_err(|_| "app_visibility_poisoned")?
+        .get(caller)
+        .cloned()
+        .unwrap_or_default();
+    let route = crate::app_routes::authorize(
+        &method,
+        &arguments["params"],
+        &crate::app_routes::AppCaller {
+            capabilities: &capabilities.iter().cloned().collect(),
+            context,
+            current_thread: thread,
+            visible_threads: &visible,
+            roots: &roots,
+            routes,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let confirm = route
+        .confirm
+        .then(|| format!("Mod {caller} requests {method}."));
+    let value = call(
+        caller,
+        "app.request",
+        arguments,
+        context,
+        thread,
+        confirm,
+        active,
+    )?;
+    if matches!(method.as_str(), "thread/start" | "thread/fork")
+        && let Some(created) = value["thread"]["id"].as_str()
+        && let Ok(mut visible) = VISIBLE.lock()
+    {
+        let threads = visible.entry(caller.to_owned()).or_default();
+        if threads.len() < VISIBLE_THREADS {
+            threads.insert(created.to_owned());
+        }
+    }
+    Ok(value)
 }
 
 pub fn call(

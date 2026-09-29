@@ -1,0 +1,6 @@
+"Read(//private/tmp/omd-b26/**)",
+"Edit(//private/tmp/omd-b26/**)",
+"Write(//private/tmp/omd-b26/**)",
+"Bash(cd /private/tmp/omd-b26/codex:*)",
+"Bash(/private/tmp/omd-b26/cargo.sh:*)",
+"Bash(python3 /private/tmp/omd-b26/sync_main.py:*)"

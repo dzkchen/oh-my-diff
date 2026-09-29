@@ -49,7 +49,34 @@ fn unsafe_edits_are_refused() {
         json!({"replace": [{"index": 1, "text": "x"}]}),
         json!({"replace": [{"index": 5, "text": "x"}]}),
         json!({"insert": [{"before": 0, "role": "assistant", "text": "x"}]}),
+        json!({"insert": [{"before": 2, "role": "developer", "text": "x"}]}),
     ] {
         assert!(apply(&items, edit(refused)).is_err());
     }
+}
+
+#[test]
+fn call_arguments_and_image_messages_can_be_rewritten() {
+    let items = vec![
+        json!({"type": "message", "role": "user", "content": [
+            {"type": "input_text", "text": "see"}, {"type": "input_image", "image_url": "data:image/png;base64,AAA"}]}),
+        json!({"type": "function_call", "call_id": "c1", "name": "login", "arguments": "{\"token\":\"secret\"}"}),
+        json!({"type": "function_call_output", "call_id": "c1", "output": "ok"}),
+        json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "current"}]}),
+    ];
+    assert_eq!(view(&items)[0]["images"], 1);
+    let edited = apply(
+        &items,
+        edit(
+            json!({"replace": [{"index": 0, "text": "see [screenshot folded]"},
+            {"index": 1, "text": "{\"token\":\"[redacted]\"}"}]}),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        edited[0]["content"],
+        json!([{"type": "input_text", "text": "see [screenshot folded]"}])
+    );
+    assert_eq!(edited[1]["arguments"], "{\"token\":\"[redacted]\"}");
+    assert_eq!(edited[2], items[2]);
 }

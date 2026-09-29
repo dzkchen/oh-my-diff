@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "status_tools",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.4",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": ["lifecycle", "tools", "events", "store"],
+  "compatibility": {
+    "required_features": ["dynamic_tools_v1", "timers_v1"]
+  }
+}

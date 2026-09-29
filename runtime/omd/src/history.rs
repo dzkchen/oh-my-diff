@@ -48,17 +48,31 @@ fn text(item: &Value) -> Option<String> {
             Value::String(text) => Some(text.clone()),
             other => Some(other.to_string()),
         },
+        "function_call" => item["arguments"].as_str().map(str::to_owned),
+        "custom_tool_call" => item["input"].as_str().map(str::to_owned),
         _ => None,
     }
+}
+
+fn images(item: &Value) -> usize {
+    ["content", "output"]
+        .iter()
+        .filter_map(|field| item[*field].as_array())
+        .flatten()
+        .filter(|part| part["type"] == "input_image")
+        .count()
 }
 
 fn editable(item: &Value) -> bool {
     text(item).is_some()
         && item.get("encrypted_content").is_none()
         && item["content"].as_array().is_none_or(|parts| {
-            parts
-                .iter()
-                .all(|part| matches!(part["type"].as_str(), Some("input_text" | "output_text")))
+            parts.iter().all(|part| {
+                matches!(
+                    part["type"].as_str(),
+                    Some("input_text" | "output_text" | "input_image")
+                )
+            })
         })
 }
 
@@ -85,6 +99,7 @@ pub fn view(items: &[Value]) -> Value {
                 let body = text(item);
                 json!({"index": index, "type": item["type"], "role": item.get("role"),
                     "call_id": call_id(item), "editable": editable(item) && index + 1 < items.len(),
+                    "images": images(item),
                     "text": body.as_deref().map(preview), "bytes": body.map_or(0, |body| body.len())})
             })
             .collect(),
@@ -142,6 +157,12 @@ pub fn apply(items: &[Value], edit: HistoryEdit) -> Result<Vec<Value>, String> {
         if insert.before > last || !matches!(insert.role.as_str(), "user" | "developer") {
             return invalid("insert");
         }
+        if insert.before > 0
+            && reasoning(insert.before - 1)
+            && !dropped.contains(&(insert.before - 1))
+        {
+            return invalid("reasoning_pair");
+        }
         inserted
             .entry(insert.before)
             .or_default()
@@ -156,15 +177,18 @@ pub fn apply(items: &[Value], edit: HistoryEdit) -> Result<Vec<Value>, String> {
         }
         let mut item = item.clone();
         if let Some(text) = replaced.remove(&index) {
-            if item["type"] == "message" {
-                let kind = if item["role"] == "assistant" {
-                    "output_text"
-                } else {
-                    "input_text"
-                };
-                item["content"] = json!([{"type": kind, "text": text}]);
-            } else {
-                item["output"] = Value::String(text);
+            match item["type"].as_str() {
+                Some("message") => {
+                    let kind = if item["role"] == "assistant" {
+                        "output_text"
+                    } else {
+                        "input_text"
+                    };
+                    item["content"] = json!([{"type": kind, "text": text}]);
+                }
+                Some("function_call") => item["arguments"] = Value::String(text),
+                Some("custom_tool_call") => item["input"] = Value::String(text),
+                _ => item["output"] = Value::String(text),
             }
         }
         result.push(item);

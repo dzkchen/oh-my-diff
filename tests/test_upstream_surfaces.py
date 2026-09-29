@@ -39,6 +39,24 @@ client_notification_definitions! {
     Initialized,
 }
 '''
+PARAMS = '''
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkParams {
+    pub thread_id: String,
+    /// Rollout path, renamed.
+    #[serde(rename = "path")]
+    pub rollout: Option<String>,
+    #[serde(skip)]
+    pub internal: bool,
+    #[serde(flatten)]
+    pub overrides: Overrides,
+}
+#[serde(rename_all = "camelCase")]
+pub struct Overrides {
+    pub base_model: Option<String>,
+}
+'''
 TYPES = '''
 pub enum EventMsg {
     /// Error text with a comma, inside docs.
@@ -108,6 +126,7 @@ def build(root):
         "codex-rs/core/src/session/mcp.rs": "",
         "codex-rs/core/src/mcp_tool_call.rs": "pub(crate) async fn request_mcp_tool_user_approval(\n) {}\n",
         "codex-rs/core/config.schema.json": json.dumps(SCHEMA),
+        surfaces.PROTOCOL_ROOT + "/v2/thread.rs": PARAMS,
     }
     for name, text in files.items():
         (root / name).parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +192,17 @@ class UpstreamSurfaceTests(unittest.TestCase):
         table = self.table(**{"config_key:tui.theme": None, "config_key:tui.keymap": None})
         table["patterns"] = {"config_key:tui.*": {"route": "r"}}
         self.assertEqual(surfaces.check(self.root, table)["gap"], 0)
+
+    def test_new_request_parameter_is_flagged(self):
+        self.assertEqual(self.ids()["app_request:thread/fork"]["params"], ["baseModel", "path", "threadId"])
+        routed = {"route": "app.request", "fields": ["threadId"], "refuse": ["path", "baseModel"]}
+        table = self.table(**{"app_request:thread/fork": routed})
+        table["routes"]["app.request"] = "route"
+        self.assertEqual(surfaces.check(self.root, table)["gap"], 0)
+        routed["refuse"] = ["path"]
+        report = surfaces.check(self.root, table)
+        self.assertEqual(report["param_drift"], [{"id": "app_request:thread/fork", "fields": ["baseModel"]}])
+        self.assertEqual(report["gap"], 1)
 
     def test_moved_upstream_source_is_a_gap(self):
         table = self.table()

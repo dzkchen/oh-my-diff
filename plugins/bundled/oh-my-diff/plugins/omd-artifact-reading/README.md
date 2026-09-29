@@ -1,6 +1,6 @@
 # GitHub virtual reading
 
-The optional API `0.2.0-experimental.3` component extends this existing artifact plugin. Its TypeScript registers `github://`; the plugin's Python helper owns URI grammar, GitHub REST requests, pagination, revisions and source projection. The runtime only dispatches the ordinary `read` tool and enforces an exact helper grant. Local files remain separate resources. Nothing implements GitHub behavior in Rust.
+The optional API `0.2.0-experimental.4` component extends this existing artifact plugin. Its TypeScript registers `github://`; the plugin's Python helper owns URI grammar, GitHub REST requests, pagination, revisions and source projection. The runtime only dispatches the ordinary `read` tool and enforces an exact helper grant. Local files remain separate resources. Nothing implements GitHub behavior in Rust.
 
 Supported paths:
 

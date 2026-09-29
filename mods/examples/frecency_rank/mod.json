@@ -2,11 +2,11 @@
   "schema": 1,
   "id": "frecency_rank",
   "version": "1.0.0",
-  "api": "0.2.0-experimental.3",
+  "api": "0.2.0-experimental.4",
   "state_version": 1,
   "license": "Apache-2.0",
-  "capabilities": ["composer", "input"],
+  "capabilities": ["composer", "input", "commands"],
   "compatibility": {
-    "required_features": ["completion_v1"]
+    "required_features": ["completion_v1", "completion_arguments_v1"]
   }
 }

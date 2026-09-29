@@ -65,6 +65,7 @@ use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -78,7 +79,7 @@ pub use store::ModStore;
 
 pub const CODEX_HOST_RELEASE: &str = "0.157.0";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-pub const MOD_API_VERSION: &str = "0.2.0-experimental.3";
+pub const MOD_API_VERSION: &str = "0.2.0-experimental.4";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
 
@@ -218,6 +219,13 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "model_complete_v1",
     "history_v1",
     "terminal_pty_v1",
+    "dynamic_tools_v1",
+    "timers_v1",
+    "terminal_input_v1",
+    "terminal_style_v1",
+    "completion_arguments_v1",
+    "terminal_editor_v1",
+    "pty_programs_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",
@@ -290,10 +298,15 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.prompt",
     "terminal.pty",
     "model.complete",
+    "tools.define",
+    "tools.undefine",
+    "events.schedule",
+    "events.cancel",
 ];
 pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
     ("0.2.0-experimental.1", "experimental", "2027-03-20"),
     ("0.2.0-experimental.2", "experimental", "2027-03-20"),
+    ("0.2.0-experimental.3", "experimental", "2027-03-20"),
     (MOD_API_VERSION, "experimental", "2027-03-20"),
 ];
 pub const MOD_CAPABILITIES: &[&str] = &[
@@ -328,6 +341,9 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "events",
     "credentials",
     "composer",
+    "pty",
+    "history",
+    "outputs",
 ];
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
@@ -365,16 +381,17 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("app_server_request", "approvals"),
     ("approval", "approvals"),
     ("approval_result", "approvals"),
-    ("tool_output", "interception"),
+    ("tool_output", "outputs"),
     ("tool_batch", "interception"),
     ("tool_specs", "tools"),
     ("process_event", "exec"),
     ("channel", "events"),
+    ("timer", "events"),
     ("component_event", "terminal"),
     ("view", "terminal"),
     ("focus", "terminal"),
     ("completion", "composer"),
-    ("history", "context"),
+    ("history", "history"),
 ];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "tool_before",
@@ -690,10 +707,14 @@ fn source_use(
     }
     let used_capabilities = |operation: &String| -> Result<Vec<String>> {
         let used = if operation == "app.request" {
+            let named = crate::app_routes::classes_named_in(source);
             package
                 .capabilities
                 .iter()
-                .filter(|declared| crate::app_routes::class(declared))
+                .filter(|declared| match &named {
+                    Some(named) => named.contains(declared.as_str()),
+                    None => crate::app_routes::class(declared),
+                })
                 .cloned()
                 .collect()
         } else {
@@ -884,8 +905,13 @@ impl ModSubscriptions {
         if self.app.len() > 32 || self.channels.len() > 32 || !app_ok || !channels_ok {
             return Err(failure("invalid_subscriptions"));
         }
-        if !self.app.is_empty() && !granted("threads") && !granted("approvals") {
-            return Err(failure("capability_denied: threads"));
+        for value in &self.app {
+            if crate::app_routes::notification_patterns_match(value) && !granted("threads") {
+                return Err(failure("capability_denied: threads"));
+            }
+            if crate::app_routes::server_request_patterns_match(value) && !granted("approvals") {
+                return Err(failure("capability_denied: approvals"));
+            }
         }
         if !self.channels.is_empty() && !granted("events") {
             return Err(failure("capability_denied: events"));
@@ -1451,6 +1477,8 @@ struct Registrations {
     services: Vec<ModServiceContract>,
     #[serde(default)]
     virtual_reads: Vec<ModVirtualReader>,
+    #[serde(default)]
+    dynamic_tools: bool,
 }
 
 #[derive(Deserialize)]
@@ -1526,6 +1554,175 @@ pub struct ModHost {
     service_calls: Vec<Value>,
     tool_validator: fn(&Value) -> Result<()>,
     virtual_time_ms: Option<u64>,
+    dynamic_tools: BTreeMap<String, Vec<ModTool>>,
+}
+
+enum Access<'a> {
+    Held(&'a mut ModHost),
+    Shared(&'a Mutex<ModHost>),
+}
+
+impl Access<'_> {
+    fn with<T>(&mut self, run: impl FnOnce(&mut ModHost) -> Result<T>) -> Result<T> {
+        match self {
+            Access::Held(runtime) => run(runtime),
+            Access::Shared(runtime) => run(&mut *runtime
+                .lock()
+                .map_err(|_| failure("mod_runtime_poisoned"))?),
+        }
+    }
+}
+
+struct Invocation {
+    loaded: Loaded,
+    dynamic: Vec<String>,
+    previous_state: Value,
+    node: PathBuf,
+    virtual_time_ms: Option<u64>,
+    started: Instant,
+}
+
+fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str) -> Result<()> {
+    match event {
+        "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
+        "tool" if dynamic.iter().any(|tool| tool == name) => (),
+        "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
+        "virtual_read"
+            if loaded
+                .registrations
+                .virtual_reads
+                .iter()
+                .any(|reader| reader.scheme == name) => {}
+        "service"
+            if loaded.registrations.services.iter().any(|contract| {
+                contract
+                    .methods
+                    .keys()
+                    .any(|method| format!("{}.{}", contract.name, method) == name)
+            }) => {}
+        e if loaded
+            .registrations
+            .events
+            .iter()
+            .any(|registered| registered == e) => {}
+        _ => return Err(failure("unsupported_or_unregistered_operation")),
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn invoke(
+    access: &mut Access<'_>,
+    id: &str,
+    generation: u64,
+    event: &str,
+    name: &str,
+    payload: Value,
+    active: &dyn Fn() -> bool,
+    host: &mut dyn FnMut(&str, ModHostCall) -> Result<Value>,
+    progress: &mut dyn FnMut(String),
+    scope: &InvocationScope,
+) -> Result<Value> {
+    let _frame = scope.enter(id)?;
+    let invocation = access.with(|runtime| runtime.begin(id, generation, active))?;
+    let reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
+        bridge::run(
+            &invocation.node,
+            &invocation.loaded,
+            event,
+            name,
+            payload,
+            active,
+            &mut |call| {
+                let private = call.operation.starts_with("sessions.")
+                    || call.operation.starts_with("evidence.");
+                let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if private {Value::Null} else {call.arguments.clone()}});
+                let _ = access.with(|runtime| {
+                    Ok(runtime.event_except("host_operation", before, id, active, scope))
+                });
+                let result = if call.operation == "mods.service" {
+                    access.with(|runtime| {
+                        runtime.call_service(id, generation, call.arguments.clone(), active, host, scope)
+                    })
+                } else {
+                    host(id, call.clone())
+                };
+                let after = match &result {
+                    Ok(value) => {
+                        json!({"phase":"after","caller":id,"operation":call.operation,"result":if private {Value::Null} else {value.clone()}})
+                    }
+                    Err(error) => {
+                        json!({"phase":"after","caller":id,"operation":call.operation,"error":if private {"private_operation_failed".to_owned()} else {error.to_string()}})
+                    }
+                };
+                let _ = access.with(|runtime| {
+                    Ok(runtime.event_except("host_operation", after, id, active, scope))
+                });
+                result
+            },
+            progress,
+            invocation.virtual_time_ms,
+            scope,
+        )
+    });
+    access.with(|runtime| runtime.finish(id, generation, event, name, invocation, reply, active))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn invoke_shared(
+    runtime: &Mutex<ModHost>,
+    id: &str,
+    generation: u64,
+    event: &str,
+    name: &str,
+    payload: Value,
+    active: impl Fn() -> bool,
+    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+    mut progress: impl FnMut(String),
+) -> Result<Value> {
+    invoke(
+        &mut Access::Shared(runtime),
+        id,
+        generation,
+        event,
+        name,
+        payload,
+        &active,
+        &mut host,
+        &mut progress,
+        &InvocationScope::default(),
+    )
+}
+
+pub fn event_shared(
+    runtime: &Mutex<ModHost>,
+    event: &str,
+    mut payload: impl FnMut(&str) -> Value,
+    active: impl Fn() -> bool,
+    mut host: impl FnMut(&str, ModHostCall) -> Result<Value>,
+) -> Vec<(String, Result<Value>)> {
+    let Ok((ids, generation)) = runtime
+        .lock()
+        .map(|runtime| (runtime.event_ids(event), runtime.generation))
+    else {
+        return Vec::new();
+    };
+    ids.into_iter()
+        .map(|id| {
+            let result = invoke_shared(
+                runtime,
+                &id,
+                generation,
+                event,
+                "",
+                payload(&id),
+                &active,
+                &mut host,
+                |_| {},
+            );
+            (id, result)
+        })
+        .collect()
 }
 
 impl ModHost {
@@ -1548,6 +1745,7 @@ impl ModHost {
             service_calls: Vec::new(),
             tool_validator,
             virtual_time_ms: None,
+            dynamic_tools: BTreeMap::new(),
         };
         host.reload()?;
         Ok(host)
@@ -1578,6 +1776,7 @@ impl ModHost {
         });
         if self.loaded.len() != retained {
             self.generation += 1;
+            self.dynamic_tools.clear();
         }
         let mut rejected = Vec::new();
         let selected = Self::select(&config, initial, &mut rejected)?;
@@ -1689,6 +1888,7 @@ impl ModHost {
         self.rejected = rejected;
         self.configuration_sha256 = hash;
         self.generation += 1;
+        self.dynamic_tools.clear();
         self.reload_error = None;
         self.write_installed_service_types()?;
         Ok(true)
@@ -2034,7 +2234,7 @@ impl ModHost {
         if registrations.tools.len() > 16
             || registrations.commands.len() > 16
             || registrations.events.len() > MOD_EVENTS.len()
-            || (!registrations.tools.is_empty() && !has("tools"))
+            || ((!registrations.tools.is_empty() || registrations.dynamic_tools) && !has("tools"))
             || (!registrations.commands.is_empty() && !has("commands"))
             || (!registrations.contracts.is_empty() && !has("contracts"))
             || (!registrations.services.is_empty() && !has("services"))
@@ -2282,7 +2482,26 @@ impl ModHost {
         progress: &mut dyn FnMut(String),
         scope: &InvocationScope,
     ) -> Result<Value> {
-        let _frame = scope.enter(id)?;
+        invoke(
+            &mut Access::Held(self),
+            id,
+            generation,
+            event,
+            name,
+            payload,
+            active,
+            host,
+            progress,
+            scope,
+        )
+    }
+
+    fn begin(
+        &mut self,
+        id: &str,
+        generation: u64,
+        active: &dyn Fn() -> bool,
+    ) -> Result<Invocation> {
         if !active() {
             return Err(failure("callback_cancelled"));
         }
@@ -2304,154 +2523,124 @@ impl ModHost {
             &loaded.selection.scope,
             loaded.package.state_version,
         )?;
-        let previous_state = loaded.state.clone();
-        let node = self.node.clone();
-        let virtual_time_ms = self.virtual_time_ms;
-        let started = Instant::now();
-        let result = (|| {
-            match event {
-                "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
-                "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
-                "virtual_read"
-                    if loaded
-                        .registrations
-                        .virtual_reads
-                        .iter()
-                        .any(|reader| reader.scheme == name) => {}
-                "service"
-                    if loaded.registrations.services.iter().any(|contract| {
-                        contract
-                            .methods
-                            .keys()
-                            .any(|method| format!("{}.{}", contract.name, method) == name)
-                    }) => {}
-                e if loaded
-                    .registrations
-                    .events
-                    .iter()
-                    .any(|registered| registered == e) => {}
-                _ => return Err(failure("unsupported_or_unregistered_operation")),
+        Ok(Invocation {
+            dynamic: self
+                .dynamic_tools
+                .get(id)
+                .into_iter()
+                .flatten()
+                .map(|tool| tool.name.clone())
+                .collect(),
+            previous_state: loaded.state.clone(),
+            loaded,
+            node: self.node.clone(),
+            virtual_time_ms: self.virtual_time_ms,
+            started: Instant::now(),
+        })
+    }
+
+    fn accept(
+        &mut self,
+        loaded: &Loaded,
+        event: &str,
+        reply: Reply,
+        active: &dyn Fn() -> bool,
+    ) -> Result<(Value, Value)> {
+        if !active() {
+            return Err(failure("callback_cancelled"));
+        }
+        if reply.registrations != loaded.registrations {
+            return Err(failure("registration_changed_during_callback"));
+        }
+        let replaces = |point: &str| {
+            loaded
+                .registrations
+                .replacements
+                .iter()
+                .any(|registered| registered == point)
+        };
+        if matches!(event, "routing" | "compaction") && !reply.value.is_null() && !replaces(event) {
+            return Err(failure("exclusive_replacement_registration_required"));
+        }
+        if event == "context" && !reply.value.is_null() {
+            let text = reply
+                .value
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| failure("invalid_context_result"))?;
+            if text.len() > 1024 {
+                return Err(failure("context_limit"));
             }
-            let reply = bridge::run(
-                &node,
-                &loaded,
-                event,
-                name,
-                payload,
-                &active,
-                &mut |call| {
-                    let private = call.operation.starts_with("sessions.")
-                        || call.operation.starts_with("evidence.");
-                    let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if private {Value::Null} else {call.arguments.clone()}});
-                    let _ = self.event_except("host_operation", before, id, active, scope);
-                    let result = if call.operation == "mods.service" {
-                        self.call_service(
-                            id,
-                            generation,
-                            call.arguments.clone(),
-                            active,
-                            host,
-                            scope,
-                        )
-                    } else {
-                        host(id, call.clone())
-                    };
-                    let after = match &result {
-                        Ok(value) => {
-                            json!({"phase":"after","caller":id,"operation":call.operation,"result":if private {Value::Null} else {value.clone()}})
-                        }
-                        Err(error) => {
-                            json!({"phase":"after","caller":id,"operation":call.operation,"error":if private {"private_operation_failed".to_owned()} else {error.to_string()}})
-                        }
-                    };
-                    let _ = self.event_except("host_operation", after, id, active, scope);
-                    result
-                },
-                progress,
-                virtual_time_ms,
-                scope,
+        }
+        if event == "routing" && !reply.value.is_null() {
+            let valid = reply.value.as_object().is_some_and(|object| {
+                object.len() == 1
+                    && object
+                        .get("route")
+                        .and_then(Value::as_str)
+                        .is_some_and(crate::resource_data::token)
+            });
+            if !valid {
+                return Err(failure("invalid_routing_result"));
+            }
+        }
+        if event == "tool_before"
+            && reply.value.get("arguments").is_some()
+            && !replaces("tool_before")
+        {
+            return Err(failure("exclusive_replacement_registration_required"));
+        }
+        if event == "terminal" && !reply.value.is_null() {
+            if replaces("terminal") {
+                ModView::parse(reply.value.clone())?;
+            } else {
+                ModViewPatch::parse(reply.value.clone())?;
+            }
+        }
+        if event == "input" {
+            let decision = ModInputDecision::parse(&reply.value)?;
+            if matches!(decision, ModInputDecision::Rewrite(_)) && !replaces("input") {
+                return Err(failure("exclusive_replacement_registration_required"));
+            }
+        }
+        if matches!(
+            event,
+            "prompt" | "session" | "agent" | "tool_call" | "tool_result" | "host_operation"
+        ) && !reply.value.is_null()
+        {
+            return Err(failure("observe_only_event_returned_a_value"));
+        }
+        if reply.state != loaded.state {
+            if !loaded.package.capabilities.iter().any(|c| c == "store") {
+                return Err(failure("state_capability_denied"));
+            }
+            self.store.write_state(
+                &loaded.package.id,
+                &loaded.selection.scope,
+                loaded.package.state_version,
+                &loaded.state,
+                &reply.state,
             )?;
-            if !active() {
-                return Err(failure("callback_cancelled"));
-            }
-            if reply.registrations != loaded.registrations {
-                return Err(failure("registration_changed_during_callback"));
-            }
-            let replaces = |point: &str| {
-                loaded
-                    .registrations
-                    .replacements
-                    .iter()
-                    .any(|registered| registered == point)
-            };
-            if matches!(event, "routing" | "compaction")
-                && !reply.value.is_null()
-                && !replaces(event)
-            {
-                return Err(failure("exclusive_replacement_registration_required"));
-            }
-            if event == "context" && !reply.value.is_null() {
-                let text = reply
-                    .value
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| failure("invalid_context_result"))?;
-                if text.len() > 1024 {
-                    return Err(failure("context_limit"));
-                }
-            }
-            if event == "routing" && !reply.value.is_null() {
-                let valid = reply.value.as_object().is_some_and(|object| {
-                    object.len() == 1
-                        && object
-                            .get("route")
-                            .and_then(Value::as_str)
-                            .is_some_and(crate::resource_data::token)
-                });
-                if !valid {
-                    return Err(failure("invalid_routing_result"));
-                }
-            }
-            if event == "tool_before"
-                && reply.value.get("arguments").is_some()
-                && !replaces("tool_before")
-            {
-                return Err(failure("exclusive_replacement_registration_required"));
-            }
-            if event == "terminal" && !reply.value.is_null() {
-                if replaces("terminal") {
-                    ModView::parse(reply.value.clone())?;
-                } else {
-                    ModViewPatch::parse(reply.value.clone())?;
-                }
-            }
-            if event == "input" {
-                let decision = ModInputDecision::parse(&reply.value)?;
-                if matches!(decision, ModInputDecision::Rewrite(_)) && !replaces("input") {
-                    return Err(failure("exclusive_replacement_registration_required"));
-                }
-            }
-            if matches!(
-                event,
-                "prompt" | "session" | "agent" | "tool_call" | "tool_result" | "host_operation"
-            ) && !reply.value.is_null()
-            {
-                return Err(failure("observe_only_event_returned_a_value"));
-            }
-            if reply.state != loaded.state {
-                if !loaded.package.capabilities.iter().any(|c| c == "store") {
-                    return Err(failure("state_capability_denied"));
-                }
-                self.store.write_state(
-                    &loaded.package.id,
-                    &loaded.selection.scope,
-                    loaded.package.state_version,
-                    &loaded.state,
-                    &reply.state,
-                )?;
-            }
-            Ok((reply.value, reply.state))
-        })();
+        }
+        Ok((reply.value, reply.state))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &mut self,
+        id: &str,
+        generation: u64,
+        event: &str,
+        name: &str,
+        invocation: Invocation,
+        reply: Result<Reply>,
+        active: &dyn Fn() -> bool,
+    ) -> Result<Value> {
+        let result = reply.and_then(|reply| self.accept(&invocation.loaded, event, reply, active));
+        if generation != self.generation {
+            return result.map(|(value, _)| value);
+        }
+        let (started, previous_state) = (invocation.started, invocation.previous_state);
         let current = self
             .loaded
             .get_mut(id)
@@ -3002,6 +3191,7 @@ impl ModHost {
                 m.registrations
                     .tools
                     .iter()
+                    .chain(self.dynamic_tools.get(id).into_iter().flatten())
                     .map(|tool| (id.clone(), self.generation, tool.clone()))
             })
             .collect();
@@ -3009,6 +3199,49 @@ impl ModHost {
             tools.push((String::new(), self.generation, resources::read_tool()));
         }
         tools
+    }
+
+    pub fn define_tool(&mut self, id: &str, generation: u64, arguments: Value) -> Result<Value> {
+        let tool: ModTool = serde_json::from_value(arguments)?;
+        let loaded = self
+            .loaded
+            .get(id)
+            .filter(|loaded| loaded.error.is_none() && generation == self.generation)
+            .ok_or_else(|| failure("stale_mod_generation: retry on the next turn"))?;
+        if !loaded.registrations.dynamic_tools {
+            return Err(failure("dynamic_tools_unregistered"));
+        }
+        if !identifier(&tool.name)
+            || tool.description.is_empty()
+            || tool.description.len() > 4096
+            || tool.task_scoped
+            || loaded
+                .registrations
+                .tools
+                .iter()
+                .any(|t| t.name == tool.name)
+        {
+            return Err(failure("dynamic_tool_invalid"));
+        }
+        (self.tool_validator)(&tool.parameters)?;
+        let tools = self.dynamic_tools.entry(id.to_owned()).or_default();
+        tools.retain(|existing| existing.name != tool.name);
+        if tools.len() >= 64 {
+            return Err(failure("dynamic_tool_limit"));
+        }
+        let name = tool.name.clone();
+        tools.push(tool);
+        Ok(json!({"name": name, "effective_at": "next_request"}))
+    }
+
+    pub fn undefine_tool(&mut self, id: &str, arguments: &Value) -> Result<Value> {
+        let name = arguments["name"]
+            .as_str()
+            .ok_or_else(|| failure("dynamic_tool_invalid"))?;
+        let tools = self.dynamic_tools.entry(id.to_owned()).or_default();
+        let before = tools.len();
+        tools.retain(|tool| tool.name != name);
+        Ok(json!({"removed": tools.len() != before}))
     }
 
     pub fn has_task_scoped_tools(&self) -> bool {

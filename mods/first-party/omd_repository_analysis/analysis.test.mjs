@@ -14,7 +14,7 @@ const sorted = value => Array.isArray(value) ? value.map(sorted) : value && type
   ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, sorted(item)])) : value;
 
 function run(name, payload, receipts = [], event = 'tool') {
-  const request = { source, filename: 'omd_repository_analysis.ts', api: '0.2.0-experimental.3', capabilities: ['tools', 'services', 'fs.read', 'store'], environment: ['crypto'],
+  const request = { source, filename: 'omd_repository_analysis.ts', api: '0.2.0-experimental.4', capabilities: ['tools', 'services', 'fs.read', 'store'], environment: ['crypto'],
     state: null, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 3000 };
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: JSON.stringify(request), encoding: 'utf8', timeout: 6000,

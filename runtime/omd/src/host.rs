@@ -218,7 +218,7 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
     })
 }
 
-fn program_hash(path: &Path) -> Result<String, String> {
+pub fn program_hash(path: &Path) -> Result<String, String> {
     let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
     if metadata.len() > 128 * 1024 * 1024 {
         return Err("exec_program_too_large".into());
