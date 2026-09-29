@@ -370,8 +370,8 @@ capabilities.
 
 ## Batch 2.6 host primitives
 
-API `0.2.0-experimental.4` adds these generic primitives; `.1`, `.2` and `.3`
-packages keep loading. Each advertises a host feature a package can require.
+API `0.2.0-experimental.4` adds these generic primitives; earlier API versions
+no longer load. Each advertises a host feature a package can require.
 With no mod registered for a primitive the host allocates nothing for it and
 changes no decision. Mapping from pinned upstream surfaces to these routes, and
 the recorded exclusions, live in `scripts/upstream_routes.json`;

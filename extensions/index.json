@@ -4,7 +4,7 @@
   "release_pin": {
     "codex": "0.157.0",
     "omd": "0.1.0",
-    "mod_api": "0.2.0-experimental.1",
+    "mod_api": "0.2.0-experimental.4",
     "node": "24.18.0"
   },
   "packages": [
@@ -16,7 +16,7 @@
       "source": "mods/first-party/omd_claude_cli",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; Node 24.18.0; official Claude CLI 2.1.281",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; Node 24.18.0; official Claude CLI 2.1.281",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -35,7 +35,7 @@
       "source": "mods/first-party/omd_coordination",
       "license": "undeclared",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -53,7 +53,7 @@
       "source": "mods/first-party/omd_recovery",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -71,7 +71,7 @@
       "source": "mods/first-party/omd_workspace",
       "license": "undeclared",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -89,7 +89,7 @@
       "source": "mods/first-party/omd_typed_tasks",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; Node 24.18.0",
       "tested_versions": [
         "Codex 0.156.1",
         "OMD 0.1.0",
@@ -107,7 +107,7 @@
       "source": "mods/first-party/omd_logo",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; terminal_identity_v1, terminal_render_sites_v1 and terminal_rich_line_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -125,7 +125,7 @@
       "source": "mods/first-party/omd_model_picker",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; terminal_lists_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; terminal_lists_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -143,7 +143,7 @@
       "source": "mods/first-party/omd_selection_copy",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; terminal_selection_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; terminal_selection_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",
@@ -161,7 +161,7 @@
       "source": "mods/first-party/omd_git",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.1; git_operations_v1, terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
+      "compatibility": "Codex 0.157.0; OMD 0.1.0; mod API 0.2.0-experimental.4; git_operations_v1, terminal_components_v1 and terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.157.0",
         "OMD 0.1.0",

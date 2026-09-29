@@ -9,16 +9,14 @@ against the Rust host by `python3 scripts/mod_compatibility.py`.
 | Codex | OMD host | Package schema | Mod API | API label | Service imports | Generated installed-contract types | Support through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0.157.0 | 0.1.0, experimental | 1 | 0.2.0-experimental.4 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
-| 0.157.0 | 0.1.0, experimental | 1 | 0.2.0-experimental.3 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
-| 0.157.0 | 0.1.0, experimental | 1 | 0.2.0-experimental.2 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
-| 0.157.0 | 0.1.0, experimental | 1 | 0.2.0-experimental.1 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 
 API 0.1 packages and declarations are retired from this development host. The
 earlier 0.1 support-window rows described pre-release builds and are historical
 evidence, not current executable compatibility. API 0.2 provides generic host
 operations for execution, workspace access, snapshots, agents, contracts, evidence,
-store, processes, terminal rendering and services. `.3` is current and adds the Batch 2.6 host features; `.1` and `.2`
-packages keep loading unchanged. The rows are not a promise
+store, processes, terminal rendering and services. Until the first public
+release the host supports only the current API: every API bump drops earlier
+versions, and in-repository packages move to the new version with it. The rows are not a promise
 that every intervening or future version works. Before activation the host checks the
 package schema, API row, optional exact host-release list, required host features,
 declared authority, dependencies, and service imports. `omd-mod status` reports

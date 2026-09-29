@@ -303,12 +303,8 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "events.schedule",
     "events.cancel",
 ];
-pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
-    ("0.2.0-experimental.1", "experimental", "2027-03-20"),
-    ("0.2.0-experimental.2", "experimental", "2027-03-20"),
-    ("0.2.0-experimental.3", "experimental", "2027-03-20"),
-    (MOD_API_VERSION, "experimental", "2027-03-20"),
-];
+pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
+    &[(MOD_API_VERSION, "experimental", "2027-03-20")];
 pub const MOD_CAPABILITIES: &[&str] = &[
     "context",
     "tools",
@@ -1641,8 +1637,17 @@ fn invoke(
                     Ok(runtime.event_except("host_operation", before, id, active, scope))
                 });
                 let result = if call.operation == "mods.service" {
+                    let mut guarded = |caller: &str, call: ModHostCall| {
+                        if matches!(call.operation.as_str(), "tools.define" | "tools.undefine") {
+                            return Err(failure(format!(
+                                "host_operation_unavailable: {} is not available inside a service call",
+                                call.operation
+                            )));
+                        }
+                        host(caller, call)
+                    };
                     access.with(|runtime| {
-                        runtime.call_service(id, generation, call.arguments.clone(), active, host, scope)
+                        runtime.call_service(id, generation, call.arguments.clone(), active, &mut guarded, scope)
                     })
                 } else {
                     host(id, call.clone())
@@ -3222,6 +3227,17 @@ impl ModHost {
                 .any(|t| t.name == tool.name)
         {
             return Err(failure("dynamic_tool_invalid"));
+        }
+        let exposed = format!("mod_{id}_{}", tool.name);
+        if self.active().any(|(other, m)| {
+            other.as_str() != id
+                && m.registrations
+                    .tools
+                    .iter()
+                    .chain(self.dynamic_tools.get(other).into_iter().flatten())
+                    .any(|t| format!("mod_{other}_{}", t.name) == exposed)
+        }) {
+            return Err(failure(format!("tool_name_conflict: {exposed}")));
         }
         (self.tool_validator)(&tool.parameters)?;
         let tools = self.dynamic_tools.entry(id.to_owned()).or_default();

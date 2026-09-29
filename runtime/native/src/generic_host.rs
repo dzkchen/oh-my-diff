@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn process_environment_names_must_be_declared_by_the_manifest() {
         let grants = codex_omd::ModGrants {
-            api: "0.2.0-experimental.1".into(),
+            api: codex_omd::MOD_API_VERSION.into(),
             source_sha256: "a".repeat(64),
             capabilities: vec!["exec".into()],
             exec_environment: vec!["RUSTUP_HOME".into()],

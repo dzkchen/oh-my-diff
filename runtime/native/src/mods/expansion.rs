@@ -52,7 +52,7 @@ pub(super) struct State {
     approval_result: AtomicBool,
     tool_specs: AtomicBool,
     tool_batch: AtomicBool,
-    gates: Mutex<BTreeMap<String, String>>,
+    gates: Mutex<std::collections::VecDeque<(String, String)>>,
     current: Mutex<Option<LeadHandle>>,
     leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
     commands: Mutex<std::collections::HashSet<String>>,

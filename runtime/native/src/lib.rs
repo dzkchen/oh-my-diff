@@ -292,7 +292,9 @@ impl Host {
             .routes
             .iter()
             .filter(|candidate| {
-                candidate.roles.contains(&config::RouteRole::Lead) && candidate.provider == provider
+                route.is_some()
+                    && candidate.roles.contains(&config::RouteRole::Lead)
+                    && candidate.provider == provider
             })
             .map(|candidate| accounting::RequestRoute {
                 name: candidate.name.clone(),

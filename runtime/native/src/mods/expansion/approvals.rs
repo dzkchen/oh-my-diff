@@ -90,12 +90,11 @@ impl ApprovalGateContributor for Mods {
                 ),
             };
             if let (Some(owner), Ok(mut gates)) = (owner, self.expansion.gates.lock()) {
-                if gates.len() >= 256
-                    && let Some(oldest) = gates.keys().next().cloned()
-                {
-                    gates.remove(&oldest);
+                gates.retain(|(call, _)| call != input.call_id);
+                if gates.len() >= 256 {
+                    gates.pop_front();
                 }
-                gates.insert(input.call_id.to_owned(), owner);
+                gates.push_back((input.call_id.to_owned(), owner));
             }
             self.cleanup_failed(Some(&lead)).await;
             gate
@@ -109,7 +108,10 @@ impl ApprovalGateContributor for Mods {
                 .gates
                 .lock()
                 .ok()
-                .and_then(|mut gates| gates.remove(input.call_id));
+                .and_then(|mut gates| {
+                    let index = gates.iter().position(|(call, _)| call == input.call_id)?;
+                    gates.remove(index).map(|(_, owner)| owner)
+                });
             if !self.expansion.approval_result.load(Ordering::Acquire) {
                 return;
             }

@@ -108,9 +108,6 @@
       "owner": "OMD mod host (runtime/omd/src/mods.rs)",
       "version": "0.2.0-experimental.4",
       "supported_versions": [
-        "0.2.0-experimental.1",
-        "0.2.0-experimental.2",
-        "0.2.0-experimental.3",
         "0.2.0-experimental.4"
       ],
       "status": "supported",

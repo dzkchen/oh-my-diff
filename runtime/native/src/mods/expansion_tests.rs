@@ -913,3 +913,45 @@ async fn dynamic_tools_are_defined_invoked_and_removed_by_their_mod() {
             .contains("timer_invalid")
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dynamic_tools_cannot_shadow_another_mods_exposed_tool_name() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "bridge",
+            capabilities: &["tools"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.dynamicTools(() => ({}));\n}\n",
+        },
+        Package {
+            id: "bridge_x",
+            capabilities: &["tools"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.tool({ name: 'y', description: 'Y.', parameters: { type: 'object', properties: {} } }, () => ({}));\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    let mut runtime = fixture.core.runtime.lock().unwrap();
+    let generation = runtime.generation();
+    let schema = json!({"type": "object", "properties": {}});
+    let error = runtime
+        .define_tool(
+            "bridge",
+            generation,
+            json!({"name": "x_y", "description": "X.", "parameters": schema}),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("tool_name_conflict: mod_bridge_x_y"),
+        "{error}"
+    );
+    runtime
+        .define_tool(
+            "bridge",
+            generation,
+            json!({"name": "z", "description": "Z.", "parameters": schema}),
+        )
+        .unwrap();
+}

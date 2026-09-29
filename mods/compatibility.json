@@ -88,24 +88,6 @@
   },
   "apis": [
     {
-      "version": "0.2.0-experimental.1",
-      "stability": "experimental",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
-    {
-      "version": "0.2.0-experimental.2",
-      "stability": "experimental",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
-    {
-      "version": "0.2.0-experimental.3",
-      "stability": "experimental",
-      "support_until": "2027-03-20",
-      "service_imports": "exact or compatible caret range"
-    },
-    {
       "version": "0.2.0-experimental.4",
       "stability": "experimental",
       "support_until": "2027-03-20",
@@ -128,7 +110,8 @@
     "stable_deprecation_notice_omd_releases": 1,
     "urgent_security_exception_requires_advisory": true,
     "support_window_is_finite": true,
-    "experimental_pre_1_0_is_not_stable": true
+    "experimental_pre_1_0_is_not_stable": true,
+    "pre_release_current_api_only": true
   },
   "transitions": {
     "real_supported_release": {

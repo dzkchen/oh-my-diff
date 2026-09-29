@@ -72,6 +72,8 @@ def check(matrix):
         problems.append("stable breaking API changes must require a major")
     if policy["stable_deprecation_notice_omd_releases"] < 1:
         problems.append("stable APIs need at least one stable OMD release of deprecation notice")
+    if policy["pre_release_current_api_only"] and [row["version"] for row in host["apis"]] != [host["current_api"]]:
+        problems.append("before public release the host supports only the current API")
     if not policy["urgent_security_exception_requires_advisory"]:
         problems.append("urgent security exceptions need a published advisory")
     service = matrix["service_contracts"]

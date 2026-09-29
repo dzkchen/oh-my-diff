@@ -3772,7 +3772,7 @@ index e5ff7f2a4..a1fdaf98e 100644
                  payload: ToolPayload::Function {
                      arguments: json!({ "path": "not-an-image.txt" }).to_string(),
 diff --git a/codex-rs/core/src/tools/lifecycle.rs b/codex-rs/core/src/tools/lifecycle.rs
-index 82ba4a6c6..4968b6a8b 100644
+index 82ba4a6c6..ae2361d5f 100644
 --- a/codex-rs/core/src/tools/lifecycle.rs
 +++ b/codex-rs/core/src/tools/lifecycle.rs
 @@ -6,16 +6,22 @@ use codex_extension_api::McpToolResultInput;
@@ -3798,7 +3798,7 @@ index 82ba4a6c6..4968b6a8b 100644
  
  pub(crate) async fn notify_tool_start(
      invocation: &ToolInvocation,
-@@ -81,6 +87,165 @@ pub(crate) async fn notify_command_start(
+@@ -81,6 +87,164 @@ pub(crate) async fn notify_command_start(
      }
  }
  
@@ -3906,15 +3906,14 @@ index 82ba4a6c6..4968b6a8b 100644
 +            codex_protocol::models::FunctionCallOutputBody::Text(text) => Some(text),
 +            codex_protocol::models::FunctionCallOutputBody::ContentItems(items) => {
 +                use codex_protocol::models::FunctionCallOutputContentItem as Item;
-+                let parts = items
-+                    .into_iter()
-+                    .filter_map(|item| match item {
-+                        Item::InputText { text } => Some(text),
-+                        Item::InputImage { .. } => Some("[image]".to_owned()),
-+                        Item::InputAudio { .. } => Some("[audio]".to_owned()),
-+                        Item::EncryptedContent { .. } => None,
-+                    })
-+                    .collect::<Vec<_>>();
++                let mut parts = Vec::new();
++                for item in items {
++                    match item {
++                        Item::InputText { text } => parts.push(text),
++                        Item::InputImage { .. } | Item::InputAudio { .. } => return None,
++                        Item::EncryptedContent { .. } => {}
++                    }
++                }
 +                (!parts.is_empty()).then(|| parts.join("\n"))
 +            }
 +        },
@@ -3964,7 +3963,7 @@ index 82ba4a6c6..4968b6a8b 100644
  pub(crate) async fn process_mcp_tool_result(
      session: &Session,
      turn: &TurnContext,
-@@ -105,7 +270,31 @@ pub(crate) async fn process_mcp_tool_result(
+@@ -105,7 +269,31 @@ pub(crate) async fn process_mcp_tool_result(
      }
  }
  
@@ -3997,7 +3996,7 @@ index 82ba4a6c6..4968b6a8b 100644
      notify_tool_finish_parts(
          invocation.session.as_ref(),
          invocation.turn.as_ref(),
-@@ -113,6 +302,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
+@@ -113,6 +301,8 @@ pub(crate) async fn notify_tool_finish(invocation: &ToolInvocation, outcome: Too
          &invocation.tool_name,
          invocation.source.clone(),
          outcome,
@@ -4006,7 +4005,7 @@ index 82ba4a6c6..4968b6a8b 100644
      )
      .await;
  }
-@@ -131,10 +322,13 @@ pub(crate) async fn notify_tool_aborted(
+@@ -131,10 +321,13 @@ pub(crate) async fn notify_tool_aborted(
          tool_name,
          source,
          ToolCallOutcome::Aborted,
@@ -4020,7 +4019,7 @@ index 82ba4a6c6..4968b6a8b 100644
  async fn notify_tool_finish_parts(
      session: &Session,
      turn: &TurnContext,
-@@ -142,6 +336,8 @@ async fn notify_tool_finish_parts(
+@@ -142,6 +335,8 @@ async fn notify_tool_finish_parts(
      tool_name: &ToolName,
      source: ToolCallSource,
      outcome: ToolCallOutcome,
@@ -4029,7 +4028,7 @@ index 82ba4a6c6..4968b6a8b 100644
  ) {
      for contributor in session.services.extensions.tool_lifecycle_contributors() {
          contributor
-@@ -154,9 +350,37 @@ async fn notify_tool_finish_parts(
+@@ -154,9 +349,37 @@ async fn notify_tool_finish_parts(
                  tool_name,
                  source: extension_tool_call_source(source.clone()),
                  outcome,
@@ -4067,7 +4066,7 @@ index 82ba4a6c6..4968b6a8b 100644
  }
  
  pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToolCallSource {
-@@ -167,6 +391,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
+@@ -167,6 +390,7 @@ pub(crate) fn extension_tool_call_source(source: ToolCallSource) -> ExtensionToo
          ToolCallSource::CodeMode {
              cell_id,
              runtime_tool_call_id,
@@ -9241,7 +9240,7 @@ index 000000000..a5fe999ee
 +}
 diff --git a/codex-rs/ext/omd/src/generic_host.rs b/codex-rs/ext/omd/src/generic_host.rs
 new file mode 100644
-index 000000000..94e49b75a
+index 000000000..b75d761f8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/generic_host.rs
 @@ -0,0 +1,271 @@
@@ -9498,7 +9497,7 @@ index 000000000..94e49b75a
 +    #[test]
 +    fn process_environment_names_must_be_declared_by_the_manifest() {
 +        let grants = codex_omd::ModGrants {
-+            api: "0.2.0-experimental.1".into(),
++            api: codex_omd::MOD_API_VERSION.into(),
 +            source_sha256: "a".repeat(64),
 +            capabilities: vec!["exec".into()],
 +            exec_environment: vec!["RUSTUP_HOME".into()],
@@ -9648,10 +9647,10 @@ index 000000000..e69c3124f
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..ee0b0b504
+index 000000000..8602756f0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,491 @@
+@@ -0,0 +1,493 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -9946,7 +9945,9 @@ index 000000000..ee0b0b504
 +            .routes
 +            .iter()
 +            .filter(|candidate| {
-+                candidate.roles.contains(&config::RouteRole::Lead) && candidate.provider == provider
++                route.is_some()
++                    && candidate.roles.contains(&config::RouteRole::Lead)
++                    && candidate.provider == provider
 +            })
 +            .map(|candidate| accounting::RequestRoute {
 +                name: candidate.name.clone(),
@@ -14940,7 +14941,7 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..77ff27c68
+index 000000000..fe68a4084
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
 @@ -0,0 +1,455 @@
@@ -14998,7 +14999,7 @@ index 000000000..77ff27c68
 +    approval_result: AtomicBool,
 +    tool_specs: AtomicBool,
 +    tool_batch: AtomicBool,
-+    gates: Mutex<BTreeMap<String, String>>,
++    gates: Mutex<std::collections::VecDeque<(String, String)>>,
 +    current: Mutex<Option<LeadHandle>>,
 +    leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
 +    commands: Mutex<std::collections::HashSet<String>>,
@@ -15744,10 +15745,10 @@ index 000000000..a10e0b7c5
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/approvals.rs b/codex-rs/ext/omd/src/mods/expansion/approvals.rs
 new file mode 100644
-index 000000000..26fcfaa7d
+index 000000000..838cee676
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/approvals.rs
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,135 @@
 +use super::*;
 +use codex_extension_api::ApprovalGate;
 +use codex_extension_api::ApprovalGateContributor;
@@ -15840,12 +15841,11 @@ index 000000000..26fcfaa7d
 +                ),
 +            };
 +            if let (Some(owner), Ok(mut gates)) = (owner, self.expansion.gates.lock()) {
-+                if gates.len() >= 256
-+                    && let Some(oldest) = gates.keys().next().cloned()
-+                {
-+                    gates.remove(&oldest);
++                gates.retain(|(call, _)| call != input.call_id);
++                if gates.len() >= 256 {
++                    gates.pop_front();
 +                }
-+                gates.insert(input.call_id.to_owned(), owner);
++                gates.push_back((input.call_id.to_owned(), owner));
 +            }
 +            self.cleanup_failed(Some(&lead)).await;
 +            gate
@@ -15859,7 +15859,10 @@ index 000000000..26fcfaa7d
 +                .gates
 +                .lock()
 +                .ok()
-+                .and_then(|mut gates| gates.remove(input.call_id));
++                .and_then(|mut gates| {
++                    let index = gates.iter().position(|(call, _)| call == input.call_id)?;
++                    gates.remove(index).map(|(_, owner)| owner)
++                });
 +            if !self.expansion.approval_result.load(Ordering::Acquire) {
 +                return;
 +            }
@@ -16935,10 +16938,10 @@ index 000000000..13341482d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..04f8e4f07
+index 000000000..a78bce56e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,915 @@
+@@ -0,0 +1,957 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
@@ -17853,6 +17856,48 @@ index 000000000..04f8e4f07
 +            .unwrap_err()
 +            .contains("timer_invalid")
 +    );
++}
++
++#[tokio::test(flavor = "multi_thread")]
++async fn dynamic_tools_cannot_shadow_another_mods_exposed_tool_name() {
++    let Some(fixture) = fixture(&[
++        Package {
++            id: "bridge",
++            capabilities: &["tools"],
++            manifest: Value::Null,
++            source: "export default function (api) {\n  api.dynamicTools(() => ({}));\n}\n",
++        },
++        Package {
++            id: "bridge_x",
++            capabilities: &["tools"],
++            manifest: Value::Null,
++            source: "export default function (api) {\n  api.tool({ name: 'y', description: 'Y.', parameters: { type: 'object', properties: {} } }, () => ({}));\n}\n",
++        },
++    ]) else {
++        return;
++    };
++    let mut runtime = fixture.core.runtime.lock().unwrap();
++    let generation = runtime.generation();
++    let schema = json!({"type": "object", "properties": {}});
++    let error = runtime
++        .define_tool(
++            "bridge",
++            generation,
++            json!({"name": "x_y", "description": "X.", "parameters": schema}),
++        )
++        .unwrap_err()
++        .to_string();
++    assert!(
++        error.contains("tool_name_conflict: mod_bridge_x_y"),
++        "{error}"
++    );
++    runtime
++        .define_tool(
++            "bridge",
++            generation,
++            json!({"name": "z", "description": "Z.", "parameters": schema}),
++        )
++        .unwrap();
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
@@ -31061,10 +31106,10 @@ index 000000000..e1d28e163
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..cee62ea6a
+index 000000000..6e7cd7bd6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,3536 @@
+@@ -0,0 +1,3552 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -31370,12 +31415,8 @@ index 000000000..cee62ea6a
 +    "events.schedule",
 +    "events.cancel",
 +];
-+pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] = &[
-+    ("0.2.0-experimental.1", "experimental", "2027-03-20"),
-+    ("0.2.0-experimental.2", "experimental", "2027-03-20"),
-+    ("0.2.0-experimental.3", "experimental", "2027-03-20"),
-+    (MOD_API_VERSION, "experimental", "2027-03-20"),
-+];
++pub const SUPPORTED_MOD_APIS: &[(&str, &str, &str)] =
++    &[(MOD_API_VERSION, "experimental", "2027-03-20")];
 +pub const MOD_CAPABILITIES: &[&str] = &[
 +    "context",
 +    "tools",
@@ -32708,8 +32749,17 @@ index 000000000..cee62ea6a
 +                    Ok(runtime.event_except("host_operation", before, id, active, scope))
 +                });
 +                let result = if call.operation == "mods.service" {
++                    let mut guarded = |caller: &str, call: ModHostCall| {
++                        if matches!(call.operation.as_str(), "tools.define" | "tools.undefine") {
++                            return Err(failure(format!(
++                                "host_operation_unavailable: {} is not available inside a service call",
++                                call.operation
++                            )));
++                        }
++                        host(caller, call)
++                    };
 +                    access.with(|runtime| {
-+                        runtime.call_service(id, generation, call.arguments.clone(), active, host, scope)
++                        runtime.call_service(id, generation, call.arguments.clone(), active, &mut guarded, scope)
 +                    })
 +                } else {
 +                    host(id, call.clone())
@@ -34289,6 +34339,17 @@ index 000000000..cee62ea6a
 +                .any(|t| t.name == tool.name)
 +        {
 +            return Err(failure("dynamic_tool_invalid"));
++        }
++        let exposed = format!("mod_{id}_{}", tool.name);
++        if self.active().any(|(other, m)| {
++            other.as_str() != id
++                && m.registrations
++                    .tools
++                    .iter()
++                    .chain(self.dynamic_tools.get(other).into_iter().flatten())
++                    .any(|t| format!("mod_{other}_{}", t.name) == exposed)
++        }) {
++            return Err(failure(format!("tool_name_conflict: {exposed}")));
 +        }
 +        (self.tool_validator)(&tool.parameters)?;
 +        let tools = self.dynamic_tools.entry(id.to_owned()).or_default();
@@ -60144,7 +60205,7 @@ index 000000000..bad58157b
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..92eb80c4b
+index 000000000..c43dafe34
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
 @@ -0,0 +1,183 @@
@@ -60300,7 +60361,7 @@ index 000000000..92eb80c4b
 +    };
 +    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::unrestricted();
 +    let grants = codex_omd::ModGrants {
-+        api: "0.2.0-experimental.1".to_owned(),
++        api: codex_omd::MOD_API_VERSION.to_owned(),
 +        source_sha256: "a".repeat(64),
 +        capabilities: vec!["fs.read".to_owned()],
 +        exec_environment: Vec::new(),
