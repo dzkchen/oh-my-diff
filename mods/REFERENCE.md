@@ -421,6 +421,9 @@ A mod can never approve, and a failing middleware counts as `ask`.
 - `on('tool_output')` observers (`tool_feedback_v1`) return `{append}` of at
   most 4 KiB, 16 KiB per call in total, added after any replacement at any
   output size. Observers receive `original: null`.
+- Tool-output callbacks may call every host operation their grants allow in
+  lifecycle events, such as language-server exchanges or `model.complete`,
+  before the model sees the result. The output waits for them.
 - `replace('tool_batch')` (`tool_batch_v1`) may merge parallel-safe calls of
   one response into one call of a tool the mod registered; the merged call runs
   through ordinary admission and approvals, and results fan out by call id.

@@ -1,17 +1,21 @@
 {
   "schema": 1,
   "id": "omd_advisor",
-  "version": "0.2.0-preview.1",
+  "version": "0.3.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "license": "Apache-2.0",
   "capabilities": [
     "tools",
+    "commands",
     "lifecycle",
+    "outputs",
     "store",
     "sessions",
     "agents",
+    "model",
     "contracts",
+    "exec",
     "fs.read",
     "context",
     "terminal"
@@ -22,9 +26,14 @@
   "compatibility": {
     "required_features": [
       "turn_evidence_v1",
+      "turn_activity_v1",
       "workspace_snapshots_v1",
       "workspace_fingerprint_v1",
-      "contracts_v2"
+      "contracts_v2",
+      "tool_feedback_v1",
+      "model_complete_v1",
+      "exec_v1",
+      "app_v1"
     ]
   },
   "settings_schema": {
@@ -45,6 +54,22 @@
           "blocking"
         ],
         "default": "advisory"
+      },
+      "triggers": {
+        "type": "array",
+        "default": []
+      },
+      "share": {
+        "type": "array",
+        "default": [
+          "conversation",
+          "diff",
+          "files"
+        ]
+      },
+      "skip_same_model": {
+        "type": "boolean",
+        "default": true
       }
     },
     "additionalProperties": false

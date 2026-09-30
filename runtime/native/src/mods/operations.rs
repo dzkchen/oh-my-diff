@@ -51,7 +51,7 @@ pub(super) struct Caller<'a> {
 
 pub(super) fn event_allows(event: &str, operation: &str) -> bool {
     crate::generic_host::event_allows(event, operation)
-        || super::expansion::event_allows(event, operation)
+        || super::expansion::event_allows(event)
         || event == "context"
             && (codex_omd::scoped_data::operation(operation)
                 || matches!(

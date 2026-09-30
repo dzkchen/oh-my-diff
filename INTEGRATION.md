@@ -40,7 +40,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 
 | Selected mod | Version | Source |
 | --- | --- | --- |
-| `omd_advisor` | 0.2.0-preview.1 | `mods/first-party/omd_advisor` |
+| `omd_advisor` | 0.3.0-preview.1 | `mods/first-party/omd_advisor` |
 | `omd_checks` | 0.1.0-preview.1 | `mods/first-party/omd_checks` |
 | `omd_claude_cli` | 0.2.0-preview.1 | `mods/first-party/omd_claude_cli` |
 | `omd_continue` | 0.1.0-preview.1 | `mods/first-party/omd_continue` |
@@ -50,7 +50,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_guideline_governance` | 0.1.0-preview.1 | `mods/first-party/omd_guideline_governance` |
 | `omd_inspector` | 0.2.0-preview.1 | `mods/first-party/omd_inspector` |
 | `omd_logo` | 0.2.0-preview.1 | `mods/first-party/omd_logo` |
-| `omd_lsp_sync` | 0.2.0-preview.1 | `mods/first-party/omd_lsp_sync` |
+| `omd_lsp_sync` | 0.3.0-preview.1 | `mods/first-party/omd_lsp_sync` |
 | `omd_model_picker` | 0.2.0-preview.1 | `mods/first-party/omd_model_picker` |
 | `omd_plan_removal` | 0.1.0-preview.1 | `mods/first-party/omd_plan_removal` |
 | `omd_programmable_context` | 0.1.0-preview.1 | `mods/first-party/omd_programmable_context` |

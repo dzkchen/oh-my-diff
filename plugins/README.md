@@ -20,8 +20,8 @@ install or enable it in Codex.
   local PDF and notebook helper reads data without executing embedded content.
 - `omd-code-execution` supplies guidance for persistent V8, Python, and Bun
   cells. It has no own interpreter, tool server, sandbox, or process supervisor.
-- `omd-anchored-edit` supplies exact text-anchor editing guidance and a separately
-  trusted mod component for host-authorized file transactions.
+- `omd-anchored-edit` supplies per-line `LINE#HASH` editing guidance and a
+  separately trusted mod component for host-authorized file transactions.
 - `omd-session-review` supplies a source-linked session review skill and a
   separately trusted read-only command component.
 - `omd-curated-memory` supplies local memory guidance, a bounded curation hook,

@@ -1,14 +1,21 @@
 ---
 name: omd-anchored-edit
-description: Apply a small edit using exact current file hashes, unique text anchors and explicit line scope through the optional OMD anchored-edit component.
+description: Edit files by citing per-line LINE#HASH anchors through the optional OMD anchored-edit component.
 ---
 
 Use only when the separately trusted `omd_anchored_edit` component is enabled. Its plugin installation alone does not enable a tool or grant write permission.
 
-Read the selected files with the component's `read` tool. Copy the returned whole-file `sha256` and exact `before` text, preserving spaces, tabs, CRLF and final newlines. For each file specify `start_line` and `end_line` (inclusive, one-based) and replacements `{before, after}`. An anchor must occur exactly once in that line scope. Use a smaller scope to distinguish repeated text; never guess a hash or normalize whitespace. At most eight files and 32 nonoverlapping edits are accepted in one transaction.
+Get anchors from the component's `read` tool (optionally `offset`/`limit`) or its `search` tool (ripgrep; `path`, `glob`, `literal`, `ignore_case`, `context`). Each line appears as `LINE#HASH|content`; the hash covers the line number and content. Never invent or guess an anchor.
 
-The plugin resolves anchors and sends complete new bytes plus expected hashes to the public workspace transaction service. The host checks permissions, concurrent changes and cancellation, replaces each file atomically, and attempts checked multi-file rollback. Intermediate multi-file states and rollback conflicts remain possible.
+Call `edit` with `files: [{path, edits}]`. Each edit is one of:
 
-On `fallback`, no transaction was attempted: reread the file and use the ordinary `apply_patch` path with its existing permissions. Generated files, new files, non-UTF-8 files, malformed, stale or ambiguous anchors need ordinary patch review. On `denied`, respect the permission failure. On `transaction_failed`, inspect files and the diff before retrying; do not assume rollback succeeded. Never silently widen scope or retry stale anchors.
+- `replace` with `anchor`, optional `end` (inclusive last line) and `lines`
+- `delete` with `anchor` and optional `end`
+- `insert_before` / `insert_after` with `anchor` and `lines` (the anchor line stays)
+- `append` / `prepend` with `lines`
 
-After success, review the ordinary diff and run relevant checks. This tool does not stage or commit changes, promise perfect edits, or establish token savings. If absent, disabled or broken, use the existing patch tool.
+Only the cited lines are checked, so changes elsewhere do not block an edit. All edits in one call apply atomically or not at all; ranges must not overlap. On success the result lists `+LINE#HASH|content` for every changed line: use those anchors for the next edit of that file instead of rereading. CRLF, final-newline state and bytes outside the edited lines are preserved.
+
+On `rejected`, nothing was written and every failure is listed: `moved_to` gives the fresh anchor when the cited line moved (resend with it); `stale` shows the current line (reread); `ambiguous` means reread. Use the ordinary patch tool for new, generated, oversized (over 96 KB per call) or non-UTF-8 files. On `denied`, respect the permission failure. On `transaction_failed`, inspect the files before retrying.
+
+After success, run the relevant checks. If the component is absent, disabled or broken, use the existing patch tool.

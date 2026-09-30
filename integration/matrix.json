@@ -1173,7 +1173,7 @@
   },
   "first_party_packages": {
     "omd_advisor": {
-      "version": "0.2.0-preview.1",
+      "version": "0.3.0-preview.1",
       "source": "mods/first-party/omd_advisor"
     },
     "omd_checks": {
@@ -1213,7 +1213,7 @@
       "source": "mods/first-party/omd_logo"
     },
     "omd_lsp_sync": {
-      "version": "0.2.0-preview.1",
+      "version": "0.3.0-preview.1",
       "source": "mods/first-party/omd_lsp_sync"
     },
     "omd_model_picker": {

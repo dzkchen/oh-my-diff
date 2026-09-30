@@ -15089,7 +15089,7 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..da91ecdea
+index 000000000..81c08dc61
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
 @@ -0,0 +1,456 @@
@@ -15251,11 +15251,11 @@ index 000000000..da91ecdea
 +        || codex_omd::client_surface::SURFACE_OPERATIONS.contains(&operation)
 +}
 +
-+pub(super) fn event_allows(event: &str, operation: &str) -> bool {
++pub(super) fn event_allows(event: &str) -> bool {
 +    matches!(
 +        event,
-+        "process_event" | "channel" | "approval_result" | "timer"
-+    ) || event == "tool_output" && matches!(operation, "evidence.read" | "store.get" | "store.list")
++        "process_event" | "channel" | "approval_result" | "timer" | "tool_output"
++    )
 +}
 +
 +type HostFn<'a> = &'a mut dyn FnMut(&str, ModHostCall) -> std::io::Result<Value>;
@@ -17100,10 +17100,10 @@ index 000000000..13341482d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..a78bce56e
+index 000000000..03b33815d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,957 @@
+@@ -0,0 +1,959 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
@@ -17249,13 +17249,15 @@ index 000000000..a78bce56e
 +        },
 +        Package {
 +            id: "lint",
-+            capabilities: &["outputs"],
++            capabilities: &["outputs", "agents"],
 +            manifest: Value::Null,
-+            source: "export default function (api) {\n  api.on('tool_output', event => event.text.startsWith('trimmed') && event.original === null ? { append: 'lint: ok' } : null);\n}\n",
++            source: "export default function (api) {\n  api.on('tool_output', event => event.text.startsWith('trimmed') && event.original === null ? { append: `lint: ${api.host.tryCall('model.complete', { route: 'missing', prompt: 'lint' }).error}` } : null);\n}\n",
 +        },
 +    ]) else {
 +        return;
 +    };
++    *fixture.lead.session.contract.lock().unwrap() =
++        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
 +    let mods = mods(&fixture.core);
 +    assert!(mods.expansion.tool_output_active());
 +    let (session_store, thread_store, turn_store) = (
@@ -17280,7 +17282,7 @@ index 000000000..a78bce56e
 +        mods.replace_tool_output(input("hello world"))
 +            .await
 +            .as_deref(),
-+        Some("trimmed 11 read a.txt object\n\nlint: ok")
++        Some("trimmed 11 read a.txt object\n\nlint: provider_not_registered_or_stopped")
 +    );
 +    assert_eq!(mods.replace_tool_output(input("ok")).await, None);
 +
@@ -18063,7 +18065,7 @@ index 000000000..a78bce56e
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..1bc30084e
+index 000000000..94c45f134
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
 @@ -0,0 +1,557 @@
@@ -18120,7 +18122,7 @@ index 000000000..1bc30084e
 +
 +pub(super) fn event_allows(event: &str, operation: &str) -> bool {
 +    crate::generic_host::event_allows(event, operation)
-+        || super::expansion::event_allows(event, operation)
++        || super::expansion::event_allows(event)
 +        || event == "context"
 +            && (codex_omd::scoped_data::operation(operation)
 +                || matches!(

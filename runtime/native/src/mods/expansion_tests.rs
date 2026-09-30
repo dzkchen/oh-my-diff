@@ -143,13 +143,15 @@ async fn tool_output_owner_replaces_text_observers_append_and_original_stays_rea
         },
         Package {
             id: "lint",
-            capabilities: &["outputs"],
+            capabilities: &["outputs", "agents"],
             manifest: Value::Null,
-            source: "export default function (api) {\n  api.on('tool_output', event => event.text.startsWith('trimmed') && event.original === null ? { append: 'lint: ok' } : null);\n}\n",
+            source: "export default function (api) {\n  api.on('tool_output', event => event.text.startsWith('trimmed') && event.original === null ? { append: `lint: ${api.host.tryCall('model.complete', { route: 'missing', prompt: 'lint' }).error}` } : null);\n}\n",
         },
     ]) else {
         return;
     };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
     let mods = mods(&fixture.core);
     assert!(mods.expansion.tool_output_active());
     let (session_store, thread_store, turn_store) = (
@@ -174,7 +176,7 @@ async fn tool_output_owner_replaces_text_observers_append_and_original_stays_rea
         mods.replace_tool_output(input("hello world"))
             .await
             .as_deref(),
-        Some("trimmed 11 read a.txt object\n\nlint: ok")
+        Some("trimmed 11 read a.txt object\n\nlint: provider_not_registered_or_stopped")
     );
     assert_eq!(mods.replace_tool_output(input("ok")).await, None);
 

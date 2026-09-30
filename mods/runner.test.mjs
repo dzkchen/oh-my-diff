@@ -133,7 +133,7 @@ test('independent workspace mod uses public read and transaction calls', () => {
 });
 test('LSP mod synchronizes writes and applies versioned rename edits through public host calls', () => {
   const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
-  const capabilities = ['lifecycle', 'exec', 'store', 'tools', 'fs.read', 'fs.write'];
+  const { capabilities } = JSON.parse(readFileSync(new URL('./first-party/omd_lsp_sync/mod.json', import.meta.url), 'utf8'));
   const repository = '/tmp/project';
   const files = {
     'pkg/old.py': { text: 'value = 1\n', sha256: 'old-hash' },
@@ -205,7 +205,7 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
 });
 test('LSP mod reports an absent server and leaves the write event recoverable', () => {
   const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
-  const capabilities = ['lifecycle', 'exec', 'store', 'tools', 'fs.read', 'fs.write'];
+  const { capabilities } = JSON.parse(readFileSync(new URL('./first-party/omd_lsp_sync/mod.json', import.meta.url), 'utf8'));
   const payload = { repository: '/tmp/project', call_id: 'write-1', source: 'tool', status: 'observed', changes: [{ path: 'sample.py', before: null, after: 'sha' }] };
   const first = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload });
   assert.deepEqual(first.host_call, { operation: 'store.get', arguments: { key: 'lsp.observed_repository', scope: 'repository' } });
@@ -224,7 +224,7 @@ test('LSP mod reports an absent server and leaves the write event recoverable', 
 });
 test('LSP mod retains pre-0.2 Python state when another adapter is first to update', () => {
   const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
-  const capabilities = ['lifecycle', 'exec', 'store', 'tools', 'fs.read', 'fs.write'];
+  const { capabilities } = JSON.parse(readFileSync(new URL('./first-party/omd_lsp_sync/mod.json', import.meta.url), 'utf8'));
   const state = { repository: '/tmp/project', running: true, next_id: 4, capabilities: {}, documents: { 'sample.py': { sha256: 'old-sha', version: 2 } }, diagnostics: {}, status: 'synced', reason: '' };
   const payload = { repository: '/tmp/project', call_id: 'ts-write', source: 'tool', status: 'observed', changes: [{ path: 'sample.ts', before: null, after: 'new-sha' }] };
   const first = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state });
@@ -243,7 +243,7 @@ test('LSP mod retains pre-0.2 Python state when another adapter is first to upda
 });
 test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writes', () => {
   const source = readFileSync(new URL('./first-party/omd_lsp_sync/index.ts', import.meta.url), 'utf8');
-  const capabilities = ['lifecycle', 'exec', 'store', 'tools', 'fs.read', 'fs.write'];
+  const { capabilities } = JSON.parse(readFileSync(new URL('./first-party/omd_lsp_sync/mod.json', import.meta.url), 'utf8'));
   const repository = '/tmp/project';
   const files = {
     'src/app.ts': { text: 'export const value = 1;\n', sha256: 'ts-sha' },

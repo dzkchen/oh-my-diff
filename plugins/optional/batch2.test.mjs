@@ -28,72 +28,97 @@ function invoke(name, payload, host, extra = {}) {
   throw new Error('host_call_limit');
 }
 
-function workspace(initial, transactionError) {
+function workspace(initial, overrides = {}) {
   const files = { ...initial };
   const calls = [];
   return { files, calls, host(call) {
     calls.push(call);
+    if (overrides[call.operation]) return overrides[call.operation](call);
+    if (call.operation === 'workspace.stat') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, Object.hasOwn(files, path) ? { kind: 'file', size: Buffer.byteLength(files[path]), mtime_ms: 0 } : null])) };
     if (call.operation === 'workspace.read') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, Object.hasOwn(files, path) ? { text: files[path], sha256: digest(files[path]) } : null])) };
     assert.equal(call.operation, 'workspace.transaction');
-    if (transactionError) throw new Error(transactionError);
     for (const [path, hash] of Object.entries(call.arguments.expected)) assert.equal(digest(files[path]), hash);
     Object.assign(files, call.arguments.writes);
-    return { files: Object.fromEntries(Object.keys(call.arguments.writes).map(path => [path, digest(files[path])])) };
+    return { files: Object.fromEntries(Object.keys(call.arguments.writes).map(path => [path, digest(files[path])])), backup: null };
   } };
 }
 
-const edit = (text, extra = {}) => ({ path: 'file.txt', sha256: digest(text), start_line: 1, end_line: text.split('\n').length - Number(text.endsWith('\n')), edits: [{ before: 'value', after: 'updated' }], ...extra });
+const anchored = (name, payload, host) => invoke('anchored-edit', payload, host.host, { name }).value;
+const anchors = (host, path) => Object.fromEntries(anchored('read', { paths: [path] }, host).split('\n').slice(1).filter(line => line.includes('|')).map(line => [line.slice(line.indexOf('|') + 1), line.slice(0, line.indexOf('|'))]));
+const writes = host => host.calls.filter(call => call.operation === 'workspace.transaction').length;
 
-test('anchors preserve exact CRLF, Unicode, whitespace, final newline and multi-file scope', () => {
-  const text = '\tvalue = "世界";\r\n  untouched\r\n';
-  const host = workspace({ 'file.txt': text, 'other.txt': 'value without newline' });
-  const reply = invoke('anchored-edit', { files: [edit(text), edit(host.files['other.txt'], { path: 'other.txt' })] }, host.host);
-  assert.equal(reply.value.status, 'applied');
-  assert.equal(host.files['file.txt'], '\tupdated = "世界";\r\n  untouched\r\n');
-  assert.equal(host.files['other.txt'], 'updated without newline');
-  assert.equal(host.calls.filter(call => call.operation === 'workspace.transaction').length, 1);
-});
-
-test('stale, ambiguous, overlapping, generated, missing and malformed anchors never attempt writes', () => {
-  const cases = [
-    ['value\n', { sha256: '0'.repeat(64) }, 'stale_file_hash'],
-    ['value value\n', {}, 'ambiguous_anchor'],
-    ['value\n', { edits: [{ before: 'value', after: 'a' }, { before: 'alue', after: 'b' }] }, 'overlapping_anchors'],
-    ['// @generated\nvalue\n', {}, 'generated_file'],
-    ['value\n', { edits: [{ before: ' value', after: 'other' }] }, 'anchor_changed'],
-    ['value\n', { start_line: 2 }, 'invalid_line_scope'],
-    ['value\n', { path: '../file.txt' }, 'relative_path_required'],
-    ['value\n', { sha256: 'not-a-hash' }, 'malformed_anchor'],
-    ['value\n', { edits: [{ before: '', after: 'insert' }] }, 'exact_nonempty'],
-    ['value\n', { path: 'absent.txt' }, 'stale_file_hash'],
-  ];
-  for (const [text, changes, expected] of cases) {
-    const host = workspace({ 'file.txt': text });
-    const result = invoke('anchored-edit', { files: [edit(text, changes)] }, host.host).value;
-    assert.equal(result.status, 'fallback');
-    assert.match(result.reason, new RegExp(expected));
-    assert.equal(result.tool, 'apply_patch');
-    assert.equal(host.files['file.txt'], text);
-    assert.equal(host.calls.filter(call => call.operation === 'workspace.transaction').length, 0);
-  }
-});
-
-test('line scope disambiguates repeated text without changing bytes outside scope', () => {
-  const host = workspace({ 'file.txt': 'value\nvalue\n' });
-  const result = invoke('anchored-edit', { files: [edit(host.files['file.txt'], { start_line: 2, end_line: 2 })] }, host.host).value;
+test('hashline edits apply atomically across files with byte fidelity and fresh anchors', () => {
+  const host = workspace({ 'a.txt': 'head\r\n}\r\n  value = "世界"\r\n}\r\ntail', 'b.txt': 'one\ntwo\n' });
+  const a = anchors(host, 'a.txt');
+  const read = anchored('read', { paths: ['a.txt'] }, host).split('\n');
+  const braces = read.filter(line => line.endsWith('|}'));
+  assert.equal(new Set(braces.map(line => line.split('|')[0])).size, 2);
+  const result = anchored('edit', { files: [
+    { path: 'a.txt', edits: [{ op: 'replace', anchor: a['  value = "世界"'], lines: ['  value = 1', '  other = 2'] }, { op: 'delete', anchor: braces[1].split('|')[0] }, { op: 'append', lines: ['end'] }] },
+    { path: 'b.txt', edits: [{ op: 'prepend', lines: ['zero'] }, { op: 'insert_after', anchor: anchors(host, 'b.txt').two, lines: ['three'] }] },
+  ] }, host);
   assert.equal(result.status, 'applied');
-  assert.equal(host.files['file.txt'], 'value\nupdated\n');
+  assert.equal(host.files['a.txt'], 'head\r\n}\r\n  value = 1\r\n  other = 2\r\ntail\r\nend');
+  assert.equal(host.files['b.txt'], 'zero\none\ntwo\nthree\n');
+  assert.equal(writes(host), 1);
+  const fresh = [...result.diff.matchAll(/^\+(\d+#[0-9A-Z]{4})\|(.*)$/gm)];
+  assert.deepEqual(fresh.map(match => match[2]), ['  value = 1', '  other = 2', 'end', 'zero', 'three']);
+  const current = { ...anchors(host, 'a.txt'), ...anchors(host, 'b.txt') };
+  for (const [, anchor, text] of fresh) assert.equal(current[text], anchor);
+  assert.match(result.diff, /^-\}$/m);
+  assert.match(result.diff, /^ \d+#[0-9A-Z]{4}\|tail$/m);
 });
 
-test('permission denial and concurrent-write rollback conflict remain explicit without retry', () => {
-  const text = 'value\n';
-  const denied = invoke('anchored-edit', { files: [edit(text)] }, () => { throw new Error('read_denied'); }).value;
+test('only cited lines are verified; drift relocates uniquely and every failure returns before any write', () => {
+  const host = workspace({ 'a.txt': 'a\nb\nc\nd\n', 'b.txt': 'x\n}\ny\n}\n' });
+  const a = anchors(host, 'a.txt');
+  const b = anchors(host, 'b.txt');
+  host.files['a.txt'] = 'a\nb\nc\nD\n';
+  assert.equal(anchored('edit', { files: [{ path: 'a.txt', edits: [{ op: 'replace', anchor: a.b, lines: ['B'] }] }] }, host).status, 'applied');
+  host.files['a.txt'] = 'new\na\nB\nc\nD\n';
+  host.files['b.txt'] = 'x\n}\n}\ny\n}\n';
+  const stale = anchored('edit', { files: [
+    { path: 'a.txt', edits: [{ op: 'replace', anchor: a.c, lines: ['C'] }, { op: 'delete', anchor: '2#ZZZZ' }] },
+    { path: 'b.txt', edits: [{ op: 'insert_before', anchor: b.y, lines: ['w'] }, { op: 'delete', anchor: '4#' + b['}'].split('#')[1] }] },
+  ] }, host);
+  assert.equal(stale.status, 'rejected');
+  assert.deepEqual(stale.failures.map(failure => Object.keys(failure).at(-1)), ['moved_to', 'stale', 'moved_to', 'ambiguous']);
+  assert.equal(writes(host), 1);
+  const retry = anchored('edit', { files: [{ path: 'a.txt', edits: [{ op: 'replace', anchor: stale.failures[0].moved_to, lines: ['C'] }] }] }, host);
+  assert.equal(retry.status, 'applied');
+  assert.equal(host.files['a.txt'], 'new\na\nB\nC\nD\n');
+  const overlap = anchored('edit', { files: [{ path: 'a.txt', edits: [{ op: 'replace', anchor: anchors(host, 'a.txt').a, lines: ['y'] }, { op: 'insert_before', anchor: anchors(host, 'a.txt').a, lines: ['z'] }] }] }, host);
+  assert.match(overlap.failures[0].error, /overlapping/);
+  assert.equal(writes(host), 2);
+});
+
+test('denied, oversized, missing, generated and malformed edits never write', () => {
+  const denied = anchored('edit', { files: [{ path: 'a.txt', edits: [{ op: 'append', lines: ['x'] }] }] }, workspace({}, { 'workspace.stat': () => { throw new Error('read_denied'); } }));
   assert.equal(denied.status, 'denied');
-  const host = workspace({ 'file.txt': text }, 'rollback_conflict');
-  const result = invoke('anchored-edit', { files: [edit(text)] }, host.host).value;
-  assert.equal(result.status, 'transaction_failed');
-  assert.match(result.review, /Inspect current files/);
-  assert.equal(host.calls.length, 2);
+  const host = workspace({ 'big.txt': 'x'.repeat(96_001), 'gen.ts': '// @generated\nx\n' });
+  assert.deepEqual(anchored('read', { paths: ['big.txt'] }, host), { status: 'rejected', reason: 'files_too_large: 96001 bytes exceeds 96000; use the ordinary patch tool', writes_attempted: false });
+  const result = anchored('edit', { files: [{ path: 'gen.ts', edits: [{ op: 'append', lines: ['y'] }] }, { path: 'none.txt', edits: [{ op: 'append', lines: ['y'] }] }] }, host);
+  assert.deepEqual(result.failures.map(failure => failure.error.split(';')[0]), ['generated file', 'file missing']);
+  for (const edit of [{ op: 'delete', anchor: '1#AAAA', lines: ['x'] }, { op: 'append', anchor: '1#AAAA', lines: ['x'] }, { op: 'replace', anchor: '1#AAAA' }, { op: 'move' }]) assert.equal(anchored('edit', { files: [{ path: 'gen.ts', edits: [edit] }] }, host).status, 'rejected');
+  assert.equal(writes(host), 0);
+});
+
+test('anchored search returns the anchors read would return', () => {
+  const text = 'alpha\nbeta\ngamma\ndelta\n';
+  const rg = [
+    { type: 'begin', data: { path: { text: 'src/a.txt' } } },
+    { type: 'context', data: { path: { text: 'src/a.txt' }, line_number: 1, lines: { text: 'alpha\n' } } },
+    { type: 'match', data: { path: { text: 'src/a.txt' }, line_number: 2, lines: { text: 'beta\n' } } },
+    { type: 'match', data: { path: { text: 'src/a.txt' }, line_number: 4, lines: { text: 'delta\n' } } },
+  ].map(line => JSON.stringify(line)).join('\n');
+  const host = workspace({ 'src/a.txt': text }, { 'exec.run': call => {
+    assert.deepEqual(call.arguments.argv.slice(-4), ['-e', 'ta', '--', 'src']);
+    return { exit_code: 0, stdout: rg, stdout_preview_truncated: false, stderr: '' };
+  } });
+  const found = anchored('search', { pattern: 'ta', path: 'src', context: 1 }, host).split('\n');
+  const read = anchors(host, 'src/a.txt');
+  assert.deepEqual(found, ['src/a.txt', `${read.alpha}|alpha`, `${read.beta}|beta`, '--', `${read.delta}|delta`]);
+  assert.equal(anchored('search', { pattern: 'zzz' }, workspace({}, { 'exec.run': () => ({ exit_code: 1, stdout: '', stderr: '' }) })), 'no matches');
 });
 
 function sessions(rows, error) {
@@ -169,7 +194,7 @@ test('optional components register no lifecycle or context callbacks', () => {
 });
 
 const nativeEvents = readFileSync(new URL('../../runtime/omd/src/mods.rs', import.meta.url), 'utf8').match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
-const advisorOptions = { api: '0.2.0-experimental.5', surface: { events: Object.fromEntries([...nativeEvents.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), state: 'store', contracts: 'contracts' }, event: 'turn_end', name: '', settings: { every_turn: true }, capabilities: ['tools', 'lifecycle', 'store', 'sessions', 'agents', 'contracts', 'fs.read', 'context', 'terminal'], environment: ['crypto'] };
+const advisorOptions = { api: '0.2.0-experimental.5', surface: { events: Object.fromEntries([...nativeEvents.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), state: 'store', contracts: 'contracts' }, event: 'turn_end', name: '', settings: { every_turn: true }, capabilities: manifests.advisor.capabilities, environment: ['crypto'] };
 const evidence = { turn_id: 'turn-1', thread_id: 'thread-1', workspace_sha256: digest('source'), records: [{ item: 1, role: 'assistant', text: 'The exact supporting concern from this turn.' }] };
 const reference = { reference: digest('ref'), sha256: digest(JSON.stringify(evidence)) };
 const completed = { turn_id: 'turn-1', outcome: 'completed', evidence: reference };
@@ -253,6 +278,78 @@ test('advisor off has no completed-turn or context subscriber and aborts do not 
   const registration = invoke('advisor', null, () => assert.fail('unexpected host call'), { ...advisorOptions, event: 'inspect', settings: {} });
   assert.deepEqual(registration.registrations.events, ['terminal']);
   invoke('advisor', { ...completed, outcome: 'aborted' }, () => assert.fail('aborted turn review'), advisorOptions);
+});
+
+function consultHost(overrides = {}) {
+  const calls = [];
+  const snapshot = { reference: digest('history'), sha256: digest('history-sha') };
+  const history = `{"records":[{"role":"user","text":"Fix the parser. api_key=sk-live-123456"}]}`;
+  return { calls, host(call) {
+    calls.push(call);
+    if (Object.hasOwn(overrides, call.operation)) return overrides[call.operation](call);
+    if (call.operation === 'routes.list') return [{ name: 'astra', model: 'advisor-model' }];
+    if (call.operation === 'task.status') return { ledger: { thread_id: 'thread-1' } };
+    if (call.operation === 'app.request') return { thread: { model: 'lead-model' } };
+    if (call.operation === 'sessions.snapshot') return { evidence: snapshot };
+    if (call.operation === 'evidence.read') return { reference: snapshot, text: history.slice(call.arguments.cursor ?? 0), cursor: null, bytes: history.length };
+    if (call.operation === 'exec.run') return { exit_code: 0, stdout: 'diff --git a/x b/x\n+password: hunter2\n', stderr: '' };
+    if (call.operation === 'workspace.stat') return { files: { 'src/a.ts': { size: 10 } } };
+    if (call.operation === 'workspace.read') return { files: { 'src/a.ts': { text: 'export {}', sha256: digest('export {}') } } };
+    if (call.operation === 'model.complete') return { text: 'Verdict: sound' };
+    throw new Error(`unexpected host operation ${call.operation}`);
+  } };
+}
+const consultOptions = settings => ({ ...advisorOptions, settings, state: null });
+const prompt = fixture => fixture.calls.find(call => call.operation === 'model.complete')?.arguments.prompt;
+
+test('advisor ask sends a bounded, redacted prompt limited to shared sources and skips the lead model', () => {
+  const full = consultHost();
+  const answer = invoke('advisor', { question: 'Is the parser fix safe?', draft: 'x'.repeat(4000), files: ['src/a.ts', '../etc/passwd'] }, full.host, { ...consultOptions({}), event: 'tool', name: 'ask' });
+  assert.equal(answer.value, 'Verdict: sound');
+  assert.ok(Buffer.byteLength(prompt(full)) <= 8192);
+  assert.match(prompt(full), /Is the parser fix safe\?[\s\S]*Lead draft[\s\S]*Fix the parser[\s\S]*diff --git/);
+  assert.doesNotMatch(prompt(full), /sk-live|hunter2|etc\/passwd/);
+  assert.equal(answer.state.consulted.trigger, 'ask');
+  const narrow = consultHost();
+  invoke('advisor', { files: ['src/a.ts'] }, narrow.host, { ...consultOptions({ share: ['diff'] }), event: 'tool', name: 'ask' });
+  assert.match(prompt(narrow), /Withheld by the user: conversation, files/);
+  assert.ok(!narrow.calls.some(call => ['sessions.snapshot', 'workspace.read'].includes(call.operation)));
+  const same = consultHost({ 'app.request': () => ({ thread: { model: 'advisor-model' } }) });
+  assert.match(invoke('advisor', {}, same.host, { ...consultOptions({}), event: 'tool', name: 'ask' }).value, /skipped: its route uses the lead's model advisor-model/);
+  assert.equal(prompt(same), undefined);
+  const command = invoke('advisor', 'check the migration', () => assert.fail('command host call'), { ...consultOptions({}), event: 'command', name: 'advisor' }).value;
+  assert.match(command.submit, /mod_omd_advisor_ask tool now with question: check the migration/);
+});
+
+test('advisor failure and loop triggers fire at their thresholds and ignore progress', () => {
+  const options = { ...consultOptions({ triggers: ['failure', 'loop'] }), event: 'tool_output', name: '' };
+  const output = (tool, success, text, extra = {}) => ({ call_id: 'c', tool, arguments: { cmd: tool }, success, text, tail: null, bytes: text.length, original: null, ...extra });
+  let state = null;
+  const run = (event, fixture = consultHost()) => { const reply = invoke('advisor', event, fixture.host, { ...options, state }); state = reply.state; return reply.value; };
+  assert.equal(run(output('test', true, 'Process exited with code 1\nFAIL 1')), null);
+  assert.equal(run(output('build', true, 'ok')), null);
+  const fired = consultHost();
+  assert.match(run(output('test', false, 'FAIL 2'), fired).append, /^Independent advisor \(failure, advisory\): Verdict: sound/);
+  assert.match(prompt(fired), /failed; output ends:\nFAIL 2/);
+  assert.equal(run(output('test', false, 'FAIL 3')), null);
+  assert.equal(run(output('test', true, 'pass')), null);
+  assert.equal(run(output('test', false, 'FAIL 4')), null);
+  assert.equal(run(output('poll', true, 'Chunk ID: a\nWall time: 1.0 seconds\nProcess running with session ID 7\nOutput:\n')), null);
+  assert.equal(run(output('poll', true, 'Chunk ID: b\nWall time: 2.0 seconds\nProcess running with session ID 7\nOutput:\n')), null);
+  assert.equal(run(output('poll', true, 'Chunk ID: c\nWall time: 3.0 seconds\nProcess running with session ID 7\nOutput:\n')), null);
+  assert.equal(run(output('read', true, 'v1')), null);
+  assert.equal(run(output('read', true, 'Wall time: 1.0 seconds\nsame')), null);
+  assert.equal(run(output('read', true, 'Wall time: 2.0 seconds\nsame')), null);
+  assert.match(run(output('read', true, 'Wall time: 3.0 seconds\nsame')).append, /^Independent advisor \(loop, advisory\)/);
+});
+
+test('advisor completion trigger reviews only completed turns that changed files', () => {
+  const options = { ...advisorOptions, settings: { triggers: ['completion'] } };
+  const unchanged = advisorHost({ 'turns.activity': () => ({ turns: [{ files: [] }], recording: true }) });
+  invoke('advisor', completed, unchanged.host, options);
+  assert.deepEqual(unchanged.calls.map(call => call.operation), ['turns.activity']);
+  const changed = advisorHost({ 'turns.activity': () => ({ turns: [{ files: [{ path: 'a.ts' }] }], recording: true }), 'routes.list': () => [], 'task.status': () => ({ ledger: { thread_id: 'thread-1' } }), 'app.request': () => ({ thread: { model: 'lead-model' } }) });
+  assert.equal(invoke('advisor', completed, changed.host, options).state.status, 'reviewing');
 });
 
 const researchOptions = { event: 'tool', name: 'gather', api: '0.2.0-experimental.5', capabilities: ['tools', 'agents', 'model', 'fs.read'], settings: { enabled: true } };

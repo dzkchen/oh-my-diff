@@ -2,7 +2,7 @@ import type { Json, ModAPI } from '../../api.d.ts';
 
 type Adapter = 'python' | 'typescript' | 'rust' | 'java';
 type Document = { sha256: string; version: number };
-type Diagnostic = { count: number; version: number | null };
+type Diagnostic = { count: number; version: number | null; errors: string[] };
 type State = {
   adapter: Adapter;
   server: string | null;
@@ -175,7 +175,7 @@ function state(value: Json, adapter: Adapter): State {
   const diagnostics: Record<string, Diagnostic> = {};
   for (const [path, entry] of Object.entries(object(saved.diagnostics ?? null) ?? {})) {
     const data = object(entry);
-    if (data && number(data.count) !== null) diagnostics[path] = { count: Number(data.count), version: number(data.version) };
+    if (data && number(data.count) !== null) diagnostics[path] = { count: Number(data.count), version: number(data.version), errors: Array.isArray(data.errors) ? data.errors.filter(item => typeof item === 'string').slice(0, 50) as string[] : [] };
   }
   const savedPreview = object(saved.preview ?? null);
   const previewActions = savedPreview?.actions;
@@ -206,6 +206,20 @@ const CALL_BUDGET = 28;
 const BYTE_BUDGET = 96_000;
 const SILENT_WAITS = 10;
 const IDLE_STOP_MS = 15 * 60_000;
+const DIAGNOSTIC_WAITS = 8;
+const FEEDBACK_BYTES = 4000;
+const MENTION = /[\w@+.\/-]+\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
+const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
+const errorText = (entry: string) => entry.slice(entry.indexOf(' ') + 1);
+const difference = (from: string[], minus: string[]) => {
+  const counts = new Map<string, number>();
+  for (const entry of minus) counts.set(errorText(entry), (counts.get(errorText(entry)) ?? 0) + 1);
+  return from.filter(entry => {
+    const left = counts.get(errorText(entry)) ?? 0;
+    counts.set(errorText(entry), left - 1);
+    return left <= 0;
+  });
+};
 const OBSERVED_REPOSITORY_KEY = 'lsp.observed_repository';
 const serializedBytes = (value: unknown) => {
   const text = JSON.stringify(value) ?? '';
@@ -261,7 +275,15 @@ export default function activate(api: ModAPI) {
       const version = number(params?.version ?? null);
       if (version !== null && version !== s.documents[path].version) continue;
       const entries = params?.diagnostics;
-      if (Array.isArray(entries)) s.diagnostics[path] = { count: entries.length, version };
+      if (!Array.isArray(entries)) continue;
+      const errors = new Set<string>();
+      for (const entry of entries) {
+        const item = object(entry);
+        const start = object(object(item?.range ?? null)?.start ?? null);
+        const text = string(item?.message ?? null);
+        if (text && (item?.severity ?? 1) === 1 && errors.size < 50) errors.add(`${Number(start?.line ?? 0) + 1}:${Number(start?.character ?? 0) + 1} ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
+      }
+      s.diagnostics[path] = { count: entries.length, version, errors: [...errors] };
     }
   };
   const handle = (s: State, messages: Message[]): Message[] => {
@@ -485,6 +507,48 @@ export default function activate(api: ModAPI) {
     s.reason = '';
     save(s);
     return { status: 'ready' as const, expected, writes };
+  });
+  api.on('tool_output', event => {
+    const mentioned = strings(event.arguments).join('\n').match(MENTION) ?? [];
+    const report: string[] = [];
+    for (const adapter of ORDER) {
+      const s = state(api.state.get(), adapter);
+      if (!s.running || !s.repository) continue;
+      const named = mentioned.map(path => path.startsWith(`${s.repository}/`) ? path.slice(s.repository.length + 1) : path.replace(/^\.\//, '')).filter(path => adapterFor(path) === adapter && pathFromUri(s.repository, uri(s.repository, path)));
+      const candidates = [...new Set([...Object.keys(s.documents), ...named])].slice(0, 128);
+      if (!candidates.length) continue;
+      const stat = budget({ paths: candidates, hash: true }, argument => api.host.tryCall('workspace.stat', argument));
+      if (!stat.ok) continue;
+      const changed = candidates.filter(path => stat.value.files[path]?.kind === 'file' ? stat.value.files[path]?.sha256 !== s.documents[path]?.sha256 : Boolean(s.documents[path]));
+      if (!changed.length) continue;
+      const edited = changed.filter(path => s.documents[path] && stat.value.files[path]);
+      const pending = exchange(s, [], 0);
+      if (pending.ok) settle(s, handle(s, pending.value));
+      const before = Object.fromEntries(Object.entries(s.diagnostics).map(([path, entry]) => [path, entry.errors]));
+      const synced = synchronize(s, changed);
+      if (!synced.ok) { failure(s, synced.error, true); save(s); continue; }
+      for (let wait = 0; wait < DIAGNOSTIC_WAITS && edited.some(path => !s.diagnostics[path]); wait++) {
+        const batch = exchange(s, [], 250);
+        const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
+        if (!settled.ok) break;
+      }
+      for (const path of new Set([...edited, ...Object.keys(s.diagnostics)])) {
+        const after = s.diagnostics[path]?.errors;
+        const prior = before[path] ?? (edited.includes(path) ? [] : undefined);
+        if (!after || !prior || after === prior) continue;
+        const introduced = difference(after, prior);
+        const resolved = difference(prior, after);
+        if (!introduced.length && !resolved.length) continue;
+        report.push(`${path}${edited.includes(path) ? '' : ' (dependent)'}: ${introduced.length} new, ${resolved.length} resolved`, ...introduced.slice(0, 8).map(entry => `  + ${entry}`), ...resolved.slice(0, 8).map(entry => `  - ${entry}`));
+      }
+      s.status = 'synced';
+      s.reason = '';
+      save(s);
+    }
+    if (!report.length) return null;
+    let text = `Language-server errors after this call:\n${report.join('\n')}`;
+    while (serializedBytes(text) > FEEDBACK_BYTES) text = text.slice(0, Math.floor(text.length * 0.9));
+    return { append: text };
   });
   api.on('turn_start', () => {
     for (const adapter of ORDER) {

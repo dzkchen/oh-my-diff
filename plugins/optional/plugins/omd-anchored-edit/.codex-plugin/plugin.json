@@ -1,7 +1,7 @@
 {
   "name": "omd-anchored-edit",
-  "version": "0.1.0-preview.1",
-  "description": "Resolve exact text anchors and file hashes before an authorized workspace transaction.",
+  "version": "0.2.0-preview.1",
+  "description": "Edit files through per-line LINE#HASH anchors verified against current content and applied in one authorized workspace transaction.",
   "author": {
     "name": "Oh My Diff"
   },
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "OMD Anchored Edit",
     "shortDescription": "OMD Anchored Edit",
-    "longDescription": "Resolve exact text anchors and file hashes before an authorized workspace transaction.",
+    "longDescription": "Edit files through per-line LINE#HASH anchors verified against current content and applied in one authorized workspace transaction.",
     "developerName": "Oh My Diff",
     "category": "Developer Tools",
     "capabilities": [

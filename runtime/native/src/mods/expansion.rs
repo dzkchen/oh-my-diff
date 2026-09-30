@@ -156,11 +156,11 @@ pub(super) fn served(operation: &str) -> bool {
         || codex_omd::client_surface::SURFACE_OPERATIONS.contains(&operation)
 }
 
-pub(super) fn event_allows(event: &str, operation: &str) -> bool {
+pub(super) fn event_allows(event: &str) -> bool {
     matches!(
         event,
-        "process_event" | "channel" | "approval_result" | "timer"
-    ) || event == "tool_output" && matches!(operation, "evidence.read" | "store.get" | "store.list")
+        "process_event" | "channel" | "approval_result" | "timer" | "tool_output"
+    )
 }
 
 type HostFn<'a> = &'a mut dyn FnMut(&str, ModHostCall) -> std::io::Result<Value>;

@@ -309,10 +309,10 @@
     {
       "path": "mods/first-party/omd_lsp_sync",
       "id": "omd_lsp_sync",
-      "version": "0.2.0-preview.1",
+      "version": "0.3.0-preview.1",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Owns live language-server synchronization and rename/edit planning through generic host process and workspace operations."
+      "why_mod": "Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations."
     },
     {
       "path": "mods/examples/virtual_reader",
@@ -364,11 +364,11 @@
     },
     {
       "id": "omd_advisor",
-      "version": "0.2.0-preview.1",
+      "version": "0.3.0-preview.1",
       "path": "mods/first-party/omd_advisor",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Owns completed-turn scheduling, independent review prompts, typed result validation, deduplication and selected-context presentation through public accounted review primitives."
+      "why_mod": "Owns on-demand, triggered and completed-turn advice, independent review prompts, typed result validation, deduplication and selected-context presentation through public accounted review primitives."
     },
     {
       "id": "omd_research",

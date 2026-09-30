@@ -5,24 +5,28 @@
       "api": "0.2.0-experimental.5",
       "capabilities": [
         "tools",
+        "commands",
         "lifecycle",
+        "outputs",
         "store",
         "sessions",
         "agents",
+        "model",
         "contracts",
+        "exec",
         "fs.read",
         "context",
         "terminal"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "15014a0942c70cb63f2fefa510336eb23bc34e2d795112914f33c26b3807904c",
-        "mod.json": "07525c722045d2a0b5961bc7f7414e8c49d26c00da6d5116dfba4c9b87a115e5"
+        "index.ts": "660bcb83894ba07a973cc305169dcd592eb600b0a6055ab4ca5aacf4a56bfd34",
+        "mod.json": "8079242512167067678da95d70ec7c2a50cd042ecdd6ed3e2698b9e7cb7894fc"
       },
       "id": "omd_advisor",
-      "package_sha256": "606d8aafb3217b3a36c97ba2a94e2a7cf3007f6d048a6cdc5d224b0a01ca1baf",
+      "package_sha256": "8bd85a3eb27857b0767eff96a31eb4db3d99ca9fa5e5b9bb1757887f3545393a",
       "source": "mods/first-party/omd_advisor",
-      "version": "0.2.0-preview.1"
+      "version": "0.3.0-preview.1"
     },
     "omd_checks": {
       "api": "0.2.0-experimental.5",
@@ -177,18 +181,19 @@
         "exec",
         "store",
         "tools",
+        "outputs",
         "fs.read",
         "fs.write"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "5547105ec4f0a82c5453bd8e85b228230c461db826f8b006cf4ce96459eebcd0",
-        "mod.json": "b8a8687584507657c578e6c88d4aee04bcce04f4633db40045ed0a3b41a5f020"
+        "index.ts": "414370f81fc8f5f9fed62f409f5600fbad859c00dc955645ca291bfbc5c41744",
+        "mod.json": "3755f9b8a58480d592491723ce7f28feec99217495046fb6947d96603a932107"
       },
       "id": "omd_lsp_sync",
-      "package_sha256": "4efe0fad7307d61c30b524eab5bda80b58c5f5bca9c910e903a6603253bcb17e",
+      "package_sha256": "0e5f8b7f71622d2dfbd7e0f8f730833c3324a34e51fcd182cb0c241185f4d96d",
       "source": "mods/first-party/omd_lsp_sync",
-      "version": "0.2.0-preview.1"
+      "version": "0.3.0-preview.1"
     },
     "omd_model_picker": {
       "api": "0.2.0-experimental.5",

@@ -80,9 +80,7 @@ class Host:
                     messages.append(json.loads(self.buffer[marker + 4:end]))
                     self.buffer = self.buffer[end:]
                     continue
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return messages
+            remaining = max(0, deadline - time.monotonic())
             ready, _, _ = select.select([self.child.stdout], [], [], remaining)
             if not ready:
                 return messages
@@ -130,6 +128,12 @@ class Host:
         if operation == "process.stop":
             self.close()
             return {"stopped": True}
+        if operation == "workspace.stat":
+            files = {}
+            for name in arguments["paths"]:
+                path = self.repository / name
+                files[name] = {"kind": "file", "size": path.stat().st_size, "mtime_ms": 0, "sha256": digest(path.read_bytes())} if path.exists() else None
+            return {"files": files}
         if operation == "workspace.read":
             files = {}
             for name in arguments["paths"]:
@@ -267,7 +271,83 @@ while True:
 """
 
 
+DIAGNOSTIC_SERVER = r"""
+import json, sys, time
+documents = {}
+def send(message):
+    data = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(data) + data)
+    sys.stdout.buffer.flush()
+def publish():
+    exported = any("value" in text for uri, (_, text) in documents.items() if uri.endswith("/old.py"))
+    for uri, (version, text) in documents.items():
+        errors = [(index, line.split("ERR ", 1)[1]) for index, line in enumerate(text.splitlines()) if "ERR " in line]
+        if uri.endswith("/user.py") and not exported:
+            errors.append((0, "value is undefined"))
+        diagnostics = [{"range": {"start": {"line": line, "character": 0}, "end": {"line": line, "character": 1}}, "severity": 1, "message": error} for line, error in errors]
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": uri, "version": version, "diagnostics": diagnostics + [{"severity": 2, "message": "style"}]}})
+while True:
+    length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            sys.exit(0)
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            length = int(line.split(b":", 1)[1])
+    message = json.loads(sys.stdin.buffer.read(length))
+    method, params = message.get("method"), message.get("params", {})
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {}}})
+    elif method == "textDocument/didOpen":
+        documents[params["textDocument"]["uri"]] = (params["textDocument"]["version"], params["textDocument"]["text"])
+        time.sleep(0.3)
+        publish()
+    elif method == "textDocument/didChange":
+        documents[params["textDocument"]["uri"]] = (params["textDocument"]["version"], params["contentChanges"][0]["text"])
+        publish()
+"""
+
+
 class LspSyncModTest(unittest.TestCase):
+    def test_post_edit_feedback_reports_only_introduced_and_resolved_errors(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "diagnostic_server.py"
+            server.write_text(DIAGNOSTIC_SERVER)
+            (repository / "old.py").write_text("value = 1\n")
+            (repository / "user.py").write_text("from old import value\n")
+            host = Host(repository, str(server))
+            output = lambda arguments: {"call_id": "c", "tool": "apply_patch", "arguments": arguments, "success": True, "text": "Done", "tail": None, "bytes": 4, "original": None}
+            try:
+                state = run(node, "workspace_change", {"repository": str(repository), "source": "tool", "call_id": "1", "status": "observed",
+                    "changes": [{"path": name, "before": None, "after": digest((repository / name).read_bytes())} for name in ("old.py", "user.py")]}, None, host)["state"]
+                time.sleep(1)
+                (repository / "old.py").write_text("val = 1\nERR broken syntax\n")
+                broken = run(node, "tool_output", output("*** Update File: old.py"), state, host)
+                self.assertEqual(broken["value"]["append"], "Language-server errors after this call:\nold.py: 1 new, 0 resolved\n  + 2:1 broken syntax\nuser.py (dependent): 1 new, 0 resolved\n  + 1:1 value is undefined")
+                (repository / "old.py").write_text("value = 1\n")
+                fixed = run(node, "tool_output", output(f"{repository}/old.py"), broken["state"], host)
+                self.assertIn("old.py: 0 new, 1 resolved\n  - 2:1 broken syntax", fixed["value"]["append"])
+                self.assertIn("user.py (dependent): 0 new, 1 resolved", fixed["value"]["append"])
+                self.assertIsNone(run(node, "tool_output", output("cat old.py"), fixed["state"], host)["value"])
+                (repository / "new.py").write_text("ERR preexisting\n")
+                opened = run(node, "tool_output", output({"cmd": "sed -n 1p new.py"}), fixed["state"], host)
+                self.assertIsNone(opened["value"])
+                self.assertIn("new.py", opened["state"]["servers"]["python"]["documents"])
+                (repository / "new.py").write_text("ERR preexisting\nERR added\n")
+                (repository / "old.py").write_text("value = 1\nERR also\n")
+                edited = run(node, "tool_output", output(None), opened["state"], host)
+                self.assertEqual(edited["value"]["append"], "Language-server errors after this call:\nold.py: 1 new, 0 resolved\n  + 2:1 also\nnew.py: 1 new, 0 resolved\n  + 2:1 added")
+                self.assertEqual(host.operations.count("process.start"), 1)
+            finally:
+                host.close()
+
     def test_symbol_rename_and_code_action_apply_exact_text_scopes(self):
         node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
         if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
