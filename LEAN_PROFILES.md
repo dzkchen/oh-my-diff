@@ -81,7 +81,7 @@ knowledge, task tools, theme, reactive rules, programmable context, `/continue` 
 require their own explicit host policy and allowance; installation does not
 activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
-selections and adds newly bundled first-party packages disabled. Seven curated plugin source packages are available in
+selections and adds newly bundled first-party packages disabled. Nine curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
 started. The deferred code-execution plugin, browser,
 bridge service, external language servers, code-mode host, and sidecars are

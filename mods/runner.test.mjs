@@ -296,13 +296,16 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
     payload: { repository, old: 'src/app.ts', new: 'src/main.rs', expected: {} }, state: result.state });
   assert.deepEqual(cross.value, { status: 'fallback', reason: 'unsupported_language' });
 });
+const debuggerSource = readFileSync(new URL('../plugins/optional/plugins/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
+const debugpyProbe = { exit_code: 0, stdout: '1.8.22\n', stderr: '' };
 test('optional API 0.2 debugger: DAP control and inspection on managed process calls', () => {
-  const source = readFileSync(new URL('../plugins/optional/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
+  const source = debuggerSource;
   const capabilities = ['tools', 'exec', 'store', 'lifecycle', 'network'];
   const calls = [];
   const server = call => {
     calls.push(call);
     if (call.operation === 'process.which') return { found: [{ name: 'python3', path: '/usr/bin/python3', sha256: 'adapter-hash' }] };
+    if (call.operation === 'exec.run') return debugpyProbe;
     if (call.operation === 'process.start') return { session: 'debug', running: true };
     if (call.operation === 'process.status') return { session: 'debug', running: true, idle_ms: 0 };
     if (call.operation === 'process.stop') return { stopped: true };
@@ -331,7 +334,7 @@ test('optional API 0.2 debugger: DAP control and inspection on managed process c
     assert.fail('debugger mod did not finish');
   };
   const opened = replay('open', { adapter: 'debugpy' });
-  assert.equal(opened.value.status, 'initialized');
+  assert.deepEqual(opened.value, { adapter: 'debugpy', status: 'initialized', python: '/usr/bin/python3', debugpy: '1.8.22' });
   const started = replay('start', { mode: 'launch', program: '/tmp/project/bug.py' }, opened.state);
   assert.equal(started.state.ready, true);
   const breakpoint = replay('breakpoints', { source: '/tmp/project/bug.py', lines: [4] }, started.state);
@@ -358,7 +361,7 @@ test('optional API 0.2 debugger: DAP control and inspection on managed process c
   assert.deepEqual(replay('start', { mode: 'attach', process_id: 42 }, opened.state).value, { error: 'invalid_mode' });
 });
 test('optional API 0.2 debugger: stop events after the control response', () => {
-  const source = readFileSync(new URL('../plugins/optional/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
+  const source = debuggerSource;
   const capabilities = ['tools', 'exec', 'store', 'lifecycle', 'network'];
   let queued = [];
   const server = call => {
@@ -398,7 +401,7 @@ test('optional API 0.2 debugger: stop events after the control response', () => 
   assert.equal(frames.state.reason, 'breakpoint');
 });
 test('optional API 0.2 debugger: refused asynchronous launch', () => {
-  const source = readFileSync(new URL('../plugins/optional/omd-debugger/mod/index.ts', import.meta.url), 'utf8');
+  const source = debuggerSource;
   const capabilities = ['tools', 'exec', 'store', 'lifecycle', 'network'];
   const initial = { adapter: 'debugpy', executable: '/usr/bin/python3', running: true, ready: false, mode: null, phase: 'initialized', next_seq: 2, launch_seq: null, thread_id: null, reason: '' };
   const sent = run(source, { capabilities, event: 'tool', name: 'start', payload: { mode: 'launch', program: '/repo/bug.py' }, state: initial,
@@ -424,6 +427,7 @@ test('optional API 0.2 debugger: refused asynchronous launch', () => {
     if (!reopened.host_call) break;
     const call = reopened.host_call;
     const value = call.operation === 'process.which' ? { found: [{ name: 'python3', path: '/usr/bin/python3', sha256: 'adapter-hash' }] }
+      : call.operation === 'exec.run' ? debugpyProbe
       : call.operation === 'process.start' ? { session: 'debug', running: true }
         : { session: 'debug', running: true, messages: [{ type: 'response', request_seq: 1, command: 'initialize', success: true, body: {} }] };
     receipts.push({ call, value });
@@ -431,7 +435,32 @@ test('optional API 0.2 debugger: refused asynchronous launch', () => {
   assert.equal(reopened.value.status, 'initialized');
   assert.equal(reopened.state.running, true);
   assert.equal(reopened.state.reason, '');
-  assert.deepEqual(receipts.map(receipt => receipt.call.operation), ['process.which', 'process.start', 'process.exchange']);
+  assert.deepEqual(receipts.map(receipt => receipt.call.operation), ['process.which', 'exec.run', 'process.start', 'process.exchange']);
+});
+test('optional API 0.2 debugger: setup, cancellation, turn end and resume', () => {
+  const capabilities = ['tools', 'exec', 'store', 'lifecycle', 'network'];
+  const which = { call: { operation: 'process.which', arguments: { names: ['python3'] } }, value: { found: [{ name: 'python3', path: '/usr/bin/python3', sha256: 'adapter-hash' }] } };
+  const probe = run(debuggerSource, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'debugpy' }, receipts: [which] }).host_call;
+  const missing = run(debuggerSource, { capabilities, event: 'tool', name: 'open', payload: { adapter: 'debugpy' },
+    receipts: [which, { call: probe, value: { exit_code: 1, stdout: '', stderr: "ModuleNotFoundError: No module named 'debugpy' TOP_SECRET" } }] });
+  assert.deepEqual(missing.value, { error: 'adapter_dependency_absent', adapter: 'debugpy', dependency: 'debugpy', python: '/usr/bin/python3' });
+  assert.ok(!missing.host_call);
+  const live = { adapter: 'debugpy', executable: '/usr/bin/python3', debugpy: '1.8.22', running: true, ready: true, mode: 'launch', next_seq: 9, launch_seq: null, thread_id: 3 };
+  const lifecycle = (event, payload, phase, messages = []) => {
+    const state = { ...live, phase, reason: '' };
+    const receipts = [];
+    for (;;) {
+      const output = run(debuggerSource, { capabilities, event, payload, state, receipts });
+      if (!output.host_call) return output.state ?? state;
+      const { operation } = output.host_call;
+      receipts.push({ call: output.host_call, value: operation === 'process.exchange' ? { session: 'debug', running: true, messages } : { stopped: false } });
+    }
+  };
+  assert.equal(lifecycle('idle', { cause: 'Completed' }, 'stopped').running, true);
+  assert.equal(lifecycle('idle', { cause: 'Completed' }, 'active').reason, 'target_running_at_turn_end');
+  assert.equal(lifecycle('idle', { cause: 'Completed' }, 'active', [{ type: 'event', event: 'stopped', body: { threadId: 3, reason: 'breakpoint' } }]).phase, 'stopped');
+  assert.equal(lifecycle('idle', { cause: 'Interrupted' }, 'stopped').reason, 'cancelled');
+  assert.equal(lifecycle('resume', { thread_id: 't', last_turn: null, restarted: true }, 'stopped').reason, 'session_resumed');
 });
 test('workspace layout accepts bare toggles and dialog select values', () => {
   const source = readFileSync(new URL('./first-party/omd_workspace/index.ts', import.meta.url), 'utf8');

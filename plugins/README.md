@@ -1,7 +1,7 @@
 # First-party Codex plugin collection
 
 The source marketplace contains five Codex plugins. The current provisional
-OMD+ package stages four of them plus the three selected local plugins as inactive source candidates;
+OMD+ package stages four of them plus the five selected local plugins as inactive source candidates;
 `omd-code-execution` remains outside that package. Staging a plugin does not
 install or enable it in Codex.
 
@@ -26,8 +26,13 @@ install or enable it in Codex.
   separately trusted read-only command component.
 - `omd-curated-memory` supplies local memory guidance, a bounded curation hook,
   and a separately trusted opt-in memory component.
+- `omd-debugger` supplies sandboxed Python launch-debugging guidance and a
+  separately trusted debugpy component over managed processes.
+- `omd-procedures` supplies guidance and a separately trusted component that
+  promotes a completed `omd_workflow` task into a versioned skill plugin only
+  when the user runs `/omd_procedures:promote`.
 
-The current OMD+ candidate stages all seven selected plugins at
+The current OMD+ candidate stages all nine selected plugins at
 `$OMD_PREFIX/bundles/oh-my-diff` without editing shared Codex state. After
 inspecting the staged sources, installation into Codex is a separate operator
 action:
@@ -40,7 +45,7 @@ codex plugin add omd-application-bridges@oh-my-diff
 codex plugin add omd-artifact-reading@oh-my-diff
 ```
 
-The three local packages retain their source homes under `plugins/optional/plugins`
+The five local packages retain their source homes under `plugins/optional/plugins`
 and are available from the staged `oh-my-diff` marketplace too. Install one only
 when selected, for example `codex plugin add omd-session-review@oh-my-diff`.
 Their `mod/` components require a separate exact inspection, capability grant,

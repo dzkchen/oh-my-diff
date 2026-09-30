@@ -1,6 +1,6 @@
 {
   "name": "omd-debugger",
-  "version": "0.1.0-preview.2+codex.20260925192404",
+  "version": "0.2.0-preview.1",
   "description": "Opt-in guidance for sandboxed Python debugging through a separately trusted OMD mod.",
   "author": {
     "name": "Oh My Diff"

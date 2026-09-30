@@ -1,0 +1,21 @@
+{
+  "name": "omd-procedures",
+  "version": "0.1.0-preview.1",
+  "description": "Promote a completed OMD workflow task into a versioned, reusable procedure skill packaged as a repository plugin.",
+  "author": {
+    "name": "Oh My Diff"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "OMD Procedures",
+    "shortDescription": "Promote completed workflow tasks into procedure skills",
+    "longDescription": "Draft a reusable procedure from a completed omd_workflow task, promote it explicitly into a versioned skill plugin in the repository, and run it through the same workflow checkpoints and contract.",
+    "developerName": "Oh My Diff",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Skills"
+    ],
+    "defaultPrompt": "Draft a reusable OMD procedure from this completed workflow task"
+  },
+  "license": "Apache-2.0"
+}

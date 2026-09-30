@@ -8,7 +8,7 @@
       "name": "omd-debugger",
       "source": {
         "source": "local",
-        "path": "./omd-debugger"
+        "path": "./plugins/omd-debugger"
       },
       "policy": {
         "installation": "AVAILABLE",
@@ -45,6 +45,18 @@
       "source": {
         "source": "local",
         "path": "./plugins/omd-curated-memory"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "omd-procedures",
+      "source": {
+        "source": "local",
+        "path": "./plugins/omd-procedures"
       },
       "policy": {
         "installation": "AVAILABLE",

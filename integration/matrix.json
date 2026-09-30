@@ -1163,7 +1163,9 @@
         "omd-application-bridges",
         "omd-artifact-reading",
         "omd-curated-memory",
+        "omd-debugger",
         "omd-guidance-hooks",
+        "omd-procedures",
         "omd-review-policy",
         "omd-session-review"
       ]

@@ -4,9 +4,10 @@
 TypeScript mod. The plugin gives task guidance; its installation does not trust,
 enable, or run the mod. The mod implements Python **launch** debugging through
 `python3 -m debugpy.adapter`. C, Go, and attach are outside this package's
-supported control surface. Neither OMD install profile activates it.
+supported control surface. OMD+ stages it inactive in its plugin marketplace;
+neither profile installs or activates it.
 
-The local on-demand marketplace at this directory can install the plugin into
+This directory is also a local marketplace that can install the plugin into
 an explicitly selected Codex home:
 
 ```sh
@@ -23,24 +24,28 @@ Inspect the source and grant its exact digest and capabilities before enabling
 it:
 
 ```sh
-omd-mod inspect /absolute/path/to/plugins/optional/omd-debugger/mod
-omd-mod trust /absolute/external/mod-store /absolute/path/to/plugins/optional/omd-debugger/mod INSPECT_SHA256 tools,exec,store,lifecycle,network
-omd-mod enable /absolute/external/mod-store /absolute/path/to/plugins/optional/omd-debugger/mod
+omd-mod plugin-component /absolute/path/to/plugins/optional/plugins/omd-debugger
+omd-mod trust /absolute/external/mod-store /absolute/path/to/plugins/optional/plugins/omd-debugger/mod INSPECT_SHA256 tools,exec,store,lifecycle,network
+omd-mod enable /absolute/external/mod-store /absolute/path/to/plugins/optional/plugins/omd-debugger/mod
 omd-mod selection-status /absolute/external/mod-store
 ```
 
-Use the digest reported by the current `inspect` command. Source changes need
+Use the digest reported by the current `plugin-component` command. Source changes need
 new inspection and trust. A selected mod still needs `OMD_MODE=omd`, native host
 permission for tool calls, and the adapter on the host's effective `PATH`.
-Run the skill in a new Codex thread after plugin installation.
+Run the skill in a new Codex thread after plugin installation. `open` checks
+that the selected `python3` imports debugpy and reports its version. A session
+stopped at a breakpoint survives the turn end; a running target is terminated
+then, and interrupts, restarts and adapter failures report a bounded reason.
 
 Historical pre-migration acceptance used pinned Codex `rust-v0.156.1`, OMD `0.1.0`, mod
 API `0.1.0-experimental.8`, Apple Silicon macOS Darwin `25.5.0`, Python
 `3.14.6`, and debugpy `1.8.22`. The exact Python target remained in OMD's
 restrictive read-only sandbox. [The acceptance audit](../../.docs/audits/debugger-20260925.md)
-records the tests and limits; it does not qualify the API 0.2 port. This is a local opt-in candidate; public release
-and other platform/version support remain separate qualification work.
+records the tests and limits; it does not qualify the API 0.2 port, which has
+offline component tests only ([Batch 3c](../../.docs/audits/batch3c-debugger-procedures-20260930.md)).
+Public release and other platform/version support remain separate qualification work.
 
 ## Batch 2 local packages
 
-The same optional marketplace offers [anchored edits](plugins/omd-anchored-edit/README.md), [past-session review](plugins/omd-session-review/README.md), and [local curated memory](plugins/omd-curated-memory/README.md). Each uses a separately inspected/trusted API 0.2 component. Installation does not activate a component. Local memory has no third-party backend connection.
+The same optional marketplace offers [anchored edits](plugins/omd-anchored-edit/README.md), [past-session review](plugins/omd-session-review/README.md), [local curated memory](plugins/omd-curated-memory/README.md), and [promoted workflow procedures](plugins/omd-procedures/README.md). Each uses a separately inspected/trusted API 0.2 component. Installation does not activate a component. Local memory has no third-party backend connection.

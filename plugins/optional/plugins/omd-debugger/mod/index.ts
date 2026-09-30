@@ -4,6 +4,7 @@ type Entry = Record<string, Json>;
 type State = {
   adapter: 'debugpy' | null;
   executable: string;
+  debugpy: string;
   running: boolean;
   ready: boolean;
   mode: 'launch' | null;
@@ -20,6 +21,7 @@ const record = (value: Json): Entry | null => value !== null && typeof value ===
 const string = (value: Json): string | null => typeof value === 'string' ? value : null;
 const integer = (value: Json): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 const bounded = (value: string, maximum = 256) => value.slice(0, maximum);
+const version = /^[\w.+-]{1,32}$/;
 const path = (value: Json): string | null => typeof value === 'string' && value.startsWith('/') && value.length <= 4096 && !value.includes('\0') && !value.split('/').includes('..') ? value : null;
 
 function restore(value: Json): State {
@@ -27,6 +29,7 @@ function restore(value: Json): State {
   return {
     adapter: saved.adapter === 'debugpy' ? saved.adapter : null,
     executable: path(saved.executable ?? null) ?? '',
+    debugpy: string(saved.debugpy ?? null) ?? '',
     running: saved.running === true,
     ready: saved.ready === true,
     mode: saved.mode === 'launch' ? saved.mode : null,
@@ -166,8 +169,11 @@ export default function activate(api: ModAPI) {
     if (state.running) stop(state, '');
     const name = 'python3';
     const found = api.host.tryCall('process.which', { names: [name] });
-    if (!found.ok || !found.value.found.length) return { error: 'adapter_dependency_absent', adapter };
+    if (!found.ok || !found.value.found.length) return { error: 'adapter_dependency_absent', adapter, dependency: name };
     const binary = found.value.found[0];
+    const probe = api.host.tryCall('exec.run', { program: binary.path, sha256: binary.sha256, argv: ['-c', 'import debugpy; print(debugpy.__version__)'] });
+    const debugpy = probe.ok && probe.value.exit_code === 0 ? probe.value.stdout.trim() : '';
+    if (!version.test(debugpy)) return { error: 'adapter_dependency_absent', adapter, dependency: 'debugpy', python: binary.path };
     const started = api.host.tryCall('process.start', {
       session, name, path: binary.path, sha256: binary.sha256,
       arguments: ['-m', 'debugpy.adapter'],
@@ -176,6 +182,7 @@ export default function activate(api: ModAPI) {
     if (!started.ok) return { error: 'adapter_start_refused', adapter };
     state.adapter = adapter;
     state.executable = binary.path;
+    state.debugpy = debugpy;
     state.running = true;
     state.mode = null;
     state.phase = 'initialized';
@@ -194,7 +201,7 @@ export default function activate(api: ModAPI) {
       stop(state, 'adapter_initialize_failed');
       return { error: 'adapter_initialize_failed', adapter };
     }
-    return { adapter, status: 'initialized' };
+    return { adapter, status: 'initialized', python: binary.path, debugpy };
   });
   api.tool({
     name: 'start',
@@ -325,8 +332,18 @@ export default function activate(api: ModAPI) {
       }
     }
     const current = restore(api.state.get());
-    return { adapter: current.adapter, running: current.running, ready: current.ready, mode: current.mode, phase: current.phase, thread_id: current.thread_id, reason: current.reason };
+    return { adapter: current.adapter, debugpy: current.debugpy, running: current.running, ready: current.ready, mode: current.mode, phase: current.phase, thread_id: current.thread_id, reason: current.reason };
   });
-  api.on('idle', () => stop(restore(api.state.get()), ''));
+  api.on('idle', event => {
+    const state = restore(api.state.get());
+    if (!state.running) return;
+    if (record(event)?.cause === 'Interrupted') return stop(state, 'cancelled');
+    if (state.phase === 'active') drain(state);
+    if (state.running && state.phase === 'active') stop(state, 'target_running_at_turn_end');
+  });
+  api.on('resume', () => {
+    const state = restore(api.state.get());
+    if (state.running) stop(state, 'session_resumed');
+  });
   api.on('stop', () => stop(restore(api.state.get()), ''));
 }

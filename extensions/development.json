@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "as_of": "2026-09-29",
+  "as_of": "2026-09-30",
   "packages": [
     {
       "id": "omd-code-execution",
@@ -169,6 +169,20 @@
       "source": "mods/first-party/omd_workflow",
       "reason": "Reviewed and solo schema-2 contracts pass local mock-provider fixtures; controlled workflow and native-retirement parity remain open",
       "review": ".docs/audits/batch255-migration-20260927.md"
+    },
+    {
+      "id": "omd-debugger",
+      "extension_type": "plugin",
+      "source": "plugins/optional/plugins/omd-debugger",
+      "reason": "Optional sandboxed Python launch debugger; offline component acceptance only, live adapter runs predate API 0.2 and task value is unqualified. OMD+ stages the source inactive; parent plugin and mod-component trust and activation remain separate.",
+      "review": ".docs/audits/batch3c-debugger-procedures-20260930.md"
+    },
+    {
+      "id": "omd-procedures",
+      "extension_type": "plugin",
+      "source": "plugins/optional/plugins/omd-procedures",
+      "reason": "Optional promotion of completed omd_workflow tasks into versioned skill plugins; offline component acceptance only, real-task reuse unqualified. OMD+ stages the source inactive; parent plugin and mod-component trust and activation remain separate.",
+      "review": ".docs/audits/batch3c-debugger-procedures-20260930.md"
     }
   ]
 }

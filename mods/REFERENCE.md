@@ -849,11 +849,10 @@ to the same declared capability and host permission checks.
 `network: "loopback"` (with the `network` capability) allows local binding
 while keeping external network access restricted. It owns process group termination
 and starts adapters with a cleared host environment and an owner-only scratch
-directory. The opt-in debugger package in `plugins/optional/omd-debugger`
+directory. The opt-in debugger package in `plugins/optional/plugins/omd-debugger`
 exposes **Python launch only**; LLDB, Delve and attach are not supported. Its mod requires
 separate review, trust, and enablement. Plugin installation does not activate
-the mod or install Python or debugpy. The local on-demand marketplace is not
-part of either release installation profile.
+the mod or install Python or debugpy. OMD+ stages the plugin inactive.
 
 ## Terminal identity, rich lines and picker
 
