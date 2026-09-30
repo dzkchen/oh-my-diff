@@ -225,6 +225,30 @@
       "source": "mods/first-party/omd_plan_removal",
       "version": "0.1.0-preview.1"
     },
+    "omd_preview": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "commands",
+        "terminal",
+        "store",
+        "sessions",
+        "exec",
+        "fs.read",
+        "fs.write",
+        "events",
+        "lifecycle"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "aef8d64744ddd484af1828778f2a08f0cb8220b2f275195630f01a01e09ce681",
+        "mod.json": "a69bc6c7a341ca856bc3cb60007bc259fbdd6e8aab551d279aa294c6d6d9621a",
+        "render.mjs": "ea625c89b7ddb03e1ed8a482cd1bbd3dad2c35f992b1a1f171db6bfcf47d1f8c"
+      },
+      "id": "omd_preview",
+      "package_sha256": "96ee06296536b556efd368d5d337a835cc47f2206cda6f2818fb663a5fa5df3b",
+      "source": "mods/first-party/omd_preview",
+      "version": "0.1.0-preview.1"
+    },
     "omd_programmable_context": {
       "api": "0.2.0-experimental.5",
       "capabilities": [

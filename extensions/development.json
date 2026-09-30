@@ -178,6 +178,13 @@
       "review": ".docs/audits/batch3c-debugger-procedures-20260930.md"
     },
     {
+      "id": "omd-browser",
+      "extension_type": "plugin",
+      "source": "plugins/optional/plugins/omd-browser",
+      "reason": "Optional persistent browser MCP server over the managed browser bundle; local fixture acceptance only, real sites, Keychain enrollment and real CAPTCHA widgets unqualified. OMD+ stages the source inactive; plugin installation and per-profile configuration remain separate.",
+      "review": ".docs/audits/batch3f-browser-preview-20260930.md"
+    },
+    {
       "id": "omd-procedures",
       "extension_type": "plugin",
       "source": "plugins/optional/plugins/omd-procedures",

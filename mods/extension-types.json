@@ -601,6 +601,14 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the user-typed /continue recovery prompt and a bounded summary built only from the host turn-activity ledger; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_preview",
+      "id": "omd_preview",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

@@ -44,6 +44,7 @@ contains only the packages labeled `bundled` below.
 | `omd_programmable_context@0.1.0-preview.1` | `mod` | `mods/first-party/omd_programmable_context` | Owns the Python-facing context, child-agent and refinement API plus a versioned session harness in the model-bound request view; installed inactive in OMD+. |
 | `omd_plan_removal@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_removal` | Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); installed inactive in OMD+. |
 | `omd_continue@0.1.0-preview.1` | `mod` | `mods/first-party/omd_continue` | Owns the user-typed /continue recovery prompt and a bounded summary built only from the host turn-activity ledger; installed inactive in OMD+. |
+| `omd_preview@0.1.0-preview.1` | `mod` | `mods/first-party/omd_preview` | Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+. |
 
 ## Author examples
 

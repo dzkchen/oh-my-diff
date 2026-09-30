@@ -1,7 +1,7 @@
 # First-party Codex plugin collection
 
 The source marketplace contains five Codex plugins. The current provisional
-OMD+ package stages four of them plus the five selected local plugins as inactive source candidates;
+OMD+ package stages four of them plus the six selected local plugins as inactive source candidates;
 `omd-code-execution` remains outside that package. Staging a plugin does not
 install or enable it in Codex.
 
@@ -31,8 +31,11 @@ install or enable it in Codex.
 - `omd-procedures` supplies guidance and a separately trusted component that
   promotes a completed `omd_workflow` task into a versioned skill plugin only
   when the user runs `/omd_procedures:promote`.
+- `omd-browser` supplies browsing guidance and a prompt-approved MCP server that
+  drives persistent, policy-guarded sessions over the managed browser bundle,
+  with live handoff and an opt-in login vault and CAPTCHA helpers.
 
-The current OMD+ candidate stages all nine selected plugins at
+The current OMD+ candidate stages all ten selected plugins at
 `$OMD_PREFIX/bundles/oh-my-diff` without editing shared Codex state. After
 inspecting the staged sources, installation into Codex is a separate operator
 action:

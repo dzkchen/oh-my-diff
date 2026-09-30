@@ -1,0 +1,23 @@
+{
+  "name": "omd-browser",
+  "version": "0.1.0-preview.1",
+  "description": "Persistent, policy-guarded browser sessions over OMD's managed Chromium, with ref-based snapshots, proof screenshots, live handoff and an opt-in login vault and CAPTCHA helpers.",
+  "author": {
+    "name": "Oh My Diff"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "OMD Browser",
+    "shortDescription": "Drive a persistent, policy-guarded browser",
+    "longDescription": "Named browser sessions keep cookies and tabs across calls. Compact snapshots name elements by ref, screenshots record proof, private and cloud-metadata destinations are blocked by default, and a live view hands the page to the user. The login vault and CAPTCHA helpers stay off until enabled per profile.",
+    "developerName": "Oh My Diff",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Local MCP Tools",
+      "Skills"
+    ],
+    "defaultPrompt": "Open the page in the OMD browser and check it"
+  },
+  "license": "Apache-2.0"
+}
