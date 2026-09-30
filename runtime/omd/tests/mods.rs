@@ -872,6 +872,52 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
 }
 
 #[test]
+fn startup_terminal_preview_rejects_native_task_operations_at_host_boundary() {
+    for (call, capability) in [
+        ("api.host.call('task.status', null)", "agents"),
+        (
+            "api.host.call('model.complete', {route:'fixture',prompt:'offline'})",
+            "agents",
+        ),
+        (
+            "api.host.call('app.request', {method:'account/read',params:{}})",
+            "account",
+        ),
+        (
+            "api.host.call('terminal.notify', {title:'fixture'})",
+            "terminal",
+        ),
+    ] {
+        let source = format!("export default api => api.on('terminal', () => {call})");
+        let capabilities = if capability == "terminal" {
+            vec!["terminal"]
+        } else {
+            vec!["terminal", capability]
+        };
+        eprintln!("startup preview denial fixture: {call}, capabilities={capabilities:?}");
+        let (temp, _, _) = fixture(&source, &capabilities);
+        let mut runtime = host(&temp);
+        let terminal = runtime.terminal_view(
+            json!({"event":"startup","ledger":null,
+                "presentation":{"thread_id":null,"phase":"fresh"}}),
+            || true,
+        );
+        assert_eq!(
+            terminal.diagnostics.len(),
+            1,
+            "{call}: {:?}",
+            terminal.diagnostics
+        );
+        assert!(
+            terminal.diagnostics[0].contains("host_operation_unavailable: requires a native task"),
+            "{call}: {:?}",
+            terminal.diagnostics
+        );
+        assert!(terminal.contributors.is_empty());
+    }
+}
+
+#[test]
 fn terminal_components_compose_in_dependency_order_and_observers_contribute_status() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();

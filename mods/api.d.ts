@@ -63,16 +63,21 @@ export type TerminalComponent =
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
   | { type: 'slot' };
 export type TerminalRange = { start: number; end: number };
-export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'dialog' | `${string}/${string}`;
+export type TerminalSiteName = 'sidebar' | 'header' | 'above_composer' | 'dialog' | 'welcome' | `${string}/${string}`;
 export type LayoutNode =
   | { content: 'transcript' | 'composer' | `site:${TerminalSiteName}` }
   | { split: 'horizontal' | 'vertical'; ratio?: number[]; children: LayoutNode[] }
   | { tabs: { title: string; node: LayoutNode }[]; active?: number };
-export type AsciiBackdrop = { text: string; dim?: number };
+export type BackdropTransform = { position?: 'center' | 'fill' | 'fit' | 'tile'; dim?: number; scale?: number; tint?: ThemeColor; opacity?: number; offset?: { x: number; y: number } };
+export type AsciiBackdrop = BackdropTransform & { text: string };
 export type TerminalBackdrop =
   | { ascii: AsciiBackdrop }
-  | { image: { resource: ResourceRef; position?: 'center' | 'fill' | 'fit' | 'tile'; dim?: number }; fallback?: { ascii: AsciiBackdrop } };
+  | { image: BackdropTransform & { resource: ResourceRef; overlay?: TerminalSurfacePaint }; fallback?: { ascii: AsciiBackdrop } };
+export type TerminalSurfacePaint = { top?: ThemeColor; bottom?: ThemeColor; foreground?: ThemeColor; border?: ThemeColor; opacity?: number };
 export type TerminalRenderSite = { mode?: 'replace' | 'wrap'; components?: TerminalComponent[] };
+export type TerminalWelcome = { show_while_composing?: boolean };
+/** Host startup selection uses a null thread_id; live acceptance/resume supplies the real thread. */
+export type TerminalPresentation = { thread_id: string | null; phase: 'fresh' | 'started' | 'resumed' };
 export interface TerminalTheme {
   accent?: ThemeColor; user_message_background?: ThemeColor; syntax?: string; success?: ThemeColor; attention?: ThemeColor; failure?: ThemeColor;
   diff_added?: ThemeColor; diff_removed?: ThemeColor; muted?: ThemeColor; border?: 'plain' | 'rounded' | 'double'; density?: 'compact' | 'comfortable'; icons?: 'unicode' | 'ascii';
@@ -81,10 +86,11 @@ export interface TerminalTheme {
 export type TerminalListEvent = { view_id: string; title: string; subtitle: string | null; width: number; items: { label: string; description: string | null; current: boolean; disabled: boolean; order: number }[]; selected: number | null };
 export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number } };
 export interface TerminalView {
+  welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; panels?: Panel[]; header?: Panel; footer?: Panel;
   sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; theme?: TerminalTheme;
   completed_tools?: 'normal' | 'compact'; message_template?: string; tool_template?: string; placeholder?: string;
-  layout?: LayoutNode; backdrop?: TerminalBackdrop;
+  layout?: LayoutNode; backdrop?: TerminalBackdrop; surface_styles?: { composer?: TerminalSurfacePaint; backdrop?: TerminalSurfacePaint };
 }
 export type TerminalPatch = Omit<TerminalView, 'panels' | 'header' | 'footer'>;
 export type CommandResult = Json | { display?: string; insert?: string; submit?: string };
@@ -189,7 +195,8 @@ export interface HostOperations {
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
   'terminal.notify': { arguments: { title: string; body?: string }; result: { delivered: boolean; method: 'osc9' | 'osc99' | 'osc777' | 'bel' | 'none'; reason?: string } };
   'terminal.show_thread': { arguments: { thread_id: string }; result: { shown: boolean } };
-  'terminal.import_file': { arguments: { path: string; max_bytes?: number }; result: ResourceRef | Declined };
+  'terminal.import_file': { arguments: { path: string; max_bytes?: number; lifetime?: 'thread' | 'package' }; result: ResourceRef | Declined };
+  'terminal.image_sample': { arguments: { resource: ResourceRef; columns: number; rows: number }; result: { width: number; height: number; rgba: number[] } };
   'composer.read': { arguments: null; result: { text: string; cursor: number; attachments: { kind: 'image'; label: string }[] } };
   'composer.write': { arguments: { text?: string; insert?: string; attach?: { image: ResourceRef }[] }; result: { text: string; cursor: number } };
   'builtins.invoke': { arguments: { command: string; args?: string } | { action: KeymapAction }; result: { invoked: boolean } };
@@ -210,7 +217,7 @@ export interface Events {
   input: { input: { text: string; attachments: number }; output: InputDecision };
   tool_before: { input: { tool: string; arguments: Json; call_id: string; thread_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; output: { deny: string } | { arguments: Json; tool?: string } | null };
   tool_exposure: { input: { thread_id: string | null; ledger: Ledger | null; available: string[] }; output: { enable: string[] } };
-  terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity }; output: TerminalView | TerminalPatch | null };
+  terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity; presentation?: TerminalPresentation | null }; output: TerminalView | TerminalPatch | null };
   list: { input: TerminalListEvent; output: TerminalComponent[] | null };
   start: { input: Json; output: void };
   resume: { input: { thread_id: string; last_turn: { turn_id: string; status: 'completed' | 'interrupted' | 'failed' | 'in_progress' } | null; restarted: boolean }; output: void };
@@ -251,7 +258,7 @@ export interface Events {
 }
 export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 export interface ModAPI {
-  readonly version: '0.2.0-experimental.4';
+  readonly version: '0.2.0-experimental.5';
   readonly fieldPolicies: Readonly<Record<string, Readonly<Record<string, FieldPolicy>>>>;
   readonly settings: Readonly<Record<string, Json>>;
   readonly host: {

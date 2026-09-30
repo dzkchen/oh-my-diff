@@ -2,10 +2,10 @@
 
 [`index.json`](index.json) is the repository-backed index of reviewed release
 candidates. [`development.json`](development.json) keeps experiments and author
-exercises separate. As of September 22, 2026, no entry has passed the full
-Phase 11/12 release support gates, so none is labeled `supported`. The nine
+exercises separate. As of September 29, 2026, no entry has passed the full
+Phase 11/12 release support gates, so none is labeled `supported`. The twelve
 reviewed entries are candidates, not an active bundle, a public compatibility
-promise, or evidence of independent community adoption. The Full OMD installed
+promise, or evidence of independent community adoption. The OMD+ installed
 collection may grow with every qualified package; only a measured low-overhead
 subset may activate by default. Installation never implies activation.
 
@@ -47,16 +47,18 @@ the versioned cache directory.
 
 | Reviewed candidate | Type | Capability | Intended placement |
 | --- | --- | --- | --- |
-| `omd_coordination` | mod | Live task routing and worker context | Full OMD, inactive candidate |
-| `omd_recovery` | mod | Failure-aware recovery choices | Full OMD, inactive candidate |
-| `omd_workspace` | mod | Live terminal task workspace | Full OMD, possible small default after qualification |
+| `omd_claude_cli` | mod | Official Claude CLI route | OMD+, installed inactive |
+| `omd_coordination` | mod | Live task routing and worker context | OMD+, inactive candidate |
+| `omd_recovery` | mod | Failure-aware recovery choices | OMD+, inactive candidate |
+| `omd_workspace` | mod | Live terminal task workspace | OMD+, provisional active default |
+| `omd_typed_tasks` | mod | Bounded workers with typed results | OMD+, installed inactive |
 | `omd_logo` | mod | Oh My Diff terminal logo and launch status | Both profiles, active by default |
-| `omd_model_picker` | mod | Compact `/model` and reasoning picker presentation | Full OMD, active by default |
-| `omd_git` | mod | Git sidebar with confirmed source-control actions | Full OMD, installed inactive |
-| `omd-guidance-hooks` | plugin with skills and hooks | Selected guidance and lifecycle reactions | Full OMD, inactive candidate |
-| `omd-review-policy` | plugin with skills and hook | Review cadence and final review prompts | Full OMD, inactive candidate |
-| `omd-application-bridges` | plugin with hook | Application diagnostics | On demand candidate |
-| `omd-artifact-reading` | plugin with skill | Source-anchored artifact reading | On demand candidate |
+| `omd_model_picker` | mod | Compact `/model` and reasoning picker presentation | OMD+, active by default |
+| `omd_git` | mod | Git sidebar with confirmed source-control actions | OMD+, installed inactive |
+| `omd-guidance-hooks` | plugin with skills and hooks | Selected guidance and lifecycle reactions | OMD+, inactive candidate |
+| `omd-review-policy` | plugin with skills and hook | Review cadence and final review prompts | OMD+, inactive candidate |
+| `omd-application-bridges` | plugin with hook | Application diagnostics | OMD+, inactive source candidate |
+| `omd-artifact-reading` | plugin with skill | Source-anchored artifact reading | OMD+, inactive source candidate |
 
 Each reviewed row records an extension type, capability, exact tested host
 versions and compatibility conditions, source, license, maintainer, evidence,
@@ -133,7 +135,7 @@ the recovery path if a mod fails.
    only after the applicable Phase 11 functional/package checks and Phase 12
    per-package value and no-material-regression gates. Add `release_evidence`
    to the index; the checker refuses unsupported promotion. The maintainer
-   verifies both install paths before packaging Full OMD. No hosted registry
+   verifies both install paths before packaging OMD+. No hosted registry
    or marketplace account is required.
 4. **Report issues.** File a repository issue with package ID/version and
    source digest, host/API versions, install scope, sanitized plan or lock,
@@ -177,8 +179,8 @@ code by default.
 | Task instructions and reusable procedure | Native instructions or skill | Guidance skills are reviewed candidates; promote new procedures only after reuse evidence |
 | Tool-result or stop lifecycle reaction | Native Codex hook | Reviewed guidance/review hooks stay selected and host-gated |
 | Repository graph, health, semantic navigation, artifact reading, application diagnostics | Existing native operations plus optional plugin tools | Reviewed on-demand plugin candidates, with separate dependency and task gates |
-| Task-sensitive optional tool/context exposure | Public `.8` mod API | Internal `task_scope` author exercise; first-party task value remains open |
-| Live route, recovery or terminal replacement | Public mod API with native authority | Three reviewed first-party candidates; no default promotion yet |
+| Task-sensitive optional tool/context exposure | Public `0.2.0-experimental.5` mod API | Internal `task_scope` author exercise; first-party task value remains open |
+| Live route, recovery or terminal replacement | Public mod API with native authority | Selected first-party candidates; public support remains unqualified |
 | Long-session policy or stage-dependent workflow | Native checkpoints/contract or skill first, then mod only for a proven live gap | `session_anchor` remains development-only; Phase 11 package trial is separate |
 | Structural edit, debugger, patch recovery, subagent guidance | Configured tools, plugin, skill or hook trial | No supported package until each selected slate gate passes |
 | Provider credentials, broad always-on services, embedded shell replacement | Existing native/configured surface | No catalog package selected |

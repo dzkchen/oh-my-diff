@@ -33,6 +33,9 @@ import uuid
 RELEASE_URL = ""
 RELEASE_SHA256 = "dd4af10730de910ba2b2f71e834e616f369a14eb1f82c2e52477bdf6df24f939"
 LINKS = ("codex", "omd-package", "omd-mod-author")
+PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
+MAX_UNPACKED_BYTES = 1_200_000_000
+MAX_MEMBER_BYTES = 1_000_000_000
 
 
 def fail(message):
@@ -130,8 +133,8 @@ def profile_choice(args):
     try:
         with open("/dev/tty", "r+") as terminal:
             terminal.write("Oh My Diff 0.159.1 candidate\n"
-                           "1) Modding platform only: patched Codex, mod manager, typed author tools; the OMD logo is installed and active.\n"
-                           "2) Full OMD: every first-party mod and the staged plugin sources.\n"
+                           "1) OMD Core: patched Codex, mod manager, typed author tools; the OMD logo is installed and active.\n"
+                           "2) OMD+: the selected first-party collection and staged plugin sources.\n"
                            "   The inspector, logo, model picker and workspace mods are active on a fresh install. Other mods require your explicit activation.\n"
                            "   Updates preserve selections and add newly bundled mods disabled.\n"
                            "Choose 1 or 2: ")
@@ -167,12 +170,15 @@ def download(url, expected, destination):
 def extract(archive_path, destination):
     with tarfile.open(archive_path, "r:xz") as archive:
         members = archive.getmembers()
-        if not members or len(members) > 1000 or sum(item.size for item in members) > 600_000_000:
-            fail("release archive has an invalid inventory")
+        if not members or len(members) > 1000:
+            fail("release archive has an invalid file count")
+        if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
+            fail("release archive exceeds unpacked byte limit")
         if any(not item.isfile() or not item.name.startswith("payload/")
-               or ".." in Path(item.name).parts
-               or item.size > 500_000_000 for item in members):
+               or ".." in Path(item.name).parts for item in members):
             fail("release archive contains an unsafe member")
+        if any(item.size > MAX_MEMBER_BYTES for item in members):
+            fail("release archive member exceeds byte limit")
         archive.extractall(destination, filter="data")
     return destination / "payload"
 
@@ -264,7 +270,7 @@ def install(args, root, current):
                 pruned.append(old.name)
             except (OSError, ValueError) as error:
                 failures.append(f"{old.name}: {error}")
-        print(json.dumps({"installed": profile, "active": str(generation),
+        print(json.dumps({"installed": profile, "profile_label": PROFILE_LABELS[profile], "active": str(generation),
                           "previous": str(current) if current else None,
                           "upstream": upstream["path"], "bin_dir": str(args.bin_dir),
                           "pruned": pruned, "prune_failures": failures}, indent=2))
@@ -311,7 +317,8 @@ def rollback(root, bin_dir, current):
     except BaseException:
         atomic_symlink(root / "current", current)
         raise
-    print(json.dumps({"restored": str(previous), "profile": target["profile"]}, indent=2))
+    print(json.dumps({"restored": str(previous), "profile": target["profile"],
+                      "profile_label": PROFILE_LABELS[target["profile"]]}, indent=2))
 
 
 def uninstall(root, bin_dir, current):
@@ -346,7 +353,7 @@ def main():
         fail("Python 3.12 or newer is required for verified archive extraction")
     parser = argparse.ArgumentParser(description="Install the Apple Silicon Oh My Diff release candidate")
     parser.add_argument("command", nargs="?", choices=("install", "status", "rollback", "uninstall"), default="install")
-    parser.add_argument("--profile", choices=("platform", "full"))
+    parser.add_argument("--profile", choices=PROFILE_LABELS, help="platform: OMD Core; full: OMD+")
     parser.add_argument("--asset-url")
     parser.add_argument("--asset-sha256")
     parser.add_argument("--upstream", type=Path)

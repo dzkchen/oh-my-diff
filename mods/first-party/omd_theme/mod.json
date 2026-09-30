@@ -1,0 +1,141 @@
+{
+  "schema": 1,
+  "id": "omd_theme",
+  "version": "0.3.0-candidate.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_theme"
+  },
+  "capabilities": [
+    "terminal",
+    "commands",
+    "store"
+  ],
+  "compatibility": {
+    "required_features": [
+      "terminal_render_sites_v1",
+      "store_v1",
+      "terminal_surface_paint_v1",
+      "terminal_backdrop_transform_v1",
+      "terminal_image_sample_v1",
+      "terminal_import_lifetime_v1",
+      "terminal_welcome_v1"
+    ]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "palette": {
+        "type": "string",
+        "enum": [
+          "midnight",
+          "paper",
+          "contrast",
+          "frost",
+          "graphite",
+          "amber"
+        ],
+        "default": "midnight"
+      },
+      "symbols": {
+        "type": "string",
+        "enum": [
+          "ascii",
+          "unicode"
+        ],
+        "default": "ascii"
+      },
+      "background_color": {
+        "type": "string",
+        "default": ""
+      },
+      "foreground_color": {
+        "type": "string",
+        "default": ""
+      },
+      "ascii_text": {
+        "type": "string",
+        "default": ". :  "
+      },
+      "tint": {
+        "type": "string",
+        "default": ""
+      },
+      "greeting_text": {
+        "type": "string",
+        "default": "What would you like to work on?"
+      },
+      "backdrop_mode": {
+        "type": "string",
+        "enum": [
+          "none",
+          "ascii",
+          "image"
+        ],
+        "default": "none"
+      },
+      "position": {
+        "type": "string",
+        "enum": [
+          "center",
+          "fill",
+          "fit",
+          "tile"
+        ],
+        "default": "fit"
+      },
+      "scale": {
+        "type": "number",
+        "default": 1
+      },
+      "dim": {
+        "type": "number",
+        "default": 0.65
+      },
+      "opacity": {
+        "type": "number",
+        "default": 1
+      },
+      "x": {
+        "type": "number",
+        "default": 0
+      },
+      "y": {
+        "type": "number",
+        "default": 0
+      },
+      "highlight": {
+        "type": "number",
+        "default": 0.12
+      },
+      "shading": {
+        "type": "number",
+        "default": 0.08
+      },
+      "gloss_opacity": {
+        "type": "number",
+        "default": 0.85
+      },
+      "composer_gloss": {
+        "type": "boolean",
+        "default": false
+      },
+      "backdrop_gloss": {
+        "type": "boolean",
+        "default": false
+      },
+      "borders": {
+        "type": "boolean",
+        "default": true
+      },
+      "greeting_enabled": {
+        "type": "boolean",
+        "default": false
+      }
+    },
+    "additionalProperties": false
+  }
+}

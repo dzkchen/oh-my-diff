@@ -1,12 +1,12 @@
 # TypeScript mods
 
 The current pinned Codex `0.159.1` OMD host exposes API
-`0.2.0-experimental.4` on Apple Silicon macOS and Node `24.18.0`. Mods are
+`0.2.0-experimental.5` on Apple Silicon macOS and Node `24.18.0`. Mods are
 editable, hash-approved TypeScript packages. The API remains experimental;
 local author and host fixtures do not complete independent preview feedback or
 release qualification.
 
-Install the exact `@oh-my-diff/mod-api@0.2.0-experimental.4` author package
+Install the exact `@oh-my-diff/mod-api@0.2.0-experimental.5` author package
 with pnpm. It exports the typed SDK and `omd-mod-author` CLI. See
 [REFERENCE.md](REFERENCE.md#api-02-host-primitives) for current generic API
 operations and command documentation. The current host accepts `OMD_MODE=omd`
@@ -39,7 +39,7 @@ rationale for every package.
 
 For a local host, initialize the external store with `omd-mod init STORE NODE`,
 then inspect, trust, enable, and reload a package through `omd-mod`. Run the
-patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The Full profile
+patched `codex` with `OMD_MODE=omd` and `OMD_MOD_STORE=STORE`. The OMD+ profile
 installer in [LEAN_PROFILES.md](../LEAN_PROFILES.md) stages candidate packages
 inactive except its three explicitly selected presentation packages. Its
 `omd_workflow` package implements task controls through mod-owned schema-2

@@ -51,6 +51,7 @@ impl ModHostCall {
             "terminal.notify"
             | "terminal.show_thread"
             | "terminal.import_file"
+            | "terminal.image_sample"
             | "terminal.open"
             | "terminal.prompt" => Ok("terminal"),
             "terminal.pty" => Ok("pty"),

@@ -109,3 +109,62 @@ fn text_evidence_pages_over_the_blob_content() {
         );
     });
 }
+
+#[test]
+fn package_imports_survive_config_and_thread_changes_but_keep_owner_source_and_repository() {
+    with_store(|store| {
+        let mut package = store.binding.clone();
+        package.thread = "package".into();
+        package.generation = 0;
+        let imported = ResourceStore {
+            root: store.root,
+            binding: &package,
+        };
+        let reference = imported
+            .save(
+                "evidence",
+                imported
+                    .evidence_record(
+                        json!({"media_type":"image/png","base64":STANDARD.encode(PNG)}),
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+        let mut next = store.binding.clone();
+        next.generation += 1;
+        next.thread = "thread_2".into();
+        assert!(
+            ResourceStore {
+                root: store.root,
+                binding: &next
+            }
+            .load(&reference, "evidence")
+            .is_ok()
+        );
+        for changed in ["owner", "source", "repository"] {
+            let mut other = next.clone();
+            match changed {
+                "owner" => other.owner = "mod_b".into(),
+                "source" => other.source_sha256 = "c".repeat(64),
+                _ => other.repository = "d".repeat(64),
+            };
+            assert!(
+                ResourceStore {
+                    root: store.root,
+                    binding: &other
+                }
+                .load(&reference, "evidence")
+                .is_err()
+            );
+        }
+        let record = imported.load(&reference, "evidence").unwrap();
+        fs::write(
+            imported
+                .blob_path(record["blob"].as_str().unwrap())
+                .unwrap(),
+            b"changed",
+        )
+        .unwrap();
+        assert!(imported.blob(record["blob"].as_str().unwrap()).is_err());
+    });
+}

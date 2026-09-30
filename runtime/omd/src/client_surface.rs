@@ -10,6 +10,7 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "terminal.notify",
     "terminal.show_thread",
     "terminal.import_file",
+    "terminal.image_sample",
     "composer.read",
     "composer.write",
     "builtins.invoke",

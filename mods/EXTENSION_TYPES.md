@@ -39,6 +39,7 @@ contains only the packages labeled `bundled` below.
 | `omd_lsp_sync@0.2.0-preview.1` | `mod` | `mods/first-party/omd_lsp_sync` | Owns live language-server synchronization and rename/edit planning through generic host process and workspace operations. |
 | `omd_advisor@0.2.0-preview.1` | `mod` | `mods/first-party/omd_advisor` | Owns completed-turn scheduling, independent review prompts, typed result validation, deduplication and selected-context presentation through public accounted review primitives. |
 | `omd_research@0.2.0-preview.1` | `mod` | `mods/first-party/omd_research` | Owns lead-requested broad-research admission, bounded briefing and evidence validation using an explicitly granted read-only host worker preset. |
+| `omd_theme@0.3.0-candidate.1` | `mod` | `mods/first-party/omd_theme` | Composes live terminal palettes, backgrounds, composer appearance and greeting settings through public presentation APIs; installed inactive in OMD+. |
 
 ## Author examples
 

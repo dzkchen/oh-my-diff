@@ -7,6 +7,7 @@ use codex_omd::ModViewSnapshot;
 #[derive(Default)]
 struct State {
     snapshot: ModViewSnapshot,
+    presentation: Value,
     sequence: u64,
     diagnostics: BTreeMap<String, String>,
 }
@@ -28,6 +29,39 @@ fn visible(text: &str, limit: usize) -> String {
 }
 
 impl Views {
+    pub(super) fn start_thread(&self, thread: &codex_extension_api::ExtensionData) -> Value {
+        let phase = if thread.get::<codex_extension_api::ResumedThread>().is_some()
+            || thread
+                .get::<codex_extension_api::ForkedFromThread>()
+                .is_some()
+        {
+            "resumed"
+        } else {
+            "fresh"
+        };
+        self.presentation(thread.level_id(), Some(phase))
+    }
+
+    pub(super) fn presentation(&self, thread: &str, phase: Option<&str>) -> Value {
+        let Ok(mut state) = self.state.lock() else {
+            return Value::Null;
+        };
+        if state.presentation["thread_id"].as_str() != Some(thread) {
+            state.presentation = json!({"thread_id": thread, "phase": "fresh"});
+        }
+        if let Some(phase) = phase {
+            state.presentation["phase"] = json!(phase);
+        }
+        state.presentation.clone()
+    }
+
+    pub(super) fn current_presentation(&self) -> Value {
+        self.state
+            .lock()
+            .map(|state| state.presentation.clone())
+            .unwrap_or(Value::Null)
+    }
+
     pub(super) fn new() -> Self {
         let epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -118,7 +152,44 @@ impl Views {
 
 #[cfg(test)]
 mod tests {
-    use super::visible;
+    use super::{Views, visible};
+
+    #[test]
+    fn welcome_phase_survives_ready_reload_and_rejected_input_until_accepted_start() {
+        let views = Views::new();
+        assert_eq!(
+            views.presentation("thread-a", Some("fresh"))["phase"],
+            "fresh"
+        );
+        // A view refresh, reload, or rejected submission does not supply an accepted phase.
+        assert_eq!(views.presentation("thread-a", None)["phase"], "fresh");
+        views.presentation("thread-a", Some("started"));
+        assert_eq!(views.presentation("thread-a", None)["phase"], "started");
+        assert_eq!(views.current_presentation()["phase"], "started");
+        views.presentation("thread-b", Some("resumed"));
+        assert_eq!(views.presentation("thread-b", None)["phase"], "resumed");
+        assert_eq!(views.presentation("thread-c", None)["phase"], "fresh");
+    }
+
+    #[test]
+    fn welcome_resume_and_fork_markers_are_latched_before_ready_publication() {
+        let views = Views::new();
+        let thread = codex_extension_api::ExtensionData::new("resumed");
+        thread.insert(codex_extension_api::ResumedThread);
+        views.start_thread(&thread);
+        assert_eq!(views.current_presentation()["phase"], "resumed");
+        assert_eq!(
+            views.presentation(thread.level_id(), None)["phase"],
+            "resumed"
+        );
+        let fork = codex_extension_api::ExtensionData::new("forked");
+        fork.insert(codex_extension_api::ForkedFromThread(
+            codex_protocol::ThreadId::new(),
+        ));
+        views.start_thread(&fork);
+        assert_eq!(views.current_presentation()["phase"], "resumed");
+        assert_eq!(views.current_presentation()["thread_id"], "forked");
+    }
 
     #[test]
     fn visible_bounds_bytes_on_a_character_boundary() {

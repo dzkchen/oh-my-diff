@@ -6,7 +6,10 @@
       "mod": "omd_theme",
       "event": "terminal",
       "name": "",
-      "payload": {"event": "idle", "ledger": null},
+      "payload": {
+        "event": "idle",
+        "ledger": null
+      },
       "expect": {
         "foreground": 255,
         "background": 235,
@@ -18,11 +21,26 @@
           "diff_added": "#91e6aa",
           "diff_removed": "#ff9b9b",
           "muted": "#b4beca",
-          "user_message_background": "#303942",
+          "user_message_background": "#262626",
           "border": "plain",
           "density": "comfortable",
           "icons": "ascii",
           "glyphs": {}
+        },
+        "greeting": "",
+        "surface_styles": {
+          "composer": {
+            "top": "#262626",
+            "bottom": "#262626",
+            "foreground": "#eeeeee",
+            "opacity": 1
+          },
+          "backdrop": {
+            "top": "#262626",
+            "bottom": "#262626",
+            "foreground": "#eeeeee",
+            "opacity": 1
+          }
         }
       }
     }

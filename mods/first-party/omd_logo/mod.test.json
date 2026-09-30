@@ -6,9 +6,10 @@
       "event": "terminal",
       "payload": {
         "event": "start",
+        "presentation": { "thread_id": "fresh-logo-fixture", "phase": "fresh" },
         "ledger": null,
         "identity": {
-          "codex_version": "0.157.0",
+          "codex_version": "0.159.1",
           "install_profile": "full",
           "mode": "omd",
           "mods": { "installed": 6, "enabled": 2, "active": 2 }

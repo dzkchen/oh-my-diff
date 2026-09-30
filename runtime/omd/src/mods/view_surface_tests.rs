@@ -11,6 +11,45 @@ fn view(extra: Value) -> Result<ModView> {
 }
 
 #[test]
+fn welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose() {
+    let welcome = json!({"greeting":"", "session_title_suffix":" | Project tools",
+        "welcome":{"show_while_composing":true},
+        "sites":{"welcome":{"components":[{"type":"text","id":"guide","label":"Guide","text":"Start a project"}]}}});
+    assert!(view(welcome.clone()).is_ok());
+    for invalid in [
+        json!({"greeting":"a\u{001b}[2J"}),
+        json!({"greeting":"x".repeat(257)}),
+        json!({"session_title_suffix":"x".repeat(81)}),
+        json!({"welcome":{"unknown":true}}),
+    ] {
+        assert!(view(invalid.clone()).is_err(), "{invalid}");
+        assert!(ModViewPatch::parse(invalid).is_err());
+    }
+    let mut target = ModView::default();
+    let mut replaced = BTreeSet::new();
+    let mut completed = false;
+    ModViewPatch::parse(welcome)
+        .unwrap()
+        .apply(&mut target, &mut replaced, &mut completed)
+        .unwrap();
+    ModViewPatch::parse(json!({"greeting":"Ready to work?"}))
+        .unwrap()
+        .apply(&mut target, &mut replaced, &mut completed)
+        .unwrap();
+    assert_eq!(target.greeting.as_deref(), Some("Ready to work?"));
+    assert_eq!(
+        target.session_title_suffix.as_deref(),
+        Some(" | Project tools")
+    );
+    assert!(
+        ModViewPatch::parse(json!({"sites":{"welcome":{"components":[]}}}))
+            .unwrap()
+            .apply(&mut target, &mut replaced, &mut completed)
+            .is_err()
+    );
+}
+
+#[test]
 fn layouts_need_one_transcript_and_composer_below_it() {
     let leaf = |content: &str| json!({"content": content});
     assert!(view(json!({"layout": {"split": "horizontal", "children": [
@@ -91,5 +130,37 @@ fn patches_claim_layout_and_backdrop_once() {
             .unwrap()
             .apply(&mut target, &mut replaced, &mut completed)
             .is_err()
+    );
+}
+
+#[test]
+fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() {
+    assert!(view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}},"backdrop":{"ascii":{"text":"+", "scale":2.0,"opacity":0.5,"tint":"#123456","offset":{"x":-4,"y":2},"position":"center"}}})).is_ok());
+    for value in [
+        json!({"surface_styles":{"approval":{"top":0}}}),
+        json!({"surface_styles":{"composer":{"opacity":1.01}}}),
+        json!({"backdrop":{"ascii":{"text":"x","scale":0.01}}}),
+        json!({"backdrop":{"ascii":{"text":"x","offset":{"x":4097,"y":0}}}}),
+        json!({"backdrop":{"ascii":{"text":"x","tint":"red"}}}),
+    ] {
+        assert!(view(value.clone()).is_err(), "{value}");
+    }
+    let mut target = ModView::default();
+    let mut sites = BTreeSet::new();
+    let mut completed = false;
+    for patch in [
+        json!({"surface_styles":{"composer":{"top":"#123456"}}}),
+        json!({"surface_styles":{"backdrop":{"top":"#abcdef"}}}),
+        json!({"surface_styles":{"composer":{"top":"#654321"}}}),
+    ] {
+        ModViewPatch::parse(patch)
+            .unwrap()
+            .apply(&mut target, &mut sites, &mut completed)
+            .unwrap();
+    }
+    assert_eq!(target.surface_styles.len(), 2);
+    assert_eq!(
+        target.surface_styles["composer"].top,
+        Some(ModColor::Rgb(0x65, 0x43, 0x21))
     );
 }

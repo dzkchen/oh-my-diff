@@ -1,4 +1,17 @@
-# Local lean candidate profiles
+# OMD Core and OMD+ candidate profiles
+
+Both profiles use one `install.sh` curl entry point and the same patched host and
+author tools. OMD Core supplies the modding ecosystem for user-selected
+extensions; OMD+ also contains the selected first-party collection.
+
+| Public profile | Install selector | Runtime identity |
+| --- | --- | --- |
+| OMD Core | `--profile platform` | `OMD_INSTALL_PROFILE=platform_only` |
+| OMD+ | `--profile full` | `OMD_INSTALL_PROFILE=full` |
+
+These internal selectors, installation paths, schema-1 records and lock filenames
+remain unchanged. They identify the same profiles; the public labels and status
+metadata use OMD Core and OMD+. No unreleased-format migration is needed.
 
 These are local Apple Silicon candidate profiles for the active Codex `0.159.1`
 patch. They are not a public release or a qualified default. Build the patched
@@ -6,7 +19,7 @@ patch. They are not a public release or a qualified default. Build the patched
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
 SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
 and copy that archive to `/path/to/release/mod-api.tgz`. Use Node `24.18.0` from
-`mise which node`. The platform profile installs the host, mod manager, author
+`mise which node`. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, and the `omd_logo` presentation mod. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
 The historical `0.155.1` candidate and private build remain frozen. Verify the
@@ -22,7 +35,7 @@ python3 -m scripts.lean_package install --archive /path/to/omd-package.tar.xz --
   --bin-dir /path/to/omd-bin --store /path/to/omd-mod-store --node "$(mise which node)"
 ```
 
-Use `--profile full` for the provisional Full collection. The archive is
+Use `--profile full` for the provisional OMD+ collection. The archive is
 verified before installation. For an automated patch-and-build install:
 
 ```sh
@@ -33,7 +46,7 @@ python3 -m scripts.lean_package source-install \
   --bin-dir /path/to/omd-bin --store /path/to/omd-mod-store --node "$(mise which node)"
 ```
 
-Use `--profile full` for the Full candidate. An
+Use `--profile full` for the OMD+ candidate. An
 optional `--target-dir` retains a separate Cargo build cache. The source route
 verifies the upstream commit, normalizes the lock, applies the hash-checked
 patch, and builds the matching binaries. It requires Rust 1.95.0 and the pinned
@@ -59,20 +72,26 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 `--profile platform` creates a store holding only the `omd_logo` presentation
 mod, enabled, and launches patched Codex with `OMD_MODE=omd`.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs twenty first-party candidate mods. A fresh Full store enables
+`--profile full` installs twenty-one first-party candidate mods. A fresh OMD+ store enables
 `omd_inspector`, `omd_workspace`, `omd_logo` and `omd_model_picker`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
 navigation, guideline governance, Pi prompts, repository analysis, source
-knowledge and task tools are installed but disabled. Advisor every-turn selection and the separate research preset
+knowledge, task tools and theme are installed but disabled. Advisor every-turn selection and the separate research preset
 require their own explicit host policy and allowance; installation does not
 activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
-selections and adds newly bundled first-party packages disabled. Four curated plugin source packages are available in
+selections and adds newly bundled first-party packages disabled. Seven curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
 started. The deferred code-execution plugin, browser,
 bridge service, external language servers, code-mode host, and sidecars are
 absent from the installed base profile.
+
+The staged plugins are guidance hooks, review policy, application bridges,
+artifact reading, anchored edit, session review and curated memory. Their nested
+skills, hooks and mod components are source inventory, not enabled extensions.
+See [plugin setup](plugins/README.md) for each component's separate trust and
+activation steps. OMD Core can install the same packages explicitly.
 
 Enable the installed synchronization mod explicitly with
 `/path/to/omd-bin/omd-package mod enable omd_lsp_sync`. It claims Python,
@@ -80,7 +99,7 @@ TypeScript, JavaScript, Rust and Java files whose server is installed; absent
 servers report fallback. It discovers the executable without installing it, starts it
 on demand, and sends document changes after observed OMD writes. Requested
 file renames use the mod's pre-rename handler and the host's exact transaction
-service. Platform-only users can install the same mod explicitly with
+service. OMD Core users can install the same mod explicitly with
 `omd-mod` and grant its declared capabilities.
 
 Inspect and switch the effective profile:
@@ -91,11 +110,11 @@ Inspect and switch the effective profile:
 /path/to/omd-bin/omd-package activate full
 ```
 
-Use `activate platform` for a platform installation. `direct` immediately
+Use `activate platform` for an OMD Core installation. `direct` immediately
 selects upstream-style behavior inside the patched binary. `status` reports
-the installed profile, host mode, installed versus enabled mods, source hashes,
-mod errors, and staged plugins. The Full profile's inspector mod supplies
-`/omd`; direct mode has no inspector. To disable a broken first-party Full mod:
+the installed profile and public label, host mode, installed, enabled and active mods, source hashes,
+mod errors, and staged plugins. The OMD+ profile's inspector mod supplies
+`/omd`; direct mode has no inspector. To disable a broken first-party OMD+ mod:
 
 ```sh
 /path/to/omd-bin/omd-package mod disable omd_workspace
@@ -132,7 +151,7 @@ Direct work remains available when the package is disabled or the selected
 contract forbids children. Local Batch 2.55 runner coverage does not qualify
 real-model quality or public support.
 
-The Full profile includes an inactive `omd_claude_cli` mod. To use the official
+The OMD+ profile includes an inactive `omd_claude_cli` mod. To use the official
 Claude CLI's logged-in `claude.ai` subscription for one bounded task, enable
 the mod and launch through its package command:
 
@@ -155,16 +174,16 @@ The native host retains route admission, process authority, host tool execution,
 approvals, task limits, and usage accounting. Local task evidence is written
 under the installation prefix's `tasks` directory. Move or retain that evidence
 before uninstalling; uninstall refuses to remove an installation containing
-task files. Modding platform only includes no Claude route or assets.
+task files. OMD Core includes no Claude route or assets.
 
-For a user mod in the platform profile, inspect its `mod.json` and source,
+For a user mod in the OMD Core profile, inspect its `mod.json` and source,
 then use the installed `artifacts/omd-mod` binary to inspect, trust its exact
 digest and declared capabilities, enable it in the store, and reload. The
 authoring and recovery details are in [mods/README.md](mods/README.md). A mod's `error` in status is a failure to
 repair or disable, not evidence that its behavior ran successfully.
 
 An existing compatible store can be attached with `--attach-store` during a
-new installation. Full attach checks the exact pinned package source digests
+new installation. OMD+ attach checks the exact pinned package source digests
 and preserves each existing enabled or disabled choice. Use a separate prefix
 and launcher directory for a side-by-side candidate upgrade. Removal deletes
 only the managed launcher and installation prefix:
@@ -187,5 +206,5 @@ store; only explicitly trusted and enabled command exports are available. For
 example, `omd COMMAND --repo /absolute/project` routes to the selected
 extension. No session-review or memory behavior is built into this binary.
 Package installation and activation remain separate. The current host exposes
-API `0.2.0-experimental.4`; API 0.1 packages are historical compatibility
+API `0.2.0-experimental.5`; API 0.1 packages are historical compatibility
 fixtures and do not qualify as current package candidates.

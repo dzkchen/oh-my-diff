@@ -17,8 +17,8 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.159.1.patch",
-      "sha256": "45527bbed191e0c09064f80b64d8c2d865e37ec37ff1fb748de173a62d4eb66c"
+      "sha256": "edd850c7829d2ae56c1f508a7244d6a9fc8ca391d7e294f207a62cd9efafc1ae"
     }
   ],
-  "compatibility_evidence": ".docs/audits/upstream-pin-0159-20260929.md"
+  "compatibility_evidence": ".docs/audits/batch3aa-appearance-identity-20260929.md"
 }

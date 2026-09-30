@@ -1,7 +1,7 @@
 # Mod API reference
 
 This reference is version-matched to `@oh-my-diff/mod-api` and host API
-`0.2.0-experimental.4` on OMD `0.1.0` and Codex `0.159.1`. The package's
+`0.2.0-experimental.5` on OMD `0.1.0` and Codex `0.159.1`. The package's
 [`api.d.ts`](api.d.ts) is the complete typed surface. API 0.1 packages are
 historical and do not load in the current host; the later .9 reference sections
 remain only as migration evidence. A store also generates `active-host.d.ts` and
@@ -368,7 +368,7 @@ capabilities.
 
 ## Batch 2.6 host primitives
 
-API `0.2.0-experimental.4` adds these generic primitives; earlier API versions
+API `0.2.0-experimental.5` adds these generic primitives; earlier API versions
 no longer load. Each advertises a host feature a package can require.
 With no mod registered for a primitive the host allocates nothing for it and
 changes no decision. Mapping from pinned upstream surfaces to these routes, and
@@ -467,11 +467,84 @@ recorded only while an enabled mod holds `sessions`. Commands record their exit
 code when they finish, including commands that outlive their tool call; the log
 is removed when the thread is deleted.
 
+### Startup presentation (`terminal_welcome_v1`)
+
+The terminal event's read-only `presentation` is `{thread_id, phase}`. A new
+thread is `fresh`, an accepted native turn start makes it `started`, and a
+resumed or forked thread is `resumed`, from existing host markers before the
+first ready publication. Before the first editable frame, a repeatable
+`event: 'startup'` callback has `ledger: null` and a null `thread_id`; its phase
+comes from the host's new/resume/fork selection. Native task, app and paid
+operations are unavailable through the host boundary in this preview. This is
+a presentation refresh, not a once-only session or turn event. Before local
+presentation is available, the whole presentation value may be absent or null.
+Composer input, submission rejection, ordinary
+view refreshes, and mod reload do not reset it. It describes the host session;
+mods do not need to persist their own first-turn flag. A locally queued draft
+is not an accepted turn. Empty bootstrap snapshots preserve the initial view;
+real disabled, broken or reloaded publications replace it.
+
+The reserved `welcome` site renders bounded generic components centered in
+the owned transcript's unused area. `welcome: {show_while_composing: true}`
+keeps the site visible with a draft; the default shows it only with an empty
+composer. Accepted/running and resumed sessions, transcript selection/search,
+raw output and overlays suppress it. Existing transcript, failures, approvals
+and input retain their space; if no blank space fits the components, the site
+does not draw. Inline output retains the native transcript without the
+centered decoration. No welcome site preserves Codex's normal blossom policy.
+
+`session_title_suffix` appends up to 80 visible characters to the upstream
+version heading, including inline/raw output; the host keeps its source-backed
+version and attribution. `greeting` overrides the startup phrase with up to
+256 visible characters, and an empty string hides it. Both are last-writer
+scalars in dependency order, then mod ID order, so a later opt-in theme can
+override an earlier presentation default. Escape/control injection is refused.
+Disable, a broken mod, or direct mode restores the upstream fields.
+
 ### Terminal surface (`terminal_surface_v1`, `terminal_media_v1`, `terminal_prompt_v1`, `terminal_pty_v1`)
 
+The appearance additions (`terminal_surface_paint_v1`,
+`terminal_backdrop_transform_v1`, `terminal_image_sample_v1`,
+`terminal_import_lifetime_v1`) remain generic presentation primitives:
+
+- `surface_styles.composer` and `.backdrop` accept a `TerminalSurfacePaint`
+  with `top`, `bottom`, `foreground`, `border` RGB/indexed colors and
+  `opacity` from 0 to 1. Background colors interpolate vertically and blend
+  with existing colors. The foreground is independent of background opacity;
+  reset foregrounds get a readable color against the surviving background.
+  Explicit native foregrounds and special backgrounds remain. Borders use
+  blank edge cells and disappear at zero opacity. `NO_COLOR` omits styling.
+  Solid backdrop colors remain in narrow terminals. Inline rendering uses
+  the current bounded viewport; it does not repaint earlier terminal scrollback.
+- Image and ASCII backdrops accept `position: center|fit|fill|tile`,
+  `scale: 0.1..4`, signed `offset: {x,y}` in -4096..4096 cells,
+  `dim`, `opacity` from 0 to 1 and optional `tint`. Image dimming blends
+  toward the tint, or black if absent; ASCII tint colors decorative glyphs.
+  Images may add an independent `overlay: TerminalSurfacePaint` for pixel
+  gradients. Placement assumes an 8×16 pixel cell and caps its working canvas
+  at 2048×2048. The host does not choose a gloss or background policy.
+- `terminal.image_sample {resource, columns, rows}` returns
+  `{width,height,rgba}` (row-major RGBA bytes) for a caller-owned PNG/JPEG.
+  Columns are integers 1..120 and rows 1..60; sources are at most 8 MiB and
+  4096 pixels per dimension, with a 64 MiB decoder allocation limit. A mod can
+  implement ASCII ramps or image inspection without a new file read.
+- `terminal.import_file` adds `lifetime: thread|package` (default thread).
+  Package imports retain repository, owner, exact source and immutable content
+  identity across settings/reload/new threads. A source change requires a new
+  confirmed import. The original path is never reread. Existing blob and
+  resource quotas apply; removing the mod store removes retained assets.
+
+Surface paints compose by surface name with the later contributor replacing
+that surface's paint. Backdrops retain one owner. Keeping settings, selected
+assets, image-to-ASCII conversion, greetings and glass composition in a mod
+lets outside authors use the same APIs for document viewers, image previews,
+warnings, watermarks and dashboards.
+
 Views may declare a `layout` tree of splits and tabs with transcript, composer
-and mod-named sites (`mod/site`), plus an ASCII or image `backdrop` (off over
-SSH, multiplexers, `NO_COLOR`, reduced motion and narrow terminals).
+and mod-named sites (`mod/site`), plus an ASCII or image `backdrop`. Local
+detected Kitty graphics use images in an owned viewport; SSH, multiplexers,
+reduced motion, other protocols and inline viewports use ASCII fallback.
+Decorative backdrops are omitted below 60 columns and under `NO_COLOR`.
 Components add `document` (up to 100,000 lines with anchors, selection and
 find), `diff`, `image` (truecolor half-block cells, alt text under
 `NO_COLOR`) and `terminal` (a PTY session). Spans accept `fg` and `bg` theme
@@ -756,8 +829,8 @@ wait, output, and session count. Sessions belong to one mod and generation;
 disable, reload, cancellation, and thread stop clean them up. A process cannot
 write the repository through this API. The first-party `omd_lsp_sync` mod owns
 Python, TypeScript/JavaScript, Rust and Java server choices and language
-protocol; it is installed inactive with Full OMD and can also be installed
-explicitly in a platform-only store. It never installs a language server.
+protocol; it is installed inactive with OMD+ and can also be installed
+explicitly in a OMD Core store. It never installs a language server.
 Definition, references and code-action discovery return bounded read-only
 results for observed sources; applying an action and symbol rename remain
 unsupported. Absent or unsupported servers report fallback.

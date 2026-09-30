@@ -5,7 +5,7 @@
     "codex": "0.159.1",
     "omd": "0.1.0",
     "stability": "experimental",
-    "current_api": "0.2.0-experimental.4",
+    "current_api": "0.2.0-experimental.5",
     "package_schemas": [
       1
     ],
@@ -26,6 +26,7 @@
       "terminal_components_v1",
       "terminal_identity_v1",
       "terminal_render_sites_v1",
+      "terminal_welcome_v1",
       "terminal_rich_line_v1",
       "transactional_reload_v1",
       "task_tool_exposure_v1",
@@ -71,6 +72,10 @@
       "completion_v1",
       "tool_feedback_v1",
       "terminal_media_v1",
+      "terminal_surface_paint_v1",
+      "terminal_backdrop_transform_v1",
+      "terminal_image_sample_v1",
+      "terminal_import_lifetime_v1",
       "secrets_v1",
       "terminal_prompt_v1",
       "model_complete_v1",
@@ -87,7 +92,7 @@
   },
   "apis": [
     {
-      "version": "0.2.0-experimental.4",
+      "version": "0.2.0-experimental.5",
       "stability": "experimental",
       "support_until": "2027-03-20",
       "service_imports": "exact or compatible caret range"

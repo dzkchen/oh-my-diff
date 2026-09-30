@@ -26,6 +26,7 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "oh-my-diff-lean-package-candidate-v1"
 SCHEMA = 1
+PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace")
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo",)
@@ -46,7 +47,7 @@ def invoke(*arguments):
 def package_sources(preview):
     full = full_mods_lock.load()
     if full["mod_api"] != preview["mod_api"]:
-        raise ValueError("Full mod API disagrees with pinned preview")
+        raise ValueError("OMD+ mod API disagrees with pinned preview")
     return {**preview["packages"], **full["packages"]}
 
 
@@ -85,6 +86,9 @@ def candidate_lock(upstream, patch, preview):
     for name, expected in record["source_sha256"].items():
         if support.digest(ROOT / name) != expected:
             raise ValueError(f"lean candidate source changed: {name}")
+    prefixes = tuple(f"plugins/optional/plugins/{identifier}/" for identifier in support.SELECTED_OPTIONAL_PLUGINS)
+    if set(support.optional_plugin_sources()) != {name for name in record["source_sha256"] if name.startswith(prefixes)}:
+        raise ValueError("selected optional plugin source inventory changed")
     return record
 
 
@@ -116,6 +120,23 @@ def copy_curated_plugins(destination):
             source / ".agents/plugins/marketplace.json") != lock["files"][".agents/plugins/marketplace.json"]:
         raise ValueError("pinned bundled plugin marketplace changed")
     marketplace["plugins"] = [entry for entry in marketplace["plugins"] if entry["name"] in selected]
+    optional_sources = support.optional_plugin_sources()
+    for identifier in support.SELECTED_OPTIONAL_PLUGINS:
+        source = ROOT / "plugins/optional/plugins" / identifier
+        for name in optional_sources:
+            path = ROOT / name
+            if not path.is_relative_to(source):
+                continue
+            relative = f"plugins/{identifier}/{path.relative_to(source).as_posix()}"
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            files[relative] = support.digest(path)
+        marketplace["plugins"].append({"name": identifier,
+                                       "source": {"source": "local", "path": f"./plugins/{identifier}"},
+                                       "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+                                       "category": "Developer Tools"})
+    selected.update(support.SELECTED_OPTIONAL_PLUGINS)
     support.atomic_text(destination / ".agents/plugins/marketplace.json",
                         json.dumps(marketplace, indent=2) + "\n")
     return {"marketplace": str(destination), "plugins": sorted(selected), "files": files,
@@ -222,9 +243,12 @@ def status(prefix, bin_dir):
         )
         packages.append({"id": identifier, "installed": source.is_dir(), "pinned_source_current": current,
                          "enabled_in_store": identifier in active,
+                         "active": identifier in active and not active[identifier].get("error")
+                         and record["activation"]["selection"] != "direct",
                          "loaded_by_profile": identifier in active and record["activation"]["selection"] != "direct",
                          "error": active.get(identifier, {}).get("error")})
     return {"product": PRODUCT, "profile": record["profile"],
+            "profile_label": PROFILE_LABELS[record["profile"]],
             "activation": record["activation"]["selection"],
             "host_mode": "upstream_direct" if record["activation"]["selection"] == "direct" else "omd",
             "binary_sha256": record["binary"]["sha256"], "runtime_patch_sha256": record["runtime_patch_sha256"],
@@ -308,7 +332,7 @@ def install(args):
         raise ValueError("active runtime patch hash mismatch")
     locked = support.preview_sources(support.preview_lock())
     if full_mods_lock.load() != full_mods_lock.build():
-        raise ValueError("Full mod lock differs from pinned sources")
+        raise ValueError("OMD+ mod lock differs from pinned sources")
     packages = package_sources(locked)
     candidate = candidate_lock(upstream_lock, patch_lock, locked)
     if tuple(sorted(packages)) != PACKAGES:
@@ -399,6 +423,7 @@ def install(args):
             if added:
                 target.mkdir()
                 for name in package["files"]:
+                    (target / name).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(ROOT / package["source"] / name, target / name)
             inspected = invoke(installed_manager, "inspect", target)
             if inspected["sha256"] != package["package_sha256"]:
@@ -413,7 +438,8 @@ def install(args):
         record = {"schema": SCHEMA, "product": PRODUCT,
                   "installed_at": datetime.now(timezone.utc).isoformat(),
                   "prefix": str(prefix), "bin_dir": str(bin_dir), "store": str(store),
-                  "profile": args.profile, "mod_api": host["api"], "packages": installed,
+                  "profile": args.profile, "profile_label": PROFILE_LABELS[args.profile],
+                  "mod_api": host["api"], "packages": installed,
                   "plugin_bundle": plugin_bundle,
                   "binary": {**binary, "installed_path": str(artifacts / "codex"),
                              "sha256": support.digest(artifacts / "codex")},
@@ -512,12 +538,13 @@ def uninstall(prefix, bin_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Install and inspect the local lean candidate profiles")
+    parser = argparse.ArgumentParser(description="Install and inspect the local OMD Core and OMD+ candidate profiles")
     parser.add_argument("--prefix", type=Path, required=True)
     parser.add_argument("--bin-dir", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
     install_parser = commands.add_parser("install")
-    install_parser.add_argument("--profile", choices=("platform", "full"), required=True)
+    install_parser.add_argument("--profile", choices=PROFILE_LABELS, required=True,
+                                help="platform: OMD Core; full: OMD+")
     install_parser.add_argument("--binary", type=Path, required=True)
     install_parser.add_argument("--manager", type=Path, required=True)
     for name in HOST_TOOLS:
@@ -528,7 +555,8 @@ def main():
     install_parser.add_argument("--attach-store", action="store_true")
     commands.add_parser("status")
     activate_parser = commands.add_parser("activate")
-    activate_parser.add_argument("selection", choices=("platform", "full", "direct"))
+    activate_parser.add_argument("selection", choices=("platform", "full", "direct"),
+                                 help="platform: OMD Core; full: OMD+; direct: upstream-style behavior")
     mod_parser = commands.add_parser("mod")
     mod_parser.add_argument("action", choices=("enable", "disable"))
     mod_parser.add_argument("identifier", choices=PACKAGES)
@@ -553,7 +581,7 @@ def main():
         record = load(prefix)
         check(record, bin_dir)
         if record['profile'] != 'full':
-            raise ValueError('the Claude mod is available only in Full OMD')
+            raise ValueError('the Claude mod is available only in OMD+')
         node = record['author']['node']
         setup = Path(record['store']) / 'sources' / 'omd_claude_cli' / 'setup.mjs'
         os.execv(node, [node, str(setup), str(prefix / 'install.json'),

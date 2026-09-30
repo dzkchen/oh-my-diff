@@ -1,19 +1,19 @@
 {
   "schema": 1,
-  "as_of": "2026-09-27",
+  "as_of": "2026-09-29",
   "packages": [
     {
       "id": "omd-code-execution",
       "extension_type": "plugin",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-code-execution",
-      "reason": "Native Python and Bun worker acceptance passed; Full profile installation, composed real-task value, and public support remain unverified",
+      "reason": "Native Python and Bun worker acceptance passed; OMD+ profile installation, composed real-task value, and public support remain unverified",
       "review": ".docs/audits/code-execution-workers-20260925.md"
     },
     {
       "id": "omd_theme",
       "extension_type": "mod",
-      "source": "mods/optional/omd_theme",
-      "reason": "Separate opt-in responsiveness and accessibility keep gate remains open",
+      "source": "mods/first-party/omd_theme",
+      "reason": "Selected Batch 3aa first-party theme, installed inactive in OMD+ and installable explicitly in OMD Core; earlier responsiveness rejection remains historical evidence.",
       "review": "extensions/REVIEWS.md"
     },
     {
@@ -83,14 +83,14 @@
       "id": "omd-anchored-edit",
       "extension_type": "plugin",
       "source": "plugins/optional/plugins/omd-anchored-edit",
-      "reason": "Optional local package; deterministic and sandboxed acceptance only, public support and real-task value unqualified.",
+      "reason": "Optional local package; deterministic and sandboxed acceptance only, public support and real-task value unqualified. OMD+ stages the source inactive; parent plugin and mod-component trust and activation remain separate.",
       "review": ".docs/audits/batch2-packages-20260926.md"
     },
     {
       "id": "omd-session-review",
       "extension_type": "plugin",
       "source": "plugins/optional/plugins/omd-session-review",
-      "reason": "Optional local package; deterministic and sandboxed acceptance only, public support and real-task value unqualified.",
+      "reason": "Optional local package; deterministic and sandboxed acceptance only, public support and real-task value unqualified. OMD+ stages the source inactive; parent plugin and mod-component trust and activation remain separate.",
       "review": ".docs/audits/batch2-packages-20260926.md"
     },
     {
@@ -111,7 +111,7 @@
       "id": "omd-curated-memory",
       "extension_type": "plugin",
       "source": "plugins/optional/plugins/omd-curated-memory",
-      "reason": "Local-only opt-in memory; third-party connections deferred by maintainer. Native fixture qualification, no public support or task-value claim.",
+      "reason": "Local-only opt-in memory; third-party connections deferred by maintainer. Native fixture qualification, no public support or task-value claim. OMD+ stages the source inactive; parent plugin and mod-component trust and activation remain separate.",
       "review": ".docs/audits/batch2-packages-20260926.md"
     },
     {

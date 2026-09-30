@@ -6,6 +6,7 @@ pub use view::MOD_KEY_LIMIT;
 pub use view::ModActivity;
 pub use view::ModAsciiBackdrop;
 pub use view::ModBackdrop;
+pub use view::ModBackdropOffset;
 pub use view::ModBorder;
 pub use view::ModColor;
 pub use view::ModCommandAction;
@@ -30,6 +31,7 @@ pub use view::ModSidebarSide;
 pub use view::ModSiteMode;
 pub use view::ModSpan;
 pub use view::ModSplit;
+pub use view::ModSurfacePaint;
 pub use view::ModTab;
 pub use view::ModTheme;
 pub use view::ModThemePatch;
@@ -77,7 +79,7 @@ pub use store::ModStore;
 
 pub const CODEX_HOST_RELEASE: &str = "0.159.1";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
-pub const MOD_API_VERSION: &str = "0.2.0-experimental.4";
+pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
 
@@ -166,6 +168,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "terminal_components_v1",
     "terminal_identity_v1",
     "terminal_render_sites_v1",
+    "terminal_welcome_v1",
     "terminal_rich_line_v1",
     "transactional_reload_v1",
     "task_tool_exposure_v1",
@@ -211,6 +214,10 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "completion_v1",
     "tool_feedback_v1",
     "terminal_media_v1",
+    "terminal_surface_paint_v1",
+    "terminal_backdrop_transform_v1",
+    "terminal_image_sample_v1",
+    "terminal_import_lifetime_v1",
     "secrets_v1",
     "terminal_prompt_v1",
     "model_complete_v1",
@@ -284,6 +291,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.notify",
     "terminal.show_thread",
     "terminal.import_file",
+    "terminal.image_sample",
     "composer.read",
     "composer.write",
     "builtins.invoke",
@@ -3478,6 +3486,7 @@ impl ModHost {
 
     pub fn field_policies() -> Value {
         json!({
+            "terminal": {"identity":"observe_only","presentation":"observe_only","greeting":"last_writer","session_title_suffix":"last_writer","welcome":"last_writer"},
             "model_request": {"request_id":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","effective":"alterable","provenance":"observe_only"},
             "response_stream": {"kind":"observe_only","raw_sha256":"observe_only","raw_usage":"observe_only","opaque_reasoning":"observe_only","protected":"observe_only","text":"alterable","original":"observe_only","effective":"observe_only","provenance":"observe_only","fallback":"observe_only"},
             "prompt": {"thread_id":"observe_only","turn_id":"observe_only","original":"observe_only","effective":"replaceable","provenance":"observe_only"},

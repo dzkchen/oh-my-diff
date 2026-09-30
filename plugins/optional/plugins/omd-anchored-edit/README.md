@@ -1,6 +1,6 @@
 # OMD anchored edits
 
-Optional plugin component `0.2.0-preview.1`, public mod API `0.2.0-experimental.4`. The TypeScript component owns anchor validation, unique matching, line scope and replacement construction. The host provides ordinary reads and authorized compare-and-swap transactions. No anchor behavior was added to Rust.
+Optional plugin component `0.2.0-preview.1`, public mod API `0.2.0-experimental.5`. The TypeScript component owns anchor validation, unique matching, line scope and replacement construction. The host provides ordinary reads and authorized compare-and-swap transactions. No anchor behavior was added to Rust.
 
 Install the plugin from the repository's optional marketplace in the Codex home you explicitly choose:
 
@@ -17,7 +17,7 @@ omd-mod trust STORE COMPONENT_PATH INSPECT_SHA256 tools,fs.read,fs.write
 omd-mod enable STORE COMPONENT_PATH
 ```
 
-Use the selected host's `OMD_MOD_STORE`. Full and platform-only users can install the component explicitly; neither profile enables it. Disable with `omd-mod disable STORE COMPONENT_PATH`. The ordinary patch tool remains available when this component is absent or disabled. Plugin removal alone does not remove a separately trusted component; disable that component as well.
+Use the selected host's `OMD_MOD_STORE`. OMD+ and OMD Core users can install the component explicitly; neither profile enables it. Disable with `omd-mod disable STORE COMPONENT_PATH`. The ordinary patch tool remains available when this component is absent or disabled. Plugin removal alone does not remove a separately trusted component; disable that component as well.
 
 The component's `read` tool returns exact UTF-8 text and SHA-256. Its `edit` tool accepts:
 

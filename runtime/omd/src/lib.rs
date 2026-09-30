@@ -103,6 +103,8 @@ pub use mods::MOD_STATE_STORAGE_SCHEMA_VERSION;
 pub use mods::ModActivity;
 pub use mods::ModAsciiBackdrop;
 pub use mods::ModBackdrop;
+pub use mods::ModBackdropOffset;
+pub use mods::ModSurfacePaint;
 pub use mods::ModBorder;
 pub use mods::ModColor;
 pub use mods::ModCommand;

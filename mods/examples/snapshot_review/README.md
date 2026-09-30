@@ -1,6 +1,6 @@
 # Frozen snapshot review example
 
-This independent-author API `0.2.0-experimental.4` fixture demonstrates reusable snapshot capture, sandboxed commands, full visible parent history, selected tool-history evidence, structured agent failures, argument-scoped restrictions and durable contract receipts and allowance. It loads no first-party mod and defines its own schema-2 contract.
+This independent-author API `0.2.0-experimental.5` fixture demonstrates reusable snapshot capture, sandboxed commands, full visible parent history, selected tool-history evidence, structured agent failures, argument-scoped restrictions and durable contract receipts and allowance. It loads no first-party mod and defines its own schema-2 contract.
 
 Install it with `omd-mod`, grant its declared capabilities and a schema-2 contract selection, then invoke its command in an `OMD_MODE=omd` session with no first-party mods enabled. `failure` surfaces an HTTP 503 through both `agents.wait` and `agent_end`; `resume` restarts the session and completes from saved receipts, restrictions and consumed requests; `snapshot` runs the same inspection without a restart.
 

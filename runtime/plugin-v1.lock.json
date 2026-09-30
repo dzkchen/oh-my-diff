@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "2ad59249216ba0bdd2996ed97e8b344eb25f828a827c9da1c9edaff35d71d434"
+    "sha256": "d896352e235b9bbdccde4aee7ebb4d6d9cf57898e666c8912d38df74738c8149"
   },
   "plugins": {
     "omd-guidance-hooks": {
@@ -59,12 +59,12 @@
     "plugins/omd-application-bridges/hooks/hooks.json": "705c7166e08a13e189d4caf332408a3ce0b760b04ffc42d183062da2d143b993",
     "plugins/omd-application-bridges/hooks/omd_bridge_lifecycle.py": "539b6345795423658a84f8296de958011677f7640a871f5528b49ab80fda6e49",
     "plugins/omd-application-bridges/scripts/omd_application_bridge.py": "c4a03297b8a75b1acb84db84c1370b10c0ac53a2d96746aab599b787b6434a82",
-    "plugins/omd-artifact-reading/.codex-plugin/omd.json": "de16ae368bda078c2fc974ae9d0df730fbecee860131ff474cc4399da732a691",
+    "plugins/omd-artifact-reading/.codex-plugin/omd.json": "38e358e9488c196911257135004be50b144974936892848ad4d0cd4885bf3a1b",
     "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "9324e098d303dbc68db25f2774dc624f60d04423b5f4c209a1566209f97f99a8",
-    "plugins/omd-artifact-reading/README.md": "a6ef98e314cdec0c84f6f1a11f512ccdd94c797a6ab134a3a4eb5633fdbbfeb5",
+    "plugins/omd-artifact-reading/README.md": "b8cd094cc8039aa3686e559f68b53bb4ee6252d8b53b641eb482762fb3948ffd",
     "plugins/omd-artifact-reading/mod/index.ts": "2764548cdde0f6a8d2c8961bb53e22ee18a86fa21f7adf0c7edc97cf24db436d",
-    "plugins/omd-artifact-reading/mod/mod.json": "efae7d717b129cfa42c9aa1860620d043fcaa3665599e5a3f0129f79596a5b65",
-    "plugins/omd-artifact-reading/mod.test.mjs": "b23f7d1d69025ddebc648e6196ef065c5997d49c7716f765c6439bcfed7905d4",
+    "plugins/omd-artifact-reading/mod/mod.json": "117f5e0480a5b36157ed3c401df1301a625c80dd9cb2505be64e7ceaf6169633",
+    "plugins/omd-artifact-reading/mod.test.mjs": "e764ef0a8d926e8303a95cbd1830a060b6bab31110fc0b5b5b49e7e51928fd7d",
     "plugins/omd-artifact-reading/scripts/github_read.py": "1a730b4c48d81b7a0e6feb4962c69b6b9f454c76db887a61984c28b5b8cdc709",
     "plugins/omd-artifact-reading/scripts/read_artifact.py": "8552f663a7b3130636ea554b66ec26a9a2b0a4b3c8b4ac6786f2e842cb7cf20f",
     "plugins/omd-artifact-reading/skills/omd-artifact-reading/SKILL.md": "fbbcd37ce926c7b37c15b4486aea4c53f2a73888138506fa8cc94b32ea7c3a18",

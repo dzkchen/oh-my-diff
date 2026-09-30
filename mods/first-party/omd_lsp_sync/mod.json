@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "omd_lsp_sync",
   "version": "0.2.0-preview.1",
-  "api": "0.2.0-experimental.4",
+  "api": "0.2.0-experimental.5",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },

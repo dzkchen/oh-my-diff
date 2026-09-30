@@ -72,6 +72,7 @@ def run(artifact_dir, upstream, output):
                            "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--omd-contract", artifact_dir / "omd-contract", "--author-archive", artifact_dir / "mod-api.tgz",
                            "--node", node, "--store", platform_store)
         assert platform["host_mode"] == "omd"
+        assert platform["profile_label"] == "OMD Core"
         assert [item["id"] for item in platform["packages"] if item["loaded_by_profile"]] == ["omd_logo"]
         assert platform["installed_tools"] == ["omd", "omd-contract"] and platform["plugin_bundle"] is None
         assert call([base / "platform-bin/omd-package", "status"], env)["profile"] == "platform"
@@ -129,15 +130,18 @@ def run(artifact_dir, upstream, output):
                    "--manager", artifact_dir / "omd-mod", "--omd", artifact_dir / "omd", "--omd-contract", artifact_dir / "omd-contract", "--author-archive", artifact_dir / "mod-api.tgz",
                    "--node", node, "--store", full_store]
         full = command("full", *install)
+        assert full["profile_label"] == "OMD+"
         assert call([base / "full-bin/omd-package", "status"], env)["profile"] == "full"
         active = [item["id"] for item in full["packages"] if item["loaded_by_profile"]]
         assert active == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace"]
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
                    for item in full["packages"])
+        assert not next(item for item in full["packages"] if item["id"] == "omd_theme")["active"]
         assert set(full["installed_tools"]) == {"omd", "omd-contract"}
         assert "export OMD_INSTALL_PROFILE=full" in (base / "full-bin/codex").read_text()
         bundle = Path(full["plugin_bundle"]["marketplace"])
-        assert len(full["plugin_bundle"]["plugins"]) == 4
+        assert len(full["plugin_bundle"]["plugins"]) == 7
+        assert {"omd-anchored-edit", "omd-session-review", "omd-curated-memory"} <= set(full["plugin_bundle"]["plugins"])
         assert not (bundle / "plugins/omd-code-execution").exists()
         assert not (base / "full-prefix/browser").exists()
         assert not (base / "full-prefix/artifacts/codex-code-mode-host").exists()

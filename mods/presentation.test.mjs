@@ -11,10 +11,10 @@ const surface = {
   events: { terminal: 'terminal', list: 'terminal', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle' },
   replacements: ['terminal', 'list'], middleware: [], state: 'store', contracts: 'contracts',
 };
-const source = name => readFileSync(new URL(`./${name === 'omd_theme' ? 'optional' : 'first-party'}/${name}/index.ts`, import.meta.url), 'utf8');
+const source = name => readFileSync(new URL(`./first-party/${name}/index.ts`, import.meta.url), 'utf8');
 function run(name, input) {
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source: source(name), filename: 'index.ts', api: '0.2.0-experimental.4', surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input }),
+    input: JSON.stringify({ source: source(name), filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: [], settings: {}, state: null, event: 'inspect', ...input }),
     encoding: 'utf8', timeout: 5000,
   });
   assert.ifError(result.error);
@@ -44,30 +44,46 @@ test('model and reasoning lists use bounded generic components', () => {
   assert.equal(run('omd_model_picker', { capabilities: ['terminal'], event: 'list', payload: { ...payload, view_id: 'unknown' } }).value, null);
 });
 
-test('optional theme owns width-preserving Unicode input glyphs', () => {
+test('first-party theme owns width-preserving Unicode input glyphs', () => {
   const payload = { event: 'idle', ledger: null };
-  const ascii = run('omd_theme', { capabilities: ['terminal'], event: 'terminal', payload });
+  const ascii = run('omd_theme', { capabilities: ['terminal', 'commands', 'store'], event: 'terminal', payload });
   assert.deepEqual(ascii.value.theme.glyphs, {});
-  const unicode = run('omd_theme', { capabilities: ['terminal'], settings: { symbols: 'unicode' }, event: 'terminal', payload });
+  const unicode = run('omd_theme', { capabilities: ['terminal', 'commands', 'store'], settings: { symbols: 'unicode' }, event: 'terminal', payload });
   assert.deepEqual(unicode.value.theme.glyphs, { '===': '≡  ', '->': '→ ', '<=': '≤ ' });
 });
 
-test('logo compacts after a completed turn while workspace uses the current ledger', () => {
-  const identity = { codex_version: '0.157.0', install_profile: 'full', mode: 'omd', mods: { installed: 6, enabled: 2, active: 2 } };
-  const capabilities = ['terminal', 'store'];
-  const logo = run('omd_logo', { capabilities, event: 'terminal', payload: { event: 'start', identity, ledger: null } });
-  assert.match(logo.value.sites.header.components[0].children[1].label, /OMD enabled/);
-  const updatedLogo = run('omd_logo', { capabilities, event: 'terminal', payload: { event: 'idle', identity, ledger: null } });
-  assert.equal(updatedLogo.value.sites.header.components[0].children[0].spans.at(-1).text, 'oh my diff');
-  const completed = run('omd_logo', { capabilities, event: 'terminal', payload: { event: 'turn_end', identity, ledger: null } });
-  assert.equal(completed.state.settled, true);
-  assert.equal(completed.value.sites.header.components.length, 2);
-  assert.match(completed.value.sites.header.components[0].children[0].label, /Full OMD/);
-  const later = run('omd_logo', { capabilities, state: completed.state, event: 'terminal', payload: { event: 'idle', identity, ledger: null } });
-  assert.equal(later.value.sites.header.components.length, 2);
-  const newSession = run('omd_logo', { capabilities, state: completed.state, event: 'terminal', payload: { event: 'start', identity, ledger: null } });
-  assert.equal(newSession.state.settled, false);
-  assert.equal(newSession.value.sites.header.components[0].id, 'omd_logo_mark');
+test('logo follows host acceptance and installed identity without persistent task state', () => {
+  const identity = { codex_version: '9.8.7', install_profile: 'full', mode: 'omd', mods: { installed: 6, enabled: 2, active: 0 } };
+  const capabilities = ['terminal'];
+  const presentation = { thread_id: 'fresh-thread', phase: 'fresh' };
+  const payload = { event: 'start', identity, presentation, ledger: null };
+  const logo = run('omd_logo', { capabilities, event: 'terminal', payload });
+  assert.equal(logo.value.session_title_suffix, ' | OMD+');
+  assert.equal(logo.value.greeting, '');
+  assert.deepEqual(logo.value.welcome, { show_while_composing: true });
+  assert.equal(logo.value.sites.welcome.components[0].children[0].spans[1].text, '╭─╮ ╭╮╭╮ ┌─╮');
+  assert.match(JSON.stringify(logo.value), /v9.8.7/);
+  assert.equal(logo.state, null);
+  for (const event of ['idle', 'input_rejected', 'turn_end']) {
+    const draft = run('omd_logo', { capabilities, event: 'terminal', payload: { ...payload, event } });
+    assert.deepEqual(draft.value.sites, logo.value.sites);
+  }
+  for (const phase of ['started', 'resumed']) {
+    for (const event of ['start', 'turn_start', 'turn_end', 'idle']) {
+      const current = run('omd_logo', { capabilities, state: { settled: false }, event: 'terminal', payload: { ...payload, event, presentation: { ...presentation, phase } } });
+      assert.deepEqual(current.value.sites, {});
+      assert.equal(current.value.session_title_suffix, ' | OMD+');
+    }
+  }
+  const core = run('omd_logo', { capabilities, settings: { icons: 'ascii' }, event: 'terminal', payload: { ...payload, identity: { ...identity, install_profile: 'platform_only', mods: { installed: 20, enabled: 15, active: 15 } } } });
+  assert.equal(core.value.session_title_suffix, ' | OMD Core');
+  assert.equal(core.value.sites.welcome.components[1].children[0].spans[1].text, '.-. |\\/| |-.');
+  const unreported = run('omd_logo', { capabilities, event: 'terminal', payload: { ...payload, identity: undefined, presentation: undefined } });
+  assert.equal(unreported.value.session_title_suffix, undefined);
+  assert.deepEqual(unreported.value.sites, {});
+});
+
+test('workspace uses the current ledger', () => {
   const workspace = run('omd_workspace', { capabilities: ['terminal', 'commands', 'lifecycle', 'store'], event: 'terminal', payload: { event: 'idle', ledger: { thread_id: '1234567890abcdef', cost: null } } });
   assert.equal(workspace.value.sites.sidebar.components[0].title, 'Session');
   assert.equal(JSON.stringify(workspace.value).includes('No live workers'), false);

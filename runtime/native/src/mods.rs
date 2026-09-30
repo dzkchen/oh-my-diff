@@ -310,7 +310,8 @@ fn publish(
     ledger: Value,
     active: impl Fn() -> bool,
 ) {
-    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime)});
+    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
+        "presentation": views.current_presentation()});
     let mut terminal = runtime.terminal_view(input.clone(), active);
     let status = runtime.status();
     let mut errors = status["mods"]
@@ -1046,6 +1047,8 @@ impl TurnLifecycleContributor for Mods {
             else {
                 return;
             };
+            self.views
+                .presentation(&lead.thread.to_string(), Some("started"));
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
             let session_repository = self.host.repository.clone();
@@ -1223,6 +1226,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             });
             if owner == "lead" {
                 if let Some(lead) = input.thread_store.get::<Lead>() {
+                    self.views.start_thread(input.thread_store);
                     let forked = input
                         .thread_store
                         .get::<codex_extension_api::ForkedFromThread>()
@@ -1261,6 +1265,8 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 .get::<Lead>()
                 .filter(|lead| lead.owner == "lead")
             {
+                self.views
+                    .presentation(&lead.thread.to_string(), Some("resumed"));
                 self.event(
                     "session",
                     json!({"phase":"resume","thread_id":lead.thread.to_string()}),

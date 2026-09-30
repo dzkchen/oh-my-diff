@@ -14,7 +14,7 @@ LOCK = ROOT / "runtime/full-mods.lock.json"
 PACKAGES = ("omd_advisor", "omd_checks", "omd_claude_cli", "omd_git", "omd_graph_navigator", "omd_guideline_governance",
             "omd_inspector", "omd_logo", "omd_lsp_sync", "omd_model_picker", "omd_project_pi_prompts",
             "omd_repository_analysis", "omd_research", "omd_source_knowledge", "omd_task_tools",
-            "omd_typed_tasks")
+            "omd_theme", "omd_typed_tasks")
 
 
 def source_files(identifier):
@@ -52,9 +52,9 @@ def main():
         LOCK.write_text(expected)
         print(f"wrote {LOCK.relative_to(ROOT)}")
     elif not LOCK.is_file() or LOCK.read_text() != expected:
-        raise SystemExit("Full mod lock differs from pinned sources")
+        raise SystemExit("OMD+ mod lock differs from pinned sources")
     else:
-        print("Full mod lock matches pinned sources")
+        print("OMD+ mod lock matches pinned sources")
 
 
 if __name__ == "__main__":

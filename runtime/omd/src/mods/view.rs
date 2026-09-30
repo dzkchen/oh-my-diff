@@ -3,9 +3,22 @@ use super::*;
 pub const MOD_KEY_LIMIT: usize = 12;
 pub const MOD_COMPONENT_LIMIT: usize = 64;
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModWelcome {
+    #[serde(default)]
+    pub show_while_composing: bool,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub welcome: Option<ModWelcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_title_suffix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greeting: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -42,11 +55,19 @@ pub struct ModView {
     pub layout: Option<ModLayout>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backdrop: Option<ModBackdrop>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub surface_styles: BTreeMap<String, ModSurfacePaint>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModViewPatch {
+    #[serde(default)]
+    pub welcome: Option<ModWelcome>,
+    #[serde(default)]
+    pub session_title_suffix: Option<String>,
+    #[serde(default)]
+    pub greeting: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -77,6 +98,8 @@ pub struct ModViewPatch {
     pub layout: Option<ModLayout>,
     #[serde(default)]
     pub backdrop: Option<ModBackdrop>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub surface_styles: BTreeMap<String, ModSurfacePaint>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -194,10 +217,67 @@ impl ModLayout {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+pub struct ModBackdropOffset {
+    pub x: i16,
+    pub y: i16,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModSurfacePaint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+}
+
+fn valid_surface_styles(styles: &BTreeMap<String, ModSurfacePaint>) -> bool {
+    styles.iter().all(|(name, paint)| {
+        matches!(name.as_str(), "composer" | "backdrop")
+            && paint
+                .opacity
+                .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+    })
+}
+
+fn valid_backdrop_transform(
+    position: &Option<String>,
+    scale: Option<f32>,
+    opacity: Option<f32>,
+    offset: &Option<ModBackdropOffset>,
+) -> bool {
+    position
+        .as_deref()
+        .is_none_or(|value| matches!(value, "center" | "fill" | "fit" | "tile"))
+        && scale.is_none_or(|value| value.is_finite() && (0.1..=4.0).contains(&value))
+        && opacity.is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+        && offset.as_ref().is_none_or(|value| {
+            (-4096..=4096).contains(&value.x) && (-4096..=4096).contains(&value.y)
+        })
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ModAsciiBackdrop {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dim: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<ModBackdropOffset>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -208,6 +288,16 @@ pub struct ModImageBackdrop {
     pub position: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dim: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<ModColor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<ModBackdropOffset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<ModSurfacePaint>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -237,14 +327,28 @@ impl ModBackdrop {
                 && ascii.text.len() <= 8192
                 && multiline(&ascii.text, 8192)
                 && dim(&ascii.dim)
+                && valid_backdrop_transform(
+                    &ascii.position,
+                    ascii.scale,
+                    ascii.opacity,
+                    &ascii.offset,
+                )
         };
         match self {
             Self::Ascii { ascii: backdrop } => ascii(backdrop),
             Self::Image { image, fallback } => {
                 dim(&image.dim)
-                    && image.position.as_deref().is_none_or(|position| {
-                        matches!(position, "center" | "fill" | "fit" | "tile")
+                    && image.overlay.as_ref().is_none_or(|paint| {
+                        paint
+                            .opacity
+                            .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
                     })
+                    && valid_backdrop_transform(
+                        &image.position,
+                        image.scale,
+                        image.opacity,
+                        &image.offset,
+                    )
                     && fallback
                         .as_ref()
                         .is_none_or(|fallback| ascii(&fallback.ascii))
@@ -1149,7 +1253,7 @@ fn valid_site(name: &str) -> bool {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
             })
     };
-    ["sidebar", "header", "above_composer", "dialog"].contains(&name)
+    ["sidebar", "header", "above_composer", "dialog", "welcome"].contains(&name)
         || name
             .split_once('/')
             .is_some_and(|(owner, site)| part(owner, 24) && part(site, 32))
@@ -1330,7 +1434,15 @@ impl ModThemePatch {
 impl ModViewPatch {
     pub fn parse(value: Value) -> Result<Self> {
         let patch: Self = serde_json::from_value(value)?;
-        if patch.sidebar_width.is_some_and(|width| width > 60)
+        if patch
+            .session_title_suffix
+            .as_ref()
+            .is_some_and(|text| !visible(text, 80))
+            || patch
+                .greeting
+                .as_ref()
+                .is_some_and(|text| !visible(text, 256))
+            || patch.sidebar_width.is_some_and(|width| width > 60)
             || patch
                 .title
                 .as_ref()
@@ -1354,6 +1466,7 @@ impl ModViewPatch {
                 .backdrop
                 .as_ref()
                 .is_some_and(|backdrop| !backdrop.valid())
+            || !valid_surface_styles(&patch.surface_styles)
             || serde_json::to_vec(&patch)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_patch"));
@@ -1387,6 +1500,15 @@ impl ModViewPatch {
         replaced_sites: &mut BTreeSet<String>,
         completed_tools_owner: &mut bool,
     ) -> Result<()> {
+        if self.welcome.is_some() {
+            target.welcome = self.welcome;
+        }
+        if self.session_title_suffix.is_some() {
+            target.session_title_suffix = self.session_title_suffix;
+        }
+        if self.greeting.is_some() {
+            target.greeting = self.greeting;
+        }
         if let Some(title) = self.title {
             target.title = Some(title);
         }
@@ -1402,6 +1524,7 @@ impl ModViewPatch {
             }
             target.backdrop = Some(backdrop);
         }
+        target.surface_styles.extend(self.surface_styles);
         if let Some(foreground) = self.foreground {
             target.foreground = Some(foreground);
         }
@@ -1490,7 +1613,15 @@ impl ModViewPatch {
 impl ModView {
     pub fn parse(value: Value) -> Result<Self> {
         let view: Self = serde_json::from_value(value)?;
-        if view.sidebar_width > 60
+        if view
+            .session_title_suffix
+            .as_ref()
+            .is_some_and(|text| !visible(text, 80))
+            || view
+                .greeting
+                .as_ref()
+                .is_some_and(|text| !visible(text, 256))
+            || view.sidebar_width > 60
             || view.panels.len() > 8
             || view
                 .title
@@ -1521,6 +1652,7 @@ impl ModView {
                 .backdrop
                 .as_ref()
                 .is_some_and(|backdrop| !backdrop.valid())
+            || !valid_surface_styles(&view.surface_styles)
             || serde_json::to_vec(&view)?.len() > 16_384
         {
             return Err(failure("invalid_terminal_view"));

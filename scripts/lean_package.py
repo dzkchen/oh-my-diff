@@ -18,6 +18,8 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MAX_UNPACKED_BYTES = 1_200_000_000
+MAX_MEMBER_BYTES = 1_000_000_000
 
 
 def run(*arguments, cwd=None, env=None):
@@ -95,12 +97,15 @@ def checked_extract(archive_path, expected, destination):
         raise ValueError("prebuilt package SHA-256 mismatch")
     with tarfile.open(archive_path, "r:xz") as archive:
         members = archive.getmembers()
-        if not members or len(members) > 1000 or sum(item.size for item in members) > 600_000_000:
+        if not members or len(members) > 1000:
             raise ValueError("unrecognized package file count")
+        if sum(item.size for item in members) > MAX_UNPACKED_BYTES:
+            raise ValueError("prebuilt package exceeds unpacked byte limit")
         if any(not item.isfile() or not item.name.startswith("payload/")
-               or any(part in ("", ".", "..") for part in Path(item.name).parts)
-               or item.size > 500_000_000 for item in members):
+               or any(part in ("", ".", "..") for part in Path(item.name).parts) for item in members):
             raise ValueError("unsafe package member")
+        if any(item.size > MAX_MEMBER_BYTES for item in members):
+            raise ValueError("prebuilt package member exceeds byte limit")
         archive.extractall(destination, filter="data")
     payload = destination / "payload"
     manifest = json.loads((payload / "package-manifest.json").read_text())
@@ -169,7 +174,7 @@ def source_build(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build, package and install the local lean candidate")
+    parser = argparse.ArgumentParser(description="Build, package and install the local OMD Core and OMD+ candidate")
     commands = parser.add_subparsers(dest="command", required=True)
     pack = commands.add_parser("pack")
     pack.add_argument("--artifact-dir", type=Path, required=True)
@@ -184,7 +189,8 @@ def main():
     source.add_argument("--author-archive", type=Path, required=True)
     for command in (install, source):
         command.add_argument("--upstream", type=Path, required=True)
-        command.add_argument("--profile", choices=("platform", "full"), required=True)
+        command.add_argument("--profile", choices=("platform", "full"), required=True,
+                             help="platform: OMD Core; full: OMD+")
         command.add_argument("--prefix", type=Path, required=True)
         command.add_argument("--bin-dir", type=Path, required=True)
         command.add_argument("--store", type=Path, required=True)

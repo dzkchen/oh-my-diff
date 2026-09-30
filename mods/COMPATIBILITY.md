@@ -8,7 +8,7 @@ against the Rust host by `python3 scripts/mod_compatibility.py`.
 
 | Codex | OMD host | Package schema | Mod API | API label | Service imports | Generated installed-contract types | Support through |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.159.1 | 0.1.0, experimental | 1 | 0.2.0-experimental.4 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
+| 0.159.1 | 0.1.0, experimental | 1 | 0.2.0-experimental.5 | experimental | exact `x.y.z` or compatible `^x.y.z` | 1 | 2027-03-20 |
 
 API 0.1 packages and declarations are retired from this development host. The
 earlier 0.1 support-window rows described pre-release builds and are historical

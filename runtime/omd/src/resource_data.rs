@@ -263,7 +263,12 @@ impl ResourceStore<'_> {
             return Err(io::Error::other("resource_integrity_failed"));
         }
         let value: StoredResource = serde_json::from_slice(bytes)?;
-        if value.binding != *self.binding || value.kind != kind {
+        let package_asset = value.binding.thread == "package"
+            && value.binding.generation == 0
+            && value.binding.repository == self.binding.repository
+            && value.binding.owner == self.binding.owner
+            && value.binding.source_sha256 == self.binding.source_sha256;
+        if (value.binding != *self.binding && !package_asset) || value.kind != kind {
             return Err(io::Error::other("resource_scope_mismatch"));
         }
         Ok(value.payload)

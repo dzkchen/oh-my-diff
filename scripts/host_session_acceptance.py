@@ -11,7 +11,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[1]
-API = '0.2.0-experimental.4'
+API = '0.2.0-experimental.5'
 
 GATE = '''export default function activate(api) {
   api.contract({ schema: 2, id: 'probe_gate', version: 1, description: 'A passing check before completion',

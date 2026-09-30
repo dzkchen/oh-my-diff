@@ -1,6 +1,6 @@
 # OMD session review
 
-Optional plugin component `0.2.0-preview.1`, public mod API `0.2.0-experimental.4`. The TypeScript component owns session selection, duplicate detection, classification and the report. The generic host supplies a read-only, repository-scoped session index and command dispatch. No report logic was added to Rust.
+Optional plugin component `0.2.0-preview.1`, public mod API `0.2.0-experimental.5`. The TypeScript component owns session selection, duplicate detection, classification and the report. The generic host supplies a read-only, repository-scoped session index and command dispatch. No report logic was added to Rust.
 
 ```sh
 codex plugin marketplace add /absolute/path/to/oh-my-diff/plugins/optional

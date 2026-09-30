@@ -5,6 +5,12 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from scripts import install_support, lean_profiles
+except ModuleNotFoundError:
+    import install_support
+    import lean_profiles
+
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "integration/matrix.json"
 DOCUMENT = ROOT / "INTEGRATION.md"
@@ -33,17 +39,40 @@ def sources():
                for language, block in re.findall(r"^  (\w+): \{ candidates: \[(.*?)\] \},$", lsp, re.M)}
     servers["javascript"] = servers["typescript"]
     api = re.search(r'MOD_API_VERSION: &str = "([^"]+)"', host).group(1)
+    preview = json.loads((ROOT / "runtime/preview-v1.lock.json").read_text())
+    packages = {**preview["packages"], **json.loads((ROOT / "runtime/full-mods.lock.json").read_text())["packages"]}
+    index = json.loads((ROOT / "extensions/index.json").read_text())
+    plugins = sorted([entry["id"] for entry in index["packages"]
+                      if entry["extension_type"] == "plugin"
+                      and entry["support_status"] in ("reviewed_candidate", "supported")]
+                     + list(install_support.SELECTED_OPTIONAL_PLUGINS))
+    view = (ROOT / "runtime/omd/src/mods/view.rs").read_text()
+    site_validation = view[view.index("fn valid_site("):view.index("fn valid_action(")]
     return {
         "upstream": json.loads((ROOT / "upstream.lock.json").read_text()),
         "compatibility": json.loads((ROOT / "mods/compatibility.json").read_text()),
         "browser": json.loads((ROOT / "browser/browser.lock.json").read_text()),
-        "preview": json.loads((ROOT / "runtime/preview-v1.lock.json").read_text()),
+        "preview": preview,
         "plugin": json.loads((ROOT / "runtime/plugin-v1.lock.json").read_text()),
         "api": api,
         "omd": json.loads((ROOT / "mods/package.json").read_text())["version"],
         "capabilities": set(re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))),
         "operations": set(re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))),
         "features": re.findall(r'"([a-z0-9_]+)"', constant("MOD_HOST_FEATURES")),
+        "sites": re.findall(r'"([a-z_]+)"', re.search(r'\[(.*?)\]\.contains\(&name\)', site_validation).group(1)),
+        "schemas": {key: int(re.search(rf'{name}: u32 = (\d+);', host).group(1))
+                    for key, name in (("package", "MOD_PACKAGE_SCHEMA_VERSION"),
+                                      ("state_storage", "MOD_STATE_STORAGE_SCHEMA_VERSION"),
+                                      ("installed_contract_types", "INSTALLED_CONTRACT_TYPES_VERSION"))},
+        "terminal_operations": [name for name in re.findall(r'"([a-z_.]+)"', constant("MOD_HOST_OPERATIONS"))
+                                if name.startswith(("terminal.", "composer.", "builtins."))],
+        "first_party_packages": {name: {key: packages[name][key] for key in ("version", "source")}
+                                 for name in lean_profiles.PACKAGES},
+        "profiles": {name: {"label": label, "first_party_installed": list(lean_profiles.profile_packages(name)),
+                            "first_party_default_active": sorted(set(lean_profiles.profile_packages(name))
+                                                                 & set(lean_profiles.DEFAULT_ACTIVE)),
+                            "plugin_sources": plugins if name == "full" else []}
+                     for name, label in lean_profiles.PROFILE_LABELS.items()},
         "apis": [
             api if row == "MOD_API_VERSION" else row.strip('"')
             for row, _, _ in re.findall(r'\(([^,]+), "([a-z]+)", "([\d-]+)"\)', constant("SUPPORTED_MOD_APIS"))
@@ -92,6 +121,9 @@ def check(matrix):
             problems.append(f"release.{key} is {release.get(key)!r}; the shipped source says {value!r}")
     if source["api"] != source["omd"]:
         problems.append(f"mods/package.json {source['omd']} does not match the host API {source['api']}")
+    for key in ("profiles", "first_party_packages"):
+        if matrix.get(key) != source[key]:
+            problems.append(f"{key} differs from the selected package source inventory")
 
     components = {}
     for component in matrix["components"]:
@@ -117,8 +149,11 @@ def check(matrix):
 
     claim("mod_api", "version", source["api"])
     claim("mod_api", "supported_versions", source["apis"])
+    claim("mod_api", "sites", source["sites"])
+    claim("mod_api", "terminal_operations", source["terminal_operations"])
     claim("omd_host", "version", f"{source['compatibility']['host']['omd']} on Codex {source['compatibility']['host']['codex']}")
     claim("omd_host", "features", source["features"])
+    claim("omd_host", "schemas", source["schemas"])
     claim("upstream_hooks", "hooks", source["hooks"])
     bundled_plugin = source["plugin"]["plugins"]["omd-guidance-hooks"]
     claim("omd_guidance_hooks", "version", bundled_plugin["version"])
@@ -219,7 +254,7 @@ def table(rows, headers):
     return "\n".join(lines)
 
 
-DETAILS = ("extension_type", "versions", "supported_versions", "capabilities", "features", "hooks", "operations")
+DETAILS = ("extension_type", "versions", "supported_versions", "capabilities", "features", "hooks", "operations", "terminal_operations", "sites", "schemas")
 
 
 def listed(value):
@@ -266,6 +301,17 @@ def render(matrix):
             ["Field", "Value"],
         ),
         "",
+    ]
+    out += [
+        "## Selected source inventory", "",
+        "This is the current package source selection, not proof of an installed or active session.",
+        "Opt-in mods remain disabled; plugin sources and their nested skills/hooks require separate installation and activation.", "",
+        table([(profile["label"], f"`{selector}`", ", ".join(profile["first_party_installed"]),
+                ", ".join(profile["first_party_default_active"]), ", ".join(profile["plugin_sources"]) or "none")
+               for selector, profile in matrix["profiles"].items()],
+              ["Profile", "Selector", "Installed mod sources", "Fresh-install default selection", "Inactive plugin sources"]), "",
+        table([(f"`{name}`", package["version"], f"`{package['source']}`")
+               for name, package in matrix["first_party_packages"].items()], ["Selected mod", "Version", "Source"]), "",
     ]
     for area, title in AREAS.items():
         rows = [

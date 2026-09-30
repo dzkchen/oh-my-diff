@@ -1,7 +1,7 @@
-# Bundled Codex plugins
+# First-party Codex plugin collection
 
 The source marketplace contains five Codex plugins. The current provisional
-Full package stages four of them as inactive source candidates;
+OMD+ package stages four of them plus the three selected local plugins as inactive source candidates;
 `omd-code-execution` remains outside that package. Staging a plugin does not
 install or enable it in Codex.
 
@@ -19,8 +19,14 @@ install or enable it in Codex.
   local PDF and notebook helper reads data without executing embedded content.
 - `omd-code-execution` supplies guidance for persistent V8, Python, and Bun
   cells. It has no own interpreter, tool server, sandbox, or process supervisor.
+- `omd-anchored-edit` supplies exact text-anchor editing guidance and a separately
+  trusted mod component for host-authorized file transactions.
+- `omd-session-review` supplies a source-linked session review skill and a
+  separately trusted read-only command component.
+- `omd-curated-memory` supplies local memory guidance, a bounded curation hook,
+  and a separately trusted opt-in memory component.
 
-The current Full candidate stages the four selected plugins at
+The current OMD+ candidate stages all seven selected plugins at
 `$OMD_PREFIX/bundles/oh-my-diff` without editing shared Codex state. After
 inspecting the staged sources, installation into Codex is a separate operator
 action:
@@ -32,6 +38,15 @@ codex plugin add omd-review-policy@oh-my-diff
 codex plugin add omd-application-bridges@oh-my-diff
 codex plugin add omd-artifact-reading@oh-my-diff
 ```
+
+The three local packages retain their source homes under `plugins/optional/plugins`
+and are available from the staged `oh-my-diff` marketplace too. Install one only
+when selected, for example `codex plugin add omd-session-review@oh-my-diff`.
+Their `mod/` components require a separate exact inspection, capability grant,
+trust and enable step; installing the parent plugin does not run the component.
+Follow the staged package's README. The curation hook also requires its explicit
+configuration. OMD Core users can add the source marketplace or packages by the
+same native plugin and mod paths.
 
 The frozen private `0.155.1` installer has a different marketplace path and
 does not establish activation behavior for the current `OMD_MODE=omd` host.
@@ -67,7 +82,7 @@ plugin has no MCP server, network client, hook, or TypeScript mod of its own.
 Use `$omd-code-execution:omd-code-execution` when persistent code state or
 composed tool calls help a task. The matching `codex-code-mode-host` must be
 installed beside `codex` from the pinned OpenAI V8 150.4.0 archive and binding;
-the current Full package candidate does not bundle that host, this plugin, or
+the current OMD+ package candidate does not bundle that host, this plugin, or
 Python and Bun.
 Activate experimental code mode explicitly with
 `codex -c features.code_mode.enabled=true`; the plugin never edits shared Codex

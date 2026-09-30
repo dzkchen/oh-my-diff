@@ -27,7 +27,7 @@ SOURCES = (
     "mods/author/cli.mjs",
     "LEAN_PROFILES.md",
     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
-) + full_mods_lock.sources()
+) + full_mods_lock.sources() + support.optional_plugin_sources()
 
 
 def sdk_sources():
@@ -92,7 +92,7 @@ def build(artifact_dir, package_mode=False):
     preview = support.preview_sources(support.preview_lock())
     full = full_mods_lock.load()
     if not package_mode and full != full_mods_lock.build():
-        raise ValueError("Full mod lock differs from pinned sources")
+        raise ValueError("OMD+ mod lock differs from pinned sources")
     index = json.loads((ROOT / "extensions/index.json").read_text())
     version = upstream["tag"].removeprefix("rust-v")
     if (index["release_pin"]["codex"] != version
@@ -141,11 +141,11 @@ def build(artifact_dir, package_mode=False):
         "artifacts": artifacts,
         "platform_tools": ["omd", "omd-contract"],
         "profiles": {
-            "platform": {"first_party_installed": ["omd_logo"], "first_party_default_active": ["omd_logo"],
+            "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo"], "first_party_default_active": ["omd_logo"],
                          "plugin_sources": []},
-            "full": {"first_party_installed": sorted((*preview["packages"], *full["packages"])),
+            "full": {"label": "OMD+", "first_party_installed": sorted((*preview["packages"], *full["packages"])),
                      "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace"],
-                     "plugin_sources": selected},
+                     "plugin_sources": sorted((*selected, *support.SELECTED_OPTIONAL_PLUGINS))},
         },
         "qualification": "development package candidate; supported collection and default pending",
     }

@@ -9,7 +9,7 @@ const surface = { events: { turn_start: 'lifecycle', tool_result: 'lifecycle', t
 const capabilities = ['tools', 'context', 'exec', 'fs.write', 'lifecycle', 'services', 'agents', 'store'];
 
 function run(event, payload, state = null, receipts = [], settings = {}, name = '') {
-  const request = { source, filename: 'omd_task_tools.ts', api: '0.2.0-experimental.4', capabilities, state, settings,
+  const request = { source, filename: 'omd_task_tools.ts', api: '0.2.0-experimental.5', capabilities, state, settings,
     event, name, payload, receipts, surface, hook_budget_ms: 1000 };
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: JSON.stringify(request), encoding: 'utf8', timeout: 5000,

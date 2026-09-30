@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "api": "0.2.0-experimental.4",
+  "api": "0.2.0-experimental.5",
   "note": "Generated tables live in mods/COVERAGE.md; scripts/mod_conformance.py checks this file against the host source and the executable evidence.",
   "decisions": [
     {
@@ -533,7 +533,7 @@
       "id": "shared.virtual_read",
       "group": "tool",
       "decision": "Versioned reads supplied by extensions",
-      "observe": "Public API .9 operation results and owner-scoped events",
+      "observe": "Public API 0.2 operation results and owner-scoped events",
       "alter": "Extension-owned selection and interpretation within host grants",
       "replace": null,
       "timing": "Inside the documented callback or explicitly dispatched plugin command",
@@ -739,12 +739,12 @@
       "id": "terminal.view",
       "group": "terminal",
       "decision": "Terminal base view and composable render-site patches",
-      "observe": "the triggering event and checkpoint; current-API observers compose patches after the exclusive base owner",
+      "observe": "the triggering event, checkpoint, real version/installed identity and host presentation phase fresh/started/resumed; current-API observers compose patches after the exclusive base owner",
       "alter": "the owner returns the bounded base view; observers may wrap or replace declared sites and add non-conflicting presentation fields",
       "replace": "terminal (exclusive)",
-      "timing": "every mod event, redrawn inline and fullscreen",
+      "timing": "repeatable startup presentation before the first editable frame, then every mod event; redrawn inline and fullscreen",
       "ownership": "host: driver, layout, modes, validation, native composer, recovery, input primitives and restoration",
-      "limits": "dependency order is deterministic; conflicting or invalid patches fail alone and transactionally; older API observers remain observe-only; recovery remains native",
+      "limits": "dependency order is deterministic; conflicting or invalid patches fail alone and transactionally; only the current experimental API loads; title suffix and greeting are bounded last-writer scalars; the welcome site uses blank space only and never restores after an accepted start or resume; recovery remains native",
       "native": "native plugins cannot change the terminal at all",
       "covers": {
         "capabilities": [
@@ -761,14 +761,24 @@
       "evidence": [
         "patch:custom_panel_reserves_space_and_narrow_terminal_preserves_native_composer",
         "rust:terminal_components_compose_in_dependency_order_and_observers_contribute_status",
-        "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
+        "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest",
+        "patch:welcome_and_header_presentation_are_bounded_and_greeting_overrides_compose",
+        "patch:welcome_phase_survives_ready_reload_and_rejected_input_until_accepted_start",
+        "patch:welcome_resume_and_fork_markers_are_latched_before_ready_publication",
+        "patch:mod_welcome_survives_draft_paste_clear_rejection_and_stops_on_observed_start",
+        "patch:mod_welcome_resumed_or_forked_first_paint_never_shows_decoration",
+        "patch:welcome_centers_in_blank_space_and_preserves_error_prompt_and_keyboard_targets",
+        "patch:mod_session_header_suffix_and_greeting_preserve_raw_fields_and_disable_fallback",
+        "patch:startup_first_frame_uses_public_presentation_and_pending_input_is_not_acceptance",
+        "patch:startup_preview_survives_only_empty_bootstrap_and_yields_to_real_publications",
+        "rust:startup_terminal_preview_rejects_native_task_operations_at_host_boundary"
       ],
       "replace_note": null
     },
     {
       "id": "terminal.panels",
       "group": "terminal",
-      "decision": "Declarative components at sidebar, header, above-composer and dialog sites",
+      "decision": "Declarative components at sidebar, header, above-composer, dialog and welcome sites",
       "observe": "not applicable",
       "alter": "bounded box, text, button, input, select, Markdown, code, pane and dialog trees; wrappers expose exactly one slot",
       "replace": "terminal",
@@ -811,6 +821,36 @@
       "replace_note": null
     },
     {
+      "id": "terminal.paint",
+      "group": "terminal",
+      "decision": "Generic surface gradients and transformed image/ASCII backdrops",
+      "observe": "not applicable",
+      "alter": "`surface_styles` for composer/backdrop; backdrop placement, scale, offset, dim, opacity, tint and image overlay paint",
+      "replace": null,
+      "timing": "inline or owned viewport render; media cached until resource, transform, environment or geometry changes",
+      "ownership": "mod: colors, composition and contrast policy; host: bounded decode/render and native text/semantic preservation",
+      "limits": "scale 0.1-4, offsets -4096..4096 cells, dim/opacity 0-1, RGB or indexed colors; no-color drops styling; graphics only detected local Kitty protocol in owned viewport; ASCII/plain-color fallback; decorative backdrops omitted below 60 columns, solid colors retained",
+      "native": "hooks cannot style terminal surfaces",
+      "covers": {
+        "capabilities": [],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "patch:appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface",
+        "patch:transforms_place_tile_tint_and_gloss_without_mutating_source",
+        "patch:surface_paint_preserves_text_semantics_and_special_backgrounds",
+        "patch:paper_surface_on_dark_terminal_paints_solid_background_and_readable_native_fill",
+        "patch:narrow_paper_backdrop_keeps_solid_surface_while_omitting_ascii_decoration",
+        "patch:inline_snapshot_keeps_ascii_palette_composer_dialog_and_workspace_bounded",
+        "patch:graphics_eligibility_uses_production_protocol_remote_motion_color_and_ownership",
+        "patch:native_approval_stays_visible_and_owns_enter_over_retained_mod_dialog",
+        "patch:no_color_panels_drop_theme_indices"
+      ],
+      "replace_note": null
+    },
+    {
       "id": "terminal.keybindings",
       "group": "terminal",
       "decision": "F2-F12, Ctrl/Alt actions and component interaction",
@@ -819,7 +859,7 @@
       "replace": "terminal",
       "timing": "inline and fullscreen while the mod view is active",
       "ownership": "host: native keymap, modal input, focus, pointer dispatch, clipboard authorization and cancellation keys",
-      "limits": "Ctrl, Alt and Shift combinations of letters, digits, F2–F12 and named keys; active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M, Shift+Tab and cancellation remain native",
+      "limits": "Ctrl, Alt and Shift combinations of letters, digits, F2\u2013F12 and named keys; active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M, Shift+Tab and cancellation remain native",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -829,6 +869,7 @@
       },
       "evidence": [
         "patch:native_escape_and_cancel_keys_cannot_be_intercepted",
+        "patch:short_dialog_retains_recovery_hitboxes_and_keyboard_dispatch",
         "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views"
       ],
       "replace_note": null
@@ -1010,7 +1051,7 @@
       "replace": "tool_output (exclusive)",
       "timing": "after the handler returns, before upstream truncation and history recording",
       "ownership": "mod: model-visible text; host: call id, status, the retrievable original and the ledger hashes",
-      "limits": "replacement ≤ 64 KiB; handlers see the first 48 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers; originals rotate per mod (newest 256)",
+      "limits": "replacement \u2264 64 KiB; handlers see the first 48 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers; originals rotate per mod (newest 256)",
       "native": "PostToolUse hooks can add feedback but cannot keep a retrievable original or compose with a replacement",
       "covers": {
         "capabilities": [
@@ -1183,11 +1224,11 @@
       "group": "terminal",
       "decision": "Layout, notifications, composer and built-in actions",
       "observe": "`component_event` (including keys from focused `keys: true` panes), `view` and `focus`",
-      "alter": "`terminal.notify`, `terminal.show_thread`, `terminal.import_file`, `composer.read`/`write` and `builtins.invoke`",
+      "alter": "`terminal.notify`, `terminal.show_thread`, confirmed `terminal.import_file` with thread/package lifetime, bounded `terminal.image_sample`, `composer.read`/`write` and `builtins.invoke`",
       "replace": null,
       "timing": "user commands; composer writes and imports from user contexts",
       "ownership": "mod: content; host: rendering, focus, confirmation and rate limits",
-      "limits": "notifications honor terminal settings and a 2 s rate limit; approval key actions and authority commands are refused",
+      "limits": "notifications honor terminal settings and a 2 s rate limit; approval key actions and authority commands are refused; imports are 8 MiB maximum; image samples are PNG/JPEG, 4096px per dimension, 120 by 60 RGBA samples; package imports survive config/thread changes but remain repository, owner and exact-source bound",
       "native": "hooks cannot draw, notify, edit the composer or invoke built-ins",
       "covers": {
         "capabilities": [
@@ -1205,13 +1246,17 @@
           "terminal.import_file",
           "composer.read",
           "composer.write",
-          "builtins.invoke"
+          "builtins.invoke",
+          "terminal.image_sample"
         ]
       },
       "evidence": [
         "patch:view_changes_are_diffed_per_frame",
         "patch:splits_tabs_and_chat_union_place_regions",
-        "patch:actions_resolve_to_their_effective_binding_and_refuse_approval"
+        "patch:actions_resolve_to_their_effective_binding_and_refuse_approval",
+        "patch:package_imports_survive_config_and_thread_changes_but_keep_owner_source_and_repository",
+        "patch:image_samples_reject_unbounded_fractional_or_missing_sizes",
+        "patch:decoder_rejects_oversized_dimensions_before_pixel_allocation"
       ],
       "replace_note": null
     },
@@ -1333,7 +1378,7 @@
       "replace": null,
       "timing": "event and tool callbacks during a task",
       "ownership": "mod: prompt and route; host: admission, ledger, allowance and cancellation",
-      "limits": "prompt ≤ 8 KiB; ≤ 300 s and ends with a cancelled callback; needs `agents`; counts against agent limits; unknown routes are refused",
+      "limits": "prompt \u2264 8 KiB; \u2264 300 s and ends with a cancelled callback; needs `agents`; counts against agent limits; unknown routes are refused",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -1405,7 +1450,7 @@
     },
     {
       "id": "conflict_before_activation",
-      "rule": "Contested exclusive claims — a replacement point, a workflow contract ID or a namespaced tool name — are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.",
+      "rule": "Contested exclusive claims \u2014 a replacement point, a workflow contract ID or a namespaced tool name \u2014 are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.",
       "evidence": [
         "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
       ]
@@ -1435,7 +1480,7 @@
     },
     {
       "id": "reload",
-      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
+      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional \u2014 if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
       "evidence": [
         "rust:mod_reload_is_transactional_and_stale_calls_are_rejected",
         "rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation"

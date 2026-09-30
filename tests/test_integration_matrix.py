@@ -57,6 +57,8 @@ class IntegrationMatrixTests(unittest.TestCase):
             lambda matrix: matrix["release"].__setitem__("codex", "0.0.0"),
             lambda matrix: matrix["combinations"][0]["evidence"].append("rust:omd/tests/integration.rs::absent"),
             lambda matrix: matrix["combinations"].clear(),
+            lambda matrix: matrix["profiles"]["full"]["first_party_installed"].remove("omd_theme"),
+            lambda matrix: matrix["first_party_packages"]["omd_theme"].__setitem__("source", "mods/optional/omd_theme"),
         ):
             drifted = copy.deepcopy(self.matrix)
             mutate(drifted)

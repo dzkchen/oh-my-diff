@@ -10,8 +10,10 @@ import tempfile
 
 try:
     from scripts import install_support as support
+    from scripts import lean_profiles
 except ModuleNotFoundError:
     import install_support as support
+    import lean_profiles
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +64,7 @@ def run(archive, sha256, upstream, output):
             status = call([bin_dir / "omd-package", "status"], environment)
             assert status["profile"] == profile and status["package_control"] == str(bin_dir / "omd-package")
             assert status["author"]["files"] and (bin_dir / "omd-mod-author").is_file()
+            assert {item["id"] for item in status["packages"] if item["installed"]} == set(lean_profiles.profile_packages(profile))
             assert status["installer_configured_optional_services"] == []
             assert not any((prefix / name).exists() for name in
                            ("browser", "bridge", "mcp", "sidecar", "code-mode"))
@@ -71,9 +74,9 @@ def run(archive, sha256, upstream, output):
                 assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_logo"]
             else:
                 assert set(status["installed_tools"]) == {"omd", "omd-contract"}
-                assert len([item for item in status["packages"] if item["installed"]]) == 13
                 assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace"]
-                assert len(status["plugin_bundle"]["plugins"]) == 4
+                assert {item["id"] for item in status["packages"] if item["active"]} == set(lean_profiles.DEFAULT_ACTIVE)
+                assert len(status["plugin_bundle"]["plugins"]) == 7
                 disabled = call([bin_dir / "omd-package", "mod", "disable", "omd_workspace"], environment)
                 assert not next(item for item in disabled["packages"]
                                 if item["id"] == "omd_workspace")["enabled_in_store"]

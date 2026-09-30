@@ -2,7 +2,7 @@
   "schema": 1,
   "id": "omd_logo",
   "version": "0.2.0-preview.1",
-  "api": "0.2.0-experimental.4",
+  "api": "0.2.0-experimental.5",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": {
@@ -10,11 +10,10 @@
     "source": "mods/first-party"
   },
   "capabilities": [
-    "terminal",
-    "store"
+    "terminal"
   ],
   "compatibility": {
-    "required_features": ["terminal_render_sites_v1"]
+    "required_features": ["terminal_render_sites_v1", "terminal_welcome_v1"]
   },
   "settings_schema": {
     "type": "object",
