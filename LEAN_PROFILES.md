@@ -151,30 +151,33 @@ Direct work remains available when the package is disabled or the selected
 contract forbids children. Local Batch 2.55 runner coverage does not qualify
 real-model quality or public support.
 
-The OMD+ profile includes an inactive `omd_claude_cli` mod. To use the official
-Claude CLI's logged-in `claude.ai` subscription for one bounded task, enable
-the mod and launch through its package command:
+The OMD+ profile includes inactive `omd_claude_cli` and `omd_muse` route mods.
+`omd_claude_cli` uses the official Claude CLI's logged-in `claude.ai` Pro or Max
+subscription; `omd_muse` uses a separately installed Muse Code with an MSP host
+(`muse serve`). Set a route up once, then launch sessions on it:
 
 ```sh
-/path/to/omd-bin/omd-package mod enable omd_claude_cli
-/path/to/omd-bin/omd-package claude --repository /absolute/repository \
-  --model claude-sonnet-5 --max-requests 2 --prompt 'Your task'
+/path/to/omd-bin/omd-package claude --setup
+/path/to/omd-bin/omd-package claude --model sonnet
+/path/to/omd-bin/omd-package claude --model haiku exec 'Your task'
+/path/to/omd-bin/omd-package muse --setup
+/path/to/omd-bin/omd-package muse
 ```
 
-The `--model` choice also accepts `claude-haiku-4-5-20251001`. The optional
-`--max-requests` lowers the task limit from eight to one through eight. The mod requires
-official Claude CLI `2.1.281` with a first-party Pro or Max login and Node
-`24.18.0`. The command rejects inherited API-key and cloud overrides; it has
-no API-key fallback. The mod package owns the model catalog, task setup,
-request translation, and CLI transport in `index.ts`, `setup.mjs`, and
-`transport.mjs`. Its signed assets are checked by the installed mod manager.
-The command explicitly selects OMD's solo-evidence workflow with self-review
-and self-verification; it does not claim independent review.
-The native host retains route admission, process authority, host tool execution,
-approvals, task limits, and usage accounting. Local task evidence is written
-under the installation prefix's `tasks` directory. Move or retain that evidence
-before uninstalling; uninstall refuses to remove an installation containing
-task files. OMD Core includes no Claude route or assets.
+Setup checks the CLI, reads its model catalog and measured context windows,
+adds the route's service grant and local token to the store's `host.json`,
+enables the mod and makes the managed `codex` launcher define the provider.
+Launching adds the provider, model and catalog to an ordinary OMD+ session, so
+enabled mods, their data, `/status` and resume work as usual; `--model` takes a
+slug or family shortcut and further arguments go to `codex`. The Claude route
+requires official Claude CLI `2.1.285` and rejects inherited API-key and cloud
+overrides; there is no API-key fallback. The native host keeps process
+authority, tool execution, approvals and usage accounting; each Claude model
+call admits one upstream request. `ask_claude: true` gives other leads an
+opt-in Claude delegation tool, and the Muse mod adds a read-only `research`
+subagent tool. Muse approvals go through an OMD prompt unless `auto_approve` is
+set. The package READMEs list each route's limits. OMD Core includes no route
+or assets.
 
 For a user mod in the OMD Core profile, inspect its `mod.json` and source,
 then use the installed `artifacts/omd-mod` binary to inspect, trust its exact

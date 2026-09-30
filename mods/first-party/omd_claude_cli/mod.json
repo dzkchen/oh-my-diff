@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_claude_cli",
-  "version": "0.2.0-preview.1",
+  "version": "0.2.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "license": "Apache-2.0",
@@ -12,9 +12,11 @@
   "capabilities": [
     "commands",
     "lifecycle",
-    "middleware",
     "model",
-    "exec"
+    "exec",
+    "tools",
+    "agents",
+    "sessions"
   ],
   "assets": [
     "models.json",
@@ -24,13 +26,9 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "model": {
-        "type": "string",
-        "enum": [
-          "claude-sonnet-5",
-          "claude-haiku-4-5-20251001"
-        ],
-        "default": "claude-sonnet-5"
+      "ask_claude": {
+        "type": "boolean",
+        "default": false
       }
     },
     "additionalProperties": false

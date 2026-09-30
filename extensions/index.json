@@ -10,19 +10,37 @@
   "packages": [
     {
       "id": "omd_claude_cli",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "extension_type": "mod",
-      "capability": "Opt-in official Claude CLI subscription request route",
+      "capability": "Opt-in official Claude CLI subscription provider with the CLI model catalog and ask_claude delegation",
       "source": "mods/first-party/omd_claude_cli",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; official Claude CLI 2.1.281",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; official Claude CLI 2.1.285",
       "tested_versions": [
-        "Codex 0.156.1",
+        "Codex 0.159.1",
         "OMD 0.1.0",
-        "mod API 0.1.0-experimental.8",
+        "mod API 0.2.0-experimental.5",
         "Node 24.18.0",
-        "Claude CLI 2.1.281"
+        "Claude CLI 2.1.285"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_muse",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in Muse provider and read-only research subagent over muse serve",
+      "source": "mods/first-party/omd_muse",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; Node 24.18.0; Muse Code with an MSP host (muse serve)",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
       ],
       "support_status": "reviewed_candidate",
       "review": "extensions/REVIEWS.md"

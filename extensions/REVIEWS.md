@@ -13,7 +13,8 @@ retain detailed local evidence but are not required to read this register.
 
 | Candidate | Review basis | Remaining support gate |
 | --- | --- | --- |
-| `omd_claude_cli` | The pinned first-party route has offline and bounded live CLI request evidence in the Phase 11 audit; installed but inactive in OMD+ | Release package and support matrix remain candidate scoped; subscription usage is not an exact billing measure |
+| `omd_claude_cli` | Batch 3e: CLI model catalog, measured windows, images, thinking, effort, named limits and `ask_claude` with offline CLI checks and bounded live requests; installed but inactive in OMD+ | Release package and support matrix remain candidate scoped; subscription usage is not an exact billing measure |
+| `omd_muse` | Batch 3e: `muse serve` provider and research tool validated against a fake MSP host; the installed Muse Code 0.2.1 has no MSP host; installed inactive in OMD+ | Experimental until a live run on a Muse build with `muse serve` under a current allowance |
 | `omd_coordination` | Public `.7` API implements live route, context and delegation preparation; exact source is in `mods/first-party` | Declare distributable license/provenance; task-matched route value and isolated overhead |
 | `omd_recovery` | Public `.7` API implements bounded recovery choices while native host retains failure and permission authority | Task-matched failure recovery value, repeat-call and overhead checks |
 | `omd_workspace` | Public `.7` terminal API supplies live workspace; measured cold/callback cost is material | Declare distributable license/provenance; terminal responsiveness, accessibility and task benefit |

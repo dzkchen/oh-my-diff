@@ -37,10 +37,10 @@
     {
       "path": "mods/first-party/omd_claude_cli",
       "id": "omd_claude_cli",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Translates live admitted model requests through the opt-in official Claude CLI route while the native host retains credentials, permissions, accounting, and cancellation."
+      "why_mod": "Owns the Claude CLI model catalog, request translation and ask_claude delegation over a host-approved provider service while the native host executes every tool and keeps permissions, accounting and cancellation."
     },
     {
       "path": "mods/first-party/omd_task_tools",
@@ -609,6 +609,14 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_muse",
+      "id": "omd_muse",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the Muse MSP client, approval relay and research tool over a host-approved provider service; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

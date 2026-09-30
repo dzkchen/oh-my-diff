@@ -24,6 +24,17 @@ class LeanProfileModeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("{platform,full,direct}", result.stdout)
 
+    def test_launcher_defines_set_up_providers_only_in_omd_mode(self):
+        provider = {"id": "omd_claude_cli", "name": "OMD Claude CLI", "base_url": "http://127.0.0.1:5/v1",
+                    "env_key": "OMD_CLAUDE_LOCAL_TOKEN", "token": "/opt/omd/claude/local token"}
+        record = {"binary": {"installed_path": "/opt/omd/codex"}, "store": "/opt/omd/store", "profile": "full",
+                  "activation": {"selection": "full"}, "providers": {"omd_claude_cli": provider}}
+        text = lean_profiles.selected_text(record)
+        self.assertIn("OMD_CLAUDE_LOCAL_TOKEN=\"$(cat '/opt/omd/claude/local token' 2>/dev/null)\"", text)
+        self.assertIn("-c 'model_providers.omd_claude_cli.base_url=\"http://127.0.0.1:5/v1\"'", text)
+        record["activation"]["selection"] = "direct"
+        self.assertNotIn("omd_claude_cli", lean_profiles.selected_text(record))
+
     def test_missing_service_rolls_back_selection_and_settings(self):
         identifier = "omd_task_tools"
         store = Path("/tmp/omd-unused-store")

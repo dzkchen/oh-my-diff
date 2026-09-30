@@ -1138,6 +1138,7 @@
         "omd_logo",
         "omd_lsp_sync",
         "omd_model_picker",
+        "omd_muse",
         "omd_plan_removal",
         "omd_preview",
         "omd_programmable_context",
@@ -1183,7 +1184,7 @@
       "source": "mods/first-party/omd_checks"
     },
     "omd_claude_cli": {
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "source": "mods/first-party/omd_claude_cli"
     },
     "omd_continue": {
@@ -1221,6 +1222,10 @@
     "omd_model_picker": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_model_picker"
+    },
+    "omd_muse": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_muse"
     },
     "omd_plan_removal": {
       "version": "0.1.0-preview.1",

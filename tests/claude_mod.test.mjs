@@ -4,8 +4,9 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { translateRequest, responseEvents } from '../mods/first-party/omd_claude_cli/index.ts';
-import { Capture, Relay, checkCli } from '../mods/first-party/omd_claude_cli/transport.mjs';
+import { once } from 'node:events';
+import { translateRequest, responseEvents, reasoningItem } from '../mods/first-party/omd_claude_cli/index.ts';
+import { CLI_VERSION, Capture, Relay, checkCli, limitHeaders, upstreamFailure } from '../mods/first-party/omd_claude_cli/transport.mjs';
 
 const model = 'claude-sonnet-5';
 const prompt = {
@@ -56,23 +57,66 @@ test('Claude mod folds mid-conversation developer messages into user frames', ()
   ]);
 });
 
-test('Claude mod rejects route drift and unmapped tools', () => {
+test('Claude mod forwards images, skips reasoning items and hides ask_claude from Claude leads', () => {
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  const translated = translateRequest({ ...prompt,
+    tools: [...prompt.tools, { type: 'function', name: 'mod_omd_claude_cli_ask_claude', parameters: { type: 'object', properties: {} } }],
+    input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Look.' }, { type: 'input_image', image_url: png }] },
+      reasoningItem({ type: 'thinking', thinking: 'Plan.', signature: 'sig' }, 'r1'),
+      { type: 'function_call', name: 'exec_command', call_id: 'call_1', arguments: '{"cmd":"shot"}' },
+      { type: 'function_call_output', call_id: 'call_1', output: [{ type: 'input_text', text: 'saved' }, { type: 'input_image', image_url: png }] }] }, model);
+  assert.deepEqual(translated.frames[0].message.content[1],
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } });
+  assert.deepEqual(translated.frames[1].message.content.map(block => block.type), ['tool_use']);
+  assert.deepEqual(translated.frames[2].message.content[0].content.map(block => block.type), ['text', 'image']);
+  assert.equal(translated.manifest.some(tool => tool.name.includes('ask_claude')), false);
+  assert.throws(() => translateRequest({ ...prompt, input: [{ type: 'message', role: 'user',
+    content: [{ type: 'input_image', image_url: 'https://example.com/a.png' }] }] }, model), /unsupported_image_input/);
+});
+
+test('Claude mod routes Codex tool search so a Claude lead can load deferred mod tools', () => {
+  const research = { type: 'function', name: 'mod_omd_muse_research', description: 'Research', parameters: { type: 'object', properties: {} } };
+  const translated = translateRequest({ ...prompt, tools: [...prompt.tools, { type: 'tool_search', execution: 'client', description: 'Find tools',
+    parameters: { type: 'object', properties: { query: { type: 'string' } } } }],
+  input: [...prompt.input, { type: 'tool_search_call', call_id: 's1', execution: 'client', arguments: { query: 'muse' } },
+    { type: 'tool_search_output', call_id: 's1', status: 'completed', execution: 'client', tools: [{ type: 'namespace', name: 'functions', tools: [research] }] }] }, model);
+  assert.ok(translated.reverse.mod_omd_muse_research);
+  assert.deepEqual(translated.frames[1].message.content, [{ type: 'tool_use', id: 's1', name: 'mcp__omd__tool_search', input: { query: 'muse' } }]);
+  assert.equal(translated.frames[2].message.content[0].content, 'Loaded tools: mcp__omd__mod_omd_muse_research');
+  const events = responseEvents({ id: 'msg_s', usage: { input_tokens: 1, output_tokens: 1 }, content: [
+    { type: 'tool_use', id: 's2', name: 'mcp__omd__tool_search', input: { query: 'git' } },
+    { type: 'tool_use', id: 'c1', name: 'mcp__omd__mod_omd_muse_research', input: { question: 'q' } }] }, {}, model, translated.reverse);
+  const items = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
+  assert.deepEqual(items[0], { type: 'tool_search_call', id: 's2', call_id: 's2', execution: 'client', arguments: { query: 'git' } });
+  assert.equal(items[1].name, 'mod_omd_muse_research');
+});
+
+test('Claude mod rejects route drift and carries calls to tools no longer offered as text', () => {
   assert.throws(() => translateRequest({ ...prompt, model: 'other' }, model));
-  assert.throws(() => translateRequest({ ...prompt, input: [...prompt.input,
-    { type: 'function_call', name: 'unknown', call_id: 'bad', arguments: '{}' }] }, model));
+  const compacting = translateRequest({ ...prompt, tools: [], input: [...prompt.input,
+    { type: 'function_call', name: 'exec_command', call_id: 'c1', arguments: '{"cmd":"pwd"}' },
+    { type: 'function_call_output', call_id: 'c1', output: '/repo' },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Summarize.' }] }] }, model);
+  assert.deepEqual(compacting.frames.map(frame => frame.message.content.map(block => block.text)),
+    [['List files.'], ['[called exec_command {"cmd":"pwd"}]'], ['[result of c1]', '/repo', 'Summarize.']]);
   assert.throws(() => responseEvents({ id: 'msg_1', usage: { input_tokens: 1,
     output_tokens: 1 }, content: [{ type: 'tool_use', name: 'mcp__omd__unknown' }] },
   {}, model, {}));
 });
 
-test('Claude stream capture preserves usage and tool arguments', () => {
-  const capture = new Capture();
+test('Claude stream capture streams thinking as reasoning and preserves tool arguments', () => {
+  const emitted = [];
+  const capture = new Capture(event => emitted.push(event));
   const events = [
     { type: 'message_start', message: { id: 'msg_1', content: [], usage: { input_tokens: 2 } } },
-    { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'x', name: 't', input: {} } },
-    { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"cmd":' } },
-    { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '"pwd"}' } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'Check pwd.' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
     { type: 'content_block_stop', index: 0 },
+    { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'x', name: 't', input: {} } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"cmd":' } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '"pwd"}' } },
+    { type: 'content_block_stop', index: 1 },
     { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
     { type: 'message_stop' },
   ];
@@ -83,8 +127,25 @@ test('Claude stream capture preserves usage and tool arguments', () => {
     capture.feed(wire.subarray(cut));
   }
   assert.equal(capture.complete, true);
-  assert.deepEqual(capture.message.content[0].input, { cmd: 'pwd' });
+  assert.deepEqual(capture.message.content[1].input, { cmd: 'pwd' });
   assert.equal(capture.message.usage.output_tokens, 5);
+  assert.equal(emitted.find(event => event.type === 'response.reasoning_summary_text.delta').delta, 'Check pwd.');
+  const reasoning = emitted.find(event => event.type === 'response.output_item.done').item;
+  assert.deepEqual(reasoning.summary, [{ type: 'summary_text', text: 'Check pwd.' }]);
+});
+
+test('subscription windows reach /status headers and rate limits name their window', () => {
+  const headers = { 'anthropic-ratelimit-unified-5h-utilization': '0.42', 'anthropic-ratelimit-unified-5h-reset': '1790000000',
+    'anthropic-ratelimit-unified-7d-utilization': '0.071', 'anthropic-ratelimit-unified-7d-reset': '1790500000' };
+  assert.deepEqual(limitHeaders(headers), { 'x-codex-primary-used-percent': '42', 'x-codex-primary-window-minutes': '300',
+    'x-codex-primary-reset-at': '1790000000', 'x-codex-secondary-used-percent': '7.1', 'x-codex-secondary-window-minutes': '10080',
+    'x-codex-secondary-reset-at': '1790500000' });
+  const limited = upstreamFailure(429, { ...headers, 'anthropic-ratelimit-unified-status': 'rejected',
+    'anthropic-ratelimit-unified-representative-claim': 'seven_day' }, '');
+  assert.deepEqual(limited, { code: 'rate_limit_exceeded',
+    message: `Claude seven_day limit reached; resets ${new Date(1790500000 * 1000).toISOString()}` });
+  assert.equal(upstreamFailure(400, {}, '{"error":{"message":"prompt is too long: 1000001 tokens"}}').code, 'context_length_exceeded');
+  assert.equal(upstreamFailure(200, headers, ''), null);
 });
 
 test('Claude stream capture preserves UTF-8 across network chunks', () => {
@@ -170,7 +231,7 @@ test('missing subscription login and inherited API override fail before routing'
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-auth-'));
   const fake = join(root, 'claude');
   try {
-    await writeFile(fake, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.281 (Claude Code)"; else echo \'{"loggedIn":false}\'; fi\n');
+    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; else echo '{"loggedIn":false}'; fi\n`);
     await chmod(fake, 0o700);
     assert.throws(() => checkCli(fake), /claude_ai_pro_or_max_login_required/);
     const previous = process.env.ANTHROPIC_API_KEY;
@@ -189,47 +250,52 @@ test('official CLI auth probe uses the approved user identity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omd-claude-home-'));
   const fake = join(root, 'claude');
   try {
-    await writeFile(fake, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.281 (Claude Code)"; elif [ "$HOME" = "/opt/fixture-home" ] && [ "$USER" = "fixture" ] && [ "$LOGNAME" = "fixture" ]; then echo \'{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}\'; else echo \'{"loggedIn":false}\'; fi\n');
+    await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ "$HOME" = "/opt/fixture-home" ] && [ "$USER" = "fixture" ] && [ "$LOGNAME" = "fixture" ]; then echo '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}'; else echo '{"loggedIn":false}'; fi\n`);
     await chmod(fake, 0o700);
     assert.throws(() => checkCli(fake, root), /claude_ai_pro_or_max_login_required/);
     assert.doesNotThrow(() => checkCli(fake, '/opt/fixture-home', 'fixture'));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('subscription sidecar retains failed attempts in its task request limit', { timeout: 15000 }, async () => {
+test('provider answers readiness, rejects unknown models and hands its shared port to a later session', { timeout: 20000 }, async () => {
   const { spawn } = await import('node:child_process');
-  const { once } = await import('node:events');
-  const root = await mkdtemp(join(tmpdir(), 'omd-claude-bound-'));
+  const root = await mkdtemp(join(tmpdir(), 'omd-claude-serve-'));
   const fake = join(root, 'claude');
+  await writeFile(fake, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${CLI_VERSION}"; elif [ "$1" = "auth" ]; then echo '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}'; else exit 1; fi\n`, { mode: 0o700 });
   const reserve = createServer();
   await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
   const port = reserve.address().port;
   await new Promise(resolve => reserve.close(resolve));
-  await writeFile(fake, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.281 (Claude Code)"; elif [ "$1" = "auth" ]; then echo \'{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}\'; else exit 1; fi\n', { mode: 0o700 });
+  const route = join(root, 'route.json');
+  await writeFile(route, JSON.stringify({ port, claude: fake, default: model,
+    models: [{ slug: model, cli: model, family: 'sonnet', efforts: [], thinking: false, window: 200000 }] }));
   const token = 'local-fixture-token-without-account-access';
-  const child = spawn(process.execPath, [new URL('../mods/first-party/omd_claude_cli/transport.mjs', import.meta.url).pathname,
-    'serve', String(port), model, fake, root, 'fixture', '2'], { env: { PATH: '/usr/bin:/bin', HOME: root, USER: 'fixture',
-      OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready-fixture' }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let stderr = '';
-  child.stderr.on('data', bytes => { stderr += bytes; });
-  const exit = once(child, 'exit');
+  const start = ready => spawn(process.execPath, [new URL('../mods/first-party/omd_claude_cli/transport.mjs', import.meta.url).pathname,
+    'serve', route, root, 'fixture'], { env: { PATH: '/usr/bin:/bin', OMD_CLAUDE_LOCAL_TOKEN: token, OMD_READY_TOKEN: ready }, stdio: 'ignore' });
+  const ready = async expected => {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      try { if (await (await fetch(`http://127.0.0.1:${port}/_omd/ready`)).text() === `OMD_READY:${expected}`) return true; } catch {}
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return false;
+  };
+  const call = body => fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST',
+    headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  const first = start('first');
+  let second;
   try {
-    let ready = false;
-    for (let attempt = 0; attempt < 50 && !ready; attempt++) {
-      try { ready = (await fetch(`http://127.0.0.1:${port}/_omd/ready`)).ok; } catch {}
-      if (!ready) await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    assert.ok(ready, stderr);
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, { method: 'POST',
-        headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(prompt) });
-      const text = await response.text();
-      assert.equal(response.status, attempt < 2 ? 200 : 429, text);
-      assert.match(text, attempt < 2 ? /response.failed/ : /claude_task_request_limit/);
-    }
+    assert.ok(await ready('first'));
+    assert.equal((await call({ ...prompt, model: 'claude-unknown' })).status, 400);
+    assert.match(await (await call(prompt)).text(), /response\.failed/);
+    second = start('second');
+    assert.ok(await ready('second'));
+    first.kill('SIGTERM');
+    await once(first, 'exit');
+    assert.ok(await ready('second'));
+    assert.match(await (await call(prompt)).text(), /response\.failed/);
   } finally {
-    child.kill('SIGTERM');
-    await exit;
+    first.kill('SIGKILL');
+    second?.kill('SIGKILL');
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "omd_muse",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_muse"},
+  "capabilities": ["commands", "lifecycle", "model", "exec", "tools", "agents", "terminal", "builtins"],
+  "exec_environment": ["MUSE_EXPERIMENTAL_SDK_ENABLED", "XDG_DATA_HOME"],
+  "assets": ["models.json", "setup.mjs", "transport.mjs"],
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "auto_approve": {"type": "boolean", "default": false},
+      "route": {"type": "string"}
+    },
+    "additionalProperties": false
+  }
+}

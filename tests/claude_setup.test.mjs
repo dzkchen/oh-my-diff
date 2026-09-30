@@ -1,77 +1,51 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
-const bin = process.env.OMD_TEST_BIN_DIR;
-const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-
-test('Claude setup creates a bounded isolated host store and respects an existing stronger contract', { skip: !bin, timeout: 60000 }, async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'omd-claude-setup-')));
-  const prefix = join(root, 'prefix');
-  const store = join(root, 'store');
-  const repository = join(root, 'repository');
-  const node = await realpath(process.execPath);
-  const manager = resolve(bin, 'omd-mod');
-  const contract = resolve(bin, 'omd-contract');
-  const command = (program, args) => {
-    const child = spawnSync(program, args, { encoding: 'utf8', timeout: 15000 });
-    assert.ifError(child.error);
-    assert.equal(child.status, 0, child.stderr);
-    return JSON.parse(child.stdout);
-  };
-  try {
-    await mkdir(prefix);
-    await mkdir(repository);
-    command(manager, ['init', store, node]);
-    await mkdir(join(store, 'sources'));
-    const packages = {};
-    for (const id of ['omd_claude_cli', 'omd_workflow']) {
-      const destination = join(store, 'sources', id);
-      await cp(resolve('mods/first-party', id), destination, { recursive: true });
-      const manifest = JSON.parse(await readFile(join(destination, 'mod.json'), 'utf8'));
-      const current = command(manager, ['inspect', destination]);
-      packages[id] = { sha256: current.sha256 };
-      command(manager, ['trust', store, destination, current.sha256, manifest.capabilities.join(',')]);
-      command(manager, ['enable', store, destination]);
-    }
-    const fake = join(root, 'claude');
-    await writeFile(fake, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.281 (Claude Code)"; else echo \'{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","subscriptionType":"pro"}\'; fi\n', { mode: 0o700 });
-    const capture = join(root, 'launch.json');
-    const binary = join(root, 'codex');
-    await writeFile(binary, `#!${node}\nimport {writeFileSync} from 'node:fs';\nwriteFileSync(${JSON.stringify(capture)},JSON.stringify({mode:process.env.OMD_MODE,store:process.env.OMD_MOD_STORE,legacy:process.env.OMD_CONTROLLED_MANIFEST,args:process.argv.slice(2)}));\n`, { mode: 0o700 });
-    const record = { profile: 'full', prefix, store, packages, author: { node }, manager: { installed_path: manager },
-      binary: { installed_path: binary }, tools: { 'omd-contract': { installed_path: contract, sha256: sha(await readFile(contract)) } } };
-    const recordPath = join(prefix, 'install.json');
-    await writeFile(recordPath, JSON.stringify(record));
-    const before = await readFile(join(store, 'mods.json'), 'utf8');
-    const setup = () => spawnSync(node, [join(store, 'sources/omd_claude_cli/setup.mjs'), recordPath, repository, '', fake, '2', 'Keep the exact requested task'],
-      { encoding: 'utf8', timeout: 25000, env: { PATH: `${dirname(node)}:/usr/bin:/bin`, HOME: root, USER: 'fixture', OMD_CONTROLLED_MANIFEST: '/ignored-legacy' } });
-    const result = setup();
-    assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stderr);
-    const launch = JSON.parse(await readFile(capture, 'utf8'));
-    assert.equal(launch.mode, 'omd');
-    assert.equal(launch.legacy, undefined);
-    assert.notEqual(launch.store, store);
-    assert.equal(await readFile(join(store, 'mods.json'), 'utf8'), before);
-    const host = JSON.parse(await readFile(join(launch.store, 'host.json'), 'utf8'));
-    assert.equal(host.routes.length, 1);
-    assert.deepEqual(host.routes[0].roles, ['lead']);
-    assert.equal(host.services[0].arguments.at(-1), '2');
-    assert.equal(host.limits.requests, 2);
-    const taskMods = JSON.parse(await readFile(join(launch.store, 'mods.json'), 'utf8'));
-    const workflow = taskMods.mods.find(item => item.path.endsWith('/omd_workflow'));
-    assert.equal(workflow.settings.initial_task.objective, 'Keep the exact requested task');
-    assert.equal(command(contract, ['status', launch.store, repository]).contract.key, 'solo_evidence@1');
-    command(contract, ['select', store, repository, 'reviewed_omd@1']);
-    const denied = setup();
-    assert.equal(denied.status, 1);
-    assert.match(denied.stderr, /resolve_existing_contract_before_solo_task/);
-    assert.equal(command(contract, ['status', store, repository]).contract.key, 'reviewed_omd@1');
-    assert.equal((await readdir(join(prefix, 'tasks'))).length, 2);
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
+test('Claude setup adds its provider grant to the OMD+ store without disturbing other host settings',
+  { skip: !process.env.OMD_TEST_CLAUDE, timeout: 120000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'omd-claude-setup-')));
+    const prefix = join(root, 'prefix');
+    const store = join(root, 'store');
+    try {
+      await mkdir(prefix);
+      await mkdir(join(store, 'sources'), { recursive: true });
+      await cp(resolve('mods/first-party/omd_claude_cli'), join(store, 'sources/omd_claude_cli'), { recursive: true });
+      const other = { name: 'worker', provider: 'fixture', model: 'fixture', reasoning_effort: 'low', responses_url: 'http://127.0.0.1:9/v1/responses',
+        roles: ['lead'], rates: { input_microusd_per_million: 1, cached_microusd_per_million: 1, output_microusd_per_million: 1,
+          reservation_microusd: 1, max_output_tokens: 1, input_token_ceiling: 1, included_subscription: false } };
+      await writeFile(join(store, 'host.json'), JSON.stringify({ schema: 1, routes: [other], max_request_bytes: 33554432,
+        worker_limits: { requests: 5, exposure_microusd: 7, seconds: 60 } }));
+      const recordPath = join(prefix, 'install.json');
+      await writeFile(recordPath, JSON.stringify({ profile: 'full', prefix, store, packages: { omd_claude_cli: {} },
+        author: { node: process.execPath } }));
+      const setup = () => {
+        const result = spawnSync(process.execPath, [join(store, 'sources/omd_claude_cli/setup.mjs'), 'setup', recordPath,
+          process.env.OMD_TEST_CLAUDE], { encoding: 'utf8', timeout: 90000 });
+        assert.equal(result.status, 0, result.stderr);
+        return JSON.parse(result.stdout);
+      };
+      const first = setup();
+      const host = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
+      assert.deepEqual(host.routes, [other]);
+      assert.equal(host.max_request_bytes, 33554432);
+      assert.deepEqual(host.worker_limits, { requests: 5, exposure_microusd: 7, seconds: 86400 });
+      const grant = host.services.find(service => service.id === 'claude_cli');
+      assert.deepEqual(grant.arguments.slice(1, 3), ['serve', first.provider.route]);
+      assert.equal(grant.route.rates.included_subscription, true);
+      assert.equal(host.secret_refs.claude_local_token, first.provider.token);
+      assert.equal((await stat(first.provider.token)).mode & 0o777, 0o600);
+      const catalog = JSON.parse(await readFile(first.provider.catalog, 'utf8')).models;
+      assert.deepEqual(catalog.map(model => [model.slug, model.context_window]), first.models.map(model => [model.slug, model.window]));
+      assert.ok(catalog.every(model => model.input_modalities.includes('image')));
+      const token = await readFile(first.provider.token, 'utf8');
+      const again = setup();
+      assert.equal(again.provider.base_url, first.provider.base_url);
+      assert.equal(await readFile(first.provider.token, 'utf8'), token);
+      const rerun = JSON.parse(await readFile(join(store, 'host.json'), 'utf8'));
+      assert.equal(rerun.services.filter(service => service.id === 'claude_cli').length, 1);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });

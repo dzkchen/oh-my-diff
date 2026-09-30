@@ -47,7 +47,8 @@ the versioned cache directory.
 
 | Reviewed candidate | Type | Capability | Intended placement |
 | --- | --- | --- | --- |
-| `omd_claude_cli` | mod | Official Claude CLI route | OMD+, installed inactive |
+| `omd_claude_cli` | mod | Official Claude CLI route and `ask_claude` delegation | OMD+, installed inactive |
+| `omd_muse` | mod | Muse route and research subagent over `muse serve` | OMD+, installed inactive |
 | `omd_coordination` | mod | Live task routing and worker context | OMD+, inactive candidate |
 | `omd_recovery` | mod | Failure-aware recovery choices | OMD+, inactive candidate |
 | `omd_workspace` | mod | Live terminal task workspace | OMD+, provisional active default |

@@ -50,22 +50,24 @@
       "capabilities": [
         "commands",
         "lifecycle",
-        "middleware",
         "model",
-        "exec"
+        "exec",
+        "tools",
+        "agents",
+        "sessions"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "c02c6b31d5841458ba81be728530ae97b7592ef73d908f63dcdf2a78b0b484bb",
-        "mod.json": "f38b85b4264f29128f52526b56d80eef5684dead3cc47f5ba977a9e6c9c0904a",
-        "models.json": "1a4fb1bf277f76bd55b3bb54fdf35649848ffe9537781e5147900a79923c1051",
-        "setup.mjs": "94dd96be0b476f61334ba589ecb7f6c9fe223005656053a392cec5b0993ac8f7",
-        "transport.mjs": "da523ad79b410495ea4b8ad4208b28ef54ed1b722bb097d6ef56430d058ceb2e"
+        "index.ts": "d0d19fd4322eb50ce14be8e1f2978f12d284a6310da06fb3fa1ac7fad69f3287",
+        "mod.json": "013869796614765b0879560912a47b09542bb28ce443da5d7da03ebd5c190dbd",
+        "models.json": "21710d46d563a0d0e25fdbfd05f1cbdbf788ab235ca65bdd65a7b31f19f09cc8",
+        "setup.mjs": "3def61abd5614c78b7ebd5afa183f9a390d347eaf457e7950bf00a1d32a76ae9",
+        "transport.mjs": "f6f1868be3f460a6bf2452340ab4c0062ba9d021fd3c81eede76415db12bb3a3"
       },
       "id": "omd_claude_cli",
-      "package_sha256": "38331e37af3393024c4c43de836660f456c02e7c27f53332c55a03a9f091e7e5",
+      "package_sha256": "598cb25d5a5eb040fdc1f4237dcd89fe742bb18eb032f32a27f412d0341653ad",
       "source": "mods/first-party/omd_claude_cli",
-      "version": "0.2.0-preview.1"
+      "version": "0.2.0-preview.2"
     },
     "omd_continue": {
       "api": "0.2.0-experimental.5",
@@ -209,6 +211,31 @@
       "package_sha256": "41a03bb55120be87c0d452691e972e452fb6822cd457e16b7245da39a2a03358",
       "source": "mods/first-party/omd_model_picker",
       "version": "0.2.0-preview.1"
+    },
+    "omd_muse": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "commands",
+        "lifecycle",
+        "model",
+        "exec",
+        "tools",
+        "agents",
+        "terminal",
+        "builtins"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "8b5f97d1414ee42ed89d5341d5c0da91bfcddcc91bcf48192810c80f308fbae3",
+        "mod.json": "17f057d200aa2917822660541afbb17f5216dd07e95325a72171436e2159cafd",
+        "models.json": "25e51859c4740c2208887517939a66e8e20843622c59a1378ddaec816a9a9d30",
+        "setup.mjs": "8e5893936081a005b0449d4206a078f1e78a7e088cdfec161aaa3412f3d7f571",
+        "transport.mjs": "2371a10e365f03974be0339bfc3a32552a4bd7d14345767ffb8652adfb4a6011"
+      },
+      "id": "omd_muse",
+      "package_sha256": "7e03bfa82a5d8b2ad99fab7b3f63023204b46f4d26235b746f51f00714007789",
+      "source": "mods/first-party/omd_muse",
+      "version": "0.1.0-preview.1"
     },
     "omd_plan_removal": {
       "api": "0.2.0-experimental.5",

@@ -31,6 +31,7 @@ DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_workspac
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo",)
 HOST_TOOLS = ("omd", "omd-contract")
+ROUTES = {"claude": "omd_claude_cli", "muse": "omd_muse"}
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
                     "scripts/preview_lock.py",
@@ -168,7 +169,15 @@ def selected_text(record):
         lines.append("export OMD_MODE=upstream_direct")
     else:
         lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}"])
-    lines.append(f"exec {shlex.quote(binary)} \"$@\"")
+    flags = []
+    for provider in record.get("providers", {}).values() if selection != "direct" else ():
+        key = provider["env_key"]
+        lines.append(f'{key}="$(cat {shlex.quote(provider["token"])} 2>/dev/null)"; export {key}')
+        settings = {"name": provider["name"], "base_url": provider["base_url"], "wire_api": "responses", "env_key": key,
+                    "request_max_retries": 0, "stream_max_retries": 0, "supports_websockets": False}
+        for field, value in settings.items():
+            flags += ["-c", f"model_providers.{provider['id']}.{field}={json.dumps(value)}"]
+    lines.append(f"exec {shlex.join([binary, *flags])} \"$@\"")
     return "\n".join(lines) + "\n"
 
 
@@ -312,6 +321,50 @@ def select_mod(prefix, bin_dir, identifier, enabled):
         except Exception as rollback_error:
             raise ValueError(f"managed mod selection failed: {error}; rollback failed: {rollback_error}") from rollback_error
         raise ValueError(f"managed mod selection failed and was restored: {error}") from error
+
+
+def route(prefix, bin_dir, name, args):
+    record = load(prefix)
+    check(record, bin_dir)
+    identifier = ROUTES[name]
+    if record["profile"] != "full":
+        raise ValueError(f"the {name} route is available only in OMD+")
+    if args.setup:
+        setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
+        result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"),
+                                 str(args.path or "")], capture_output=True, text=True)
+        if result.returncode:
+            raise ValueError(result.stderr.strip() or f"{name} setup failed")
+        details = json.loads(result.stdout)
+        record.setdefault("providers", {})[identifier] = details.pop("provider")
+        launcher = bin_dir / "codex"
+        support.atomic_text(launcher, selected_text(record), 0o755)
+        record["activation"]["sha256"] = support.digest(launcher)
+        write(prefix, record)
+        if name == "muse":
+            source = (Path(record["store"]) / "sources" / identifier).resolve()
+            mods = json.loads((Path(record["store"]) / "mods.json").read_text())["mods"]
+            current = next((item.get("settings") or {} for item in mods if Path(item["path"]).resolve() == source), {})
+            settings = {**current, "route": record["providers"][identifier]["route"]}
+            invoke(record["manager"]["installed_path"], "settings", record["store"], source, json.dumps(settings))
+        select_mod(prefix, bin_dir, identifier, True)
+        return details
+    provider = record.get("providers", {}).get(identifier)
+    if not provider:
+        raise ValueError(f"run `omd-package {name} --setup` first")
+    if record["activation"]["selection"] == "direct":
+        raise ValueError(f"activate OMD+ before using the {name} route")
+    selections = invoke(record["manager"]["installed_path"], "selection-status", record["store"])["selections"]
+    if not any(item.get("id") == identifier and item.get("effective") and not item.get("error") for item in selections):
+        raise ValueError(f"the {name} route needs its mod enabled: omd-package mod enable {identifier}")
+    models = json.loads(Path(provider["route"]).read_text())
+    wanted = args.model or models["default"]
+    model = next((item["slug"] for item in models["models"] if wanted in (item["slug"], item.get("family"))), None)
+    if model is None:
+        raise ValueError(f"unknown {name} model {wanted}; choose one of {', '.join(item['slug'] for item in models['models'])}")
+    launcher = bin_dir / "codex"
+    os.execv(launcher, [str(launcher), "-c", f"model_provider={json.dumps(identifier)}", "-c", f"model={json.dumps(model)}",
+                        "-c", f"model_catalog_json={json.dumps(provider['catalog'])}", *args.codex])
 
 
 def install(args):
@@ -560,12 +613,12 @@ def main():
     mod_parser = commands.add_parser("mod")
     mod_parser.add_argument("action", choices=("enable", "disable"))
     mod_parser.add_argument("identifier", choices=PACKAGES)
-    claude_parser = commands.add_parser('claude')
-    claude_parser.add_argument('--repository', type=Path, default=Path.cwd())
-    claude_parser.add_argument('--model')
-    claude_parser.add_argument('--claude', type=Path)
-    claude_parser.add_argument('--max-requests', type=int, default=8)
-    claude_parser.add_argument('--prompt', required=True)
+    for name in ROUTES:
+        route_parser = commands.add_parser(name, help=f"set up or launch the opt-in {name} route")
+        route_parser.add_argument("--setup", action="store_true")
+        route_parser.add_argument(f"--{name}", dest="path", type=Path, help=f"{name} CLI path for --setup")
+        route_parser.add_argument("--model", help="model slug or family shortcut")
+        route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
     commands.add_parser("uninstall")
     args = parser.parse_args()
     prefix, bin_dir = support.validate_locations(args.prefix, args.bin_dir)
@@ -577,17 +630,8 @@ def main():
         result = activate(prefix, bin_dir, args.selection)
     elif args.command == "mod":
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
-    elif args.command == 'claude':
-        record = load(prefix)
-        check(record, bin_dir)
-        if record['profile'] != 'full':
-            raise ValueError('the Claude mod is available only in OMD+')
-        node = record['author']['node']
-        setup = Path(record['store']) / 'sources' / 'omd_claude_cli' / 'setup.mjs'
-        os.execv(node, [node, str(setup), str(prefix / 'install.json'),
-                        str(args.repository), args.model or '',
-                        str(args.claude) if args.claude else '',
-                        str(args.max_requests), args.prompt])
+    elif args.command in ROUTES:
+        result = route(prefix, bin_dir, args.command, args)
     else:
         result = uninstall(prefix, bin_dir)
     print(json.dumps(result, indent=2, sort_keys=True))

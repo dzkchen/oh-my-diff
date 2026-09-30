@@ -21,7 +21,7 @@ contains only the packages labeled `bundled` below.
 
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
-| `omd_claude_cli@0.2.0-preview.1` | `mod` | `mods/first-party/omd_claude_cli` | Translates live admitted model requests through the opt-in official Claude CLI route while the native host retains credentials, permissions, accounting, and cancellation. |
+| `omd_claude_cli@0.2.0-preview.2` | `mod` | `mods/first-party/omd_claude_cli` | Owns the Claude CLI model catalog, request translation and ask_claude delegation over a host-approved provider service while the native host executes every tool and keeps permissions, accounting and cancellation. |
 | `omd_task_tools@0.2.0-preview.1` | `mod` | `mods/first-party/omd_task_tools` | Selects owned optional tools at the native per-request boundary from the current host checkpoint; a static skill or plugin cannot change that exposure for each task step. |
 | `omd_checks@0.1.0-preview.1` | `mod` | `mods/first-party/omd_checks` | Selects bounded language-specific verification commands for the current candidate snapshot and relevant inputs during a live task. |
 | `omd_repository_analysis@0.1.0-preview.2` | `mod` | `mods/first-party/omd_repository_analysis` | Builds a source-bound repository graph and compares approved dependency-boundary baselines during a live task through generic workspace and store operations. |
@@ -45,6 +45,7 @@ contains only the packages labeled `bundled` below.
 | `omd_plan_removal@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_removal` | Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); installed inactive in OMD+. |
 | `omd_continue@0.1.0-preview.1` | `mod` | `mods/first-party/omd_continue` | Owns the user-typed /continue recovery prompt and a bounded summary built only from the host turn-activity ledger; installed inactive in OMD+. |
 | `omd_preview@0.1.0-preview.1` | `mod` | `mods/first-party/omd_preview` | Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+. |
+| `omd_muse@0.1.0-preview.1` | `mod` | `mods/first-party/omd_muse` | Owns the Muse MSP client, approval relay and research tool over a host-approved provider service; installed inactive in OMD+. |
 
 ## Author examples
 
