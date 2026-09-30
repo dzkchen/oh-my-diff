@@ -154,6 +154,78 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_reactive_rules",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Bounded explicit rules that stop a completed response item and retry with a reminder",
+      "source": "mods/first-party/omd_reactive_rules",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; stream_control_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_programmable_context",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Python context, child-agent and continual-harness API over the code-execution kernel bridge",
+      "source": "mods/first-party/omd_programmable_context",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; history_v1, store_thread_v1, routes_v1, model_complete_v1, terminal_prompt_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_plan_removal",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Removes /plan and plan mode through public built-in controls",
+      "source": "mods/first-party/omd_plan_removal",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; builtins_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_continue",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "User-typed /continue recovery turn with a turn-activity summary",
+      "source": "mods/first-party/omd_continue",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; turn_activity_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd-guidance-hooks",
       "version": "0.1.0",
       "extension_type": "plugin",
@@ -192,7 +264,7 @@
       "id": "omd-review-policy",
       "version": "0.1.0+codex.20260927022545",
       "extension_type": "plugin",
-      "capability": "Selected review cadence and final review prompts; optional extension-owned completed-turn advisor guidance",
+      "capability": "Selected review cadence and final review prompts; optional extension-owned completed-turn advisor guidance; changed-line simplify skill with an opt-in /simplify mod component",
       "source": "plugins/bundled/oh-my-diff/plugins/omd-review-policy",
       "license": "UNLICENSED",
       "maintainer": "Oh My Diff",
@@ -214,6 +286,10 @@
         {
           "extension_type": "skill",
           "path": "skills/omd-final-review"
+        },
+        {
+          "extension_type": "skill",
+          "path": "skills/omd-simplify"
         },
         {
           "extension_type": "hook",

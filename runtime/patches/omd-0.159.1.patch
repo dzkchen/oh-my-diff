@@ -1347,7 +1347,7 @@ index b88b343c1..db1b24781 100644
      flush_assistant_text_segments_all(
          &sess,
 diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
-index d9a5c6a30..11d05bdb4 100644
+index d9a5c6a30..2228a976e 100644
 --- a/codex-rs/core/src/session/turn_input.rs
 +++ b/codex-rs/core/src/session/turn_input.rs
 @@ -208,6 +208,7 @@ pub(super) async fn handle(
@@ -1358,7 +1358,7 @@ index d9a5c6a30..11d05bdb4 100644
      match mode {
          TurnInputMode::StartOrSteer => start_or_steer(session, request, submission_id).await,
          TurnInputMode::StartIfIdle => {
-@@ -251,6 +252,114 @@ pub(super) async fn handle(
+@@ -251,6 +252,124 @@ pub(super) async fn handle(
      }
  }
 
@@ -1368,6 +1368,10 @@ index d9a5c6a30..11d05bdb4 100644
 +    submission_id: &str,
 +) -> CodexResult<TurnInputRequest> {
 +    let contributors = session.services.extensions.turn_lifecycle_contributors();
++    if let SubmittedTurnInput::UserInput { content, .. } = &mut request.input {
++        intercept_user_text(session, content, submission_id).await?;
++    }
++    // Mods reload while intercepting input, so read their disabled modes afterwards.
 +    let disabled = contributors
 +        .iter()
 +        .flat_map(|contributor| contributor.disabled_collaboration_modes())
@@ -1404,11 +1408,17 @@ index d9a5c6a30..11d05bdb4 100644
 +                .await;
 +        }
 +    }
-+    let SubmittedTurnInput::UserInput { content, .. } = &mut request.input else {
-+        return Ok(request);
-+    };
++    Ok(request)
++}
++
++async fn intercept_user_text(
++    session: &Arc<Session>,
++    content: &mut Vec<UserInput>,
++    submission_id: &str,
++) -> CodexResult<()> {
++    let contributors = session.services.extensions.turn_lifecycle_contributors();
 +    if contributors.is_empty() {
-+        return Ok(request);
++        return Ok(());
 +    }
 +    let mut text = content
 +        .iter()
@@ -1419,7 +1429,7 @@ index d9a5c6a30..11d05bdb4 100644
 +        .collect::<Vec<_>>()
 +        .join("\n");
 +    if text.is_empty() {
-+        return Ok(request);
++        return Ok(());
 +    }
 +    let attachments = content
 +        .iter()
@@ -1467,34 +1477,47 @@ index d9a5c6a30..11d05bdb4 100644
 +            }
 +        }
 +    }
-+    Ok(request)
++    Ok(())
 +}
 +
  pub(super) async fn handle_recovery(
      session: &Arc<Session>,
      thread_settings: ThreadSettingsOverrides,
 diff --git a/codex-rs/core/src/session/turn_input_tests.rs b/codex-rs/core/src/session/turn_input_tests.rs
-index e76b3e268..9da312404 100644
+index e76b3e268..959d105ab 100644
 --- a/codex-rs/core/src/session/turn_input_tests.rs
 +++ b/codex-rs/core/src/session/turn_input_tests.rs
-@@ -1072,3 +1072,54 @@ async fn steer_preserves_request_origin(
+@@ -1072,3 +1072,67 @@ async fn steer_preserves_request_origin(
      );
      session.abort_all_tasks(TurnAbortReason::Interrupted).await;
  }
 +
 +#[tokio::test]
 +async fn disabled_collaboration_modes_clamp_to_default_at_turn_start() {
-+    struct DisablesPlan;
++    struct DisablesPlanOnInput(std::sync::atomic::AtomicBool);
 +
-+    impl codex_extension_api::TurnLifecycleContributor for DisablesPlan {
++    impl codex_extension_api::TurnLifecycleContributor for DisablesPlanOnInput {
++        fn intercept_user_input<'a>(
++            &'a self,
++            _input: codex_extension_api::UserInputInterceptInput<'a>,
++        ) -> codex_extension_api::ExtensionFuture<'a, codex_extension_api::UserInputDecision>
++        {
++            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
++            Box::pin(async { codex_extension_api::UserInputDecision::Keep })
++        }
++
 +        fn disabled_collaboration_modes(&self) -> Vec<String> {
-+            vec!["plan".to_string()]
++            if self.0.load(std::sync::atomic::Ordering::SeqCst) {
++                vec!["plan".to_string()]
++            } else {
++                Vec::new()
++            }
 +        }
 +    }
 +
 +    let (mut session, turn_context) = make_session_and_context().await;
 +    let mut builder = codex_extension_api::ExtensionRegistryBuilder::<crate::config::Config>::new();
-+    builder.turn_lifecycle_contributor(Arc::new(DisablesPlan));
++    builder.turn_lifecycle_contributor(Arc::new(DisablesPlanOnInput(Default::default())));
 +    session.services.extensions = Arc::new(builder.build());
 +    let session = Arc::new(session);
 +    let requested = |mode| CollaborationMode {
@@ -4866,10 +4889,40 @@ index 000000000..aaf3e7942
 +    assert_eq!(fetch.parameters, function("fetch").parameters);
 +}
 diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
-index bb1474feb..e2a7ec08d 100644
+index bb1474feb..cdc55cbec 100644
 --- a/codex-rs/core/src/tools/spec_plan.rs
 +++ b/codex-rs/core/src/tools/spec_plan.rs
-@@ -178,13 +178,15 @@ pub(crate) fn build_tool_router(
+@@ -116,6 +116,7 @@ struct CoreToolPlanContext<'a> {
+     wait_for_environment_tool_config: Option<&'a Arc<crate::WaitForEnvironmentToolConfig>>,
+     default_agent_type_description: &'a str,
+     wait_agent_timeouts: WaitAgentTimeoutOptions,
++    disabled_modes: &'a [String],
+ }
+
+ #[instrument(level = "trace", skip_all)]
+@@ -136,6 +137,13 @@ pub(crate) fn build_tool_router(
+         .services
+         .thread_extension_data
+         .get::<crate::WaitForEnvironmentToolConfig>();
++    let disabled_modes = session
++        .services
++        .extensions
++        .turn_lifecycle_contributors()
++        .iter()
++        .flat_map(|contributor| contributor.disabled_collaboration_modes())
++        .collect::<Vec<_>>();
+     let context = CoreToolPlanContext {
+         tool_policy: &session.tool_policy,
+         turn_context,
+@@ -146,6 +154,7 @@ pub(crate) fn build_tool_router(
+         wait_for_environment_tool_config: wait_for_environment_tool_config.as_ref(),
+         default_agent_type_description: &default_agent_type_description,
+         wait_agent_timeouts: wait_agent_timeout_options(turn_context),
++        disabled_modes: &disabled_modes,
+     };
+     let mut registry = ToolRegistry::with_tool_policy(Arc::clone(&session.tool_policy));
+     add_core_tool_sources(&context, &mut registry);
+@@ -178,13 +187,15 @@ pub(crate) fn build_tool_router(
          standalone_web_search_tool.as_slice(),
      );
 
@@ -4887,7 +4940,15 @@ index bb1474feb..e2a7ec08d 100644
  }
 
  fn apply_mcp_tool_exposure_policy(
-@@ -902,6 +904,11 @@ fn register_code_mode_executors(
+@@ -291,6 +302,7 @@ pub(crate) fn build_core_tool_registry(
+         wait_for_environment_tool_config,
+         default_agent_type_description: &default_agent_type_description,
+         wait_agent_timeouts: wait_agent_timeout_options(turn_context),
++        disabled_modes: &[],
+     };
+     let mut registry = ToolRegistry::default();
+     add_core_tool_sources(&context, &mut registry);
+@@ -902,6 +914,11 @@ fn register_code_mode_executors(
          exec_prompt_tool_specs.iter(),
          code_mode_input_schema_max_bytes,
      );
@@ -4899,6 +4960,29 @@ index bb1474feb..e2a7ec08d 100644
      let deferred_tools = collect_code_mode_exec_prompt_tool_definitions(
          deferred_exec_prompt_tool_specs.iter().map(Arc::as_ref),
          code_mode_input_schema_max_bytes,
+@@ -1166,11 +1183,18 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
+         );
+     }
+
+-    if turn_context.config.experimental_request_user_input_enabled {
++    let available_modes = request_user_input_available_modes(features)
++        .into_iter()
++        .filter(|mode| {
++            serde_json::to_value(mode)
++                .ok()
++                .and_then(|name| name.as_str().map(str::to_owned))
++                .is_none_or(|name| !context.disabled_modes.contains(&name))
++        })
++        .collect::<Vec<_>>();
++    if turn_context.config.experimental_request_user_input_enabled && !available_modes.is_empty() {
+         registry.add_with_exposure(
+-            RequestUserInputHandler {
+-                available_modes: request_user_input_available_modes(features),
+-            },
++            RequestUserInputHandler { available_modes },
+             ToolExposure::DirectModelOnly,
+         );
+     }
 diff --git a/codex-rs/core/src/tools/tool_dispatch_trace.rs b/codex-rs/core/src/tools/tool_dispatch_trace.rs
 index deb5fa02b..c8086c2d5 100644
 --- a/codex-rs/core/src/tools/tool_dispatch_trace.rs
@@ -11051,10 +11135,10 @@ index 000000000..c1851f83a
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..5fc49125e
+index 000000000..088e15308
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1543 @@
+@@ -0,0 +1,1549 @@
 +mod agents;
 +mod evidence;
 +mod expansion;
@@ -11437,6 +11521,11 @@ index 000000000..5fc49125e
 +    }
 +}
 +
++// `sessions` holders read changed files from the turn-activity ledger.
++fn observes_workspace(runtime: &ModHost) -> bool {
++    runtime.has_event("workspace_change") || runtime.holds_capability("sessions")
++}
++
 +fn refresh_contract(runtime: &ModHost, session: &Session) {
 +    let documents = runtime.contract_documents();
 +    if session
@@ -11527,7 +11616,7 @@ index 000000000..5fc49125e
 +            let Some(facts) = runtime.lock().ok().map(|runtime| {
 +                codex_omd::observe_workspace_changes(
 +                    &host.repository,
-+                    runtime.has_event("workspace_change"),
++                    observes_workspace(&runtime),
 +                );
 +                facts(&runtime)
 +            }) else {
@@ -12003,7 +12092,8 @@ index 000000000..5fc49125e
 +    }
 +
 +    fn disabled_collaboration_modes(&self) -> Vec<String> {
-+        match self.runtime.try_lock() {
++        // Input interception reloads this runtime before the core reads the turn's modes.
++        match self.input_runtime.try_lock() {
 +            Ok(runtime) => runtime
 +                .builtin_controls()
 +                .into_iter()
@@ -12115,7 +12205,7 @@ index 000000000..5fc49125e
 +                    refresh_contract(&runtime, &session);
 +                    codex_omd::observe_workspace_changes(
 +                        &session_repository,
-+                        runtime.has_event("workspace_change"),
++                        observes_workspace(&runtime),
 +                    );
 +                }
 +            })
@@ -12408,7 +12498,7 @@ index 000000000..5fc49125e
 +            let snapshot = tokio::task::spawn_blocking(move || {
 +                let observed = runtime
 +                    .lock()
-+                    .is_ok_and(|runtime| runtime.has_event("workspace_change"));
++                    .is_ok_and(|runtime| observes_workspace(&runtime));
 +                codex_omd::observe_workspace_changes(&repository, observed);
 +                codex_omd::change_baseline(&repository)
 +            })
@@ -14999,10 +15089,10 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..fe68a4084
+index 000000000..da91ecdea
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,456 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -15077,6 +15167,7 @@ index 000000000..fe68a4084
 +struct Delivery {
 +    task: tokio::task::JoinHandle<()>,
 +    _wake: codex_omd::client_surface::Registration,
++    _activity: codex_omd::turn_activity::ReaderRegistration,
 +}
 +
 +impl Drop for Delivery {
@@ -15460,10 +15551,10 @@ index 000000000..fe68a4084
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/mods/expansion/activity.rs b/codex-rs/ext/omd/src/mods/expansion/activity.rs
 new file mode 100644
-index 000000000..a10e0b7c5
+index 000000000..d0be9d7ac
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/activity.rs
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,345 @@
 +use super::*;
 +use codex_omd::turn_activity::ActivityRecord;
 +use codex_omd::turn_activity::TurnActivityLog;
@@ -15723,6 +15814,16 @@ index 000000000..a10e0b7c5
 +    lead: &Lead,
 +    arguments: Value,
 +) -> Result<Value, String> {
++    tokio::task::spawn_blocking(prepare(core, lead, arguments)?)
++        .await
++        .map_err(|error| error.to_string())?
++}
++
++pub(in crate::mods) fn prepare(
++    core: &Core,
++    lead: &Lead,
++    arguments: Value,
++) -> Result<impl FnOnce() -> Result<Value, String> + Send + 'static, String> {
 +    #[derive(Deserialize)]
 +    #[serde(deny_unknown_fields)]
 +    struct Input {
@@ -15758,7 +15859,7 @@ index 000000000..a10e0b7c5
 +        .lock()
 +        .map(|commands| commands.clone())
 +        .unwrap_or_default();
-+    tokio::task::spawn_blocking(move || {
++    Ok(move || {
 +        let live = |id: &str| match id.split_once('/') {
 +            Some((owner, session)) => processes.running(owner, session),
 +            None => Some(commands.contains(id)),
@@ -15769,8 +15870,6 @@ index 000000000..a10e0b7c5
 +        value["recording"] = Value::Bool(recording);
 +        Ok(value)
 +    })
-+    .await
-+    .map_err(|error| error.to_string())?
 +}
 +
 +pub(in crate::mods) async fn resume_payload(core: &Core, lead: &Lead) -> Value {
@@ -15939,10 +16038,10 @@ index 000000000..41c09bf0c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..fda693ba3
+index 000000000..eda74cf7d
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,516 @@
+@@ -0,0 +1,526 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -16079,6 +16178,15 @@ index 000000000..fda693ba3
 +    let signal = wake.clone();
 +    let registration =
 +        codex_omd::client_surface::register_wake(Arc::new(move || signal.notify_one()));
++    let reader = Arc::downgrade(core);
++    let activity = codex_omd::turn_activity::register_reader(Arc::new(move |thread, arguments| {
++        let core = reader.upgrade().ok_or("turn_activity_unavailable")?;
++        let lead = ThreadId::from_string(thread)
++            .ok()
++            .and_then(|thread| core.expansion.lead(thread))
++            .ok_or("turn_activity_unavailable")?;
++        super::activity::prepare(&core, &lead, arguments)?()
++    }));
 +    let weak = Arc::downgrade(core);
 +    let task = tokio::spawn(async move {
 +        loop {
@@ -16095,6 +16203,7 @@ index 000000000..fda693ba3
 +    *delivery = Some(Delivery {
 +        task,
 +        _wake: registration,
++        _activity: activity,
 +    });
 +}
 +
@@ -41797,10 +41906,10 @@ index 000000000..36487c71c
 +}
 diff --git a/codex-rs/omd/src/turn_activity.rs b/codex-rs/omd/src/turn_activity.rs
 new file mode 100644
-index 000000000..b260e52e0
+index 000000000..3df385934
 --- /dev/null
 +++ b/codex-rs/omd/src/turn_activity.rs
-@@ -0,0 +1,326 @@
+@@ -0,0 +1,361 @@
 +use serde::{Deserialize, Serialize};
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
@@ -42122,6 +42231,41 @@ index 000000000..b260e52e0
 +
 +fn tail(values: &[Value], limit: usize) -> Value {
 +    Value::Array(values[values.len().saturating_sub(limit)..].to_vec())
++}
++
++pub type Reader = std::sync::Arc<dyn Fn(&str, Value) -> Result<Value, String> + Send + Sync>;
++
++static READER: std::sync::Mutex<(u64, Option<Reader>)> = std::sync::Mutex::new((0, None));
++
++fn reader() -> std::sync::MutexGuard<'static, (u64, Option<Reader>)> {
++    READER
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++}
++
++#[must_use]
++pub struct ReaderRegistration(u64);
++
++impl Drop for ReaderRegistration {
++    fn drop(&mut self) {
++        let mut slot = reader();
++        if slot.0 == self.0 {
++            slot.1 = None;
++        }
++    }
++}
++
++/// Lets in-process clients read the ledger through the session host that records it.
++pub fn register_reader(read: Reader) -> ReaderRegistration {
++    let mut slot = reader();
++    slot.0 += 1;
++    slot.1 = Some(read);
++    ReaderRegistration(slot.0)
++}
++
++pub fn read_registered(thread: &str, arguments: Value) -> Result<Value, String> {
++    let read = reader().1.clone().ok_or("turn_activity_unavailable")?;
++    read(thread, arguments)
 +}
 +
 +#[cfg(test)]
@@ -42520,10 +42664,10 @@ index 000000000..a128af3ed
 +}
 diff --git a/codex-rs/omd/src/workspace.rs b/codex-rs/omd/src/workspace.rs
 new file mode 100644
-index 000000000..16e85ed86
+index 000000000..3c79277f7
 --- /dev/null
 +++ b/codex-rs/omd/src/workspace.rs
-@@ -0,0 +1,1266 @@
+@@ -0,0 +1,1312 @@
 +use rustix::fs::AtFlags;
 +use rustix::fs::Mode;
 +use rustix::fs::OFlags;
@@ -42543,6 +42687,7 @@ index 000000000..16e85ed86
 +use std::io::Read;
 +use std::io::Write;
 +use std::io::{self};
++use std::os::unix::fs::MetadataExt;
 +use std::os::unix::fs::PermissionsExt;
 +use std::path::Component;
 +use std::path::Path;
@@ -42945,6 +43090,15 @@ index 000000000..16e85ed86
 +        if !repository.is_absolute() || repository.canonicalize()? != repository {
 +            return Err(invalid("repository must be canonical"));
 +        }
++        let cached = HASHES
++            .lock()
++            .ok()
++            .and_then(|mut hashes| hashes.remove(repository))
++            .unwrap_or_default();
++        let settled = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map_or(0, |now| now.as_secs() as i64 - 2);
++        let mut stamped = BTreeMap::new();
 +        let mut stack = vec![repository.to_path_buf()];
 +        let mut files = BTreeMap::new();
 +        let mut bytes = 0_usize;
@@ -42991,11 +43145,31 @@ index 000000000..16e85ed86
 +                        .to_str()
 +                        .ok_or_else(|| invalid("non-UTF8 workspace path"))?
 +                        .to_owned();
-+                    let (content, _) = read_version(repository, &name, max_bytes)?
-+                        .ok_or_else(|| invalid("workspace file disappeared during index"))?;
-+                    files.insert(name, content_hash(&content));
++                    let stamp = (
++                        metadata.len(),
++                        metadata.ctime(),
++                        metadata.ctime_nsec(),
++                        metadata.ino(),
++                    );
++                    let hash = match cached.get(&name) {
++                        Some((seen, hash)) if *seen == stamp => hash.clone(),
++                        _ => {
++                            let (content, _) = read_version(repository, &name, max_bytes)?
++                                .ok_or_else(|| {
++                                    invalid("workspace file disappeared during index")
++                                })?;
++                            content_hash(&content)
++                        }
++                    };
++                    if stamp.1 < settled {
++                        stamped.insert(name.clone(), (stamp, hash.clone()));
++                    }
++                    files.insert(name, hash);
 +                }
 +            }
++        }
++        if let Ok(mut hashes) = HASHES.lock() {
++            hashes.insert(repository.to_path_buf(), stamped);
 +        }
 +        Ok(Self { files })
 +    }
@@ -43029,6 +43203,10 @@ index 000000000..16e85ed86
 +}
 +
 +static OBSERVED: std::sync::Mutex<BTreeSet<PathBuf>> = std::sync::Mutex::new(BTreeSet::new());
++type Stamped = BTreeMap<String, ((u64, i64, i64, u64), String)>;
++/// Content hashes keyed by size, ctime and inode, so unchanged files are not reread.
++static HASHES: std::sync::Mutex<BTreeMap<PathBuf, Stamped>> =
++    std::sync::Mutex::new(BTreeMap::new());
 +static RECORDED: std::sync::Mutex<BTreeMap<PathBuf, Vec<RecordedChange>>> =
 +    std::sync::Mutex::new(BTreeMap::new());
 +
@@ -43513,6 +43691,18 @@ index 000000000..16e85ed86
 +mod transaction_tests {
 +    use super::*;
 +    use std::cell::Cell;
++
++    #[test]
++    fn workspace_index_rehashes_same_size_edits() {
++        let directory = tempfile::tempdir().unwrap();
++        let root = directory.path().canonicalize().unwrap();
++        fs::write(root.join("a.txt"), "one\n").unwrap();
++        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
++        fs::write(root.join("a.txt"), "two\n").unwrap();
++        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
++        assert_eq!(after.files["a.txt"], content_hash(b"two\n"));
++        assert_eq!(before.changed(&after).len(), 1);
++    }
 +
 +    #[test]
 +    fn streamed_snapshot_hash_matches_the_serialized_digest() {
@@ -61542,10 +61732,10 @@ index 000000000..430d032bd
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..b82627bee
+index 000000000..fd396b3b4
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,572 @@
+@@ -0,0 +1,581 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -62087,6 +62277,15 @@ index 000000000..b82627bee
 +    }
 +    match operation {
 +        "app.routes" => Ok(codex_omd::app_routes::routes()),
++        "turns.activity" => {
++            let thread = scope
++                .thread
++                .map(str::to_owned)
++                .or_else(current_thread)
++                .ok_or_else(|| other("turn_activity_unavailable"))?;
++            codex_omd::turn_activity::read_registered(&thread, call.arguments)
++                .map_err(std::io::Error::other)
++        }
 +        "events.publish" => {
 +            let channel = call.arguments["channel"]
 +                .as_str()
@@ -62120,10 +62319,10 @@ index 000000000..b82627bee
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..65a96e60f
+index 000000000..1bca19f5f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,224 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -62287,6 +62486,35 @@ index 000000000..65a96e60f
 +        routes
 +            .as_array()
 +            .is_some_and(|routes| routes.iter().any(|route| route["method"] == "thread/list"))
++    );
++}
++
++#[test]
++fn user_commands_read_turn_activity_through_the_session_host() {
++    let dir = tempfile::tempdir().unwrap();
++    let paths = paths(dir.path());
++    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
++    let call = || codex_omd::ModHostCall {
++        operation: "turns.activity".into(),
++        arguments: json!({"last": 1}),
++    };
++    let scope = crate::mod_runtime::CallScope {
++        thread: Some("thread-2"),
++        ..scope(InvocationContext::User)
++    };
++    let registration = codex_omd::turn_activity::register_reader(Arc::new(|thread, arguments| {
++        Ok(json!({"thread": thread, "arguments": arguments}))
++    }));
++    let read = host_call(&paths, &policy, grants(&["sessions"]), "m", call(), &scope).unwrap();
++    assert_eq!(
++        read,
++        json!({"thread": "thread-2", "arguments": {"last": 1}})
++    );
++    drop(registration);
++    let unavailable = host_call(&paths, &policy, grants(&["sessions"]), "m", call(), &scope);
++    assert_eq!(
++        unavailable.unwrap_err().to_string(),
++        "turn_activity_unavailable"
 +    );
 +}
 +
@@ -64516,10 +64744,10 @@ index 000000000..ba09dbc55
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..19549a578
+index 000000000..c89a50da6
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,845 @@
+@@ -0,0 +1,846 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -65181,6 +65409,7 @@ index 000000000..19549a578
 +
 +#[test]
 +#[ignore = "explicit bounded appearance timing fixture"]
++#[allow(clippy::print_stdout)]
 +fn appearance_render_cost_fixture() {
 +    use std::hint::black_box;
 +    use std::io::Cursor;
@@ -66497,7 +66726,7 @@ index da417ce52..6fe1da13c 100644
                          composer,
                          self.pump.motion,
 diff --git a/codex-rs/tui/src/startup_draft_layout_tests.rs b/codex-rs/tui/src/startup_draft_layout_tests.rs
-index 1644ad310..a52e3406c 100644
+index 1644ad310..c06388c9f 100644
 --- a/codex-rs/tui/src/startup_draft_layout_tests.rs
 +++ b/codex-rs/tui/src/startup_draft_layout_tests.rs
 @@ -3,6 +3,79 @@
@@ -66541,7 +66770,7 @@ index 1644ad310..a52e3406c 100644
 +        let text = buffer
 +            .content
 +            .iter()
-+            .map(|cell| cell.symbol())
++            .map(ratatui::buffer::Cell::symbol)
 +            .collect::<String>();
 +        assert!(text.contains(&format!(
 +            "OpenAI Codex (v{}) | External profile",
@@ -66555,7 +66784,7 @@ index 1644ad310..a52e3406c 100644
 +        let text = inline
 +            .content
 +            .iter()
-+            .map(|cell| cell.symbol())
++            .map(ratatui::buffer::Cell::symbol)
 +            .collect::<String>();
 +        assert!(text.contains("External profile"));
 +        assert!(!text.contains("Pull up a prompt."));
@@ -66569,7 +66798,7 @@ index 1644ad310..a52e3406c 100644
 +    let text = fallback
 +        .content
 +        .iter()
-+        .map(|cell| cell.symbol())
++        .map(ratatui::buffer::Cell::symbol)
 +        .collect::<String>();
 +    assert!(text.contains("Pull up a prompt."));
 +    assert!(!text.contains("External profile"));
@@ -66769,7 +66998,7 @@ index baaa0ebdf..a3e1a8867 100644
      let pasted = "x".repeat(/*n*/ 1_100);
      let mut pump = startup_test_pump(std::iter::once(TuiEvent::Paste(pasted.clone())));
 diff --git a/codex-rs/tui/src/startup_orchestration.rs b/codex-rs/tui/src/startup_orchestration.rs
-index a0ff9cb31..6796dbbc7 100644
+index a0ff9cb31..e2f8521fb 100644
 --- a/codex-rs/tui/src/startup_orchestration.rs
 +++ b/codex-rs/tui/src/startup_orchestration.rs
 @@ -179,7 +179,12 @@ pub(super) async fn run_main_inner(
@@ -66793,7 +67022,7 @@ index a0ff9cb31..6796dbbc7 100644
 +    let presentation_repository = presentation
 +        .config_cwd
 +        .as_ref()
-+        .map(|cwd| cwd.to_path_buf())
++        .map(codex_utils_absolute_path::AbsolutePathBuf::to_path_buf)
 +        .or_else(|| std::env::current_dir().ok());
 +    if let Some(repository) = presentation_repository {
 +        tokio::task::spawn_blocking(move || {

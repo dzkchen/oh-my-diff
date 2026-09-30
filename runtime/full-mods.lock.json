@@ -63,6 +63,22 @@
       "source": "mods/first-party/omd_claude_cli",
       "version": "0.2.0-preview.1"
     },
+    "omd_continue": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "commands",
+        "sessions"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "54a4093a0a9bb17162b093519a59ba3b93c8bfc053d163f53b2384c8814dfd10",
+        "mod.json": "79fedf806e0abf30e191f5065352c706f61a35a9d255eecab55da5a66913f638"
+      },
+      "id": "omd_continue",
+      "package_sha256": "742eb0f99fd5ae599897def8dbd1601ba1aea7cdc96b6290a930cae4f22e1b5a",
+      "source": "mods/first-party/omd_continue",
+      "version": "0.1.0-preview.1"
+    },
     "omd_git": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
@@ -188,6 +204,21 @@
       "package_sha256": "41a03bb55120be87c0d452691e972e452fb6822cd457e16b7245da39a2a03358",
       "source": "mods/first-party/omd_model_picker",
       "version": "0.2.0-preview.1"
+    },
+    "omd_plan_removal": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "builtins"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "0ea3e396de5471051d42dd1148d6a38e206a4442204d90872150983284c118f5",
+        "mod.json": "b05a649cedf294f7b44340ce89ffa20814fae020dfc59ca079863ed358c4a040"
+      },
+      "id": "omd_plan_removal",
+      "package_sha256": "b71e741b6180da9c4060a511e5ab19c9be352478e33e9c81cdc0a70287afa4b9",
+      "source": "mods/first-party/omd_plan_removal",
+      "version": "0.1.0-preview.1"
     },
     "omd_programmable_context": {
       "api": "0.2.0-experimental.5",

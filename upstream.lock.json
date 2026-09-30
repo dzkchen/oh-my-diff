@@ -17,8 +17,8 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.159.1.patch",
-      "sha256": "edd850c7829d2ae56c1f508a7244d6a9fc8ca391d7e294f207a62cd9efafc1ae"
+      "sha256": "9ec16967cd2da9c079f84710615510de637d4b06dd281f58ee75480e43a4ecf6"
     }
   ],
-  "compatibility_evidence": ".docs/audits/batch3aa-appearance-identity-20260929.md"
+  "compatibility_evidence": ".docs/audits/batch3b-plan-continue-simplify-20260930.md"
 }

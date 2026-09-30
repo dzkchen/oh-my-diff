@@ -257,6 +257,16 @@ pub(in crate::mods) async fn read(
     lead: &Lead,
     arguments: Value,
 ) -> Result<Value, String> {
+    tokio::task::spawn_blocking(prepare(core, lead, arguments)?)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+pub(in crate::mods) fn prepare(
+    core: &Core,
+    lead: &Lead,
+    arguments: Value,
+) -> Result<impl FnOnce() -> Result<Value, String> + Send + 'static, String> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Input {
@@ -292,7 +302,7 @@ pub(in crate::mods) async fn read(
         .lock()
         .map(|commands| commands.clone())
         .unwrap_or_default();
-    tokio::task::spawn_blocking(move || {
+    Ok(move || {
         let live = |id: &str| match id.split_once('/') {
             Some((owner, session)) => processes.running(owner, session),
             None => Some(commands.contains(id)),
@@ -303,8 +313,6 @@ pub(in crate::mods) async fn read(
         value["recording"] = Value::Bool(recording);
         Ok(value)
     })
-    .await
-    .map_err(|error| error.to_string())?
 }
 
 pub(in crate::mods) async fn resume_payload(core: &Core, lead: &Lead) -> Value {

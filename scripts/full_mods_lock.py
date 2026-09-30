@@ -11,10 +11,11 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "runtime/full-mods.lock.json"
-PACKAGES = ("omd_advisor", "omd_checks", "omd_claude_cli", "omd_git", "omd_graph_navigator", "omd_guideline_governance",
-            "omd_inspector", "omd_logo", "omd_lsp_sync", "omd_model_picker", "omd_programmable_context",
-            "omd_project_pi_prompts", "omd_reactive_rules", "omd_repository_analysis", "omd_research",
-            "omd_source_knowledge", "omd_task_tools", "omd_theme", "omd_typed_tasks")
+PACKAGES = ("omd_advisor", "omd_checks", "omd_claude_cli", "omd_continue", "omd_git", "omd_graph_navigator",
+            "omd_guideline_governance", "omd_inspector", "omd_logo", "omd_lsp_sync", "omd_model_picker",
+            "omd_plan_removal", "omd_programmable_context", "omd_project_pi_prompts", "omd_reactive_rules",
+            "omd_repository_analysis", "omd_research", "omd_source_knowledge", "omd_task_tools", "omd_theme",
+            "omd_typed_tasks")
 
 
 def source_files(identifier):

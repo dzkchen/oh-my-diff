@@ -72,6 +72,7 @@ pub(super) struct State {
 struct Delivery {
     task: tokio::task::JoinHandle<()>,
     _wake: codex_omd::client_surface::Registration,
+    _activity: codex_omd::turn_activity::ReaderRegistration,
 }
 
 impl Drop for Delivery {

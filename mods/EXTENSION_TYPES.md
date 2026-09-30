@@ -42,6 +42,8 @@ contains only the packages labeled `bundled` below.
 | `omd_theme@0.3.0-candidate.1` | `mod` | `mods/first-party/omd_theme` | Composes live terminal palettes, backgrounds, composer appearance and greeting settings through public presentation APIs; installed inactive in OMD+. |
 | `omd_reactive_rules@0.1.0-preview.1` | `mod` | `mods/first-party/omd_reactive_rules` | Matches bounded explicit rules against completed response items and requests a stream stop and retry through response_stream middleware; installed inactive in OMD+. |
 | `omd_programmable_context@0.1.0-preview.1` | `mod` | `mods/first-party/omd_programmable_context` | Owns the Python-facing context, child-agent and refinement API plus a versioned session harness in the model-bound request view; installed inactive in OMD+. |
+| `omd_plan_removal@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_removal` | Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); installed inactive in OMD+. |
+| `omd_continue@0.1.0-preview.1` | `mod` | `mods/first-party/omd_continue` | Owns the user-typed /continue recovery prompt and a bounded summary built only from the host turn-activity ledger; installed inactive in OMD+. |
 
 ## Author examples
 

@@ -321,6 +321,41 @@ fn tail(values: &[Value], limit: usize) -> Value {
     Value::Array(values[values.len().saturating_sub(limit)..].to_vec())
 }
 
+pub type Reader = std::sync::Arc<dyn Fn(&str, Value) -> Result<Value, String> + Send + Sync>;
+
+static READER: std::sync::Mutex<(u64, Option<Reader>)> = std::sync::Mutex::new((0, None));
+
+fn reader() -> std::sync::MutexGuard<'static, (u64, Option<Reader>)> {
+    READER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[must_use]
+pub struct ReaderRegistration(u64);
+
+impl Drop for ReaderRegistration {
+    fn drop(&mut self) {
+        let mut slot = reader();
+        if slot.0 == self.0 {
+            slot.1 = None;
+        }
+    }
+}
+
+/// Lets in-process clients read the ledger through the session host that records it.
+pub fn register_reader(read: Reader) -> ReaderRegistration {
+    let mut slot = reader();
+    slot.0 += 1;
+    slot.1 = Some(read);
+    ReaderRegistration(slot.0)
+}
+
+pub fn read_registered(thread: &str, arguments: Value) -> Result<Value, String> {
+    let read = reader().1.clone().ok_or("turn_activity_unavailable")?;
+    read(thread, arguments)
+}
+
 #[cfg(test)]
 #[path = "turn_activity_tests.rs"]
 mod tests;

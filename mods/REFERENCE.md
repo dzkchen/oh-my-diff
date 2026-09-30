@@ -229,7 +229,10 @@ activation, hides slash commands and disables collaboration modes from the next
 idle boundary until the mod is disabled, unloaded or fails. `/quit`,
 `/exit`, `/approvals`, `/permissions`, `/status`, `/logout` and the default mode
 cannot be removed. A turn that requests a disabled mode runs in the default mode
-and reports why, including for app-server and exec clients.
+with that mode's instructions cleared and a warning (a `warning` notification
+for app-server clients), including the turn at whose boundary the mod loads.
+Tools limited to collaboration modes lose the disabled ones and are not offered
+when none remain.
 
 ### Contracts and receipts
 
@@ -462,8 +465,11 @@ mod runtime or the model.
 `store.*` accepts `scope: 'thread'`: data forks with the thread, is removed
 when the thread is deleted and kept when it is archived. `resume` carries
 `last_turn` and `restarted`. `turns.activity {turn_id?, last?}` reads turn
-outcomes, tool calls, processes and file changes for the current thread,
-recorded only while an enabled mod holds `sessions`. Commands record their exit
+outcomes, tool calls, processes and file changes for the current thread from
+event, tool and terminal slash-command callbacks, recorded only while an
+enabled mod holds `sessions`. File changes come from the same workspace
+observer as `workspace_change`, which rereads only files whose size, ctime or
+inode changed. Commands record their exit
 code when they finish, including commands that outlive their tool call; the log
 is removed when the thread is deleted.
 

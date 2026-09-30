@@ -585,6 +585,22 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the Python-facing context, child-agent and refinement API plus a versioned session harness in the model-bound request view; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_plan_removal",
+      "id": "omd_plan_removal",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_continue",
+      "id": "omd_continue",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the user-typed /continue recovery prompt and a bounded summary built only from the host turn-activity ledger; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

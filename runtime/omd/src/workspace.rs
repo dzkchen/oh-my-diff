@@ -17,6 +17,7 @@ use std::fs;
 use std::io::Read;
 use std::io::Write;
 use std::io::{self};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Component;
 use std::path::Path;
@@ -419,6 +420,15 @@ impl WorkspaceIndex {
         if !repository.is_absolute() || repository.canonicalize()? != repository {
             return Err(invalid("repository must be canonical"));
         }
+        let cached = HASHES
+            .lock()
+            .ok()
+            .and_then(|mut hashes| hashes.remove(repository))
+            .unwrap_or_default();
+        let settled = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |now| now.as_secs() as i64 - 2);
+        let mut stamped = BTreeMap::new();
         let mut stack = vec![repository.to_path_buf()];
         let mut files = BTreeMap::new();
         let mut bytes = 0_usize;
@@ -465,11 +475,31 @@ impl WorkspaceIndex {
                         .to_str()
                         .ok_or_else(|| invalid("non-UTF8 workspace path"))?
                         .to_owned();
-                    let (content, _) = read_version(repository, &name, max_bytes)?
-                        .ok_or_else(|| invalid("workspace file disappeared during index"))?;
-                    files.insert(name, content_hash(&content));
+                    let stamp = (
+                        metadata.len(),
+                        metadata.ctime(),
+                        metadata.ctime_nsec(),
+                        metadata.ino(),
+                    );
+                    let hash = match cached.get(&name) {
+                        Some((seen, hash)) if *seen == stamp => hash.clone(),
+                        _ => {
+                            let (content, _) = read_version(repository, &name, max_bytes)?
+                                .ok_or_else(|| {
+                                    invalid("workspace file disappeared during index")
+                                })?;
+                            content_hash(&content)
+                        }
+                    };
+                    if stamp.1 < settled {
+                        stamped.insert(name.clone(), (stamp, hash.clone()));
+                    }
+                    files.insert(name, hash);
                 }
             }
+        }
+        if let Ok(mut hashes) = HASHES.lock() {
+            hashes.insert(repository.to_path_buf(), stamped);
         }
         Ok(Self { files })
     }
@@ -503,6 +533,10 @@ pub struct RecordedChange {
 }
 
 static OBSERVED: std::sync::Mutex<BTreeSet<PathBuf>> = std::sync::Mutex::new(BTreeSet::new());
+type Stamped = BTreeMap<String, ((u64, i64, i64, u64), String)>;
+/// Content hashes keyed by size, ctime and inode, so unchanged files are not reread.
+static HASHES: std::sync::Mutex<BTreeMap<PathBuf, Stamped>> =
+    std::sync::Mutex::new(BTreeMap::new());
 static RECORDED: std::sync::Mutex<BTreeMap<PathBuf, Vec<RecordedChange>>> =
     std::sync::Mutex::new(BTreeMap::new());
 
@@ -987,6 +1021,18 @@ pub fn cleanup_owned_directory(parent: &Path, directory: &Path) -> io::Result<()
 mod transaction_tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn workspace_index_rehashes_same_size_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        fs::write(root.join("a.txt"), "one\n").unwrap();
+        let before = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        fs::write(root.join("a.txt"), "two\n").unwrap();
+        let after = WorkspaceIndex::capture(&root, 16, 1024).unwrap();
+        assert_eq!(after.files["a.txt"], content_hash(b"two\n"));
+        assert_eq!(before.changed(&after).len(), 1);
+    }
 
     #[test]
     fn streamed_snapshot_hash_matches_the_serialized_digest() {

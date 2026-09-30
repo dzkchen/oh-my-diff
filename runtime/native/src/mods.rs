@@ -380,6 +380,11 @@ fn publish(
     }
 }
 
+// `sessions` holders read changed files from the turn-activity ledger.
+fn observes_workspace(runtime: &ModHost) -> bool {
+    runtime.has_event("workspace_change") || runtime.holds_capability("sessions")
+}
+
 fn refresh_contract(runtime: &ModHost, session: &Session) {
     let documents = runtime.contract_documents();
     if session
@@ -470,7 +475,7 @@ impl Core {
             let Some(facts) = runtime.lock().ok().map(|runtime| {
                 codex_omd::observe_workspace_changes(
                     &host.repository,
-                    runtime.has_event("workspace_change"),
+                    observes_workspace(&runtime),
                 );
                 facts(&runtime)
             }) else {
@@ -946,7 +951,8 @@ impl TurnLifecycleContributor for Mods {
     }
 
     fn disabled_collaboration_modes(&self) -> Vec<String> {
-        match self.runtime.try_lock() {
+        // Input interception reloads this runtime before the core reads the turn's modes.
+        match self.input_runtime.try_lock() {
             Ok(runtime) => runtime
                 .builtin_controls()
                 .into_iter()
@@ -1058,7 +1064,7 @@ impl TurnLifecycleContributor for Mods {
                     refresh_contract(&runtime, &session);
                     codex_omd::observe_workspace_changes(
                         &session_repository,
-                        runtime.has_event("workspace_change"),
+                        observes_workspace(&runtime),
                     );
                 }
             })
@@ -1351,7 +1357,7 @@ impl ToolLifecycleContributor for Mods {
             let snapshot = tokio::task::spawn_blocking(move || {
                 let observed = runtime
                     .lock()
-                    .is_ok_and(|runtime| runtime.has_event("workspace_change"));
+                    .is_ok_and(|runtime| observes_workspace(&runtime));
                 codex_omd::observe_workspace_changes(&repository, observed);
                 codex_omd::change_baseline(&repository)
             })

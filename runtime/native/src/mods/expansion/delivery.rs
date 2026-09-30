@@ -134,6 +134,15 @@ fn ensure_delivery(core: &Arc<Core>) {
     let signal = wake.clone();
     let registration =
         codex_omd::client_surface::register_wake(Arc::new(move || signal.notify_one()));
+    let reader = Arc::downgrade(core);
+    let activity = codex_omd::turn_activity::register_reader(Arc::new(move |thread, arguments| {
+        let core = reader.upgrade().ok_or("turn_activity_unavailable")?;
+        let lead = ThreadId::from_string(thread)
+            .ok()
+            .and_then(|thread| core.expansion.lead(thread))
+            .ok_or("turn_activity_unavailable")?;
+        super::activity::prepare(&core, &lead, arguments)?()
+    }));
     let weak = Arc::downgrade(core);
     let task = tokio::spawn(async move {
         loop {
@@ -150,6 +159,7 @@ fn ensure_delivery(core: &Arc<Core>) {
     *delivery = Some(Delivery {
         task,
         _wake: registration,
+        _activity: activity,
     });
 }
 

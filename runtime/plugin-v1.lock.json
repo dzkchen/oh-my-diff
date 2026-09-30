@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "d896352e235b9bbdccde4aee7ebb4d6d9cf57898e666c8912d38df74738c8149"
+    "sha256": "e2db97b6324f30dba6a1281b2eed237c87aabf5e5f7f0ce62d2db53c56e35e2f"
   },
   "plugins": {
     "omd-guidance-hooks": {
@@ -81,10 +81,15 @@
     "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/references/full-short-v1.md": "548f64606aedcd29d24e0b962df2ebd2696c51c47b1fcadef6a068bd76e14459",
     "plugins/omd-guidance-hooks/skills/omd-simplicity-guidance/references/tiny-selected-v1.md": "6d82565c7a81fd1c2ddf8d5fff10573cad9ee9bd4d8601bcba9ba64c1204581b",
     "plugins/omd-guidance-hooks/skills/omd-structured-reports/SKILL.md": "6de37a55033d4389109ff564f5bd03d337f511a94803d5bbc409d6373deb29aa",
+    "plugins/omd-review-policy/.codex-plugin/omd.json": "1b3c100402849f538792d292baab9226c88ad9ffd3d2684bd5ca97183eff09ef",
     "plugins/omd-review-policy/.codex-plugin/plugin.json": "221fe94f280ad078af6838b81debb8bad137b33143b30ebd83e651ded4697a14",
+    "plugins/omd-review-policy/README.md": "26b0121068015225ac7e916da1296a15363f610d220189d641b18a13bae2c4b7",
     "plugins/omd-review-policy/hooks/hooks.json": "695c491a68372be3a48bd44c4d3ef5e38bea5432cd16305b8a19936547f325bd",
     "plugins/omd-review-policy/hooks/omd_review_lifecycle.py": "4af7ddb744211a046f051916860c8be6a3a7d5f2a4fc78c8d93f3296ba3efd79",
+    "plugins/omd-review-policy/mod/index.ts": "1fd02ea1f64a5433575f6d82f48fde4b804843fab9c2c59e13d14ea258a1c8be",
+    "plugins/omd-review-policy/mod/mod.json": "3d2a500c74bab19554d53c7b071bd1aadb6ea713996313ec800ade5bf64d21e3",
     "plugins/omd-review-policy/skills/omd-final-review/SKILL.md": "38051ec9e664e9f884b53819e36a25aa93892afbf9c36e55172651edb961ed2e",
-    "plugins/omd-review-policy/skills/omd-review-cadence/SKILL.md": "35376621fbd683cb3a7f388a7f8e3faf42f732637225b6c64e75b7b6cf8afe0c"
+    "plugins/omd-review-policy/skills/omd-review-cadence/SKILL.md": "35376621fbd683cb3a7f388a7f8e3faf42f732637225b6c64e75b7b6cf8afe0c",
+    "plugins/omd-review-policy/skills/omd-simplify/SKILL.md": "7e658a7ac2e7ee60fd77683f56e5be1a107e7f6289ea19113c3bbfedab6a51f5"
   }
 }

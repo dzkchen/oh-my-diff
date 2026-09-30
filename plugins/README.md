@@ -8,9 +8,10 @@ install or enable it in Codex.
 - `omd-guidance-hooks` contains three explicit skills and two selected
   lifecycle hooks. It has no MCP server, app connector, network dependency, or
   TypeScript mod.
-- `omd-review-policy` contains explicit intermediate- and final-review skills
-  plus an every-turn lifecycle reminder. It never writes the findings ledger or
-  chooses reviewer authority.
+- `omd-review-policy` contains explicit intermediate- and final-review skills,
+  an every-turn lifecycle reminder, and an `omd-simplify` skill with an opt-in
+  `/simplify` mod component that requires separate trust. It never writes the
+  findings ledger or chooses reviewer authority.
 - `omd-application-bridges` exposes adapter-scoped browser, Node, Rust, Python,
   and Java MCP tools over the managed bridge host, with selected session
   context and managed process teardown.
