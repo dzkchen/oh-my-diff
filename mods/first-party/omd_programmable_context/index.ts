@@ -11,7 +11,7 @@ type Mirror = { base: Sections; thread: string | null; version: number; sections
 const SECTIONS = ['notes', 'memories', 'skills', 'agents'] as const;
 const KEEP_VERSIONS = 16;
 const HARNESS_BYTES = 12_000;
-const LOAD_BYTES = 96_000;
+const LOAD_BYTES = 60_000;
 const TOOL = 'mod_omd_programmable_context';
 const PYTHON_API = `import json as _json
 
@@ -81,7 +81,7 @@ class RLM:
         kept = _call("vars", name=name)
         return Var(kept["value"], kept["sha256"], kept["sources"])
 
-    def spawn(self, prompt, role="worker", spec=None, route=None, workspace=None, tools=None):
+    def spawn(self, prompt, role=None, spec=None, route=None, workspace=None, tools=None):
         spawned = _call("spawn", prompt=prompt, role=role, spec=spec, route=route, workspace=workspace, tools=tools)
         return Agent(spawned["handle"], spawned["route"])
 
@@ -129,29 +129,28 @@ function proposal(value: unknown): Proposal {
 
 function applied(sections: Sections, changes: Change[]) {
   const next: Sections = JSON.parse(JSON.stringify(sections));
-  for (const { section, name, value } of changes) {
-    const entries = next[section] as Record<string, string | Spec>;
-    if (value === null) delete entries[name];
-    else entries[name] = value;
-  }
+  for (const { section, name, value } of changes) (next[section] as Record<string, string | Spec | null>)[name] = value;
   if (JSON.stringify(next).length > HARNESS_BYTES) throw new Error('harness_limit: remove entries before adding more');
   return next;
 }
 
 const shown = (value: string | Spec) => typeof value === 'string' ? value : JSON.stringify(value).slice(0, 160);
 
-function diff(sections: Sections, { changes, reason, evidence }: Proposal) {
-  const lines = changes.map(({ section, name, value }) => {
+function lines(sections: Sections, changes: Change[]) {
+  return changes.flatMap(({ section, name, value }) => {
     const before = (sections[section] as Record<string, string | Spec>)[name];
-    if (value === null) return `- ${section}/${name}`;
-    return before === undefined ? `+ ${section}/${name}: ${shown(value)}` : `~ ${section}/${name}: ${shown(before)} -> ${shown(value)}`;
+    if (JSON.stringify(before) === JSON.stringify(value ?? undefined)) return [];
+    if (value === null) return [`- ${section}/${name}`];
+    return [before === undefined ? `+ ${section}/${name}: ${shown(value)}` : `~ ${section}/${name}: ${shown(before)} -> ${shown(value)}`];
   });
-  return [...lines, `reason: ${reason}`, `evidence: ${evidence.join(', ')}`].join('\n');
 }
+
+const diff = (sections: Sections, { changes, reason, evidence }: Proposal) => [...lines(sections, changes), `reason: ${reason}`, `evidence: ${evidence.join(', ')}`].join('\n');
 
 function merged(...layers: Sections[]) {
   const result = empty();
   for (const layer of layers) for (const section of SECTIONS) Object.assign(result[section], layer[section]);
+  for (const section of SECTIONS) for (const [name, value] of Object.entries(result[section])) if (value === null) delete result[section][name];
   return result;
 }
 
@@ -195,6 +194,7 @@ export default function activate(api: ModAPI) {
   };
   const snapshot = (version: number): Sections => version ? api.host.call('store.get', { key: `harness.v${version}`, scope: 'thread' })?.value as unknown as Sections ?? empty() : empty();
   const layer = (scope: 'user' | 'repository'): Sections => (api.host.call('store.get', { key: 'harness', scope })?.value as unknown as Sections | undefined) ?? empty();
+  const effective = (sections: Sections) => merged(mirror().base, sections);
   const publish = (update: Partial<Mirror>) => {
     const current = mirror();
     const id = thread();
@@ -212,7 +212,7 @@ export default function activate(api: ModAPI) {
   };
   const apply = (record: ReturnType<typeof harness>, change: Proposal, before = snapshot(record.value.version)) => {
     commit(record, applied(before, change.changes), { version: record.value.version + 1, kind: 'refine', reason: change.reason, evidence: change.evidence });
-    return diff(before, change);
+    return diff(effective(before), change);
   };
 
   api.on('start', () => api.state.set({ base: merged(layer('user'), layer('repository')), thread: thread(), version: 0, sections: empty(), vars: {} } as unknown as Json));
@@ -226,16 +226,11 @@ export default function activate(api: ModAPI) {
   tool({ name: 'python_api', description: 'Return the Python source of the rlm helper for the persistent python kernel. Run it once per kernel with exec(...).', parameters: schema({}) },
     () => ({ source: PYTHON_API }));
 
-  tool({ name: 'load', description: 'Read up to 8 workspace files with their current SHA-256 for use as context variables.', parameters: schema({ paths: { type: 'array', items: { type: 'string' }, maxItems: 8 } }, ['paths']) }, value => {
+  tool({ name: 'load', description: `Read up to 8 workspace files (${LOAD_BYTES} bytes in total) with their current SHA-256 for use as context variables.`, parameters: schema({ paths: { type: 'array', items: { type: 'string' }, maxItems: 8 } }, ['paths']) }, value => {
     if (!strings(value.paths, 8, 512) || !value.paths.length) throw new Error('load_invalid: 1-8 paths');
-    const files = api.host.call('workspace.read', { paths: value.paths }).files;
-    let budget = LOAD_BYTES;
-    return { files: Object.fromEntries(Object.entries(files).map(([path, file]) => {
-      if (!file) return [path, null];
-      const kept = file.text.slice(0, Math.max(0, budget));
-      budget -= kept.length;
-      return [path, { text: kept, sha256: file.sha256, chars: file.text.length, truncated: kept.length < file.text.length }];
-    })) };
+    const bytes = Object.values(api.host.call('workspace.stat', { paths: value.paths }).files).reduce((total, file) => total + (file?.size ?? 0), 0);
+    if (bytes > LOAD_BYTES) throw new Error(`load_limit: ${bytes} bytes requested, at most ${LOAD_BYTES}; load fewer files or read line ranges with rlm.sh`);
+    return api.host.call('workspace.read', { paths: value.paths });
   });
 
   tool({ name: 'keep', description: 'Persist a named context variable (up to 32 KiB) with its sources for this session, so it survives kernel restarts and compaction.', parameters: schema({ name: { type: 'string' }, value: { type: 'string' }, sources: { type: 'array', items: { type: 'string' }, maxItems: 8 } }, ['name', 'value']) }, async value => {
@@ -272,7 +267,7 @@ export default function activate(api: ModAPI) {
 
   tool({ name: 'spawn', description: 'Start an isolated child agent on a worker route, optionally from a stored agent spec. Returns a handle.', parameters: schema({ prompt: { type: 'string' }, role: { type: 'string' }, spec: { type: 'string' }, route: { type: 'string' }, workspace: { type: 'string', enum: ['read_only', 'isolated_worktree'] }, tools: { type: 'array', items: { type: 'string' }, maxItems: 16 } }, ['prompt']) }, value => {
     if (!text(value.prompt, 16_000)) throw new Error('spawn_invalid: prompt required');
-    const stored = value.spec === undefined ? undefined : merged(mirror().base, snapshot(harness().value.version)).agents[String(value.spec)];
+    const stored = value.spec === undefined ? undefined : effective(snapshot(harness().value.version)).agents[String(value.spec)];
     if (value.spec !== undefined && !stored) throw new Error(`unknown_agent_spec: ${String(value.spec)}`);
     const options = { role: value.role ?? stored?.role ?? 'worker', workspace: value.workspace ?? stored?.workspace ?? 'read_only', tools: value.tools ?? stored?.tools };
     if (!text(options.role, 64) || !['read_only', 'isolated_worktree'].includes(String(options.workspace)) || (options.tools !== undefined && !strings(options.tools, 16, 64))) throw new Error('spawn_invalid: options');
@@ -304,7 +299,7 @@ export default function activate(api: ModAPI) {
 
   tool({ name: 'harness', description: 'Show the session harness: version, notes, memories, skills, agent specs, pending refinement and history.', parameters: schema({}) }, () => {
     const record = harness();
-    return { policy, version: record.value.version, sections: merged(mirror().base, snapshot(record.value.version)) as unknown as Json,
+    return { policy, version: record.value.version, sections: effective(snapshot(record.value.version)) as unknown as Json,
       pending: record.value.pending as unknown as Json, log: record.value.log as unknown as Json };
   });
 
@@ -316,7 +311,7 @@ export default function activate(api: ModAPI) {
     applied(before, change.changes);
     if (policy === 'auto') return { status: 'applied', version: record.value.version + 1, diff: apply(record, change, before) };
     save(record, { ...record.value, pending: change });
-    return { status: 'pending', diff: diff(before, change), next: 'The user reviews it with /refine and applies it with /refine apply.' };
+    return { status: 'pending', diff: diff(effective(before), change), next: 'The user reviews it with /refine and applies it with /refine apply.' };
   });
 
   api.command('refine', refusing(argument => {
@@ -325,7 +320,7 @@ export default function activate(api: ModAPI) {
     const pending = record.value.pending;
     if (action === 'show') {
       const history = record.value.log.map(entry => `v${entry.version} ${entry.kind}: ${entry.reason}`).join('\n');
-      return { display: [`Refine policy: ${policy}. Session harness v${record.value.version}.`, pending ? `Pending:\n${diff(snapshot(record.value.version), pending)}` : 'No pending refinement.', history].filter(Boolean).join('\n') };
+      return { display: [`Refine policy: ${policy}. Session harness v${record.value.version}.`, pending ? `Pending:\n${diff(effective(snapshot(record.value.version)), pending)}` : 'No pending refinement.', history].filter(Boolean).join('\n') };
     }
     if (action === 'apply') {
       if (policy === 'off') return { display: 'The refine policy is off; nothing was applied.' };
@@ -344,11 +339,16 @@ export default function activate(api: ModAPI) {
     }
     if (action === 'promote' && (target === 'project' || target === 'personal')) {
       const scope = target === 'project' ? 'repository' : 'user';
-      const sections = snapshot(record.value.version);
-      const confirmed = api.host.call('terminal.prompt', { kind: 'confirm', title: `Promote the session harness to ${target} scope?`, message: `Future sessions ${target === 'project' ? 'in this repository' : 'for this user'} will receive:\n${describe(sections).join('\n')}`.slice(0, 2000) });
-      if (confirmed.status !== 'accepted') return { display: 'Promotion declined.' };
+      const session = snapshot(record.value.version);
+      const changes = SECTIONS.flatMap(section => Object.entries(session[section]).map(([name, value]) => ({ section, name, value }) as Change));
       const current = api.host.call('store.get', { key: 'harness', scope });
-      api.host.call('store.put', { key: 'harness', value: sections as unknown as Json, expected_revision: current?.revision ?? null, scope });
+      const stored = (current?.value as unknown as Sections | undefined) ?? empty();
+      const next = merged(applied(stored, changes));
+      const changed = lines(stored, changes);
+      if (!changed.length) return { display: `The ${target} harness already matches this session.` };
+      const confirmed = api.host.call('terminal.prompt', { kind: 'confirm', title: `Promote the session harness to ${target} scope?`, message: `Future sessions ${target === 'project' ? 'in this repository' : 'for this user'} will receive these changes; other stored entries stay:\n${changed.join('\n')}`.slice(0, 2000) });
+      if (confirmed.status !== 'accepted') return { display: 'Promotion declined.' };
+      api.host.call('store.put', { key: 'harness', value: next as unknown as Json, expected_revision: current?.revision ?? null, scope });
       publish({ base: merged(layer('user'), layer('repository')) });
       return { display: `Promoted session harness v${record.value.version} to ${target} scope. Remove it with omd store reset --mod omd_programmable_context --scope ${scope}.` };
     }

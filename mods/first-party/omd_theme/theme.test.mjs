@@ -31,6 +31,7 @@ test('default greeting is hidden; palettes retain semantic colors and width-pres
   for (const palette of ['midnight', 'paper', 'contrast', 'frost', 'graphite', 'amber']) {
     const value = run('terminal', '', '', { settings: { palette, composer_gloss: true } }).value;
     assert.match(value.theme.failure, /^#[\da-f]{6}$/);
+    assert.equal(value.theme.syntax, palette === 'paper' ? 'catppuccin-latte' : 'catppuccin-mocha');
     assert.notEqual(value.surface_styles.composer.top, value.surface_styles.composer.bottom);
     assert.equal(value.message_template, undefined);
     assert.equal(value.completed_tools, undefined);
@@ -49,7 +50,11 @@ test('preview, save, reload, discard and reset keep user-selected greeting and p
   state = run('command', 'set', 'greeting_text Build something useful', { state }).state;
   state = run('command', 'set', 'greeting_enabled true', { state }).state;
   assert.equal(run('terminal', '', '', { state }).value.greeting, 'Build something useful');
+  const paletteSelect = state => run('terminal', '', '', { state: { ...state, open: true } }).value.sites.dialog.components[0].children.find(item => item.label === 'Palette library');
+  const shown = paletteSelect(state);
   state = run('command', 'reset', '', { state }).state;
+  assert.notEqual(paletteSelect(state).id, shown.id);
+  assert.equal(paletteSelect(state).value, 'midnight');
   assert.equal(run('terminal', '', '', { state }).value.greeting, '');
   assert.equal(run('terminal', '', '', { state }).value.background, 235);
 });
@@ -84,6 +89,8 @@ test('denied, declined, malformed and unsupported imports preserve the selected 
     assert.equal(output.state.preview.palette, 'paper');
     assert.deepEqual(output.state.imports, {});
   }
+  for (const [command, value] of [['set', 'palette constructor'], ['set', 'palette __proto__'], ['theme', '__proto__']]) assert.equal(run('command', command, value, { state: prior }).state.preview.palette, 'paper');
+  assert.equal(run('terminal', '', '', { state: { preview: { palette: 'constructor' } } }).value.background, 235);
   const invalid = run('command', 'set', 'scale 99', { state: prior });
   assert.equal(invalid.state.preview.palette, 'paper');
   assert.match(invalid.value.display, /0.1/);

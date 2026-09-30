@@ -9,7 +9,7 @@ type Settings = {
   gloss_opacity: number; borders: boolean; greeting_enabled: boolean; greeting_text: string;
 };
 type Asset = { resource: ResourceRef; label: string; ascii: string };
-type State = { saved: Settings | null; preview: Settings | null; asset: Asset | null; preview_asset: Asset | null; imports: Record<string, Palette>; open: boolean; page: string; notice: string };
+type State = { saved: Settings | null; preview: Settings | null; asset: Asset | null; preview_asset: Asset | null; imports: Record<string, Palette>; open: boolean; page: string; notice: string; revision: number };
 const DEFAULTS: Settings = {
   palette: 'midnight', symbols: 'ascii', background_color: '', foreground_color: '', backdrop_mode: 'none', ascii_text: '. :  ',
   position: 'fit', scale: 1, tint: '', dim: 0.65, opacity: 1, x: 0, y: 0,
@@ -119,9 +119,11 @@ function importTheme(format: string, text: string, name: string): Palette {
 }
 
 export default function activate(api: ModAPI) {
-  const readState = (): State => { const value = api.state.get() as Partial<State> | null; return { saved: value?.saved ? settings(value.saved) : null, preview: value?.preview ? settings(value.preview) : null, asset: value?.asset ?? null, preview_asset: value?.preview_asset ?? null, imports: value?.imports ?? {}, open: value?.open === true, page: value?.page ?? 'palette', notice: value?.notice ?? '' }; };
+  const readState = (): State => { const value = api.state.get() as Partial<State> | null; return { saved: value?.saved ? settings(value.saved) : null, preview: value?.preview ? settings(value.preview) : null, asset: value?.asset ?? null, preview_asset: value?.preview_asset ?? null, imports: value?.imports ?? {}, open: value?.open === true, page: value?.page ?? 'palette', notice: value?.notice ?? '', revision: value?.revision ?? 0 }; };
   const writeState = (state: State) => api.state.set(state as unknown as Json);
   const current = (state: State) => state.preview ?? state.saved ?? settings(api.settings);
+  const palette = (state: State, id: string): Palette | undefined => Object.hasOwn(state.imports, id) ? state.imports[id] : Object.hasOwn(PALETTES, id) ? PALETTES[id] : undefined;
+  const restored = (state: State): State => ({ ...state, revision: state.revision + 1 });
   const update = (state: State, value: Settings, notice = 'Live preview; Save to keep these settings') => { writeState({ ...state, preview: value, notice }); return { display: notice }; };
   const guard = (action: () => Json): Json => { try { return action(); } catch (error) { if (!(error instanceof Error)) throw error; const message = visible(error instanceof Error ? error.message : String(error)); writeState({ ...readState(), notice: message }); return { display: message }; } };
   const importedText = (resource: ResourceRef): string => {
@@ -129,38 +131,38 @@ export default function activate(api: ModAPI) {
     do { const page = api.host.call('evidence.read', { reference: resource, cursor, max_bytes: 16384 }); if (page.bytes > 65536) throw new Error('Text import is limited to 64 KiB'); text += page.text; cursor = page.cursor ?? undefined; } while (cursor !== undefined);
     return text;
   };
-  api.command('set', arguments_ => guard(() => { const text = String(arguments_ ?? ''); const [key, ...parts] = text.trim().split(/\s+/); const value = parts.join(' '); const state = readState(); if (key === 'palette' && !PALETTES[value] && !state.imports[value]) throw new Error('Unknown palette'); return update(state, configure(current(state), key, value)); }), { description: 'Preview a theme setting: set KEY VALUE' });
+  api.command('set', arguments_ => guard(() => { const text = String(arguments_ ?? ''); const [key, ...parts] = text.trim().split(/\s+/); const value = parts.join(' '); const state = readState(); if (key === 'palette' && !palette(state, value)) throw new Error('Unknown palette'); return update(state, configure(current(state), key, value)); }), { description: 'Preview a theme setting: set KEY VALUE' });
   api.command('save', () => { const state = readState(); writeState({ ...state, saved: current(state), asset: state.preview_asset ?? state.asset, preview: null, preview_asset: null, notice: 'Theme saved' }); return { display: 'Theme saved' }; }, { description: 'Save the live theme preview' });
-  api.command('cancel', () => { const state = readState(); writeState({ ...state, preview: null, preview_asset: null, notice: 'Preview discarded' }); return { display: 'Preview discarded' }; }, { description: 'Restore the last saved theme' });
-  api.command('reset', () => { const state = readState(); writeState({ ...state, saved: null, preview: null, asset: null, preview_asset: null, notice: 'Theme reset to configured defaults' }); return { display: 'Theme reset to configured defaults' }; }, { description: 'Reset theme settings and backdrop selection' });
+  api.command('cancel', () => { const state = readState(); writeState({ ...restored(state), preview: null, preview_asset: null, notice: 'Preview discarded' }); return { display: 'Preview discarded' }; }, { description: 'Restore the last saved theme' });
+  api.command('reset', () => { const state = readState(); writeState({ ...restored(state), saved: null, preview: null, asset: null, preview_asset: null, notice: 'Theme reset to configured defaults' }); return { display: 'Theme reset to configured defaults' }; }, { description: 'Reset theme settings and backdrop selection' });
   api.command('page', value => { const state = readState(); const page = String(value); writeState({ ...state, open: true, page: ['palette', 'backdrop', 'position', 'glass', 'greeting'].includes(page) ? page : 'palette' }); return null; });
   api.command('close', () => { writeState({ ...readState(), open: false }); return null; });
   api.command('import', arguments_ => guard(() => {
     const match = /^(ghostty|iterm2|warp)\s+(.+)$/.exec(String(arguments_ ?? '').trim()); if (!match) throw new Error('Use /omd_theme:import ghostty|iterm2|warp PATH');
     const resource = api.host.call('terminal.import_file', { path: match[2], max_bytes: 65536 }); if ('status' in resource) return { display: 'Theme import declined; current theme kept' };
     const state = readState(); if (Object.keys(state.imports).length >= 20) throw new Error('Import library is full (20 themes)');
-    const id = `import_${Object.keys(state.imports).length + 1}`; const palette = importTheme(match[1], importedText(resource), match[2].split('/').at(-1) ?? id);
-    state.imports[id] = palette; return update(state, { ...current(state), palette: id }, `Imported ${palette.name}; Save to keep the selection`);
+    const id = `import_${Object.keys(state.imports).length + 1}`; const imported = importTheme(match[1], importedText(resource), match[2].split('/').at(-1) ?? id);
+    state.imports[id] = imported; return update(restored(state), { ...current(state), palette: id }, `Imported ${imported.name}; Save to keep the selection`);
   }), { description: 'Import a Ghostty, iTerm2 XML or Warp palette from a confirmed file' });
-  api.command('ascii', path => guard(() => { const resource = api.host.call('terminal.import_file', { path: String(path), max_bytes: 8192 }); if ('status' in resource) return { display: 'ASCII import declined; current backdrop kept' }; const state = readState(); const text = importedText(resource).replace(/\r\n?/g, '\n'); return update(state, configure({ ...current(state), backdrop_mode: 'ascii' }, 'ascii_text', text), 'ASCII backdrop imported; Save to keep it'); }), { description: 'Import a printable ASCII backdrop from a confirmed file' });
+  api.command('ascii', path => guard(() => { const resource = api.host.call('terminal.import_file', { path: String(path), max_bytes: 8192 }); if ('status' in resource) return { display: 'ASCII import declined; current backdrop kept' }; const state = readState(); const text = importedText(resource).replace(/\r\n?/g, '\n'); return update(restored(state), configure({ ...current(state), backdrop_mode: 'ascii' }, 'ascii_text', text), 'ASCII backdrop imported; Save to keep it'); }), { description: 'Import a printable ASCII backdrop from a confirmed file' });
   api.command('image', path => guard(() => {
     const resource = api.host.call('terminal.import_file', { path: String(path), max_bytes: 8 * 1024 * 1024, lifetime: 'package' }); if ('status' in resource) return { display: 'Image import declined; current backdrop kept' };
     const sample = api.host.call('terminal.image_sample', { resource, columns: 80, rows: 24 });
     const ramp = ' .:-=+*#%@'; const rows: string[] = [];
     for (let y = 0; y < sample.height; y++) { let line = ''; for (let x = 0; x < sample.width; x++) { const index = (y * sample.width + x) * 4; const channels = sample.rgba.slice(index, index + 3); const luma = channels.reduce((total, value, i) => total + value * [0.2126, 0.7152, 0.0722][i], 0) / 255 * sample.rgba[index + 3] / 255; line += ramp[Math.round(luma * (ramp.length - 1))]; } rows.push(line); }
     const state = readState(); state.preview_asset = { resource, label: visible(String(path), 128), ascii: rows.join('\n') || ' ' };
-    return update(state, { ...current(state), backdrop_mode: 'image' }, 'Image imported with ASCII fallback; Save to keep it');
+    return update(restored(state), { ...current(state), backdrop_mode: 'image' }, 'Image imported with ASCII fallback; Save to keep it');
   }), { description: 'Import a PNG/JPEG backdrop with an image-derived ASCII fallback' });
   api.command('theme', arguments_ => {
     const text = String(arguments_ ?? '').trim(); const state = readState();
-    if (text) return guard(() => { if (!PALETTES[text] && !state.imports[text]) throw new Error('Unknown palette; use /theme to open the library'); return update(state, { ...current(state), palette: text }); });
+    if (text) return guard(() => { if (!palette(state, text)) throw new Error('Unknown palette; use /theme to open the library'); return update(state, { ...current(state), palette: text }); });
     writeState({ ...state, open: true }); return null;
   }, { description: 'Open theme settings and live preview, or choose a palette' });
   api.on('terminal', (): TerminalPatch => {
-    const state = readState(); const config = current(state); const selected = state.imports[config.palette] ?? PALETTES[config.palette] ?? PALETTES.midnight;
+    const state = readState(); const config = current(state); const selected = palette(state, config.palette) ?? PALETTES.midnight;
     const background = config.background_color || selected.background;
     const foreground = readable(config.foreground_color || selected.foreground, [background]);
-    const theme: TerminalTheme = { ...selected.theme, icons: config.symbols, glyphs: config.symbols === 'unicode' ? { '===': '≡  ', '->': '→ ', '<=': '≤ ' } : {} };
+    const theme: TerminalTheme = { ...selected.theme, syntax: contrast('#000000', background) > contrast('#ffffff', background) ? 'catppuccin-latte' : 'catppuccin-mocha', icons: config.symbols, glyphs: config.symbols === 'unicode' ? { '===': '≡  ', '->': '→ ', '<=': '≤ ' } : {} };
     for (const key of ['accent', 'success', 'attention', 'failure', 'diff_added', 'diff_removed', 'muted'] as const) { const value = theme[key]; if (typeof value === 'string' && COLOR.test(value)) theme[key] = readable(value, [background]) as ThemeColor; }
     theme.user_message_background = background as ThemeColor;
     const foregrounds = [foreground, ...(['accent', 'success', 'attention', 'failure', 'diff_added', 'diff_removed', 'muted'] as const).map(key => String(theme[key] ?? foreground))];
@@ -179,11 +181,11 @@ export default function activate(api: ModAPI) {
 
   function controls(state: State, config: Settings): TerminalComponent[] {
     const button = (id: string, text: string, command: string, args?: string): TerminalComponent => ({ type: 'button', id: `omd_theme_${id}`, label: text, text, action: { command: `omd_theme:${command}`, ...(args ? { args } : {}) } });
-    const input = (key: keyof Settings, label: string): TerminalComponent => ({ type: 'input', id: `omd_theme_${key}`, label, value: String(config[key]), action: { command: 'omd_theme:set', args: key } });
-    const select = (key: keyof Settings, label: string, values: string[]): TerminalComponent => ({ type: 'select', id: `omd_theme_${key}`, label, value: String(config[key]), options: values.map(value => ({ value, label: value })), action: { command: 'omd_theme:set', args: key } });
+    const input = (key: keyof Settings, label: string): TerminalComponent => ({ type: 'input', id: `omd_theme_${key}_${state.revision}`, label, value: String(config[key]), action: { command: 'omd_theme:set', args: key } });
+    const select = (key: keyof Settings, label: string, values: string[]): TerminalComponent => ({ type: 'select', id: `omd_theme_${key}_${state.revision}`, label, value: String(config[key]), options: values.map(value => ({ value, label: value })), action: { command: 'omd_theme:set', args: key } });
     const children: TerminalComponent[] = [button('close', 'Close', 'close'), button('save', 'Save', 'save'), button('cancel', 'Discard preview', 'cancel'), button('reset', 'Reset', 'reset'), { type: 'select', id: 'omd_theme_page', label: 'Settings page', value: state.page, options: ['palette', 'backdrop', 'position', 'glass', 'greeting'].map(value => ({ value, label: value })), action: { command: 'omd_theme:page' } }];
     if (state.page === 'palette') children.push(
-      { type: 'select', id: 'omd_theme_palette', label: 'Palette library', value: config.palette, options: Object.entries({ ...PALETTES, ...state.imports }).map(([value, palette]) => ({ value, label: palette.name })), action: { command: 'omd_theme:set', args: 'palette' } },
+      { type: 'select', id: `omd_theme_palette_${state.revision}`, label: 'Palette library', value: config.palette, options: Object.entries({ ...PALETTES, ...state.imports }).map(([value, palette]) => ({ value, label: palette.name })), action: { command: 'omd_theme:set', args: 'palette' } },
       select('symbols', 'Symbols', ['ascii', 'unicode']), input('background_color', 'Background RGB (empty = palette)'), input('foreground_color', 'Text RGB (empty = palette)'),
       { type: 'input', id: 'omd_theme_import', label: 'Import theme', placeholder: 'ghostty|iterm2|warp /absolute/path', action: { command: 'omd_theme:import' } },
     );

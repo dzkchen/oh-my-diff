@@ -26,6 +26,7 @@ function session(settings = {}, prompt = 'accepted') {
         return { revision: store[args.key].revision };
       }
       case 'store.delete': delete store[args.key]; return { deleted: true };
+      case 'workspace.stat': return { files: Object.fromEntries(args.paths.map(path => [path, path === 'missing' ? null : { kind: 'file', size: path.length * 60_000, mtime_ms: 0 }])) };
       case 'workspace.read': return { files: Object.fromEntries(args.paths.map(path => [path, path === 'missing' ? null : { text: path.repeat(60_000), sha256: sha(path) }])) };
       case 'routes.list': return [{ name: 'paid', roles: ['worker'], available: false }, { name: 'worker', roles: ['worker'], available: true }];
       case 'agents.spawn': {
@@ -53,8 +54,10 @@ function session(settings = {}, prompt = 'accepted') {
         state = output.state;
         return output.value;
       }
-      try { receipts.push({ call: output.host_call, value: host(output.host_call) }); }
-      catch (error) { receipts.push({ call: output.host_call, error: error.message }); }
+      let receipt;
+      try { receipt = { call: output.host_call, value: host(output.host_call) }; }
+      catch (error) { receipt = { call: output.host_call, error: error.message }; }
+      receipts.push(JSON.stringify([...receipts, receipt]).length > 131_072 ? { call: output.host_call, error: 'host_result_limit' } : receipt);
     }
   };
   return { run, tool: (name, args = {}) => run('tool', args, name), command: text => run('command', text, 'refine').display, history: (agent = null) => run('history', { thread_id: 'thread-1', agent_id: agent, model: 'm', items: [] }), stores };
@@ -66,9 +69,9 @@ test('context variables carry provenance, survive through thread storage and app
   assert.equal(s.history('child'), null);
   assert.match(s.history().insert[0].text, /^Programmable context \(omd_programmable_context\), session harness v0\./);
   assert.match(s.tool('python_api').source, /^import json as _json/);
-  const loaded = s.tool('load', { paths: ['a', 'bb', 'missing'] }).files;
-  assert.deepEqual([loaded.a.chars, loaded.a.truncated, loaded.bb.text.length, loaded.bb.truncated, loaded.missing], [60_000, false, 36_000, true, null]);
-  assert.equal(loaded.a.sha256, sha('a'));
+  const loaded = s.tool('load', { paths: ['a', 'missing'] }).files;
+  assert.deepEqual([loaded.a.text.length, loaded.a.sha256, loaded.missing], [60_000, sha('a'), null]);
+  assert.match(s.tool('load', { paths: ['a', 'bb'] }).error, /^load_limit: 180000 bytes/);
   const kept = s.tool('keep', { name: 'summary', value: 'three facts', sources: ['a@' + sha('a')] });
   assert.deepEqual(kept, { sha256: sha('three facts'), chars: 11, sources: ['a@' + sha('a')] });
   assert.deepEqual(s.tool('vars', { name: 'summary' }).value, 'three facts');
@@ -112,11 +115,21 @@ test('refinement is evidence-linked, policy-bound, versioned, reversible and pro
   assert.deepEqual(s.stores.thread.harness.value.log.map(entry => entry.kind), ['refine', 'refine', 'rollback']);
   assert.match(s.command('rollback 5'), /^Choose a version/);
   s.command('rollback v1');
-  assert.equal(session({}, 'declined').command('promote project'), 'Promotion declined.');
+  const declined = session({ refine: 'auto' }, 'declined');
+  declined.tool('refine', { changes: [note], reason: 'r', evidence: ['e'] });
+  assert.equal(declined.command('promote project'), 'Promotion declined.');
   assert.match(s.command('promote project'), /^Promoted session harness v4 to project scope/);
   assert.deepEqual(s.stores.repository.harness.value.notes, { checks: note.value });
   s.run('start');
   assert.match(s.history().insert[0].text, /session harness v0\.[\s\S]*- checks: Run the focused test/);
+  s.stores.thread = {};
+  s.tool('refine', { changes: [{ section: 'notes', name: 'style', value: 'Prefer small diffs.' }], reason: 'r', evidence: ['e'] });
+  s.command('apply');
+  s.command('promote project');
+  assert.deepEqual(s.stores.repository.harness.value.notes, { checks: note.value, style: 'Prefer small diffs.' });
+  s.tool('refine', { changes: [{ ...note, value: null }], reason: 'r', evidence: ['e'] });
+  assert.match(s.command('apply'), /^Applied v2:\n- notes\/checks\n/);
+  assert.doesNotMatch(s.history().insert[0].text, /- checks:/);
   assert.match(session({ refine: 'off' }).tool('refine', { changes: [note], reason: 'r', evidence: ['e'] }).error, /refine_disabled/);
   assert.equal(session({ refine: 'auto' }).tool('refine', { changes: [note], reason: 'r', evidence: ['e'] }).status, 'applied');
   assert.throws(() => session({ refine: 'always' }).run('start'), /refine_policy_invalid/);

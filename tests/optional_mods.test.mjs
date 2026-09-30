@@ -63,19 +63,6 @@ test('session anchor requires the current store capability', () => {
   assert.match(JSON.parse(result.stdout).error, /capability_denied: store/);
 });
 
-test('optional theme uses current terminal patches and respects explicit palette settings', () => {
-  const name = 'optional/omd_theme';
-  const defaultView = run(name, 'terminal', { event: 'idle', ledger: null }).value;
-  assert.equal(defaultView.foreground, 255);
-  assert.equal(defaultView.background, 235);
-  assert.equal(defaultView.theme.icons, 'ascii');
-  const paper = run(name, 'terminal', { event: 'idle', ledger: null }, null, { palette: 'paper', symbols: 'unicode' }).value;
-  assert.equal(paper.foreground, 234);
-  assert.equal(paper.background, 231);
-  assert.equal(paper.theme.icons, 'unicode');
-  assert.equal(paper.theme.accent, '#005f9e');
-});
-
 test('optional focus flow toggles only completed tool presentation and retains state', () => {
   const name = 'optional/omd_focus_flow';
   const initial = run(name, 'terminal', { event: 'idle', ledger: null });

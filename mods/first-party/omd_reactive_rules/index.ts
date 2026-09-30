@@ -4,31 +4,71 @@ type Rule = { id: string; regex: RegExp; reminder: string; max_activations: numb
 type State = { thread: string | null; counts: Record<string, number>; stops: number; tools: boolean; active: Record<string, string> };
 
 const MAX_STOPS_PER_TURN = 2;
+const MAX_REPEAT = 64;
+const MATCH_WORK = 2048;
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const line = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= max && !/[\r\n]/.test(value);
 
-function unbounded(pattern: string) {
-  for (let index = 0; index < pattern.length; index++) {
-    const character = pattern[index];
-    if (character === '\\') {
-      if (/[1-9k]/.test(pattern[++index] ?? '')) return true;
-    } else if (character === '*' || character === '+') return true;
-    else if (character === '{') {
-      const quantifier = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(index));
-      if (quantifier && quantifier[2] !== undefined && (quantifier[3] === '' || Number(quantifier[3]) > 64)) return true;
+// Worst-case backtracking steps per start position; each node yields [match paths, steps].
+function work(pattern: string): number {
+  let index = 0;
+  const alternation = (): [number, number] => {
+    let paths = 0, steps = 0;
+    for (;;) {
+      let branchPaths = 1, branchSteps = 0;
+      while (index < pattern.length && pattern[index] !== '|' && pattern[index] !== ')') {
+        const [p, s] = quantified(atom());
+        branchSteps += branchPaths * s;
+        branchPaths *= p;
+      }
+      paths += branchPaths;
+      steps += branchSteps;
+      if (pattern[index] !== '|') return [paths, steps];
+      index++;
     }
-  }
-  return false;
+  };
+  const atom = (): [number, number] => {
+    const character = pattern[index++];
+    if (character === '(') {
+      index += /^(?:\?(?:[:=!]|<[=!]|<[^>]*>))?/.exec(pattern.slice(index))![0].length;
+      const inner = alternation();
+      index++;
+      return inner;
+    }
+    if (character === '[') {
+      while (index < pattern.length && pattern[index] !== ']') index += pattern[index] === '\\' ? 2 : 1;
+      index++;
+    } else if (character === '\\' && /[1-9k]/.test(pattern[index++] ?? '')) return [Infinity, Infinity];
+    return [1, 1];
+  };
+  const quantified = ([paths, steps]: [number, number]): [number, number] => {
+    const quantifier = /^(?:([?*+])|\{(\d+)(,(\d*))?\})\??/.exec(pattern.slice(index));
+    if (!quantifier) return [paths, steps];
+    index += quantifier[0].length;
+    const min = quantifier[1] ? Number(quantifier[1] === '+') : Number(quantifier[2]);
+    const max = quantifier[1] ? (quantifier[1] === '?' ? 1 : Infinity) : quantifier[3] === undefined ? min : quantifier[4] ? Number(quantifier[4]) : Infinity;
+    if (max > MAX_REPEAT) return [Infinity, Infinity];
+    let repeated = 0, iterations = 0;
+    for (let count = 0, power = 1; count <= max; count++, power *= paths) {
+      if (count >= min) repeated += power;
+      if (count < max) iterations += power * steps;
+    }
+    return [repeated, iterations];
+  };
+  return alternation()[1];
 }
 
 function rules(value: Json | undefined): Rule[] {
   if (!Array.isArray(value) || value.length > 16) throw new Error('rules_invalid: at most 16 rules');
   const ids = new Set<string>(), patterns = new Set<string>();
+  let budget = MATCH_WORK;
   return value.map(rule => {
     if (!object(rule) || Object.keys(rule).some(key => !['id', 'pattern', 'flags', 'reminder', 'max_activations'].includes(key))) throw new Error('rule_invalid');
     const { id, pattern, flags = '', reminder, max_activations = 1 } = rule;
     if (typeof id !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(id) || ids.has(id)) throw new Error(`rule_id_invalid_or_duplicate: ${String(id)}`);
-    if (!line(pattern, 128) || unbounded(pattern)) throw new Error(`rule_pattern_unbounded: ${id}`);
+    if (!line(pattern, 128)) throw new Error(`rule_pattern_unbounded: ${id}`);
+    budget -= work(pattern);
+    if (!(budget >= 0)) throw new Error(`rule_pattern_unbounded: ${id}`);
     if (flags !== '' && flags !== 'i') throw new Error(`rule_flags_invalid: ${id}`);
     if (!line(reminder, 512)) throw new Error(`rule_reminder_invalid: ${id}`);
     if (typeof max_activations !== 'number' || !Number.isInteger(max_activations) || max_activations < 1 || max_activations > MAX_STOPS_PER_TURN) throw new Error(`rule_max_activations_invalid: ${id}`);
