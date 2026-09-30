@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "id": "omd_programmable_context",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_programmable_context"
+  },
+  "capabilities": ["agents", "commands", "fs.read", "history", "lifecycle", "model", "store", "terminal", "tools"],
+  "environment": ["crypto"],
+  "compatibility": {
+    "required_features": ["history_v1", "store_thread_v1", "routes_v1", "model_complete_v1", "terminal_prompt_v1"]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "refine": {
+        "type": "string",
+        "enum": ["off", "manual", "auto"],
+        "default": "manual"
+      },
+      "route": {
+        "type": "string",
+        "default": ""
+      }
+    },
+    "additionalProperties": false
+  }
+}

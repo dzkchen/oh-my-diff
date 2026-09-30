@@ -569,6 +569,22 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Composes live terminal palettes, backgrounds, composer appearance and greeting settings through public presentation APIs; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_reactive_rules",
+      "id": "omd_reactive_rules",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Matches bounded explicit rules against completed response items and requests a stream stop and retry through response_stream middleware; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_programmable_context",
+      "id": "omd_programmable_context",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the Python-facing context, child-agent and refinement API plus a versioned session harness in the model-bound request view; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

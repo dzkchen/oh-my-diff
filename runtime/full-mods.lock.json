@@ -189,6 +189,29 @@
       "source": "mods/first-party/omd_model_picker",
       "version": "0.2.0-preview.1"
     },
+    "omd_programmable_context": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "agents",
+        "commands",
+        "fs.read",
+        "history",
+        "lifecycle",
+        "model",
+        "store",
+        "terminal",
+        "tools"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "2bf0c189e3fee85e1b38f217884c8674d9e4f03403f4fb1082168e6ecce7542d",
+        "mod.json": "9d22bb66f15212e8fe6e60e5646bf01c3b8731300fd1a1d4790e7d6927544b58"
+      },
+      "id": "omd_programmable_context",
+      "package_sha256": "4e6ab41baf99b819f3e89acacf0299efbf300c53479211b2872d9acf5decd859",
+      "source": "mods/first-party/omd_programmable_context",
+      "version": "0.1.0-preview.1"
+    },
     "omd_project_pi_prompts": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
@@ -207,6 +230,24 @@
       "package_sha256": "66b14d3504ae62abd0d835b20f971620fcae9fc44b152f6ce8c7b1fc027293dd",
       "source": "mods/first-party/omd_project_pi_prompts",
       "version": "0.1.0-preview.2"
+    },
+    "omd_reactive_rules": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "context",
+        "lifecycle",
+        "middleware",
+        "store"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "fb48b0458e09365b8de4e52e81baeed7e2eb634c361fc5f6e67de143452ddd7c",
+        "mod.json": "719ce7881bfa945df3f1f85bede67de577c82bad7663d2f1539a87d71747d7c5"
+      },
+      "id": "omd_reactive_rules",
+      "package_sha256": "317fa5852bbee4af5ae4164e19a27b6e292e45d09612c40b9bf6574bcb741bcc",
+      "source": "mods/first-party/omd_reactive_rules",
+      "version": "0.1.0-preview.1"
     },
     "omd_repository_analysis": {
       "api": "0.2.0-experimental.5",

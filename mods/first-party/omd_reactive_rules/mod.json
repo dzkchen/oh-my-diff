@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "omd_reactive_rules",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {
+    "maintainer": "Oh My Diff",
+    "source": "mods/first-party/omd_reactive_rules"
+  },
+  "capabilities": ["context", "lifecycle", "middleware", "store"],
+  "compatibility": {
+    "required_features": ["stream_control_v1"]
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "rules": {
+        "type": "array",
+        "default": []
+      }
+    },
+    "additionalProperties": false
+  }
+}
