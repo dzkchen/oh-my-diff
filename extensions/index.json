@@ -269,7 +269,7 @@
       "source": "mods/first-party/omd_panes",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_surface_v1, terminal_pty_v1, store_thread_v1, events_v1; Node 24.18.0",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_surface_v1, terminal_pty_v1, store_thread_v1, events_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.159.1",
         "OMD 0.1.0",
@@ -306,6 +306,42 @@
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; events_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_frecency",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in @ mention and file-tree find ranking by typo-tolerant fuzzy match, per-project frecency learned from submitted prompts and Git status",
+      "source": "mods/first-party/omd_frecency",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_v1, exec_v1, service_dispatch_v1, store_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_plan_panel",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in pinned plan panel over Codex's update_plan tool with status glyphs, a done/total header, collapse key and completed-first overflow",
+      "source": "mods/first-party/omd_plan_panel",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.159.1",
         "OMD 0.1.0",

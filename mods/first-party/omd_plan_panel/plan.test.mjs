@@ -1,0 +1,36 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+
+const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
+const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
+const surface = { events: { app_notification: 'threads', terminal: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
+
+function run(event, payload, state, name = '') {
+  const request = { source, filename: 'index.ts', api: manifest.api, capabilities: manifest.capabilities, state, settings: { rows: 6 }, event, name, payload, surface, hook_budget_ms: 2000 };
+  const output = JSON.parse(spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner],
+    { input: JSON.stringify(request), encoding: 'utf8', timeout: 10000 }).stdout);
+  if (output.error) throw new Error(output.error);
+  return output;
+}
+const notify = (state, method, thread, plan) => run('app_notification', { method, params: { threadId: thread, turnId: 't', plan }, thread_id: thread, coalesced: 0, dropped: 0 }, state).state;
+const panel = (state, thread = 'lead') => run('terminal', { event: 'idle', ledger: { thread_id: thread, cwd: '/repo', cost: null } }, state).value
+  ?.sites.above_composer.components.filter(item => item.type === 'line').map(item => item.spans.map(span => span.text).join(''));
+
+test('the panel shows only its session plan, drops completed steps first and survives later events', () => {
+  const steps = ['completed', 'completed', 'inProgress', 'completed', ...Array(6).fill('pending')].map((status, index) => ({ step: `step ${index + 1}`, status }));
+  let state = notify(null, 'turn/plan/updated', 'lead', steps);
+  state = notify(state, 'turn/plan/updated', 'child', [{ step: 'child work', status: 'pending' }]);
+  assert.deepEqual(panel(state), ['● Plan (3/10)', '├─ ◐ step 3', '├─ ○ step 5', '├─ ○ step 6', '├─ ○ step 7', '├─ ○ step 8', '└─ +5 more (3 completed, 2 pending)']);
+  assert.deepEqual(panel(state, 'child'), ['● Plan (0/1)', '└─ ○ child work']);
+  assert.equal(panel(state, 'other'), undefined);
+  const collapsed = run('command', 'toggle', state, 'todos').state;
+  assert.deepEqual(panel(collapsed), ['● Plan (3/10)', '└─ Alt+p to expand']);
+  assert.equal(panel(run('command', '', state, 'todos').state).length, 11);
+  assert.deepEqual(notify(state, 'turn/started', 'lead'), state);
+  state = notify(state, 'turn/plan/updated', 'lead', steps.map(step => ({ ...step, status: 'completed' })));
+  assert.deepEqual(panel(state).slice(0, 2), ['○ Plan (10/10)', '├─ ✓ step 6']);
+  assert.equal(panel(notify(state, 'turn/started', 'lead')), undefined);
+});

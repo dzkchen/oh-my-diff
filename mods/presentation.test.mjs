@@ -44,14 +44,6 @@ test('model and reasoning lists use bounded generic components', () => {
   assert.equal(run('omd_model_picker', { capabilities: ['terminal'], event: 'list', payload: { ...payload, view_id: 'unknown' } }).value, null);
 });
 
-test('first-party theme owns width-preserving Unicode input glyphs', () => {
-  const payload = { event: 'idle', ledger: null };
-  const ascii = run('omd_theme', { capabilities: ['terminal', 'commands', 'store'], event: 'terminal', payload });
-  assert.deepEqual(ascii.value.theme.glyphs, {});
-  const unicode = run('omd_theme', { capabilities: ['terminal', 'commands', 'store'], settings: { symbols: 'unicode' }, event: 'terminal', payload });
-  assert.deepEqual(unicode.value.theme.glyphs, { '===': '≡  ', '->': '→ ', '<=': '≤ ' });
-});
-
 test('logo follows host acceptance and installed identity without persistent task state', () => {
   const identity = { codex_version: '9.8.7', install_profile: 'full', mode: 'omd', mods: { installed: 6, enabled: 2, active: 0 } };
   const capabilities = ['terminal'];

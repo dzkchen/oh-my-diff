@@ -5,10 +5,11 @@ import { spawnSync } from 'node:child_process';
 
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-const surface = { events: { terminal: 'terminal' }, replacements: ['terminal'], middleware: [], state: 'store', contracts: 'contracts' };
+const { capabilities } = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
+const surface = { events: { terminal: 'terminal', app_notification: 'threads', start: 'lifecycle', resume: 'lifecycle', turn_end: 'lifecycle', timer: 'events' }, replacements: ['terminal'], middleware: [], state: 'store', contracts: 'contracts' };
 function run(event, name = '', payload = '', options = {}) {
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: ['terminal', 'commands', 'store'], settings: {}, state: null, event, name, payload, ...options }), encoding: 'utf8', timeout: 5000,
+    input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities, settings: {}, state: null, event, name, payload, ...options }), encoding: 'utf8', timeout: 5000,
   });
   assert.ifError(result.error);
   const output = JSON.parse(result.stdout);
@@ -131,9 +132,65 @@ test('greeting byte bounds and short-dialog recovery actions remain usable after
   const rejected = run('command', 'set', `greeting_text ${'界'.repeat(100)}`, { state });
   assert.equal(rejected.state.preview.greeting_text, 'Hello');
   assert.match(rejected.value.display, /UTF-8 bytes/);
-  for (const page of ['palette', 'backdrop', 'position', 'glass', 'greeting']) {
+  for (const page of ['palette', 'backdrop', 'position', 'glass', 'greeting', 'status']) {
     const state = run('command', 'page', page).state;
     const children = run('terminal', '', '', { state }).value.sites.dialog.components[0].children;
     assert.deepEqual(children.slice(0, 4).map(item => item.action.command), ['omd_theme:close', 'omd_theme:save', 'omd_theme:cancel', 'omd_theme:reset']);
   }
+});
+
+test('powerline presets show session, Git, context and OMD state; below adds one status segment; Alt+z stashes', () => {
+  const thread = 'thread-123456789';
+  const ledger = { thread_id: thread, cwd: '/Users/me/work/project', cost: { settled_task_charge_microusd: 1_250_000 } };
+  const identity = { codex_version: '0.159.1', install_profile: 'full', mode: 'omd', mods: { installed: 9, enabled: 5, active: 5 } };
+  const on = { statusline: 'default' };
+  const notify = (state, method, params) => run('app_notification', '', { method, params: { threadId: thread, ...params }, thread_id: thread, coalesced: 0, dropped: 0 }, { state, settings: on }).state;
+  assert.equal(run('app_notification', '', { method: 'thread/settings/updated', params: { threadId: thread }, thread_id: thread, coalesced: 0, dropped: 0 }).state, null);
+  const exec = (argv, stdout) => ({ call: { operation: 'exec.run', arguments: { program: argv[0], ...(argv.length > 1 ? { argv: argv.slice(1) } : {}), timeout_ms: argv[0] === 'env' ? 2000 : 3000 } }, value: { exit_code: 0, stdout } });
+  let state = run('start', '', null, { settings: on, receipts: [
+    exec(['env'], 'TERM_PROGRAM=ghostty\nPATH=/bin\n'),
+    { call: { operation: 'app.request', arguments: { method: 'config/read', params: {} } }, value: { config: { model: 'gpt-6.1-sol', model_reasoning_effort: 'medium' } } },
+    exec(['git', 'status', '--porcelain=v2', '--branch'], '# branch.oid abc\n# branch.head main\n# branch.ab +2 -1\n1 M. N... 100644 100644 100644 a b src/a.ts\n1 .M N... 100644 100644 100644 a b src/b.ts\nu UU N... 1 2 3 4 a b c src/c.ts\n? new.ts\n'),
+    { call: { operation: 'events.schedule', arguments: { key: 'git', delay_ms: 10000 } }, value: { key: 'git', delay_ms: 10000 } },
+  ] }).state;
+  assert.deepEqual(state.live.git, { branch: 'main', ahead: 2, behind: 1, staged: 1, unstaged: 2, untracked: 1 });
+  assert.equal(state.live.nerd, true);
+  state = notify(state, 'thread/settings/updated', { threadSettings: { model: 'gpt-6.1-sol', effort: 'high', modelProvider: 'openai' } });
+  state = notify(state, 'thread/tokenUsage/updated', { tokenUsage: { total: { inputTokens: 12300, outputTokens: 4500 }, last: { totalTokens: 184000 }, modelContextWindow: 200000 } });
+  const view = settings => run('terminal', '', { event: 'idle', ledger, identity }, { state, settings }).value;
+  const spans = view({ statusline: 'nerd' }).sites.above_composer.components[1].spans;
+  assert.equal(spans.map(span => span.text).join(''), ['  gpt-6.1-sol ', ' think:high ', '  …/work/project ', '  main ↑2 ↓1 +1 *2 ?1 ', '  ↑12k ↓4.5k ', '  $1.25 ', '  92%/200k ', '  thread-1 ', '  5 mods '].join('') + '');
+  assert.ok(spans.filter(span => span.text.startsWith(' ')).every(span => span.bg));
+  const ascii = view({ statusline: 'ascii' }).sites.above_composer.components[1].spans;
+  assert.equal(ascii.map(span => span.text).join(''), 'gpt-6.1-sol | think:high | …/work/project | git:main ^2 v1 +1 *2 ?1 | in:12k out:4.5k | $1.25 | ctx:92%/200k');
+  assert.ok(ascii.every(span => !span.bg));
+  assert.deepEqual(view({ statusline: 'minimal', statusline_position: 'below' }).status, ['5 mods · $1.25 · ctx 92%!']);
+  assert.equal(view({}).sites, undefined);
+  assert.equal(view({}).status, undefined);
+
+  let stash = null;
+  const composer = { text: 'draft one' };
+  const drive = (state, payload = '') => {
+    const receipts = [];
+    for (;;) {
+      const output = run('command', 'stash', payload, { state, receipts, settings: on });
+      if (!output.host_call) return output;
+      const { operation, arguments: args } = output.host_call;
+      const value = operation === 'store.get' ? stash && { value: stash, revision: 1, provenance: {} }
+        : operation === 'store.put' ? (stash = args.value, { revision: 2 })
+        : operation === 'composer.read' ? { text: composer.text, cursor: 0, attachments: [] }
+        : (composer.text = args.text ?? composer.text + args.insert, { text: composer.text, cursor: 0 });
+      receipts.push({ call: output.host_call, value });
+    }
+  };
+  let output = drive(state);
+  assert.deepEqual([output.value.display, composer.text, stash, output.state.live.stashed], ['Draft stashed; Alt+z restores it', '', { active: 'draft one', history: ['draft one'] }, true]);
+  state = output.state;
+  assert.match(view({ statusline: 'compact' }).sites.above_composer.components[1].spans.at(-2).text, /stash/);
+  output = drive(output.state);
+  assert.deepEqual([output.value.display, composer.text, stash.active, output.state.live.stashed], ['Stash restored', 'draft one', null, false]);
+  assert.equal(drive(output.state, 'list').value.display, '1. draft one');
+  composer.text = '';
+  assert.equal(drive(output.state).value.display, 'Nothing to stash');
+  assert.deepEqual(run('terminal').value.keybindings, { 'Alt+z': { command: 'omd_theme:stash' } });
 });

@@ -43,9 +43,9 @@ project note only after you accept a confirmation that shows the text; a
 declined or unavailable prompt writes nothing. Notes stay separate from curated
 memory.
 
-`/note` also completes note names and subcommands as you type. The mod owns the
-composer `completion` replacement for that and returns upstream ranking for `@`
-mentions; another mod that owns `completion` cannot be enabled at the same time.
+`/note` also completes note names and subcommands as you type. The host sends
+the mod only its own commands' argument completion, so it works alongside a mod
+that ranks `@` mentions, such as `omd_frecency`.
 
 Capabilities: `commands`, `terminal`, `store`, `lifecycle`, `events` (the reload
 timer), `exec` (`cat`, `grep`, `find`, `awk`, `tee`, `mkdir`), `fs.read`,

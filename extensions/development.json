@@ -13,7 +13,7 @@
       "id": "omd_theme",
       "extension_type": "mod",
       "source": "mods/first-party/omd_theme",
-      "reason": "Selected Batch 3aa first-party theme, installed inactive in OMD+ and installable explicitly in OMD Core; earlier responsiveness rejection remains historical evidence.",
+      "reason": "Selected Batch 3aa first-party theme, extended in Batch 3h with a powerline status line and prompt stash, installed inactive in OMD+ and installable explicitly in OMD Core; earlier responsiveness rejection remains historical evidence.",
       "review": "extensions/REVIEWS.md"
     },
     {

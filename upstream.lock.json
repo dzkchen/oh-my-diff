@@ -17,8 +17,8 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.159.1.patch",
-      "sha256": "006ee050cc140af417ebbf69a0f40d51cb6695bec520833703a3aead3097c272"
+      "sha256": "05bff36b2971273877d262887dea53717cab2b302a3016ea79f52cb5bbea17f8"
     }
   ],
-  "compatibility_evidence": ".docs/audits/batch4a-mod-controls-first-run-20260930.md"
+  "compatibility_evidence": ".docs/audits/batch3h-status-plan-ranking-20260930.md"
 }

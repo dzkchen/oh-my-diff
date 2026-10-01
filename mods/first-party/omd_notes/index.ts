@@ -243,8 +243,8 @@ export default function activate(api: ModAPI) {
     }
   }, { description: 'Markdown notes vault: wiki links, backlinks, tags, tasks and search (Alt+n)' });
 
-  api.replace('completion', event => {
-    if (event.kind !== 'argument' || !/^(omd_notes:)?note$/.test(event.command)) return null;
+  api.on('completion', event => {
+    if (event.kind !== 'argument') return null;
     const query = event.query.toLowerCase();
     const items = event.line.trim().includes(' ') || event.line.endsWith(' ')
       ? notes().map(note => title(note.path)).filter(name => name.toLowerCase().includes(query))

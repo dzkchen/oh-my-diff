@@ -7,9 +7,10 @@
   "description": "Recursive split panes with a Git-aware file tree, file viewer, shell, diff, mod-panel and browser panes",
   "license": "Apache-2.0",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_panes"},
-  "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "exec", "fs.read", "fs.write", "pty", "network", "composer"],
+  "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "exec", "fs.read", "fs.write", "pty", "network", "composer", "services"],
   "subscriptions": {"channels": ["omd_panes/*"]},
-  "compatibility": {"required_features": ["app_v1", "events_v1", "exec_v1", "store_thread_v1", "terminal_surface_v1", "terminal_pty_v1", "pty_programs_v1", "terminal_prompt_v1", "terminal_editor_v1", "terminal_style_v1", "workspace_fs_v1"]},
+  "services": {"imports": [{"name": "omd.frecency", "version": "1.0.0", "optional": true}]},
+  "compatibility": {"required_features": ["app_v1", "events_v1", "exec_v1", "store_thread_v1", "terminal_surface_v1", "terminal_pty_v1", "pty_programs_v1", "terminal_prompt_v1", "service_dispatch_v1", "terminal_editor_v1", "terminal_style_v1", "workspace_fs_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {

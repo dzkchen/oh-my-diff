@@ -1297,7 +1297,7 @@
       "group": "terminal",
       "decision": "Composer mention completion",
       "observe": "`completion` with the query and upstream candidates",
-      "alter": "reorder, filter or add workspace-relative paths; suggest mod command arguments",
+      "alter": "reorder, filter or add workspace-relative paths; suggest a mod command's arguments from the mod that registered the command, else the owner",
       "replace": "completion (exclusive)",
       "timing": "each `@` query result",
       "ownership": "mod: ranking; host: the popup, insertion and stale-result filtering",

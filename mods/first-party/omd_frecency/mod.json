@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "omd_frecency",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "description": "Ranks @ file mentions and file-tree find by typo-tolerant fuzzy match, per-project frecency and Git status",
+  "license": "Apache-2.0",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_frecency"},
+  "capabilities": ["composer", "input", "lifecycle", "store", "exec", "fs.read", "services"],
+  "compatibility": {"required_features": ["completion_v1", "exec_v1", "service_dispatch_v1", "store_v1"]},
+  "services": {"exports": [{"name": "omd.frecency", "version": "1.0.0", "methods": {"rank": {"input": "object", "output": "object"}}}]}
+}

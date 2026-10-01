@@ -608,9 +608,11 @@ interaction. Operations:
 upstream candidates and returns `{items: [{path}]}` in the order to show.
 Paths must be workspace-relative. Without an owner upstream ranking is used;
 stale results are dropped. While the user types arguments to a mod command
-(`completion_arguments_v1`) the owner receives `{kind: 'argument', command,
-query, line}` and returns `{items: [{insert}]}`; the list opens only when it
-has items.
+(`completion_arguments_v1`), the mod that registered the command receives
+`{kind: 'argument', command, query, line}` when it handles `completion`
+(`api.on` or `replace`), otherwise the exclusive owner does; it returns
+`{items: [{insert}]}` and the list opens only when it has items. A mod can
+therefore complete its own commands without owning `@` mention ranking.
 
 ### One-shot model calls (`model_complete_v1`)
 

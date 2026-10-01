@@ -449,6 +449,7 @@ export default function activate(api: ModAPI) {
       const files = ((found.value as { files?: { path?: string }[] }).files ?? []).map(file => String(file.path ?? '')).filter(path => path && (!scope || path.startsWith(`${scope}/`)));
       state.find = files.slice(0, 200);
       save(state);
+      api.host.tryCall('events.publish', { channel: 'find', data: { query: argument, scope, paths: state.find } });
       return files.length ? null : { display: `No files match ${argument}${scope ? ` in ${scope}` : ''}` };
     }
     if (op === 'refresh') {
@@ -658,8 +659,17 @@ export default function activate(api: ModAPI) {
   };
   api.on('start', restore);
   api.on('resume', restore);
-  api.on('channel', () => {
+  api.on('channel', event => {
     const state = load();
+    const find = event.data as { query: string; scope: string; paths: string[] } | null;
+    if (event.channel.endsWith('/find') && find && JSON.stringify(state.find) === JSON.stringify(find.paths)) {
+      try {
+        const ranked = api.services.call<{ paths: string[] }>('omd.frecency', 'rank', { query: find.query, paths: find.paths }).paths;
+        state.find = ranked.filter(path => !find.scope || path.startsWith(`${find.scope}/`)).slice(0, 200);
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+      }
+    }
     syncWatch(state);
     save(state);
   });

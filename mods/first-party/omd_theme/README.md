@@ -1,6 +1,6 @@
 # Theme
 
-`omd_theme` is installed inactive in OMD+ and can be installed explicitly in OMD Core. Enable it through the ordinary mod manager, then use `/theme`. It uses the public API; it does not require the workspace or logo mod.
+`omd_theme` (`0.4.0-candidate.1`) is installed inactive in OMD+ and can be installed explicitly in OMD Core. Enable it through the ordinary mod manager, then use `/theme`. It uses the public API; it does not require the workspace or logo mod.
 
 Choose Midnight, Paper, High contrast, Frost, Graphite or Amber, or import a palette. Code highlighting follows the palette background: Catppuccin Latte on light backgrounds and Catppuccin Mocha on dark ones, replacing the configured syntax theme while the mod is active. Changes preview immediately. **Save** retains them, **Discard preview** restores the saved selection, and **Reset** returns to configured defaults and clears the backdrop selection. Settings survive reload and disable/enable. Startup greetings are hidden by default; the Greeting page enables a custom message. The logo mod supplies the same hidden default while the theme is inactive.
 
@@ -23,6 +23,26 @@ All actions also work through namespaced commands, including in terminals too sm
 /omd_theme:close
 ```
 
+## Powerline status line and prompt stash
+
+The **status** page (or `/omd_theme:set statusline PRESET`) turns on a powerline status line; it is `off` by default.
+
+| Preset | Segments |
+| --- | --- |
+| `default` | model, reasoning, folder, Git, context, spend, OMD, stash |
+| `minimal` | folder, Git, context |
+| `compact` | model, Git, spend, context, stash |
+| `full` / `nerd` | model, reasoning, path, Git, tokens, spend, context, session, OMD, stash |
+| `ascii` | model, reasoning, path, Git, tokens, spend, context, stash |
+
+Segments without data are left out. Git shows the branch, ahead/behind and staged (`+`), unstaged (`*`) and untracked (`?`) counts, refreshed when the status line is turned on, at session start, after each turn and every 10 s. Context shows the share of the model's window used by the last request, in the success color below 70%, attention from 70% and failure from 90%. Model, reasoning, provider and tokens come from the session's own `thread/settings/updated` and `thread/tokenUsage/updated` notifications (sub-agent threads never replace them), with `config/read` before the first turn. Spend is the OMD ledger's settled paid charge; OMD shows the active mod count and a non-OpenAI route provider.
+
+`nerd` uses Nerd Font icons and powerline arrows. Other presets use them when the terminal looks like Ghostty, Kitty, WezTerm, Alacritty or iTerm2 (the same heuristic as the source package) and plain colored blocks otherwise; `ascii` and `NO_COLOR` use ASCII text with `|` separators. The line is one row: a narrow terminal cuts it at the right edge, so presets put the most important segments first.
+
+`statusline_position` is `above` (default) or `below` the composer. Below, the host offers only Codex's status row: the theme adds one plain segment with OMD state (active mods, route, spend, a context warning from 70% and the stash marker), and model, path, branch and context come from Codex's own `/statusline` items.
+
+**Stash.** Alt+z (or `/omd_theme:stash`) stashes the composer draft and clears it; Alt+z with an empty composer restores it; with both a draft and a stash it replaces the stash. `/omd_theme:stash list` shows the 12 most recent stashed drafts and `/omd_theme:stash N` inserts one at the cursor. Stashes are kept per repository in mod storage and survive restarts; drafts over 16 KiB are not stashed. The `stash` segment shows while one is held.
+
 Imports require the native file confirmation. Declined, denied or invalid files preserve the current selection. Text imports are bounded to 64 KiB; ASCII is printable ASCII plus newlines, at most 8 KiB. PNG/JPEG imports are at most 8 MiB and 4096 × 4096 pixels. A bounded 80 × 24 image sample supplies the ASCII fallback. Package-lifetime images are copied into the owner’s immutable resource store and never reread from their original path. They survive configuration changes and new sessions for the same exact package source. A source upgrade requires explicit reimport; the saved ASCII fallback remains usable. Reset clears selections; retained blobs remain within the existing host quotas (256 MiB/4096 blobs and 64 MiB/1024 resource records per owner) until the mod store is removed.
 
 Palette imports retain foreground/background and map ANSI red, green, yellow, blue and bright black to semantic tones. Contrast correction can change the imported tone. Other terminal configuration is ignored and cannot execute commands or read referenced paths.
@@ -43,6 +63,8 @@ Palette imports retain foreground/background and map ANSI red, green, yellow, bl
 | Narrow/resize | Image/ASCII decoration omitted below 60 columns; solid palette surfaces, native text, input and commands remain. The dialog requires 48 columns and 14 rows. |
 
 Kitty placement uses `z=-1`, below text and above cell backgrounds under the [protocol’s layering rules](https://sw.kovidgoyal.net/kitty/graphics-protocol/#controlling-displayed-image-layout). Image geometry assumes cells twice as tall as they are wide and uses a bounded 2048 × 2048 working canvas. Borders occupy blank edge cells and never replace input text. Explicit native foregrounds, styled diff backgrounds, failures and approval content are preserved. Disabling or a broken mod restores the native presentation; the welcome mark and status belong to their own mods.
+
+Ported from [pi-powerline-footer](https://github.com/nicobailon/pi-powerline-footer) 0.18.0 (Nico Bailon, MIT; see `../../../THIRD_PARTY_NOTICES.md`): presets, segments, context thresholds, Nerd Font detection and the stash toggle. This package reimplements that behavior and copies no code; loading vibes, bash mode, delayed send, the welcome overlay and the queue are not ported.
 
 The [earlier theme rejection](../../../.docs/audits/theme-focus-revisit-20260922.md) remains unchanged: +57.708 ms cold activation and +49.697 ms callback p95, exceeding the +25 ms gates. Batch 3aa adds opt-in delivery.
 

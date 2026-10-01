@@ -85,6 +85,27 @@
       "source": "mods/first-party/omd_continue",
       "version": "0.1.0-preview.1"
     },
+    "omd_frecency": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "composer",
+        "input",
+        "lifecycle",
+        "store",
+        "exec",
+        "fs.read",
+        "services"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "bfb4fb118b0858fca477c7d6cdc1d96f6c50310b7a97237bd072611ef48dea35",
+        "mod.json": "ef459786c37068b75666e396ddd73f0b69ce4aebb11fa2723ea7c6b69a0325ea"
+      },
+      "id": "omd_frecency",
+      "package_sha256": "88688bb262b900b8a463b591807edda3c6840b8c053858bb5613898069decfa0",
+      "source": "mods/first-party/omd_frecency",
+      "version": "0.1.0-preview.1"
+    },
     "omd_git": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
@@ -294,11 +315,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "1d169aec48aa4ad26704c98a40441e29eaab2ae2c5ccd8bdbea3335e233bcaf2",
+        "index.ts": "9dd5f76fe15a3182b1603803aaa6d50ed31eafa0550f176932fb229b6d405d6e",
         "mod.json": "93bc32d24fc6a5e03ed7cd54f3099630d477e2d95d3bb2e88176f5e6c16f928f"
       },
       "id": "omd_notes",
-      "package_sha256": "4a491e67d8e229de46a2edcc222b7cd464899f4985ca06caded81da8aa8d9f0b",
+      "package_sha256": "e923ae70a0be3807c05e2aa812265ea8bd817d3d350f2ea44e1df367381603d5",
       "source": "mods/first-party/omd_notes",
       "version": "0.1.0-preview.1"
     },
@@ -315,16 +336,35 @@
         "fs.write",
         "pty",
         "network",
-        "composer"
+        "composer",
+        "services"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "a5823717a8ca69ca105de14f8256063912a77ea1d07159168342a9964e273ff8",
-        "mod.json": "6a99185274b85de9142b56e9beae5ad415cb12bee66decf001b14c71746419b0"
+        "index.ts": "0df88742fa03441583f3dc29bcfda8f091db64c3f531061855ac20984a9b3873",
+        "mod.json": "a2cc50a86713d29fb3661a7f9512a8f33b1a12251c9cfff7198d0a2d709c8ab8"
       },
       "id": "omd_panes",
-      "package_sha256": "1c70652c935b635002a3143d77a612f1e0bef40a111073a4708ca178ab54e000",
+      "package_sha256": "40138b06d0cf665f5cd12ba3c1e928f5cf8d0f05de519c343bd5ca6eaed6941e",
       "source": "mods/first-party/omd_panes",
+      "version": "0.1.0-preview.1"
+    },
+    "omd_plan_panel": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "terminal",
+        "commands",
+        "store",
+        "threads"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "8206c106009533df4003004a38446995684ec11c5cd8643592db119be4694a85",
+        "mod.json": "dd223bda76b9bcb2ed3da97760c339ab55da79899f33852a24f770cf91ecd8bb"
+      },
+      "id": "omd_plan_panel",
+      "package_sha256": "383c61e092f8039c3b58c0163376b5aa555db621349ea6dea36e446ec632136f",
+      "source": "mods/first-party/omd_plan_panel",
       "version": "0.1.0-preview.1"
     },
     "omd_plan_removal": {
@@ -509,17 +549,23 @@
       "capabilities": [
         "terminal",
         "commands",
-        "store"
+        "store",
+        "lifecycle",
+        "events",
+        "exec",
+        "threads",
+        "config",
+        "composer"
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "be7c84cf90ffeeeda845a78607c863cbd6af2543561ac3f6b2b59f7d6bac8373",
-        "mod.json": "22744b96cfbb47e45f5884e6d294fbc29d37b5d13d74dd1f1d57df06be2dcf63"
+        "index.ts": "4500b3b839ad308cb1f7a4e2d042e6152996ad9a0bb75557a34d350b6817ea34",
+        "mod.json": "39503f4e4c046f956ed562add557a955863310f4f4a084f943e9649f1e6cd2c4"
       },
       "id": "omd_theme",
-      "package_sha256": "150a5e4e304fa5de34cb39c1d8fdcbbb77addfe5b612f76637456dc6e4f9c703",
+      "package_sha256": "c7400a5fd1a66e746c728ce73736158385832008090ad5f303498775ded73ff5",
       "source": "mods/first-party/omd_theme",
-      "version": "0.3.0-candidate.1"
+      "version": "0.4.0-candidate.1"
     },
     "omd_typed_tasks": {
       "api": "0.2.0-experimental.5",

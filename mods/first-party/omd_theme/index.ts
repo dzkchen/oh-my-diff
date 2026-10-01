@@ -1,4 +1,4 @@
-import type { Json, ModAPI, ResourceRef, TerminalComponent, TerminalPatch, TerminalTheme, ThemeColor } from '../../api.d.ts';
+import type { Json, Ledger, ModAPI, ResourceRef, TerminalComponent, TerminalIdentity, TerminalPatch, TerminalSpan, TerminalTheme, ThemeColor } from '../../api.d.ts';
 
 type Palette = { name: string; foreground: string; background: string; theme: TerminalTheme };
 type Settings = {
@@ -7,15 +7,36 @@ type Settings = {
   scale: number; tint: string; dim: number; opacity: number; x: number; y: number;
   composer_gloss: boolean; backdrop_gloss: boolean; highlight: number; shading: number;
   gloss_opacity: number; borders: boolean; greeting_enabled: boolean; greeting_text: string;
+  statusline: string; statusline_position: 'above' | 'below';
 };
 type Asset = { resource: ResourceRef; label: string; ascii: string };
-type State = { saved: Settings | null; preview: Settings | null; asset: Asset | null; preview_asset: Asset | null; imports: Record<string, Palette>; open: boolean; page: string; notice: string; revision: number };
+type Usage = { model?: string; effort?: string | null; provider?: string; input?: number; output?: number; context?: number; window?: number | null; seq: number };
+type Git = { branch: string; ahead: number; behind: number; staged: number; unstaged: number; untracked: number };
+type Live = { threads: Record<string, Usage>; seq: number; model: string | null; effort: string | null; git: Git | null; nerd: boolean | null; plain: boolean; stashed: boolean };
+type State = { saved: Settings | null; preview: Settings | null; asset: Asset | null; preview_asset: Asset | null; imports: Record<string, Palette>; open: boolean; page: string; notice: string; revision: number; live: Live };
 const DEFAULTS: Settings = {
   palette: 'midnight', symbols: 'ascii', background_color: '', foreground_color: '', backdrop_mode: 'none', ascii_text: '. :  ',
   position: 'fit', scale: 1, tint: '', dim: 0.65, opacity: 1, x: 0, y: 0,
   composer_gloss: false, backdrop_gloss: false, highlight: 0.12, shading: 0.08, gloss_opacity: 0.85, borders: true,
-  greeting_enabled: false, greeting_text: 'What would you like to work on?',
+  greeting_enabled: false, greeting_text: 'What would you like to work on?', statusline: 'off', statusline_position: 'above',
 };
+const LIVE: Live = { threads: {}, seq: 0, model: null, effort: null, git: null, nerd: null, plain: false, stashed: false };
+const PRESETS: Record<string, string[]> = {
+  default: ['model', 'reasoning', 'path', 'git', 'context', 'cost', 'omd', 'stash'],
+  minimal: ['path', 'git', 'context'],
+  compact: ['model', 'git', 'cost', 'context', 'stash'],
+  full: ['model', 'reasoning', 'path', 'git', 'tokens', 'cost', 'context', 'session', 'omd', 'stash'],
+  nerd: ['model', 'reasoning', 'path', 'git', 'tokens', 'cost', 'context', 'session', 'omd', 'stash'],
+  ascii: ['model', 'reasoning', 'path', 'git', 'tokens', 'cost', 'context', 'stash'],
+};
+const ICONS: Record<'nerd' | 'unicode' | 'ascii', Record<string, string>> = {
+  nerd: { model: '\uEC19 ', path: '\uF115 ', git: '\uF126 ', tokens: '\uE26B ', cost: '\uF155 ', context: '\uF1C0 ', session: '\uF550 ', omd: '\uF1B3 ', stash: '\uF0C7 ', ahead: '↑', behind: '↓' },
+  unicode: { model: '', path: '', git: '⎇ ', tokens: '⊛ ', cost: '', context: '◫ ', session: '#', omd: '◆ ', stash: '≡ ', ahead: '↑', behind: '↓' },
+  ascii: { model: '', path: '', git: 'git:', tokens: '', cost: '', context: 'ctx:', session: 'id:', omd: 'omd:', stash: '', ahead: '^', behind: 'v' },
+};
+const NERD_TERMINALS = /iterm|wezterm|kitty|ghostty|alacritty/i;
+const STASH_HISTORY = 12;
+const tokens = (n: number) => n < 1000 ? String(n) : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)}M`;
 const PALETTES: Record<string, Palette> = {
   midnight: { name: 'Midnight', foreground: '#eeeeee', background: '#262626', theme: { accent: '#80d8ff', success: '#91e6aa', attention: '#ffe08a', failure: '#ff9b9b', diff_added: '#91e6aa', diff_removed: '#ff9b9b', muted: '#b4beca', user_message_background: '#303942', border: 'plain', density: 'comfortable' } },
   paper: { name: 'Paper', foreground: '#1c1c1c', background: '#ffffff', theme: { accent: '#005f9e', success: '#176b37', attention: '#805300', failure: '#a21d2b', diff_added: '#176b37', diff_removed: '#a21d2b', muted: '#555d66', user_message_background: '#e8edf1', border: 'plain', density: 'comfortable' } },
@@ -56,7 +77,7 @@ function indexed(value: string): number {
 function configure(base: Settings, key: string, text: string): Settings {
   const next = { ...base };
   const numeric: Record<string, [number, number]> = { scale: [0.1, 4], dim: [0, 1], opacity: [0, 1], x: [-4096, 4096], y: [-4096, 4096], highlight: [0, 0.4], shading: [0, 0.4], gloss_opacity: [0, 1] };
-  const choices: Record<string, string[]> = { symbols: ['ascii', 'unicode'], backdrop_mode: ['none', 'ascii', 'image'], position: ['center', 'fill', 'fit', 'tile'] };
+  const choices: Record<string, string[]> = { symbols: ['ascii', 'unicode'], backdrop_mode: ['none', 'ascii', 'image'], position: ['center', 'fill', 'fit', 'tile'], statusline: ['off', ...Object.keys(PRESETS)], statusline_position: ['above', 'below'] };
   if (key in numeric) { const n = Number(text); const [min, max] = numeric[key]; if (text.trim() === '' || !Number.isFinite(n) || n < min || n > max || (['x', 'y'].includes(key) && !Number.isInteger(n))) throw new Error(`${key} must be ${min}–${max}${['x', 'y'].includes(key) ? ' integer cells' : ''}`); (next as unknown as Record<string, unknown>)[key] = n; }
   else if (key in choices) { if (!choices[key].includes(text)) throw new Error(`Choose ${choices[key].join(', ')}`); (next as unknown as Record<string, unknown>)[key] = text; }
   else if (['composer_gloss', 'backdrop_gloss', 'borders', 'greeting_enabled'].includes(key)) { if (!['true', 'false'].includes(text)) throw new Error('Choose true or false'); (next as unknown as Record<string, unknown>)[key] = text === 'true'; }
@@ -119,7 +140,7 @@ function importTheme(format: string, text: string, name: string): Palette {
 }
 
 export default function activate(api: ModAPI) {
-  const readState = (): State => { const value = api.state.get() as Partial<State> | null; return { saved: value?.saved ? settings(value.saved) : null, preview: value?.preview ? settings(value.preview) : null, asset: value?.asset ?? null, preview_asset: value?.preview_asset ?? null, imports: value?.imports ?? {}, open: value?.open === true, page: value?.page ?? 'palette', notice: value?.notice ?? '', revision: value?.revision ?? 0 }; };
+  const readState = (): State => { const value = api.state.get() as Partial<State> | null; return { saved: value?.saved ? settings(value.saved) : null, preview: value?.preview ? settings(value.preview) : null, asset: value?.asset ?? null, preview_asset: value?.preview_asset ?? null, imports: value?.imports ?? {}, open: value?.open === true, page: value?.page ?? 'palette', notice: value?.notice ?? '', revision: value?.revision ?? 0, live: { ...LIVE, ...value?.live } }; };
   const writeState = (state: State) => api.state.set(state as unknown as Json);
   const current = (state: State) => state.preview ?? state.saved ?? settings(api.settings);
   const palette = (state: State, id: string): Palette | undefined => Object.hasOwn(state.imports, id) ? state.imports[id] : Object.hasOwn(PALETTES, id) ? PALETTES[id] : undefined;
@@ -131,11 +152,11 @@ export default function activate(api: ModAPI) {
     do { const page = api.host.call('evidence.read', { reference: resource, cursor, max_bytes: 16384 }); if (page.bytes > 65536) throw new Error('Text import is limited to 64 KiB'); text += page.text; cursor = page.cursor ?? undefined; } while (cursor !== undefined);
     return text;
   };
-  api.command('set', arguments_ => guard(() => { const text = String(arguments_ ?? ''); const [key, ...parts] = text.trim().split(/\s+/); const value = parts.join(' '); const state = readState(); if (key === 'palette' && !palette(state, value)) throw new Error('Unknown palette'); return update(state, configure(current(state), key, value)); }), { description: 'Preview a theme setting: set KEY VALUE' });
+  api.command('set', arguments_ => guard(() => { const text = String(arguments_ ?? ''); const [key, ...parts] = text.trim().split(/\s+/); const value = parts.join(' '); const state = readState(); if (key === 'palette' && !palette(state, value)) throw new Error('Unknown palette'); const result = update(state, configure(current(state), key, value)); if (key.startsWith('statusline')) refresh('session'); return result; }), { description: 'Preview a theme setting: set KEY VALUE' });
   api.command('save', () => { const state = readState(); writeState({ ...state, saved: current(state), asset: state.preview_asset ?? state.asset, preview: null, preview_asset: null, notice: 'Theme saved' }); return { display: 'Theme saved' }; }, { description: 'Save the live theme preview' });
   api.command('cancel', () => { const state = readState(); writeState({ ...restored(state), preview: null, preview_asset: null, notice: 'Preview discarded' }); return { display: 'Preview discarded' }; }, { description: 'Restore the last saved theme' });
   api.command('reset', () => { const state = readState(); writeState({ ...restored(state), saved: null, preview: null, asset: null, preview_asset: null, notice: 'Theme reset to configured defaults' }); return { display: 'Theme reset to configured defaults' }; }, { description: 'Reset theme settings and backdrop selection' });
-  api.command('page', value => { const state = readState(); const page = String(value); writeState({ ...state, open: true, page: ['palette', 'backdrop', 'position', 'glass', 'greeting'].includes(page) ? page : 'palette' }); return null; });
+  api.command('page', value => { const state = readState(); const page = String(value); writeState({ ...state, open: true, page: ['palette', 'backdrop', 'position', 'glass', 'greeting', 'status'].includes(page) ? page : 'palette' }); return null; });
   api.command('close', () => { writeState({ ...readState(), open: false }); return null; });
   api.command('import', arguments_ => guard(() => {
     const match = /^(ghostty|iterm2|warp)\s+(.+)$/.exec(String(arguments_ ?? '').trim()); if (!match) throw new Error('Use /omd_theme:import ghostty|iterm2|warp PATH');
@@ -158,7 +179,111 @@ export default function activate(api: ModAPI) {
     if (text) return guard(() => { if (!palette(state, text)) throw new Error('Unknown palette; use /theme to open the library'); return update(state, { ...current(state), palette: text }); });
     writeState({ ...state, open: true }); return null;
   }, { description: 'Open theme settings and live preview, or choose a palette' });
-  api.on('terminal', (): TerminalPatch => {
+  const live = (change: (live: Live) => void) => { const state = readState(); change(state.live); writeState(state); };
+  const refresh = (cause: 'session' | 'turn') => {
+    const state = readState(); const preset = PRESETS[current(state).statusline]; if (!preset) return;
+    live(data => {
+      if (cause === 'session' || data.nerd === null) {
+        const env = api.host.tryCall('exec.run', { program: 'env', timeout_ms: 2000 });
+        const vars = Object.fromEntries((env.ok ? env.value.stdout : '').split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+        data.nerd = ['GHOSTTY_RESOURCES_DIR', 'KITTY_WINDOW_ID', 'WEZTERM_EXECUTABLE', 'ALACRITTY_WINDOW_ID'].some(name => vars[name]) || NERD_TERMINALS.test(vars.TERM_PROGRAM ?? '');
+        data.plain = 'NO_COLOR' in vars;
+      }
+      if (cause === 'session' || !data.model) {
+        const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
+        const values = config.ok ? (config.value as { config?: { model?: string; model_reasoning_effort?: string } }).config : undefined;
+        data.model = values?.model ?? null; data.effort = values?.model_reasoning_effort ?? null;
+      }
+      if (preset.includes('git')) {
+        const run = api.host.tryCall('exec.run', { program: 'git', argv: ['status', '--porcelain=v2', '--branch'], timeout_ms: 3000 });
+        data.git = run.ok && run.value.exit_code === 0 ? run.value.stdout.split('\n').reduce((git: Git, line) => {
+          if (line.startsWith('# branch.head ')) git.branch = line.slice(14);
+          else if (line.startsWith('# branch.ab ')) [git.ahead, git.behind] = line.slice(12).split(' ').map(part => Math.abs(Number(part)));
+          else if (/^[12u] /.test(line)) { if (line[2] !== '.' && line[0] !== 'u') git.staged++; if (line[3] !== '.' || line[0] === 'u') git.unstaged++; }
+          else if (line.startsWith('? ')) git.untracked++;
+          return git;
+        }, { branch: '', ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0 }) : null;
+        api.host.tryCall('events.schedule', { key: 'git', delay_ms: 10_000 });
+      }
+    });
+  };
+  api.on('start', () => refresh('session'));
+  api.on('resume', () => refresh('session'));
+  api.on('turn_end', () => refresh('turn'));
+  api.on('timer', () => refresh('turn'));
+  api.on('app_notification', ({ method, params, thread_id }) => {
+    const update = params as { threadId?: string; threadSettings?: { model?: string; effort?: string | null; modelProvider?: string }; tokenUsage?: { total?: { inputTokens?: number; outputTokens?: number }; last?: { totalTokens?: number }; modelContextWindow?: number | null } };
+    const thread = thread_id ?? update.threadId;
+    if (!thread || !PRESETS[current(readState()).statusline]) return;
+    live(data => {
+      const usage = data.threads[thread] ??= { seq: 0 }; usage.seq = ++data.seq;
+      if (method === 'thread/settings/updated' && update.threadSettings) Object.assign(usage, { model: update.threadSettings.model, effort: update.threadSettings.effort ?? null, provider: update.threadSettings.modelProvider });
+      if (method === 'thread/tokenUsage/updated' && update.tokenUsage) Object.assign(usage, { input: update.tokenUsage.total?.inputTokens, output: update.tokenUsage.total?.outputTokens, context: update.tokenUsage.last?.totalTokens, window: update.tokenUsage.modelContextWindow ?? null });
+      for (const old of Object.keys(data.threads).sort((a, b) => data.threads[b].seq - data.threads[a].seq).slice(16)) delete data.threads[old];
+    });
+  });
+  api.command('stash', value => guard(() => {
+    const argument = String(value ?? '').trim();
+    const stored = api.host.call('store.get', { key: 'stash', scope: 'repository' });
+    const stash = (stored?.value ?? { active: null, history: [] }) as { active: string | null; history: string[] };
+    const put = (active: string | null, history: string[], display: string) => {
+      api.host.call('store.put', { key: 'stash', value: { active, history }, expected_revision: stored?.revision ?? null, scope: 'repository' });
+      live(data => { data.stashed = active !== null; });
+      return { display };
+    };
+    if (argument === 'list') return { display: stash.history.length ? stash.history.map((text, index) => `${index + 1}. ${visible(text.replace(/\s+/g, ' '), 72)}`).join('\n') : 'No stashed drafts' };
+    if (argument) { const text = stash.history[Number(argument) - 1]; if (!/^\d+$/.test(argument) || text === undefined) throw new Error('Use /omd_theme:stash, stash list or stash N'); api.host.call('composer.write', { insert: text }); return null; }
+    const draft = api.host.call('composer.read', null).text;
+    if (!draft.trim()) {
+      if (stash.active === null) return { display: 'Nothing to stash' };
+      api.host.call('composer.write', { text: stash.active });
+      return put(null, stash.history, 'Stash restored');
+    }
+    if (bytes(draft) > 16384) throw new Error('Drafts over 16 KiB are not stashed');
+    const history = [draft, ...stash.history.filter(text => text !== draft)].slice(0, STASH_HISTORY);
+    const result = put(draft, history, stash.active === null ? 'Draft stashed; Alt+z restores it' : 'Stash updated; Alt+z restores it');
+    api.host.call('composer.write', { text: '' });
+    return result;
+  }), { description: 'Stash the composer draft or restore it (Alt+z); stash list, stash N inserts a recent one' });
+
+  function statusline(state: State, config: Settings, colors: { background: string; foreground: string; theme: TerminalTheme }, ledger: Ledger | null, identity: TerminalIdentity | undefined): Pick<TerminalPatch, 'sites' | 'status'> {
+    const preset = PRESETS[config.statusline]; if (!preset) return {};
+    const data = state.live; const usage = ledger ? data.threads[ledger.thread_id] : undefined;
+    const glyphs = config.statusline === 'ascii' || data.plain ? 'ascii' : config.statusline === 'nerd' || data.nerd ? 'nerd' : 'unicode'; const icon = ICONS[glyphs];
+    const tone = (key: keyof TerminalTheme) => String(colors.theme[key] ?? colors.foreground);
+    const model = usage?.model ?? data.model; const effort = usage?.model ? usage.effort : data.effort;
+    const percent = usage?.context && usage.window ? Math.round(usage.context / usage.window * 100) : null;
+    const spend = (ledger?.cost as { settled_task_charge_microusd?: number } | null)?.settled_task_charge_microusd;
+    const parts = (ledger?.cwd ?? '').split('/').filter(Boolean); const git = data.git;
+    const omd = `${identity?.mods.active ?? 0} mods${usage?.provider && usage.provider !== 'openai' ? ` · ${usage.provider}` : ''}`;
+    const values: Record<string, [string, string] | null> = {
+      model: model ? [`${icon.model}${model}`, tone('accent')] : null,
+      reasoning: effort ? [`think:${effort}`, tone('muted')] : null,
+      path: parts.length ? [`${icon.path}${['full', 'nerd', 'ascii'].includes(config.statusline) && parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : parts.at(-1)}`, colors.foreground] : null,
+      git: git?.branch ? [`${icon.git}${git.branch}${git.ahead ? ` ${icon.ahead}${git.ahead}` : ''}${git.behind ? ` ${icon.behind}${git.behind}` : ''}${git.staged ? ` +${git.staged}` : ''}${git.unstaged ? ` *${git.unstaged}` : ''}${git.untracked ? ` ?${git.untracked}` : ''}`, tone(git.staged + git.unstaged + git.untracked ? 'attention' : 'success')] : null,
+      tokens: usage?.input !== undefined ? [`${icon.tokens}${glyphs === 'ascii' ? 'in:' : '↑'}${tokens(usage.input)} ${glyphs === 'ascii' ? 'out:' : '↓'}${tokens(usage.output ?? 0)}`, tone('muted')] : null,
+      cost: typeof spend === 'number' ? [`${icon.cost}$${(spend / 1e6).toFixed(2)}`, tone(spend ? 'attention' : 'muted')] : null,
+      context: percent !== null ? [`${icon.context}${percent}%/${tokens(usage?.window ?? 0)}`, tone(percent >= 90 ? 'failure' : percent >= 70 ? 'attention' : 'success')] : null,
+      session: ledger ? [`${icon.session}${ledger.thread_id.slice(0, 8)}`, tone('muted')] : null,
+      omd: [`${icon.omd}${omd}`, tone('accent')],
+      stash: data.stashed ? [`${icon.stash}stash`, tone('attention')] : null,
+    };
+    if (config.statusline_position === 'below') {
+      const text = [omd, typeof spend === 'number' && spend ? `$${(spend / 1e6).toFixed(2)}` : '', percent !== null && percent >= 70 ? `ctx ${percent}%${percent >= 90 ? '!' : ''}` : '', data.stashed ? 'stash' : ''].filter(Boolean).join(' · ');
+      return { status: [visible(text, 40)] };
+    }
+    const segments = preset.map(key => values[key]).filter((value): value is [string, string] => value !== null);
+    const shade = (index: number) => blend(colors.background, colors.foreground, index % 2 ? 0.14 : 0.24);
+    const spans: TerminalSpan[] = segments.flatMap(([text, fg], index): TerminalSpan[] => {
+      if (glyphs === 'ascii') return [...(index ? [{ text: ' | ', tone: 'muted' as const }] : []), { text, fg: fg as ThemeColor }];
+      const bg = shade(index); const segment: TerminalSpan = { text: ` ${text} `, fg: readable(fg, [bg]) as ThemeColor, bg: bg as ThemeColor };
+      if (glyphs === 'unicode') return [segment];
+      return [segment, { text: '\uE0B0', fg: bg as ThemeColor, ...(index < segments.length - 1 ? { bg: shade(index + 1) as ThemeColor } : {}) }];
+    });
+    return spans.length ? { sites: { above_composer: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'line', id: 'omd_theme_statusline', label: 'Status line', spans }] } } } : {};
+  }
+
+  api.on('terminal', ({ ledger, identity }): TerminalPatch => {
     const state = readState(); const config = current(state); const selected = palette(state, config.palette) ?? PALETTES.midnight;
     const background = config.background_color || selected.background;
     const foreground = readable(config.foreground_color || selected.foreground, [background]);
@@ -167,7 +292,8 @@ export default function activate(api: ModAPI) {
     theme.user_message_background = background as ThemeColor;
     const foregrounds = [foreground, ...(['accent', 'success', 'attention', 'failure', 'diff_added', 'diff_removed', 'muted'] as const).map(key => String(theme[key] ?? foreground))];
     const paint = (gloss: boolean) => ({ top: readableBackground(gloss ? blend(background, '#ffffff', config.highlight) : background, foregrounds, background) as ThemeColor, bottom: readableBackground(gloss ? blend(background, '#000000', config.shading) : background, foregrounds, background) as ThemeColor, foreground: foreground as ThemeColor, opacity: gloss ? config.gloss_opacity : 1, ...(gloss && config.borders ? { border: readable(blend(background, foreground, 0.6), [background]) as ThemeColor } : {}) });
-    const view: TerminalPatch = { foreground: indexed(foreground), background: indexed(background), theme, greeting: config.greeting_enabled ? config.greeting_text : '', surface_styles: { composer: paint(config.composer_gloss), backdrop: paint(config.backdrop_gloss) } };
+    const view: TerminalPatch = { foreground: indexed(foreground), background: indexed(background), theme, greeting: config.greeting_enabled ? config.greeting_text : '', surface_styles: { composer: paint(config.composer_gloss), backdrop: paint(config.backdrop_gloss) },
+      keybindings: { 'Alt+z': { command: 'omd_theme:stash' } }, ...statusline(state, config, { background, foreground, theme }, ledger, identity) };
     const tint = readableBackground(config.tint || background, foregrounds, background);
     let imageDim = config.dim;
     while (imageDim < 1 && !['#000000', '#ffffff'].every(extreme => foregrounds.every(fg => contrast(fg, blend(extreme, tint, imageDim)) >= 4.5))) imageDim = Math.min(1, imageDim + 0.025);
@@ -175,7 +301,7 @@ export default function activate(api: ModAPI) {
     if (config.backdrop_mode === 'ascii') view.backdrop = { ascii: { text: config.ascii_text, ...transform } };
     const asset = state.preview_asset ?? state.asset;
     if (config.backdrop_mode === 'image' && asset) view.backdrop = { image: { resource: asset.resource, ...transform, dim: imageDim, tint: tint as ThemeColor, ...(config.backdrop_gloss ? { overlay: paint(true) } : {}) }, fallback: { ascii: { text: asset.ascii, ...transform } } };
-    if (state.open) view.sites = { dialog: { components: [{ type: 'dialog', id: 'omd_theme_dialog', label: 'Theme settings', title: 'Theme · live preview', children: controls(state, config) }] } };
+    if (state.open) view.sites = { ...view.sites, dialog: { components: [{ type: 'dialog', id: 'omd_theme_dialog', label: 'Theme settings', title: 'Theme · live preview', children: controls(state, config) }] } };
     return view;
   });
 
@@ -183,7 +309,7 @@ export default function activate(api: ModAPI) {
     const button = (id: string, text: string, command: string, args?: string): TerminalComponent => ({ type: 'button', id: `omd_theme_${id}`, label: text, text, action: { command: `omd_theme:${command}`, ...(args ? { args } : {}) } });
     const input = (key: keyof Settings, label: string): TerminalComponent => ({ type: 'input', id: `omd_theme_${key}_${state.revision}`, label, value: String(config[key]), action: { command: 'omd_theme:set', args: key } });
     const select = (key: keyof Settings, label: string, values: string[]): TerminalComponent => ({ type: 'select', id: `omd_theme_${key}_${state.revision}`, label, value: String(config[key]), options: values.map(value => ({ value, label: value })), action: { command: 'omd_theme:set', args: key } });
-    const children: TerminalComponent[] = [button('close', 'Close', 'close'), button('save', 'Save', 'save'), button('cancel', 'Discard preview', 'cancel'), button('reset', 'Reset', 'reset'), { type: 'select', id: 'omd_theme_page', label: 'Settings page', value: state.page, options: ['palette', 'backdrop', 'position', 'glass', 'greeting'].map(value => ({ value, label: value })), action: { command: 'omd_theme:page' } }];
+    const children: TerminalComponent[] = [button('close', 'Close', 'close'), button('save', 'Save', 'save'), button('cancel', 'Discard preview', 'cancel'), button('reset', 'Reset', 'reset'), { type: 'select', id: 'omd_theme_page', label: 'Settings page', value: state.page, options: ['palette', 'backdrop', 'position', 'glass', 'greeting', 'status'].map(value => ({ value, label: value })), action: { command: 'omd_theme:page' } }];
     if (state.page === 'palette') children.push(
       { type: 'select', id: `omd_theme_palette_${state.revision}`, label: 'Palette library', value: config.palette, options: Object.entries({ ...PALETTES, ...state.imports }).map(([value, palette]) => ({ value, label: palette.name })), action: { command: 'omd_theme:set', args: 'palette' } },
       select('symbols', 'Symbols', ['ascii', 'unicode']), input('background_color', 'Background RGB (empty = palette)'), input('foreground_color', 'Text RGB (empty = palette)'),
@@ -196,6 +322,7 @@ export default function activate(api: ModAPI) {
     );
     else if (state.page === 'position') children.push(select('position', 'Position', ['center', 'fill', 'fit', 'tile']), input('scale', 'Scale (0.1–4)'), input('x', 'Horizontal offset (cells)'), input('y', 'Vertical offset (cells)'));
     else if (state.page === 'greeting') children.push(select('greeting_enabled', 'Startup greeting', ['false', 'true']), input('greeting_text', 'Greeting text'));
+    else if (state.page === 'status') children.push(select('statusline', 'Status line preset', ['off', ...Object.keys(PRESETS)]), select('statusline_position', 'Status line position', ['above', 'below']));
     else children.push(select('composer_gloss', 'Glossy prompt', ['false', 'true']), select('backdrop_gloss', 'Gloss over backdrop', ['false', 'true']), input('highlight', 'Highlight (0–0.4)'), input('shading', 'Shading (0–0.4)'), input('gloss_opacity', 'Gloss opacity (0–1)'), select('borders', 'Glass borders', ['true', 'false']));
     children.push({ type: 'text', id: 'omd_theme_notice', label: 'Preview status', text: visible(state.notice || 'Changes preview immediately; Save keeps them', 400) });
     return children;

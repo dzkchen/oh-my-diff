@@ -25,7 +25,8 @@
           "border": "plain",
           "density": "comfortable",
           "icons": "ascii",
-          "glyphs": {}
+          "glyphs": {},
+          "syntax": "catppuccin-mocha"
         },
         "greeting": "",
         "surface_styles": {
@@ -40,6 +41,11 @@
             "bottom": "#262626",
             "foreground": "#eeeeee",
             "opacity": 1
+          }
+        },
+        "keybindings": {
+          "Alt+z": {
+            "command": "omd_theme:stash"
           }
         }
       }

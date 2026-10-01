@@ -36,7 +36,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | Profile | Selector | Installed mod sources | Fresh-install default selection | Inactive plugin sources |
 | --- | --- | --- | --- | --- |
 | OMD Core | `platform` | omd_logo, omd_mods | omd_logo, omd_mods | none |
-| OMD+ | `full` | omd_advisor, omd_checks, omd_claude_cli, omd_continue, omd_coordination, omd_git, omd_graph_navigator, omd_guideline_governance, omd_inspector, omd_logo, omd_lsp_sync, omd_lsp_view, omd_model_picker, omd_mods, omd_muse, omd_notes, omd_panes, omd_plan_removal, omd_preview, omd_programmable_context, omd_project_pi_prompts, omd_reactive_rules, omd_recovery, omd_repository_analysis, omd_research, omd_source_knowledge, omd_task_tools, omd_theme, omd_typed_tasks, omd_workflow, omd_workspace | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_workspace | omd-anchored-edit, omd-application-bridges, omd-artifact-reading, omd-browser, omd-curated-memory, omd-debugger, omd-guidance-hooks, omd-procedures, omd-review-policy, omd-session-review |
+| OMD+ | `full` | omd_advisor, omd_checks, omd_claude_cli, omd_continue, omd_coordination, omd_frecency, omd_git, omd_graph_navigator, omd_guideline_governance, omd_inspector, omd_logo, omd_lsp_sync, omd_lsp_view, omd_model_picker, omd_mods, omd_muse, omd_notes, omd_panes, omd_plan_panel, omd_plan_removal, omd_preview, omd_programmable_context, omd_project_pi_prompts, omd_reactive_rules, omd_recovery, omd_repository_analysis, omd_research, omd_source_knowledge, omd_task_tools, omd_theme, omd_typed_tasks, omd_workflow, omd_workspace | omd_inspector, omd_logo, omd_model_picker, omd_mods, omd_workspace | omd-anchored-edit, omd-application-bridges, omd-artifact-reading, omd-browser, omd-curated-memory, omd-debugger, omd-guidance-hooks, omd-procedures, omd-review-policy, omd-session-review |
 
 | Selected mod | Version | Source |
 | --- | --- | --- |
@@ -45,6 +45,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_claude_cli` | 0.2.0-preview.2 | `mods/first-party/omd_claude_cli` |
 | `omd_continue` | 0.1.0-preview.1 | `mods/first-party/omd_continue` |
 | `omd_coordination` | 0.2.0-preview.1 | `mods/first-party/omd_coordination` |
+| `omd_frecency` | 0.1.0-preview.1 | `mods/first-party/omd_frecency` |
 | `omd_git` | 0.2.0-preview.2 | `mods/first-party/omd_git` |
 | `omd_graph_navigator` | 0.2.0-preview.2 | `mods/first-party/omd_graph_navigator` |
 | `omd_guideline_governance` | 0.1.0-preview.1 | `mods/first-party/omd_guideline_governance` |
@@ -57,6 +58,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_muse` | 0.1.0-preview.1 | `mods/first-party/omd_muse` |
 | `omd_notes` | 0.1.0-preview.1 | `mods/first-party/omd_notes` |
 | `omd_panes` | 0.1.0-preview.1 | `mods/first-party/omd_panes` |
+| `omd_plan_panel` | 0.1.0-preview.1 | `mods/first-party/omd_plan_panel` |
 | `omd_plan_removal` | 0.1.0-preview.1 | `mods/first-party/omd_plan_removal` |
 | `omd_preview` | 0.1.0-preview.2 | `mods/first-party/omd_preview` |
 | `omd_programmable_context` | 0.1.0-preview.1 | `mods/first-party/omd_programmable_context` |
@@ -67,7 +69,7 @@ Opt-in mods remain disabled; plugin sources and their nested skills/hooks requir
 | `omd_research` | 0.2.0-preview.1 | `mods/first-party/omd_research` |
 | `omd_source_knowledge` | 0.1.0-preview.3 | `mods/first-party/omd_source_knowledge` |
 | `omd_task_tools` | 0.2.0-preview.1 | `mods/first-party/omd_task_tools` |
-| `omd_theme` | 0.3.0-candidate.1 | `mods/first-party/omd_theme` |
+| `omd_theme` | 0.4.0-candidate.1 | `mods/first-party/omd_theme` |
 | `omd_typed_tasks` | 0.2.0-preview.1 | `mods/first-party/omd_typed_tasks` |
 | `omd_workflow` | 0.2.0-preview.1 | `mods/first-party/omd_workflow` |
 | `omd_workspace` | 0.2.0-preview.3 | `mods/first-party/omd_workspace` |

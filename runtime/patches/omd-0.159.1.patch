@@ -55037,7 +55037,7 @@ index 982c3ecb5..16d500910 100644
      /// Same-host task results for the active unified mention query.
      TaskSearchResult {
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 625c61492..abb33052b 100644
+index 625c61492..e4ecc6d22 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -472,6 +472,7 @@ pub enum InputResult {
@@ -55136,7 +55136,7 @@ index 625c61492..abb33052b 100644
 
          if self.popups.current_file_query.is_some() {
              self.app_event_tx
-@@ -4103,6 +4136,52 @@ impl ChatComposer {
+@@ -4103,6 +4136,51 @@ impl ChatComposer {
          }
      }
 
@@ -55152,15 +55152,14 @@ index 625c61492..abb33052b 100644
 +        let start = line[..cursor]
 +            .rfind(char::is_whitespace)
 +            .map_or(0, |index| index + 1);
-+        (crate::mod_surface::completion_owned() && crate::mod_runtime::find(command).is_some())
-+            .then(|| {
-+                (
-+                    start..cursor,
-+                    line[start..cursor].to_owned(),
-+                    command.to_owned(),
-+                    line[name_end..cursor].trim_start().to_owned(),
-+                )
-+            })
++        crate::mod_surface::completes_arguments(command).then(|| {
++            (
++                start..cursor,
++                line[start..cursor].to_owned(),
++                command.to_owned(),
++                line[name_end..cursor].trim_start().to_owned(),
++            )
++        })
 +    }
 +
 +    fn sync_argument_popup(
@@ -55189,7 +55188,7 @@ index 625c61492..abb33052b 100644
      /// Synchronize the legacy file-search popup with the current `@` token.
      fn sync_file_search_popup(&mut self, range: Range<usize>, query: String) {
          if self
-@@ -5038,6 +5117,7 @@ impl ChatComposer {
+@@ -5038,6 +5116,7 @@ impl ChatComposer {
              self.cursor_pos_with_options(area, options),
              buf,
          );
@@ -55197,7 +55196,7 @@ index 625c61492..abb33052b 100644
          if options.footer.is_some_and(|footer| footer.is_interactive) {
              buf.set_style(composer_rect, Style::default().dim());
          }
-@@ -9450,6 +9530,7 @@ mod tests {
+@@ -9450,6 +9529,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected model command, got service tier {command:?}")
                  }
@@ -55205,7 +55204,7 @@ index 625c61492..abb33052b 100644
                  None => panic!("no selected command for '/mo'"),
              },
              _ => panic!("slash popup not active after typing '/mo'"),
-@@ -9532,6 +9613,7 @@ mod tests {
+@@ -9532,6 +9612,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected resume command, got service tier {command:?}")
                  }
@@ -55213,7 +55212,7 @@ index 625c61492..abb33052b 100644
                  None => panic!("no selected command for '/res'"),
              },
              _ => panic!("slash popup not active after typing '/res'"),
-@@ -9586,6 +9668,7 @@ mod tests {
+@@ -9586,6 +9667,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected pets command, got service tier {command:?}")
                  }
@@ -55221,7 +55220,7 @@ index 625c61492..abb33052b 100644
                  None => panic!("no selected command for '/pet'"),
              },
              _ => panic!("slash popup not active after typing '/pet'"),
-@@ -9640,6 +9723,7 @@ mod tests {
+@@ -9640,6 +9722,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected btw command, got service tier {command:?}")
                  }
@@ -55229,7 +55228,7 @@ index 625c61492..abb33052b 100644
                  None => panic!("no selected command for '/bt'"),
              },
              _ => panic!("slash popup not active after typing '/bt'"),
-@@ -9694,6 +9778,7 @@ mod tests {
+@@ -9694,6 +9777,7 @@ mod tests {
                  Some(CommandItem::ServiceTier(command)) => {
                      panic!("expected side command, got service tier {command:?}")
                  }
@@ -55237,7 +55236,7 @@ index 625c61492..abb33052b 100644
                  None => panic!("no selected command for '/si'"),
              },
              _ => panic!("slash popup not active after typing '/si'"),
-@@ -9792,6 +9877,7 @@ mod tests {
+@@ -9792,6 +9876,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected init command, got service tier {command:?}")
              }
@@ -55245,7 +55244,7 @@ index 625c61492..abb33052b 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch, but composer submitted literal text: {text}")
              }
-@@ -9809,6 +9895,25 @@ mod tests {
+@@ -9809,6 +9894,25 @@ mod tests {
          );
      }
 
@@ -55271,7 +55270,7 @@ index 625c61492..abb33052b 100644
      #[test]
      fn kill_buffer_persists_after_submit() {
          use crossterm::event::KeyCode;
-@@ -10302,6 +10407,7 @@ mod tests {
+@@ -10302,6 +10406,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected diff command, got service tier {command:?}")
              }
@@ -55279,7 +55278,7 @@ index 625c61492..abb33052b 100644
              InputResult::Submitted { text, .. } => {
                  panic!("expected command dispatch after Tab completion, got literal submit: {text}")
              }
-@@ -10502,6 +10608,7 @@ mod tests {
+@@ -10502,6 +10607,7 @@ mod tests {
              InputResult::ServiceTierCommand(command) => {
                  panic!("expected mention command, got service tier {command:?}")
              }
@@ -62144,10 +62143,10 @@ index 000000000..d09b569cd
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..5fe080d8e
+index 000000000..8c6045d39
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,590 @@
+@@ -0,0 +1,624 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -62187,6 +62186,8 @@ index 000000000..5fe080d8e
 +    checked: Option<Instant>,
 +    subscribers: Vec<(String, Vec<String>)>,
 +    events: BTreeSet<String>,
++    completers: BTreeSet<String>,
++    completion_owner: bool,
 +    view: Option<(usize, Option<&'static str>, bool)>,
 +    queues: BTreeMap<String, NotificationQueue>,
 +    requests: BTreeMap<String, NotificationQueue>,
@@ -62253,6 +62254,17 @@ index 000000000..5fe080d8e
 +        })
 +        .filter_map(|event| event.as_str().map(str::to_owned))
 +        .collect();
++    let registers = |item: &Value, kind: &str| {
++        item["registrations"][kind]
++            .as_array()
++            .is_some_and(|names| names.iter().any(|name| name == "completion"))
++    };
++    state.completers = mods
++        .iter()
++        .filter(|item| registers(item, "events"))
++        .filter_map(|item| item["id"].as_str().map(str::to_owned))
++        .collect();
++    state.completion_owner = mods.iter().any(|item| registers(item, "replacements"));
 +    state.subscribers = mods
 +        .into_iter()
 +        .filter_map(|item| {
@@ -62405,7 +62417,24 @@ index 000000000..5fe080d8e
 +}
 +
 +pub(crate) fn completion_owned() -> bool {
-+    registered("completion")
++    with(|state| {
++        refresh_subscribers(state);
++        state.completion_owner
++    })
++}
++
++fn own_completer(command: &str) -> Option<String> {
++    let id = crate::mod_runtime::find(command)?.target.id;
++    with(|state| {
++        refresh_subscribers(state);
++        state.completers.contains(&id)
++    })
++    .then_some(id)
++}
++
++pub(crate) fn completes_arguments(command: &str) -> bool {
++    own_completer(command).is_some()
++        || (completion_owned() && crate::mod_runtime::find(command).is_some())
 +}
 +
 +pub(crate) fn complete_files(
@@ -62456,7 +62485,11 @@ index 000000000..5fe080d8e
 +            return;
 +        }
 +        let payload = json!({"kind": "argument", "command": command, "query": query, "line": line});
-+        let matches = crate::mod_runtime::invoke_replacement("completion", payload)
++        let reply = match own_completer(&command) {
++            Some(id) => crate::mod_runtime::invoke_event(&id, "completion", payload),
++            None => crate::mod_runtime::invoke_replacement("completion", payload),
++        };
++        let matches = reply
 +            .and_then(Result::ok)
 +            .and_then(|value| {
 +                value["items"]

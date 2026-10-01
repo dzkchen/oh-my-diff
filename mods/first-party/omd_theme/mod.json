@@ -1,10 +1,10 @@
 {
   "schema": 1,
   "id": "omd_theme",
-  "version": "0.3.0-candidate.1",
+  "version": "0.4.0-candidate.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "description": "/theme: color themes, backgrounds, glyphs and the startup greeting",
+  "description": "/theme: color themes, backgrounds, glyphs, the startup greeting, a powerline status line and a prompt stash",
   "license": "Apache-2.0",
   "provenance": {
     "maintainer": "Oh My Diff",
@@ -13,8 +13,28 @@
   "capabilities": [
     "terminal",
     "commands",
-    "store"
+    "store",
+    "lifecycle",
+    "events",
+    "exec",
+    "threads",
+    "config",
+    "composer"
   ],
+  "exec_environment": [
+    "TERM_PROGRAM",
+    "GHOSTTY_RESOURCES_DIR",
+    "KITTY_WINDOW_ID",
+    "WEZTERM_EXECUTABLE",
+    "ALACRITTY_WINDOW_ID",
+    "NO_COLOR"
+  ],
+  "subscriptions": {
+    "app": [
+      "thread/settings/updated",
+      "thread/tokenUsage/updated"
+    ]
+  },
   "compatibility": {
     "required_features": [
       "terminal_render_sites_v1",
@@ -23,7 +43,11 @@
       "terminal_backdrop_transform_v1",
       "terminal_image_sample_v1",
       "terminal_import_lifetime_v1",
-      "terminal_welcome_v1"
+      "terminal_welcome_v1",
+      "app_v1",
+      "exec_v1",
+      "terminal_surface_v1",
+      "timers_v1"
     ]
   },
   "settings_schema": {
@@ -135,6 +159,27 @@
       "greeting_enabled": {
         "type": "boolean",
         "default": false
+      },
+      "statusline": {
+        "type": "string",
+        "enum": [
+          "off",
+          "default",
+          "minimal",
+          "compact",
+          "full",
+          "nerd",
+          "ascii"
+        ],
+        "default": "off"
+      },
+      "statusline_position": {
+        "type": "string",
+        "enum": [
+          "above",
+          "below"
+        ],
+        "default": "above"
       }
     },
     "additionalProperties": false

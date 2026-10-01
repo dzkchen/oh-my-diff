@@ -48,7 +48,8 @@ drops its layout.
 once, 300 rows drawn around the selection) in natural order with Git colours and markers: staged, modified,
 untracked (`U`), conflicted and ignored (dimmed); directories take their
 strongest child state (600 Git states at most, ignored ones last). Find uses the upstream fuzzy file search, scoped to the
-selected folder. Enter on a file opens it in the viewer. The selected entry's
+selected folder, and reorders the results by frecency and Git status when
+`omd_frecency` is enabled. Enter on a file opens it in the viewer. The selected entry's
 action row creates files and folders, renames, moves and deletes them, inserts
 the path into the composer or opens the file in your editor. Every change
 shows a confirmation with the paths and file count, then runs as one
@@ -80,7 +81,8 @@ text client with loopback-only network.
 
 Capabilities: `commands`, `terminal`, `store`, `lifecycle`, `events` (watch
 registration), `exec` (`git`, `awk`, `mkdir`, `find`), `fs.read`, `fs.write`,
-`pty`, `network` (the browser pane's loopback client) and `composer`.
+`pty`, `network` (the browser pane's loopback client), `composer` and
+`services` (the optional `omd.frecency` ranking).
 
 Ported from [neoism](https://github.com/parkers0405/neoism) (Parker Settle and
 the Neoism contributors, MIT; see `THIRD_PARTY_NOTICES.md`): panes and splits,
