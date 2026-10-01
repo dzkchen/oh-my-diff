@@ -519,7 +519,7 @@ The appearance additions (`terminal_surface_paint_v1`,
 `terminal_backdrop_transform_v1`, `terminal_image_sample_v1`,
 `terminal_import_lifetime_v1`) remain generic presentation primitives:
 
-- `surface_styles.composer` and `.backdrop` accept a `TerminalSurfacePaint`
+- `surface_styles.composer`, `.backdrop` and `.approval` accept a `TerminalSurfacePaint`
   with `top`, `bottom`, `foreground`, `border` RGB/indexed colors and
   `opacity` from 0 to 1. Background colors interpolate vertically and blend
   with existing colors. The foreground is independent of background opacity;
@@ -528,6 +528,8 @@ The appearance additions (`terminal_surface_paint_v1`,
   blank edge cells and disappear at zero opacity. `NO_COLOR` omits styling.
   Solid backdrop colors remain in narrow terminals. Inline rendering uses
   the current bounded viewport; it does not repaint earlier terminal scrollback.
+  `approval` frames native approval prompts and mod confirmations; their
+  text, options, default selection, focus and grants stay host-owned.
 - Image and ASCII backdrops accept `position: center|fit|fill|tile`,
   `scale: 0.1..4`, signed `offset: {x,y}` in -4096..4096 cells,
   `dim`, `opacity` from 0 to 1 and optional `tint`. Image dimming blends
@@ -560,9 +562,19 @@ Decorative backdrops are omitted below 60 columns and under `NO_COLOR`.
 Components add `document` (up to 100,000 lines with anchors, selection and
 find), `diff`, `image` (truecolor half-block cells, alt text under
 `NO_COLOR`) and `terminal` (a PTY session). Spans accept `fg` and `bg` theme
-colors, `italic` and `underline` (`terminal_style_v1`). A `pane` with
-`keys: true` (`terminal_input_v1`) forwards every key while focused as
-`component_event {kind: 'key', key, text}`; Ctrl+] leaves it. In a layout
+colors, `italic` and `underline` (`terminal_style_v1`); `document` keeps
+span styles. A `pane` or `document` with `keys: true` (`terminal_input_v1`)
+forwards keys and pastes while focused as `component_event {kind: 'input',
+events}`, each event `{key, text}` or `{paste, truncated?}` (a paste is at most
+64 KiB). Input waiting for one component arrives in order as one batch of at
+most 64 events and 64 KiB, so a slow callback adds at most one batch of lag;
+beyond 256 queued events input is dropped and the next batch reports
+`dropped`. Ctrl+] leaves the component; Ctrl+C leaves it and keeps its native
+meaning (interrupt or quit); Esc goes to the mod.
+The mod owns the buffer, cursor and selection and draws them as spans; a key
+`document` keeps its scroll across content changes and scrolls to `selected`.
+A paste into a focused `terminal` component goes to the PTY, bracketed when
+the program asked for it. In a layout
 region, `terminal`, `document`, `diff` and `list` components without a
 `height` share the rows left after the region's other components. Releasing a
 mouse drag on a split border sends `component_event {kind: 'resize',

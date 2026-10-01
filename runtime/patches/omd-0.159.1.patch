@@ -4061,7 +4061,7 @@ index 9d61157c4..1d511f153 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index de47e41f7..bbbb5f23a 100644
+index de47e41f7..da46abaa1 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -229,6 +229,8 @@ mod link_hover;
@@ -4109,7 +4109,18 @@ index de47e41f7..bbbb5f23a 100644
                  self.recap.note_focus_gained();
              }
              _ => {}
-@@ -1149,7 +1166,68 @@ impl App {
+@@ -1050,6 +1067,10 @@ impl App {
+                     // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
+                     // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
+                     let pasted = pasted.replace("\r\n", "\n").replace('\r', "\n");
++                    if self.mod_overlays_allowed() && crate::mod_ui::paste(&pasted) {
++                        tui.frame_requester().schedule_frame();
++                        return Ok(AppRunControl::Continue);
++                    }
+                     if self.backtrack.primed && !pasted.is_empty() {
+                         if self.backtrack.overlay_preview_active {
+                             self.cancel_transcript_browsing(tui);
+@@ -1149,7 +1170,68 @@ impl App {
          Ok(())
      }
 
@@ -4178,7 +4189,7 @@ index de47e41f7..bbbb5f23a 100644
          self.sync_thread_title_progress();
          self.chat_widget
              .set_sparkle_terminal_focus(tui.is_terminal_focused());
-@@ -1179,20 +1257,30 @@ impl App {
+@@ -1179,20 +1261,30 @@ impl App {
              self.schedule_immediate_resize_reflow(tui);
              self.maybe_run_resize_reflow(tui, screen_size)?;
          }
@@ -6152,8 +6163,20 @@ index 982c3ecb5..16d500910 100644
 
      /// Same-host task results for the active unified mention query.
      TaskSearchResult {
+diff --git a/codex-rs/tui/src/bottom_pane/approval_overlay.rs b/codex-rs/tui/src/bottom_pane/approval_overlay.rs
+index 0c676aae6..53f28e9c6 100644
+--- a/codex-rs/tui/src/bottom_pane/approval_overlay.rs
++++ b/codex-rs/tui/src/bottom_pane/approval_overlay.rs
+@@ -319,6 +319,7 @@ impl ApprovalOverlay {
+             header,
+             header_view_all_hint: approval_keymap
+                 .primary_hint("open_fullscreen", &approval_keymap.open_fullscreen),
++            view_id: Some(crate::mod_ui::APPROVAL_VIEW_ID),
+             ..SelectionViewParams::picker()
+         };
+
 diff --git a/codex-rs/tui/src/bottom_pane/chat_composer.rs b/codex-rs/tui/src/bottom_pane/chat_composer.rs
-index 625c61492..e4ecc6d22 100644
+index 625c61492..71dcb48cd 100644
 --- a/codex-rs/tui/src/bottom_pane/chat_composer.rs
 +++ b/codex-rs/tui/src/bottom_pane/chat_composer.rs
 @@ -472,6 +472,7 @@ pub enum InputResult {
@@ -6308,7 +6331,7 @@ index 625c61492..e4ecc6d22 100644
              self.cursor_pos_with_options(area, options),
              buf,
          );
-+        crate::mod_ui::paint_composer(composer_rect, buf, style.bg);
++        crate::mod_ui::paint_named("composer", composer_rect, buf, style.bg);
          if options.footer.is_some_and(|footer| footer.is_interactive) {
              buf.set_style(composer_rect, Style::default().dim());
          }
@@ -6587,7 +6610,7 @@ index 51760df39..60f5551a4 100644
 -    }
  }
 diff --git a/codex-rs/tui/src/bottom_pane/list_selection_view.rs b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
-index 575a7ea33..76e2b7f8d 100644
+index 575a7ea33..2d2720b3a 100644
 --- a/codex-rs/tui/src/bottom_pane/list_selection_view.rs
 +++ b/codex-rs/tui/src/bottom_pane/list_selection_view.rs
 @@ -37,6 +37,9 @@ use super::CancellationEvent;
@@ -6662,6 +6685,21 @@ index 575a7ea33..76e2b7f8d 100644
 
          let note_width = area.width.saturating_sub(2);
          let note_lines = self
+@@ -1608,6 +1631,14 @@ impl Renderable for ListSelectionView {
+                 Paragraph::new(hint_lines).dim().render(hint_area, buf);
+             }
+         }
++        if self.view_id == Some(crate::mod_ui::APPROVAL_VIEW_ID) {
++            crate::mod_ui::paint_named(
++                "approval",
++                area,
++                buf,
++                crate::style::user_message_style().bg,
++            );
++        }
+     }
+ }
+
 diff --git a/codex-rs/tui/src/bottom_pane/mod.rs b/codex-rs/tui/src/bottom_pane/mod.rs
 index 912880eed..e33db673a 100644
 --- a/codex-rs/tui/src/bottom_pane/mod.rs
@@ -45000,10 +45038,10 @@ index 000000000..22bb827c6
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..a5a769a88
+index 000000000..dc0db9189
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,1704 @@
+@@ -0,0 +1,1707 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -45245,7 +45283,7 @@ index 000000000..a5a769a88
 +
 +fn valid_surface_styles(styles: &BTreeMap<String, ModSurfacePaint>) -> bool {
 +    styles.iter().all(|(name, paint)| {
-+        matches!(name.as_str(), "composer" | "backdrop")
++        matches!(name.as_str(), "composer" | "backdrop" | "approval")
 +            && paint
 +                .opacity
 +                .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
@@ -45504,6 +45542,8 @@ index 000000000..a5a769a88
 +        height: Option<u16>,
 +        #[serde(default, skip_serializing_if = "Option::is_none")]
 +        action: Option<ModCommandAction>,
++        #[serde(default)]
++        keys: bool,
 +    },
 +    Terminal {
 +        id: String,
@@ -46169,6 +46209,7 @@ index 000000000..a5a769a88
 +                find,
 +                height,
 +                action,
++                ..
 +            } => {
 +                identified(id, label, ids)
 +                    && (source.is_none() || lines.is_empty())
@@ -46710,10 +46751,10 @@ index 000000000..a5a769a88
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..8e50aa0b6
+index 000000000..47f39a60f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,167 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -46851,9 +46892,10 @@ index 000000000..8e50aa0b6
 +
 +#[test]
 +fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() {
++    assert!(view(json!({"surface_styles":{"approval":{"border":"#888888"}}})).is_ok());
 +    assert!(view(json!({"surface_styles":{"composer":{"top":"#123456","bottom":235,"opacity":0.7}},"backdrop":{"ascii":{"text":"+", "scale":2.0,"opacity":0.5,"tint":"#123456","offset":{"x":-4,"y":2},"position":"center"}}})).is_ok());
 +    for value in [
-+        json!({"surface_styles":{"approval":{"top":0}}}),
++        json!({"surface_styles":{"transcript":{"top":0}}}),
 +        json!({"surface_styles":{"composer":{"opacity":1.01}}}),
 +        json!({"backdrop":{"ascii":{"text":"x","scale":0.01}}}),
 +        json!({"backdrop":{"ascii":{"text":"x","offset":{"x":4097,"y":0}}}}),
@@ -58740,10 +58782,10 @@ index 000000000..c6e7242a7
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..0c61aa7ac
+index 000000000..ebf929e7f
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,750 @@
+@@ -0,0 +1,751 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -59237,6 +59279,7 @@ index 000000000..0c61aa7ac
 +            title: Some(format!("Confirm request from mod {caller}")),
 +            subtitle: Some(prompt),
 +            items: vec![item("Allow once", true), item("Decline", false)],
++            view_id: Some(crate::mod_ui::APPROVAL_VIEW_ID),
 +            on_cancel: Some(Box::new(
 +                move |tx: &crate::app_event_sender::AppEventSender| {
 +                    tx.send(AppEvent::ModSurfaceConfirmed {
@@ -60983,10 +61026,10 @@ index 000000000..03ce15a97
 +}
 diff --git a/codex-rs/tui/src/mod_components.rs b/codex-rs/tui/src/mod_components.rs
 new file mode 100644
-index 000000000..c13c1efb3
+index 000000000..ebc8fe804
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components.rs
-@@ -0,0 +1,374 @@
+@@ -0,0 +1,402 @@
 +use crate::mod_document::DiffKind;
 +use crate::mod_document::DocumentEvent;
 +use crate::mod_document::DocumentKey;
@@ -61017,7 +61060,7 @@ index 000000000..c13c1efb3
 +    view: DocumentView,
 +    key: String,
 +    lines: Arc<Vec<String>>,
-+    styles: Arc<Vec<Style>>,
++    spans: Arc<Vec<Vec<Span<'static>>>>,
 +    anchors: Arc<Vec<Option<String>>>,
 +    applied_find: Option<ModFind>,
 +    applied_selection: Option<ModRange>,
@@ -61170,12 +61213,12 @@ index 000000000..c13c1efb3
 +    height: Option<u16>,
 +    owners: &[String],
 +    focused: bool,
++    keys: bool,
 +    prefix: &str,
 +) -> Vec<Line<'static>> {
 +    let key = match &content {
 +        Content::Spans(lines) => {
-+            format!("spans:{}", lines.len())
-+                + &lines.iter().map(|line| span_text(line)).collect::<String>()
++            format!("spans:{}", serde_json::to_string(lines).unwrap_or_default())
 +        }
 +        Content::Source(reference) => format!("source:{}", reference.sha256),
 +        Content::Diff(unified) => format!("diff:{unified}"),
@@ -61183,10 +61226,19 @@ index 000000000..c13c1efb3
 +    let mut documents = documents();
 +    let document = documents.entry(id.to_owned()).or_default();
 +    if document.key != key {
-+        let (lines, styles, parsed_anchors) = match content {
++        let (lines, spans, parsed_anchors) = match content {
 +            Content::Spans(lines) => (
 +                lines.iter().map(|line| span_text(line)).collect::<Vec<_>>(),
-+                vec![Style::default(); lines.len()],
++                lines
++                    .iter()
++                    .map(|line| {
++                        line.iter()
++                            .map(|span| {
++                                Span::styled(span.text.clone(), crate::mod_ui::span_style(span))
++                            })
++                            .collect()
++                    })
++                    .collect(),
 +                (0..lines.len())
 +                    .map(|index| anchors.get(index).cloned())
 +                    .collect::<Vec<_>>(),
@@ -61195,8 +61247,11 @@ index 000000000..c13c1efb3
 +                Ok(lines) => {
 +                    let count = lines.len();
 +                    (
-+                        lines,
-+                        vec![Style::default(); count],
++                        lines.clone(),
++                        lines
++                            .into_iter()
++                            .map(|line| vec![Span::raw(line)])
++                            .collect(),
 +                        (0..count)
 +                            .map(|index| anchors.get(index).cloned())
 +                            .collect(),
@@ -61204,7 +61259,7 @@ index 000000000..c13c1efb3
 +                }
 +                Err(error) => (
 +                    vec![format!("unavailable: {error}")],
-+                    vec![Style::default().dim()],
++                    vec![vec![format!("unavailable: {error}").dim()]],
 +                    vec![None],
 +                ),
 +            },
@@ -61214,16 +61269,26 @@ index 000000000..c13c1efb3
 +                    parsed.iter().map(|(_, text, _)| text.clone()).collect(),
 +                    parsed
 +                        .iter()
-+                        .map(|(kind, _, _)| diff_style(*kind))
++                        .map(|(kind, text, _)| vec![Span::styled(text.clone(), diff_style(*kind))])
 +                        .collect(),
 +                    parsed.into_iter().map(|(_, _, anchor)| anchor).collect(),
 +                )
 +            }
 +        };
++        let view = if keys {
++            DocumentView {
++                cursor: document.view.cursor,
++                scroll: document.view.scroll,
++                ..DocumentView::default()
++            }
++        } else {
++            DocumentView::default()
++        };
 +        *document = Document {
++            view,
 +            key,
 +            lines: Arc::new(lines),
-+            styles: Arc::new(styles),
++            spans: Arc::new(spans),
 +            anchors: Arc::new(parsed_anchors),
 +            ..Document::default()
 +        };
@@ -61282,17 +61347,23 @@ index 000000000..c13c1efb3
 +        .map(|index| {
 +            let cursor = index == document.view.cursor;
 +            let lead = if focused && cursor { marker } else { "  " };
-+            let mut style = document.styles[index];
-+            if selection.contains(&index) && (document.view.anchor.is_some() || focused && cursor) {
++            let mut style = Style::default();
++            if !keys
++                && selection.contains(&index)
++                && (document.view.anchor.is_some() || focused && cursor)
++            {
 +                style = style.reversed();
 +            }
 +            if matches.contains(&index) {
 +                style = style.underlined();
 +            }
-+            Line::from(vec![
-+                Span::raw(format!("{prefix}{lead}")),
-+                Span::styled(document.lines[index].clone(), style),
-+            ])
++            let mut line = vec![Span::raw(format!("{prefix}{lead}"))];
++            line.extend(
++                document.spans[index]
++                    .iter()
++                    .map(|span| span.clone().patch_style(style)),
++            );
++            Line::from(line)
 +        })
 +        .collect()
 +}
@@ -61363,10 +61434,10 @@ index 000000000..c13c1efb3
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_components_tests.rs b/codex-rs/tui/src/mod_components_tests.rs
 new file mode 100644
-index 000000000..044b30dfd
+index 000000000..39fb2a544
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_components_tests.rs
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,121 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -61413,6 +61484,7 @@ index 000000000..044b30dfd
 +            Some(2),
 +            &[],
 +            focused,
++            false,
 +            "",
 +        ))
 +    };
@@ -61445,6 +61517,7 @@ index 000000000..044b30dfd
 +        Some(10),
 +        &[],
 +        false,
++        false,
 +        "",
 +    ));
 +    assert_eq!(rendered.len(), 6);
@@ -61475,6 +61548,7 @@ index 000000000..044b30dfd
 +        None,
 +        &[],
 +        true,
++        false,
 +        "",
 +    );
 +    let documents = documents();
@@ -62232,10 +62306,10 @@ index 000000000..346f5fa4a
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 000000000..13e47f87c
+index 000000000..d3e30397b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,404 @@
+@@ -0,0 +1,423 @@
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyModifiers;
@@ -62590,6 +62664,25 @@ index 000000000..13e47f87c
 +    };
 +    visible(&mut sessions(), owners, session)
 +        .is_some_and(|pane| pane.writer.try_send(bytes).is_ok())
++}
++
++pub(crate) fn paste(owners: &[String], session: &str, text: &str) {
++    let mut sessions = sessions();
++    let Some(pane) = visible(&mut sessions, owners, session) else {
++        return;
++    };
++    let bracketed = pane
++        .screen
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner)
++        .screen()
++        .bracketed_paste();
++    let bytes = if bracketed {
++        format!("\x1b[200~{text}\x1b[201~")
++    } else {
++        text.to_owned()
++    };
++    let _ = pane.writer.try_send(bytes.into_bytes());
 +}
 +
 +#[cfg(test)]
@@ -63599,10 +63692,10 @@ index 000000000..d09b569cd
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..8c6045d39
+index 000000000..5c0cb03b1
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,624 @@
+@@ -0,0 +1,678 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -64014,6 +64107,60 @@ index 000000000..8c6045d39
 +    }
 +}
 +
++const INPUT_BATCH_EVENTS: usize = 64;
++const INPUT_BATCH_BYTES: usize = 64 * 1024;
++
++static INPUT_DROPPED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++
++pub(crate) fn input_event(component: &str, event: Value) {
++    static QUEUE: std::sync::OnceLock<std::sync::mpsc::SyncSender<(String, Value)>> =
++        std::sync::OnceLock::new();
++    if registered("component_event") {
++        let queue = QUEUE.get_or_init(|| {
++            let (sender, receiver) = std::sync::mpsc::sync_channel::<(String, Value)>(256);
++            std::thread::spawn(move || {
++                while let Ok(first) = receiver.recv() {
++                    let mut pending = vec![first];
++                    pending.extend(receiver.try_iter());
++                    let dropped = INPUT_DROPPED.swap(0, std::sync::atomic::Ordering::Relaxed);
++                    for payload in input_batches(pending, dropped) {
++                        crate::mod_runtime::broadcast_event("component_event", payload);
++                    }
++                }
++            });
++            sender
++        });
++        if queue.try_send((component.to_owned(), event)).is_err() {
++            INPUT_DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        }
++    }
++}
++
++fn input_batches(pending: Vec<(String, Value)>, dropped: usize) -> Vec<Value> {
++    let mut pending = std::collections::VecDeque::from(pending);
++    let mut batches = Vec::new();
++    while let Some((component, event)) = pending.pop_front() {
++        let mut bytes = event.to_string().len();
++        let mut events = vec![event];
++        while let Some((next, event)) = pending.front()
++            && *next == component
++            && events.len() < INPUT_BATCH_EVENTS
++            && bytes + event.to_string().len() <= INPUT_BATCH_BYTES
++        {
++            if let Some((_, event)) = pending.pop_front() {
++                bytes += event.to_string().len();
++                events.push(event);
++            }
++        }
++        let mut payload = json!({"component": component, "kind": "input", "events": events});
++        if dropped > 0 && batches.is_empty() {
++            payload["dropped"] = dropped.into();
++        }
++        batches.push(payload);
++    }
++    batches
++}
++
 +pub(crate) fn focus(focused: bool) {
 +    terminal_event("focus", json!({"focused": focused}));
 +}
@@ -64229,10 +64376,10 @@ index 000000000..8c6045d39
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_surface_tests.rs b/codex-rs/tui/src/mod_surface_tests.rs
 new file mode 100644
-index 000000000..1bca19f5f
+index 000000000..911dd26c9
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface_tests.rs
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,249 @@
 +use super::*;
 +use codex_omd::app_routes::InvocationContext;
 +use pretty_assertions::assert_eq;
@@ -64457,12 +64604,37 @@ index 000000000..1bca19f5f
 +    assert!(ranked_files(&json!({"items": [{"path": "../x"}]}), root, 200).is_none());
 +    assert!(ranked_files(&json!({"items": [{"path": "/etc/passwd"}]}), root, 200).is_none());
 +}
++
++#[test]
++fn input_batches_keep_order_per_component_and_report_drops() {
++    let key = |text: &str| json!({"key": null, "text": text});
++    let mut pending = vec![
++        ("a".to_owned(), key("1")),
++        ("a".to_owned(), key("2")),
++        ("b".to_owned(), json!({"paste": "x"})),
++        ("a".to_owned(), key("3")),
++    ];
++    pending.extend((0..70).map(|_| ("a".to_owned(), key("k"))));
++    let batches = input_batches(pending, 5);
++    assert_eq!(
++        batches[0],
++        json!({"component": "a", "kind": "input", "events": [key("1"), key("2")], "dropped": 5})
++    );
++    assert_eq!(
++        batches[1],
++        json!({"component": "b", "kind": "input", "events": [{"paste": "x"}]})
++    );
++    assert_eq!(batches[2]["events"].as_array().map(Vec::len), Some(64));
++    assert_eq!(batches[2]["events"][0], key("3"));
++    assert_eq!(batches[3]["events"].as_array().map(Vec::len), Some(7));
++    assert_eq!(batches.len(), 4);
++}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..c3d0909cc
+index 000000000..5986bb1bc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,2236 @@
+@@ -0,0 +1,2283 @@
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModColor;
@@ -64586,6 +64758,8 @@ index 000000000..c3d0909cc
 +    Action(String, ModKeyAction),
 +}
 +
++const PASTE_BYTES: usize = 64 * 1024;
++
 +static CACHE: RwLock<Option<Cache>> = RwLock::new(None);
 +static INTERACTION: Mutex<Interaction> = Mutex::new(Interaction {
 +    focused: None,
@@ -64672,7 +64846,7 @@ index 000000000..c3d0909cc
 +    }
 +}
 +
-+fn span_style(span: &codex_omd::ModSpan) -> Style {
++pub(crate) fn span_style(span: &codex_omd::ModSpan) -> Style {
 +    let mut style = tone_style(span.tone);
 +    if let Some(fg) = span.fg {
 +        style = style.fg(color(fg));
@@ -65624,11 +65798,15 @@ index 000000000..c3d0909cc
 +                find,
 +                height,
 +                action,
++                keys,
 +            } => {
 +                let content = match source {
 +                    Some(source) => crate::mod_components::Content::Source(source),
 +                    None => crate::mod_components::Content::Spans(lines),
 +                };
++                if *keys {
++                    interaction.key_panes.insert(id.clone());
++                }
 +                let focused = interaction.focused.as_deref() == Some(id.as_str());
 +                let owners = interaction.owners.clone();
 +                for line in crate::mod_components::rows(
@@ -65640,6 +65818,7 @@ index 000000000..c3d0909cc
 +                    *height,
 +                    &owners,
 +                    focused,
++                    *keys,
 +                    &prefix,
 +                ) {
 +                    rows.push(ComponentRow {
@@ -65669,6 +65848,7 @@ index 000000000..c3d0909cc
 +                    *height,
 +                    &owners,
 +                    focused,
++                    false,
 +                    &prefix,
 +                ) {
 +                    rows.push(ComponentRow {
@@ -65951,6 +66131,16 @@ index 000000000..c3d0909cc
 +            .find(|hitbox| hitbox.id == focused)
 +    {
 +        buffer.set_style(hitbox.area, crate::style::accent_style());
++        let hint = " Ctrl+] leaves, Ctrl+C cancels ";
++        let width = hint.len() as u16;
++        if interaction.key_panes.contains(&focused) && hitbox.area.width >= width + 8 {
++            buffer.set_string(
++                hitbox.area.right() - width,
++                hitbox.area.y,
++                hint,
++                crate::style::accent_style().reversed(),
++            );
++        }
 +    }
 +}
 +
@@ -66137,8 +66327,10 @@ index 000000000..c3d0909cc
 +    }
 +}
 +
-+pub(crate) fn paint_composer(area: Rect, buffer: &mut Buffer, base: Option<Color>) {
-+    if let Some(paint) = snapshot().view.surface_styles.get("composer") {
++pub(crate) const APPROVAL_VIEW_ID: &str = "approval";
++
++pub(crate) fn paint_named(name: &str, area: Rect, buffer: &mut Buffer, base: Option<Color>) {
++    if let Some(paint) = snapshot().view.surface_styles.get(name) {
 +        paint_surface(area, buffer, paint, base, /*border_clip*/ None);
 +    }
 +}
@@ -66470,6 +66662,10 @@ index 000000000..c3d0909cc
 +    if let Some(focused) = interaction.focused.clone()
 +        && interaction.key_panes.contains(&focused)
 +    {
++        if (key.code, key.modifiers) == (KeyCode::Char('c'), KeyModifiers::CONTROL) {
++            interaction.focused = None;
++            return None;
++        }
 +        if (key.code, key.modifiers) == (KeyCode::Char(']'), KeyModifiers::CONTROL) {
 +            interaction.focused = None;
 +        } else {
@@ -66485,9 +66681,9 @@ index 000000000..c3d0909cc
 +            };
 +            let name = key_name(key);
 +            if name.is_some() || text.is_some() {
-+                crate::mod_surface::terminal_event(
-+                    "component_event",
-+                    serde_json::json!({"component": focused, "kind": "key", "key": name, "text": text}),
++                crate::mod_surface::input_event(
++                    &focused,
++                    serde_json::json!({"key": name, "text": text}),
 +                );
 +            }
 +        }
@@ -66583,6 +66779,29 @@ index 000000000..c3d0909cc
 +    with_cache(|cache| action_for(&cache.snapshot.view, key))
 +        .flatten()
 +        .map(|(name, action)| ModInput::Binding(name, action))
++}
++
++pub(crate) fn paste(text: &str) -> bool {
++    let interaction = INTERACTION
++        .lock()
++        .unwrap_or_else(std::sync::PoisonError::into_inner);
++    let Some(focused) = interaction.focused.clone() else {
++        return false;
++    };
++    let bounded = &text[..text.floor_char_boundary(PASTE_BYTES)];
++    if let Some(ComponentTarget::Terminal(session)) = interaction.targets.get(&focused) {
++        crate::mod_pty::paste(&interaction.owners, session, bounded);
++        return true;
++    }
++    if !interaction.key_panes.contains(&focused) {
++        return false;
++    }
++    let mut event = serde_json::json!({"paste": bounded});
++    if bounded.len() < text.len() {
++        event["truncated"] = true.into();
++    }
++    crate::mod_surface::input_event(&focused, event);
++    true
 +}
 +
 +fn contains(area: Rect, column: u16, row: u16) -> bool {
@@ -66701,10 +66920,10 @@ index 000000000..c3d0909cc
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..a6509e5be
+index 000000000..a760e3307
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,869 @@
+@@ -0,0 +1,964 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -66758,6 +66977,101 @@ index 000000000..a6509e5be
 +    render_welcome(Rect::new(0, 0, 20, 0), &mut buffer, &snapshot);
 +    assert!(!rows(&buffer, buffer.area).contains("Create project"));
 +    preview(ModViewSnapshot::default());
++}
++
++#[test]
++#[serial_test::serial]
++fn focused_key_documents_take_keys_and_paste_until_released() {
++    let colors = crate::terminal_probe::DefaultColors {
++        fg: (240, 240, 240),
++        bg: (0, 0, 0),
++    };
++    crate::terminal_palette::with_test_default_colors(colors, || {
++        let snapshot = snapshot(
++            serde_json::json!({"sidebar_width":30,"sites":{"sidebar":{"components":[
++                {"type":"document","id":"buffer","label":"Buffer","keys":true,"lines":[[{"text":"ab"},{"text":"c","bg":"#00ff00"}]]},
++                {"type":"document","id":"viewer","label":"Viewer","lines":[[{"text":"plain"}]]}
++            ]}}}),
++        );
++        preview(snapshot.clone());
++        let area = Rect::new(0, 0, 100, 24);
++        let mut buffer = Buffer::empty(area);
++        render(area, area, &mut buffer, &snapshot);
++        let cell = (0..area.height)
++            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
++            .find(|&(x, y)| buffer[(x, y)].symbol() == "c")
++            .unwrap();
++        assert_ne!(buffer[cell].bg, Color::Reset);
++        assert!(focus("buffer"));
++        let press = |code, modifiers| input(KeyEvent::new(code, modifiers));
++        assert!(matches!(
++            press(KeyCode::Tab, KeyModifiers::NONE),
++            Some(ModInput::Consumed)
++        ));
++        assert_eq!(
++            INTERACTION.lock().unwrap().focused.as_deref(),
++            Some("buffer")
++        );
++        assert!(paste("line one\nline two"));
++        assert!(matches!(
++            press(KeyCode::Char(']'), KeyModifiers::CONTROL),
++            Some(ModInput::Consumed)
++        ));
++        assert!(!paste("composer"));
++        assert!(focus("buffer"));
++        assert!(press(KeyCode::Char('c'), KeyModifiers::CONTROL).is_none());
++        assert_eq!(INTERACTION.lock().unwrap().focused, None);
++        assert!(focus("viewer"));
++        assert!(!paste("composer"));
++        preview(ModViewSnapshot::default());
++    });
++}
++
++#[test]
++#[serial_test::serial]
++fn approval_paint_frames_prompts_without_changing_their_text() {
++    let colors = crate::terminal_probe::DefaultColors {
++        fg: (240, 240, 240),
++        bg: (0, 0, 0),
++    };
++    crate::terminal_palette::with_test_default_colors(colors, || {
++        use crate::bottom_pane::SelectionItem;
++        use crate::bottom_pane::SelectionViewParams;
++        use crate::render::renderable::Renderable;
++        let view = crate::bottom_pane::ListSelectionView::new(
++            SelectionViewParams {
++                title: Some("Confirm request from mod m".into()),
++                subtitle: Some("Mod m wants to start /bin/sh with workspace writes.".into()),
++                items: ["Allow once", "Decline"]
++                    .map(|name| SelectionItem {
++                        name: name.into(),
++                        ..Default::default()
++                    })
++                    .into(),
++                view_id: Some(APPROVAL_VIEW_ID),
++                ..SelectionViewParams::picker()
++            },
++            crate::app_event_sender::AppEventSender::new(tokio::sync::mpsc::unbounded_channel().0),
++            crate::keymap::RuntimeKeymap::defaults().list,
++        );
++        let area = Rect::new(0, 0, 60, view.desired_height(60));
++        let draw = || {
++            let mut buffer = Buffer::empty(area);
++            view.render(area, &mut buffer);
++            buffer
++        };
++        let native = draw();
++        preview(snapshot(serde_json::json!({"surface_styles":{"approval":{
++            "top":"#202030","bottom":"#101018","foreground":"#000000","border":"#888888"}}})));
++        let painted = draw();
++        preview(ModViewSnapshot::default());
++        let cells = || (0..area.height).flat_map(|y| (0..area.width).map(move |x| (x, y)));
++        for cell in cells().filter(|&cell| native[cell].symbol() != " ") {
++            assert_eq!(painted[cell].symbol(), native[cell].symbol());
++        }
++        assert!(cells().any(|cell| painted[cell].bg != native[cell].bg));
++        assert_eq!(rows(&draw(), area), rows(&native, area));
++    });
 +}
 +
 +#[test]
@@ -67327,7 +67641,7 @@ index 000000000..a6509e5be
 +        let mut buffer = Buffer::empty(area);
 +        let composer = Rect::new(chat.x, chat.bottom() - 3, chat.width, 3);
 +        buffer[(composer.x + 1, composer.y + 1)].set_char('I');
-+        paint_composer(composer, &mut buffer, None);
++        paint_named("composer", composer, &mut buffer, None);
 +        render_inline(area, chat, &mut buffer, &current);
 +        assert_eq!(buffer[(composer.x + 1, composer.y + 1)].symbol(), "I");
 +        assert_eq!(buffer[(composer.x, composer.y)].symbol(), "-");
@@ -67357,7 +67671,7 @@ index 000000000..a6509e5be
 +
 +        preview(ModViewSnapshot::default());
 +        let mut native = Buffer::empty(area);
-+        paint_composer(composer, &mut native, None);
++        paint_named("composer", composer, &mut native, None);
 +        render_inline(area, area, &mut native, &super::snapshot());
 +        assert_eq!(rows(&native, area).trim(), "");
 +        assert_eq!(native[(1, 1)].bg, Color::Reset);

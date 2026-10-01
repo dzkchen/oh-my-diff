@@ -1,23 +1,56 @@
 import type { ModAPI, TerminalView } from '@oh-my-diff/mod-api';
 
+type Notes = { lines: string[]; row: number; col: number };
+
 export default function activate(api: ModAPI) {
-  api.replace('terminal', (): TerminalView => ({
-    layout: { split: 'horizontal', ratio: [1, 3], children: [
-      { tabs: [{ title: 'Diff', node: { content: 'site:layout_explorer/diff' } }, { title: 'Notes', node: { content: 'site:layout_explorer/notes' } }] },
-      { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript' }, { content: 'composer' }] },
-    ] },
-    backdrop: { ascii: { text: '·  ', dim: 0.6 } },
-    sites: {
-      'layout_explorer/diff': { components: [{ type: 'diff', id: 'explorer-diff', label: 'Working diff', unified: '+++ b/README.md\n@@ -1 +1 @@\n-old\n+new', action: { command: 'layout_explorer:open' } }] },
-      'layout_explorer/notes': { components: [
-        { type: 'document', id: 'explorer-notes', label: 'Notes', lines: [[{ text: 'Select a line and press enter' }]] },
-        { type: 'pane', id: 'explorer-keys', label: 'Keys', keys: true, children: [
-          { type: 'line', id: 'explorer-hint', label: 'Hint', spans: [{ text: 'Focus with Tab and type; Ctrl+] leaves', fg: '#7aa2f7', italic: true }] },
-        ] },
+  const notes = (): Notes => (api.state.get() as Notes | null) ?? { lines: [''], row: 0, col: 0 };
+  api.replace('terminal', (): TerminalView => {
+    const { lines, row, col } = notes();
+    return {
+      layout: { split: 'horizontal', ratio: [1, 3], children: [
+        { tabs: [{ title: 'Diff', node: { content: 'site:layout_explorer/diff' } }, { title: 'Notes', node: { content: 'site:layout_explorer/notes' } }] },
+        { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript' }, { content: 'composer' }] },
       ] },
-    },
-    keybindings: { 'Ctrl+Shift+p': { command: 'layout_explorer:open', args: 'palette' } },
-  }));
-  api.on('component_event', event => { api.state.set(event); });
+      backdrop: { ascii: { text: '·  ', dim: 0.6 } },
+      sites: {
+        'layout_explorer/diff': { components: [{ type: 'diff', id: 'explorer-diff', label: 'Working diff', unified: '+++ b/README.md\n@@ -1 +1 @@\n-old\n+new', action: { command: 'layout_explorer:open' } }] },
+        'layout_explorer/notes': { components: [
+          { type: 'document', id: 'explorer-notes', label: 'Notes', keys: true, selected: { start: row, end: row },
+            lines: lines.map((line, index) => index === row
+              ? [{ text: line.slice(0, col) }, { text: line[col] ?? ' ', bg: '#7aa2f7' }, { text: line.slice(col + 1) }]
+              : [{ text: line }]) },
+          { type: 'line', id: 'explorer-hint', label: 'Hint', spans: [{ text: 'Focus Notes with Tab, type or paste; Ctrl+] leaves, Ctrl+C cancels', fg: '#7aa2f7', italic: true }] },
+        ] },
+      },
+      keybindings: { 'Ctrl+Shift+p': { command: 'layout_explorer:open', args: 'palette' } },
+    };
+  });
+  api.on('component_event', event => {
+    if (event.component !== 'explorer-notes' || !event.events) return;
+    let { lines, row, col } = notes();
+    const insert = (text: string) => {
+      const [first, ...rest] = (lines[row].slice(0, col) + text).split('\n');
+      const tail = lines[row].slice(col);
+      lines.splice(row, 1, first, ...rest);
+      row += rest.length;
+      col = lines[row].length;
+      lines[row] += tail;
+    };
+    for (const input of event.events) {
+      const key = 'key' in input ? input.key : null;
+      if ('paste' in input) insert(input.paste);
+      else if (input.text) insert(input.text);
+      else if (key === 'Enter') insert('\n');
+      else if (key === 'Backspace' && col > 0) lines[row] = lines[row].slice(0, col - 1) + lines[row].slice(col--);
+      else if (key === 'Backspace' && row > 0) { col = lines[row - 1].length; lines.splice(row - 1, 2, lines[row - 1] + lines[row]); row--; }
+      else if (key === 'Left') col = Math.max(0, col - 1);
+      else if (key === 'Right') col = Math.min(lines[row].length, col + 1);
+      else if (key === 'Up' || key === 'Down') {
+        row = Math.max(0, Math.min(lines.length - 1, row + (key === 'Up' ? -1 : 1)));
+        col = Math.min(col, lines[row].length);
+      }
+    }
+    api.state.set({ lines, row, col });
+  });
   api.command('open', anchor => ({ display: `open ${String(anchor)}` }));
 }

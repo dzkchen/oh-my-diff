@@ -43,6 +43,7 @@ export type TerminalTone = 'normal' | 'accent' | 'success' | 'attention' | 'fail
 export type TerminalCommandAction = { command: string; args?: string };
 export type TerminalComponentAction = TerminalCommandAction | { copy: string; label: string } | { insert: string };
 export type TerminalSelectOption = { value: string; label: string };
+export type TerminalInputEvent = { key: KeyName | string | null; text: string | null } | { paste: string; truncated?: boolean };
 export type TerminalSpan = { text: string; tone?: TerminalTone; bold?: boolean; italic?: boolean; underline?: boolean; fg?: ThemeColor; bg?: ThemeColor };
 export type TerminalListRow = { value: string; spans: TerminalSpan[]; label: string };
 export type TerminalComponent =
@@ -57,7 +58,7 @@ export type TerminalComponent =
   | { type: 'code'; id: string; label: string; text: string; language?: string }
   | { type: 'pane'; id: string; label: string; title?: string; collapsed?: boolean; scroll?: number; keys?: boolean; children?: TerminalComponent[] }
   | { type: 'dialog'; id: string; label: string; title: string; children?: TerminalComponent[] }
-  | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction }
+  | { type: 'document'; id: string; label: string; lines?: TerminalSpan[][]; source?: ResourceRef; anchors?: string[]; selected?: TerminalRange; find?: { query: string; regex?: boolean; case?: boolean }; height?: number; action?: TerminalCommandAction; keys?: boolean }
   | { type: 'diff'; id: string; label: string; unified: string; selected?: TerminalRange; height?: number; action?: TerminalCommandAction }
   | { type: 'image'; id: string; label: string; image: ResourceRef; alt: string; height?: number }
   | { type: 'terminal'; id: string; label: string; session: string; height?: number }
@@ -90,7 +91,7 @@ export interface TerminalView {
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; panels?: Panel[]; header?: Panel; footer?: Panel;
   sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; theme?: TerminalTheme;
   completed_tools?: 'normal' | 'compact'; message_template?: string; tool_template?: string; placeholder?: string;
-  layout?: LayoutNode; backdrop?: TerminalBackdrop; surface_styles?: { composer?: TerminalSurfacePaint; backdrop?: TerminalSurfacePaint };
+  layout?: LayoutNode; backdrop?: TerminalBackdrop; surface_styles?: { composer?: TerminalSurfacePaint; backdrop?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
 }
 export type TerminalPatch = Omit<TerminalView, 'panels' | 'header' | 'footer'>;
 export type CommandResult = Json | { display?: string; insert?: string; submit?: string };
@@ -252,7 +253,7 @@ export interface Events {
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'key' | 'resize'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; key?: KeyName | string | null; text?: string | null; ratio?: number[] }; output: void };
+  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[] }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
 }

@@ -239,7 +239,7 @@ pub struct ModSurfacePaint {
 
 fn valid_surface_styles(styles: &BTreeMap<String, ModSurfacePaint>) -> bool {
     styles.iter().all(|(name, paint)| {
-        matches!(name.as_str(), "composer" | "backdrop")
+        matches!(name.as_str(), "composer" | "backdrop" | "approval")
             && paint
                 .opacity
                 .is_none_or(|value| value.is_finite() && (0.0..=1.0).contains(&value))
@@ -498,6 +498,8 @@ pub enum ModComponent {
         height: Option<u16>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         action: Option<ModCommandAction>,
+        #[serde(default)]
+        keys: bool,
     },
     Terminal {
         id: String,
@@ -1163,6 +1165,7 @@ impl ModComponent {
                 find,
                 height,
                 action,
+                ..
             } => {
                 identified(id, label, ids)
                     && (source.is_none() || lines.is_empty())
