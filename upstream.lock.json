@@ -17,8 +17,8 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.159.1.patch",
-      "sha256": "6b4c922495dddf5342739fdf8997022ce40243e9c8436ced48879b4086bc1d41"
+      "sha256": "1c5acc10fefccea639248e96d88468f3721f65534eb4e1954d13c9c2c7b1958a"
     }
   ],
-  "compatibility_evidence": ".docs/audits/batch3c-4a-review-repairs-20260930.md"
+  "compatibility_evidence": ".docs/audits/batch4b-terminal-performance-20261001.md"
 }

@@ -1,20 +1,43 @@
 import { stripTypeScriptTypes } from 'node:module';
 import { createContext, SourceTextModule } from 'node:vm';
+import { readSync, writeSync } from 'node:fs';
 
 if (process.versions.node !== '24.18.0') {
   process.stdout.write(JSON.stringify({ error: 'unsupported_runtime: Node 24.18.0 required' }));
   process.exit(1);
 }
 
-let input = '';
-for await (const chunk of process.stdin) {
-  input += chunk;
-  if (input.length > 524288) throw new Error('input_limit');
+// A spare runner loads the TypeScript stripper before the host sends it a request.
+stripTypeScriptTypes('let ready: boolean;');
+let input = Buffer.alloc(0);
+function readLine() {
+  const chunk = Buffer.alloc(65536);
+  let end;
+  while ((end = input.indexOf(10)) < 0) {
+    const read = readSync(0, chunk);
+    if (!read) {
+      end = input.length;
+      break;
+    }
+    input = Buffer.concat([input, chunk.subarray(0, read)]);
+    if (input.length > 524288) throw new Error('input_limit');
+  }
+  const line = input.subarray(0, end).toString();
+  input = input.subarray(end + 1);
+  return line;
 }
-const request = JSON.parse(input);
+const request = JSON.parse(readLine());
 request.hook_budget_ms ??= 1000;
 const globals = Object.create(null);
 if (request.environment?.includes('crypto')) globals.crypto = globalThis.crypto;
+globals.__exchange = frame => {
+  try {
+    writeSync(1, frame + '\n');
+    return readLine();
+  } catch {
+    process.exit(1);
+  }
+};
 const context = createContext(globals, {
   codeGeneration: { strings: false, wasm: false },
 });
@@ -44,6 +67,8 @@ let pending = null;
 const calls = [];
 const receipts = request.receipts ?? [];
 const suspension = Object.freeze({});
+const exchange = globalThis.__exchange;
+delete globalThis.__exchange;
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
@@ -60,6 +85,10 @@ function hostTryCall(operation, arguments_ = null) {
     if (JSON.stringify(canonical(receipt.call)) !== JSON.stringify(canonical(call))) throw new Error('host_call_replay_diverged');
     if (receipt.error) return { ok: false, error: receipt.error };
     return { ok: true, value: structuredCloneFallback(receipt.value) };
+  }
+  if (request.interactive) {
+    const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
+    return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
   }
   pending = call;
   throw suspension;
@@ -227,7 +256,7 @@ try {
       calls: globalThis.__omd.calls, host_call: globalThis.__omd.pending(), updates: globalThis.__omd.updates });
   `, { context });
   await dispatch.link(() => { throw new Error('unsupported_import'); });
-  await dispatch.evaluate({ timeout: request.hook_budget_ms });
+  await dispatch.evaluate(request.interactive ? {} : { timeout: request.hook_budget_ms });
   if (context.__result.length > 262144) throw new Error('output_limit');
   process.stdout.write(context.__result);
 } catch (error) {

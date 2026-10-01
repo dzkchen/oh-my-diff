@@ -1001,7 +1001,13 @@ impl ModStore {
             "name":event,"payload":null,"state":null,"settings":{"event":event,"package":package.id,
                 "version":package.version,"integrity":package.integrity},"capabilities":[],"environment":[],
             "hook_budget_ms":1000,"receipts":[],"field_policies":{},"virtual_time_ms":null});
-        process::evaluate(&node, &request, std::time::Duration::from_secs(1), &|| true)?;
+        process::evaluate(
+            &node,
+            &request,
+            std::time::Duration::from_secs(1),
+            &|| true,
+            &mut |_| Err(failure("host_operation_unavailable")),
+        )?;
         Ok(())
     }
 }

@@ -106,74 +106,35 @@ pub(super) fn run(
 ) -> Result<Reply> {
     let mut receipts = Vec::new();
     let mut expected = Vec::new();
-    let mut execution = Duration::ZERO;
     let mut forwarded = 0;
-    loop {
-        if !active() {
-            return Err(failure("callback_cancelled"));
-        }
-        let request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
-            "api": MOD_API_VERSION,
-            "assets": loaded.assets,
-            "entrypoint": loaded.package.entrypoint,
-            "entrypoint_sha256": digest(loaded.source.as_bytes()),
-            "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": loaded.selection.settings,
-            "state": loaded.state, "event": event, "name": name, "payload": payload, "receipts": receipts,
-            "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
-        let mut request = request;
-        request["field_policies"] = ModHost::field_policies();
-        request["surface"] = json!({
-            "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
-            "replacements": MOD_REPLACEMENT_POINTS,
-            "middleware": MOD_MIDDLEWARE_EVENTS,
-            "state": "store",
-            "contracts": "contracts",
-            "adapter": loaded.adapter,
-        });
-        request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
-        let started = Instant::now();
-        let budget = Duration::from_millis(loaded.package.hook_budget_ms);
-        let evaluated = process::evaluate(node, &request, budget, active);
-        let elapsed = started.elapsed();
-        scope.charge_execution(elapsed)?;
-        execution += elapsed;
-        let reply: Reply = serde_json::from_value(evaluated?)?;
-        if event != "inspect" && reply.registrations != loaded.registrations {
-            return Err(failure("registration_changed_during_callback"));
-        }
-        // Host-call replay re-runs the module, so the whole callback carries a total budget.
-        if execution > Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS) {
-            return Err(failure("callback_execution_budget"));
-        }
-        if !reply.calls.starts_with(&expected) {
-            return Err(failure("host_call_replay_diverged"));
-        }
-        if reply.updates.len() > 32
-            || reply
-                .updates
-                .iter()
-                .any(|update| update.is_empty() || update.len() > 1024)
-        {
-            return Err(failure("invalid_progress"));
-        }
-        if event == "tool" {
-            for update in reply.updates.iter().skip(forwarded) {
-                progress(update.clone());
-            }
-            forwarded = forwarded.max(reply.updates.len());
-        }
-        let Some(call) = &reply.host_call else {
-            if reply.calls != expected {
-                return Err(failure("invalid_host_call_receipts"));
-            }
-            return Ok(reply);
-        };
-        if event == "inspect"
-            || reply.calls.len() != expected.len() + 1
-            || reply.calls.last() != Some(call)
-        {
+    let mut waited = Duration::ZERO;
+    let mut request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
+        "api": MOD_API_VERSION,
+        "assets": loaded.assets,
+        "entrypoint": loaded.package.entrypoint,
+        "entrypoint_sha256": digest(loaded.source.as_bytes()),
+        "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": loaded.selection.settings,
+        "state": loaded.state, "event": event, "name": name, "payload": payload, "interactive": true,
+        "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
+    request["field_policies"] = ModHost::field_policies();
+    request["surface"] = json!({
+        "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
+        "replacements": MOD_REPLACEMENT_POINTS,
+        "middleware": MOD_MIDDLEWARE_EVENTS,
+        "state": "store",
+        "contracts": "contracts",
+        "adapter": loaded.adapter,
+    });
+    request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
+    let started = Instant::now();
+    let budget = Duration::from_millis(loaded.package.hook_budget_ms);
+    let evaluated = process::evaluate(node, &request, budget, active, &mut |frame| {
+        if event == "inspect" {
             return Err(failure("invalid_host_call_sequence"));
         }
+        let frame: Frame = serde_json::from_value(frame)?;
+        forward(event, &frame.updates, &mut forwarded, progress)?;
+        let call = frame.call;
         if expected.len() >= 32 {
             return Err(failure("host_call_limit"));
         }
@@ -196,6 +157,7 @@ pub(super) fn run(
         if !active() {
             return Err(failure("callback_cancelled"));
         }
+        let call_started = Instant::now();
         scope.charge_call()?;
         let result = host(call.clone());
         let mut receipt = match result {
@@ -212,11 +174,52 @@ pub(super) fn run(
             receipt = json!({"call": call, "error": format!(
                 "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
         }
-        expected.push(call.clone());
-        receipts.push(receipt);
+        expected.push(call);
+        receipts.push(receipt.clone());
         if serde_json::to_vec(&receipts)?.len() > HOST_RECEIPT_BYTES {
             return Err(failure("host_receipt_limit"));
         }
-        scope.charge_receipt(serde_json::to_vec(receipts.last().unwrap())?.len())?;
+        scope.charge_receipt(serde_json::to_vec(&receipt)?.len())?;
+        waited += call_started.elapsed();
+        Ok(receipt)
+    });
+    let execution = started.elapsed().saturating_sub(waited);
+    scope.charge_execution(execution)?;
+    let reply: Reply = serde_json::from_value(evaluated?)?;
+    if event != "inspect" && reply.registrations != loaded.registrations {
+        return Err(failure("registration_changed_during_callback"));
     }
+    if reply.host_call.is_some() || reply.calls != expected {
+        return Err(failure("invalid_host_call_receipts"));
+    }
+    forward(event, &reply.updates, &mut forwarded, progress)?;
+    Ok(reply)
+}
+
+#[derive(Deserialize)]
+struct Frame {
+    call: ModHostCall,
+    updates: Vec<String>,
+}
+
+fn forward(
+    event: &str,
+    updates: &[String],
+    forwarded: &mut usize,
+    progress: &mut dyn FnMut(String),
+) -> Result<()> {
+    if updates.len() > 32
+        || updates
+            .iter()
+            .any(|update| update.is_empty() || update.len() > 1024)
+    {
+        return Err(failure("invalid_progress"));
+    }
+    if event == "tool" {
+        for update in updates.iter().skip(*forwarded) {
+            progress(update.clone());
+        }
+        *forwarded = (*forwarded).max(updates.len());
+    }
+    Ok(())
 }

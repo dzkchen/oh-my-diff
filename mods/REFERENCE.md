@@ -19,8 +19,8 @@ without mods. `OMD_MODE=platform`, `OMD_MODE=enabled` and
 The [`release_check` example](examples/release_check) is an independent
 author package that uses only this surface.
 
-Each callback replays its host calls, so their arguments and results share a
-128 KiB transport budget per callback. A result that would exceed the remaining
+Host call arguments and results share a 128 KiB transport budget per
+callback. A result that would exceed the remaining
 budget becomes a `host_result_limit` error the mod can catch; the operation has
 still run. Primitive limits below keep single results inside that budget; page
 or use artifacts for larger data.
@@ -987,11 +987,12 @@ at 8 MiB.
 
 `service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and host-operation provenance when a consumer calls it. A nested call shares the initiating callback's cancellation, 32-call and 5 s execution budgets; recursive providers and chains beyond eight callback frames fail closed. Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation. Offline `host_calls` records the actual mod caller for every mocked operation.
 
-`hook_budget_ms` bounds each JavaScript evaluation, not their sum. A callback
-that makes host calls is replayed once per call, so the host re-runs the module
-and that replay cost is the host's, not the mod's. The callback as a whole,
-including every replay, is bounded by a separate 5 s host total; exceeding
-either bound fails the callback with `callback_execution_budget`.
+The host answers each host call inside the running callback, so a callback
+runs once. `hook_budget_ms` bounds the callback's own JavaScript time; waiting
+for host calls does not count. A separate 5 s host total bounds the callback's
+execution; exceeding it fails the callback with `callback_execution_budget`.
+Offline runners without an interactive host replay the callback once per host
+call instead.
 
 Dependencies run before consumers and remaining mods use lexical ID order.
 Project scope shadows user scope without inheriting its state or grants.

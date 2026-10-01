@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.159.1.patch",
-    "sha256": "6b4c922495dddf5342739fdf8997022ce40243e9c8436ced48879b4086bc1d41"
+    "sha256": "1c5acc10fefccea639248e96d88468f3721f65534eb4e1954d13c9c2c7b1958a"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -573,7 +573,7 @@
     },
     "codex-rs/omd/src/mods/bridge.rs": {
       "before": null,
-      "after": "74888087253773084498dc0ade3d9786766f1200470276451c8a9955511a496f"
+      "after": "50bb4bae7901678d9fad40eb6c2e08c71843c258853b9f371f851056e083bf4a"
     },
     "codex-rs/omd/src/mods/outcome.rs": {
       "before": null,
@@ -581,7 +581,7 @@
     },
     "codex-rs/omd/src/mods/package_manager.rs": {
       "before": null,
-      "after": "c15915f820819a14f337dff5d356e56093e00ed559437856568768e382b510e5"
+      "after": "18f0ed9b57834e2d135ca9ce2fa255b870a5a998451bc04a4d09ed772f50bf5c"
     },
     "codex-rs/omd/src/mods/packages.rs": {
       "before": null,
@@ -589,7 +589,7 @@
     },
     "codex-rs/omd/src/mods/process.rs": {
       "before": null,
-      "after": "bd571a6ec42cec6ea6706ff9274c726b89742b3ea680645463a02fd052a140bd"
+      "after": "9f2738b8ebe81662c1b1dd2babfee4269bd03a302dd01673ffb49ffb7e572843"
     },
     "codex-rs/omd/src/mods/process_tests.rs": {
       "before": null,
@@ -601,7 +601,7 @@
     },
     "codex-rs/omd/src/mods/runner.mjs": {
       "before": null,
-      "after": "d819e2784929cd8cdd371967b1b6e837dbdb82b26891fe517ffec94e97f01509"
+      "after": "ac91bbc74e7ea3f712bfc7e598efbe7ac5a35829a4651130c46c358506d07f99"
     },
     "codex-rs/omd/src/mods/store.rs": {
       "before": null,
