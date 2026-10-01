@@ -298,12 +298,12 @@ async fn background_delivery_wakes_on_publish_and_client_wake() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn turn_activity_records_only_while_a_sessions_mod_is_enabled() {
+async fn turn_activity_records_only_while_a_mod_reads_it() {
     let Some(fixture) = fixture(&[Package {
         id: "ledger",
         capabilities: &["sessions"],
         manifest: Value::Null,
-        source: "export default function () {}\n",
+        source: "export default function (api) { const read = () => api.host.tryCall('turns.activity', {}); }\n",
     }]) else {
         return;
     };
@@ -373,10 +373,10 @@ async fn turn_activity_records_only_while_a_sessions_mod_is_enabled() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn turn_activity_stays_empty_without_a_sessions_mod() {
+async fn turn_activity_stays_empty_without_a_reader() {
     let Some(fixture) = fixture(&[Package {
         id: "plain",
-        capabilities: &["lifecycle"],
+        capabilities: &["sessions"],
         manifest: Value::Null,
         source: "export default function () {}\n",
     }]) else {

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const { capabilities } = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const surface = { events: { terminal: 'terminal', app_notification: 'threads', start: 'lifecycle', resume: 'lifecycle', turn_end: 'lifecycle', timer: 'events' }, replacements: ['terminal'], middleware: [], state: 'store', contracts: 'contracts' };
+const surface = { events: { terminal: 'terminal', app_notification: 'threads', start: 'lifecycle', resume: 'lifecycle', turn_end: 'lifecycle', timer: 'events', channel: 'events' }, replacements: ['terminal'], middleware: [], state: 'store', contracts: 'contracts' };
 function run(event, name = '', payload = '', options = {}) {
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
     input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities, settings: {}, state: null, event, name, payload, ...options }), encoding: 'utf8', timeout: 5000,
@@ -147,12 +147,15 @@ test('powerline presets show session, Git, context and OMD state; below adds one
   const notify = (state, method, params) => run('app_notification', '', { method, params: { threadId: thread, ...params }, thread_id: thread, coalesced: 0, dropped: 0 }, { state, settings: on }).state;
   assert.equal(run('app_notification', '', { method: 'thread/settings/updated', params: { threadId: thread }, thread_id: thread, coalesced: 0, dropped: 0 }).state, null);
   const exec = (argv, stdout) => ({ call: { operation: 'exec.run', arguments: { program: argv[0], ...(argv.length > 1 ? { argv: argv.slice(1) } : {}), timeout_ms: argv[0] === 'env' ? 2000 : 3000 } }, value: { exit_code: 0, stdout } });
-  let state = run('start', '', null, { settings: on, receipts: [
+  const start = stashed => run('start', '', null, { settings: on, receipts: [
     exec(['env'], 'TERM_PROGRAM=ghostty\nPATH=/bin\n'),
+    { call: { operation: 'store.get', arguments: { key: 'stash', scope: 'repository' } }, value: stashed },
     { call: { operation: 'app.request', arguments: { method: 'config/read', params: {} } }, value: { config: { model: 'gpt-6.1-sol', model_reasoning_effort: 'medium' } } },
     exec(['git', 'status', '--porcelain=v2', '--branch'], '# branch.oid abc\n# branch.head main\n# branch.ab +2 -1\n1 M. N... 100644 100644 100644 a b src/a.ts\n1 .M N... 100644 100644 100644 a b src/b.ts\nu UU N... 1 2 3 4 a b c src/c.ts\n? new.ts\n'),
     { call: { operation: 'events.schedule', arguments: { key: 'git', delay_ms: 10000 } }, value: { key: 'git', delay_ms: 10000 } },
   ] }).state;
+  assert.equal(start({ value: { active: 'kept', history: ['kept'] }, revision: 1, provenance: {} }).live.stashed, true);
+  let state = start(null);
   assert.deepEqual(state.live.git, { branch: 'main', ahead: 2, behind: 1, staged: 1, unstaged: 2, untracked: 1 });
   assert.equal(state.live.nerd, true);
   state = notify(state, 'thread/settings/updated', { threadSettings: { model: 'gpt-6.1-sol', effort: 'high', modelProvider: 'openai' } });

@@ -3095,13 +3095,13 @@ impl ModHost {
             .collect()
     }
 
-    pub fn holds_capability(&self, capability: &str) -> bool {
+    pub fn uses_operation(&self, operation: &str) -> bool {
         self.active().any(|(_, loaded)| {
             loaded
-                .package
-                .capabilities
+                .source_use
+                .operations
                 .iter()
-                .any(|cap| cap == capability)
+                .any(|used| used == operation)
         })
     }
 

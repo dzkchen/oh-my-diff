@@ -41,6 +41,7 @@ function workspace(files = {}) {
       return { exit_code: 0, stdout: '', stderr: '' };
     }
     if (operation === 'workspace.read') return { files: Object.fromEntries(args.paths.map(path => [path, path in files ? { text: files[path], sha256: digest(files[path]) } : null])) };
+    if (operation === 'workspace.stat') return { files: Object.fromEntries(args.paths.map(path => [path, path in files ? { kind: 'file', size: files[path].length, mtime_ms: 0, sha256: digest(files[path]) } : null])) };
     assert.equal(operation, 'workspace.transaction');
     for (const [path, hash] of Object.entries(args.expected)) assert.equal(path in files ? digest(files[path]) : null, hash);
     for (const path of Object.keys(args.writes)) assert.ok(directories.has(path.slice(0, path.lastIndexOf('/'))), `missing directory for ${path}`);

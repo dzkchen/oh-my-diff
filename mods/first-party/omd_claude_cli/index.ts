@@ -224,7 +224,10 @@ export default function activate(api: ModAPI): void {
     if (status.ok) api.host.tryCall('providers.unregister', { id: service });
     return api.host.tryCall('providers.register', { id: service }).ok;
   };
-  api.on('turn_start', () => { ensure(); });
+  api.on('turn_start', () => {
+    const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
+    if (config.ok && (config.value as Row).config?.model_provider === 'omd_claude_cli') ensure();
+  });
   api.command('claude_route', () => ({ display: 'Claude CLI route: launch with `omd-package claude [--model family]` after `omd-package claude --setup`; subscription windows appear in /status limits.' }));
   if (api.settings.ask_claude !== true) return;
   api.tool({ name: 'ask_claude', description: 'Delegate a question or bounded task to Claude through the OMD Claude route and wait for its answer. Read-only by default; write mode edits an isolated worktree and integrates only within your own write permissions. Use for a second opinion, review or a self-contained task; handle simple work yourself.',
@@ -243,7 +246,7 @@ export default function activate(api: ModAPI): void {
     if (!spawned.ok) return { status: 'denied', reason: spawned.error };
     const handle = spawned.value.handle;
     let result = api.host.tryCall('agents.wait', { handle });
-    for (let waits = 1; waits < 40 && result.ok && result.value.status === 'running'; waits++) {
+    for (let waits = 1; waits < 27 && result.ok && result.value.status === 'running'; waits++) {
       result = api.host.tryCall('agents.wait', { handle });
     }
     if (!result.ok || result.value.status !== 'completed') {

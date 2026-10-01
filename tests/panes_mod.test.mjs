@@ -14,7 +14,7 @@ const surface = { events: { terminal: 'terminal', channel: 'events', start: 'lif
   replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 const sha = data => createHash('sha256').update(data).digest('hex');
 
-function fixture() {
+function fixture(launch = '') {
   const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-panes-')));
   const git = (...argv) => spawnSync('git', argv, { cwd: repository, encoding: 'utf8' });
   git('init', '-q');
@@ -30,17 +30,18 @@ function fixture() {
   writeFileSync(join(repository, 'notes.md'), '# new\n');
   mkdirSync(join(repository, 'build'));
   writeFileSync(join(repository, 'build/out.js'), '');
+  const root = join(repository, launch);
   const store = new Map();
   const backups = new Map();
   const answers = [];
   const calls = [];
   const kind = path => {
-    const full = join(repository, path);
+    const full = join(root, path);
     if (!existsSync(full)) return null;
     const stat = lstatSync(full);
     return { kind: stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'dir' : 'file', size: stat.size, mtime_ms: 0, ...(stat.isFile() ? { sha256: sha(readFileSync(full)) } : {}) };
   };
-  const walk = (dir, recursive) => readdirSync(join(repository, dir), { withFileTypes: true }).filter(entry => entry.name !== '.git')
+  const walk = (dir, recursive) => readdirSync(join(root, dir), { withFileTypes: true }).filter(entry => entry.name !== '.git')
     .flatMap(entry => {
       const path = dir ? `${dir}/${entry.name}` : entry.name;
       return [{ path, ...kind(path) }, ...(recursive && entry.isDirectory() ? walk(path, true) : [])];
@@ -56,7 +57,7 @@ function fixture() {
         return { revision: (current?.revision ?? 0) + 1 };
       }
       case 'exec.run': {
-        const run = spawnSync(args.program, args.argv ?? [], { cwd: repository, input: args.stdin, encoding: 'utf8' });
+        const run = spawnSync(args.program, args.argv ?? [], { cwd: root, input: args.stdin, encoding: 'utf8' });
         return { exit_code: run.status, stdout: run.stdout, stderr: run.stderr, stdout_sha256: sha(run.stdout), stdout_preview_truncated: false };
       }
       case 'workspace.list': return { entries: walk(args.path ?? '', args.recursive), truncated: false };
@@ -64,14 +65,14 @@ function fixture() {
       case 'workspace.transaction': {
         for (const [path, expected] of Object.entries(args.expected)) assert.equal(kind(path)?.sha256 ?? null, expected, `stale ${path}`);
         const reference = { reference: `backup-${backups.size}`, sha256: '0' };
-        if (args.backup) backups.set(reference.reference, Object.fromEntries(Object.keys(args.expected).map(path => [path, readFileSync(join(repository, path))])));
-        for (const { old, new: next } of args.renames ?? []) renameSync(join(repository, old), join(repository, next));
-        for (const [path, text] of Object.entries(args.writes ?? {})) writeFileSync(join(repository, path), text);
-        for (const path of args.deletes ?? []) rmSync(join(repository, path));
+        if (args.backup) backups.set(reference.reference, Object.fromEntries(Object.keys(args.expected).map(path => [path, readFileSync(join(root, path))])));
+        for (const { old, new: next } of args.renames ?? []) renameSync(join(root, old), join(root, next));
+        for (const [path, text] of Object.entries(args.writes ?? {})) writeFileSync(join(root, path), text);
+        for (const path of args.deletes ?? []) rmSync(join(root, path));
         return { files: {}, backup: args.backup ? reference : null };
       }
       case 'workspace.restore':
-        for (const [path, data] of Object.entries(backups.get(args.backup.reference))) writeFileSync(join(repository, path), data);
+        for (const [path, data] of Object.entries(backups.get(args.backup.reference))) writeFileSync(join(root, path), data);
         return { files: {} };
       case 'terminal.prompt': return args.kind === 'text' ? { status: 'accepted', value: answers.shift() } : { status: 'accepted' };
       case 'terminal.pty': return args.action === 'start' ? { session: args.session, running: true } : { stopped: true };
@@ -132,6 +133,16 @@ test('panes split, focus, move, resize and persist a valid layout per thread', (
     event('resume', { thread_id: 'thread-1', last_turn: null, restarted: true });
     assert.deepEqual(view().layout.children[1], { content: 'site:sidebar' });
     assert.equal(state().revision, 7);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('file tree Git markers follow a subdirectory launch', () => {
+  const { repository, command, view } = fixture('src');
+  try {
+    command('tree', '');
+    assert.deepEqual(view().sites['omd_panes/p1-tree'].components[2].rows.map(row => row.spans.map(span => `${span.text}|${span.tone ?? 'normal'}`).join('')), ['▸ deep/|normal', '  app.ts|attention M|attention']);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

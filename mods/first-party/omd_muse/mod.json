@@ -7,7 +7,7 @@
   "description": "Experimental: a low-cost Muse research subagent and optional lead over muse serve",
   "license": "Apache-2.0",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_muse"},
-  "capabilities": ["commands", "lifecycle", "model", "exec", "tools", "agents", "terminal", "builtins"],
+  "capabilities": ["commands", "lifecycle", "model", "exec", "tools", "agents", "terminal", "builtins", "config"],
   "exec_environment": ["MUSE_EXPERIMENTAL_SDK_ENABLED", "XDG_DATA_HOME"],
   "assets": ["models.json", "setup.mjs", "transport.mjs"],
   "settings_schema": {

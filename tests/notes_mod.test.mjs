@@ -135,8 +135,15 @@ test('notes vaults link, search, track tasks and write only through checked, con
     const agent = invoke(state, 'tool', { title: 'Beta', content: 'from the agent', mode: 'append' }, 'write', { personal, agent: true });
     assert.equal(agent.value, 'Saved Beta');
     assert.match(confirms.at(-1).title, /Agent wants to append note Beta/);
+    assert.equal(confirms.at(-1).message, 'from the agent');
     assert.match(readFileSync(join(vault, 'Beta.md'), 'utf8'), /from the agent\n$/);
     assert.equal(statSync(join(vault, 'Beta.md')).isFile(), true);
+
+    writeFileSync(join(vault, 'Big.md'), `${'x'.repeat(50_000)}\n- [ ] tail task\n`);
+    note('open Big');
+    assert.match(note('append more').display, /over 48000 characters/);
+    assert.match(invoke(state, 'tool', { title: 'Big', content: 'more', mode: 'append' }, 'write', { personal, agent: true }).value, /over 48000 characters/);
+    assert.doesNotMatch(readFileSync(join(vault, 'Big.md'), 'utf8'), /more/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

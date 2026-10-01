@@ -246,11 +246,14 @@ pub(super) fn isolated(
     Ok(config)
 }
 
+const ONE_SHOT: Duration = Duration::from_secs(300);
+
 pub(super) async fn command(
     task: &Task,
     output_bytes: usize,
     config: &Config,
     argv: Vec<String>,
+    limit: Duration,
 ) -> Result<Value, String> {
     task.check_active().map_err(error)?;
     let remaining = task.remaining().map_err(error)?.0;
@@ -261,7 +264,7 @@ pub(super) async fn command(
         ExecParams {
             command: argv.clone(),
             cwd: config.cwd.clone(),
-            expiration: ExecExpiration::Timeout(remaining.min(Duration::from_secs(300))),
+            expiration: ExecExpiration::Timeout(remaining.min(limit)),
             capture_policy: ExecCapturePolicy::Controlled {
                 max_bytes: output_bytes.saturating_mul(4).saturating_add(65536),
             },
@@ -309,6 +312,7 @@ pub(super) async fn all_paths(
             "--exclude-standard".into(),
             "-z".into(),
         ],
+        ONE_SHOT,
     )
     .await?;
     if output["exit_code"] != 0 || output["stdout_truncated"] != false {
@@ -414,6 +418,7 @@ pub(super) async fn apply_candidate(
             "a",
             "b",
         ]),
+        ONE_SHOT,
     )
     .await?;
     let patch = delta.join("candidate.patch");
@@ -429,6 +434,7 @@ pub(super) async fn apply_candidate(
         bytes,
         &isolated(parent, &host.repository, &[], denied, true)?,
         git(&["apply", "-p2", "--binary", &patch.display().to_string()]),
+        ONE_SHOT,
     )
     .await
 }

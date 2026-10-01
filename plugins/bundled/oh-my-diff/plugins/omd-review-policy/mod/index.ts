@@ -2,7 +2,7 @@ import type { ModAPI } from '@oh-my-diff/mod-api';
 
 type Scope = { path: string; added: boolean; renamed: boolean; lines: [number, number][] };
 
-const HEADERS = `d=$(git -c core.quotePath=false diff --unified=0 --no-color --no-ext-diff --find-renames --src-prefix=a/ --dst-prefix=b/ "$@") || exit
+const HEADERS = `d=$(git -c core.quotePath=false diff --relative --unified=0 --no-color --no-ext-diff --find-renames --src-prefix=a/ --dst-prefix=b/ "$@") || exit
 printf '%s\\n' "$d" | grep -E '^(diff --git |[+]{3} |@@ |new file mode|rename to )' || true`;
 
 function parse(headers: string): Scope[] {

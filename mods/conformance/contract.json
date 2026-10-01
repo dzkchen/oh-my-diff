@@ -1200,7 +1200,7 @@
       "observe": "`turns.activity` for the current thread: outcomes, tool calls, processes and file changes",
       "alter": "no",
       "replace": null,
-      "timing": "recorded only while an enabled mod holds `sessions`",
+      "timing": "recorded only while an enabled mod's source calls `turns.activity`",
       "ownership": "host: records; mod: reads",
       "limits": "turns before recording started read as unavailable; per-turn lists are bounded and marked truncated",
       "native": "no native equivalent",
@@ -1215,7 +1215,7 @@
       "evidence": [
         "patch:completed_turn_reports_tools_processes_and_files",
         "patch:a_turn_without_an_end_is_interrupted_unless_running_or_paused",
-        "patch:turn_activity_records_only_while_a_sessions_mod_is_enabled"
+        "patch:turn_activity_records_only_while_a_mod_reads_it"
       ],
       "replace_note": null
     },

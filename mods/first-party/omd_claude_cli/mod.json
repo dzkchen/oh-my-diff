@@ -17,7 +17,8 @@
     "exec",
     "tools",
     "agents",
-    "sessions"
+    "sessions",
+    "config"
   ],
   "assets": [
     "models.json",

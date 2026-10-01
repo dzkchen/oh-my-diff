@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -365,18 +365,27 @@ function resumption(payload) {
   return { key: String(detail.key), approved: match[1] === 'DECISION' && detail.approved === true };
 }
 
+export async function privateDirectory(path) {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.uid !== process.getuid() || info.mode & 0o077) throw new Error(`muse_data_directory_unsafe: ${path}`);
+}
+
 async function serve(routePath) {
   const route = JSON.parse(await readFile(routePath, 'utf8'));
   const token = process.env.OMD_MUSE_LOCAL_TOKEN ?? '';
   const ready = process.env.OMD_READY_TOKEN ?? '';
   if (token.length < 32 || !ready) throw new Error('native_provider_tokens_required');
-  await mkdir(route.data, { recursive: true, mode: 0o700 });
+  await privateDirectory(route.data);
   const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: route.home, USER: route.username, LOGNAME: route.username,
     TMPDIR: route.data, XDG_DATA_HOME: route.data, MUSE_EXPERIMENTAL_SDK_ENABLED: '1' };
   const host = new Host(route.muse, env, route.fingerprint);
   const router = new Router(host, join(route.data, 'omd-sessions.json'), process.cwd());
   await router.load();
   let nonce = ready;
+  let active = 0;
+  let stopping = false;
+  const exit = () => { host.stop(); process.exit(0); };
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/_omd/ready') { response.writeHead(200).end(`OMD_READY:${nonce}`); return; }
     if (request.method !== 'POST' || !['/v1/responses', '/_omd/nonce'].includes(request.url)) { response.writeHead(404).end(); return; }
@@ -395,6 +404,7 @@ async function serve(routePath) {
       return;
     }
     const controller = new AbortController();
+    active++;
     response.on('close', () => { if (!response.writableFinished) controller.abort(); });
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
     const send = event => response.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -410,16 +420,18 @@ async function serve(routePath) {
       if (!response.destroyed) send({ type: 'response.failed', response: { error: { code: message.split(':')[0], message } } });
     } finally {
       response.end();
+      if (!--active && stopping) exit();
     }
   });
-  const stop = () => { host.stop(); server.close(); process.exit(0); };
+  const stop = () => { stopping = true; server.close(); if (!active) exit(); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   await claim(server, route.port, token, ready);
 }
 
-// Concurrent sessions share the store's fixed port: a later transport hands its readiness nonce to the owner and takes the port over when the owner exits.
+// Concurrent sessions share the store's fixed port: a later transport hands its readiness nonce to the owner during the host's 3 s readiness window and takes the port over once the owner has drained and exited.
 async function claim(server, port, token, ready) {
+  const handoff = Date.now() + 3_000;
   for (;;) {
     try {
       await new Promise((resolve, reject) => {
@@ -430,7 +442,7 @@ async function claim(server, port, token, ready) {
     } catch (error) {
       if (error.code !== 'EADDRINUSE') throw error;
     }
-    await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST',
+    if (Date.now() < handoff) await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST',
       headers: { authorization: `Bearer ${token}` }, body: ready }).catch(() => {});
     await new Promise(resolve => setTimeout(resolve, 500));
   }

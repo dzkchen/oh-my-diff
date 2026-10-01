@@ -211,6 +211,7 @@ const IDLE_STOP_MS = 15 * 60_000;
 const DIAGNOSTIC_WAITS = 8;
 const FEEDBACK_BYTES = 4000;
 const MENTION = /[\w@+.\/-]+\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
+const READ_ONLY_TOOLS = new Set(['update_plan', 'view_image', 'tool_search', 'request_user_input', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'list_agents', 'get_context_remaining']);
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
 const errorText = (entry: string) => entry.slice(entry.indexOf(' ') + 1);
 const difference = (from: string[], minus: string[]) => {
@@ -517,16 +518,21 @@ export default function activate(api: ModAPI) {
     return { status: 'ready' as const, expected, writes };
   });
   api.on('tool_output', event => {
-    const mentioned = strings(event.arguments).join('\n').match(MENTION) ?? [];
-    const report: string[] = [];
-    for (const adapter of ORDER) {
+    if (READ_ONLY_TOOLS.has(event.tool)) return null;
+    const mentioned = event.tool === 'apply_patch' ? strings(event.arguments).join('\n').match(MENTION) ?? [] : [];
+    const work = ORDER.flatMap(adapter => {
       const s = state(api.state.get(), adapter);
-      if (!s.running || !s.repository) continue;
+      if (!s.running || !s.repository) return [];
       const named = mentioned.map(path => path.startsWith(`${s.repository}/`) ? path.slice(s.repository.length + 1) : path.replace(/^\.\//, '')).filter(path => adapterFor(path) === adapter && pathFromUri(s.repository, uri(s.repository, path)));
       const candidates = [...new Set([...Object.keys(s.documents), ...named])].slice(0, 128);
-      if (!candidates.length) continue;
-      const stat = budget({ paths: candidates, hash: true }, argument => api.host.tryCall('workspace.stat', argument));
-      if (!stat.ok) continue;
+      return candidates.length ? [{ adapter, candidates }] : [];
+    });
+    if (!work.length) return null;
+    const stat = budget({ paths: [...new Set(work.flatMap(item => item.candidates))], hash: true }, argument => api.host.tryCall('workspace.stat', argument));
+    if (!stat.ok) return null;
+    const report: string[] = [];
+    for (const { adapter, candidates } of work) {
+      const s = state(api.state.get(), adapter);
       const changed = candidates.filter(path => stat.value.files[path]?.kind === 'file' ? stat.value.files[path]?.sha256 !== s.documents[path]?.sha256 : Boolean(s.documents[path]));
       if (!changed.length) continue;
       const edited = changed.filter(path => s.documents[path] && stat.value.files[path]);

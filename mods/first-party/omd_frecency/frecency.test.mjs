@@ -49,12 +49,14 @@ test('mentions rank by fuzzy tier, frecency and Git status, tolerate typos and d
   assert.equal(run('completion', { kind: 'argument', command: 'note', query: '', line: '' }, () => { throw new Error('no host call'); }).value, null);
   const { host } = repository(null, '');
   assert.deepEqual(run('service', { query: 'tree', paths: ['src/tree.ts', 'src/treat.ts'] }, host, 'omd.frecency.rank').value, { paths: ['src/tree.ts', 'src/treat.ts'] });
+  assert.deepEqual(run('service', { query: 'index theme', paths: ['mods/omd_theme/index.ts'] }, host, 'omd.frecency.rank').value, { paths: ['mods/omd_theme/index.ts'] });
+  assert.equal(run('service', { query: 'tree', paths: Array.from({ length: 60 }, (_, index) => `src/tree${index}.ts`) }, host, 'omd.frecency.rank').value.paths.length, 60);
 });
 
 test('submitted prompts queue paths; the next turn learns only files Git does not ignore', () => {
   const none = () => { throw new Error('no host call'); };
   assert.equal(run('input', { text: 'explain the failing build', attachments: 0 }, none).state, null);
-  const queued = run('input', { text: 'Fix @src/a.ts:12, "docs/my notes.md" and build/out.js', attachments: 0 }, none);
+  const queued = run('input', { text: 'Fix `@src/a.ts:12`, "docs/my notes.md" and (build/out.js)', attachments: 0 }, none);
   assert.equal(queued.value, null);
   assert.deepEqual(queued.state, ['src/a.ts', 'docs/my notes.md', 'build/out.js']);
   const { host, writes } = repository({ tick: 4, files: { 'src/a.ts': [2, 1] } }, 'src/a.ts\0docs/my notes.md\0');

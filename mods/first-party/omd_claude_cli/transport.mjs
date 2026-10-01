@@ -355,8 +355,9 @@ async function inert(path) {
   }
 }
 
-// Concurrent sessions share the store's fixed port: a later transport hands its readiness nonce to the owner and takes the port over when the owner exits.
+// Concurrent sessions share the store's fixed port: a later transport hands its readiness nonce to the owner during the host's 3 s readiness window and takes the port over once the owner has drained and exited.
 async function claim(server, port, token, ready) {
+  const handoff = Date.now() + 3_000;
   for (;;) {
     try {
       await new Promise((resolve, reject) => {
@@ -367,7 +368,7 @@ async function claim(server, port, token, ready) {
     } catch (error) {
       if (error.code !== 'EADDRINUSE') throw error;
     }
-    await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST',
+    if (Date.now() < handoff) await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST',
       headers: { authorization: `Bearer ${token}` }, body: ready }).catch(() => {});
     await new Promise(resolve => setTimeout(resolve, 500));
   }
@@ -423,9 +424,11 @@ async function serve(routePath, home, username) {
     } finally {
       active.delete(controller);
       response.end();
+      if (stopping && !active.size) process.exit(0);
     }
   });
-  const stop = () => { for (const controller of active) controller.abort(); server.close(); process.exit(0); };
+  let stopping = false;
+  const stop = () => { stopping = true; server.close(); if (!active.size) process.exit(0); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   await claim(server, route.port, token, ready);

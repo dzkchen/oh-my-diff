@@ -8823,10 +8823,10 @@ index 000000000..a995c1a7c
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 000000000..a5fe999ee
+index 000000000..c8818d4f0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,548 @@
+@@ -0,0 +1,554 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -9075,11 +9075,14 @@ index 000000000..a5fe999ee
 +    Ok(config)
 +}
 +
++const ONE_SHOT: Duration = Duration::from_secs(300);
++
 +pub(super) async fn command(
 +    task: &Task,
 +    output_bytes: usize,
 +    config: &Config,
 +    argv: Vec<String>,
++    limit: Duration,
 +) -> Result<Value, String> {
 +    task.check_active().map_err(error)?;
 +    let remaining = task.remaining().map_err(error)?.0;
@@ -9090,7 +9093,7 @@ index 000000000..a5fe999ee
 +        ExecParams {
 +            command: argv.clone(),
 +            cwd: config.cwd.clone(),
-+            expiration: ExecExpiration::Timeout(remaining.min(Duration::from_secs(300))),
++            expiration: ExecExpiration::Timeout(remaining.min(limit)),
 +            capture_policy: ExecCapturePolicy::Controlled {
 +                max_bytes: output_bytes.saturating_mul(4).saturating_add(65536),
 +            },
@@ -9138,6 +9141,7 @@ index 000000000..a5fe999ee
 +            "--exclude-standard".into(),
 +            "-z".into(),
 +        ],
++        ONE_SHOT,
 +    )
 +    .await?;
 +    if output["exit_code"] != 0 || output["stdout_truncated"] != false {
@@ -9243,6 +9247,7 @@ index 000000000..a5fe999ee
 +            "a",
 +            "b",
 +        ]),
++        ONE_SHOT,
 +    )
 +    .await?;
 +    let patch = delta.join("candidate.patch");
@@ -9258,6 +9263,7 @@ index 000000000..a5fe999ee
 +        bytes,
 +        &isolated(parent, &host.repository, &[], denied, true)?,
 +        git(&["apply", "-p2", "--binary", &patch.display().to_string()]),
++        ONE_SHOT,
 +    )
 +    .await
 +}
@@ -11136,7 +11142,7 @@ index 000000000..c1851f83a
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..088e15308
+index 000000000..a8ce30724
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
 @@ -0,0 +1,1549 @@
@@ -11522,9 +11528,9 @@ index 000000000..088e15308
 +    }
 +}
 +
-+// `sessions` holders read changed files from the turn-activity ledger.
++// `turns.activity` readers see changed files from the turn-activity ledger.
 +fn observes_workspace(runtime: &ModHost) -> bool {
-+    runtime.has_event("workspace_change") || runtime.holds_capability("sessions")
++    runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
 +}
 +
 +fn refresh_contract(runtime: &ModHost, session: &Session) {
@@ -15090,10 +15096,10 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..194e421c9
+index 000000000..1ce367273
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,442 @@
+@@ -0,0 +1,444 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -15238,7 +15244,7 @@ index 000000000..194e421c9
 +        if let Ok(mut subscriptions) = self.subscriptions.lock() {
 +            *subscriptions = runtime.subscriptions();
 +        }
-+        let recording = runtime.holds_capability("sessions");
++        let recording = runtime.uses_operation("turns.activity");
 +        self.recording.swap(recording, Ordering::AcqRel) && !recording
 +    }
 +
@@ -15344,7 +15350,9 @@ index 000000000..194e421c9
 +            |_| {},
 +        )
 +        .map_err(|error| error.to_string());
-+        if let Ok(mut runtime) = runtime.lock()
++        // The tool_result event that follows every tool_output republishes the view.
++        if event != "tool_output"
++            && let Ok(mut runtime) = runtime.lock()
 +            && runtime.state(&id) != before.as_ref()
 +        {
 +            publish(&mut runtime, &owner, &views, event, ledger, active);
@@ -17087,7 +17095,7 @@ index 000000000..13341482d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..8574472c4
+index 000000000..a4f463c42
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 @@ -0,0 +1,970 @@
@@ -17391,12 +17399,12 @@ index 000000000..8574472c4
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
-+async fn turn_activity_records_only_while_a_sessions_mod_is_enabled() {
++async fn turn_activity_records_only_while_a_mod_reads_it() {
 +    let Some(fixture) = fixture(&[Package {
 +        id: "ledger",
 +        capabilities: &["sessions"],
 +        manifest: Value::Null,
-+        source: "export default function () {}\n",
++        source: "export default function (api) { const read = () => api.host.tryCall('turns.activity', {}); }\n",
 +    }]) else {
 +        return;
 +    };
@@ -17466,10 +17474,10 @@ index 000000000..8574472c4
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
-+async fn turn_activity_stays_empty_without_a_sessions_mod() {
++async fn turn_activity_stays_empty_without_a_reader() {
 +    let Some(fixture) = fixture(&[Package {
 +        id: "plain",
-+        capabilities: &["lifecycle"],
++        capabilities: &["sessions"],
 +        manifest: Value::Null,
 +        source: "export default function () {}\n",
 +    }]) else {
@@ -18626,7 +18634,7 @@ index 000000000..94c45f134
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..cb2e40b91
+index 000000000..e7aea33a1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
 @@ -0,0 +1,683 @@
@@ -19176,7 +19184,7 @@ index 000000000..cb2e40b91
 +        let job = tokio::spawn(async move {
 +            let result = tokio::time::timeout(
 +                timeout,
-+                execution::command(&task, output_bytes, &config, supervised),
++                execution::command(&task, output_bytes, &config, supervised, timeout),
 +            )
 +            .await
 +            .map_err(|_| "sidecar_deadline".to_string())??;
@@ -31417,7 +31425,7 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..eb055a33d
+index 000000000..b36b7a195
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
 @@ -0,0 +1,3553 @@
@@ -34518,13 +34526,13 @@ index 000000000..eb055a33d
 +            .collect()
 +    }
 +
-+    pub fn holds_capability(&self, capability: &str) -> bool {
++    pub fn uses_operation(&self, operation: &str) -> bool {
 +        self.active().any(|(_, loaded)| {
 +            loaded
-+                .package
-+                .capabilities
++                .source_use
++                .operations
 +                .iter()
-+                .any(|cap| cap == capability)
++                .any(|used| used == operation)
 +        })
 +    }
 +

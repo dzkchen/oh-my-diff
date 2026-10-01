@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.159.1.patch",
-    "sha256": "05bff36b2971273877d262887dea53717cab2b302a3016ea79f52cb5bbea17f8"
+    "sha256": "6b4c922495dddf5342739fdf8997022ce40243e9c8436ced48879b4086bc1d41"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -345,7 +345,7 @@
     },
     "codex-rs/ext/omd/src/execution.rs": {
       "before": null,
-      "after": "6a848a1851dac5f3608db26418e8f9e5e78d738a9fe6fc11e88880855ac6e41e"
+      "after": "fa597bf1555012689508bf0e0c947b6a73f54561e3a75745fa5c85493d2b820f"
     },
     "codex-rs/ext/omd/src/generic_host.rs": {
       "before": null,
@@ -365,7 +365,7 @@
     },
     "codex-rs/ext/omd/src/mods.rs": {
       "before": null,
-      "after": "330fcea97a5a463fadaf25864b9428b0fb2fd3190fffead0c16fc06c3074665e"
+      "after": "6cda2abc535a5a977d563c704a30a7cd4d553be8a448d01c0998280276ff56ad"
     },
     "codex-rs/ext/omd/src/mods/agents.rs": {
       "before": null,
@@ -377,7 +377,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion.rs": {
       "before": null,
-      "after": "e497ed597de27353f9d1ed4d7d45cf18f7861459a3a138a7cc894ef4d9034852"
+      "after": "1e64765ed2f9e47a4fbeb82a9ee520776bb94f1baccbe23d07c4ccfdab9c19f9"
     },
     "codex-rs/ext/omd/src/mods/expansion/activity.rs": {
       "before": null,
@@ -405,7 +405,7 @@
     },
     "codex-rs/ext/omd/src/mods/expansion_tests.rs": {
       "before": null,
-      "after": "9296ab946ebb43bb4c61cbd72b6e3dc8d95ac5f9f2d3c0a8928ae008b08fe06f"
+      "after": "f9219badc8f0568cf15e3e4f60834f48f07498022a68b01a5577dd58ee3dc8bf"
     },
     "codex-rs/ext/omd/src/mods/operations.rs": {
       "before": null,
@@ -413,7 +413,7 @@
     },
     "codex-rs/ext/omd/src/mods/services.rs": {
       "before": null,
-      "after": "a7e1426ca5693c3f87374e1d0e03884cdb3f9d359683d3fa2b7e5ab79986fca8"
+      "after": "001f26c46278d96edee4f01489fa4f2be589f1bc6fb5bcfd54d2b106dd76ab7f"
     },
     "codex-rs/ext/omd/src/mods/snapshots.rs": {
       "before": null,
@@ -565,7 +565,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "078434bf1ecc58a24cc09e6b292f153bd00a0ca2f24db920bced822276bafe8b"
+      "after": "acc35472084e5c20475dab1abae93a1410f9cb5c3d3ffe8af3770bd4712dae44"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,

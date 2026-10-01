@@ -473,7 +473,7 @@ when the thread is deleted and kept when it is archived. `resume` carries
 `last_turn` and `restarted`. `turns.activity {turn_id?, last?}` reads turn
 outcomes, tool calls, processes and file changes for the current thread from
 event, tool and terminal slash-command callbacks, recorded only while an
-enabled mod holds `sessions`. File changes come from the same workspace
+enabled mod's source calls `turns.activity`. File changes come from the same workspace
 observer as `workspace_change`, which rereads only files whose size, ctime or
 inode changed. Commands record their exit
 code when they finish, including commands that outlive their tool call; the log

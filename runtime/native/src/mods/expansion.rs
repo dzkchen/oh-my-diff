@@ -142,7 +142,7 @@ impl State {
         if let Ok(mut subscriptions) = self.subscriptions.lock() {
             *subscriptions = runtime.subscriptions();
         }
-        let recording = runtime.holds_capability("sessions");
+        let recording = runtime.uses_operation("turns.activity");
         self.recording.swap(recording, Ordering::AcqRel) && !recording
     }
 
@@ -248,7 +248,9 @@ pub(super) async fn invoke_one(
             |_| {},
         )
         .map_err(|error| error.to_string());
-        if let Ok(mut runtime) = runtime.lock()
+        // The tool_result event that follows every tool_output republishes the view.
+        if event != "tool_output"
+            && let Ok(mut runtime) = runtime.lock()
             && runtime.state(&id) != before.as_ref()
         {
             publish(&mut runtime, &owner, &views, event, ledger, active);

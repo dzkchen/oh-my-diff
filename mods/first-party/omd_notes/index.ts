@@ -2,11 +2,12 @@ import type { CommandResult, Json, ModAPI, TerminalComponent } from '@oh-my-diff
 
 type Vault = 'project' | 'personal';
 type Item = { label: string; value: string };
-type Note = { vault: Vault; path: string; text: string; sha256: string; line: number | null; links: Item[]; backlinks: Item[]; tags: string[] };
+type Note = { vault: Vault; path: string; text: string; sha256: string; partial: boolean; line: number | null; links: Item[]; backlinks: Item[]; tags: string[] };
 type State = { note: Note | null; list: { title: string; items: Item[] } | null; shown: boolean; revision: number };
 type Hit = { vault: Vault; path: string; line: number; text: string };
 
 const TEXT_LIMIT = 48_000;
+const TOO_LARGE = `notes over ${TEXT_LIMIT} characters are shown truncated; edit them in your editor`;
 const ITEM_LIMIT = 200;
 const POLL_MS = 2_000;
 const LINK = /\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|[^\]\n]*)?\]\]/g;
@@ -35,9 +36,9 @@ export default function activate(api: ModAPI) {
   const exec = (program: string, argv: string[], extra: { stdin?: string; write?: boolean; guards?: { program: string; argv: string[]; stdout_sha256: string }[] } = {}) =>
     api.host.tryCall('exec.run', { program, argv, timeout_ms: 10_000, ...extra });
 
-  const read = (vault: Vault, path: string): { text: string; sha256: string } | null => {
+  const read = (vault: Vault, path: string): { text: string; sha256: string; partial: boolean } | null => {
     const run = exec('cat', [location(vault, path)]);
-    return run.ok && run.value.exit_code === 0 ? { text: run.value.stdout.slice(0, TEXT_LIMIT), sha256: run.value.stdout_sha256 } : null;
+    return run.ok && run.value.exit_code === 0 ? { text: run.value.stdout.slice(0, TEXT_LIMIT), sha256: run.value.stdout_sha256, partial: run.value.stdout_preview_truncated || run.value.stdout.length > TEXT_LIMIT } : null;
   };
   const write = (vault: Vault, path: string, text: string, expected: string | null): string | null => {
     const target = location(vault, path);
@@ -94,7 +95,7 @@ export default function activate(api: ModAPI) {
       .filter(hit => !(hit.vault === vault && hit.path === path) && links(hit.text).some(link => link.toLowerCase() === name))
       .map(hit => ({ label: `← ${title(hit.path)}:${hit.line} ${hit.text.trim().slice(0, 80)}`, value: `open ${reference(hit.vault, hit.path, hit.line)}` }));
     const tags = [...new Set([...file.text.matchAll(TAG)].map(match => match[1]))];
-    state.note = { vault, path, text: file.text, sha256: file.sha256, line, links: outgoing, backlinks: incoming, tags };
+    state.note = { vault, path, text: file.text, sha256: file.sha256, partial: file.partial, line, links: outgoing, backlinks: incoming, tags };
     state.list = null;
     state.shown = true;
     save(state);
@@ -135,6 +136,7 @@ export default function activate(api: ModAPI) {
     const found = parse(target);
     const file = found?.line ? read(found.vault, found.path) : null;
     if (!found?.line || !file) return { display: `No task at ${target}` };
+    if (file.partial) return { display: TOO_LARGE };
     const lines = file.text.split('\n');
     const match = TASK.exec(lines[found.line - 1] ?? '');
     if (!match) return { display: `Line ${found.line} of ${title(found.path)} is not a task` };
@@ -158,7 +160,7 @@ export default function activate(api: ModAPI) {
     const expected: Record<string, string | null> = { [`${project}/${note.path}`]: note.sha256, [`${project}/${path}`]: null };
     for (const other of new Set(grep(['-iF'], `[[${old}`).filter(hit => hit.vault === 'project' && hit.path !== note.path).map(hit => hit.path))) {
       const file = read('project', other);
-      if (!file || Object.keys(writes).length >= 64) return { display: `Cannot update links in ${other}` };
+      if (!file || file.partial || Object.keys(writes).length >= 64) return { display: `Cannot update links in ${other}${file?.partial ? `: ${TOO_LARGE}` : ''}` };
       expected[`${project}/${other}`] = file.sha256;
       writes[`${project}/${other}`] = file.text.replace(pattern, `[[${name}`);
     }
@@ -220,6 +222,7 @@ export default function activate(api: ModAPI) {
         case 'append': {
           const note = state.note;
           if (!note || !argument) return { display: note ? USAGE : 'Open a note first' };
+          if (note.partial) return { display: TOO_LARGE };
           const failed = write(note.vault, note.path, `${note.text.replace(/\n*$/, '\n')}${argument}\n`, note.sha256);
           const reopened = open(state, note.vault, note.path, note.line);
           return failed ? { display: failed } : reopened;
@@ -278,8 +281,9 @@ export default function activate(api: ModAPI) {
       const path = `${name.replace(/[\\/:]/g, '-').trim()}.md`;
       const current = read('project', path);
       if (!name.trim() || (mode === 'create') === Boolean(current)) return mode === 'create' ? `Note ${name} already exists` : `No project note ${name}`;
+      if (mode === 'append' && current?.partial) return `Note ${name}: ${TOO_LARGE}`;
       const text = mode === 'append' && current ? `${current.text.replace(/\n*$/, '\n')}${content}\n` : content;
-      if (!confirm(`Agent wants to ${mode} note ${name}`, text.slice(0, 1_500))) return 'The user declined the note write';
+      if (!confirm(`Agent wants to ${mode} note ${name}`, content.slice(0, 1_500))) return 'The user declined the note write';
       return write('project', path, text, current?.sha256 ?? null) ?? `Saved ${name}`;
     });
   }

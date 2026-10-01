@@ -544,7 +544,7 @@ impl Services {
         let job = tokio::spawn(async move {
             let result = tokio::time::timeout(
                 timeout,
-                execution::command(&task, output_bytes, &config, supervised),
+                execution::command(&task, output_bytes, &config, supervised, timeout),
             )
             .await
             .map_err(|_| "sidecar_deadline".to_string())??;

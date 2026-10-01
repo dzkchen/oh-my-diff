@@ -177,9 +177,10 @@ const live = startLive({
 });
 
 async function handoff(session, reason, signal) {
+  clearTimeout(session.timer);
   const result = await live.handoff(session.name, reason, signal);
   const outcome = result ? `The user finished${result.note ? `: ${result.note}` : ''}.` : 'The user did not finish the handoff.';
-  return `${outcome}\n${await state(session, { interactive_only: true })}`;
+  return withSession({ session: session.name }, async current => `${outcome}\n${await state(current, { interactive_only: true })}`);
 }
 
 const schema = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -267,7 +268,7 @@ const browserTools = [{
   name: 'browser_handoff',
   description: 'Hand the session to the user in a live view (sign-in, payment, consent or anything needing a person) and wait until they press Done.',
   inputSchema: schema({ session: common.session, reason: { type: 'string' } }, ['reason']),
-  run: (args, signal) => withSession(args, session => handoff(session, args.reason, signal)),
+  run: (args, signal) => open(args.session).then(session => handoff(session, args.reason, signal)),
 }, {
   name: 'browser_sessions',
   description: 'List running sessions with their profile settings, or close one (cookies stay on disk).',
@@ -315,12 +316,14 @@ const captchaTool = {
   name: 'browser_captcha',
   description: 'Clear a CAPTCHA checkbox or interstitial on a flow the user is authorized to complete: at most three stages, never repeating a rejected action, then a live handoff to the user.',
   inputSchema: schema({ session: common.session }),
-  run: (args, signal) => withSession(args, async session => {
-    if (!session.profile.captcha) throw new Error(`CAPTCHA helpers are off for profile ${session.name}; the user enables them in ${configPath}`);
-    const result = await solveChallenge(session.page, session.attempted);
-    if (result.status === 'clear') return `No challenge remains after ${result.stages} stage(s).\n${await state(session, { interactive_only: true })}`;
-    return handoff(session, `Please complete the CAPTCHA (${result.reason}), then press Done.`, signal);
-  }),
+  run: async (args, signal) => {
+    const outcome = await withSession(args, async session => {
+      if (!session.profile.captcha) throw new Error(`CAPTCHA helpers are off for profile ${session.name}; the user enables them in ${configPath}`);
+      const result = await solveChallenge(session.page, session.attempted);
+      return result.status === 'clear' ? `No challenge remains after ${result.stages} stage(s).\n${await state(session, { interactive_only: true })}` : { session, reason: result.reason };
+    });
+    return typeof outcome === 'string' ? outcome : handoff(outcome.session, `Please complete the CAPTCHA (${outcome.reason}), then press Done.`, signal);
+  },
 };
 
 const enabled = flag => Object.values(config?.profiles ?? {}).some(settings => settings?.[flag]);

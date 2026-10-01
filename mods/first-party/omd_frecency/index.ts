@@ -31,7 +31,7 @@ function fuzzy(query: string, path: string): number | null {
 }
 
 const mentioned = (text: string) => [...new Set([...text.matchAll(/"([^"\n]{1,256})"|(\S{1,256})/g)]
-  .map(match => (match[1] ?? match[2]).replace(/^@/, '').replace(/^\.\//, '').replace(/[,;:.!?)\]'"`]+$/, '').replace(/(:\d+)+$/, ''))
+  .map(match => (match[1] ?? match[2]).replace(/^[(\['"`<]*@?/, '').replace(/^\.\//, '').replace(/[,;:.!?)\]'"`>]+$/, '').replace(/(:\d+)+$/, ''))
   .filter(path => /\/|\.\w{1,10}$/.test(path) && !path.startsWith('/') && !path.split('/').includes('..')))].slice(0, 16);
 
 export default function activate(api: ModAPI) {
@@ -58,17 +58,17 @@ export default function activate(api: ModAPI) {
     return boosts;
   };
 
-  const rank = (query: string, upstream: string[]) => {
+  const rank = (query: string, upstream: string[], limit: number) => {
     const { files, revision } = load();
     const boosts = git();
     const known = new Set([...upstream, ...boosts.keys()]);
     const order = new Map(upstream.map((path, index) => [path, index]));
     let scored = [...new Set([...known, ...Object.keys(files.files)])]
-      .map(path => ({ path, score: fuzzy(query, path) }))
+      .map(path => ({ path, score: fuzzy(query, path) ?? (order.has(path) ? 0 : null) }))
       .filter((item): item is { path: string; score: number } => item.score !== null)
       .map(item => ({ path: item.path, score: item.score + weight(files, item.path) + (boosts.get(item.path) ?? 0) }))
       .sort((a, b) => b.score - a.score || (order.get(a.path) ?? Infinity) - (order.get(b.path) ?? Infinity));
-    const unknown = scored.slice(0, LIMIT).map(item => item.path).filter(path => !known.has(path));
+    const unknown = scored.slice(0, limit).map(item => item.path).filter(path => !known.has(path));
     if (unknown.length) {
       const stat = api.host.tryCall('workspace.stat', { paths: unknown });
       const missing = new Set(stat.ok ? unknown.filter(path => stat.value.files[path]?.kind !== 'file') : []);
@@ -78,18 +78,18 @@ export default function activate(api: ModAPI) {
         save(files, revision);
       }
     }
-    return scored.slice(0, LIMIT).map(item => item.path);
+    return scored.slice(0, limit).map(item => item.path);
   };
 
   api.replace('completion', event => event.kind === 'mention'
-    ? { items: rank(event.query, event.candidates.map(candidate => candidate.path)).map(path => ({ path })) }
+    ? { items: rank(event.query, event.candidates.map(candidate => candidate.path), LIMIT).map(path => ({ path })) }
     : null);
 
   api.provide({ name: 'omd.frecency', version: '1.0.0', methods: { rank: { input: 'object', output: 'object' } } }, {
     rank: input => {
       const request = input as { query?: unknown; paths?: unknown };
       const paths = Array.isArray(request.paths) ? request.paths.filter((path): path is string => typeof path === 'string').slice(0, 1000) : [];
-      return { paths: rank(String(request.query ?? ''), paths) };
+      return { paths: rank(String(request.query ?? ''), paths, Math.max(paths.length, LIMIT)) };
     },
   });
 

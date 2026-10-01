@@ -380,9 +380,9 @@ fn publish(
     }
 }
 
-// `sessions` holders read changed files from the turn-activity ledger.
+// `turns.activity` readers see changed files from the turn-activity ledger.
 fn observes_workspace(runtime: &ModHost) -> bool {
-    runtime.has_event("workspace_change") || runtime.holds_capability("sessions")
+    runtime.has_event("workspace_change") || runtime.uses_operation("turns.activity")
 }
 
 fn refresh_contract(runtime: &ModHost, session: &Session) {

@@ -152,7 +152,7 @@ export default function activate(api: ModAPI) {
   });
 
   api.command('list', (): CommandResult => {
-    const keys = api.host.tryCall('store.list', { prefix: 'promoted.', scope: 'repository', limit: 50 });
+    const keys = api.host.tryCall('store.list', { prefix: 'promoted.', scope: 'repository', limit: 25 });
     const drafts = api.host.tryCall('store.list', { prefix: 'draft.', scope: 'repository', limit: 50 });
     if (!keys.ok || !drafts.ok) return { display: 'Procedure records are unavailable.' };
     const market = api.host.tryCall('workspace.read', { paths: [marketplace] });
@@ -162,18 +162,19 @@ export default function activate(api: ModAPI) {
     } catch {
       listing = null;
     }
-    const report = keys.value.keys.map(({ key }) => {
-      const name = key.slice('promoted.'.length);
+    const records = keys.value.keys.map(({ key }) => {
       const record = api.host.tryCall('store.get', { key, scope: 'repository' });
       const value = record.ok && object(record.value?.value) ? record.value!.value : {};
-      const expected = object(value.files) ? value.files : {};
-      const actual = api.host.tryCall('workspace.read', { paths: Object.keys(expected) });
+      return { name: key.slice('promoted.'.length), value, expected: object(value.files) ? value.files : {} };
+    });
+    const actual = api.host.tryCall('workspace.stat', { paths: records.flatMap(record => Object.keys(record.expected)), hash: true });
+    const report = records.map(({ name, value, expected }) => {
       const changed = Object.keys(expected).filter(path => !actual.ok || actual.value.files[path]?.sha256 !== expected[path]);
       const listed = object(listing) && Array.isArray(listing.plugins) && listing.plugins.some(item => object(item) && item.name === name);
       const problems = [...changed.map(path => `${path.slice(root.length + 1)} changed or missing`), ...(listed ? [] : ['not listed in the marketplace'])];
       return `${name} ${String(value.version)}: ${problems.length ? `${problems.join('; ')}. Re-promote to write a new pinned version.` : 'ok'}`;
     });
     const pending = drafts.value.keys.map(({ key }) => key.slice('draft.'.length));
-    return { display: [...(report.length ? report : ['No promoted procedures.']), `Drafts: ${pending.join(', ') || 'none'}`].join('\n') };
+    return { display: [...(report.length ? report : ['No promoted procedures.']), ...(keys.value.cursor ? ['Only the first 25 promoted procedures are checked.'] : []), `Drafts: ${pending.join(', ') || 'none'}`].join('\n') };
   });
 }

@@ -152,10 +152,10 @@ export default function activate(api: ModAPI) {
     do { const page = api.host.call('evidence.read', { reference: resource, cursor, max_bytes: 16384 }); if (page.bytes > 65536) throw new Error('Text import is limited to 64 KiB'); text += page.text; cursor = page.cursor ?? undefined; } while (cursor !== undefined);
     return text;
   };
-  api.command('set', arguments_ => guard(() => { const text = String(arguments_ ?? ''); const [key, ...parts] = text.trim().split(/\s+/); const value = parts.join(' '); const state = readState(); if (key === 'palette' && !palette(state, value)) throw new Error('Unknown palette'); const result = update(state, configure(current(state), key, value)); if (key.startsWith('statusline')) refresh('session'); return result; }), { description: 'Preview a theme setting: set KEY VALUE' });
+  api.command('set', arguments_ => guard(() => { const text = String(arguments_ ?? ''); const [key, ...parts] = text.trim().split(/\s+/); const value = parts.join(' '); const state = readState(); if (key === 'palette' && !palette(state, value)) throw new Error('Unknown palette'); const result = update(state, configure(current(state), key, value)); if (key.startsWith('statusline')) restatus(); return result; }), { description: 'Preview a theme setting: set KEY VALUE' });
   api.command('save', () => { const state = readState(); writeState({ ...state, saved: current(state), asset: state.preview_asset ?? state.asset, preview: null, preview_asset: null, notice: 'Theme saved' }); return { display: 'Theme saved' }; }, { description: 'Save the live theme preview' });
-  api.command('cancel', () => { const state = readState(); writeState({ ...restored(state), preview: null, preview_asset: null, notice: 'Preview discarded' }); return { display: 'Preview discarded' }; }, { description: 'Restore the last saved theme' });
-  api.command('reset', () => { const state = readState(); writeState({ ...restored(state), saved: null, preview: null, asset: null, preview_asset: null, notice: 'Theme reset to configured defaults' }); return { display: 'Theme reset to configured defaults' }; }, { description: 'Reset theme settings and backdrop selection' });
+  api.command('cancel', () => { const state = readState(); writeState({ ...restored(state), preview: null, preview_asset: null, notice: 'Preview discarded' }); restatus(); return { display: 'Preview discarded' }; }, { description: 'Restore the last saved theme' });
+  api.command('reset', () => { const state = readState(); writeState({ ...restored(state), saved: null, preview: null, asset: null, preview_asset: null, notice: 'Theme reset to configured defaults' }); restatus(); return { display: 'Theme reset to configured defaults' }; }, { description: 'Reset theme settings and backdrop selection' });
   api.command('page', value => { const state = readState(); const page = String(value); writeState({ ...state, open: true, page: ['palette', 'backdrop', 'position', 'glass', 'greeting', 'status'].includes(page) ? page : 'palette' }); return null; });
   api.command('close', () => { writeState({ ...readState(), open: false }); return null; });
   api.command('import', arguments_ => guard(() => {
@@ -179,6 +179,7 @@ export default function activate(api: ModAPI) {
     if (text) return guard(() => { if (!palette(state, text)) throw new Error('Unknown palette; use /theme to open the library'); return update(state, { ...current(state), palette: text }); });
     writeState({ ...state, open: true }); return null;
   }, { description: 'Open theme settings and live preview, or choose a palette' });
+  const restatus = () => api.host.tryCall('events.publish', { channel: 'statusline', data: null });
   const live = (change: (live: Live) => void) => { const state = readState(); change(state.live); writeState(state); };
   const refresh = (cause: 'session' | 'turn') => {
     const state = readState(); const preset = PRESETS[current(state).statusline]; if (!preset) return;
@@ -188,6 +189,8 @@ export default function activate(api: ModAPI) {
         const vars = Object.fromEntries((env.ok ? env.value.stdout : '').split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
         data.nerd = ['GHOSTTY_RESOURCES_DIR', 'KITTY_WINDOW_ID', 'WEZTERM_EXECUTABLE', 'ALACRITTY_WINDOW_ID'].some(name => vars[name]) || NERD_TERMINALS.test(vars.TERM_PROGRAM ?? '');
         data.plain = 'NO_COLOR' in vars;
+        const stash = api.host.tryCall('store.get', { key: 'stash', scope: 'repository' });
+        data.stashed = stash.ok && typeof (stash.value?.value as { active?: unknown } | null)?.active === 'string';
       }
       if (cause === 'session' || !data.model) {
         const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
@@ -211,6 +214,7 @@ export default function activate(api: ModAPI) {
   api.on('resume', () => refresh('session'));
   api.on('turn_end', () => refresh('turn'));
   api.on('timer', () => refresh('turn'));
+  api.on('channel', () => refresh('session'));
   api.on('app_notification', ({ method, params, thread_id }) => {
     const update = params as { threadId?: string; threadSettings?: { model?: string; effort?: string | null; modelProvider?: string }; tokenUsage?: { total?: { inputTokens?: number; outputTokens?: number }; last?: { totalTokens?: number }; modelContextWindow?: number | null } };
     const thread = thread_id ?? update.threadId;

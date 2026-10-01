@@ -56,7 +56,10 @@ export default function activate(api: ModAPI): void {
     return { error: run.value.stderr.trim().split('\n').at(-1) ?? '', results };
   };
 
-  api.on('turn_start', () => { ensure(); });
+  api.on('turn_start', () => {
+    const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
+    if (config.ok && (config.value as Row).config?.model_provider === 'omd_muse') ensure();
+  });
   api.tool({ name: 'approval', description: 'Internal relay for approval requests raised by a Muse lead. Never call this tool yourself.',
     parameters: { type: 'object', properties: { key: { type: 'string' }, tool: { type: 'string' }, summary: { type: 'string' } },
       required: ['key'], additionalProperties: false } },
@@ -73,13 +76,18 @@ export default function activate(api: ModAPI): void {
     if (!ensure()) return { status: 'unavailable', reason: 'muse_route_not_configured' };
     let prompt = `You are a read-only research subagent for another coding agent. Investigate the question below with your read and search tools; do not modify anything. Reply with concise findings, each citing file paths with line numbers or URLs, and list open questions last.\n\nQuestion:\n${value.question}`;
     let findings = '';
-    for (let step = 0; step < 40; step++) {
+    let calls = 3;
+    while (calls < 32) {
+      calls++;
       const done = api.host.tryCall('model.complete', { route: service, prompt, timeout_ms: 300000 });
       if (!done.ok) return { status: 'failed', reason: done.error, findings };
       const match = marker.exec(done.value.text);
       findings += match ? done.value.text.slice(0, match.index) : done.value.text;
       if (!match) return { status: 'completed', findings: findings.trim(), source: 'muse', decision_owner: 'lead' };
-      const detail = JSON.parse(match[2]);
+      let detail: unknown = null;
+      try { detail = JSON.parse(match[2]); } catch {}
+      if (!plain(detail)) return { status: 'failed', reason: 'invalid_muse_marker', findings };
+      if (match[1] === 'APPROVAL' && api.settings.auto_approve !== true && ++calls >= 32) break;
       prompt = match[1] === 'CONTINUE' ? `OMD_MUSE_CONTINUE ${JSON.stringify({ key: detail.key })}`
         : `OMD_MUSE_DECISION ${JSON.stringify({ key: detail.key, approved: decide(detail) })}`;
     }

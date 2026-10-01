@@ -7,7 +7,7 @@ type Node = string | Split;
 type Layout = { root: Node; panes: Record<string, Pane>; active: string; next: number };
 type View = { path: string; start: number; total: number; lines: string[]; line: number | null; range: [number, number] | null; revision: number; error: string | null };
 type State = {
-  layout: Layout; revision: number | null; repository: string | null; running: string[];
+  layout: Layout; revision: number | null; repository: string | null; prefix: string | null; running: string[];
   expanded: string[]; listings: Record<string, string[]>; truncated: string[]; status: Record<string, string>; dirs: Record<string, string>;
   selected: string | null; find: string[] | null; views: Record<string, View>; diffs: Record<string, string>;
   backup: { reference: ResourceRef; paths: string[] } | null; watch: string | null; watched: string[];
@@ -102,7 +102,7 @@ const tone = (code?: string): TerminalTone => !code ? 'normal' : code === '!!' ?
 
 export default function activate(api: ModAPI) {
   const glyph = api.settings.icons === 'ascii' ? { open: '- ', closed: '+ ', active: '*', idle: 'o' } : { open: '▾ ', closed: '▸ ', active: '●', idle: '○' };
-  const empty = (): State => ({ layout: chat(), revision: null, repository: null, running: [], expanded: [], listings: {}, truncated: [], status: {}, dirs: {},
+  const empty = (): State => ({ layout: chat(), revision: null, repository: null, prefix: null, running: [], expanded: [], listings: {}, truncated: [], status: {}, dirs: {},
     selected: null, find: null, views: {}, diffs: {}, backup: null, watch: null, watched: [] });
   const load = (): State => ({ ...empty(), ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
@@ -180,17 +180,22 @@ export default function activate(api: ModAPI) {
     state.listings[dir] = listed.value.entries.map(entry => `${entry.path.slice(dir ? dir.length + 1 : 0)}${entry.kind === 'dir' ? '/' : ''}`).sort(natural);
   };
   const gitStatus = (state: State) => {
-    const run = (ignored: boolean) => api.host.tryCall('exec.run', { program: 'git', argv: ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=false', '-c', 'core.fsmonitor=false', 'status', '--porcelain=v1', '-z', ...(ignored ? ['--ignored'] : [])], timeout_ms: 10_000 });
-    let result = run(true);
-    if (result.ok && result.value.stdout_preview_truncated) result = run(false);
     state.status = {};
     state.dirs = {};
+    if (state.prefix === null) {
+      const prefix = api.host.tryCall('exec.run', { program: 'git', argv: ['rev-parse', '--show-prefix'], timeout_ms: 5_000 });
+      if (!prefix.ok || prefix.value.exit_code !== 0) return;
+      state.prefix = prefix.value.stdout.trim();
+    }
+    const run = (ignored: boolean) => api.host.tryCall('exec.run', { program: 'git', argv: ['--no-pager', '--no-optional-locks', '-c', 'core.quotepath=false', '-c', 'core.fsmonitor=false', 'status', '--porcelain=v1', '-z', ...(ignored ? ['--ignored'] : []), '--', '.'], timeout_ms: 10_000 });
+    let result = run(true);
+    if (result.ok && result.value.stdout_preview_truncated) result = run(false);
     if (!result.ok || result.value.exit_code !== 0 || result.value.stdout_preview_truncated) return;
     const parts = result.value.stdout.split('\0');
     const entries: [string, string][] = [];
     for (let index = 0; index < parts.length; index++) {
       if (parts[index].length < 4) continue;
-      entries.push([parts[index].slice(3), parts[index].slice(0, 2)]);
+      if (parts[index].slice(3).startsWith(state.prefix)) entries.push([parts[index].slice(3 + state.prefix.length), parts[index].slice(0, 2)]);
       if ('RC'.includes(parts[index][0])) index++;
     }
     entries.sort(([, a], [, b]) => Number(a === '!!') - Number(b === '!!'));
