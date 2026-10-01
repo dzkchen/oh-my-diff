@@ -1264,12 +1264,12 @@
       "id": "coordination.packages",
       "group": "coordination",
       "decision": "Package controls",
-      "observe": "`packages.list` and `packages.preview`",
-      "alter": "`packages.apply` installs, updates, removes, enables or disables after a native confirmation; `packages.reload`",
+      "observe": "`packages.list` (every store selection with the session's effective, pending and failed state) and `packages.preview`",
+      "alter": "`packages.apply` installs, updates, removes, rolls back, enables, disables or re-trusts an edited selection after a native confirmation; `packages.reload` revalidates every selection",
       "replace": null,
       "timing": "user contexts; changes apply at the next boundary",
       "ownership": "mod: request; host: previewed plan, confirmation, trust and lock",
-      "limits": "the confirmed plan is applied as previewed; updates resolve dependencies from their index and preview added grants; a changed package or lock refuses; `/omd` stays the native recovery",
+      "limits": "the confirmed plan is applied as previewed; updates resolve dependencies from their index and preview added grants; a changed package, lock or selection refuses; `/omd` stays the native recovery",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [
@@ -1287,7 +1287,8 @@
       "evidence": [
         "patch:install_enable_disable_and_remove_through_previewed_controls",
         "patch:stale_previews_and_invalid_requests_are_refused",
-        "patch:dependency_trees_preview_every_grant_and_install_as_confirmed"
+        "patch:dependency_trees_preview_every_grant_and_install_as_confirmed",
+        "patch:trusted_selections_toggle_retrust_and_report_session_state"
       ],
       "replace_note": null
     },

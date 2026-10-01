@@ -15090,10 +15090,10 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..d6a4ebb96
+index 000000000..194e421c9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,463 @@
+@@ -0,0 +1,442 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -15395,52 +15395,31 @@ index 000000000..d6a4ebb96
 +            }))
 +            .await
 +        }
-+        "packages.list" | "packages.preview" | "packages.reload" => {
-+            let operation = request.operation.clone();
-+            let arguments = request.arguments;
++        "packages.list" => {
++            let runtime = core
++                .runtime
++                .lock()
++                .map_err(|_| "mod_runtime_poisoned")?
++                .status();
 +            blocking(Box::new(move || {
-+                packages(&host.root, &operation, arguments)
++                codex_omd::ModStore::open(host.root.clone())
++                    .and_then(|store| codex_omd::package_controls::list(&store, Some(&runtime)))
++                    .map_err(|error| error.to_string())
 +            }))
 +            .await
 +        }
++        "packages.preview" => {
++            let arguments = request.arguments;
++            blocking(Box::new(move || {
++                codex_omd::ModStore::open(host.root.clone())
++                    .and_then(|store| codex_omd::package_controls::preview(&store, arguments))
++                    .map(|preview| preview.public)
++                    .map_err(|error| error.to_string())
++            }))
++            .await
++        }
++        "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
 +        _ => surface(lead, caller, request, cancelled).await,
-+    }
-+}
-+
-+fn packages(root: &std::path::Path, operation: &str, arguments: Value) -> Result<Value, String> {
-+    let store = codex_omd::ModStore::open(root.to_path_buf()).map_err(|error| error.to_string())?;
-+    match operation {
-+        "packages.list" => {
-+            codex_omd::package_controls::list(&store).map_err(|error| error.to_string())
-+        }
-+        "packages.preview" => codex_omd::package_controls::preview(&store, arguments)
-+            .map(|preview| preview.public)
-+            .map_err(|error| error.to_string()),
-+        _ => {
-+            if !arguments.is_null() {
-+                return Err("packages_reload_arguments_invalid".into());
-+            }
-+            let status = store
-+                .selection_status()
-+                .map_err(|error| error.to_string())?;
-+            let failed = status["selections"]
-+                .as_array()
-+                .into_iter()
-+                .flatten()
-+                .filter(|item| item["selected"] == true && !item["error"].is_null())
-+                .filter_map(|item| {
-+                    item["id"]
-+                        .as_str()
-+                        .or(item["path"].as_str())
-+                        .map(str::to_owned)
-+                })
-+                .collect::<Vec<_>>();
-+            let generation = store
-+                .package_lock()
-+                .map(|lock| lock.revision)
-+                .map_err(|error| error.to_string())?;
-+            Ok(json!({"generation": generation, "failed": failed, "applies": "next_boundary"}))
-+        }
 +    }
 +}
 +
@@ -31438,10 +31417,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..a71a42064
+index 000000000..eb055a33d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,3546 @@
+@@ -0,0 +1,3553 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -32279,6 +32258,8 @@ index 000000000..a71a42064
 +    pub entrypoint: String,
 +    pub state_version: u32,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub description: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub license: Option<String>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub provenance: Option<ModProvenance>,
@@ -32471,6 +32452,11 @@ index 000000000..a71a42064
 +            return Err(failure(
 +                "incompatible_package: valid identity/version, supported API and positive state_version required",
 +            ));
++        }
++        if self.description.as_deref().is_some_and(|text| {
++            text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
++        }) {
++            return Err(failure("invalid_description: 1-160 printable characters"));
 +        }
 +        if let Some(adapter) = self.adapter.as_deref()
 +            && (adapter == self.id
@@ -37992,10 +37978,10 @@ index 000000000..f67ed6d40
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..7cde185da
+index 000000000..22bb827c6
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,399 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -38211,6 +38197,8 @@ index 000000000..7cde185da
 +                "scope": selection.scope,
 +                "selected": selection.enabled,
 +                "managed": managed,
++                "sha256": selection.sha256,
++                "capabilities": selection.capabilities,
 +                "settings_keys": selection.settings.keys().collect::<Vec<_>>(),
 +                "settings_sha256": digest(&serde_json::to_vec(&selection.settings)?),
 +                "error": error,
@@ -40294,16 +40282,16 @@ index 000000000..257d49d33
 +}
 diff --git a/codex-rs/omd/src/package_controls.rs b/codex-rs/omd/src/package_controls.rs
 new file mode 100644
-index 000000000..9900e9c0c
+index 000000000..e9a747c49
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls.rs
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,458 @@
 +use crate::{ModInstallRequest, ModPackageSource, ModPackageTrust, ModStore};
 +use serde::Deserialize;
 +use serde_json::{Value, json};
 +use std::collections::BTreeMap;
 +use std::io;
-+use std::path::PathBuf;
++use std::path::{Path, PathBuf};
 +
 +#[derive(Clone, Debug, PartialEq)]
 +pub struct PackageControl {
@@ -40311,7 +40299,17 @@ index 000000000..9900e9c0c
 +    pub id: String,
 +    request: Option<ModInstallRequest>,
 +    confirmation: Option<String>,
++    selection: Option<Selection>,
 +    generation: u64,
++}
++
++#[derive(Clone, Debug, PartialEq)]
++struct Selection {
++    path: PathBuf,
++    scope: String,
++    sha256: String,
++    capabilities: Vec<String>,
++    enabled: bool,
 +}
 +
 +pub struct PackagePreview {
@@ -40343,50 +40341,127 @@ index 000000000..9900e9c0c
 +    io::Error::other(message.into())
 +}
 +
-+pub fn list(store: &ModStore) -> io::Result<Value> {
++fn generation(store: &ModStore) -> io::Result<u64> {
++    Ok(store.configuration()?.revision)
++}
++
++fn source_kind(source: &ModPackageSource) -> &'static str {
++    match source {
++        ModPackageSource::Local { .. } => "local",
++        ModPackageSource::Repository { .. } => "repository",
++        ModPackageSource::Package { .. } => "package",
++    }
++}
++
++/// Lists every store selection; `runtime` is the serving session's mod status.
++pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
++    let generation = generation(store)?;
 +    let lock = store.package_lock()?;
 +    let status = store.selection_status()?;
 +    let selections = status["selections"].as_array().cloned().unwrap_or_default();
-+    let packages: Vec<Value> = lock
-+        .packages
-+        .values()
-+        .map(|package| {
-+            let selection = selections.iter().find(|s| s["id"] == package.id.as_str() && s["scope"] == package.scope.as_str());
++    let runtime_list = |key: &str| {
++        runtime
++            .and_then(|runtime| runtime[key].as_array())
++            .cloned()
++            .unwrap_or_default()
++    };
++    let (loaded, rejected) = (runtime_list("mods"), runtime_list("rejected"));
++    let mut packages: Vec<Value> = selections
++        .iter()
++        .map(|selection| {
++            let id = selection["id"].as_str().unwrap_or("unreadable_mod");
++            let locked = lock
++                .packages
++                .get(id)
++                .filter(|_| selection["managed"] == true);
++            let manifest = selection["path"]
++                .as_str()
++                .and_then(|path| ModStore::inspect_package(Path::new(path)).ok())
++                .map(|inspected| inspected["manifest"].clone())
++                .unwrap_or(Value::Null);
++            let api = manifest["api"]
++                .as_str()
++                .or(locked.map(|package| package.api.as_str()))
++                .unwrap_or_default();
++            let wanted = selection["effective"] == true;
++            let enabled = selection["selected"] == true;
++            let running = loaded.iter().find(|item| {
++                item["id"] == selection["id"]
++                    && item["scope"] == selection["scope"]
++                    && item["sha256"] == selection["sha256"]
++            });
++            let failed = selection["error"].as_str().or_else(|| {
++                enabled
++                    .then(|| {
++                        running.and_then(|item| item["error"].as_str()).or_else(|| {
++                            rejected
++                                .iter()
++                                .find(|item| item["path"] == selection["path"])
++                                .and_then(|item| item["reason"].as_str())
++                        })
++                    })
++                    .flatten()
++            });
 +            json!({
-+                "id": package.id,
++                "id": id,
 +                "kind": "mod",
-+                "version": package.version,
-+                "scope": package.scope,
-+                "source": match &package.source { ModPackageSource::Local { .. } => "local", ModPackageSource::Repository { .. } => "repository", ModPackageSource::Package { .. } => "package" },
++                "version": manifest["version"].as_str().or(locked.map(|package| package.version.as_str())).unwrap_or_default(),
++                "description": manifest["description"],
++                "scope": selection["scope"],
++                "path": selection["path"],
++                "source": locked.map_or("selection", |package| source_kind(&package.source)),
 +                "installed": true,
-+                "enabled": package.enabled,
-+                "effective": selection.is_some_and(|s| s["effective"] == true),
-+                "pending": selection.and_then(|s| (s["reason"] == "pending_runtime_validation").then_some("reload")),
-+                "failed": selection.and_then(|s| s["error"].as_str()),
-+                "api": package.api,
-+                "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == package.api),
-+                "grants": package.trust.capabilities,
-+                "conflicts": selection
-+                    .and_then(|s| s["reason"].as_str())
++                "enabled": enabled,
++                "effective": if runtime.is_some() { running.is_some_and(|item| item["error"].is_null()) } else { wanted },
++                "pending": (runtime.is_some() && wanted != running.is_some()).then_some("reload"),
++                "failed": failed,
++                "api": api,
++                "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
++                "grants": selection["capabilities"],
++                "conflicts": selection["reason"]
++                    .as_str()
 +                    .filter(|reason| reason.contains("conflict"))
 +                    .map(|reason| vec![reason.to_owned()])
 +                    .unwrap_or_default(),
 +            })
 +        })
 +        .collect();
-+    Ok(json!({"packages": packages, "generation": lock.revision}))
++    packages.extend(
++        loaded
++            .iter()
++            .filter(|item| {
++                !selections.iter().any(|selection| {
++                    selection["id"] == item["id"] && selection["scope"] == item["scope"]
++                })
++            })
++            .map(|item| {
++                json!({
++                    "id": item["id"], "kind": "mod", "version": item["version"], "description": null,
++                    "scope": item["scope"], "path": null, "source": "selection", "installed": false,
++                    "enabled": false, "effective": item["error"].is_null(), "pending": "reload",
++                    "failed": item["error"], "api": item["api"], "compatible": true,
++                    "grants": item["capabilities"], "conflicts": [],
++                })
++            }),
++    );
++    Ok(json!({
++        "packages": packages,
++        "generation": generation,
++        "reload_error": runtime.map_or(Value::Null, |runtime| runtime["reload_error"].clone()),
++    }))
 +}
 +
 +pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview> {
 +    let arguments: Arguments = serde_json::from_value(arguments)
 +        .map_err(|error| failure(format!("package_arguments_invalid: {error}")))?;
-+    let lock = store.package_lock()?;
++    let generation = generation(store)?;
 +    if arguments
 +        .expected_generation
-+        .is_some_and(|expected| expected != lock.revision)
++        .is_some_and(|expected| expected != generation)
 +    {
 +        return Err(failure("package_state_changed: list again"));
 +    }
++    let lock = store.package_lock()?;
 +    let locked = |id: &Option<String>| {
 +        let id = id
 +            .as_deref()
@@ -40396,18 +40471,24 @@ index 000000000..9900e9c0c
 +            .cloned()
 +            .ok_or_else(|| failure(format!("package_not_installed: {id}")))
 +    };
-+    let (id, request, plan) = match arguments.action.as_str() {
++    let (id, request, plan, selection, added) = match arguments.action.as_str() {
 +        "install" => {
 +            let source = arguments
 +                .source
++                .clone()
 +                .ok_or_else(|| failure("package_source_required"))?;
-+            let (request, plan) =
-+                requested(store, source, arguments.index, arguments.scope, false)?;
-+            (plan.root.clone(), Some(request), Some(plan))
++            let (request, plan) = requested(
++                store,
++                source,
++                arguments.index.clone(),
++                arguments.scope.clone(),
++                false,
++            )?;
++            (plan.root.clone(), Some(request), Some(plan), None, None)
 +        }
 +        "update" => {
 +            let package = locked(&arguments.id)?;
-+            let index = arguments.index.or_else(|| {
++            let index = arguments.index.clone().or_else(|| {
 +                std::iter::once(&package.source)
 +                    .chain(
 +                        package
@@ -40429,39 +40510,100 @@ index 000000000..9900e9c0c
 +                package.enabled,
 +            )
 +            .map_err(|error| failure(format!("package_update_unavailable: {error}")))?;
-+            (package.id, Some(request), Some(plan))
++            (package.id, Some(request), Some(plan), None, None)
 +        }
 +        "remove" => {
 +            let package = locked(&arguments.id)?;
-+            (
-+                package.id.clone(),
-+                None,
-+                Some(store.package_uninstall_plan(&package.id)?),
-+            )
++            let plan = store.package_uninstall_plan(&package.id)?;
++            (package.id, None, Some(plan), None, None)
 +        }
 +        "rollback" => {
 +            let package = locked(&arguments.id)?;
-+            (
-+                package.id.clone(),
-+                None,
-+                Some(store.package_rollback_plan(&package.id)?),
-+            )
++            let plan = store.package_rollback_plan(&package.id)?;
++            (package.id, None, Some(plan), None, None)
 +        }
-+        "enable" | "disable" => (locked(&arguments.id)?.id, None, None),
++        "enable" | "disable" => match selected(store, &arguments) {
++            Ok((id, current)) => {
++                let added = if arguments.action == "enable" {
++                    current.capabilities.clone()
++                } else {
++                    Vec::new()
++                };
++                (id, None, None, Some(current), Some(added))
++            }
++            Err(_) => (locked(&arguments.id)?.id, None, None, None, None),
++        },
++        "trust" => {
++            let (id, current) = selected(store, &arguments)?;
++            let inspected = ModStore::inspect_package(&current.path)?;
++            let sha256 = inspected["sha256"].as_str().unwrap_or_default().to_owned();
++            if sha256 == current.sha256 {
++                return Err(failure("package_source_unchanged"));
++            }
++            let capabilities: Vec<String> =
++                serde_json::from_value(inspected["manifest"]["capabilities"].clone())?;
++            let added = capabilities
++                .iter()
++                .filter(|capability| !current.capabilities.contains(capability))
++                .cloned()
++                .collect();
++            let trusted = Selection {
++                sha256,
++                capabilities,
++                ..current
++            };
++            (id, None, None, Some(trusted), Some(added))
++        }
 +        other => return Err(failure(format!("package_action_invalid: {other}"))),
 +    };
-+    let grants: BTreeMap<String, Vec<String>> = match (&request, lock.packages.get(&id)) {
++    let grants_added =
++        added.unwrap_or_else(|| managed_grants(&lock, &id, &request, &arguments.action));
++    let changes = match (&plan, &selection) {
++        (Some(plan), _) => plan.changes.clone(),
++        (None, Some(selection)) if arguments.action == "trust" => {
++            json!({"sha256": selection.sha256, "enabled": selection.enabled})
++        }
++        _ => json!({"enabled": arguments.action == "enable"}),
++    };
++    let public = json!({
++        "action": arguments.action,
++        "id": id,
++        "changes": changes,
++        "grants_added": grants_added,
++    });
++    Ok(PackagePreview {
++        public,
++        control: PackageControl {
++            action: arguments.action,
++            id,
++            request,
++            confirmation: plan.map(|plan| plan.confirmation),
++            selection,
++            generation,
++        },
++    })
++}
++
++fn managed_grants(
++    lock: &crate::ModPackageLock,
++    id: &str,
++    request: &Option<ModInstallRequest>,
++    action: &str,
++) -> Vec<String> {
++    let grants: BTreeMap<String, Vec<String>> = match (request, lock.packages.get(id)) {
 +        (Some(request), _) => request
 +            .trust
 +            .packages
 +            .iter()
 +            .map(|(package, grant)| (package.clone(), grant.capabilities.clone()))
 +            .collect(),
-+        (None, Some(package)) => BTreeMap::from([(id.clone(), package.trust.capabilities.clone())]),
++        (None, Some(package)) => {
++            BTreeMap::from([(id.to_owned(), package.trust.capabilities.clone())])
++        }
 +        (None, None) => BTreeMap::new(),
 +    };
-+    let (enabling, root) = (arguments.action == "enable", id.as_str());
-+    let grants_added = grants
++    let enabling = action == "enable";
++    grants
 +        .iter()
 +        .flat_map(|(package, capabilities)| {
 +            let previous = lock
@@ -40473,30 +40615,40 @@ index 000000000..9900e9c0c
 +                .iter()
 +                .filter(move |grant| !previous.contains(grant) || enabling)
 +                .map(move |grant| {
-+                    if package == root {
++                    if package == id {
 +                        grant.clone()
 +                    } else {
 +                        format!("{package}:{grant}")
 +                    }
 +                })
 +        })
-+        .collect::<Vec<_>>();
-+    let public = json!({
-+        "action": arguments.action,
-+        "id": id,
-+        "changes": plan.as_ref().map(|plan| plan.changes.clone()).unwrap_or_else(|| json!({"enabled": arguments.action == "enable"})),
-+        "grants_added": grants_added,
-+    });
-+    Ok(PackagePreview {
-+        public,
-+        control: PackageControl {
-+            action: arguments.action,
-+            id,
-+            request,
-+            confirmation: plan.map(|plan| plan.confirmation),
-+            generation: lock.revision,
-+        },
-+    })
++        .collect()
++}
++
++fn selected(store: &ModStore, arguments: &Arguments) -> io::Result<(String, Selection)> {
++    let id = arguments
++        .id
++        .clone()
++        .ok_or_else(|| failure("package_id_required"))?;
++    let status = store.selection_status()?;
++    let selection = status["selections"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .find(|item| {
++            item["id"] == id.as_str()
++                && item["scope"] == arguments.scope.as_str()
++                && item["managed"] != true
++        })
++        .ok_or_else(|| failure(format!("package_not_installed: {id}")))?;
++    let current = Selection {
++        path: PathBuf::from(selection["path"].as_str().unwrap_or_default()),
++        scope: arguments.scope.clone(),
++        sha256: selection["sha256"].as_str().unwrap_or_default().to_owned(),
++        capabilities: serde_json::from_value(selection["capabilities"].clone())?,
++        enabled: selection["selected"] == true,
++    };
++    Ok((id, current))
 +}
 +
 +fn requested(
@@ -40526,7 +40678,7 @@ index 000000000..9900e9c0c
 +}
 +
 +pub fn apply(store: &ModStore, control: &PackageControl) -> io::Result<Value> {
-+    if store.package_lock()?.revision != control.generation {
++    if generation(store)? != control.generation {
 +        return Err(failure("package_state_changed: preview again"));
 +    }
 +    let confirmation = || {
@@ -40535,17 +40687,58 @@ index 000000000..9900e9c0c
 +            .as_deref()
 +            .ok_or_else(|| failure("package_confirmation_missing"))
 +    };
-+    let lock = match (control.action.as_str(), &control.request) {
-+        ("install" | "update", Some(request)) => {
-+            store.package_apply(request.clone(), confirmation()?)?
++    match (
++        control.action.as_str(),
++        &control.request,
++        &control.selection,
++    ) {
++        ("install" | "update", Some(request), None) => {
++            store.package_apply(request.clone(), confirmation()?)?;
 +        }
-+        ("remove", None) => store.package_uninstall(&control.id, confirmation()?)?,
-+        ("rollback", None) => store.package_rollback(&control.id, confirmation()?)?,
-+        ("enable", None) => store.package_enable(&control.id)?,
-+        ("disable", None) => store.package_disable(&control.id)?,
++        ("remove", None, None) => {
++            store.package_uninstall(&control.id, confirmation()?)?;
++        }
++        ("rollback", None, None) => {
++            store.package_rollback(&control.id, confirmation()?)?;
++        }
++        ("enable", None, None) => {
++            store.package_enable(&control.id)?;
++        }
++        ("disable", None, None) => {
++            store.package_disable(&control.id)?;
++        }
++        ("enable" | "disable", None, Some(selection)) => {
++            store.enable(&selection.path, control.action == "enable")?;
++        }
++        ("trust", None, Some(selection)) => {
++            store.trust(
++                selection.path.clone(),
++                &selection.sha256,
++                selection.capabilities.clone(),
++                &selection.scope,
++            )?;
++            if selection.enabled {
++                store.enable(&selection.path, true)?;
++            }
++        }
 +        _ => return Err(failure("package_action_invalid")),
-+    };
-+    Ok(json!({"status": "applied", "generation": lock.revision}))
++    }
++    Ok(json!({"status": "applied", "generation": generation(store)?}))
++}
++
++/// Forces every selection to revalidate at the serving session's next safe boundary.
++pub fn reload(store: &ModStore) -> io::Result<Value> {
++    store.reload()?;
++    let status = store.selection_status()?;
++    let failed = status["selections"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .filter(|item| item["selected"] == true && !item["error"].is_null())
++        .filter_map(|item| item["id"].as_str().or(item["path"].as_str()))
++        .map(str::to_owned)
++        .collect::<Vec<_>>();
++    Ok(json!({"generation": generation(store)?, "failed": failed, "applies": "next_boundary"}))
 +}
 +
 +#[cfg(test)]
@@ -40553,10 +40746,10 @@ index 000000000..9900e9c0c
 +mod tests;
 diff --git a/codex-rs/omd/src/package_controls_tests.rs b/codex-rs/omd/src/package_controls_tests.rs
 new file mode 100644
-index 000000000..be4bdcb03
+index 000000000..fe9749ea2
 --- /dev/null
 +++ b/codex-rs/omd/src/package_controls_tests.rs
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,265 @@
 +use super::*;
 +
 +fn fixture_package(
@@ -40616,7 +40809,7 @@ index 000000000..be4bdcb03
 +        "applied"
 +    );
 +
-+    let listed = list(&store).unwrap();
++    let listed = list(&store, None).unwrap();
 +    let package = &listed["packages"][0];
 +    assert_eq!(
 +        (
@@ -40634,15 +40827,15 @@ index 000000000..be4bdcb03
 +    )
 +    .unwrap();
 +    apply(&store, &enable.control).unwrap();
-+    assert_eq!(list(&store).unwrap()["packages"][0]["enabled"], true);
++    assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], true);
 +
 +    let disable = preview(&store, json!({"action": "disable", "id": "sample_mod"})).unwrap();
 +    apply(&store, &disable.control).unwrap();
-+    assert_eq!(list(&store).unwrap()["packages"][0]["enabled"], false);
++    assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], false);
 +
 +    let remove = preview(&store, json!({"action": "remove", "id": "sample_mod"})).unwrap();
 +    apply(&store, &remove.control).unwrap();
-+    assert_eq!(list(&store).unwrap()["packages"], json!([]));
++    assert_eq!(list(&store, None).unwrap()["packages"], json!([]));
 +}
 +
 +#[test]
@@ -40715,7 +40908,7 @@ index 000000000..be4bdcb03
 +        json!(["commands", "library_mod:store"])
 +    );
 +    apply(&store, &preview.control).unwrap();
-+    let installed = list(&store).unwrap();
++    let installed = list(&store, None).unwrap();
 +    assert_eq!(installed["packages"].as_array().unwrap().len(), 2);
 +    fixture_package(
 +        &root,
@@ -40727,6 +40920,100 @@ index 000000000..be4bdcb03
 +        super::preview(&store, json!({"action": "update", "id": "dependent_mod"})).unwrap();
 +    assert_eq!(update.public["grants_added"], json!(["network"]));
 +    apply(&store, &update.control).unwrap();
++}
++
++#[test]
++fn trusted_selections_toggle_retrust_and_report_session_state() {
++    let (_temp, store, root) = setup();
++    let path = fixture_package(&root, "author_mod", &["commands"], json!([]));
++    let sha256 = |path: &PathBuf| {
++        ModStore::inspect_package(path).unwrap()["sha256"]
++            .as_str()
++            .unwrap()
++            .to_owned()
++    };
++    store
++        .trust(
++            path.clone(),
++            &sha256(&path),
++            vec!["commands".into()],
++            "user",
++        )
++        .unwrap();
++    let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
++    assert_eq!(enable.public["grants_added"], json!(["commands"]));
++    apply(&store, &enable.control).unwrap();
++    let idle = json!({"mods": [], "rejected": [], "reload_error": null});
++    let package = list(&store, Some(&idle)).unwrap()["packages"][0].clone();
++    assert_eq!(
++        (
++            &package["source"],
++            &package["effective"],
++            &package["pending"]
++        ),
++        (&json!("selection"), &json!(false), &json!("reload"))
++    );
++
++    fixture_package(&root, "author_mod", &["commands", "store"], json!([]));
++    assert!(
++        list(&store, None).unwrap()["packages"][0]["failed"]
++            .as_str()
++            .unwrap()
++            .starts_with("source_changed")
++    );
++    let trust = preview(&store, json!({"action": "trust", "id": "author_mod"})).unwrap();
++    assert_eq!(trust.public["grants_added"], json!(["store"]));
++    apply(&store, &trust.control).unwrap();
++    let running = json!({"mods": [{"id": "author_mod", "scope": "user", "sha256": sha256(&path),
++        "error": null}], "rejected": [], "reload_error": null});
++    let package = list(&store, Some(&running)).unwrap()["packages"][0].clone();
++    assert_eq!(
++        (
++            &package["enabled"],
++            &package["effective"],
++            &package["pending"],
++            &package["failed"]
++        ),
++        (&json!(true), &json!(true), &Value::Null, &Value::Null)
++    );
++
++    let copy = root.join("managed_copy");
++    std::fs::create_dir(&copy).unwrap();
++    for name in ["mod.json", "main.ts"] {
++        std::fs::copy(path.join(name), copy.join(name)).unwrap();
++    }
++    let install = preview(
++        &store,
++        json!({"action": "install", "source": {"kind": "local", "path": copy.canonicalize().unwrap()}, "scope": "project"}),
++    )
++    .unwrap();
++    apply(&store, &install.control).unwrap();
++    let disable = preview(&store, json!({"action": "disable", "id": "author_mod"})).unwrap();
++    apply(&store, &disable.control).unwrap();
++    let states = list(&store, None).unwrap()["packages"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .map(|package| {
++            (
++                package["scope"].clone(),
++                package["source"].clone(),
++                package["enabled"].clone(),
++            )
++        })
++        .collect::<Vec<_>>();
++    assert!(states.contains(&(json!("user"), json!("selection"), json!(false))));
++    let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
++    apply(&store, &enable.control).unwrap();
++
++    let before = list(&store, None).unwrap()["generation"].as_u64().unwrap();
++    assert!(reload(&store).unwrap()["generation"].as_u64().unwrap() > before);
++    let disable = preview(&store, json!({"action": "disable", "id": "author_mod"})).unwrap();
++    apply(&store, &disable.control).unwrap();
++    assert_eq!(
++        list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
++        "reload"
++    );
 +}
 diff --git a/codex-rs/omd/src/plugin_component.rs b/codex-rs/omd/src/plugin_component.rs
 new file mode 100644
@@ -51972,14 +52259,17 @@ index c57920741..9836705ad 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 4a97366d4..5a33ba331 100644
+index 4a97366d4..619b71cc5 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -382,6 +382,64 @@ impl App {
+@@ -382,6 +382,67 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
 +            AppEvent::OmdOpenPlugins => self.chat_widget.add_plugins_output(),
++            AppEvent::OmdRunModCommand(command) => {
++                self.chat_widget.run_mod_command(command, String::new());
++            }
 +            AppEvent::OmdModToggle {
 +                id,
 +                path,
@@ -52040,7 +52330,7 @@ index 4a97366d4..5a33ba331 100644
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -1574,8 +1632,27 @@ impl App {
+@@ -1574,8 +1635,27 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -54698,14 +54988,15 @@ index 17155eb72..6cee85992 100644
          }
          let expected_cwd = if override_cwd {
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 982c3ecb5..a1ea2de7c 100644
+index 982c3ecb5..16d500910 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -454,6 +454,27 @@ pub(crate) enum AppEvent {
+@@ -454,6 +454,28 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
 +    OmdOpenPlugins,
++    OmdRunModCommand(crate::mod_runtime::ModSlashCommand),
 +    OmdModToggle {
 +        id: String,
 +        path: PathBuf,
@@ -54729,7 +55020,7 @@ index 982c3ecb5..a1ea2de7c 100644
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -651,6 +672,15 @@ pub(crate) enum AppEvent {
+@@ -651,6 +673,15 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -55587,7 +55878,7 @@ index 000000000..bd0ab3622
 +    }
 +}
 diff --git a/codex-rs/tui/src/bottom_pane/slash_commands.rs b/codex-rs/tui/src/bottom_pane/slash_commands.rs
-index 383376a71..e8df9a63e 100644
+index 383376a71..fa817acd2 100644
 --- a/codex-rs/tui/src/bottom_pane/slash_commands.rs
 +++ b/codex-rs/tui/src/bottom_pane/slash_commands.rs
 @@ -21,6 +21,7 @@ pub(crate) struct ServiceTierCommand {
@@ -55630,15 +55921,16 @@ index 383376a71..e8df9a63e 100644
          }
      }
  }
-@@ -80,6 +83,7 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
+@@ -80,6 +83,8 @@ pub(crate) fn builtins_for_input(flags: BuiltinCommandFlags) -> Vec<(&'static st
          .filter(|(_, cmd)| flags.worktrees_enabled || *cmd != SlashCommand::Worktree)
          .filter(|(_, cmd)| flags.voice_command_enabled || *cmd != SlashCommand::Voice)
          .filter(|(_, cmd)| !flags.side_conversation_active || cmd.available_in_side_conversation())
 +        .filter(|(_, cmd)| !crate::omd::command_hidden(cmd.command()))
++        .filter(|(_, cmd)| *cmd != SlashCommand::Omd || crate::omd::is_active())
          .collect()
  }
 
-@@ -100,6 +104,20 @@ pub(crate) fn commands_for_input(
+@@ -100,6 +105,20 @@ pub(crate) fn commands_for_input(
              );
          }
      }
@@ -55659,7 +55951,7 @@ index 383376a71..e8df9a63e 100644
      commands
          .into_iter()
          .filter(|cmd| !flags.side_conversation_active || cmd.available_in_side_conversation())
-@@ -132,6 +150,9 @@ pub(crate) fn find_slash_command(
+@@ -132,6 +151,9 @@ pub(crate) fn find_slash_command(
      flags: BuiltinCommandFlags,
      service_tier_commands: &[ServiceTierCommand],
  ) -> Option<SlashCommandItem> {
@@ -55669,7 +55961,7 @@ index 383376a71..e8df9a63e 100644
      if let Some(cmd) = find_builtin_command(name, flags) {
          return Some(SlashCommandItem::Builtin(cmd));
      }
-@@ -146,6 +167,7 @@ pub(crate) fn find_slash_command(
+@@ -146,6 +168,7 @@ pub(crate) fn find_slash_command(
                  .map(SlashCommandItem::ServiceTier)
          })
          .flatten()
@@ -56084,10 +56376,10 @@ index 03efe3110..cd64c9766 100644
      }
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 000000000..6faf64dbc
+index 000000000..6d0f1b6ab
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,149 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -56105,6 +56397,20 @@ index 000000000..6faf64dbc
 +            Line::from("Changes to mods take effect at the next turn boundary."),
 +        ];
 +        let mut items = Vec::new();
++        if let Some(command) = crate::mod_runtime::find("mods") {
++            items.push(SelectionItem {
++                name: "Mods".to_string(),
++                description: Some(
++                    "Installed, active, pending and failed mods with their actions in /mods"
++                        .to_string(),
++                ),
++                actions: vec![Box::new(move |tx| {
++                    tx.send(AppEvent::OmdRunModCommand(command.clone()));
++                })],
++                dismiss_on_select: true,
++                ..Default::default()
++            });
++        }
 +        let runtime = crate::omd::mod_status();
 +        if let Some(root) = crate::omd::mod_paths().and_then(|paths| paths.store) {
 +            lines.push(Line::from(format!("Mod store {}", root.display())));
@@ -56336,10 +56642,20 @@ index dc718a712..b7781c3c6 100644
                      name: display_name,
                      skill_name: skill.name.clone(),
 diff --git a/codex-rs/tui/src/chatwidget/slash_dispatch.rs b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-index 4fe2ed057..465f34d21 100644
+index 4fe2ed057..e9503c42e 100644
 --- a/codex-rs/tui/src/chatwidget/slash_dispatch.rs
 +++ b/codex-rs/tui/src/chatwidget/slash_dispatch.rs
-@@ -1119,8 +1119,16 @@ impl ChatWidget {
+@@ -574,6 +574,9 @@ impl ChatWidget {
+             SlashCommand::Plugins => {
+                 self.add_plugins_output();
+             }
++            SlashCommand::Omd => {
++                self.open_omd_extensions();
++            }
+             SlashCommand::Rollout => {
+                 if let Some(path) = self.rollout_path() {
+                     self.add_info_message(
+@@ -1119,8 +1122,16 @@ impl ChatWidget {
                      self.handle_service_tier_command_dispatch(command);
                      QueueDrain::Continue
                  }
@@ -56356,6 +56672,14 @@ index 4fe2ed057..465f34d21 100644
 
          if !command.supports_inline_args() {
              self.submit_user_message(UserMessage {
+@@ -1255,6 +1266,7 @@ impl ChatWidget {
+             | SlashCommand::Compact
+             | SlashCommand::Review
+             | SlashCommand::Model
++            | SlashCommand::Omd
+             | SlashCommand::Plan
+             | SlashCommand::Goal
+             | SlashCommand::Side
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_denied_renders_denied_request.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_denied_renders_denied_request.snap
 index 832d39d9d..ac8831534 100644
 --- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__app_server_guardian_review_denied_renders_denied_request.snap
@@ -60863,10 +61187,10 @@ index 000000000..13e47f87c
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..1a4d35b9d
+index 000000000..79aa41c03
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,772 @@
+@@ -0,0 +1,771 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -61014,7 +61338,7 @@ index 000000000..1a4d35b9d
 +        let mut runtime = runtime
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
-+        reload(&mut runtime).ok()?;
++        reload(&mut runtime);
 +        let input = serde_json::json!({
 +            "event": "startup", "ledger": null,
 +            "identity": runtime.identity(crate::version::CODEX_CLI_VERSION,
@@ -61423,10 +61747,9 @@ index 000000000..1a4d35b9d
 +        .ok_or_else(|| "mod runtime unavailable".to_owned())
 +}
 +
-+fn reload(runtime: &mut ModHost) -> std::io::Result<()> {
-+    runtime.reload()?;
++fn reload(runtime: &mut ModHost) {
++    runtime.turn_boundary();
 +    crate::mod_pty::retain(&runtime.owners().into_iter().map(|(id, _)| id).collect());
-+    Ok(())
 +}
 +
 +fn with_host<T>(run: impl FnOnce(&mut ModHost, &crate::omd::ModPaths) -> Option<T>) -> Option<T> {
@@ -61435,7 +61758,7 @@ index 000000000..1a4d35b9d
 +    let mut runtime = runtime
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
-+    reload(&mut runtime).ok()?;
++    reload(&mut runtime);
 +    let result = run(&mut runtime, &paths);
 +    record_status(&runtime, &paths);
 +    result
@@ -61451,7 +61774,7 @@ index 000000000..1a4d35b9d
 +        None => shared_host(paths.store.clone()?).ok()?,
 +    };
 +    let mut runtime = runtime.try_lock().ok()?;
-+    reload(&mut runtime).ok()?;
++    reload(&mut runtime);
 +    let result = run(&mut runtime, &paths);
 +    record_status(&runtime, &paths);
 +    result
@@ -61478,7 +61801,7 @@ index 000000000..1a4d35b9d
 +        let mut runtime = runtime
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
-+        reload(&mut runtime).ok()?;
++        reload(&mut runtime);
 +        if !runtime.registered(id, event) {
 +            return None;
 +        }
@@ -61577,7 +61900,7 @@ index 000000000..1a4d35b9d
 +        let mut runtime = runtime
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
-+        reload(&mut runtime).map_err(|e| e.to_string())?;
++        reload(&mut runtime);
 +        (runtime.generation(), owner_grants(&runtime))
 +    };
 +    let thread = invocation.context.thread_id.map(|id| id.to_string());
@@ -61641,10 +61964,10 @@ index 000000000..1a4d35b9d
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_runtime_tests.rs b/codex-rs/tui/src/mod_runtime_tests.rs
 new file mode 100644
-index 000000000..430d032bd
+index 000000000..d09b569cd
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime_tests.rs
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,174 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -61764,14 +62087,12 @@ index 000000000..430d032bd
 +        .collect::<Vec<_>>();
 +    assert_eq!(
 +        invocations,
-+        vec![
-+            "omd_graph_navigator:graph",
-+            "graph",
-+            "omd_inspector:omd",
-+            "omd"
-+        ]
++        vec!["omd_graph_navigator:graph", "graph", "omd_inspector:omd"]
 +    );
-+    assert_eq!(commands[3].description, "Inspect OMD (/omd_inspector:omd)");
++    assert_eq!(
++        commands[2].description,
++        "Inspect OMD · bare /omd unavailable: conflicts with built-in /omd"
++    );
 +}
 +
 +#[test]
@@ -61823,10 +62144,10 @@ index 000000000..430d032bd
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..e7049c54d
+index 000000000..5fe080d8e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,585 @@
+@@ -0,0 +1,590 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -62396,13 +62717,18 @@ index 000000000..e7049c54d
 +        "credentials.list" => codex_omd::credentials::CredentialProfiles::open(&store(paths)?)?
 +            .visible(caller)
 +            .map(Value::Array),
-+        "packages.list" | "packages.preview" => {
++        "packages.list" | "packages.preview" | "packages.reload" => {
 +            let store = codex_omd::ModStore::open(store(paths)?)?;
-+            if operation == "packages.list" {
-+                codex_omd::package_controls::list(&store)
-+            } else {
-+                codex_omd::package_controls::preview(&store, call.arguments)
-+                    .map(|preview| preview.public)
++            match operation {
++                "packages.list" => {
++                    codex_omd::package_controls::list(&store, crate::omd::mod_status().as_ref())
++                }
++                "packages.preview" => codex_omd::package_controls::preview(&store, call.arguments)
++                    .map(|preview| preview.public),
++                _ if context == codex_omd::app_routes::InvocationContext::User => {
++                    codex_omd::package_controls::reload(&store)
++                }
++                _ => Err(other("host_operation_user_only: packages.reload")),
 +            }
 +        }
 +        _ => crate::mod_runtime::command_host_guarded(paths, policy, grants, caller, call, scope),
@@ -66634,6 +66960,34 @@ index 41b1d239c..d8b580109 100644
  /// A theme available in the picker, either bundled or loaded from a custom
  /// `.tmTheme` file under `{CODEX_HOME}/themes/`.
  pub(crate) struct ThemeEntry {
+diff --git a/codex-rs/tui/src/slash_command.rs b/codex-rs/tui/src/slash_command.rs
+index 301de2e05..8077a2bef 100644
+--- a/codex-rs/tui/src/slash_command.rs
++++ b/codex-rs/tui/src/slash_command.rs
+@@ -66,6 +66,7 @@ pub enum SlashCommand {
+     Mcp,
+     Apps,
+     Plugins,
++    Omd,
+     Logout,
+     Quit,
+     Exit,
+@@ -150,6 +151,7 @@ impl SlashCommand {
+             SlashCommand::Mcp => "list configured MCP tools; use /mcp verbose for details",
+             SlashCommand::Apps => "manage apps",
+             SlashCommand::Plugins => "browse plugins",
++            SlashCommand::Omd => "manage Oh My Diff mods and recover a broken one",
+             SlashCommand::Logout => "log out of Codex",
+             SlashCommand::Rollout => "print the rollout file path",
+             SlashCommand::TestApproval => "test approval request",
+@@ -285,6 +287,7 @@ impl SlashCommand {
+             | SlashCommand::Mcp
+             | SlashCommand::Apps
+             | SlashCommand::Plugins
++            | SlashCommand::Omd
+             | SlashCommand::Title
+             | SlashCommand::Statusline
+             | SlashCommand::AutoReview
 diff --git a/codex-rs/tui/src/snapshots/codex_tui__app_server_session__tests__resumed_plan_mode.snap b/codex-rs/tui/src/snapshots/codex_tui__app_server_session__tests__resumed_plan_mode.snap
 index cf58c4def..6be9105fd 100644
 --- a/codex-rs/tui/src/snapshots/codex_tui__app_server_session__tests__resumed_plan_mode.snap

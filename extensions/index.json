@@ -316,6 +316,24 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_mods",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "/mods control screen: installed, active, pending and failed mods with host-confirmed enable, trust, update, remove and reload, plus a one-time first-run card",
+      "source": "mods/first-party/omd_mods",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; package_controls_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd-guidance-hooks",
       "version": "0.1.0",
       "extension_type": "plugin",

@@ -835,6 +835,8 @@ pub struct ModPackage {
     pub entrypoint: String,
     pub state_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<ModProvenance>,
@@ -1027,6 +1029,11 @@ impl ModPackage {
             return Err(failure(
                 "incompatible_package: valid identity/version, supported API and positive state_version required",
             ));
+        }
+        if self.description.as_deref().is_some_and(|text| {
+            text.is_empty() || text.chars().count() > 160 || text.chars().any(char::is_control)
+        }) {
+            return Err(failure("invalid_description: 1-160 printable characters"));
         }
         if let Some(adapter) = self.adapter.as_deref()
             && (adapter == self.id

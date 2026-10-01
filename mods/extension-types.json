@@ -611,6 +611,14 @@
       "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+."
     },
     {
+      "path": "mods/first-party/omd_mods",
+      "id": "omd_mods",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the /mods screen, its actions and the first-run card over public package controls and terminal sites; native code keeps trust, confirmation, package authority and /omd recovery; enabled by default in both profiles."
+    },
+    {
       "path": "mods/first-party/omd_muse",
       "id": "omd_muse",
       "version": "0.1.0-preview.1",

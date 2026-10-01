@@ -141,10 +141,10 @@ def build(artifact_dir, package_mode=False):
         "artifacts": artifacts,
         "platform_tools": ["omd", "omd-contract"],
         "profiles": {
-            "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo"], "first_party_default_active": ["omd_logo"],
+            "platform": {"label": "OMD Core", "first_party_installed": ["omd_logo", "omd_mods"], "first_party_default_active": ["omd_logo", "omd_mods"],
                          "plugin_sources": []},
             "full": {"label": "OMD+", "first_party_installed": sorted((*preview["packages"], *full["packages"])),
-                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_workspace"],
+                     "first_party_default_active": ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_workspace"],
                      "plugin_sources": sorted((*selected, *support.SELECTED_OPTIONAL_PLUGINS))},
         },
         "qualification": "development package candidate; supported collection and default pending",

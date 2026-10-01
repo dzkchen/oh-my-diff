@@ -17,8 +17,8 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.159.1.patch",
-      "sha256": "f2a5c2f0fca89546a1b33682b955979e08fb2db5331673ff35649c86ec33ac30"
+      "sha256": "006ee050cc140af417ebbf69a0f40d51cb6695bec520833703a3aead3097c272"
     }
   ],
-  "compatibility_evidence": ".docs/audits/batch3g-panes-intelligence-notes-20260930.md"
+  "compatibility_evidence": ".docs/audits/batch4a-mod-controls-first-run-20260930.md"
 }

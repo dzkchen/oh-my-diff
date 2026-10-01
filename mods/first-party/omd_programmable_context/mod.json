@@ -4,6 +4,7 @@
   "version": "0.1.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Python context variables, child agents and a continual session harness over the code-execution kernel",
   "license": "Apache-2.0",
   "provenance": {
     "maintainer": "Oh My Diff",

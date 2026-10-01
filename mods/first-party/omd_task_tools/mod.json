@@ -4,6 +4,7 @@
   "version": "0.2.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Exposes Python, TypeScript and Rust check tools only for the task steps that need them",
   "license": "Apache-2.0",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_task_tools"},
   "capabilities": ["tools", "context", "exec", "fs.write", "lifecycle", "services", "agents", "store"],

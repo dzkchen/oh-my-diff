@@ -4,6 +4,7 @@
   "version": "0.2.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Git sidebar with commit graph, changed files and confirmed Git actions inside the terminal",
   "license": "Apache-2.0",
   "provenance": {
     "maintainer": "Oh My Diff",

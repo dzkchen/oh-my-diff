@@ -20,7 +20,8 @@ patch. They are not a public release or a qualified default. Build the patched
 SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
 and copy that archive to `/path/to/release/mod-api.tgz`. Use Node `24.18.0` from
 `mise which node`. The OMD Core profile installs the host, mod manager, author
-SDK/CLI, a local package-control command, and the `omd_logo` presentation mod. It does not change
+SDK/CLI, a local package-control command, the `omd_logo` presentation mod and the `omd_mods`
+control screen. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
 The historical `0.155.1` candidate and private build remain frozen. Verify the
 current host and SDK artifacts with
@@ -70,10 +71,11 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 ```
 
 `--profile platform` creates a store holding only the `omd_logo` presentation
-mod, enabled, and launches patched Codex with `OMD_MODE=omd`.
+mod and the `omd_mods` control screen, both enabled, and launches patched Codex
+with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs thirty first-party candidate mods. A fresh OMD+ store enables
-`omd_inspector`, `omd_workspace`, `omd_logo` and `omd_model_picker`; Codex's
+`--profile full` installs thirty-one first-party candidate mods. A fresh OMD+ store enables
+`omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods` and `omd_model_picker`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
 navigation, guideline governance, Pi prompts, repository analysis, source
@@ -113,8 +115,17 @@ Inspect and switch the effective profile:
 Use `activate platform` for an OMD Core installation. `direct` immediately
 selects upstream-style behavior inside the patched binary. `status` reports
 the installed profile and public label, host mode, installed, enabled and active mods, source hashes,
-mod errors, and staged plugins. The OMD+ profile's inspector mod supplies
-`/omd`; direct mode has no inspector. To disable a broken first-party OMD+ mod:
+mod errors, and staged plugins.
+
+Both profiles start with a one-time card naming the profile and its active
+mods. `/mods` lists every installed mod with what it adds, its scope, source,
+API, capabilities and whether it is active, pending the next turn or failed; it
+enables, disables, re-trusts an edited source, installs a local directory,
+updates, rolls back, removes and reloads through native confirmations. Changes
+apply at the next turn without a restart. The native `/omd` view is the
+recovery path when `/mods` is disabled or broken: it toggles each mod and links
+to plugins, skills and hooks. The OMD+ inspector moved to `/inspect`; direct
+mode has neither. To disable a broken first-party mod from a shell:
 
 ```sh
 /path/to/omd-bin/omd-package mod disable omd_workspace

@@ -213,6 +213,8 @@ impl ModStore {
                 "scope": selection.scope,
                 "selected": selection.enabled,
                 "managed": managed,
+                "sha256": selection.sha256,
+                "capabilities": selection.capabilities,
                 "settings_keys": selection.settings.keys().collect::<Vec<_>>(),
                 "settings_sha256": digest(&serde_json::to_vec(&selection.settings)?),
                 "error": error,

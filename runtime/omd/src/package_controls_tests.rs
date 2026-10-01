@@ -57,7 +57,7 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
         "applied"
     );
 
-    let listed = list(&store).unwrap();
+    let listed = list(&store, None).unwrap();
     let package = &listed["packages"][0];
     assert_eq!(
         (
@@ -75,15 +75,15 @@ fn install_enable_disable_and_remove_through_previewed_controls() {
     )
     .unwrap();
     apply(&store, &enable.control).unwrap();
-    assert_eq!(list(&store).unwrap()["packages"][0]["enabled"], true);
+    assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], true);
 
     let disable = preview(&store, json!({"action": "disable", "id": "sample_mod"})).unwrap();
     apply(&store, &disable.control).unwrap();
-    assert_eq!(list(&store).unwrap()["packages"][0]["enabled"], false);
+    assert_eq!(list(&store, None).unwrap()["packages"][0]["enabled"], false);
 
     let remove = preview(&store, json!({"action": "remove", "id": "sample_mod"})).unwrap();
     apply(&store, &remove.control).unwrap();
-    assert_eq!(list(&store).unwrap()["packages"], json!([]));
+    assert_eq!(list(&store, None).unwrap()["packages"], json!([]));
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn dependency_trees_preview_every_grant_and_install_as_confirmed() {
         json!(["commands", "library_mod:store"])
     );
     apply(&store, &preview.control).unwrap();
-    let installed = list(&store).unwrap();
+    let installed = list(&store, None).unwrap();
     assert_eq!(installed["packages"].as_array().unwrap().len(), 2);
     fixture_package(
         &root,
@@ -168,4 +168,98 @@ fn dependency_trees_preview_every_grant_and_install_as_confirmed() {
         super::preview(&store, json!({"action": "update", "id": "dependent_mod"})).unwrap();
     assert_eq!(update.public["grants_added"], json!(["network"]));
     apply(&store, &update.control).unwrap();
+}
+
+#[test]
+fn trusted_selections_toggle_retrust_and_report_session_state() {
+    let (_temp, store, root) = setup();
+    let path = fixture_package(&root, "author_mod", &["commands"], json!([]));
+    let sha256 = |path: &PathBuf| {
+        ModStore::inspect_package(path).unwrap()["sha256"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    store
+        .trust(
+            path.clone(),
+            &sha256(&path),
+            vec!["commands".into()],
+            "user",
+        )
+        .unwrap();
+    let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
+    assert_eq!(enable.public["grants_added"], json!(["commands"]));
+    apply(&store, &enable.control).unwrap();
+    let idle = json!({"mods": [], "rejected": [], "reload_error": null});
+    let package = list(&store, Some(&idle)).unwrap()["packages"][0].clone();
+    assert_eq!(
+        (
+            &package["source"],
+            &package["effective"],
+            &package["pending"]
+        ),
+        (&json!("selection"), &json!(false), &json!("reload"))
+    );
+
+    fixture_package(&root, "author_mod", &["commands", "store"], json!([]));
+    assert!(
+        list(&store, None).unwrap()["packages"][0]["failed"]
+            .as_str()
+            .unwrap()
+            .starts_with("source_changed")
+    );
+    let trust = preview(&store, json!({"action": "trust", "id": "author_mod"})).unwrap();
+    assert_eq!(trust.public["grants_added"], json!(["store"]));
+    apply(&store, &trust.control).unwrap();
+    let running = json!({"mods": [{"id": "author_mod", "scope": "user", "sha256": sha256(&path),
+        "error": null}], "rejected": [], "reload_error": null});
+    let package = list(&store, Some(&running)).unwrap()["packages"][0].clone();
+    assert_eq!(
+        (
+            &package["enabled"],
+            &package["effective"],
+            &package["pending"],
+            &package["failed"]
+        ),
+        (&json!(true), &json!(true), &Value::Null, &Value::Null)
+    );
+
+    let copy = root.join("managed_copy");
+    std::fs::create_dir(&copy).unwrap();
+    for name in ["mod.json", "main.ts"] {
+        std::fs::copy(path.join(name), copy.join(name)).unwrap();
+    }
+    let install = preview(
+        &store,
+        json!({"action": "install", "source": {"kind": "local", "path": copy.canonicalize().unwrap()}, "scope": "project"}),
+    )
+    .unwrap();
+    apply(&store, &install.control).unwrap();
+    let disable = preview(&store, json!({"action": "disable", "id": "author_mod"})).unwrap();
+    apply(&store, &disable.control).unwrap();
+    let states = list(&store, None).unwrap()["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|package| {
+            (
+                package["scope"].clone(),
+                package["source"].clone(),
+                package["enabled"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(states.contains(&(json!("user"), json!("selection"), json!(false))));
+    let enable = preview(&store, json!({"action": "enable", "id": "author_mod"})).unwrap();
+    apply(&store, &enable.control).unwrap();
+
+    let before = list(&store, None).unwrap()["generation"].as_u64().unwrap();
+    assert!(reload(&store).unwrap()["generation"].as_u64().unwrap() > before);
+    let disable = preview(&store, json!({"action": "disable", "id": "author_mod"})).unwrap();
+    apply(&store, &disable.control).unwrap();
+    assert_eq!(
+        list(&store, Some(&running)).unwrap()["packages"][0]["pending"],
+        "reload"
+    );
 }

@@ -4,6 +4,7 @@
   "version": "0.1.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "/continue resumes an interrupted turn from the recorded tool, process and file activity instead of restarting the task",
   "license": "Apache-2.0",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_continue"},
   "capabilities": ["commands", "sessions"],

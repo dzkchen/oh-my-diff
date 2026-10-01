@@ -4,6 +4,7 @@
   "version": "0.2.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Searches the live source code and impact graph and inserts verified graph evidence into the prompt",
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
   "capabilities": ["commands", "services", "store", "terminal"],

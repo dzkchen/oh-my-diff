@@ -127,9 +127,9 @@ export type TurnActivity = {
   files: { path: string; before: string | null; after: string | null; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external' }[];
   truncated: boolean;
 };
-export type PackageState = { id: string; kind: 'mod'; version: string; scope: 'user' | 'project'; source: 'local' | 'repository' | 'package'; installed: boolean; enabled: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[] };
+export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'selection'; installed: boolean; enabled: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[] };
 export type PackageSource = { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string };
-export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable'; id?: string; source?: PackageSource; index?: string; scope?: 'user' | 'project' };
+export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust'; id?: string; source?: PackageSource; index?: string; scope?: 'user' | 'project' };
 export type KeymapAction = `${string}.${string}`;
 export type Declined = { status: 'declined' };
 export interface HostOperations {
@@ -200,7 +200,7 @@ export interface HostOperations {
   'composer.read': { arguments: null; result: { text: string; cursor: number; attachments: { kind: 'image'; label: string }[] } };
   'composer.write': { arguments: { text?: string; insert?: string; attach?: { image: ResourceRef }[] }; result: { text: string; cursor: number } };
   'builtins.invoke': { arguments: { command: string; args?: string } | { action: KeymapAction }; result: { invoked: boolean } };
-  'packages.list': { arguments: null; result: { packages: PackageState[]; generation: number } };
+  'packages.list': { arguments: null; result: { packages: PackageState[]; generation: number; reload_error: string | null } };
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; conflicts: string[] } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };

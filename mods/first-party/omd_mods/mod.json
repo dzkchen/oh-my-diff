@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "omd_mods",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "description": "The /mods screen: installed, active, pending and failed mods with enable, trust, update, remove and reload",
+  "license": "Apache-2.0",
+  "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_mods" },
+  "capabilities": ["commands", "packages", "store", "terminal"],
+  "compatibility": { "required_features": ["package_controls_v1", "terminal_lists_v1", "terminal_render_sites_v1", "terminal_welcome_v1"] }
+}

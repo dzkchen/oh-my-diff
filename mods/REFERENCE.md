@@ -642,13 +642,22 @@ image references can be attached through `composer.write` and image-capable
 app methods. `packages.list`, `packages.preview`, `packages.apply` and
 `packages.reload` (`package_controls_v1`) install, update, remove, roll back,
 enable and disable packages from local directories, pinned Git revisions and
-curated index releases; `index` resolves dependencies. `apply` runs from user
-contexts after a native confirmation naming every new grant, dependencies as
-`id:capability`, and applies exactly the confirmed plan or refuses if the
-package or lock changed. An update resolves dependencies through the index the
+curated index releases; `index` resolves dependencies. `packages.list` reports
+every store selection: managed packages and trusted `omd-mod` selections
+(`source: 'selection'`, which enable, disable and `trust` but do not update).
+`effective`, `pending: 'reload'` and `failed` describe the serving session, so
+a change shows as pending until that session's next safe boundary, and a
+removed mod stays listed with `installed: false` until it stops.
+`reload_error` names a rejected change while the previous mods keep running.
+`trust` re-approves an edited selection's current source and capabilities and
+keeps it enabled. `apply` and `reload` run from user contexts; `apply` shows a
+native confirmation naming every new grant, dependencies as `id:capability`,
+and applies exactly the confirmed plan or refuses if the package, lock or
+selection changed. An update resolves dependencies through the index the
 package came from and previews the capabilities it adds. `packages.reload`
-reports the pending generation; changes take effect at the next safe boundary.
-`/omd` stays the native recovery path.
+makes every enabled selection revalidate at the next safe boundary, retrying
+failed mods. `/omd` stays the native recovery path; its Mods row opens `/mods`
+when a mod provides it.
 
 ### Dynamic tools (`dynamic_tools_v1`)
 
@@ -733,7 +742,9 @@ A package-index file is bounded JSON with schema 1:
 ```
 
 A managed package manifest must declare `license` and `provenance`; the
-scaffold emits both with placeholders to change. Package rollback repoints the
+scaffold emits both with placeholders to change. An optional `description` of
+1–160 printable characters says what the mod adds; `packages.list` and the
+`/mods` screen show it. Package rollback repoints the
 selection at the immutable store cache, so returning to editable local
 development is a fresh local install of the rolled-back source.
 

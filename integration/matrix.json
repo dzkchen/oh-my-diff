@@ -1116,10 +1116,12 @@
     "platform": {
       "label": "OMD Core",
       "first_party_installed": [
-        "omd_logo"
+        "omd_logo",
+        "omd_mods"
       ],
       "first_party_default_active": [
-        "omd_logo"
+        "omd_logo",
+        "omd_mods"
       ],
       "plugin_sources": []
     },
@@ -1139,6 +1141,7 @@
         "omd_lsp_sync",
         "omd_lsp_view",
         "omd_model_picker",
+        "omd_mods",
         "omd_muse",
         "omd_notes",
         "omd_panes",
@@ -1161,6 +1164,7 @@
         "omd_inspector",
         "omd_logo",
         "omd_model_picker",
+        "omd_mods",
         "omd_workspace"
       ],
       "plugin_sources": [
@@ -1229,6 +1233,10 @@
     "omd_model_picker": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_model_picker"
+    },
+    "omd_mods": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_mods"
     },
     "omd_muse": {
       "version": "0.1.0-preview.1",

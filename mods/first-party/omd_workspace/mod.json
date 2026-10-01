@@ -4,6 +4,7 @@
   "version": "0.2.0-preview.3",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Task, worker and allowance panels in a live terminal workspace",
   "capabilities": [
     "terminal",
     "commands",

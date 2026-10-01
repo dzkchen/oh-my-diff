@@ -95,7 +95,7 @@ test('inspector opens from live host status and fails visibly when status is una
     { call: { operation: 'task.status', arguments: null }, value: { ledger: { thread_id: 'thread-1', cost: { observed: 2 } }, limits: { turns: 4 }, worker_limits: { active: 1 } } },
     { call: { operation: 'contract.status', arguments: null }, value: { status: 'active', active: { id: 'review', version: 2, assurance: 'local' } } },
   ];
-  const opened = run('omd_inspector', { capabilities, event: 'command', name: 'omd', payload: '', receipts });
+  const opened = run('omd_inspector', { capabilities, event: 'command', name: 'inspect', payload: '', receipts });
   assert.equal(opened.state.open, true);
   const identity = { codex_version: '0.157.0', install_profile: 'full', mode: 'omd', mods: { installed: 7, enabled: 6, active: 5 } };
   const view = run('omd_inspector', { capabilities, event: 'terminal', state: opened.state, payload: { event: 'idle', identity, ledger: null } });

@@ -4,6 +4,7 @@
   "version": "0.1.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Runs a repository's Pi .pi/prompts templates as slash commands with Pi argument rules",
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party/omd_project_pi_prompts" },
   "capabilities": ["tools", "commands", "fs.read", "exec"],

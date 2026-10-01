@@ -4,6 +4,7 @@
   "version": "0.2.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Workflow contracts: checkpoints, reviewed contributions, exact-candidate checks and completion gates",
   "license": "Apache-2.0",
   "capabilities": [
     "agents",

@@ -44,7 +44,7 @@ export default function activate(api: ModAPI) {
   };
   const open = () => { save(capture({ ...saved(), open: true })); return null; };
   api.command('open', open, { description: 'Open the Oh My Diff inspector' });
-  api.command('omd', open, { description: 'Open the Oh My Diff inspector' });
+  api.command('inspect', open, { description: 'Open the Oh My Diff inspector' });
   api.command('refresh', () => { save(capture({ ...saved(), open: true })); return null; }, { description: 'Refresh the Oh My Diff inspector' });
   api.command('close', () => { save({ ...saved(), open: false }); return null; }, { description: 'Close the Oh My Diff inspector' });
   api.on('terminal', input => view(input.identity, input.ledger));

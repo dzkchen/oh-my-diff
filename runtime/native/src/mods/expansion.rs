@@ -299,52 +299,31 @@ pub(super) async fn dispatch(
             }))
             .await
         }
-        "packages.list" | "packages.preview" | "packages.reload" => {
-            let operation = request.operation.clone();
-            let arguments = request.arguments;
+        "packages.list" => {
+            let runtime = core
+                .runtime
+                .lock()
+                .map_err(|_| "mod_runtime_poisoned")?
+                .status();
             blocking(Box::new(move || {
-                packages(&host.root, &operation, arguments)
+                codex_omd::ModStore::open(host.root.clone())
+                    .and_then(|store| codex_omd::package_controls::list(&store, Some(&runtime)))
+                    .map_err(|error| error.to_string())
             }))
             .await
         }
+        "packages.preview" => {
+            let arguments = request.arguments;
+            blocking(Box::new(move || {
+                codex_omd::ModStore::open(host.root.clone())
+                    .and_then(|store| codex_omd::package_controls::preview(&store, arguments))
+                    .map(|preview| preview.public)
+                    .map_err(|error| error.to_string())
+            }))
+            .await
+        }
+        "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
         _ => surface(lead, caller, request, cancelled).await,
-    }
-}
-
-fn packages(root: &std::path::Path, operation: &str, arguments: Value) -> Result<Value, String> {
-    let store = codex_omd::ModStore::open(root.to_path_buf()).map_err(|error| error.to_string())?;
-    match operation {
-        "packages.list" => {
-            codex_omd::package_controls::list(&store).map_err(|error| error.to_string())
-        }
-        "packages.preview" => codex_omd::package_controls::preview(&store, arguments)
-            .map(|preview| preview.public)
-            .map_err(|error| error.to_string()),
-        _ => {
-            if !arguments.is_null() {
-                return Err("packages_reload_arguments_invalid".into());
-            }
-            let status = store
-                .selection_status()
-                .map_err(|error| error.to_string())?;
-            let failed = status["selections"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|item| item["selected"] == true && !item["error"].is_null())
-                .filter_map(|item| {
-                    item["id"]
-                        .as_str()
-                        .or(item["path"].as_str())
-                        .map(str::to_owned)
-                })
-                .collect::<Vec<_>>();
-            let generation = store
-                .package_lock()
-                .map(|lock| lock.revision)
-                .map_err(|error| error.to_string())?;
-            Ok(json!({"generation": generation, "failed": failed, "applies": "next_boundary"}))
-        }
     }
 }
 

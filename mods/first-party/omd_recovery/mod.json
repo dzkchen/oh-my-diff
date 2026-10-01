@@ -4,6 +4,7 @@
   "version": "0.2.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Escalates a failed step to one bounded read-only advisory call with the exact failing evidence",
   "license": "Apache-2.0",
   "provenance": {
     "maintainer": "Oh My Diff",
