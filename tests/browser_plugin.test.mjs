@@ -8,6 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { classify, isTracker, startGuard, vet } from '../plugins/optional/plugins/omd-browser/scripts/network.mjs';
 import { openVault } from '../plugins/optional/plugins/omd-browser/scripts/vault.mjs';
+import { startLive } from '../plugins/optional/plugins/omd-browser/scripts/live.mjs';
+import { decodePng, halfBlocks } from '../plugins/optional/plugins/omd-browser/scripts/pane.mjs';
+import { deflateSync } from 'node:zlib';
 
 test('network policy refuses private and tracker destinations and never allows cloud metadata', async () => {
   for (const address of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.0.9', '100.64.0.1', '::1', 'fd12::1', '::ffff:10.0.0.1']) {
@@ -66,4 +69,45 @@ test('vault records are encrypted and bound to the origin they were saved for', 
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('pane endpoint serves only pane-enabled sessions and shows handoffs in the attached pane', async () => {
+  const acted = [];
+  const live = startLive({ frame: async () => Buffer.alloc(0), input: async () => {}, pane: {
+    allowed: name => name === 'work',
+    status: async (_, full) => ({ url: 'https://example.com/', title: 'Example', ...(full ? { text: '- link "Docs" [ref=e1]' } : {}) }),
+    act: async (name, body) => (acted.push([name, body]), { ok: true }),
+    frame: async () => Buffer.from('png'),
+  } });
+  const base = await live.listen();
+  const call = (path, body) => fetch(`${base}/pane/${path}`, body ? { method: 'POST', body: JSON.stringify(body) } : undefined);
+  try {
+    assert.equal((await call('personal/state')).status, 404);
+    assert.equal((await fetch(`${base.replace(/[^/]+$/, 'wrong')}/pane/work/state`)).status, 404);
+    assert.deepEqual(await (await call('work/state')).json(), { url: 'https://example.com/', title: 'Example', text: '- link "Docs" [ref=e1]', handoff: null });
+    assert.deepEqual(await (await call('work/act', { action: 'click', ref: 'e1' })).json(), { ok: true });
+    assert.deepEqual(acted, [['work', { action: 'click', ref: 'e1' }]]);
+    assert.equal((await call('work/frame')).headers.get('content-type'), 'image/png');
+    const handed = live.handoff('work', 'Sign in please');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal((await (await call('work/status')).json()).handoff, 'Sign in please');
+    await call('work/done', { note: 'signed in' });
+    assert.deepEqual(await handed, { note: 'signed in' });
+  } finally {
+    live.close();
+  }
+});
+
+test('pane screenshots decode filtered PNG rows into half-block cells', () => {
+  const sized = (type, data) => {
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    return Buffer.concat([length, Buffer.from(type), data, Buffer.alloc(4)]);
+  };
+  const header = Buffer.from([0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0, 0, 0]);
+  const rows = Buffer.from([1, 10, 20, 30, 5, 5, 5, 2, 1, 1, 1, 2, 2, 2]);
+  const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), sized('IHDR', header), sized('IDAT', deflateSync(rows)), sized('IEND', Buffer.alloc(0))]);
+  const image = decodePng(png);
+  assert.deepEqual([image.pixel(0, 0), image.pixel(1, 0), image.pixel(0, 1), image.pixel(1, 1)], [[10, 20, 30], [15, 25, 35], [11, 21, 31], [17, 27, 37]]);
+  assert.deepEqual(halfBlocks(image, 2, 1), ['\x1b[38;2;10;20;30m\x1b[48;2;11;21;31m▀\x1b[38;2;15;25;35m\x1b[48;2;17;27;37m▀\x1b[0m']);
 });

@@ -3,10 +3,11 @@ import type { CommandResult, Json, ModAPI, TerminalComponent } from '@oh-my-diff
 const DIR = '.omd/preview';
 const INLINE_CHARACTERS = 40_000;
 const MAX_WATCHES = 8;
+const POLL_MS = 2_000;
 const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview unwatch | /preview close';
 
 type Inline = { title: string; kind: string; text: string };
-type State = { inline: Inline | null; revision: number; watch: string[]; watchId: string | null };
+type State = { inline: Inline | null; revision: number; watch: string[]; hashes: Record<string, string> };
 type Turn = { items?: { type?: string; text?: string }[] };
 type Rendered = { path: string } | { error: string };
 
@@ -18,7 +19,7 @@ const inlineKind = (path: string) => {
 };
 
 export default function activate(api: ModAPI) {
-  const load = (): State => ({ inline: null, revision: 0, watch: [], watchId: null, ...(api.state.get() as Partial<State> | null) });
+  const load = (): State => ({ inline: null, revision: 0, watch: [], hashes: {}, ...(api.state.get() as Partial<State> | null) });
   const save = (patch: Partial<State>) => api.state.set({ ...load(), ...patch } as unknown as Json);
 
   const render = (output: string, title: string, source?: string, markdown?: string): Rendered => {
@@ -67,8 +68,7 @@ export default function activate(api: ModAPI) {
       return null;
     }
     if (target === 'unwatch') {
-      save({ watch: [] });
-      api.host.tryCall('events.publish', { channel: 'watch', data: null });
+      save({ watch: [], hashes: {} });
       return { display: 'Stopped watching preview files' };
     }
     if (target === 'list') {
@@ -96,11 +96,16 @@ export default function activate(api: ModAPI) {
     return open(render(outputFor(target), target, target), target);
   };
 
-  const syncWatches = () => {
-    const { watch, watchId } = load();
-    if (watchId) api.host.tryCall('workspace.unwatch', { watch_id: watchId });
-    const watched = watch.length ? api.host.tryCall('workspace.watch', { paths: watch, debounce_ms: 300 }) : null;
-    save({ watchId: watched?.ok ? watched.value.watch_id : null });
+  const poll = () => {
+    const { watch, hashes } = load();
+    if (!watch.length) return;
+    const stat = api.host.tryCall('workspace.stat', { paths: watch, hash: true });
+    if (stat.ok) {
+      const next = Object.fromEntries(watch.map(path => [path, stat.value.files[path]?.sha256 ?? '']));
+      for (const path of watch) if (hashes[path] !== undefined && next[path] && next[path] !== hashes[path]) render(outputFor(path), path, path);
+      save({ hashes: next });
+    }
+    api.host.tryCall('events.schedule', { key: 'poll', delay_ms: POLL_MS });
   };
 
   api.command('preview', value => {
@@ -112,13 +117,7 @@ export default function activate(api: ModAPI) {
     }
   }, { description: 'Render a response or Markdown, code or diff file as HTML in the browser; --inline shows it here, --watch keeps a file fresh' });
 
-  api.on('channel', syncWatches);
-  api.on('start', syncWatches);
-  api.on('resume', syncWatches);
-  api.on('workspace_change', event => {
-    const { watch } = load();
-    for (const path of new Set(event.changes.map(change => change.path).filter(path => watch.includes(path)))) render(outputFor(path), path, path);
-  });
+  for (const event of ['channel', 'timer', 'start', 'resume'] as const) api.on(event, poll);
 
   api.on('terminal', () => {
     const { inline, revision } = load();

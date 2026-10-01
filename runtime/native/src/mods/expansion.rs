@@ -227,15 +227,16 @@ pub(super) async fn invoke_one(
     event: &'static str,
     payload: Value,
 ) -> Option<Result<Value, String>> {
+    let (views, owner, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
     run(core, lead, event, move |runtime, host, active| {
-        let generation = {
+        let (generation, before) = {
             let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
             if !runtime.registered(&id, event) {
                 return Ok(Value::Null);
             }
-            runtime.generation()
+            (runtime.generation(), runtime.state(&id).cloned())
         };
-        codex_omd::invoke_shared(
+        let result = codex_omd::invoke_shared(
             runtime,
             &id,
             generation,
@@ -246,7 +247,13 @@ pub(super) async fn invoke_one(
             host,
             |_| {},
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+        if let Ok(mut runtime) = runtime.lock()
+            && runtime.state(&id) != before.as_ref()
+        {
+            publish(&mut runtime, &owner, &views, event, ledger, active);
+        }
+        result
     })
     .await
 }

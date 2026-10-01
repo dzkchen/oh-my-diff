@@ -78,14 +78,16 @@ impl ModHostCall {
     }
 
     pub fn capabilities(&self) -> Result<Vec<&'static str>> {
-        let primary = self.capability()?;
-        Ok(
-            if self.operation == "terminal.pty" && self.arguments["write"] == true {
-                vec![primary, "fs.write"]
-            } else {
-                vec![primary]
-            },
-        )
+        let mut capabilities = vec![self.capability()?];
+        if self.operation == "terminal.pty" {
+            if self.arguments["write"] == true {
+                capabilities.push("fs.write");
+            }
+            if self.arguments["network"] == "loopback" {
+                capabilities.push("network");
+            }
+        }
+        Ok(capabilities)
     }
 }
 

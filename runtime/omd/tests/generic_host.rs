@@ -1603,4 +1603,10 @@ fn writable_pty_panes_also_need_workspace_write_authority() {
             .unwrap(),
         ["pty", "fs.write"]
     );
+    assert_eq!(
+        call(json!({"action": "start", "session": "s", "network": "loopback"}))
+            .capabilities()
+            .unwrap(),
+        ["pty", "network"]
+    );
 }

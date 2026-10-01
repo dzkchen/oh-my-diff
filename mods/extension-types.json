@@ -293,7 +293,7 @@
     {
       "path": "mods/first-party/omd_git",
       "id": "omd_git",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations."
@@ -309,10 +309,10 @@
     {
       "path": "mods/first-party/omd_lsp_sync",
       "id": "omd_lsp_sync",
-      "version": "0.3.0-preview.1",
+      "version": "0.4.0-preview.1",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations."
+      "why_mod": "Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations; exports the omd.lsp query service for the code-intelligence view."
     },
     {
       "path": "mods/examples/virtual_reader",
@@ -605,7 +605,7 @@
     {
       "path": "mods/first-party/omd_preview",
       "id": "omd_preview",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+."
@@ -617,6 +617,30 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the Muse MSP client, approval relay and research tool over a host-approved provider service; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_panes",
+      "id": "omd_panes",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the pane layout, file tree, viewer and shell panes through public layout, terminal, PTY, workspace-transaction and thread-store primitives; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_notes",
+      "id": "omd_notes",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the notes vault view, wiki-link index, note commands, argument completion and opt-in agent tools; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_lsp_view",
+      "id": "omd_lsp_view",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the user-invoked code-intelligence view, its request hop and result navigation over the omd.lsp service; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

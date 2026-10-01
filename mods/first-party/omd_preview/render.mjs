@@ -71,6 +71,7 @@ function inline(text, base) {
     .replace(/(^|[^\\$\w])\$(?=\S)([^$\n]*?\S)\$(?![\w$])/g, (_, lead, tex) => lead + hold(`<span class="math">\\(${escape(tex)}\\)</span>`))
     .replace(/\\([\\`*_{}[\]()#+\-.!|~$<>])/g, (_, character) => hold(escape(character))))
     .replace(/!\[([^\]]*)\]\(\s*((?:[^\s()]|\([^\s()]*\))+)(?:\s+&#34;(.*?)&#34;)?\s*\)/g, (_, alt, url, title) => link(alt, url, title, true))
+    .replace(/\[\[([^\]|#\n]+)(#[^\]|\n]*)?(?:\|([^\]\n]+))?\]\]/g, (_, name, heading, label) => link(label ?? name, `${encodeURI(name.trim())}.md${heading ? `#${slug(heading.slice(1))}` : ''}`, '', false))
     .replace(/\[([^\]]+)\]\(\s*((?:[^\s()]|\([^\s()]*\))+)(?:\s+&#34;(.*?)&#34;)?\s*\)/g, (_, label, url, title) => link(label, url, title, false))
     .replace(/&#60;((?:https?|mailto):[^\s&]+)&#62;/g, (_, url) => hold(`<a href="${url}">${url}</a>`))
     .replace(/(^|[\s(])(https?:\/\/[^\s<\u0000]*[^\s<.,;:!?)'"\u0000])/g, (_, lead, url) => `${lead}${hold(`<a href="${url}">${url}</a>`)}`)

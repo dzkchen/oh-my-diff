@@ -155,7 +155,7 @@
     },
     {
       "id": "omd_git",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "extension_type": "mod",
       "capability": "Opt-in left Git sidebar with commit graph, changed files and confirmed actions",
       "source": "mods/first-party/omd_git",
@@ -245,13 +245,67 @@
     },
     {
       "id": "omd_preview",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "capability": "User-typed /preview of responses and Markdown, code or diff files as sanitized HTML in the browser or an inline dialog",
       "source": "mods/first-party/omd_preview",
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
-      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, events_v1, exec_v1, terminal_media_v1; Node 24.18.0",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, events_v1, exec_v1, terminal_media_v1, timers_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_panes",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in recursive split panes with a Git-aware file tree, viewer, shell, diff, mod-panel and browser panes, persisted per session",
+      "source": "mods/first-party/omd_panes",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; terminal_surface_v1, terminal_pty_v1, store_thread_v1, events_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_notes",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in Markdown notes vault with wiki links, backlinks, tags, tasks, search and confirmed agent writes",
+      "source": "mods/first-party/omd_notes",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; completion_arguments_v1, events_v1, exec_v1, timers_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_lsp_view",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in code-intelligence view (hover, definition, references, symbols, diagnostics, code actions, formatting) over omd_lsp_sync's servers",
+      "source": "mods/first-party/omd_lsp_view",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; events_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.159.1",
         "OMD 0.1.0",

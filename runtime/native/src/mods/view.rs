@@ -85,6 +85,7 @@ impl Views {
         change(&mut state);
         state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
         let _ = owner.persist_json("mod-view.json", &state.snapshot);
+        codex_omd::client_surface::redraw();
     }
 
     pub(super) fn base(&self, owner: &Host, terminal: ModTerminalView, input: Value) {

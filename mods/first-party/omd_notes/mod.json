@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "id": "omd_notes",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_notes"},
+  "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "exec", "fs.read", "fs.write", "sessions", "tools", "composer"],
+  "subscriptions": {"channels": ["omd_notes/*"]},
+  "compatibility": {"required_features": ["app_v1", "completion_arguments_v1", "events_v1", "exec_v1", "store_v1", "terminal_surface_v1", "terminal_prompt_v1", "terminal_editor_v1", "timers_v1", "workspace_fs_v1"]},
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "vault": {"type": "string", "default": ".omd/notes"},
+      "personal": {"type": "string", "default": ""},
+      "agent": {"type": "boolean", "default": false}
+    },
+    "additionalProperties": false
+  }
+}

@@ -118,7 +118,7 @@ export type AppRoute = { method: string; class: Capability; contexts: Invocation
 export type CredentialProfile = { id: string; label: string; kind: 'chatgpt' | 'api_key' | 'provider' | 'secret'; provider: string | null; origin: string | null; status: 'ready' | 'not_enrolled'; default: boolean };
 export type HistoryItem = { index: number; type: string; role: string | null; call_id: string | null; editable: boolean; images: number; text: string | null; bytes: number };
 export type HistoryEdit = { drop?: number[]; replace?: { index: number; text: string }[]; insert?: { before: number; role: 'user' | 'developer'; text: string }[] };
-export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
+export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean; network?: 'loopback' } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
 export type TurnActivity = {
   turn_id: string; started_at: string | null; ended_at: string | null;
   outcome: 'completed' | 'aborted' | 'error' | 'interrupted' | 'running' | 'unknown'; reason: string | null; unrecorded_end: boolean;
@@ -252,7 +252,7 @@ export interface Events {
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'key'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; key?: KeyName | string | null; text?: string | null }; output: void };
+  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'key' | 'resize'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; key?: KeyName | string | null; text?: string | null; ratio?: number[] }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
 }

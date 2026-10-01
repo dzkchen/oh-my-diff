@@ -270,7 +270,7 @@ export default function activate(api: ModAPI) {
     const result = diff(entry.path, staged);
     return { display: result.ok ? `${staged ? 'staged' : 'unstaged'} diff · ${trim(entry.path, 200)}\n${result.value.slice(0, 12_000)}${result.value.length > 12_000 ? `\n${glyph.more} truncated` : ''}` : result.error };
   }, { description: 'Show a changed file diff' });
-  api.command('discard', () => {
+  const discard = () => {
     const state = refresh();
     if (state.error) return { display: `Git: ${state.error}` };
     const entry = state.entries.find(item => item.path === state.selected);
@@ -292,7 +292,15 @@ export default function activate(api: ModAPI) {
     const lines = [`  ${trim(entry.path, width - 4)}`, '', ...(change?.ok ? [visible(change.value.text.slice(0, 8_000)), ''] : []), 'The current file will be backed up outside this repository before the change.', 'Confirmation refuses a changed file or Git status.'];
     save({ ...state, preview: { kind: 'discard', tracked, target: entry.path, from: state.head?.oid ?? null, destination: null, status: state.status, lines, guards: tracked && index?.ok && content?.ok ? [...state.guards, index.value, content.value.guard] : state.guards, paths: [entry.path], expected: { [entry.path]: file.sha256 } } });
     return null;
-  }, { description: 'Preview backing up and discarding an untracked file' });
+  };
+  api.command('discard', discard, { description: 'Preview backing up and discarding an untracked file' });
+  api.command('act', value => {
+    const [action, ...rest] = String(value ?? '').trim().split(' ');
+    const path = rest.join(' ');
+    const state = refresh({ ...saved(), selected: path, notice: null });
+    if (!state.entries.some(entry => entry.path === path)) return { display: `${trim(path, 80)} has no Git change` };
+    return action === 'stage' || action === 'unstage' ? changeIndex(action) : action === 'discard' ? discard() : { display: 'usage: /act stage|unstage|discard PATH' };
+  }, { description: 'Select a changed file and stage, unstage or preview discarding it' });
   api.command('switch', () => {
     const state = refresh();
     if (state.error) return { display: `Git: ${state.error}` };

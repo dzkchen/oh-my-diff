@@ -44,15 +44,25 @@ const readBody = request => new Promise((resolve, reject) => {
   }).on('end', () => resolve(body)).on('error', reject);
 });
 
-export function startLive({ frame, input }) {
+export function startLive({ frame, input, pane }) {
   const token = randomBytes(16).toString('hex');
   const waiters = new Map();
+  const attached = new Map();
   const server = createServer(async (request, response) => {
     const host = `127.0.0.1:${server.address().port}`;
     const [, key, kind, name, action] = new URL(request.url, `http://${host}`).pathname.split('/');
-    const waiter = waiters.get(`${kind}/${name}`);
-    if (request.headers.host !== host || key !== token || !waiter) return response.writeHead(404).end();
+    const waiter = waiters.get(`${kind === 'pane' ? 'view' : kind}/${name}`);
+    if (request.headers.host !== host || key !== token || (kind === 'pane' ? !pane?.allowed(name) : !waiter)) return response.writeHead(404).end();
     try {
+      if (kind === 'pane') {
+        attached.set(name, Date.now());
+        const body = request.method === 'POST' ? JSON.parse(await readBody(request)) : null;
+        if (action === 'done') waiter?.resolve(body);
+        const result = action === 'frame' ? await pane.frame(name)
+          : action === 'done' ? {} : action === 'act' ? await pane.act(name, body) : { ...await pane.status(name, action === 'state'), handoff: waiter?.reason ?? null };
+        return Buffer.isBuffer(result) ? response.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' }).end(result)
+          : response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
+      }
       if (request.method === 'GET' && !action) return response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(waiter.page);
       if (kind === 'view' && action === 'frame') {
         return response.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' }).end(await frame(name));
@@ -67,10 +77,15 @@ export function startLive({ frame, input }) {
     }
   });
 
-  async function present(kind, name, page, signal) {
+  async function listen() {
     if (!server.listening) await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    return `http://127.0.0.1:${server.address().port}/${token}`;
+  }
+
+  async function present(kind, name, page, signal, reason = null) {
     const key = `${kind}/${name}`;
-    const url = `http://127.0.0.1:${server.address().port}/${token}/${key}`;
+    const url = `${await listen()}/${key}`;
+    const inPane = kind === 'view' && Date.now() - (attached.get(name) ?? 0) < 5_000;
     waiters.get(key)?.resolve(null);
     return new Promise(resolve => {
       const finish = value => {
@@ -81,13 +96,14 @@ export function startLive({ frame, input }) {
       };
       const timer = setTimeout(() => finish(null), WAIT_MS);
       signal?.addEventListener('abort', () => finish(null), { once: true });
-      waiters.set(key, { page, resolve: finish });
-      openExternal(url).then(opened => opened || process.stderr.write(`omd-browser: open ${url} to continue\n`));
+      waiters.set(key, { page, resolve: finish, reason });
+      if (!inPane) openExternal(url).then(opened => opened || process.stderr.write(`omd-browser: open ${url} to continue\n`));
     });
   }
 
   return {
-    handoff: (session, reason, signal) => present('view', session, viewPage(session, reason), signal),
+    handoff: (session, reason, signal) => present('view', session, viewPage(session, reason), signal, reason),
+    listen,
     enroll: (origin, signal) => present('vault', randomBytes(8).toString('hex'), enrollPage(origin), signal),
     close: () => server.close(),
   };

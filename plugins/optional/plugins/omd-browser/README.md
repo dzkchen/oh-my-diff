@@ -1,6 +1,6 @@
 # OMD browser
 
-Optional plugin `0.1.0-preview.1` with the `omd-browser` skill and the
+Optional plugin `0.1.0-preview.2` with the `omd-browser` skill and the
 `omd_browser` MCP server. It drives persistent Chromium sessions from OMD's
 [managed browser bundle](../../../../browser/README.md). The plugin has no mod
 component; Codex's per-tool MCP approval (`prompt` by default) is the
@@ -32,7 +32,7 @@ The server runs under the `node` (20 or newer) on Codex's `PATH`. Optional
 top-level fields are `data` (default `$OMD_MOD_STORE/plugin-data/omd-browser`)
 and `idle_minutes` (default 10). A profile applies to the session of the same
 name; its fields are `allow` (exact `host:port` private destinations, default
-none), `adblock` (default on), `vault` and `captcha` (both off by default).
+none), `adblock` (default on), `vault`, `captcha` and `pane` (all off by default).
 Only the user edits this file; the agent's sandbox cannot write it.
 
 ## Tools
@@ -77,6 +77,22 @@ and forwards clicks, typing and scrolling to the page. The browser sessions
 themselves cannot reach it, because loopback is blocked by default. It opens with
 `open` (macOS) or `xdg-open`; if that fails, the server writes the URL to its
 standard error.
+
+## Browser pane
+
+A profile with `"pane": true` can also be browsed inside OMD. The server then
+keeps the live-view listener running and writes its address and token to
+`data/pane.json` (mode 0600), removed on shutdown. `omd_panes` reads that file
+(its `browser` setting) and opens `scripts/pane.mjs` in a terminal pane with
+loopback-only network. The pane shows the page as the snapshot text with
+`[eN]` refs and drives the same session the agent uses: `o` opens a URL, `c`
+clicks a ref, `t` fills one, `p` presses a key, `b`/`f`/`r` go back, forward
+and reload, `/` and `n` find, `i` switches to a half-block screenshot and `q`
+quits. The pane follows the agent's navigation. While a pane is attached,
+`browser_handoff` shows its reason in the pane and `d` returns control, so the
+external live view is not opened. The guard proxy, ad blocking and vault
+redaction apply as for tool calls. Anything that can read `pane.json` or type
+into the pane can drive that session, so the flag is off by default.
 
 ## Login vault
 

@@ -42,6 +42,8 @@ pub struct SurfaceCall {
 
 pub trait ClientSurface: Send + Sync {
     fn submit(&self, call: SurfaceCall) -> Result<(), String>;
+
+    fn redraw(&self) {}
 }
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -108,6 +110,13 @@ pub fn wake() {
     let wake = hub().wake.as_ref().map(|(_, wake)| wake.clone());
     if let Some(wake) = wake {
         wake();
+    }
+}
+
+pub fn redraw() {
+    let surface = hub().surface.as_ref().map(|(_, surface)| surface.clone());
+    if let Some(surface) = surface {
+        surface.redraw();
     }
 }
 

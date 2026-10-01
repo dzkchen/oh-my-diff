@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 815f5b1d6..faec6aa3c 100644
+index 815f5b1d6..9ca208e1d 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2113,6 +2113,7 @@ dependencies = [
@@ -77,15 +77,16 @@ index 815f5b1d6..faec6aa3c 100644
  [[package]]
  name = "codex-otel"
  version = "0.159.1"
-@@ -4764,6 +4811,7 @@ dependencies = [
+@@ -4764,6 +4811,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
++ "codex-network-proxy",
 + "codex-omd",
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4785,6 +4833,7 @@ dependencies = [
+@@ -4785,6 +4834,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -15089,10 +15090,10 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..81c08dc61
+index 000000000..d6a4ebb96
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,456 @@
+@@ -0,0 +1,463 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -15322,15 +15323,16 @@ index 000000000..81c08dc61
 +    event: &'static str,
 +    payload: Value,
 +) -> Option<Result<Value, String>> {
++    let (views, owner, ledger) = (core.views.clone(), core.host.clone(), lead.ledger());
 +    run(core, lead, event, move |runtime, host, active| {
-+        let generation = {
++        let (generation, before) = {
 +            let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +            if !runtime.registered(&id, event) {
 +                return Ok(Value::Null);
 +            }
-+            runtime.generation()
++            (runtime.generation(), runtime.state(&id).cloned())
 +        };
-+        codex_omd::invoke_shared(
++        let result = codex_omd::invoke_shared(
 +            runtime,
 +            &id,
 +            generation,
@@ -15341,7 +15343,13 @@ index 000000000..81c08dc61
 +            host,
 +            |_| {},
 +        )
-+        .map_err(|error| error.to_string())
++        .map_err(|error| error.to_string());
++        if let Ok(mut runtime) = runtime.lock()
++            && runtime.state(&id) != before.as_ref()
++        {
++            publish(&mut runtime, &owner, &views, event, ledger, active);
++        }
++        result
 +    })
 +    .await
 +}
@@ -17100,10 +17108,10 @@ index 000000000..13341482d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..03b33815d
+index 000000000..8574472c4
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,959 @@
+@@ -0,0 +1,970 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
@@ -17350,7 +17358,18 @@ index 000000000..03b33815d
 +        assert_eq!(delivered["delivered"], 1);
 +    }
 +    assert!(delivery::publish(core, "herald", json!({"channel": "Bad Name", "data": 1})).is_err());
++    let revision = || {
++        codex_omd::ModViewSnapshot::read(&core.host.root.join("mod-view.json"))
++            .map(|snapshot| snapshot.revision)
++            .unwrap_or_default()
++    };
++    let before = revision();
 +    assert!(!delivery::deliver(core).await);
++    assert_eq!(
++        revision(),
++        before + 2,
++        "each state-changing delivery republishes the view"
++    );
 +    assert_eq!(
 +        command(core, "listener", "seen"),
 +        json!([["herald/ping", 1, 1], ["herald/ping", 2, {"n": 2}]])
@@ -20207,10 +20226,10 @@ index 000000000..855c7e704
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..2f19a187c
+index 000000000..abf30d80c
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,202 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -20298,6 +20317,7 @@ index 000000000..2f19a187c
 +        change(&mut state);
 +        state.snapshot.diagnostics = state.diagnostics.values().take(16).cloned().collect();
 +        let _ = owner.persist_json("mod-view.json", &state.snapshot);
++        codex_omd::client_surface::redraw();
 +    }
 +
 +    pub(super) fn base(&self, owner: &Host, terminal: ModTerminalView, input: Value) {
@@ -27241,10 +27261,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..b96590df3
+index 000000000..2e1cedca8
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,257 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
@@ -27289,6 +27309,8 @@ index 000000000..b96590df3
 +
 +pub trait ClientSurface: Send + Sync {
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String>;
++
++    fn redraw(&self) {}
 +}
 +
 +pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -27355,6 +27377,13 @@ index 000000000..b96590df3
 +    let wake = hub().wake.as_ref().map(|(_, wake)| wake.clone());
 +    if let Some(wake) = wake {
 +        wake();
++    }
++}
++
++pub fn redraw() {
++    let surface = hub().surface.as_ref().map(|(_, surface)| surface.clone());
++    if let Some(surface) = surface {
++        surface.redraw();
 +    }
 +}
 +
@@ -31409,10 +31438,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..16b7145d6
+index 000000000..a71a42064
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,3542 @@
+@@ -0,0 +1,3546 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -34848,6 +34877,10 @@ index 000000000..16b7145d6
 +        self.generation
 +    }
 +
++    pub fn state(&self, id: &str) -> Option<&Value> {
++        self.loaded.get(id).map(|loaded| &loaded.state)
++    }
++
 +    pub fn configuration_sha256(&self) -> &str {
 +        &self.configuration_sha256
 +    }
@@ -35465,10 +35498,10 @@ index 000000000..7202d28aa
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..89c56e340
+index 000000000..ebd53a67f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,222 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -35549,14 +35582,16 @@ index 000000000..89c56e340
 +    }
 +
 +    pub fn capabilities(&self) -> Result<Vec<&'static str>> {
-+        let primary = self.capability()?;
-+        Ok(
-+            if self.operation == "terminal.pty" && self.arguments["write"] == true {
-+                vec![primary, "fs.write"]
-+            } else {
-+                vec![primary]
-+            },
-+        )
++        let mut capabilities = vec![self.capability()?];
++        if self.operation == "terminal.pty" {
++            if self.arguments["write"] == true {
++                capabilities.push("fs.write");
++            }
++            if self.arguments["network"] == "loopback" {
++                capabilities.push("network");
++            }
++        }
++        Ok(capabilities)
 +    }
 +}
 +
@@ -44486,10 +44521,10 @@ index 000000000..b9175dc29
 +}
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..af6b2dedd
+index 000000000..ee044fb42
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,1606 @@
+@@ -0,0 +1,1612 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -46094,6 +46129,12 @@ index 000000000..af6b2dedd
 +            .capabilities()
 +            .unwrap(),
 +        ["pty", "fs.write"]
++    );
++    assert_eq!(
++        call(json!({"action": "start", "session": "s", "network": "loopback"}))
++            .capabilities()
++            .unwrap(),
++        ["pty", "network"]
 +    );
 +}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
@@ -51532,7 +51573,7 @@ index ae46d941b..bda8f62b1 100644
  async fn codex_err_debug_preserves_legacy_shape() {
      let actual = [
 diff --git a/codex-rs/tui/Cargo.toml b/codex-rs/tui/Cargo.toml
-index 9d61157c4..a10d1f0af 100644
+index 9d61157c4..1d511f153 100644
 --- a/codex-rs/tui/Cargo.toml
 +++ b/codex-rs/tui/Cargo.toml
 @@ -22,6 +22,8 @@ doctest = false
@@ -51544,15 +51585,16 @@ index 9d61157c4..a10d1f0af 100644
  codex-build-info = { workspace = true }
  anyhow = { workspace = true }
  axum = { workspace = true, default-features = false, features = ["http1", "tokio"] }
-@@ -53,6 +55,7 @@ codex-message-history = { workspace = true }
+@@ -53,6 +55,8 @@ codex-message-history = { workspace = true }
  codex-model-provider = { workspace = true }
  codex-model-provider-info = { workspace = true }
  codex-models-manager = { workspace = true }
++codex-network-proxy = { workspace = true }
 +codex-omd = { path = "../omd" }
  codex-otel = { workspace = true }
  codex-plugin = { workspace = true }
  codex-protocol = { workspace = true }
-@@ -185,6 +188,5 @@ pretty_assertions = { workspace = true }
+@@ -185,6 +189,5 @@ pretty_assertions = { workspace = true }
  rand = { workspace = true }
  serial_test = { workspace = true }
  tokio-tungstenite = { workspace = true }
@@ -51930,10 +51972,10 @@ index c57920741..9836705ad 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 4a97366d4..520f80f45 100644
+index 4a97366d4..5a33ba331 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -382,6 +382,63 @@ impl App {
+@@ -382,6 +382,64 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
@@ -51987,6 +52029,7 @@ index 4a97366d4..520f80f45 100644
 +                    self.chat_widget.on_mod_command_finished(invocation, result);
 +                }
 +            }
++            AppEvent::ModViewChanged => tui.frame_requester().schedule_frame(),
 +            AppEvent::ModSurfaceCall(call) => {
 +                self.handle_mod_surface_call(tui, app_server, *call).await;
 +            }
@@ -51997,7 +52040,7 @@ index 4a97366d4..520f80f45 100644
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -1574,8 +1631,27 @@ impl App {
+@@ -1574,8 +1632,27 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -52431,10 +52474,10 @@ index 000000000..c6e7242a7
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..fe001428c
+index 000000000..0c61aa7ac
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,744 @@
+@@ -0,0 +1,750 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -52862,6 +52905,11 @@ index 000000000..fe001428c
 +            .ok_or("mod store is not configured")?
 +            .join("pty-scratch");
 +        std::fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
++        let loopback = match arguments["network"].as_str() {
++            None if arguments["network"].is_null() => false,
++            Some("loopback") => true,
++            _ => return Err("pty_network_invalid".into()),
++        };
 +        let mut argv = crate::mod_pty::argv(arguments)?;
 +        let program = codex_omd::host::resolve_program(&argv[0], &paths.repository)
 +            .ok_or("pty_program_unavailable")?;
@@ -52877,6 +52925,7 @@ index 000000000..fe001428c
 +            argv,
 +            &scratch,
 +            arguments["write"] == true,
++            loopback,
 +        )?;
 +        command.current_dir(cwd);
 +        Ok((command, scratch))
@@ -54649,10 +54698,10 @@ index 17155eb72..6cee85992 100644
          }
          let expected_cwd = if override_cwd {
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 982c3ecb5..52bb68527 100644
+index 982c3ecb5..a1ea2de7c 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -454,6 +454,26 @@ pub(crate) enum AppEvent {
+@@ -454,6 +454,27 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
@@ -54672,6 +54721,7 @@ index 982c3ecb5..52bb68527 100644
 +        result: Result<crate::mod_runtime::ModCommandResult, String>,
 +    },
 +    ModSurfaceCall(Box<codex_omd::client_surface::SurfaceCall>),
++    ModViewChanged,
 +    ModSurfaceConfirmed {
 +        id: u64,
 +        approved: bool,
@@ -54679,7 +54729,7 @@ index 982c3ecb5..52bb68527 100644
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -651,6 +671,15 @@ pub(crate) enum AppEvent {
+@@ -651,6 +672,15 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -60015,10 +60065,10 @@ index 000000000..52d0fb56f
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 000000000..48fc6987f
+index 000000000..229ddd671
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,299 @@
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
 +use crossterm::event::MouseButton;
@@ -60290,7 +60340,27 @@ index 000000000..48fc6987f
 +                .insert(path, sizes.into_iter().map(|size| size.max(1)).collect());
 +            true
 +        }
-+        MouseEventKind::Up(MouseButton::Left) => state.drag.take().is_some(),
++        MouseEventKind::Up(MouseButton::Left) => {
++            let Some((path, _)) = state.drag.take() else {
++                return false;
++            };
++            if let Some(sizes) = state.ratios.get(&path) {
++                let total = sizes
++                    .iter()
++                    .map(|size| u32::from(*size))
++                    .sum::<u32>()
++                    .max(1);
++                let ratio = sizes
++                    .iter()
++                    .map(|size| (u32::from(*size) * 100 / total).clamp(1, 100))
++                    .collect::<Vec<_>>();
++                crate::mod_surface::terminal_event(
++                    "component_event",
++                    serde_json::json!({"component": path, "kind": "resize", "ratio": ratio}),
++                );
++            }
++            true
++        }
 +        _ => false,
 +    })
 +}
@@ -60383,10 +60453,10 @@ index 000000000..346f5fa4a
 +}
 diff --git a/codex-rs/tui/src/mod_pty.rs b/codex-rs/tui/src/mod_pty.rs
 new file mode 100644
-index 000000000..f42d9e7ea
+index 000000000..13e47f87c
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_pty.rs
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,404 @@
 +use crossterm::event::KeyCode;
 +use crossterm::event::KeyEvent;
 +use crossterm::event::KeyModifiers;
@@ -60502,9 +60572,14 @@ index 000000000..f42d9e7ea
 +    session_name(&arguments["session"])?;
 +    let argv = argv(arguments)?;
 +    Ok(format!(
-+        "Mod {caller} wants to open a terminal pane running `{}` in {}. It runs in the session sandbox without network, {}. The mod can type into it and read its screen.",
++        "Mod {caller} wants to open a terminal pane running `{}` in {}. It runs in the session sandbox {}, {}. The mod can type into it and read its screen.",
 +        argv.join(" "),
 +        arguments["cwd"].as_str().unwrap_or("."),
++        if arguments["network"] == "loopback" {
++            "with network limited to this computer (loopback)"
++        } else {
++            "without network"
++        },
 +        if arguments["write"] == true {
 +            "and can write to the workspace"
 +        } else {
@@ -60788,10 +60863,10 @@ index 000000000..f42d9e7ea
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..9abe11a4e
+index 000000000..1a4d35b9d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,758 @@
+@@ -0,0 +1,772 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -61131,6 +61206,16 @@ index 000000000..9abe11a4e
 +        if access.loopback {
 +            return Err("exec_network_unavailable_in_commands".to_owned());
 +        }
++        self.seatbelt(argv, access)
++    }
++}
++
++impl CommandAuthority<'_> {
++    fn seatbelt(
++        &self,
++        argv: Vec<String>,
++        access: &codex_omd::host::ExecAccess<'_>,
++    ) -> Result<std::process::Command, String> {
 +        #[cfg(target_os = "macos")]
 +        {
 +            use codex_protocol::permissions::FileSystemAccessMode;
@@ -61173,14 +61258,18 @@ index 000000000..9abe11a4e
 +                },
 +                FileSystemAccessMode::Write,
 +            ));
++            let loopback = codex_network_proxy::ManagedNetworkSandboxContext {
++                allow_local_binding: true,
++                ..Default::default()
++            };
 +            let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
 +                command: argv,
 +                file_system_sandbox_policy: &scope,
 +                network_sandbox_policy:
 +                    codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
 +                sandbox_policy_cwd: self.repository,
-+                enforce_managed_network: false,
-+                managed_network: None,
++                enforce_managed_network: access.loopback,
++                managed_network: access.loopback.then_some(&loopback),
 +                environment_id: None,
 +                network: None,
 +                extra_allow_unix_sockets: &[],
@@ -61206,8 +61295,8 @@ index 000000000..9abe11a4e
 +    argv: Vec<String>,
 +    scratch: &Path,
 +    write: bool,
++    loopback: bool,
 +) -> Result<std::process::Command, String> {
-+    use codex_omd::host::Authority;
 +    let mut protected = paths.protected.clone();
 +    protected.push(paths.evidence.clone());
 +    CommandAuthority {
@@ -61215,11 +61304,11 @@ index 000000000..9abe11a4e
 +        protected: &protected,
 +        policy,
 +    }
-+    .command(
++    .seatbelt(
 +        argv,
 +        &codex_omd::host::ExecAccess {
 +            write,
-+            loopback: false,
++            loopback,
 +            scratch,
 +        },
 +    )
@@ -61734,10 +61823,10 @@ index 000000000..430d032bd
 +}
 diff --git a/codex-rs/tui/src/mod_surface.rs b/codex-rs/tui/src/mod_surface.rs
 new file mode 100644
-index 000000000..fd396b3b4
+index 000000000..e7049c54d
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_surface.rs
-@@ -0,0 +1,581 @@
+@@ -0,0 +1,585 @@
 +use crate::app_event::AppEvent;
 +use crate::app_event_sender::AppEventSender;
 +use codex_omd::app_routes::NotificationQueue;
@@ -61763,6 +61852,10 @@ index 000000000..fd396b3b4
 +    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
 +        self.0.send(AppEvent::ModSurfaceCall(Box::new(call)));
 +        Ok(())
++    }
++
++    fn redraw(&self) {
++        self.0.send(AppEvent::ModViewChanged);
 +    }
 +}
 +
@@ -62551,10 +62644,10 @@ index 000000000..1bca19f5f
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..ba09dbc55
+index 000000000..c3d0909cc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,2189 @@
+@@ -0,0 +1,2236 @@
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModColor;
@@ -64262,6 +64355,48 @@ index 000000000..ba09dbc55
 +    }
 +}
 +
++/// Components without a height share the rows a layout region leaves after its fixed components.
++fn fill_heights(components: &mut [ModComponent], width: u16, rows: u16) {
++    let fills = |component: &ModComponent| {
++        matches!(
++            component,
++            ModComponent::Terminal { height: None, .. }
++                | ModComponent::Document { height: None, .. }
++                | ModComponent::Diff { height: None, .. }
++                | ModComponent::List { height: None, .. }
++        )
++    };
++    let count = components
++        .iter()
++        .filter(|component| fills(component))
++        .count();
++    if count == 0 {
++        return;
++    }
++    let fixed = components
++        .iter()
++        .filter(|component| !fills(component))
++        .cloned()
++        .collect::<Vec<_>>();
++    let share = rows.saturating_sub(component_height(&fixed, width))
++        / u16::try_from(count).unwrap_or(u16::MAX);
++    for component in components {
++        match component {
++            ModComponent::Terminal { height, .. } if height.is_none() => {
++                *height = Some(share.saturating_sub(1).max(2));
++            }
++            ModComponent::Document { height, .. }
++            | ModComponent::Diff { height, .. }
++            | ModComponent::List { height, .. }
++                if height.is_none() =>
++            {
++                *height = Some(share.max(1));
++            }
++            _ => {}
++        }
++    }
++}
++
 +pub(crate) fn render_owned(
 +    screen: Rect,
 +    chat: Rect,
@@ -64299,9 +64434,14 @@ index 000000000..ba09dbc55
 +        let Some(name) = region.content.strip_prefix("site:") else {
 +            continue;
 +        };
-+        let components = site(&snapshot.view, name)
++        let mut components = site(&snapshot.view, name)
 +            .map(|site| site.components.clone())
 +            .unwrap_or_default();
++        fill_heights(
++            &mut components,
++            region.area.width.saturating_sub(2),
++            region.area.height.saturating_sub(2),
++        );
 +        render_site(
 +            region.area,
 +            &components,
@@ -64746,10 +64886,10 @@ index 000000000..ba09dbc55
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..c89a50da6
+index 000000000..a6509e5be
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,846 @@
+@@ -0,0 +1,869 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -65595,6 +65735,29 @@ index 000000000..c89a50da6
 +        assert!(interaction.hitboxes.is_empty());
 +    }
 +    startup_preview(None, repository);
++}
++
++#[test]
++fn layout_regions_share_rows_among_components_without_a_height() {
++    let view = snapshot(serde_json::json!({"sites": {"pane/a": {"components": [
++        {"type": "text", "id": "title", "label": "Title", "text": "Files"},
++        {"type": "terminal", "id": "shell", "label": "Shell", "session": "s"},
++        {"type": "list", "id": "rows", "label": "Rows", "rows": [], "action": {"command": "pane:open"}},
++        {"type": "document", "id": "fixed", "label": "Fixed", "lines": [], "height": 3},
++    ]}}}))
++    .view;
++    let mut components = view.sites["pane/a"].components.clone();
++    fill_heights(&mut components, 40, 24);
++    let heights = components
++        .iter()
++        .map(|component| match component {
++            ModComponent::Terminal { height, .. }
++            | ModComponent::List { height, .. }
++            | ModComponent::Document { height, .. } => *height,
++            _ => None,
++        })
++        .collect::<Vec<_>>();
++    assert_eq!(heights, vec![None, Some(9), Some(10), Some(3)]);
 +}
 diff --git a/codex-rs/tui/src/notifications/mod.rs b/codex-rs/tui/src/notifications/mod.rs
 index ee6694b35..b94feefc0 100644

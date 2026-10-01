@@ -440,7 +440,10 @@ delivers coalesced `process_event`s. `workspace.watch {paths, recursive?,
 debounce_ms?}` reports external edits as `workspace_change` with source
 `external` (16 watches per mod, ignored and protected paths excluded). Watches
 and timers end when their mod is disabled or its source changes, and each
-delivery runs in the thread that registered it. `process_event` exits carry
+delivery runs in the thread that registered it. A `channel`, `timer`,
+`process_event` or watched `workspace_change` callback that changes its mod's
+state republishes the terminal view, so background results appear without
+waiting for the next turn. `process_event` exits carry
 only the session; read the exit status with `process.status`.
 `events.schedule {key, delay_ms}` (`timers_v1`) delivers one `timer` event
 `{key}` to the calling mod after 1 s to 24 h; scheduling a key again replaces
@@ -559,7 +562,13 @@ find), `diff`, `image` (truecolor half-block cells, alt text under
 `NO_COLOR`) and `terminal` (a PTY session). Spans accept `fg` and `bg` theme
 colors, `italic` and `underline` (`terminal_style_v1`). A `pane` with
 `keys: true` (`terminal_input_v1`) forwards every key while focused as
-`component_event {kind: 'key', key, text}`; Ctrl+] leaves it. View
+`component_event {kind: 'key', key, text}`; Ctrl+] leaves it. In a layout
+region, `terminal`, `document`, `diff` and `list` components without a
+`height` share the rows left after the region's other components. Releasing a
+mouse drag on a split border sends `component_event {kind: 'resize',
+component, ratio}`, where `component` is the split's path (`r` for the root,
+then `.N` per child index) and `ratio` its new percentages, so a mod can keep
+the ratio in its layout. View
 `keybindings` accept `Ctrl+`, `Alt+` and `Shift+` combinations of letters,
 digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
 terminal control keys and Shift+Tab; a binding that collides with a native key
@@ -582,8 +591,10 @@ interaction. Operations:
   starts an interactive shell from a user command after confirmation, in the
   session sandbox without network (macOS) with a scratch `HOME`. `start` may
   name a `program`, `argv` and `sha256` (`pty_programs_v1`); `write: true`
-  lets the pane write the workspace and needs `fs.write`. The confirmation
-  names the program, write access and that the mod can type into the pane.
+  lets the pane write the workspace and needs `fs.write`; `network:
+  'loopback'` lets it reach services on this computer only and needs
+  `network`. The confirmation names the program, write and network access and
+  that the mod can type into the pane.
   Sessions belong to the calling mod (four per mod, sixteen in all), render
   only in views that mod owns or contributes to, and stop when it unloads. A
   focused `terminal` component receives keys; Ctrl+] leaves it.

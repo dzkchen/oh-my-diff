@@ -17,8 +17,8 @@
   "runtime_patches": [
     {
       "path": "runtime/patches/omd-0.159.1.patch",
-      "sha256": "85ca7229e48412a4c338bdf7d2892ba425d959b180ce6044b80f9e2e0a0a428f"
+      "sha256": "f2a5c2f0fca89546a1b33682b955979e08fb2db5331673ff35649c86ec33ac30"
     }
   ],
-  "compatibility_evidence": ".docs/audits/batch3d-edits-advisor-diagnostics-20260930.md"
+  "compatibility_evidence": ".docs/audits/batch3g-panes-intelligence-notes-20260930.md"
 }

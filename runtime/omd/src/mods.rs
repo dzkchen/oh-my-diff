@@ -3433,6 +3433,10 @@ impl ModHost {
         self.generation
     }
 
+    pub fn state(&self, id: &str) -> Option<&Value> {
+        self.loaded.get(id).map(|loaded| &loaded.state)
+    }
+
     pub fn configuration_sha256(&self) -> &str {
         &self.configuration_sha256
     }

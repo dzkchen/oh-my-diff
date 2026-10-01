@@ -178,6 +178,11 @@ class Host:
                 else:
                     path.write_bytes(data)
             return {"files": {name: digest(data) if data is not None else None for name, data in files.items()}}
+        if operation == "terminal.prompt":
+            return {"status": "accepted"}
+        if operation == "exec.run":
+            result = subprocess.run([arguments["program"], *arguments.get("argv", [])], cwd=self.repository, capture_output=True, text=True)
+            return {"exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr, "stdout_sha256": digest(result.stdout.encode())}
         raise AssertionError(f"unexpected host operation {operation}")
 
 
@@ -310,7 +315,79 @@ while True:
 """
 
 
+VIEW_SERVER = r"""
+import json, sys
+def send(message):
+    data = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(data) + data)
+    sys.stdout.buffer.flush()
+def span(line, start, end):
+    return {"start": {"line": line, "character": start}, "end": {"line": line, "character": end}}
+while True:
+    length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            sys.exit(0)
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            length = int(line.split(b":", 1)[1])
+    message = json.loads(sys.stdin.buffer.read(length))
+    method, params = message.get("method"), message.get("params", {})
+    reply = lambda result: send({"jsonrpc": "2.0", "id": message["id"], "result": result})
+    if method == "initialize":
+        reply({"capabilities": {"hoverProvider": True, "documentSymbolProvider": True, "documentFormattingProvider": True, "codeActionProvider": True}})
+    elif method == "textDocument/didOpen":
+        document = params["textDocument"]
+        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": document["uri"], "version": document["version"],
+              "diagnostics": [{"range": span(2, 4, 8), "severity": 1, "message": "size is unused"}]}})
+    elif method == "textDocument/hover":
+        reply({"contents": [{"language": "python", "value": "value: int"}, "Module constant"]})
+    elif method == "textDocument/documentSymbol":
+        reply([{"name": "Box", "kind": 5, "range": span(1, 0, 9), "selectionRange": span(1, 6, 9), "children": [{"name": "size", "kind": 8, "range": span(2, 4, 12), "selectionRange": span(2, 4, 8)}]}])
+    elif method == "textDocument/formatting":
+        reply([{"range": span(0, 0, 7), "newText": "value = 1"}])
+    elif method == "textDocument/codeAction":
+        uri = params["textDocument"]["uri"]
+        reply([{"title": "Rename Box", "kind": "quickfix", "edit": {"changes": {uri: [{"range": span(1, 6, 9), "newText": "Crate"}]}}}])
+"""
+
+
 class LspSyncModTest(unittest.TestCase):
+    def test_lsp_service_answers_through_the_running_server_and_confirms_edits(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "view_server.py"
+            server.write_text(VIEW_SERVER)
+            (repository / "box.py").write_text("value=1\nclass Box:\n    size = 2\n")
+            host = Host(repository, str(server))
+            state = None
+            try:
+                def query(**request):
+                    nonlocal state
+                    answered = run(node, "service", request, state, host, "omd.lsp.query")
+                    state = answered["state"]
+                    return answered["value"]
+                self.assertEqual(query(op="hover", path="box.py", line=1, character=1)["text"], "```python\nvalue: int\n```\n\nModule constant")
+                symbols = query(op="symbols", path="box.py")["items"]
+                self.assertEqual(symbols, [{"label": "class Box · 2", "value": "box.py:2"}, {"label": "  field size · 3", "value": "box.py:3"}])
+                self.assertEqual(query(op="diagnostics", path="box.py")["items"], [{"label": "box.py:3:5 size is unused", "value": "box.py:3"}])
+                self.assertEqual(query(op="format", path="box.py")["text"], "Formatted box.py")
+                self.assertEqual((repository / "box.py").read_text(), "value = 1\nclass Box:\n    size = 2\n")
+                actions = query(op="actions", path="box.py", line=2, character=1)
+                self.assertEqual((actions["action"], actions["items"]), ("apply", [{"label": "Rename Box", "value": "0:box.py"}]))
+                self.assertEqual(query(op="apply", path="box.py", index=0)["text"], "Applied: Rename Box")
+                self.assertEqual((repository / "box.py").read_text(), "value = 1\nclass Crate:\n    size = 2\n")
+                self.assertEqual(query(op="hover", path="../box.py", line=1, character=1)["status"], "error")
+                self.assertEqual(host.operations.count("process.start"), 1)
+            finally:
+                host.close()
+
     def test_post_edit_feedback_reports_only_introduced_and_resolved_errors(self):
         node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
         if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":

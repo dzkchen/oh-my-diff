@@ -1,6 +1,6 @@
 # omd_preview
 
-Opt-in first-party mod (`0.1.0-preview.1`, API `0.2.0-experimental.5`) that
+Opt-in first-party mod (`0.1.0-preview.2`, API `0.2.0-experimental.5`) that
 renders a response or a local Markdown, code or diff file as a themed HTML page
 and opens it in the browser.
 
@@ -28,16 +28,18 @@ or Mermaid 12.0.0 from jsDelivr with SRI hashes only when it uses them; offline,
 code stays plain and math and diagrams stay as source. The page follows the
 browser's light or dark theme.
 
-`--watch` records the file and asks the host to watch it; edits by the agent,
-commands or other programs re-render it, and the open page reloads every two
-seconds, keeping its scroll position. `--inline` shows Markdown, code and diffs
+`--watch` records the file and checks its hash every two seconds on a host
+timer, so edits by the agent, commands or other programs re-render it, also in
+gitignored directories such as `.omd/notes`; the open page reloads every two
+seconds, keeping its scroll position. `[[Note]]`, `[[Note|label]]` and
+`[[Note#heading]]` wiki links render as links to `Note.md` beside the file. `--inline` shows Markdown, code and diffs
 with the terminal's own components in a scrollable dialog (up to 40,000
 characters); images, math and diagrams render only in the browser. A declined
 or unavailable browser leaves the written path in the message.
 
 Capabilities: `commands`, `terminal`, `store`, `sessions` (reads responses
 through `thread/turns/list`), `exec` and `fs.write` (the renderer writes under
-`.omd/preview`), `fs.read`, `events` and `lifecycle` (file watches). There is
+`.omd/preview`), `fs.read`, `events` and `lifecycle` (the watch timer). There is
 no pandoc, puppeteer, LaTeX or PDF export, and the terminal does not show
 rendered page images.
 

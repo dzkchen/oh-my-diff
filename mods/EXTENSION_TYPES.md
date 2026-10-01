@@ -35,8 +35,8 @@ contains only the packages labeled `bundled` below.
 | `omd_verification_gate@0.2.0-preview.1` | `mod` | `mods/first-party/omd_verification_gate` | Registers an explicitly selected native workflow contract and asks the host to restrict delegation when an exact candidate enters final verification. |
 | `omd_logo@0.2.0-preview.1` | `mod` | `mods/first-party/omd_logo` | Draws the Oh My Diff wordmark and launch status into the terminal header from the read-only launch identity. |
 | `omd_model_picker@0.2.0-preview.1` | `mod` | `mods/first-party/omd_model_picker` | Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence. |
-| `omd_git@0.2.0-preview.1` | `mod` | `mods/first-party/omd_git` | Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations. |
-| `omd_lsp_sync@0.3.0-preview.1` | `mod` | `mods/first-party/omd_lsp_sync` | Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations. |
+| `omd_git@0.2.0-preview.2` | `mod` | `mods/first-party/omd_git` | Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations. |
+| `omd_lsp_sync@0.4.0-preview.1` | `mod` | `mods/first-party/omd_lsp_sync` | Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations; exports the omd.lsp query service for the code-intelligence view. |
 | `omd_advisor@0.3.0-preview.1` | `mod` | `mods/first-party/omd_advisor` | Owns on-demand, triggered and completed-turn advice, independent review prompts, typed result validation, deduplication and selected-context presentation through public accounted review primitives. |
 | `omd_research@0.2.0-preview.1` | `mod` | `mods/first-party/omd_research` | Owns lead-requested broad-research admission, bounded briefing and evidence validation using an explicitly granted read-only host worker preset. |
 | `omd_theme@0.3.0-candidate.1` | `mod` | `mods/first-party/omd_theme` | Composes live terminal palettes, backgrounds, composer appearance and greeting settings through public presentation APIs; installed inactive in OMD+. |
@@ -44,8 +44,11 @@ contains only the packages labeled `bundled` below.
 | `omd_programmable_context@0.1.0-preview.1` | `mod` | `mods/first-party/omd_programmable_context` | Owns the Python-facing context, child-agent and refinement API plus a versioned session harness in the model-bound request view; installed inactive in OMD+. |
 | `omd_plan_removal@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_removal` | Owns the plan-mode removal policy through public builtins controls (hidden /plan, disabled plan mode, turn-start clamp); installed inactive in OMD+. |
 | `omd_continue@0.1.0-preview.1` | `mod` | `mods/first-party/omd_continue` | Owns the user-typed /continue recovery prompt and a bounded summary built only from the host turn-activity ledger; installed inactive in OMD+. |
-| `omd_preview@0.1.0-preview.1` | `mod` | `mods/first-party/omd_preview` | Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+. |
+| `omd_preview@0.1.0-preview.2` | `mod` | `mods/first-party/omd_preview` | Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+. |
 | `omd_muse@0.1.0-preview.1` | `mod` | `mods/first-party/omd_muse` | Owns the Muse MSP client, approval relay and research tool over a host-approved provider service; installed inactive in OMD+. |
+| `omd_panes@0.1.0-preview.1` | `mod` | `mods/first-party/omd_panes` | Owns the pane layout, file tree, viewer and shell panes through public layout, terminal, PTY, workspace-transaction and thread-store primitives; installed inactive in OMD+. |
+| `omd_notes@0.1.0-preview.1` | `mod` | `mods/first-party/omd_notes` | Owns the notes vault view, wiki-link index, note commands, argument completion and opt-in agent tools; installed inactive in OMD+. |
+| `omd_lsp_view@0.1.0-preview.1` | `mod` | `mods/first-party/omd_lsp_view` | Owns the user-invoked code-intelligence view, its request hop and result navigation over the omd.lsp service; installed inactive in OMD+. |
 
 ## Author examples
 

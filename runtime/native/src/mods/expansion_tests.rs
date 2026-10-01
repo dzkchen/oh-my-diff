@@ -244,7 +244,18 @@ async fn channel_events_reach_subscribers_in_order() {
         assert_eq!(delivered["delivered"], 1);
     }
     assert!(delivery::publish(core, "herald", json!({"channel": "Bad Name", "data": 1})).is_err());
+    let revision = || {
+        codex_omd::ModViewSnapshot::read(&core.host.root.join("mod-view.json"))
+            .map(|snapshot| snapshot.revision)
+            .unwrap_or_default()
+    };
+    let before = revision();
     assert!(!delivery::deliver(core).await);
+    assert_eq!(
+        revision(),
+        before + 2,
+        "each state-changing delivery republishes the view"
+    );
     assert_eq!(
         command(core, "listener", "seen"),
         json!([["herald/ping", 1, 1], ["herald/ping", 2, {"n": 2}]])

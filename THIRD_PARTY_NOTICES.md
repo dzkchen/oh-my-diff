@@ -13,6 +13,7 @@ OMD first-party packages that port behavior from other projects credit them here
 | `omd-review-policy` simplify skill and `/simplify` | [pi-simplify](https://github.com/MattDevy/pi-extensions/tree/main/packages/pi-simplify) | Matt Devy | 0.2.3 | MIT | Command and review principles adapted; reimplemented over the OMD mod API |
 | `omd_claude_cli` | [pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge) | Eli Dickinson | 0.9.0 | MIT | Model catalog, context-window, thinking, effort, rate-limit and AskClaude behavior reimplemented over the OMD mod API |
 | `omd_muse` | [pi-muse-msp](https://github.com/jwise7/pi-muse-msp) | Jesse Wise | 0.2.4 | MIT | `muse serve` MSP client behavior ported; UUIDv7 command ids and durable-log recovery adapted |
+| `omd_panes`, `omd_notes`, `omd_lsp_view` with the `omd.lsp` service in `omd_lsp_sync` | [neoism](https://github.com/parkers0405/neoism) | Parker Settle and the Neoism contributors | main, 2026-09-29 | MIT | Pane, file-tree, editor code-intelligence and notes-vault behavior reimplemented over the OMD mod API; no code copied |
 
 ## pi-simplify
 
@@ -202,6 +203,32 @@ SOFTWARE.
 MIT License
 
 Copyright (c) 2026 Jesse Wise
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## neoism
+
+```text
+MIT License
+
+Copyright (c) 2026-present Parker Settle and the Neoism contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

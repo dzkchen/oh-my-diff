@@ -17,6 +17,8 @@ type State = {
   reason: string;
 };
 type Message = Record<string, Json>;
+type Item = { label: string; value: string };
+type Answer = { status: 'ready' | 'error'; message: string; items: Item[]; text: string | null; action: 'open' | 'apply' };
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
 const ADAPTERS: Record<Adapter, { candidates: { name: string; arguments: string[] }[] }> = {
@@ -221,6 +223,12 @@ const difference = (from: string[], minus: string[]) => {
   });
 };
 const OBSERVED_REPOSITORY_KEY = 'lsp.observed_repository';
+const SYMBOL_KINDS = ['file', 'module', 'namespace', 'package', 'class', 'method', 'property', 'field', 'constructor', 'enum', 'interface', 'function', 'variable', 'constant', 'string', 'number', 'boolean', 'array', 'object', 'key', 'null', 'enum member', 'struct', 'event', 'operator', 'type parameter'];
+const ITEM_LIMIT = 64;
+const hoverText = (value: Json): string => typeof value === 'string' ? value
+  : Array.isArray(value) ? value.map(hoverText).filter(Boolean).join('\n\n')
+    : object(value) && string(object(value)?.language ?? null) ? `\`\`\`${object(value)?.language}\n${string(object(value)?.value ?? null) ?? ''}\n\`\`\``
+      : string(object(value)?.value ?? null) ?? '';
 const serializedBytes = (value: unknown) => {
   const text = JSON.stringify(value) ?? '';
   let bytes = 0;
@@ -348,7 +356,7 @@ export default function activate(api: ModAPI) {
       rootUri,
       workspaceFolders: [{ uri: rootUri, name: repository.split('/').at(-1) ?? 'workspace' }],
       capabilities: {
-        textDocument: { publishDiagnostics: { versionSupport: true } },
+        textDocument: { publishDiagnostics: { versionSupport: true }, documentSymbol: { hierarchicalDocumentSymbolSupport: true } },
         workspace: { workspaceEdit: { documentChanges: true, resourceOperations: ['rename'] }, fileOperations: { willRename: true, didRename: true } },
       },
     });
@@ -788,6 +796,152 @@ export default function activate(api: ModAPI) {
     const result = { status: 'ready', adapter, path, source_sha256: source.sha256, source_version: s.documents[path].version, locations };
     return serializedBytes(result) > 32_768 ? fallback('server_locations_output_limit') : result;
   };
+  const prepare = (s: State, path: string, provider: string | null): Result<{ text: string; sha256: string }> => {
+    const started = initialize(s, s.repository);
+    if (!started.ok) return started;
+    const synced = synchronize(s, [path]);
+    if (!synced.ok) return synced;
+    const capability = provider && object(s.capabilities)?.[provider];
+    if (provider && capability !== true && !object(capability ?? null)) return { ok: false, error: `server_${provider}_unsupported` };
+    const read = budget({ paths: [path] }, argument => api.host.tryCall('workspace.read', argument));
+    if (!read.ok) return read;
+    const source = read.value.files[path];
+    return source && source.sha256 === s.documents[path]?.sha256 ? { ok: true, value: source } : { ok: false, error: 'source_stale' };
+  };
+  const confirm = (title: string, message: string) => {
+    const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title, message });
+    return answer.ok && answer.value.status === 'accepted';
+  };
+  const errors = (s: State, first: string | null): Item[] => Object.entries(s.diagnostics)
+    .sort(([a], [b]) => Number(b === first) - Number(a === first) || a.localeCompare(b))
+    .flatMap(([path, entry]) => entry.errors.map(error => ({ label: `${path}:${error}`, value: `${path}:${error.split(':')[0]}` })));
+  const run = (data: Record<string, Json>): Answer => {
+    const op = string(data.op ?? null) ?? '';
+    const path = string(data.path ?? null) ?? '';
+    const position = { line: (number(data.line ?? null) ?? 1) - 1, character: (number(data.character ?? null) ?? 1) - 1 };
+    const failed = (reason: string): Answer => ({ status: 'error', message: reason.replace(/_/g, ' '), items: [], text: null, action: 'open' });
+    const done = (items: Item[], text: string | null = null, action: Answer['action'] = 'open'): Answer =>
+      ({ status: 'ready', items: items.slice(0, ITEM_LIMIT), text, action, message: text || items.length ? '' : 'No results' });
+    if (op === 'workspace' || (op === 'diagnostics' && !path)) {
+      const items: Item[] = [];
+      for (const adapter of ORDER) {
+        const s = state(api.state.get(), adapter);
+        if (op === 'diagnostics') items.push(...errors(s, null));
+        else if (s.running && s.repository && initialize(s, s.repository).ok) {
+          const found = request(s, 'workspace/symbol', { query: string(data.query ?? null) ?? '' });
+          save(s);
+          for (const entry of found.ok && Array.isArray(found.value) ? found.value : []) {
+            const symbol = object(entry);
+            const location = object(symbol?.location ?? null);
+            const where = string(location?.uri ?? null) && pathFromUri(s.repository, String(location?.uri));
+            const line = number(object(object(location?.range ?? null)?.start ?? null)?.line ?? null) ?? 0;
+            if (where && string(symbol?.name ?? null)) items.push({ label: `${SYMBOL_KINDS[(number(symbol?.kind ?? null) ?? 1) - 1] ?? 'symbol'} ${symbol?.name} · ${where}:${line + 1}`, value: `${where}:${line + 1}` });
+          }
+        }
+      }
+      return op === 'workspace' && !ORDER.some(adapter => state(api.state.get(), adapter).running) ? failed('no language server is running yet; open or edit a supported file first') : done(items);
+    }
+    const adapter = adapterFor(path);
+    if (!adapter || !pathFromUri('/repository', uri('/repository', path))) return failed(`${path || 'this file'} has no supported language server`);
+    const s = state(api.state.get(), adapter);
+    if (!s.repository) {
+      const root = budget({ program: 'pwd', timeout_ms: 5_000 }, argument => api.host.tryCall('exec.run', argument));
+      const repository = root.ok && root.value.exit_code === 0 ? root.value.stdout.trim() : '';
+      const observed = repository ? observedRepository(repository, true) : { ok: false as const, error: 'repository_unavailable' };
+      if (!observed.ok || !observed.value) return failed(observed.ok ? 'repository_binding_mismatch' : observed.error);
+      s.repository = repository;
+      save(s);
+    }
+    if (op === 'definition' || op === 'references') {
+      const result = object(semantic(op, { path, ...position, include_declaration: true }));
+      if (result?.status !== 'ready') return failed(string(result?.reason ?? null) ?? 'server_unavailable');
+      return done((Array.isArray(result.locations) ? result.locations : []).map(entry => {
+        const location = object(entry);
+        const start = object(object(location?.range ?? null)?.start ?? null);
+        const where = `${location?.path}:${Number(start?.line ?? 0) + 1}`;
+        return { label: `${where}:${Number(start?.character ?? 0) + 1}`, value: where };
+      }));
+    }
+    const provider = { hover: 'hoverProvider', symbols: 'documentSymbolProvider', format: 'documentFormattingProvider', actions: null, diagnostics: null, apply: null }[op];
+    if (provider === undefined) return failed(`unknown request ${op}`);
+    const source = prepare(s, path, provider);
+    if (!source.ok) {
+      failure(s, source.error, true);
+      save(s);
+      return failed(source.error);
+    }
+    const document = { textDocument: { uri: uri(s.repository, path) } };
+    if (op === 'hover') {
+      const hover = request(s, 'textDocument/hover', { ...document, position });
+      save(s);
+      return hover.ok ? done([], hoverText(object(hover.value)?.contents ?? null).slice(0, 12_000) || 'No hover information here') : failed(hover.error);
+    }
+    if (op === 'symbols') {
+      const listed = request(s, 'textDocument/documentSymbol', document);
+      save(s);
+      if (!listed.ok) return failed(listed.error);
+      const items: Item[] = [];
+      const walk = (entries: Json, depth: number) => {
+        for (const entry of Array.isArray(entries) ? entries : []) {
+          const symbol = object(entry);
+          const range = object(symbol?.selectionRange ?? symbol?.range ?? object(symbol?.location ?? null)?.range ?? null);
+          const line = (number(object(range?.start ?? null)?.line ?? null) ?? 0) + 1;
+          if (symbol && items.length < ITEM_LIMIT) items.push({ label: `${'  '.repeat(depth)}${SYMBOL_KINDS[(number(symbol.kind ?? null) ?? 1) - 1] ?? 'symbol'} ${symbol.name} · ${line}`, value: `${path}:${line}` });
+          walk(symbol?.children ?? null, depth + 1);
+        }
+      };
+      walk(listed.value, 0);
+      return done(items);
+    }
+    if (op === 'diagnostics') {
+      for (let wait = 0; wait < 4 && !s.diagnostics[path]; wait++) {
+        const batch = exchange(s, [], 250);
+        if (!batch.ok || !settle(s, handle(s, batch.value)).ok) break;
+      }
+      save(s);
+      return done(errors(s, path));
+    }
+    if (op === 'actions') {
+      const text = source.value.text.split('\n')[position.line] ?? '';
+      const result = object(semantic('code_actions', { path, range: { start: { line: position.line, character: 0 }, end: { line: position.line, character: text.length } } }));
+      if (result?.status !== 'ready') return failed(string(result?.reason ?? null) ?? 'server_unavailable');
+      const actions = (Array.isArray(result.actions) ? result.actions : []).map(item => object(item));
+      return done(actions.map((action, index) => ({ label: `${action?.title}${action?.has_edit ? '' : ' (runs a server command; unsupported)'}`, value: `${index}:${path}` })), null, 'apply');
+    }
+    if (op === 'apply') {
+      const index = number(data.index ?? null) ?? -1;
+      const preview = s.preview;
+      const action = preview?.path === path && preview.actions[index] ? object(JSON.parse(preview.actions[index]) as Json) : null;
+      if (!action) return failed('list the code actions again');
+      if (action.edit === undefined || action.command !== undefined) return failed('only actions that are plain text edits can be applied');
+      const edit = textWorkspaceEdit(s.repository, action.edit);
+      if (!edit.ok) return failed(edit.error);
+      const scope = Object.keys(edit.value);
+      const stat = budget({ paths: scope, hash: true }, argument => api.host.tryCall('workspace.stat', argument));
+      if (!stat.ok) return failed(stat.error);
+      const expected = Object.fromEntries(scope.map(name => [name, stat.value.files[name]?.sha256 ?? '']));
+      if (!confirm('Apply code action', `${action.title}\nChanges ${scope.join(', ')}`)) return done([], 'Cancelled');
+      const applied = object(semanticEdit('apply_code_action', { path, source_sha256: source.value.sha256, range: preview?.range ?? null, action_index: index, title: action.title ?? null, scope, expected }));
+      return applied?.status === 'applied' ? done([], `Applied: ${action.title}`) : failed(string(applied?.reason ?? null) ?? 'apply_failed');
+    }
+    const formatted = request(s, 'textDocument/formatting', { ...document, options: { tabSize: adapter === 'typescript' ? 2 : 4, insertSpaces: true } });
+    if (!formatted.ok) {
+      save(s);
+      return failed(formatted.error);
+    }
+    const edits = Array.isArray(formatted.value) ? formatted.value : [];
+    if (!edits.length || rewrite(source.value.text, edits) === source.value.text) {
+      save(s);
+      return done([], `${path} is already formatted`);
+    }
+    if (!confirm('Format file', `Apply ${edits.length} formatting edits to ${path}`)) {
+      save(s);
+      return done([], 'Cancelled');
+    }
+    const applied = object(applyTextEdit(s, [path], { [path]: source.value.sha256 }, { changes: { [uri(s.repository, path)]: edits } }));
+    return applied?.status === 'applied' ? done([], `Formatted ${path}`) : failed(string(applied?.reason ?? null) ?? 'format_failed');
+  };
+  api.provide({ name: 'omd.lsp', version: '1.0.0', methods: { query: { input: 'object', output: 'object' } } }, { query: input => run(object(input) ?? {}) as unknown as Json });
   const pathProperty = { type: 'string' };
   const positionProperties = { path: pathProperty, line: { type: 'integer', minimum: 0 }, character: { type: 'integer', minimum: 0 } };
   const pointProperty = { type: 'object', properties: { line: { type: 'integer', minimum: 0 }, character: { type: 'integer', minimum: 0 } }, required: ['line', 'character'], additionalProperties: false };
