@@ -3,6 +3,8 @@ import type { Json, ModAPI, TerminalComponent } from '@oh-my-diff/mod-api';
 type Item = { label: string; value: string };
 type View = { title: string; status: 'working' | 'ready' | 'error'; message: string; items: Item[]; action: 'open' | 'apply'; text: string | null;
   excerpt: { path: string; line: number; start: number; lines: string[] } | null; pane: boolean; revision: number };
+type Server = { adapter: string; server: string | null; status: string; reason: string; documents: number; errors: string[] };
+type Saved = { view: View | null; servers: Server[] };
 
 const object = (value: Json | undefined): Record<string, Json> | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 const target = (value: string) => {
@@ -11,11 +13,12 @@ const target = (value: string) => {
 };
 
 export default function activate(api: ModAPI) {
-  const view = (): View | null => api.state.get() as unknown as View | null;
+  const saved = (): Saved => ({ view: null, servers: [], ...api.state.get() as unknown as Saved | null });
+  const view = () => saved().view;
   const show = (patch: Partial<View> | null) => {
-    const current = view();
-    api.state.set(patch === null ? null : { title: 'Code intelligence', status: 'ready', message: '', items: [], action: 'open', text: null, excerpt: null, pane: false,
-      ...current, ...patch, revision: (current?.revision ?? 0) + 1 } as unknown as Json);
+    const { view: current, servers } = saved();
+    api.state.set({ servers, view: patch === null ? null : { title: 'Code intelligence', status: 'ready', message: '', items: [], action: 'open', text: null, excerpt: null, pane: false,
+      ...current, ...patch, revision: (current?.revision ?? 0) + 1 } } as unknown as Json);
   };
   const USAGE = 'usage: /lsp hover|definition|references|actions PATH:LINE[:COL] | symbols|diagnostics|format PATH | diagnostics | workspace QUERY | pane | close';
   api.command('lsp', value => {
@@ -41,7 +44,9 @@ export default function activate(api: ModAPI) {
       const start = Math.max(1, line - 12);
       const read = api.host.tryCall('exec.run', { program: 'awk', argv: ['-v', `s=${start}`, '-v', `e=${line + 12}`, 'NR>=s && NR<=e { print substr($0, 1, 400) }', `./${path}`], timeout_ms: 5_000 });
       if (!read.ok || read.value.exit_code !== 0) return { display: `Cannot read ${path}` };
-      show({ excerpt: { path, line, start, lines: read.value.stdout.split('\n').slice(0, -1) } });
+      show({ excerpt: { path, line, start, lines: read.value.stdout.split('\n').slice(0, -1) }, status: 'working', message: '', items: [], action: 'open' });
+      const asked = api.host.tryCall('events.publish', { channel: 'request', data: { op: 'diagnostics', path } });
+      if (!asked.ok) show({ status: 'error', message: asked.error });
       return null;
     }
     const [index, applyPath] = op === 'apply' ? [Number(argument.split(':')[0]), argument.slice(argument.indexOf(':') + 1)] : [0, ''];
@@ -53,6 +58,10 @@ export default function activate(api: ModAPI) {
     return null;
   }, { description: 'Code intelligence from omd_lsp_sync language servers: hover, definition, references, symbols, diagnostics, code actions and formatting' });
   api.on('channel', event => {
+    if (event.publisher === 'omd_lsp_sync') {
+      api.state.set({ ...saved(), servers: Array.isArray(event.data) ? event.data.slice(0, 4) : [] } as unknown as Json);
+      return;
+    }
     const data = object(event.data);
     if (!event.channel.endsWith('/request') || !data) return;
     try {
@@ -63,17 +72,25 @@ export default function activate(api: ModAPI) {
     }
   });
   api.on('terminal', () => {
-    const current = view();
-    if (!current) return null;
+    const { view: current, servers } = saved();
+    const sidebar = servers.length ? { sidebar: { mode: 'wrap' as const, components: [{ type: 'pane' as const, id: 'omd_lsp_view_servers', label: 'Language servers', title: 'Language servers', children: servers.flatMap((entry, index): TerminalComponent[] => [
+      { type: 'text', id: `omd_lsp_view_server_${index}`, label: `${entry.adapter} language server`, text: entry.server ? `${entry.adapter} ${entry.server} · ${entry.documents} open · ${entry.errors.length} errors` : `${entry.adapter} ${entry.status}: ${entry.reason}`,
+        tone: entry.errors.length ? 'failure' : entry.status === 'stale' ? 'attention' : entry.server ? 'success' : 'muted' },
+      ...entry.errors.map((error, line): TerminalComponent => ({ type: 'text', id: `omd_lsp_view_server_${index}_${line}`, label: 'Diagnostic', text: `  ${error}`, tone: 'failure' })),
+    ]) }, { type: 'slot' as const }] } } : {};
+    if (!current) return servers.length ? { sites: sidebar } : null;
     const id = (name: string) => `omd_lsp_view_${name}_${current.revision}`;
     const excerpt = current.excerpt;
+    const own = excerpt ? current.items.filter(item => item.value.startsWith(`${excerpt.path}:`)) : [];
+    const where = excerpt && `${excerpt.path}:${excerpt.line} · ${current.status === 'working' ? 'checking diagnostics' : current.status === 'error' ? current.message : `${own.length} errors`}`;
     const components: TerminalComponent[] = [
-      { type: 'text', id: id('status'), label: 'Status', text: current.message || (current.excerpt ? `${current.excerpt.path}:${current.excerpt.line}` : `${current.items.length} results`), tone: current.status === 'error' ? 'failure' : current.status === 'working' ? 'muted' : 'normal' },
+      { type: 'text', id: id('status'), label: 'Status', text: where || current.message || `${current.items.length} results`, tone: current.status === 'error' ? 'failure' : current.status === 'working' ? 'muted' : 'normal' },
       ...(excerpt ? [
         { type: 'document' as const, id: id('excerpt'), label: excerpt.path, lines: excerpt.lines.map((text, index) => [{ text: `${String(excerpt.start + index).padStart(5)} `, tone: 'muted' as const }, { text }]), selected: { start: excerpt.line - excerpt.start, end: excerpt.line - excerpt.start } },
         { type: 'button' as const, id: id('pane_open'), label: 'Open in the viewer pane', text: 'Open in pane', action: { command: 'omd_panes:open', args: `${excerpt.path}:${excerpt.line}` } },
         { type: 'button' as const, id: id('editor'), label: 'Open in your editor', text: 'Open in editor', action: { command: 'omd_lsp_view:lsp', args: `editor ${excerpt.path}:${excerpt.line}` } },
         { type: 'button' as const, id: id('back'), label: 'Back to the results', text: 'Back', action: { command: 'omd_lsp_view:lsp', args: 'back' } },
+        ...(own.length ? [{ type: 'list' as const, id: id('errors'), label: 'Errors in this file, Enter jumps', height: 6, rows: own.map(item => ({ value: item.value, label: item.label, spans: [{ text: item.label, tone: 'failure' as const }] })), action: { command: 'omd_lsp_view:lsp', args: 'open' } }] : []),
       ] : [
         ...(current.text ? [{ type: 'pane' as const, id: id('text'), label: 'Details, scroll with arrows', children: [{ type: 'markdown' as const, id: id('markdown'), label: 'Details', text: current.text }] }] : []),
         ...(current.items.length ? [{ type: 'list' as const, id: id('items'), label: current.action === 'apply' ? 'Code actions, Enter applies' : 'Results, Enter jumps', height: 12,
@@ -82,7 +99,7 @@ export default function activate(api: ModAPI) {
       { type: 'button', id: id('mode'), label: current.pane ? 'Show as a popup' : 'Show in the omd_lsp_view/lsp pane', text: current.pane ? 'Popup' : 'Pin to pane', action: { command: 'omd_lsp_view:lsp', args: 'pane' } },
       { type: 'button', id: id('close'), label: 'Close code intelligence', text: 'Close', action: { command: 'omd_lsp_view:lsp', args: 'close' } },
     ];
-    return current.pane ? { sites: { 'omd_lsp_view/lsp': { mode: 'replace', components } } }
-      : { sites: { dialog: { mode: 'wrap', components: [{ type: 'dialog', id: 'omd_lsp_view_dialog', label: 'Code intelligence', title: current.title, children: components }, { type: 'slot' }] } } };
+    return current.pane ? { sites: { ...sidebar, 'omd_lsp_view/lsp': { mode: 'replace', components } } }
+      : { sites: { ...sidebar, dialog: { mode: 'wrap', components: [{ type: 'dialog', id: 'omd_lsp_view_dialog', label: 'Code intelligence', title: current.title, children: components }, { type: 'slot' }] } } };
   });
 }

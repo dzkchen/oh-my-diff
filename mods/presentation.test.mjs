@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 const runner = readFileSync(new URL('../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const surface = {
-  events: { terminal: 'terminal', list: 'terminal', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle' },
+  events: { terminal: 'terminal', list: 'terminal', channel: 'events', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle', idle: 'lifecycle', tool_result: 'lifecycle', agent_end: 'lifecycle', compaction_end: 'lifecycle' },
   replacements: ['terminal', 'list'], middleware: [], state: 'store', contracts: 'contracts',
 };
 const source = name => readFileSync(new URL(`./first-party/${name}/index.ts`, import.meta.url), 'utf8');
@@ -29,7 +29,8 @@ test('model and reasoning lists use bounded generic components', () => {
     { label: 'A', description: null, current: true, disabled: false, order: 0 },
     { label: 'B', description: 'Reasoning model', current: false, disabled: false, order: 1 },
   ] };
-  const output = run('omd_model_picker', { capabilities: ['terminal'], event: 'list', payload });
+  const capabilities = ['terminal', 'events', 'store'];
+  const output = run('omd_model_picker', { capabilities, event: 'list', payload });
   assert.deepEqual(output.registrations.replacements, ['list']);
   assert.equal(output.value[0].text, 'oh my diff · Model');
   assert.equal(output.value[1].type, 'list');
@@ -38,10 +39,14 @@ test('model and reasoning lists use bounded generic components', () => {
   assert.match(output.value[1].rows[0].spans[0].text, /current/);
   assert.equal(JSON.stringify(output.value).includes('Reasoning model'), false);
   assert.match(output.value[2].text, /enter/);
-  const wide = run('omd_model_picker', { capabilities: ['terminal'], event: 'list', payload: { ...payload, width: 100 } });
+  const wide = run('omd_model_picker', { capabilities, event: 'list', payload: { ...payload, width: 100 } });
   assert.match(wide.value[2].rows[1].spans[0].text, /Reasoning model/);
-  assert.equal(run('omd_model_picker', { capabilities: ['terminal'], event: 'list', payload: { ...payload, items: Array(201).fill(payload.items[0]) } }).value, null);
-  assert.equal(run('omd_model_picker', { capabilities: ['terminal'], event: 'list', payload: { ...payload, view_id: 'unknown' } }).value, null);
+  assert.equal(run('omd_model_picker', { capabilities, event: 'list', payload: { ...payload, items: Array(201).fill(payload.items[0]) } }).value, null);
+  assert.equal(run('omd_model_picker', { capabilities, event: 'list', payload: { ...payload, view_id: 'unknown' } }).value, null);
+  const profiles = { profiles: [{ name: 'work', model: 'work/gpt', billing: 'included_subscription', available: true }, { name: 'router', model: 'router/claude', billing: 'explicit_paid_api_grant', available: true }], current: 'work' };
+  const listed = run('omd_model_picker', { capabilities, event: 'list', payload, state: profiles }).value;
+  assert.deepEqual(listed.at(-2).action, { command: 'omd_profiles:profile', args: 'use' });
+  assert.deepEqual(listed.at(-2).rows.map(row => row.spans[0].text), ['work · work/gpt · current', 'router · router/claude · paid']);
 });
 
 test('logo follows host acceptance and installed identity without persistent task state', () => {

@@ -159,6 +159,7 @@ test('LSP mod synchronizes writes and applies versioned rename edits through pub
       case 'process.start': running = true; return { session: 'python', running: true };
       case 'process.status': return { session: 'python', running, idle_ms: idleMs };
       case 'process.stop': running = false; return { stopped: true };
+      case 'events.publish': return { delivered: 0, dropped: 0 };
       case 'workspace.read': return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
       case 'process.exchange': {
         const request = call.arguments.send?.find(message => message.method === 'initialize' || message.method === 'workspace/willRenameFiles');
@@ -213,9 +214,15 @@ test('LSP mod reports an absent server and leaves the write event recoverable', 
   const marker = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
   receipts.push({ call: marker.host_call, value: { revision: 1 } });
+  const leftover = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
+  assert.deepEqual(leftover.host_call, { operation: 'process.stop', arguments: { session: 'python' } });
+  receipts.push({ call: leftover.host_call, value: { stopped: false } });
   const discovery = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] } });
-  const absent = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts: [...receipts, { call: discovery.host_call, value: { found: [] } }] });
+  receipts.push({ call: discovery.host_call, value: { found: [] } });
+  const published = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
+  assert.equal(published.host_call.operation, 'events.publish');
+  const absent = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
   assert.equal(absent.error, undefined);
   assert.equal(absent.state.servers.python.status, 'fallback');
   assert.equal(absent.state.servers.python.reason, 'python_server_absent');
@@ -233,10 +240,15 @@ test('LSP mod retains pre-0.2 Python state when another adapter is first to upda
   const marker = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
   receipts.push({ call: marker.host_call, value: { revision: 1 } });
+  const leftover = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
+  assert.deepEqual(leftover.host_call, { operation: 'process.stop', arguments: { session: 'typescript' } });
+  receipts.push({ call: leftover.host_call, value: { stopped: false } });
   const discovery = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['typescript-language-server', 'vtsls'] } });
+  receipts.push({ call: discovery.host_call, value: { found: [] } });
+  const published = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   const absent = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state,
-    receipts: [...receipts, { call: discovery.host_call, value: { found: [] } }] });
+    receipts: [...receipts, { call: published.host_call, value: { delivered: 0, dropped: 0 } }] });
   assert.equal(absent.state.servers.python.documents['sample.py'].version, 2);
   assert.equal(absent.state.servers.python.server, 'pylsp');
   assert.equal(absent.state.servers.typescript.reason, 'typescript_server_absent');
@@ -266,6 +278,8 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
     }
     if (call.operation === 'process.which') return { found: call.arguments.names.filter(name => ['typescript-language-server', 'rust-analyzer', 'jdtls'].includes(name)).map(name => ({ name, path: `/bin/${name}`, sha256: `${name}-sha` })) };
     if (call.operation === 'process.start') { started.push(call.arguments); return { session: call.arguments.session, running: true }; }
+    if (call.operation === 'process.stop') return { stopped: false };
+    if (call.operation === 'events.publish') return { delivered: 0, dropped: 0 };
     if (call.operation === 'workspace.read') return { files: Object.fromEntries(call.arguments.paths.map(path => [path, files[path] ?? null])) };
     if (call.operation === 'process.exchange') {
       const request = call.arguments.send?.find(message => message.method === 'initialize');
@@ -278,7 +292,7 @@ test('LSP mod starts separate TypeScript, Rust, and Java adapters for mixed writ
   const payload = { repository, source: 'tool', call_id: 'mixed', status: 'observed', changes: Object.keys(files).map(path => ({ path, before: null, after: files[path].sha256 })) };
   const receipts = [];
   let result;
-  for (let index = 0; index < 28; index++) {
+  for (let index = 0; index < 32; index++) {
     result = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts, hook_budget_ms: 500 });
     assert.equal(result.error, undefined, result.error);
     if (!result.host_call) break;

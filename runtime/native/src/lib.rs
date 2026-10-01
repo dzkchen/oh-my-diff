@@ -63,9 +63,16 @@ pub(crate) struct Host {
     repository: PathBuf,
     repository_identity: String,
     config: HostConfig,
+    routes: std::sync::Mutex<RouteTable>,
     accounts: Arc<Accounts>,
     manager: Weak<ThreadManager>,
     epoch: u128,
+}
+
+struct RouteTable {
+    stamp: Option<(u64, std::time::SystemTime)>,
+    config: Arc<HostConfig>,
+    error: Option<String>,
 }
 
 pub(crate) struct Session {
@@ -137,10 +144,16 @@ pub fn install(
     {
         return Err("the mod store must be canonical and outside the repository".into());
     }
+    let stamp = host_config_stamp(&root);
     let config = HostConfig::load(&root, &repository)?;
     accounting::set_credential_root(root.clone());
     let host = Arc::new(Host {
         repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
+        routes: std::sync::Mutex::new(RouteTable {
+            stamp,
+            config: Arc::new(config.clone()),
+            error: None,
+        }),
         root,
         repository,
         config,
@@ -190,19 +203,62 @@ fn persist_view(directory: &std::path::Path, name: &str, bytes: &[u8]) -> Result
     persist(directory, name, bytes, false)
 }
 
+fn host_config_stamp(root: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
+    let metadata = std::fs::metadata(root.join(config::HOST_CONFIG)).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
+}
+
+fn request_route(route: &Route) -> accounting::RequestRoute {
+    accounting::RequestRoute {
+        name: route.name.clone(),
+        model: route.model.clone(),
+        provider: route.provider.clone(),
+        reasoning: serde_json::to_value(&route.reasoning_effort)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        rates: route.rates.clone(),
+        credential: route.credential.clone(),
+    }
+}
+
 impl Host {
+    fn route_config(&self) -> (Arc<HostConfig>, Option<String>) {
+        let stamp = host_config_stamp(&self.root);
+        let mut table = self
+            .routes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if table.stamp != stamp {
+            match HostConfig::load(&self.root, &self.repository) {
+                Ok(config) => {
+                    table.config = Arc::new(config);
+                    table.error = None;
+                }
+                Err(error) => table.error = Some(error),
+            }
+            table.stamp = stamp;
+        }
+        (table.config.clone(), table.error.clone())
+    }
+
     fn persist_json(&self, name: &str, value: &impl Serialize) -> Result<(), String> {
         let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
         persist_view(&self.root, name, &bytes)
     }
 
-    fn lead_route(&self, config: &Config) -> Option<&Route> {
-        self.config.routes.iter().find(|route| {
-            route.roles.contains(&config::RouteRole::Lead)
-                && config.model.as_deref() == Some(route.model.as_str())
-                && config.model_provider_id == route.provider
-                && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
-        })
+    fn lead_route(&self, config: &Config) -> Option<Route> {
+        self.route_config()
+            .0
+            .routes
+            .iter()
+            .find(|route| {
+                route.roles.contains(&config::RouteRole::Lead)
+                    && config.model.as_deref() == Some(route.model.as_str())
+                    && config.model_provider_id == route.provider
+                    && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
+            })
+            .cloned()
     }
 
     fn protected_paths(&self) -> Vec<PathBuf> {
@@ -288,7 +344,8 @@ impl Host {
             (None, None) => return Err("enrollment_requires_route_or_config".into()),
         };
         let lead_routes = self
-            .config
+            .route_config()
+            .0
             .routes
             .iter()
             .filter(|candidate| {
@@ -296,17 +353,7 @@ impl Host {
                     && candidate.roles.contains(&config::RouteRole::Lead)
                     && candidate.provider == provider
             })
-            .map(|candidate| accounting::RequestRoute {
-                name: candidate.name.clone(),
-                model: candidate.model.clone(),
-                provider: candidate.provider.clone(),
-                reasoning: serde_json::to_value(&candidate.reasoning_effort)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_owned))
-                    .unwrap_or_default(),
-                rates: candidate.rates.clone(),
-                credential: candidate.credential.clone(),
-            })
+            .map(request_route)
             .collect::<Vec<_>>();
         if owner == "lead" && route.is_some() {
             session

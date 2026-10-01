@@ -1,0 +1,40 @@
+# Account and provider profiles
+
+`omd_profiles` switches one OMD+ session between ChatGPT subscription accounts, OpenAI API keys and OpenAI- or Anthropic-compatible providers (OpenRouter, local endpoints) without restarting. It is installed inactive in OMD+ and can be installed explicitly in OMD Core.
+
+```text
+/profile add chatgpt work                 # native ChatGPT sign-in for another account
+/profile add api_key openai-key           # masked OpenAI API key entry
+/profile add provider openrouter openrouter   # masked key for another provider
+```
+
+```sh
+omd-package profiles --setup --add work --credential work --protocol responses \
+  --url https://chatgpt.com/backend-api/codex/responses --upstream-model gpt-6.1-sol
+omd-package profiles --setup --add router --credential openrouter --protocol chat \
+  --url https://openrouter.ai/api/v1/chat/completions --upstream-model anthropic/claude-sonnet-5 \
+  --window 200000 --paid 3:15 --allowance 5
+omd-package profiles --setup --remove router
+omd-package profiles [--model work] [codex args]   # launch with the profiles provider
+```
+
+```text
+/profile                 # profiles, billing, credential and the current one
+/profile use router      # applies at the next request; paid profiles ask first
+/profile refresh work    # native token refresh
+/profile remove work     # native credential removal
+```
+
+How it works:
+
+- Credentials are enrolled, refreshed and removed by the host's native flows (`credentials.request`); the mod never sees a token. Each profile is a `host.json` lead route on the `omd_profiles` provider that names its credential, so the host puts that account's token on each request.
+- Setup writes the route, a Codex catalog entry (the bundled entry when the upstream model is a Codex model, otherwise `--window` is required) and the router table. The host rereads `host.json` routes, so a profile added while a session runs can be selected there with `/profile use`; the `/model` list shows new profiles after the next launch.
+- `/profile use` (or the Profiles list in the compact `/model` picker) calls `routes.select` for the thread. The switch happens at the next request: the thread, attachments and tool history stay, and an interrupted stream finishes on the old profile.
+- The router (a loopback Responses provider started with `providers.register`) forwards `responses` profiles unchanged and adapts `chat` (Chat Completions) and `anthropic` (Messages) profiles: tools become JSON-schema functions (freeform tools take an `input` string), images pass through, developer messages after the first turn become user text, and usage maps back for the ledger. It sees the injected token only to forward it.
+- Paid profiles need `--paid INPUT_USD:OUTPUT_USD` per million tokens and a host allowance (`--allowance USD`); the host admits and records each request against it. ChatGPT profiles are included subscription usage and report no charge.
+
+Recovery: the session needs the enabled mod because its provider is the router. If the mod is disabled or broken, requests fail with the provider error; re-enable it (`/mods enable omd_profiles`) or start a plain `codex` session. Removing a credential stops the profiles that use it at their next request; rerun setup with `--remove` to drop them. A forked or new thread starts on the launch profile; the router rejects a thread larger than a profile's window with `context_length_exceeded` before calling the provider.
+
+Limitations: reasoning items are dropped when a thread moves to another profile (their encrypted content belongs to the account that produced it) and are never sent to `chat` or `anthropic` profiles; hosted tools (web search, tool search) are dropped for those protocols; a smaller context window is the new profile's catalog value, and Codex compacts against the window it launched with. Providers that omit usage are recorded from a 4-bytes-per-token estimate (`omd_usage_estimated`). The Claude CLI and Muse routes are separate providers and stay separate launches (`omd-package claude`, `omd-package muse`); a thread cannot switch between providers. Live evidence is two ChatGPT subscription requests through the router, the second resuming the same thread on another profile; in-session `/profile use`, OpenAI API, OpenRouter, other Chat Completions and Anthropic-compatible routes are covered by mock-protocol tests and are unverified.
+
+Inspired by [Crush](https://github.com/charmbracelet/crush) provider setup and session model switching; no code copied.

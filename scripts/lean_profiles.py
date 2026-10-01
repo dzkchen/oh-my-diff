@@ -31,7 +31,7 @@ DEFAULT_ACTIVE = ("omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "
 PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods")
 HOST_TOOLS = ("omd", "omd-contract")
-ROUTES = {"claude": "omd_claude_cli", "muse": "omd_muse"}
+ROUTES = {"claude": "omd_claude_cli", "muse": "omd_muse", "profiles": "omd_profiles"}
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
                     "scripts/preview_lock.py",
@@ -331,8 +331,10 @@ def route(prefix, bin_dir, name, args):
         raise ValueError(f"the {name} route is available only in OMD+")
     if args.setup:
         setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
-        result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"),
-                                 str(args.path or "")], capture_output=True, text=True)
+        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
+                            "remove": args.remove, "allowance": args.allowance}) if name == "profiles" else str(args.path or "")
+        result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra],
+                                capture_output=True, text=True)
         if result.returncode:
             raise ValueError(result.stderr.strip() or f"{name} setup failed")
         details = json.loads(result.stdout)
@@ -618,6 +620,10 @@ def main():
         route_parser.add_argument("--setup", action="store_true")
         route_parser.add_argument(f"--{name}", dest="path", type=Path, help=f"{name} CLI path for --setup")
         route_parser.add_argument("--model", help="model slug or family shortcut")
+        if name == "profiles":
+            for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "paid", "allowance"):
+                route_parser.add_argument(f"--{flag}")
+            route_parser.add_argument("--reasoning", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
     commands.add_parser("uninstall")
     args = parser.parse_args()

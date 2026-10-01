@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "id": "omd_lsp_view",
-  "version": "0.1.0-preview.1",
+  "version": "0.2.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Hover, definition, references, symbols, diagnostics, code actions and formatting from the omd_lsp_sync language servers",
   "license": "Apache-2.0",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_lsp_view"},
   "capabilities": ["commands", "terminal", "store", "events", "exec", "services"],
-  "subscriptions": {"channels": ["omd_lsp_view/*"]},
+  "subscriptions": {"channels": ["omd_lsp_view/*", "omd_lsp_sync/status"]},
   "compatibility": {"required_features": ["events_v1", "exec_v1", "service_dispatch_v1", "terminal_surface_v1", "terminal_editor_v1"]},
   "services": {"imports": [{"name": "omd.lsp", "version": "1.0.0"}]}
 }

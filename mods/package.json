@@ -39,7 +39,7 @@
     "examples/snapshot_review"
   ],
   "scripts": {
-    "test": "node --test runner.test.mjs presentation.test.mjs first-party/omd_theme/theme.test.mjs first-party/omd_checks/checks.test.mjs first-party/omd_graph_navigator/navigator.test.mjs first-party/omd_task_tools/task_tools.test.mjs first-party/omd_repository_analysis/analysis.test.mjs first-party/omd_source_knowledge/knowledge.test.mjs first-party/omd_guideline_governance/governance.test.mjs first-party/omd_project_pi_prompts/prompts.test.mjs first-party/omd_reactive_rules/reactive.test.mjs first-party/omd_programmable_context/context.test.mjs first-party/omd_continue/continue.test.mjs first-party/omd_mods/mods.test.mjs first-party/omd_frecency/frecency.test.mjs first-party/omd_plan_panel/plan.test.mjs ../tests/*.test.mjs",
+    "test": "node --test runner.test.mjs presentation.test.mjs first-party/omd_theme/theme.test.mjs first-party/omd_checks/checks.test.mjs first-party/omd_graph_navigator/navigator.test.mjs first-party/omd_task_tools/task_tools.test.mjs first-party/omd_repository_analysis/analysis.test.mjs first-party/omd_source_knowledge/knowledge.test.mjs first-party/omd_guideline_governance/governance.test.mjs first-party/omd_project_pi_prompts/prompts.test.mjs first-party/omd_reactive_rules/reactive.test.mjs first-party/omd_programmable_context/context.test.mjs first-party/omd_continue/continue.test.mjs first-party/omd_mods/mods.test.mjs first-party/omd_frecency/frecency.test.mjs first-party/omd_plan_panel/plan.test.mjs first-party/omd_profiles/profiles.test.mjs ../tests/*.test.mjs",
     "check": "tsc -p tsconfig.json",
     "package": "pnpm pack --pack-destination dist"
   },

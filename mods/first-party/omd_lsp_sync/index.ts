@@ -210,6 +210,7 @@ const SILENT_WAITS = 10;
 const IDLE_STOP_MS = 15 * 60_000;
 const DIAGNOSTIC_WAITS = 8;
 const FEEDBACK_BYTES = 4000;
+const VIEW = /^\s*(?:cat|nl|head|tail|bat|less|sed\s+-n)(?:\s|$)/;
 const MENTION = /[\w@+.\/-]+\.(?:pyi?|[cm]?[jt]sx?|rs|java)\b/g;
 const READ_ONLY_TOOLS = new Set(['update_plan', 'view_image', 'tool_search', 'request_user_input', 'list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource', 'list_agents', 'get_context_remaining']);
 const strings = (value: Json): string[] => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
@@ -256,11 +257,22 @@ export default function activate(api: ModAPI) {
     return result;
   };
   const stopServer = (s: State) => budget({ session: s.adapter }, argument => api.host.tryCall('process.stop', argument));
+  const readFiles = (paths: string[]) => budget({ paths }, argument => api.host.tryCall('workspace.read', argument));
+  let dirty = false;
   const save = (s: State) => {
     const root = object(api.state.get()) ?? {};
     const existing = object(root.servers ?? null);
     const prior = existing ?? (string(root.repository ?? null) ? { python: state(api.state.get(), 'python') as unknown as Json } : {});
     api.state.set({ servers: { ...prior, [s.adapter]: s as unknown as Json } });
+    dirty = true;
+  };
+  const announce = <T>(value: T): T => {
+    if (!dirty) return value;
+    dirty = false;
+    const data = ORDER.map(adapter => state(api.state.get(), adapter)).filter(s => s.status !== 'idle' || s.running).map(s => ({ adapter: s.adapter, server: s.running ? s.server : null, status: s.status, reason: s.reason, documents: Object.keys(s.documents).length,
+      errors: Object.entries(s.diagnostics).flatMap(([path, entry]) => entry.errors.slice(0, 3).map(error => `${path}:${error}`)).slice(0, 6) }));
+    budget({ channel: 'status', data }, argument => api.host.tryCall('events.publish', argument));
+    return value;
   };
   const exchange = (s: State, outgoing: Json[], wait_ms: number): Result<Message[]> => {
     const result = budget({ session: s.adapter, send: outgoing, wait_ms }, argument => api.host.tryCall('process.exchange', argument));
@@ -330,6 +342,7 @@ export default function activate(api: ModAPI) {
       const status = budget({ session: s.adapter }, argument => api.host.tryCall('process.status', argument));
       if (status.ok && status.value.running) return { ok: true, value: false };
     }
+    stopServer(s);
     s.running = false;
     s.server = null;
     s.repository = repository;
@@ -389,7 +402,7 @@ export default function activate(api: ModAPI) {
     for (let index = 0; index < selected.length; index += 16) {
       const chunk = selected.slice(index, index + 16);
       if (spent > BYTE_BUDGET / 2) return { ok: false, error: 'callback_budget' };
-      const read = budget({ paths: chunk }, argument => api.host.tryCall('workspace.read', argument));
+      const read = readFiles(chunk);
       if (!read.ok) return read;
       const tracked = new Set(Object.keys(s.documents));
       for (const path of chunk) {
@@ -476,6 +489,7 @@ export default function activate(api: ModAPI) {
       else { s.status = 'synced'; s.reason = ''; }
       save(s);
     }
+    announce(0);
   });
   api.on('workspace_pre_rename', event => {
     const fallback = (reason: string) => ({ status: 'fallback' as const, reason });
@@ -489,7 +503,7 @@ export default function activate(api: ModAPI) {
     const provider = object(object(s.capabilities)?.workspace ?? null);
     const operations = object(provider?.fileOperations ?? null);
     if (!operations?.willRename) { save(s); return fallback('server_will_rename_unsupported'); }
-    const before = budget({ paths: [event.old, event.new] }, argument => api.host.tryCall('workspace.read', argument));
+    const before = readFiles([event.old, event.new]);
     if (!before.ok) { failure(s, before.error, true); save(s); return fallback(before.error); }
     if (before.value.files[event.old]?.sha256 !== event.expected[event.old] || before.value.files[event.new] !== null) { failure(s, 'rename_input_stale', true); save(s); return fallback('rename_input_stale'); }
     const response = request(s, 'workspace/willRenameFiles', { files: [{ oldUri: uri(s.repository, event.old), newUri: uri(s.repository, event.new) }] });
@@ -498,7 +512,7 @@ export default function activate(api: ModAPI) {
     if (!parsed.ok) { failure(s, parsed.error); save(s); return fallback(parsed.error); }
     const paths = Object.keys(parsed.value);
     if (paths.length > 126 || paths.includes(event.new)) { save(s); return fallback('server_rename_scope_invalid'); }
-    const read = paths.length ? budget({ paths }, argument => api.host.tryCall('workspace.read', argument)) : null;
+    const read = paths.length ? readFiles(paths) : null;
     if (read && !read.ok) { failure(s, read.error, true); save(s); return fallback(read.error); }
     const expected: Record<string, string | null> = { [event.old]: event.expected[event.old], [event.new]: null };
     const writes: Record<string, string> = {};
@@ -517,31 +531,56 @@ export default function activate(api: ModAPI) {
     save(s);
     return { status: 'ready' as const, expected, writes };
   });
-  api.on('tool_output', event => {
-    if (READ_ONLY_TOOLS.has(event.tool)) return null;
-    const mentioned = event.tool === 'apply_patch' ? strings(event.arguments).join('\n').match(MENTION) ?? [] : [];
+  const appended = (report: string[]) => {
+    if (!report.length) return null;
+    let text = `Language-server errors after this call:\n${report.join('\n')}`;
+    while (serializedBytes(text) > FEEDBACK_BYTES) text = text.slice(0, Math.floor(text.length * 0.9));
+    return { append: text };
+  };
+  api.on('tool_output', event => announce(appended(feedback(event))));
+  const feedback = (event: { tool: string; arguments: Json; success: boolean }): string[] => {
+    const report: string[] = [];
+    if (READ_ONLY_TOOLS.has(event.tool)) return report;
+    const texts = strings(event.arguments);
+    const viewing = event.success && event.tool !== 'apply_patch' && texts.some(text => VIEW.test(text));
+    const mentioned = event.tool === 'apply_patch' || viewing ? texts.join('\n').match(MENTION) ?? [] : [];
+    let observed: string | undefined;
     const work = ORDER.flatMap(adapter => {
       const s = state(api.state.get(), adapter);
-      if (!s.running || !s.repository) return [];
+      const lazy = viewing && !s.running && mentioned.some(path => adapterFor(path) === adapter);
+      if (lazy && !s.repository) {
+        const read = observed === undefined ? budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const }, argument => api.host.tryCall('store.get', argument)) : null;
+        if (read) observed = read.ok ? string(object(read.value?.value ?? null)?.repository ?? null) ?? '' : '';
+        s.repository = observed ?? '';
+      }
       const named = mentioned.map(path => path.startsWith(`${s.repository}/`) ? path.slice(s.repository.length + 1) : path.replace(/^\.\//, '')).filter(path => adapterFor(path) === adapter && pathFromUri(s.repository, uri(s.repository, path)));
-      const candidates = [...new Set([...Object.keys(s.documents), ...named])].slice(0, 128);
-      return candidates.length ? [{ adapter, candidates }] : [];
+      let previous: string[] = [];
+      if (lazy && s.repository && named.length) {
+        const reason = s.reason;
+        previous = Object.keys(s.documents);
+        const started = initialize(s, s.repository);
+        if (!started.ok) failure(s, started.error);
+        save(s);
+        if (!started.ok && reason !== s.reason) report.push(`${adapter} language server unavailable: ${s.reason}`);
+      }
+      const candidates = [...new Set([...Object.keys(s.documents), ...named, ...previous])].slice(0, 128);
+      return s.running && s.repository && candidates.length ? [{ adapter, candidates, named }] : [];
     });
-    if (!work.length) return null;
+    if (!work.length) return report;
     const stat = budget({ paths: [...new Set(work.flatMap(item => item.candidates))], hash: true }, argument => api.host.tryCall('workspace.stat', argument));
-    if (!stat.ok) return null;
-    const report: string[] = [];
-    for (const { adapter, candidates } of work) {
+    if (!stat.ok) return report;
+    for (const { adapter, candidates, named } of work) {
       const s = state(api.state.get(), adapter);
       const changed = candidates.filter(path => stat.value.files[path]?.kind === 'file' ? stat.value.files[path]?.sha256 !== s.documents[path]?.sha256 : Boolean(s.documents[path]));
       if (!changed.length) continue;
       const edited = changed.filter(path => s.documents[path] && stat.value.files[path]);
+      const opened = viewing ? changed.filter(path => !s.documents[path] && stat.value.files[path] && named.includes(path)) : [];
       const pending = exchange(s, [], 0);
       if (pending.ok) settle(s, handle(s, pending.value));
       const before = Object.fromEntries(Object.entries(s.diagnostics).map(([path, entry]) => [path, entry.errors]));
       const synced = synchronize(s, changed);
       if (!synced.ok) { failure(s, synced.error, true); save(s); continue; }
-      for (let wait = 0; wait < DIAGNOSTIC_WAITS && edited.some(path => !s.diagnostics[path]); wait++) {
+      for (let wait = 0; wait < DIAGNOSTIC_WAITS && [...edited, ...opened].some(path => !s.diagnostics[path]); wait++) {
         const batch = exchange(s, [], 250);
         const settled = batch.ok ? settle(s, handle(s, batch.value)) : batch;
         if (!settled.ok) break;
@@ -555,15 +594,16 @@ export default function activate(api: ModAPI) {
         if (!introduced.length && !resolved.length) continue;
         report.push(`${path}${edited.includes(path) ? '' : ' (dependent)'}: ${introduced.length} new, ${resolved.length} resolved`, ...introduced.slice(0, 8).map(entry => `  + ${entry}`), ...resolved.slice(0, 8).map(entry => `  - ${entry}`));
       }
+      for (const path of opened) {
+        const errors = s.diagnostics[path]?.errors;
+        if (errors?.length) report.push(`${path}: ${errors.length} existing (v${s.documents[path].version})`, ...errors.slice(0, 8).map(entry => `  ${entry}`));
+      }
       s.status = 'synced';
       s.reason = '';
       save(s);
     }
-    if (!report.length) return null;
-    let text = `Language-server errors after this call:\n${report.join('\n')}`;
-    while (serializedBytes(text) > FEEDBACK_BYTES) text = text.slice(0, Math.floor(text.length * 0.9));
-    return { append: text };
-  });
+    return report;
+  };
   api.on('turn_start', () => {
     for (const adapter of ORDER) {
       const s = state(api.state.get(), adapter);
@@ -581,6 +621,7 @@ export default function activate(api: ModAPI) {
       }
       save(s);
     }
+    announce(0);
   });
   api.on('idle', () => {
     for (const adapter of ORDER) {
@@ -593,6 +634,7 @@ export default function activate(api: ModAPI) {
       s.status = 'idle';
       save(s);
     }
+    announce(0);
   });
   api.on('stop', () => {
     for (const adapter of ORDER) {
@@ -609,7 +651,7 @@ export default function activate(api: ModAPI) {
     if (!parsed.ok) return fallback(parsed.error);
     const paths = Object.keys(parsed.value);
     if (paths.length !== scope.length || paths.some(path => !scope.includes(path))) return fallback('server_edit_scope_mismatch');
-    const read = budget({ paths: scope }, argument => api.host.tryCall('workspace.read', argument));
+    const read = readFiles(scope);
     if (!read.ok) return fallback(read.error, true);
     const writes: Record<string, string> = {};
     for (const path of scope) {
@@ -668,7 +710,7 @@ export default function activate(api: ModAPI) {
     if (!started.ok) return fallback(started.error);
     const synced = synchronize(s, [...new Set([path, ...scope])]);
     if (!synced.ok) return fallback(synced.error, true);
-    const source = budget({ paths: [path] }, argument => api.host.tryCall('workspace.read', argument));
+    const source = readFiles([path]);
     if (!source.ok) return fallback(source.error, true);
     const file = source.value.files[path];
     if (!file || file.sha256 !== s.documents[path]?.sha256 || file.sha256 !== input?.source_sha256) return fallback('source_stale', true);
@@ -727,7 +769,7 @@ export default function activate(api: ModAPI) {
     if (!synced.ok) return fallback(synced.error, true);
     const capability = object(s.capabilities)?.[kind === 'definition' ? 'definitionProvider' : kind === 'references' ? 'referencesProvider' : 'codeActionProvider'];
     if (capability !== true && !object(capability ?? null)) return fallback(`server_${kind}_unsupported`);
-    const before = budget({ paths: [path] }, argument => api.host.tryCall('workspace.read', argument));
+    const before = readFiles([path]);
     if (!before.ok) return fallback(before.error, true);
     const source = before.value.files[path];
     if (!source || source.sha256 !== s.documents[path]?.sha256) return fallback('source_stale', true);
@@ -757,7 +799,7 @@ export default function activate(api: ModAPI) {
         if (!title || title.length > 512 || (action?.kind !== undefined && (!actionKind || actionKind.length > 128))) return fallback('server_code_actions_invalid');
         listed.push({ title, kind: actionKind, has_edit: action?.edit !== undefined, has_command: action?.command !== undefined, disabled: action?.disabled !== undefined });
       }
-      const after = budget({ paths: [path] }, argument => api.host.tryCall('workspace.read', argument));
+      const after = readFiles([path]);
       if (!after.ok || after.value.files[path]?.sha256 !== source.sha256) return fallback('source_stale', true);
       const result = { status: 'ready', adapter, path, source_sha256: source.sha256, source_version: s.documents[path].version, actions: listed, application: 'exact_scope_text_edits_only' };
       if (serializedBytes(result) > 32_768) return fallback('server_code_actions_output_limit');
@@ -785,7 +827,7 @@ export default function activate(api: ModAPI) {
     const names = [...new Set([path, ...targets.map(target => target.path)])];
     const files: Record<string, { text: string; sha256: string } | null> = {};
     for (let index = 0; index < names.length; index += 16) {
-      const read = budget({ paths: names.slice(index, index + 16) }, argument => api.host.tryCall('workspace.read', argument));
+      const read = readFiles(names.slice(index, index + 16));
       if (!read.ok) return fallback(read.error, true);
       Object.assign(files, read.value.files);
     }
@@ -809,7 +851,7 @@ export default function activate(api: ModAPI) {
     if (!synced.ok) return synced;
     const capability = provider && object(s.capabilities)?.[provider];
     if (provider && capability !== true && !object(capability ?? null)) return { ok: false, error: `server_${provider}_unsupported` };
-    const read = budget({ paths: [path] }, argument => api.host.tryCall('workspace.read', argument));
+    const read = readFiles([path]);
     if (!read.ok) return read;
     const source = read.value.files[path];
     return source && source.sha256 === s.documents[path]?.sha256 ? { ok: true, value: source } : { ok: false, error: 'source_stale' };
@@ -947,7 +989,7 @@ export default function activate(api: ModAPI) {
     const applied = object(applyTextEdit(s, [path], { [path]: source.value.sha256 }, { changes: { [uri(s.repository, path)]: edits } }));
     return applied?.status === 'applied' ? done([], `Formatted ${path}`) : failed(string(applied?.reason ?? null) ?? 'format_failed');
   };
-  api.provide({ name: 'omd.lsp', version: '1.0.0', methods: { query: { input: 'object', output: 'object' } } }, { query: input => run(object(input) ?? {}) as unknown as Json });
+  api.provide({ name: 'omd.lsp', version: '1.0.0', methods: { query: { input: 'object', output: 'object' } } }, { query: input => announce(run(object(input) ?? {})) as unknown as Json });
   const pathProperty = { type: 'string' };
   const positionProperties = { path: pathProperty, line: { type: 'integer', minimum: 0 }, character: { type: 'integer', minimum: 0 } };
   const pointProperty = { type: 'object', properties: { line: { type: 'integer', minimum: 0 }, character: { type: 'integer', minimum: 0 } }, required: ['line', 'character'], additionalProperties: false };

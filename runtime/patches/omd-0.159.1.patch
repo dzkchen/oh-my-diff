@@ -16453,10 +16453,10 @@ index 000000000..e69c3124f
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..8602756f0
+index 000000000..a39f433e3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,540 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -16522,9 +16522,16 @@ index 000000000..8602756f0
 +    repository: PathBuf,
 +    repository_identity: String,
 +    config: HostConfig,
++    routes: std::sync::Mutex<RouteTable>,
 +    accounts: Arc<Accounts>,
 +    manager: Weak<ThreadManager>,
 +    epoch: u128,
++}
++
++struct RouteTable {
++    stamp: Option<(u64, std::time::SystemTime)>,
++    config: Arc<HostConfig>,
++    error: Option<String>,
 +}
 +
 +pub(crate) struct Session {
@@ -16596,10 +16603,16 @@ index 000000000..8602756f0
 +    {
 +        return Err("the mod store must be canonical and outside the repository".into());
 +    }
++    let stamp = host_config_stamp(&root);
 +    let config = HostConfig::load(&root, &repository)?;
 +    accounting::set_credential_root(root.clone());
 +    let host = Arc::new(Host {
 +        repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
++        routes: std::sync::Mutex::new(RouteTable {
++            stamp,
++            config: Arc::new(config.clone()),
++            error: None,
++        }),
 +        root,
 +        repository,
 +        config,
@@ -16649,19 +16662,62 @@ index 000000000..8602756f0
 +    persist(directory, name, bytes, false)
 +}
 +
++fn host_config_stamp(root: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
++    let metadata = std::fs::metadata(root.join(config::HOST_CONFIG)).ok()?;
++    Some((metadata.len(), metadata.modified().ok()?))
++}
++
++fn request_route(route: &Route) -> accounting::RequestRoute {
++    accounting::RequestRoute {
++        name: route.name.clone(),
++        model: route.model.clone(),
++        provider: route.provider.clone(),
++        reasoning: serde_json::to_value(&route.reasoning_effort)
++            .ok()
++            .and_then(|value| value.as_str().map(str::to_owned))
++            .unwrap_or_default(),
++        rates: route.rates.clone(),
++        credential: route.credential.clone(),
++    }
++}
++
 +impl Host {
++    fn route_config(&self) -> (Arc<HostConfig>, Option<String>) {
++        let stamp = host_config_stamp(&self.root);
++        let mut table = self
++            .routes
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        if table.stamp != stamp {
++            match HostConfig::load(&self.root, &self.repository) {
++                Ok(config) => {
++                    table.config = Arc::new(config);
++                    table.error = None;
++                }
++                Err(error) => table.error = Some(error),
++            }
++            table.stamp = stamp;
++        }
++        (table.config.clone(), table.error.clone())
++    }
++
 +    fn persist_json(&self, name: &str, value: &impl Serialize) -> Result<(), String> {
 +        let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
 +        persist_view(&self.root, name, &bytes)
 +    }
 +
-+    fn lead_route(&self, config: &Config) -> Option<&Route> {
-+        self.config.routes.iter().find(|route| {
-+            route.roles.contains(&config::RouteRole::Lead)
-+                && config.model.as_deref() == Some(route.model.as_str())
-+                && config.model_provider_id == route.provider
-+                && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
-+        })
++    fn lead_route(&self, config: &Config) -> Option<Route> {
++        self.route_config()
++            .0
++            .routes
++            .iter()
++            .find(|route| {
++                route.roles.contains(&config::RouteRole::Lead)
++                    && config.model.as_deref() == Some(route.model.as_str())
++                    && config.model_provider_id == route.provider
++                    && config.model_reasoning_effort.as_ref() == Some(&route.reasoning_effort)
++            })
++            .cloned()
 +    }
 +
 +    fn protected_paths(&self) -> Vec<PathBuf> {
@@ -16747,7 +16803,8 @@ index 000000000..8602756f0
 +            (None, None) => return Err("enrollment_requires_route_or_config".into()),
 +        };
 +        let lead_routes = self
-+            .config
++            .route_config()
++            .0
 +            .routes
 +            .iter()
 +            .filter(|candidate| {
@@ -16755,17 +16812,7 @@ index 000000000..8602756f0
 +                    && candidate.roles.contains(&config::RouteRole::Lead)
 +                    && candidate.provider == provider
 +            })
-+            .map(|candidate| accounting::RequestRoute {
-+                name: candidate.name.clone(),
-+                model: candidate.model.clone(),
-+                provider: candidate.provider.clone(),
-+                reasoning: serde_json::to_value(&candidate.reasoning_effort)
-+                    .ok()
-+                    .and_then(|value| value.as_str().map(str::to_owned))
-+                    .unwrap_or_default(),
-+                rates: candidate.rates.clone(),
-+                credential: candidate.credential.clone(),
-+            })
++            .map(request_route)
 +            .collect::<Vec<_>>();
 +        if owner == "lead" && route.is_some() {
 +            session
@@ -17805,10 +17852,10 @@ index 000000000..c1851f83a
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..a8ce30724
+index 000000000..ead311cf6
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1549 @@
+@@ -0,0 +1,1546 @@
 +mod agents;
 +mod evidence;
 +mod expansion;
@@ -18545,9 +18592,8 @@ index 000000000..a8ce30724
 +    }
 +
 +    fn routing_decision(&self, runtime: &mut ModHost, config: &mut Config) -> Result<(), String> {
-+        let routes = self
-+            .host
-+            .config
++        let (routing, _) = self.host.route_config();
++        let routes = routing
 +            .routes
 +            .iter()
 +            .filter(|route| route.roles.contains(&config::RouteRole::Lead))
@@ -18582,9 +18628,7 @@ index 000000000..a8ce30724
 +            match value.get("route").and_then(Value::as_str) {
 +                Some(name)
 +                    if value.as_object().is_some_and(|object| object.len() == 1)
-+                        && self
-+                            .host
-+                            .config
++                        && routing
 +                            .route(name, config::RouteRole::Lead, Some(&id))
 +                            .is_some() =>
 +                {
@@ -18598,7 +18642,7 @@ index 000000000..a8ce30724
 +            }
 +        }
 +        if let Some(route) =
-+            selected.and_then(|name| self.host.config.route(&name, config::RouteRole::Lead, None))
++            selected.and_then(|name| routing.route(&name, config::RouteRole::Lead, None))
 +        {
 +            config.model = Some(route.model.clone());
 +            config.model_provider_id = route.provider.clone();
@@ -18999,7 +19043,7 @@ index 000000000..a8ce30724
 +                .flatten();
 +            if let Err(error) =
 +                self.host
-+                    .enroll(thread, &session, &owner, route, Some(input.config))
++                    .enroll(thread, &session, &owner, route.as_ref(), Some(input.config))
 +            {
 +                self.views.diagnostic(
 +                    &self.host,
@@ -19360,10 +19404,10 @@ index 000000000..a8ce30724
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..1c6512a33
+index 000000000..af59ddc83
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2174 @@
+@@ -0,0 +1,2173 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -20914,9 +20958,8 @@ index 000000000..1c6512a33
 +        writable: bool,
 +    ) -> Result<(Route, bool), String> {
 +        let host = &lead.host;
-+        let Some(route) =
-+            host.config
-+                .route(&request.route, config::RouteRole::Worker, Some(caller.id))
++        let (routing, _) = host.route_config();
++        let Some(route) = routing.route(&request.route, config::RouteRole::Worker, Some(caller.id))
 +        else {
 +            let route = core
 +                .services
@@ -21759,10 +21802,10 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..1ce367273
+index 000000000..2410dc51e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,444 @@
+@@ -0,0 +1,455 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -22107,29 +22150,39 @@ index 000000000..1ce367273
 +        "thread" => true,
 +        _ => return Err("route_scope_invalid".into()),
 +    };
-+    let route = lead
-+        .host
-+        .config
++    let (routing, reload_error) = lead.host.route_config();
++    let route = routing
 +        .route(&input.route, config::RouteRole::Lead, Some(caller))
-+        .ok_or_else(|| format!("route_not_configured: {}", input.route))?;
-+    let enrolled = lead
++        .ok_or_else(|| match &reload_error {
++            Some(error) => format!("route_not_configured: {}; {error}", input.route),
++            None => format!("route_not_configured: {}", input.route),
++        })?;
++    let mut accounts = lead
 +        .host
 +        .accounts
 +        .0
 +        .lock()
-+        .map_err(|_| "account lock poisoned")?
-+        .get(&lead.thread.to_string())
-+        .is_some_and(|account| {
-+            account.owner == "lead"
-+                && (account.route.as_deref() == Some(route.name.as_str())
-+                    || account
-+                        .lead_routes
-+                        .iter()
-+                        .any(|candidate| candidate.name == route.name))
-+        });
-+    if !enrolled {
-+        return Err(format!("route_unavailable_for_thread: {}", input.route));
++        .map_err(|_| "account lock poisoned")?;
++    let account = accounts
++        .get_mut(&lead.thread.to_string())
++        .filter(|account| account.owner == "lead" && account.route.is_some())
++        .ok_or_else(|| format!("route_unavailable_for_thread: {}", input.route))?;
++    if account.route.as_deref() != Some(route.name.as_str())
++        && !account
++            .lead_routes
++            .iter()
++            .any(|candidate| candidate.name == route.name)
++    {
++        if route.provider != account.provider {
++            return Err(format!("route_unavailable_for_thread: {}", input.route));
++        }
++        lead.session
++            .task
++            .authorize_route(&route.provider, &route.model)
++            .map_err(|error| error.to_string())?;
++        account.lead_routes.push(crate::request_route(route));
 +    }
++    drop(accounts);
 +    SELECTIONS
 +        .lock()
 +        .map_err(|_| "route_selection_poisoned")?
@@ -22166,7 +22219,8 @@ index 000000000..1ce367273
 +        .ok_or("host_caller_inactive")?;
 +    let routes = lead
 +        .host
-+        .config
++        .route_config()
++        .0
 +        .routes
 +        .iter()
 +        .filter(|route| route.roles.contains(&config::RouteRole::Lead))
@@ -23758,10 +23812,10 @@ index 000000000..13341482d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..a4f463c42
+index 000000000..42a1c5378
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,970 @@
+@@ -0,0 +1,1003 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
@@ -23830,6 +23884,11 @@ index 000000000..a4f463c42
 +        repository: repository.clone(),
 +        repository_identity: "fixture".into(),
 +        config: config::HostConfig::default(),
++        routes: Mutex::new(crate::RouteTable {
++            stamp: None,
++            config: Arc::new(config::HostConfig::default()),
++            error: None,
++        }),
 +        accounts: Arc::new(accounting::Accounts::default()),
 +        manager: std::sync::Weak::new(),
 +        epoch: 1,
@@ -23894,6 +23953,34 @@ index 000000000..a4f463c42
 +            |_| Err(std::io::Error::other("unexpected_host_call")),
 +        )
 +        .unwrap()
++}
++
++#[test]
++fn routes_reload_from_host_config_and_select_routes_added_after_enrollment() {
++    let Some(fixture) = fixture(&[]) else {
++        return;
++    };
++    let lead = &fixture.lead;
++    let route = |name: &str, provider: &str| {
++        json!({"name": name, "provider": provider, "model": format!("{name}-model"), "reasoning_effort": "high",
++            "responses_url": "http://127.0.0.1:1/v1/responses", "roles": ["lead"], "rates": {
++            "input_microusd_per_million": 0, "cached_microusd_per_million": 0, "output_microusd_per_million": 0,
++            "reservation_microusd": 0, "max_output_tokens": 1000, "input_token_ceiling": 1000, "included_subscription": true}})
++    };
++    let write = |value: &Value| std::fs::write(lead.host.root.join("host.json"), value.to_string()).unwrap();
++    write(&json!({"routes": [route("first", "local")]}));
++    let first = lead.host.route_config().0.route("first", config::RouteRole::Lead, None).cloned().unwrap();
++    lead.host.enroll(lead.thread, &lead.session, "lead", Some(&first), None).unwrap();
++    let select = |name: &str| select_route(lead, "fixture", json!({"route": name, "scope": "thread"}));
++    assert_eq!(select("added"), Err("route_not_configured: added".into()));
++    write(&json!({"routes": [route("first", "local"), route("added", "local"), route("other", "remote")]}));
++    assert_eq!(select("added").unwrap()["route"]["model"], "added-model");
++    assert_eq!(take_route_selection(&lead.thread.to_string()), Some("added".into()));
++    assert_eq!(select("other"), Err("route_unavailable_for_thread: other".into()));
++    assert_eq!(select("first").unwrap()["route"]["name"], "first");
++    write(&json!({"routes": "invalid"}));
++    assert!(select("added").is_ok());
++    assert!(select("later").unwrap_err().starts_with("route_not_configured: later; invalid host.json"));
 +}
 +
 +#[tokio::test(flavor = "multi_thread")]
@@ -24734,10 +24821,10 @@ index 000000000..a4f463c42
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..94c45f134
+index 000000000..cd89db781
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,557 @@
+@@ -0,0 +1,558 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -25215,7 +25302,8 @@ index 000000000..94c45f134
 +    }
 +    match operation.as_str() {
 +        "routes.list" => Ok(json!(
-+            host.config
++            host.route_config()
++                .0
 +                .routes_for(caller.id)
 +                .into_iter()
 +                .map(|route| route_info(host, route))
@@ -38058,10 +38146,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..b36b7a195
+index 000000000..c212ced30
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,3553 @@
+@@ -0,0 +1,3554 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -38294,6 +38382,7 @@ index 000000000..b36b7a195
 +    "completion_arguments_v1",
 +    "terminal_editor_v1",
 +    "pty_programs_v1",
++    "route_reload_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",

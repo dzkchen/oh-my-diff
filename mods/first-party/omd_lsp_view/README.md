@@ -1,6 +1,6 @@
 # omd_lsp_view
 
-Opt-in first-party mod (`0.1.0-preview.1`, API `0.2.0-experimental.5`): a
+Opt-in first-party mod (`0.2.0-preview.1`, API `0.2.0-experimental.5`): a
 code-intelligence view over the language servers that
 [`omd_lsp_sync`](../omd_lsp_sync/README.md) already runs. It adds no second
 client; enable both.
@@ -24,6 +24,12 @@ Enter on a code action applies it after a confirmation. Formatting also
 confirms first. Without an enabled `omd_lsp_sync` the host keeps this mod
 inactive with `service_provider_missing`; if the provider fails later, the
 view says to enable it.
+
+`/lsp open PATH:LINE` is a file view: it also asks for that file's
+diagnostics, which starts its server on demand, and lists the file's errors
+under the excerpt (Enter jumps). A Language servers pane in the sidebar shows
+each running or failed server, its open documents and current errors from
+`omd_lsp_sync/status`.
 
 `omd_panes` opens the view from the file tree (symbols, diagnostics, format)
 and from a selected viewer line (definition, references, hover per symbol,

@@ -475,7 +475,8 @@ pub(super) async fn dispatch(
     }
     match operation.as_str() {
         "routes.list" => Ok(json!(
-            host.config
+            host.route_config()
+                .0
                 .routes_for(caller.id)
                 .into_iter()
                 .map(|route| route_info(host, route))

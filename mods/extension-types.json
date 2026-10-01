@@ -285,7 +285,7 @@
     {
       "path": "mods/first-party/omd_model_picker",
       "id": "omd_model_picker",
-      "version": "0.2.0-preview.1",
+      "version": "0.3.0-preview.1",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Selects the compact native model and reasoning picker presentation while native keeps rows, warnings and persistence."
@@ -309,7 +309,7 @@
     {
       "path": "mods/first-party/omd_lsp_sync",
       "id": "omd_lsp_sync",
-      "version": "0.4.0-preview.1",
+      "version": "0.5.0-preview.1",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns live language-server synchronization, post-edit diagnostic feedback and rename/edit planning through generic host process, workspace and tool-output operations; exports the omd.lsp query service for the code-intelligence view."
@@ -645,10 +645,10 @@
     {
       "path": "mods/first-party/omd_lsp_view",
       "id": "omd_lsp_view",
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "extension_type": "mod",
       "role": "candidate",
-      "why_mod": "Owns the user-invoked code-intelligence view, its request hop and result navigation over the omd.lsp service; installed inactive in OMD+."
+      "why_mod": "Owns the user-invoked code-intelligence view, its request hop, result navigation over the omd.lsp service, file-view diagnostics and the language-server sidebar pane; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_frecency",
@@ -665,6 +665,14 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Pins Codex's update_plan steps above the composer from turn/plan/updated notifications in a wrapped above_composer site with a collapse key; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_profiles",
+      "id": "omd_profiles",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

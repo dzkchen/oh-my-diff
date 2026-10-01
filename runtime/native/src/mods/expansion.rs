@@ -342,29 +342,39 @@ fn select_route(lead: &Lead, caller: &str, arguments: Value) -> Result<Value, St
         "thread" => true,
         _ => return Err("route_scope_invalid".into()),
     };
-    let route = lead
-        .host
-        .config
+    let (routing, reload_error) = lead.host.route_config();
+    let route = routing
         .route(&input.route, config::RouteRole::Lead, Some(caller))
-        .ok_or_else(|| format!("route_not_configured: {}", input.route))?;
-    let enrolled = lead
+        .ok_or_else(|| match &reload_error {
+            Some(error) => format!("route_not_configured: {}; {error}", input.route),
+            None => format!("route_not_configured: {}", input.route),
+        })?;
+    let mut accounts = lead
         .host
         .accounts
         .0
         .lock()
-        .map_err(|_| "account lock poisoned")?
-        .get(&lead.thread.to_string())
-        .is_some_and(|account| {
-            account.owner == "lead"
-                && (account.route.as_deref() == Some(route.name.as_str())
-                    || account
-                        .lead_routes
-                        .iter()
-                        .any(|candidate| candidate.name == route.name))
-        });
-    if !enrolled {
-        return Err(format!("route_unavailable_for_thread: {}", input.route));
+        .map_err(|_| "account lock poisoned")?;
+    let account = accounts
+        .get_mut(&lead.thread.to_string())
+        .filter(|account| account.owner == "lead" && account.route.is_some())
+        .ok_or_else(|| format!("route_unavailable_for_thread: {}", input.route))?;
+    if account.route.as_deref() != Some(route.name.as_str())
+        && !account
+            .lead_routes
+            .iter()
+            .any(|candidate| candidate.name == route.name)
+    {
+        if route.provider != account.provider {
+            return Err(format!("route_unavailable_for_thread: {}", input.route));
+        }
+        lead.session
+            .task
+            .authorize_route(&route.provider, &route.model)
+            .map_err(|error| error.to_string())?;
+        account.lead_routes.push(crate::request_route(route));
     }
+    drop(accounts);
     SELECTIONS
         .lock()
         .map_err(|_| "route_selection_poisoned")?
@@ -401,7 +411,8 @@ async fn surface(
         .ok_or("host_caller_inactive")?;
     let routes = lead
         .host
-        .config
+        .route_config()
+        .0
         .routes
         .iter()
         .filter(|route| route.roles.contains(&config::RouteRole::Lead))

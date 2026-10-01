@@ -230,6 +230,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "completion_arguments_v1",
     "terminal_editor_v1",
     "pty_programs_v1",
+    "route_reload_v1",
 ];
 pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "exec.run",

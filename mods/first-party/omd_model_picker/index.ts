@@ -1,7 +1,12 @@
 import type { ModAPI, TerminalComponent, TerminalListEvent, TerminalListRow, TerminalTone } from '../../api.d.ts';
 
+type Profiles = { profiles?: { name: string; model: string; billing: string; available: boolean }[]; current?: string | null };
+
 export default function activate(api: ModAPI) {
   if (api.settings.layout === 'native') return;
+  api.on('channel', ({ channel, data }) => {
+    if (channel === 'omd_profiles/routes') api.state.set(data);
+  });
   const clean = (value: string) => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim();
   const brand = typeof api.settings.brand === 'string' ? clean(api.settings.brand).slice(0, 24) : 'oh my diff';
   const shorten = (value: string, limit: number) => {
@@ -27,6 +32,12 @@ export default function activate(api: ModAPI) {
       { type: 'text', id: 'omd_picker_hints', label: 'Picker controls', text: narrow ? 'up/down · enter · esc' : 'up/down move · enter select · esc close', tone: 'muted' },
     ];
     if (!narrow && event.subtitle) components.splice(1, 0, { type: 'text', id: 'omd_picker_subtitle', label: 'Picker help', text: shorten(event.subtitle, width - 2), tone: 'muted' });
+    const { profiles = [], current = null } = (api.state.get() ?? {}) as Profiles;
+    if (event.view_id === 'model' && profiles.length) components.splice(-1, 0,
+      { type: 'text', id: 'omd_picker_profiles_title', label: 'Profiles', text: 'profiles · switch at the next request', tone: 'muted' },
+      { type: 'list', id: 'omd_picker_profiles', label: 'Account and provider profiles', height: Math.min(4, profiles.length), action: { command: 'omd_profiles:profile', args: 'use' },
+        rows: profiles.map(profile => ({ value: profile.name, label: profile.name, spans: [{ text: shorten(`${profile.name} · ${profile.model}${profile.billing === 'included_subscription' ? '' : ' · paid'}${profile.name === current ? ' · current' : ''}`, Math.max(8, width - 4)),
+          tone: profile.name === current ? 'accent' : profile.available ? 'normal' : 'muted' }] })) });
     return components;
   });
 }

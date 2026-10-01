@@ -216,7 +216,12 @@ routes visible to the calling mod with `billing` and `available`. The
 thread start; `model_request` middleware returns `{route}` to switch a request
 among the lead routes on the same provider; `agents.spawn.route` names a worker
 route or a registered provider. Worker routes require a grant file whose hash,
-repository, provider, model and URL are rechecked on every request.
+repository, provider, model and URL are rechecked on every request. Route lookups
+recheck `host.json` (`route_reload_v1`): an edited route list applies to new
+threads, `routes.list` and `routes.select` without restarting, while services,
+limits, secrets and protected paths stay as loaded at start. An invalid edit keeps
+the previous routes and `routes.select` reports why. `routes.select` also admits
+a lead route added after the thread started when it is on the thread's provider.
 
 ### Ledger
 

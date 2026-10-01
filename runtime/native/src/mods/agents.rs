@@ -1548,9 +1548,8 @@ impl Agents {
         writable: bool,
     ) -> Result<(Route, bool), String> {
         let host = &lead.host;
-        let Some(route) =
-            host.config
-                .route(&request.route, config::RouteRole::Worker, Some(caller.id))
+        let (routing, _) = host.route_config();
+        let Some(route) = routing.route(&request.route, config::RouteRole::Worker, Some(caller.id))
         else {
             let route = core
                 .services

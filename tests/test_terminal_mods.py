@@ -41,7 +41,7 @@ class TerminalModSourceTests(unittest.TestCase):
             "omd_git": ({"commands", "exec", "fs.read", "fs.write", "store", "lifecycle", "terminal"},
                         {"exec_v1", "guarded_exec_v1", "workspace_access_v1", "workspace_fs_v1", "terminal_lists_v1", "store_v1"}),
             "omd_logo": ({"terminal"}, {"terminal_render_sites_v1", "terminal_welcome_v1"}),
-            "omd_model_picker": ({"terminal"}, {"terminal_lists_v1"}),
+            "omd_model_picker": ({"terminal", "events", "store"}, {"terminal_lists_v1", "events_v1"}),
         }
         for mod, (capabilities, features) in expected.items():
             manifest = json.loads((ROOT / "mods/first-party" / mod / "mod.json").read_text())

@@ -52,7 +52,10 @@ class Host:
         self.store = {}
         self.backups = {}
         self.fail_sync_once = False
+        self.fail_open_once = None
+        self.start_error = None
         self.thread_id = "thread-a"
+        self.published = []
 
     def close(self):
         if self.child is not None:
@@ -103,8 +106,10 @@ class Host:
             self.store[arguments["key"]] = {"revision": revision, "value": arguments["value"], "provenance": {"thread_id": self.thread_id}}
             return {"revision": revision}
         if operation == "process.which":
-            return {"found": [{"name": "pylsp", "path": self.server, "sha256": digest(Path(self.server).read_bytes())}]}
+            return {"found": [{"name": "pylsp", "path": self.server, "sha256": digest(Path(self.server).read_bytes())}] if self.server else []}
         if operation == "process.start":
+            if self.start_error:
+                raise HostFailure(self.start_error)
             if self.child is not None:
                 raise AssertionError("server started twice")
             self.child = subprocess.Popen([sys.executable, self.server] if self.server.endswith(".py") else [self.server], cwd=self.repository, stdin=subprocess.PIPE,
@@ -115,6 +120,9 @@ class Host:
                 raise AssertionError("server is unavailable")
             return {"session": "python", "running": True, "idle_ms": 0}
         if operation == "process.exchange":
+            if self.fail_open_once and any(message.get("method") == "textDocument/didOpen" for message in arguments.get("send", [])):
+                error, self.fail_open_once = self.fail_open_once, None
+                raise HostFailure(error)
             if self.fail_sync_once and any(message.get("method") == "textDocument/didChange" for message in arguments.get("send", [])):
                 self.fail_sync_once = False
                 raise HostFailure("synthetic_sync_failure")
@@ -180,6 +188,9 @@ class Host:
             return {"files": {name: digest(data) if data is not None else None for name, data in files.items()}}
         if operation == "terminal.prompt":
             return {"status": "accepted"}
+        if operation == "events.publish":
+            self.published.append(arguments)
+            return {"delivered": 1, "dropped": 0}
         if operation == "exec.run":
             result = subprocess.run([arguments["program"], *arguments.get("argv", [])], cwd=self.repository, capture_output=True, text=True)
             return {"exit_code": result.returncode, "stdout": result.stdout, "stderr": result.stderr, "stdout_sha256": digest(result.stdout.encode())}
@@ -415,7 +426,8 @@ class LspSyncModTest(unittest.TestCase):
                 self.assertIsNone(run(node, "tool_output", output("cat old.py"), fixed["state"], host)["value"])
                 (repository / "new.py").write_text("ERR preexisting\n")
                 read = run(node, "tool_output", {**output({"cmd": "sed -n 1p new.py"}), "tool": "exec_command"}, fixed["state"], host)
-                self.assertNotIn("new.py", read["state"]["servers"]["python"]["documents"])
+                self.assertEqual(read["value"]["append"], "Language-server errors after this call:\nnew.py: 1 existing (v1)\n  1:1 preexisting")
+                self.assertEqual(host.published[-1]["data"][0]["errors"], ["new.py:1:1 preexisting"])
                 opened = run(node, "tool_output", output("*** Add File: new.py"), fixed["state"], host)
                 self.assertIsNone(opened["value"])
                 self.assertIn("new.py", opened["state"]["servers"]["python"]["documents"])
@@ -424,6 +436,67 @@ class LspSyncModTest(unittest.TestCase):
                 edited = run(node, "tool_output", output(None), opened["state"], host)
                 self.assertEqual(edited["value"]["append"], "Language-server errors after this call:\nold.py: 1 new, 0 resolved\n  + 2:1 also\nnew.py: 1 new, 0 resolved\n  + 2:1 added")
                 self.assertEqual(host.operations.count("process.start"), 1)
+            finally:
+                host.close()
+
+    def test_explicit_reads_start_only_the_viewed_server_set_the_edit_baseline_and_never_write(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "diagnostic_server.py"
+            server.write_text(DIAGNOSTIC_SERVER)
+            (repository / "old.py").write_text("value = 1\nERR before\n")
+            read = lambda command: {"call_id": "c", "tool": "exec_command", "arguments": {"cmd": command}, "success": True, "text": "", "tail": None, "bytes": 0, "original": None}
+            denied = Host(repository, str(server))
+            denied.start_error = "managed_process_requires_native_sandbox"
+            for host, unavailable in ((Host(repository, str(server)), None), (Host(repository, None), "python_server_absent"), (denied, denied.start_error)):
+                host.store["lsp.observed_repository"] = {"revision": 1, "value": {"repository": str(repository)}, "provenance": {"thread_id": "thread-a"}}
+                try:
+                    self.assertIsNone(run(node, "tool_output", read("rg -n value old.py"), None, host)["value"])
+                    self.assertIsNone(run(node, "tool_output", read("cat README.md"), None, host)["value"])
+                    self.assertNotIn("process.which", host.operations)
+                    first = run(node, "tool_output", read("cat old.py"), None, host)
+                    self.assertFalse({"workspace.transaction", "workspace.backup", "workspace.restore"} & set(host.operations))
+                    if unavailable:
+                        self.assertEqual(first["value"]["append"], f"Language-server errors after this call:\npython language server unavailable: {unavailable}")
+                        self.assertIsNone(run(node, "tool_output", read("cat old.py"), first["state"], host)["value"])
+                        continue
+                    self.assertEqual(first["value"]["append"], "Language-server errors after this call:\nold.py: 1 existing (v1)\n  2:1 before")
+                    self.assertIsNone(run(node, "tool_output", read("nl -ba old.py"), first["state"], host)["value"])
+                    (repository / "old.py").write_text("value = 1\nERR before\nERR after\n")
+                    edited = run(node, "tool_output", {**read("*** Update File: old.py"), "tool": "apply_patch"}, first["state"], host)
+                    self.assertEqual(edited["value"]["append"], "Language-server errors after this call:\nold.py: 1 new, 0 resolved\n  + 3:1 after")
+                    self.assertEqual(host.operations.count("process.start"), 1)
+                finally:
+                    host.close()
+
+    def test_cancelled_reads_recover_without_orphaned_servers(self):
+        node = os.environ.get("OMD_TEST_NODE") or shutil.which("node")
+        if not node or subprocess.check_output([node, "--version"], text=True).strip() != "v24.18.0":
+            self.skipTest("pinned Node 24.18.0 required")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve() / "repo"
+            repository.mkdir()
+            server = Path(directory).resolve() / "diagnostic_server.py"
+            server.write_text(DIAGNOSTIC_SERVER)
+            (repository / "old.py").write_text("ERR before\n")
+            read = {"call_id": "c", "tool": "exec_command", "arguments": {"cmd": "cat old.py"}, "success": True, "text": "", "tail": None, "bytes": 0, "original": None}
+            reported = "Language-server errors after this call:\nold.py: 1 existing (v1)\n  1:1 before"
+            host = Host(repository, str(server))
+            host.store["lsp.observed_repository"] = {"revision": 1, "value": {"repository": str(repository)}, "provenance": {"thread_id": "thread-a"}}
+            try:
+                host.fail_open_once = "process_cancelled"
+                cancelled = run(node, "tool_output", read, None, host)
+                self.assertIsNone(cancelled["value"])
+                self.assertEqual(cancelled["state"]["servers"]["python"]["status"], "stale")
+                self.assertFalse(cancelled["state"]["servers"]["python"]["running"])
+                self.assertIsNone(host.child)
+                self.assertEqual(run(node, "tool_output", read, cancelled["state"], host)["value"]["append"], reported)
+                self.assertEqual(run(node, "tool_output", read, cancelled["state"], host)["value"]["append"], reported)
+                self.assertEqual(host.operations.count("process.start"), 3)
             finally:
                 host.close()
 
@@ -655,9 +728,10 @@ class LspSyncModTest(unittest.TestCase):
                 self.assertEqual(first["state"]["servers"]["python"]["status"], "synced")
                 self.assertEqual(first["state"]["servers"]["python"]["diagnostics"]["old.py"]["count"], 1)
                 self.assertIn({"jsonrpc": "2.0", "id": 1, "result": [None]}, host.sent)
+                stops = host.operations.count("process.stop")
                 idle = run(node, "idle", {"cause": "Completed"}, first["state"], host)
                 self.assertTrue(idle["state"]["servers"]["python"]["running"])
-                self.assertNotIn("process.stop", host.operations)
+                self.assertEqual(host.operations.count("process.stop"), stops)
                 rename = run(node, "workspace_pre_rename", {"repository": str(repository), "old": "old.py", "new": "new.py",
                     "expected": {"old.py": digest((repository / "old.py").read_bytes())}}, idle["state"], host)
                 self.assertEqual(rename["value"]["status"], "ready", rename["value"])

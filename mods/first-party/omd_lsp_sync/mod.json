@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "id": "omd_lsp_sync",
-  "version": "0.4.0-preview.1",
+  "version": "0.5.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Language servers report the diagnostics each edit introduces and answer definition, reference and rename requests",
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
-  "capabilities": ["lifecycle", "exec", "store", "tools", "outputs", "fs.read", "fs.write", "services", "terminal"],
+  "capabilities": ["lifecycle", "exec", "store", "tools", "outputs", "fs.read", "fs.write", "services", "terminal", "events"],
   "exec_environment": ["RUSTUP_HOME"],
-  "compatibility": { "required_features": ["exec_v1", "workspace_fs_v1", "framed_process_v1", "store_v1", "tool_feedback_v1", "service_dispatch_v1", "terminal_prompt_v1"] },
+  "compatibility": { "required_features": ["exec_v1", "workspace_fs_v1", "framed_process_v1", "store_v1", "tool_feedback_v1", "service_dispatch_v1", "terminal_prompt_v1", "events_v1"] },
   "services": { "exports": [{ "name": "omd.lsp", "version": "1.0.0", "methods": { "query": { "input": "object", "output": "object" } } }] }
 }

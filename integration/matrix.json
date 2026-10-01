@@ -94,7 +94,8 @@
         "terminal_style_v1",
         "completion_arguments_v1",
         "terminal_editor_v1",
-        "pty_programs_v1"
+        "pty_programs_v1",
+        "route_reload_v1"
       ],
       "status": "supported",
       "fixtures": [
@@ -1149,6 +1150,7 @@
         "omd_plan_panel",
         "omd_plan_removal",
         "omd_preview",
+        "omd_profiles",
         "omd_programmable_context",
         "omd_project_pi_prompts",
         "omd_reactive_rules",
@@ -1229,15 +1231,15 @@
       "source": "mods/first-party/omd_logo"
     },
     "omd_lsp_sync": {
-      "version": "0.4.0-preview.1",
+      "version": "0.5.0-preview.1",
       "source": "mods/first-party/omd_lsp_sync"
     },
     "omd_lsp_view": {
-      "version": "0.1.0-preview.1",
+      "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_lsp_view"
     },
     "omd_model_picker": {
-      "version": "0.2.0-preview.1",
+      "version": "0.3.0-preview.1",
       "source": "mods/first-party/omd_model_picker"
     },
     "omd_mods": {
@@ -1267,6 +1269,10 @@
     "omd_preview": {
       "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_preview"
+    },
+    "omd_profiles": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_profiles"
     },
     "omd_programmable_context": {
       "version": "0.1.0-preview.1",

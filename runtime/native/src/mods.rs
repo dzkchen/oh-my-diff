@@ -734,9 +734,8 @@ impl Mods {
     }
 
     fn routing_decision(&self, runtime: &mut ModHost, config: &mut Config) -> Result<(), String> {
-        let routes = self
-            .host
-            .config
+        let (routing, _) = self.host.route_config();
+        let routes = routing
             .routes
             .iter()
             .filter(|route| route.roles.contains(&config::RouteRole::Lead))
@@ -771,9 +770,7 @@ impl Mods {
             match value.get("route").and_then(Value::as_str) {
                 Some(name)
                     if value.as_object().is_some_and(|object| object.len() == 1)
-                        && self
-                            .host
-                            .config
+                        && routing
                             .route(name, config::RouteRole::Lead, Some(&id))
                             .is_some() =>
                 {
@@ -787,7 +784,7 @@ impl Mods {
             }
         }
         if let Some(route) =
-            selected.and_then(|name| self.host.config.route(&name, config::RouteRole::Lead, None))
+            selected.and_then(|name| routing.route(&name, config::RouteRole::Lead, None))
         {
             config.model = Some(route.model.clone());
             config.model_provider_id = route.provider.clone();
@@ -1188,7 +1185,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 .flatten();
             if let Err(error) =
                 self.host
-                    .enroll(thread, &session, &owner, route, Some(input.config))
+                    .enroll(thread, &session, &owner, route.as_ref(), Some(input.config))
             {
                 self.views.diagnostic(
                     &self.host,

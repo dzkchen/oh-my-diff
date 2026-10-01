@@ -87,7 +87,8 @@
       "terminal_style_v1",
       "completion_arguments_v1",
       "terminal_editor_v1",
-      "pty_programs_v1"
+      "pty_programs_v1",
+      "route_reload_v1"
     ]
   },
   "apis": [

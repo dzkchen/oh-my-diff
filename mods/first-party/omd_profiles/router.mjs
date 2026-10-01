@@ -1,0 +1,327 @@
+import { createServer, request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
+const BODY_LIMIT = 64 * 1024 * 1024;
+const DROPPED = ['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive', 'upgrade',
+  'proxy-authorization', 'proxy-connection'];
+const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+async function bodyOf(request, limit = BODY_LIMIT) {
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) throw new Error('request_size_limit');
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+function parts(content) {
+  if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : [];
+  return (Array.isArray(content) ? content : []).flatMap(part => {
+    if (['input_text', 'output_text', 'text'].includes(part?.type) && part.text) return [{ type: 'text', text: part.text }];
+    const image = part?.type === 'input_image' && /^data:(image\/[a-z+]+);base64,(.+)$/.exec(part.image_url ?? '');
+    return image ? [{ type: 'image', media: image[1], data: image[2], url: part.image_url }] : [];
+  });
+}
+
+const textOf = content => parts(content).map(part => part.type === 'text' ? part.text : '[image]').join('\n');
+
+// Codex sends namespaced and freeform tools; both providers take flat JSON-schema functions, so names are mapped both ways.
+export function toolTable(body) {
+  const tools = [];
+  const reverse = {};
+  const add = (spec, namespace = '') => {
+    if (spec?.type === 'namespace') return (spec.tools ?? []).forEach(child => add(child, spec.name === 'functions' ? '' : spec.name));
+    if (!['function', 'custom'].includes(spec?.type) || typeof spec.name !== 'string') return;
+    const name = (namespace ? `${namespace}__${spec.name}` : spec.name).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+    if (reverse[name]) return;
+    reverse[name] = { namespace, name: spec.name, kind: spec.type };
+    const schema = spec.type === 'custom' ? { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] }
+      : plain(spec.parameters) ? spec.parameters : { type: 'object', properties: {} };
+    tools.push({ name, description: typeof spec.description === 'string' ? spec.description : '', schema });
+  };
+  for (const spec of body.tools ?? []) add(spec, spec.namespace ?? '');
+  const name = item => Object.keys(reverse).find(key => reverse[key].name === item.name && reverse[key].namespace === (item.namespace ?? '')) ?? item.name;
+  return { tools, reverse, name };
+}
+
+// History as provider-neutral turns; reasoning, search and hosted-tool items have no portable form and are dropped.
+export function turns(body) {
+  const table = toolTable(body);
+  const system = body.instructions ? [body.instructions] : [];
+  const list = [];
+  for (const item of body.input ?? []) {
+    if (item?.type === 'message') {
+      if (item.role === 'system' || item.role === 'developer') {
+        if (list.length) list.push({ role: 'user', content: [{ type: 'text', text: textOf(item.content) }] });
+        else system.push(textOf(item.content));
+      } else list.push({ role: item.role === 'assistant' ? 'assistant' : 'user', content: parts(item.content) });
+    } else if (item?.type === 'function_call' || item?.type === 'custom_tool_call') {
+      let input;
+      try { input = item.type === 'custom_tool_call' ? { input: item.input } : JSON.parse(item.arguments || '{}'); } catch { input = { raw: item.arguments }; }
+      list.push({ role: 'assistant', content: [{ type: 'call', id: item.call_id, name: table.name(item), input }] });
+    } else if (item?.type === 'function_call_output' || item?.type === 'custom_tool_call_output') {
+      const output = typeof item.output === 'string' ? [{ type: 'text', text: item.output }] : parts(item.output);
+      list.push({ role: 'tool', content: [{ type: 'result', id: item.call_id, output }] });
+    }
+  }
+  return { system: system.join('\n\n'), list, table };
+}
+
+export function chatRequest(body, profile) {
+  const { system, list, table } = turns(body);
+  const messages = system ? [{ role: 'system', content: system }] : [];
+  for (const turn of list) {
+    if (turn.role === 'tool') {
+      for (const result of turn.content) messages.push({ role: 'tool', tool_call_id: result.id, content: result.output.map(part => part.text ?? '[image]').join('\n') });
+      continue;
+    }
+    const calls = turn.content.filter(part => part.type === 'call').map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.input) } }));
+    const content = turn.content.filter(part => part.type !== 'call').map(part => part.type === 'image' ? { type: 'image_url', image_url: { url: part.url } } : { type: 'text', text: part.text });
+    const last = messages.at(-1);
+    if (turn.role === 'assistant' && last?.role === 'assistant' && (calls.length || !content.length)) {
+      last.tool_calls = [...last.tool_calls ?? [], ...calls];
+      continue;
+    }
+    const text = content.every(part => part.type === 'text') ? content.map(part => part.text).join('\n') : null;
+    messages.push({ role: turn.role, content: turn.role === 'assistant' ? text || null : text ?? content, ...calls.length ? { tool_calls: calls } : {} });
+  }
+  const effort = body.reasoning?.effort;
+  return { model: profile.model, messages, stream: true, stream_options: { include_usage: true },
+    ...table.tools.length ? { tools: table.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.schema } })), parallel_tool_calls: body.parallel_tool_calls !== false } : {},
+    ...profile.reasoning && effort ? { reasoning_effort: ['minimal', 'low'].includes(effort) ? 'low' : effort === 'medium' ? 'medium' : 'high' } : {} };
+}
+
+export function anthropicRequest(body, profile) {
+  const { system, list, table } = turns(body);
+  const messages = [];
+  for (const turn of list) {
+    const role = turn.role === 'assistant' ? 'assistant' : 'user';
+    const content = turn.content.flatMap(part => part.type === 'text' ? [{ type: 'text', text: part.text }]
+      : part.type === 'image' ? [{ type: 'image', source: { type: 'base64', media_type: part.media, data: part.data } }]
+        : part.type === 'call' ? [{ type: 'tool_use', id: part.id, name: part.name, input: plain(part.input) ? part.input : { value: part.input } }]
+          : [{ type: 'tool_result', tool_use_id: part.id, content: part.output.map(item => item.type === 'image'
+            ? { type: 'image', source: { type: 'base64', media_type: item.media, data: item.data } } : { type: 'text', text: item.text || ' ' }) }]);
+    if (!content.length) continue;
+    if (messages.at(-1)?.role === role) messages.at(-1).content.push(...content);
+    else messages.push({ role, content });
+  }
+  const effort = body.reasoning?.effort;
+  const budget = { minimal: 1024, low: 2048, medium: 8192, high: 16384, xhigh: 24576, max: 32000 }[effort];
+  const max = profile.max_output ?? 32000;
+  return { model: profile.model, max_tokens: max, stream: true, messages, ...system ? { system } : {},
+    ...table.tools.length ? { tools: table.tools.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.schema })) } : {},
+    ...profile.reasoning && budget ? { thinking: { type: 'enabled', budget_tokens: Math.min(budget, max - 1024) } } : {} };
+}
+
+// Emits the Responses stream events Codex consumes from either provider's deltas.
+export class Emitter {
+  constructor(send, reverse, id) {
+    Object.assign(this, { send, reverse, id, text: null, reasoning: null, calls: new Map(), usage: null });
+    send({ type: 'response.created', response: { id } });
+  }
+  delta(kind, value) {
+    if (!value) return;
+    const field = kind === 'text' ? 'text' : 'reasoning';
+    if (!this[field]) {
+      this[field] = { id: `${this.id}-${field}`, value: '' };
+      this.send({ type: 'response.output_item.added', item: kind === 'text'
+        ? { type: 'message', id: this[field].id, role: 'assistant', content: [] } : { type: 'reasoning', id: this[field].id, summary: [] } });
+      if (kind !== 'text') this.send({ type: 'response.reasoning_summary_part.added', item_id: this[field].id, summary_index: 0 });
+    }
+    this[field].value += value;
+    this.send(kind === 'text' ? { type: 'response.output_text.delta', item_id: this.text.id, delta: value }
+      : { type: 'response.reasoning_summary_text.delta', item_id: this.reasoning.id, summary_index: 0, delta: value });
+  }
+  call(key, { id, name, args }) {
+    const call = this.calls.get(key) ?? { id: '', name: '', args: '' };
+    this.calls.set(key, { id: id || call.id, name: name || call.name, args: call.args + (args ?? '') });
+  }
+  finish(usage) {
+    if (this.reasoning) this.send({ type: 'response.output_item.done', item: { type: 'reasoning', id: this.reasoning.id, summary: [{ type: 'summary_text', text: this.reasoning.value }] } });
+    if (this.text) this.send({ type: 'response.output_item.done', item: { type: 'message', id: this.text.id, role: 'assistant', content: [{ type: 'output_text', text: this.text.value }] } });
+    for (const call of this.calls.values()) {
+      const tool = this.reverse[call.name] ?? { namespace: '', name: call.name, kind: 'function' };
+      let input = {};
+      try { input = call.args.trim() ? JSON.parse(call.args) : {}; } catch { input = { input: call.args }; }
+      const item = tool.kind === 'custom'
+        ? { type: 'custom_tool_call', id: call.id, call_id: call.id, ...tool.namespace ? { namespace: tool.namespace } : {}, name: tool.name, input: String(input.input ?? '') }
+        : { type: 'function_call', id: call.id, call_id: call.id, ...tool.namespace ? { namespace: tool.namespace } : {}, name: tool.name, arguments: JSON.stringify(input) };
+      this.send({ type: 'response.output_item.added', item });
+      this.send({ type: 'response.output_item.done', item });
+    }
+    this.send({ type: 'response.completed', response: { id: this.id, usage } });
+  }
+}
+
+export function frames(onData) {
+  let pending = '';
+  const decoder = new TextDecoder();
+  return chunk => {
+    pending += decoder.decode(chunk, { stream: true });
+    for (let match; (match = /\r?\n\r?\n/.exec(pending));) {
+      const data = pending.slice(0, match.index).split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+      pending = pending.slice(match.index + match[0].length);
+      if (data && data !== '[DONE]') onData(JSON.parse(data));
+    }
+  };
+}
+
+export function chatEvents(emitter) {
+  return event => {
+    const choice = event.choices?.[0]?.delta ?? {};
+    emitter.delta('reasoning', choice.reasoning_content ?? choice.reasoning);
+    emitter.delta('text', choice.content);
+    for (const call of choice.tool_calls ?? []) emitter.call(call.index ?? 0, { id: call.id, name: call.function?.name, args: call.function?.arguments });
+    if (event.usage) {
+      const cached = event.usage.prompt_tokens_details?.cached_tokens ?? 0;
+      emitter.usage = { input_tokens: event.usage.prompt_tokens ?? 0, input_tokens_details: { cached_tokens: cached },
+        output_tokens: event.usage.completion_tokens ?? 0, output_tokens_details: { reasoning_tokens: event.usage.completion_tokens_details?.reasoning_tokens ?? 0 },
+        total_tokens: event.usage.total_tokens ?? (event.usage.prompt_tokens ?? 0) + (event.usage.completion_tokens ?? 0) };
+    }
+  };
+}
+
+export function anthropicEvents(emitter) {
+  const usage = { input: 0, cached: 0, written: 0, output: 0 };
+  return event => {
+    if (event.type === 'message_start') {
+      const start = event.message?.usage ?? {};
+      Object.assign(usage, { input: start.input_tokens ?? 0, cached: start.cache_read_input_tokens ?? 0, written: start.cache_creation_input_tokens ?? 0, output: start.output_tokens ?? 0 });
+    }
+    if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') emitter.call(event.index, { id: event.content_block.id, name: event.content_block.name });
+    if (event.type === 'content_block_delta') {
+      if (event.delta?.type === 'text_delta') emitter.delta('text', event.delta.text);
+      if (event.delta?.type === 'thinking_delta') emitter.delta('reasoning', event.delta.thinking);
+      if (event.delta?.type === 'input_json_delta') emitter.call(event.index, { args: event.delta.partial_json });
+    }
+    if (event.type === 'message_delta') usage.output = event.usage?.output_tokens ?? usage.output;
+    if (event.type === 'error') throw Object.assign(new Error(event.error?.message ?? 'anthropic_stream_error'), { code: event.error?.type });
+    const input = usage.input + usage.cached + usage.written;
+    emitter.usage = { input_tokens: input, input_tokens_details: { cached_tokens: usage.cached }, output_tokens: usage.output,
+      output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + usage.output };
+  };
+}
+
+function post(url, headers, payload, signal) {
+  const target = new URL(url);
+  const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const outgoing = send(target, { method: 'POST', headers: { ...headers, 'content-length': Buffer.byteLength(payload) }, signal, timeout: 600_000 }, resolve);
+    outgoing.on('timeout', () => outgoing.destroy(new Error('upstream_timeout')));
+    outgoing.on('error', reject);
+    outgoing.end(payload);
+  });
+}
+
+export async function forward(body, profile, inbound, response, signal) {
+  const authorization = inbound.authorization ?? '';
+  if (!/^Bearer \S+$/.test(authorization)) throw Object.assign(new Error('profile_credential_missing'), { status: 401 });
+  if (profile.protocol === 'responses') {
+    const headers = Object.fromEntries(Object.entries(inbound).filter(([key]) => !DROPPED.includes(key)));
+    const upstream = await post(profile.url, headers, JSON.stringify({ ...body, model: profile.model }), signal);
+    response.writeHead(upstream.statusCode, Object.fromEntries(Object.entries(upstream.headers).filter(([key]) => !['transfer-encoding', 'connection', 'content-length'].includes(key))));
+    for await (const chunk of upstream) response.write(chunk);
+    return;
+  }
+  const anthropic = profile.protocol === 'anthropic';
+  const payload = JSON.stringify(anthropic ? anthropicRequest(body, profile) : chatRequest(body, profile));
+  const headers = { 'content-type': 'application/json', accept: 'text/event-stream',
+    ...anthropic ? { 'x-api-key': authorization.slice(7), 'anthropic-version': '2023-06-01' } : { authorization } };
+  const upstream = await post(profile.url, headers, payload, signal);
+  if (upstream.statusCode !== 200) {
+    let text = '';
+    for await (const chunk of upstream) if (text.length < 65_536) text += chunk;
+    response.writeHead(upstream.statusCode, { 'content-type': upstream.headers['content-type'] ?? 'text/plain' }).end(text);
+    return;
+  }
+  response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
+  const emitter = new Emitter(event => response.write(`data: ${JSON.stringify(event)}\n\n`), toolTable(body).reverse, `omd-${profile.name}-${Date.now()}`);
+  const feed = frames(anthropic ? anthropicEvents(emitter) : chatEvents(emitter));
+  for await (const chunk of upstream) feed(chunk);
+  const input = Math.ceil(payload.length / 4);
+  const output = Math.ceil(((emitter.text?.value.length ?? 0) + (emitter.reasoning?.value.length ?? 0) + [...emitter.calls.values()].reduce((sum, call) => sum + call.args.length, 0)) / 4);
+  emitter.finish(emitter.usage ?? { input_tokens: input, input_tokens_details: { cached_tokens: 0 }, output_tokens: output, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + output, omd_usage_estimated: true });
+}
+
+// A switch to another profile drops earlier reasoning items: their encrypted content is bound to the account that produced it.
+export function prepare(body, profile, last) {
+  const key = body.prompt_cache_key;
+  const switched = key && last.has(key) && last.get(key) !== profile.name;
+  if (key) last.set(key, profile.name);
+  return switched ? { ...body, input: (body.input ?? []).filter(item => item?.type !== 'reasoning') } : body;
+}
+
+async function claim(server, port, token, ready) {
+  const handoff = Date.now() + 3_000;
+  for (;;) {
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+      });
+      return;
+    } catch (error) {
+      if (error.code !== 'EADDRINUSE') throw error;
+    }
+    if (Date.now() < handoff) await fetch(`http://127.0.0.1:${port}/_omd/nonce`, { method: 'POST',
+      headers: { authorization: `Bearer ${token}` }, body: ready }).catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+}
+
+async function serve(routePath) {
+  const route = JSON.parse(await readFile(routePath, 'utf8'));
+  const token = process.env.OMD_PROFILES_LOCAL_TOKEN ?? '';
+  const ready = process.env.OMD_READY_TOKEN ?? '';
+  if (token.length < 32 || !ready) throw new Error('native_provider_tokens_required');
+  const active = new Set();
+  const last = new Map();
+  let nonce = ready;
+  let stopping = false;
+  const server = createServer(async (request, response) => {
+    if (request.method === 'GET' && request.url === '/_omd/ready') return void response.writeHead(200).end(`OMD_READY:${nonce}`);
+    if (request.method === 'POST' && request.url === '/_omd/nonce') {
+      if (request.headers.authorization !== `Bearer ${token}`) return void response.writeHead(401).end();
+      nonce = String(await bodyOf(request, 256));
+      return void response.writeHead(204).end();
+    }
+    if (request.method !== 'POST' || request.url !== '/v1/responses' || request.headers.origin) return void response.writeHead(404).end();
+    const controller = new AbortController();
+    active.add(controller);
+    response.on('close', () => { if (!response.writableFinished) controller.abort(); });
+    try {
+      const body = JSON.parse(await bodyOf(request));
+      const table = JSON.parse(await readFile(routePath, 'utf8')).profiles ?? route.profiles;
+      const profile = table[body.model];
+      if (request.headers.authorization === `Bearer ${token}`) throw Object.assign(new Error('profile_credential_missing'), { status: 401 });
+      if (!profile) throw Object.assign(new Error(`profile_not_configured:${body.model}`), { status: 400 });
+      const estimate = Math.ceil(JSON.stringify(body.input ?? []).length / 4);
+      if (profile.window && estimate > profile.window) throw Object.assign(new Error(`context_length_exceeded: this thread (~${estimate} tokens) exceeds the ${profile.name} window of ${profile.window}; compact or switch back`), { status: 400 });
+      await forward(prepare(body, profile, last), profile, request.headers, response, controller.signal);
+    } catch (error) {
+      const message = String(error?.message ?? 'profile_transport_failed').slice(0, 500);
+      if (!response.headersSent) response.writeHead(error?.status ?? 502, { 'content-type': 'application/json' });
+      if (!response.destroyed) response.write(error?.status ? JSON.stringify({ error: { message, code: message.split(':')[0] } })
+        : `data: ${JSON.stringify({ type: 'response.failed', response: { error: { code: error?.code ?? 'profile_transport_failed', message } } })}\n\n`);
+    } finally {
+      active.delete(controller);
+      response.end();
+      if (stopping && !active.size) process.exit(0);
+    }
+  });
+  const stop = () => { stopping = true; server.close(); if (!active.size) process.exit(0); };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  await claim(server, route.port, token, ready);
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const [action, routePath] = process.argv.slice(2);
+  if (action !== 'serve') throw new Error('unsupported_profiles_router_action');
+  await serve(routePath);
+}
