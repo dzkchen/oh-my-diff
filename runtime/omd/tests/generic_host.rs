@@ -27,6 +27,7 @@ struct TestAuthority {
     read_denied: Vec<PathBuf>,
     write_denied: Vec<PathBuf>,
     sandboxed: std::cell::RefCell<Vec<(bool, bool)>>,
+    sockets: std::cell::RefCell<Vec<PathBuf>>,
 }
 
 impl Authority for TestAuthority {
@@ -53,6 +54,7 @@ impl Authority for TestAuthority {
         self.sandboxed
             .borrow_mut()
             .push((access.write, access.loopback));
+        *self.sockets.borrow_mut() = access.unix_sockets.to_vec();
         let mut command = Command::new(&argv[0]);
         command.args(&argv[1..]);
         Ok(command)
@@ -77,6 +79,7 @@ fn setup() -> (TempDir, PathBuf, PathBuf, TestAuthority) {
         read_denied: vec![repository.join("secret")],
         write_denied: vec![repository.join("locked")],
         sandboxed: Default::default(),
+        sockets: Default::default(),
     };
     (temp, repository, data, authority)
 }
@@ -443,6 +446,62 @@ fn workspace_access_checks_named_paths_and_guarded_write_authority() {
         .unwrap_err(),
         "exec_access_requires_write"
     );
+}
+
+#[test]
+fn exec_run_admits_only_inherited_user_sockets() {
+    let (temp, repository, data, authority) = setup();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+        record_changes: false,
+    };
+    let socket = temp.path().canonicalize().unwrap().join("integration.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let inside = repository.join("integration.sock");
+    let _inside = std::os::unix::net::UnixListener::bind(&inside).unwrap();
+    let name = "EXEC_SOCKET_FIXTURE";
+    let environment = strings(&[name]);
+    let capabilities = strings(&["exec", "network"]);
+    let run = |capabilities: &[String], name: &str| {
+        host.call(
+            &caller(capabilities, &environment, Origin::Tool),
+            "exec.run",
+            json!({"program":"sh","argv":["-c","true"],"unix_sockets":[name]}),
+        )
+    };
+    assert_eq!(
+        run(&strings(&["exec"]), name).unwrap_err(),
+        "capability_denied: network"
+    );
+    assert_eq!(
+        run(&capabilities, "UNDECLARED").unwrap_err(),
+        "exec_arguments_invalid"
+    );
+    for value in [
+        None,
+        Some(Path::new("integration.sock")),
+        Some(repository.join("README.md").as_path()),
+        Some(inside.as_path()),
+        Some(socket.as_path()),
+    ] {
+        // SAFETY: only this test reads this variable.
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        let result = run(&capabilities, name);
+        if value == Some(socket.as_path()) {
+            assert_eq!(result.unwrap()["exit_code"], 0);
+            assert_eq!(*authority.sockets.borrow(), vec![socket.clone()]);
+        } else {
+            assert_eq!(result.unwrap_err(), "exec_socket_unavailable");
+        }
+    }
 }
 
 #[test]

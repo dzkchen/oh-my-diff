@@ -509,6 +509,7 @@ mod tests {
             &codex_omd::host::ExecAccess {
                 write: true,
                 loopback: false,
+                unix_sockets: &[],
                 scratch: &root,
             },
         )
@@ -542,6 +543,7 @@ mod tests {
             &codex_omd::host::ExecAccess {
                 write: false,
                 loopback: false,
+                unix_sockets: &[],
                 scratch: &repository,
             },
         )
@@ -550,5 +552,42 @@ mod tests {
         .unwrap();
         assert!(output.status.success(), "{:?}", output);
         assert_eq!(output.stdout, b"sandbox-ok");
+    }
+
+    #[test]
+    fn sandboxed_commands_reach_only_granted_unix_sockets() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let socket = root.join("integration.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        for granted in [false, true] {
+            let sockets = if granted {
+                vec![socket.clone()]
+            } else {
+                Vec::new()
+            };
+            let status = crate::generic_host::sandboxed_command(
+                &FileSystemSandboxPolicy::unrestricted(),
+                &root,
+                &[],
+                vec![
+                    "/usr/bin/perl".into(),
+                    "-MIO::Socket::UNIX".into(),
+                    "-e".into(),
+                    "exit !IO::Socket::UNIX->new(Peer => shift)".into(),
+                    socket.display().to_string(),
+                ],
+                &codex_omd::host::ExecAccess {
+                    write: false,
+                    loopback: false,
+                    unix_sockets: &sockets,
+                    scratch: &root,
+                },
+            )
+            .unwrap()
+            .status()
+            .unwrap();
+            assert_eq!(status.success(), granted);
+        }
     }
 }

@@ -8921,7 +8921,7 @@ index d8b326d15..f8de89351 100644
      fn output_lines_handles_newline_dense_output_without_materializing_every_line() {
          let output = CommandOutput::new(/*exit_code*/ 0, "\n".repeat(100_000));
 diff --git a/codex-rs/tui/src/history_cell/mod.rs b/codex-rs/tui/src/history_cell/mod.rs
-index bbb05987b..fa35529d5 100644
+index bbb05987b..dce06c365 100644
 --- a/codex-rs/tui/src/history_cell/mod.rs
 +++ b/codex-rs/tui/src/history_cell/mod.rs
 @@ -263,7 +263,9 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
@@ -8935,15 +8935,22 @@ index bbb05987b..fa35529d5 100644
              HistoryRenderMode::Raw => self.live_raw_lines(),
          }
      }
-@@ -274,7 +276,16 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -274,7 +276,23 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
          mode: HistoryRenderMode,
      ) -> Vec<HyperlinkLine> {
          match mode {
 -            HistoryRenderMode::Rich => self.display_hyperlink_lines(width),
 +            HistoryRenderMode::Rich => {
-+                let kind = if self.type_id() == std::any::TypeId::of::<AgentMarkdownCell>() {
++                let id = self.type_id();
++                let kind = if [
++                    std::any::TypeId::of::<AgentMarkdownCell>(),
++                    std::any::TypeId::of::<AgentMessageCell>(),
++                    std::any::TypeId::of::<StreamingAgentTailCell>(),
++                ]
++                .contains(&id)
++                {
 +                    "message"
-+                } else if self.type_id() == std::any::TypeId::of::<crate::exec_cell::ExecCell>() {
++                } else if id == std::any::TypeId::of::<crate::exec_cell::ExecCell>() {
 +                    "tool"
 +                } else {
 +                    "native"
@@ -8953,7 +8960,7 @@ index bbb05987b..fa35529d5 100644
              HistoryRenderMode::Raw => plain_hyperlink_lines(self.live_raw_lines()),
          }
      }
-@@ -345,7 +356,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
+@@ -345,7 +363,8 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
  impl Renderable for Box<dyn HistoryCell> {
      fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -15434,10 +15441,10 @@ index 000000000..a995c1a7c
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
-index 000000000..c8818d4f0
+index 000000000..c4f9be011
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/execution.rs
-@@ -0,0 +1,554 @@
+@@ -0,0 +1,593 @@
 +use super::*;
 +use codex_core::exec::ExecCapturePolicy;
 +use codex_core::exec::ExecExpiration;
@@ -15949,6 +15956,7 @@ index 000000000..c8818d4f0
 +            &codex_omd::host::ExecAccess {
 +                write: true,
 +                loopback: false,
++                unix_sockets: &[],
 +                scratch: &root,
 +            },
 +        )
@@ -15982,6 +15990,7 @@ index 000000000..c8818d4f0
 +            &codex_omd::host::ExecAccess {
 +                write: false,
 +                loopback: false,
++                unix_sockets: &[],
 +                scratch: &repository,
 +            },
 +        )
@@ -15991,13 +16000,50 @@ index 000000000..c8818d4f0
 +        assert!(output.status.success(), "{:?}", output);
 +        assert_eq!(output.stdout, b"sandbox-ok");
 +    }
++
++    #[test]
++    fn sandboxed_commands_reach_only_granted_unix_sockets() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap();
++        let socket = root.join("integration.sock");
++        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
++        for granted in [false, true] {
++            let sockets = if granted {
++                vec![socket.clone()]
++            } else {
++                Vec::new()
++            };
++            let status = crate::generic_host::sandboxed_command(
++                &FileSystemSandboxPolicy::unrestricted(),
++                &root,
++                &[],
++                vec![
++                    "/usr/bin/perl".into(),
++                    "-MIO::Socket::UNIX".into(),
++                    "-e".into(),
++                    "exit !IO::Socket::UNIX->new(Peer => shift)".into(),
++                    socket.display().to_string(),
++                ],
++                &codex_omd::host::ExecAccess {
++                    write: false,
++                    loopback: false,
++                    unix_sockets: &sockets,
++                    scratch: &root,
++                },
++            )
++            .unwrap()
++            .status()
++            .unwrap();
++            assert_eq!(status.success(), granted);
++        }
++    }
 +}
 diff --git a/codex-rs/ext/omd/src/generic_host.rs b/codex-rs/ext/omd/src/generic_host.rs
 new file mode 100644
-index 000000000..b75d761f8
+index 000000000..04ac84dc3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/generic_host.rs
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,277 @@
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_network_proxy::ManagedNetworkSandboxContext;
 +use codex_omd::data_store::Origin;
@@ -16075,8 +16121,14 @@ index 000000000..b75d761f8
 +                FileSystemAccessMode::Write,
 +            ));
 +        }
-+        let loopback = access.loopback.then(|| ManagedNetworkSandboxContext {
-+            allow_local_binding: true,
++        let managed = access.loopback || !access.unix_sockets.is_empty();
++        let network = managed.then(|| ManagedNetworkSandboxContext {
++            allow_local_binding: access.loopback,
++            allow_unix_sockets: access
++                .unix_sockets
++                .iter()
++                .map(|path| path.display().to_string())
++                .collect(),
 +            ..Default::default()
 +        });
 +        let (program, arguments) = argv.split_first().ok_or("exec_command_empty")?;
@@ -16090,13 +16142,13 @@ index 000000000..b75d761f8
 +                    args: arguments.to_vec(),
 +                    cwd: cwd.clone(),
 +                    env: Default::default(),
-+                    managed_network: loopback,
++                    managed_network: network,
 +                    additional_permissions: None,
 +                },
 +                permissions: &permissions,
 +                sandbox: SandboxType::MacosSeatbelt,
 +                sandbox_policy_cwd: &cwd,
-+                enforce_managed_network: access.loopback,
++                enforce_managed_network: managed,
 +                environment_id: None,
 +                network: None,
 +                sandbox_exe: None,
@@ -36351,10 +36403,10 @@ index 000000000..fa62a91a6
 +}
 diff --git a/codex-rs/omd/src/host.rs b/codex-rs/omd/src/host.rs
 new file mode 100644
-index 000000000..adaeb875e
+index 000000000..6ee428998
 --- /dev/null
 +++ b/codex-rs/omd/src/host.rs
-@@ -0,0 +1,1262 @@
+@@ -0,0 +1,1292 @@
 +use crate::data_store::DataStore;
 +use crate::data_store::Origin;
 +use crate::data_store::StoreProvenance;
@@ -36429,6 +36481,7 @@ index 000000000..adaeb875e
 +pub struct ExecAccess<'a> {
 +    pub write: bool,
 +    pub loopback: bool,
++    pub unix_sockets: &'a [PathBuf],
 +    pub scratch: &'a Path,
 +}
 +
@@ -36573,6 +36626,19 @@ index 000000000..adaeb875e
 +        let candidate = directory.join(name).canonicalize().ok()?;
 +        (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
 +    })
++}
++
++fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
++    use std::os::unix::fs::FileTypeExt;
++    use std::os::unix::fs::MetadataExt;
++    let path = PathBuf::from(std::env::var_os(name)?);
++    let metadata = fs::symlink_metadata(&path).ok()?;
++    (path.is_absolute()
++        && path.canonicalize().ok()? == path
++        && !path.starts_with(repository)
++        && metadata.file_type().is_socket()
++        && metadata.uid() == rustix::process::geteuid().as_raw())
++    .then_some(path)
 +}
 +
 +pub fn program_hash(path: &Path) -> Result<String, String> {
@@ -36928,6 +36994,8 @@ index 000000000..adaeb875e
 +            #[serde(default)]
 +            network: Option<String>,
 +            #[serde(default)]
++            unix_sockets: Vec<String>,
++            #[serde(default)]
 +            guards: Vec<Guard>,
 +            #[serde(default)]
 +            required_access: Option<RequiredAccess>,
@@ -36963,6 +37031,9 @@ index 000000000..adaeb875e
 +        if input.write && !granted("fs.write") {
 +            return Err("capability_denied: fs.write".into());
 +        }
++        if !input.unix_sockets.is_empty() && !granted("network") {
++            return Err("capability_denied: network".into());
++        }
 +        if input.required_access.is_some() && !input.write {
 +            return Err("exec_access_requires_write".into());
 +        }
@@ -36979,6 +37050,11 @@ index 000000000..adaeb875e
 +            || input
 +                .env
 +                .keys()
++                .any(|name| !caller.exec_environment.contains(name))
++            || input.unix_sockets.len() > 4
++            || input
++                .unix_sockets
++                .iter()
 +                .any(|name| !caller.exec_environment.contains(name))
 +        {
 +            return Err("exec_arguments_invalid".into());
@@ -37005,6 +37081,11 @@ index 000000000..adaeb875e
 +                },
 +            );
 +        let repository = self.repository().to_path_buf();
++        let unix_sockets = input
++            .unix_sockets
++            .iter()
++            .map(|name| inherited_socket(name, &repository).ok_or("exec_socket_unavailable"))
++            .collect::<Result<Vec<_>, _>>()?;
 +        let program =
 +            resolve_program(&input.program, &repository).ok_or("exec_program_unavailable")?;
 +        let digest = program_hash(&program)?;
@@ -37103,6 +37184,7 @@ index 000000000..adaeb875e
 +            &ExecAccess {
 +                write: input.write,
 +                loopback,
++                unix_sockets: &unix_sockets,
 +                scratch: &scratch.0,
 +            },
 +        )?;
@@ -51467,10 +51549,10 @@ index 000000000..b9175dc29
 +}
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..ee044fb42
+index 000000000..3cb38dd2a
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,1612 @@
+@@ -0,0 +1,1671 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -51500,6 +51582,7 @@ index 000000000..ee044fb42
 +    read_denied: Vec<PathBuf>,
 +    write_denied: Vec<PathBuf>,
 +    sandboxed: std::cell::RefCell<Vec<(bool, bool)>>,
++    sockets: std::cell::RefCell<Vec<PathBuf>>,
 +}
 +
 +impl Authority for TestAuthority {
@@ -51526,6 +51609,7 @@ index 000000000..ee044fb42
 +        self.sandboxed
 +            .borrow_mut()
 +            .push((access.write, access.loopback));
++        *self.sockets.borrow_mut() = access.unix_sockets.to_vec();
 +        let mut command = Command::new(&argv[0]);
 +        command.args(&argv[1..]);
 +        Ok(command)
@@ -51550,6 +51634,7 @@ index 000000000..ee044fb42
 +        read_denied: vec![repository.join("secret")],
 +        write_denied: vec![repository.join("locked")],
 +        sandboxed: Default::default(),
++        sockets: Default::default(),
 +    };
 +    (temp, repository, data, authority)
 +}
@@ -51916,6 +52001,62 @@ index 000000000..ee044fb42
 +        .unwrap_err(),
 +        "exec_access_requires_write"
 +    );
++}
++
++#[test]
++fn exec_run_admits_only_inherited_user_sockets() {
++    let (temp, repository, data, authority) = setup();
++    let active = || true;
++    let host = Host {
++        authority: &authority,
++        data_root: &data,
++        active: &active,
++        record_changes: false,
++    };
++    let socket = temp.path().canonicalize().unwrap().join("integration.sock");
++    let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
++    let inside = repository.join("integration.sock");
++    let _inside = std::os::unix::net::UnixListener::bind(&inside).unwrap();
++    let name = "EXEC_SOCKET_FIXTURE";
++    let environment = strings(&[name]);
++    let capabilities = strings(&["exec", "network"]);
++    let run = |capabilities: &[String], name: &str| {
++        host.call(
++            &caller(capabilities, &environment, Origin::Tool),
++            "exec.run",
++            json!({"program":"sh","argv":["-c","true"],"unix_sockets":[name]}),
++        )
++    };
++    assert_eq!(
++        run(&strings(&["exec"]), name).unwrap_err(),
++        "capability_denied: network"
++    );
++    assert_eq!(
++        run(&capabilities, "UNDECLARED").unwrap_err(),
++        "exec_arguments_invalid"
++    );
++    for value in [
++        None,
++        Some(Path::new("integration.sock")),
++        Some(repository.join("README.md").as_path()),
++        Some(inside.as_path()),
++        Some(socket.as_path()),
++    ] {
++        // SAFETY: only this test reads this variable.
++        unsafe {
++            match value {
++                Some(value) => std::env::set_var(name, value),
++                None => std::env::remove_var(name),
++            }
++        }
++        let result = run(&capabilities, name);
++        if value == Some(socket.as_path()) {
++            assert_eq!(result.unwrap()["exit_code"], 0);
++            assert_eq!(*authority.sockets.borrow(), vec![socket.clone()]);
++        } else {
++            assert_eq!(result.unwrap_err(), "exec_socket_unavailable");
++        }
++    }
 +}
 +
 +#[test]
@@ -62735,10 +62876,10 @@ index 000000000..d3e30397b
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..79aa41c03
+index 000000000..5df1a348f
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,771 @@
+@@ -0,0 +1,779 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -63144,7 +63285,14 @@ index 000000000..79aa41c03
 +                managed_network: access.loopback.then_some(&loopback),
 +                environment_id: None,
 +                network: None,
-+                extra_allow_unix_sockets: &[],
++                extra_allow_unix_sockets: &access
++                    .unix_sockets
++                    .iter()
++                    .map(|path| {
++                        codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(path)
++                    })
++                    .collect::<Result<Vec<_>, _>>()
++                    .map_err(|error| error.to_string())?,
 +            })?;
 +            sandboxed_seatbelt(
 +                Path::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE),
@@ -63181,6 +63329,7 @@ index 000000000..79aa41c03
 +        &codex_omd::host::ExecAccess {
 +            write,
 +            loopback,
++            unix_sockets: &[],
 +            scratch,
 +        },
 +    )
@@ -66920,10 +67069,10 @@ index 000000000..5986bb1bc
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..a760e3307
+index 000000000..308edfd36
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,964 @@
+@@ -0,0 +1,995 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -67887,6 +68036,37 @@ index 000000000..a760e3307
 +        })
 +        .collect::<Vec<_>>();
 +    assert_eq!(heights, vec![None, Some(9), Some(10), Some(3)]);
++}
++
++#[test]
++#[serial_test::serial]
++fn message_template_covers_streamed_and_finalized_agent_text() {
++    use crate::history_cell::HistoryCell;
++    preview(snapshot(serde_json::json!({"message_template":"> {text}"})));
++    let cells: [Box<dyn HistoryCell>; 3] = [
++        Box::new(crate::history_cell::AgentMessageCell::new(
++            vec![Line::from("streamed")],
++            /*is_first_line*/ true,
++        )),
++        Box::new(crate::history_cell::StreamingAgentTailCell::new(
++            crate::terminal_hyperlinks::plain_hyperlink_lines(vec![Line::from("tail")]),
++            /*is_first_line*/ false,
++        )),
++        Box::new(crate::history_cell::AgentMarkdownCell::new(
++            "final".to_owned(),
++            std::path::Path::new("/"),
++        )),
++    ];
++    for cell in cells {
++        let lines =
++            cell.display_hyperlink_lines_for_mode(40, crate::history_cell::HistoryRenderMode::Rich);
++        assert!(
++            lines
++                .iter()
++                .all(|line| line.line.to_string().starts_with("> "))
++        );
++    }
++    preview(ModViewSnapshot::default());
 +}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs
 new file mode 100644

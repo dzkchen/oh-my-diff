@@ -75,8 +75,14 @@ pub(crate) fn sandboxed_command(
                 FileSystemAccessMode::Write,
             ));
         }
-        let loopback = access.loopback.then(|| ManagedNetworkSandboxContext {
-            allow_local_binding: true,
+        let managed = access.loopback || !access.unix_sockets.is_empty();
+        let network = managed.then(|| ManagedNetworkSandboxContext {
+            allow_local_binding: access.loopback,
+            allow_unix_sockets: access
+                .unix_sockets
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
             ..Default::default()
         });
         let (program, arguments) = argv.split_first().ok_or("exec_command_empty")?;
@@ -90,13 +96,13 @@ pub(crate) fn sandboxed_command(
                     args: arguments.to_vec(),
                     cwd: cwd.clone(),
                     env: Default::default(),
-                    managed_network: loopback,
+                    managed_network: network,
                     additional_permissions: None,
                 },
                 permissions: &permissions,
                 sandbox: SandboxType::MacosSeatbelt,
                 sandbox_policy_cwd: &cwd,
-                enforce_managed_network: access.loopback,
+                enforce_managed_network: managed,
                 environment_id: None,
                 network: None,
                 sandbox_exe: None,

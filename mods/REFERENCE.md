@@ -39,7 +39,7 @@ native work.
 | `outputs` | the `tool_output` replacement and observers |
 | `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, read-only `workspace.check_access`, `workspace.snapshot`, `workspace.fingerprint`, `workspace.watch`, the `workspace_change` event; `app.request fuzzyFileSearch*` |
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
-| `network` | `exec.run` and `process.start` with `network: "loopback"` |
+| `network` | `exec.run` and `process.start` with `network: "loopback"`; `exec.run` `unix_sockets` |
 | `model` | `routes.list`, `routes.select`, `providers.*`, the `routing` event |
 | `agents` | `agents.*`, `model.complete`, `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
@@ -70,7 +70,7 @@ and `GIT_CONFIG` prefixes are refused.
 ### One-shot commands: `exec.run`
 
 `{program, sha256?, argv?, cwd?, env?, stdin?, timeout_ms?, max_output_bytes?, output_artifact?,
-write?, network?, guards?, required_access?}` runs one program in the session's effective sandbox. A bare
+write?, network?, unix_sockets?, guards?, required_access?}` runs one program in the session's effective sandbox. A bare
 program name resolves on `PATH` outside the repository; an absolute path must
 be canonical and outside the repository; `sha256` pins the resolved file. `cwd`
 is repository-relative. The environment starts empty except `PATH`, a private
@@ -86,7 +86,12 @@ command's deadline and cancellation, so a descendant that keeps a pipe open
 cannot hold the call past its timeout. At most 4 runs per repository are
 concurrent. Without `write` the
 repository is read-only; with `network: "loopback"` only local binding is
-allowed. Cancellation kills the process group and returns `exec_cancelled`.
+allowed. `unix_sockets` names up to 4 declared `exec_environment` variables
+whose host values are Unix sockets the command may connect to; it needs the
+`network` capability. Each value must be an absolute, canonical path outside the
+repository to an existing socket owned by the current user, or the call fails
+with `exec_socket_unavailable`; the mod never supplies the path and no IP network
+is added. Cancellation kills the process group and returns `exec_cancelled`.
 The result is `{exit_code, signal, stdout, stdout_sha256, stderr,
 stdout_truncated, stderr_truncated, timed_out, duration_ms, program: {path,
 sha256}, guards_verified}`. The digest covers the raw captured stdout bytes.
@@ -98,6 +103,17 @@ reads at most 16 KiB per call with a byte cursor. The artifact is bound to the
 repository, current mod source and thread, hash-checked on reads, and subject
 to a 64 MiB quota per binding. This keeps large command output outside mod
 callback receipts; callers can page it in later callbacks.
+
+Integration discovery uses these grants, not a separate API. A mod declares the
+non-secret variables an integration sets (for example `HERDR_ENV`,
+`HERDR_PANE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH`, or `NVIM`) in
+`exec_environment` and reads them with `exec.run {program: 'env'}`, which sees
+only those names plus `PATH`, the private `HOME`/`TMPDIR`, `TERM` and locale.
+Inherited values are untrusted: run a binary named by one only as an absolute
+`program`, which the host canonicalizes, hashes and sandboxes, pin its returned
+`sha256` for later calls, and pass its socket through `unix_sockets`. Missing or
+malformed values leave the integration inert. Discovery itself grants neither
+execution nor socket access.
 
 `api.assets.read(name)` returns a selected package's UTF-8 entrypoint or
 declared text asset with its SHA-256. It reads only the caller's hash-bound

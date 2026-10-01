@@ -559,11 +559,11 @@
       "group": "tool",
       "decision": "One-shot sandboxed commands",
       "observe": "the result reports exit status, bounded output, timing, captured stdout digest and the program hash; snapshot commands return candidate-bound host execution evidence",
-      "alter": "`sha256` pins the program; `write` and `network` widen only with `fs.write` and `network`; guarded writes recheck bounded command output and named path access under the host operation guard",
+      "alter": "`sha256` pins the program; `write`, `network` and `unix_sockets` widen only with `fs.write` and `network`; guarded writes recheck bounded command output and named path access under the host operation guard",
       "replace": null,
       "timing": "any tool, command or lifecycle callback",
       "ownership": "mod: program and arguments; host: resolution, sandbox, environment, limits and cancellation",
-      "limits": "10 s default and 120 s ceiling; 1 MiB per stream normally, or a complete UTF-8 stdout artifact up to 16 MiB with 16 KiB bound pages; artifacts are bound to the same repository, mod source and thread and capped at 64 MiB per binding; 4 concurrent runs; declared environment names only; read-only repository without `write`; at most 4 read-only command guards and 128 required write-access paths; selected snapshots are frozen, source changes are refused, and successful execution receipts require zero exit without timeout, signal or truncated output",
+      "limits": "10 s default and 120 s ceiling; 1 MiB per stream normally, or a complete UTF-8 stdout artifact up to 16 MiB with 16 KiB bound pages; artifacts are bound to the same repository, mod source and thread and capped at 64 MiB per binding; 4 concurrent runs; declared environment names only; at most 4 Unix sockets, each named by a declared variable whose host value is a canonical user-owned socket outside the repository; read-only repository without `write`; at most 4 read-only command guards and 128 required write-access paths; selected snapshots are frozen, source changes are refused, and successful execution receipts require zero exit without timeout, signal or truncated output",
       "native": "native hooks run commands outside the session sandbox",
       "covers": {
         "capabilities": [
@@ -579,6 +579,8 @@
       },
       "evidence": [
         "rust:exec_run_bounds_program_environment_output_time_and_authority",
+        "rust:exec_run_admits_only_inherited_user_sockets",
+        "patch:sandboxed_commands_reach_only_granted_unix_sockets",
         "rust:exec_output_artifact_is_paged_and_bound_to_the_caller",
         "rust:exec_guards_recheck_output_before_a_write",
         "rust:workspace_access_checks_named_paths_and_guarded_write_authority",
@@ -881,7 +883,7 @@
       "observe": "not applicable",
       "alter": "a template that retains `{text}` exactly once, plus compact presentation for successful completed agent tool output",
       "replace": "terminal",
-      "timing": "rich assistant and exec cells as they render",
+      "timing": "rich streamed and finalized assistant cells and exec cells as they render, including inline scrollback",
       "ownership": "host: the raw transcript, stored messages and durable evidence",
       "limits": "presentation only; active work, failures, user shell commands, prompts, transcript, stored messages and evidence remain native and visible",
       "native": "no equivalent",
@@ -893,7 +895,8 @@
       },
       "evidence": [
         "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
-        "patch:focus_flow_compacts_only_successful_agent_output"
+        "patch:focus_flow_compacts_only_successful_agent_output",
+        "patch:message_template_covers_streamed_and_finalized_agent_text"
       ],
       "replace_note": null
     },

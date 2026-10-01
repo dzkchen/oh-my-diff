@@ -72,6 +72,7 @@ static RUNNING: Mutex<BTreeMap<String, usize>> = Mutex::new(BTreeMap::new());
 pub struct ExecAccess<'a> {
     pub write: bool,
     pub loopback: bool,
+    pub unix_sockets: &'a [PathBuf],
     pub scratch: &'a Path,
 }
 
@@ -216,6 +217,19 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
         let candidate = directory.join(name).canonicalize().ok()?;
         (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
     })
+}
+
+fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::FileTypeExt;
+    use std::os::unix::fs::MetadataExt;
+    let path = PathBuf::from(std::env::var_os(name)?);
+    let metadata = fs::symlink_metadata(&path).ok()?;
+    (path.is_absolute()
+        && path.canonicalize().ok()? == path
+        && !path.starts_with(repository)
+        && metadata.file_type().is_socket()
+        && metadata.uid() == rustix::process::geteuid().as_raw())
+    .then_some(path)
 }
 
 pub fn program_hash(path: &Path) -> Result<String, String> {
@@ -571,6 +585,8 @@ impl Host<'_> {
             #[serde(default)]
             network: Option<String>,
             #[serde(default)]
+            unix_sockets: Vec<String>,
+            #[serde(default)]
             guards: Vec<Guard>,
             #[serde(default)]
             required_access: Option<RequiredAccess>,
@@ -606,6 +622,9 @@ impl Host<'_> {
         if input.write && !granted("fs.write") {
             return Err("capability_denied: fs.write".into());
         }
+        if !input.unix_sockets.is_empty() && !granted("network") {
+            return Err("capability_denied: network".into());
+        }
         if input.required_access.is_some() && !input.write {
             return Err("exec_access_requires_write".into());
         }
@@ -622,6 +641,11 @@ impl Host<'_> {
             || input
                 .env
                 .keys()
+                .any(|name| !caller.exec_environment.contains(name))
+            || input.unix_sockets.len() > 4
+            || input
+                .unix_sockets
+                .iter()
                 .any(|name| !caller.exec_environment.contains(name))
         {
             return Err("exec_arguments_invalid".into());
@@ -648,6 +672,11 @@ impl Host<'_> {
                 },
             );
         let repository = self.repository().to_path_buf();
+        let unix_sockets = input
+            .unix_sockets
+            .iter()
+            .map(|name| inherited_socket(name, &repository).ok_or("exec_socket_unavailable"))
+            .collect::<Result<Vec<_>, _>>()?;
         let program =
             resolve_program(&input.program, &repository).ok_or("exec_program_unavailable")?;
         let digest = program_hash(&program)?;
@@ -746,6 +775,7 @@ impl Host<'_> {
             &ExecAccess {
                 write: input.write,
                 loopback,
+                unix_sockets: &unix_sockets,
                 scratch: &scratch.0,
             },
         )?;

@@ -134,7 +134,7 @@ export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollba
 export type KeymapAction = `${string}.${string}`;
 export type Declined = { status: 'declined' };
 export interface HostOperations {
-  'exec.run': { arguments: { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeout_ms?: number; max_output_bytes?: number; output_artifact?: boolean; write?: boolean; network?: 'none' | 'loopback'; snapshot?: ResourceRef; guards?: ExecGuard[]; required_access?: { write: string[] } }; result: ExecResult & { candidate_sha256?: string; evidence?: ResourceRef } };
+  'exec.run': { arguments: { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeout_ms?: number; max_output_bytes?: number; output_artifact?: boolean; write?: boolean; network?: 'none' | 'loopback'; unix_sockets?: string[]; snapshot?: ResourceRef; guards?: ExecGuard[]; required_access?: { write: string[] } }; result: ExecResult & { candidate_sha256?: string; evidence?: ResourceRef } };
   'exec.output_page': { arguments: { artifact: ResourceRef; cursor?: number; max_bytes?: number }; result: { text: string; cursor: number | null; bytes: number; sha256: string } };
   'workspace.read': { arguments: { paths: string[] }; result: { files: Record<string, { text: string; sha256: string } | null> } };
   'workspace.list': { arguments: { path?: string; recursive?: boolean; include_ignored?: boolean; max_entries?: number }; result: { entries: ({ path: string } & FileStat)[]; truncated: boolean } };
