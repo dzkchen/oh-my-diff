@@ -121,7 +121,7 @@ fn host(temp: &TempDir) -> ModHost {
 const COUNTER: &str = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
 
 #[test]
-fn mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates() {
+fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() {
     let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return value; }); }";
     let (temp, _, _) = fixture(source, &["commands", "store"]);
     let mut first = host(&temp);
@@ -140,10 +140,261 @@ fn mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates() {
     std::thread::sleep(std::time::Duration::from_millis(200));
     assert_eq!(invoke(&mut second, "count").unwrap(), json!(4));
     let (mut first, result) = racing.join().unwrap();
-    assert!(result.unwrap_err().to_string().contains("state_conflict"));
-    assert_eq!(invoke(&mut first, "count").unwrap(), json!(5));
+    assert_eq!(result.unwrap(), json!(4));
+    assert_eq!(invoke(&mut first, "count").unwrap(), json!(105));
     let mut resumed = host(&temp);
-    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(6));
+    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(106));
+}
+
+#[test]
+fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return read.ok; }); }";
+    let (temp, _, _) = fixture(source, &["commands", "store"]);
+    let mut first = host(&temp);
+    let mut second = host(&temp);
+    let count = |runtime: &mut ModHost| {
+        let generation = runtime.generation();
+        runtime.invoke("fixture", generation, "command", "count", Value::Null)
+    };
+    let race = |first: &mut ModHost, second: &mut ModHost, key: &str| {
+        let calls = AtomicUsize::new(0);
+        let result = std::thread::scope(|scope| {
+            let slow = scope.spawn(|| {
+                let generation = first.generation();
+                first.invoke_with(
+                    "fixture",
+                    generation,
+                    "command",
+                    "slow",
+                    json!(key),
+                    || true,
+                    |_| {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(Value::Null)
+                    },
+                )
+            });
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            count(second).unwrap();
+            slow.join().unwrap()
+        });
+        (result, calls.load(Ordering::SeqCst))
+    };
+    assert_eq!(count(&mut second).unwrap(), json!(1));
+    let (result, calls) = race(&mut first, &mut second, "fixed");
+    assert_eq!((result.unwrap(), calls), (json!(true), 1));
+    assert_eq!(count(&mut second).unwrap(), json!(103));
+    let (result, calls) = race(&mut first, &mut second, "state");
+    assert_eq!((result.unwrap(), calls), (json!(true), 2));
+    assert_eq!(count(&mut second).unwrap(), json!(205));
+    let (result, calls) = race(&mut first, &mut second, "write");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .starts_with("state_conflict")
+    );
+    assert_eq!(calls, 1);
+    assert_eq!(count(&mut second).unwrap(), json!(207));
+    assert!(first.status()["mods"][0]["error"].is_null());
+}
+
+#[test]
+fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
+    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('fill', size => { api.state.set('x'.repeat(Number(size))); return null; }); }";
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let checkout = root.join("checkout");
+    std::fs::create_dir_all(checkout.join(".git")).unwrap();
+    std::fs::create_dir_all(checkout.join("sub")).unwrap();
+    let linked = root.join("linked");
+    std::fs::create_dir_all(checkout.join(".git/worktrees/linked")).unwrap();
+    std::fs::create_dir(&linked).unwrap();
+    std::fs::write(
+        linked.join(".git"),
+        format!(
+            "gitdir: {}\n",
+            checkout.join(".git/worktrees/linked").display()
+        ),
+    )
+    .unwrap();
+    let scoped = |id: &str, scope: &str| {
+        let path = package(&root, id, source, &["commands", "store"]);
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
+        manifest["state_scope"] = json!(scope);
+        std::fs::write(
+            path.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        path
+    };
+    let (threaded, shared, invalid) = (
+        scoped("threaded", "thread"),
+        scoped("shared", "checkout"),
+        scoped("invalid", "global"),
+    );
+    let first = ModStore::create(root.join("first"), node()).unwrap();
+    let second = ModStore::create(root.join("second"), node()).unwrap();
+    for path in [&threaded, &shared] {
+        trust(&first, path, &["commands", "store"]);
+    }
+    trust(&second, &shared, &["commands", "store"]);
+    assert!(
+        ModStore::inspect_package(&invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("state_scope")
+    );
+    let invoke = |runtime: &mut ModHost, id: &str, name: &str, payload: Value| {
+        let generation = runtime.generation();
+        runtime.invoke(id, generation, "command", name, payload)
+    };
+    let mut one = ModHost::open(root.join("first")).unwrap();
+    let mut two = ModHost::open(root.join("second")).unwrap();
+    one.set_checkout(&checkout.join("sub"));
+    two.set_checkout(&checkout);
+
+    {
+        let _thread = codex_omd::StateThread::enter(Some("t1".into()));
+        assert_eq!(
+            invoke(&mut one, "threaded", "count", Value::Null).unwrap(),
+            json!(1)
+        );
+        assert_eq!(
+            invoke(&mut one, "threaded", "count", Value::Null).unwrap(),
+            json!(2)
+        );
+    }
+    {
+        let _thread = codex_omd::StateThread::enter(Some("t2".into()));
+        assert_eq!(
+            invoke(&mut one, "threaded", "count", Value::Null).unwrap(),
+            json!(1)
+        );
+    }
+    assert_eq!(
+        invoke(&mut one, "threaded", "count", json!({"thread_id": "t1"})).unwrap(),
+        json!(3)
+    );
+    assert!(
+        invoke(&mut one, "threaded", "count", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("state_thread_unavailable")
+    );
+    assert!(codex_omd::data_store::fork_thread_data(&root.join("first"), "t1", "t3").unwrap());
+    assert_eq!(
+        invoke(&mut one, "threaded", "count", json!({"thread_id": "t3"})).unwrap(),
+        json!(4)
+    );
+    assert!(codex_omd::data_store::remove_thread_data(&root.join("first"), "t1").unwrap());
+    assert_eq!(
+        invoke(&mut one, "threaded", "count", json!({"thread_id": "t1"})).unwrap(),
+        json!(1)
+    );
+    assert!(!root.join("first/state-threaded.json").exists());
+
+    assert_eq!(
+        invoke(&mut one, "shared", "count", Value::Null).unwrap(),
+        json!(1)
+    );
+    assert_eq!(
+        invoke(&mut two, "shared", "count", Value::Null).unwrap(),
+        json!(2)
+    );
+    assert_eq!(
+        invoke(&mut one, "shared", "count", Value::Null).unwrap(),
+        json!(3)
+    );
+    assert!(checkout.join(".git/omd/state/shared.json").is_file());
+    let mut linked_host = ModHost::open(root.join("second")).unwrap();
+    linked_host.set_checkout(&linked);
+    assert_eq!(
+        invoke(&mut linked_host, "shared", "count", Value::Null).unwrap(),
+        json!(1)
+    );
+    let plain = root.join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    let mut outside = ModHost::open(root.join("second")).unwrap();
+    outside.set_checkout(&plain);
+    assert_eq!(
+        invoke(&mut outside, "shared", "count", Value::Null).unwrap(),
+        json!(1)
+    );
+    assert!(plain.join(".omd/state/shared.json").is_file());
+    let cli = |cwd: &std::path::Path, args: &[&str]| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
+            .arg("command")
+            .arg(root.join("first"))
+            .args(args)
+            .current_dir(cwd)
+            .env("OMD_TEST_NODE", node())
+            .output()
+            .unwrap();
+        if output.status.success() {
+            Ok(serde_json::from_slice::<Value>(&output.stdout).unwrap())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).into_owned())
+        }
+    };
+    assert_eq!(
+        cli(&checkout, &["threaded", "count", "null", "t5"]),
+        Ok(json!(1))
+    );
+    assert_eq!(
+        cli(&checkout, &["threaded", "count", "null", "t5"]),
+        Ok(json!(2))
+    );
+    assert!(
+        cli(&checkout, &["threaded", "count", "null"])
+            .unwrap_err()
+            .contains("state_thread_unavailable")
+    );
+    assert_eq!(
+        cli(&checkout.join("sub"), &["shared", "count", "null"]),
+        Ok(json!(4))
+    );
+    let reader = scoped("reader", "checkout");
+    std::fs::write(reader.join("index.ts"), "export default api => { const seen = api.state.get() !== null; api.command(seen ? 'seen' : 'fresh', () => { api.state.set(true); return seen; }); }").unwrap();
+    trust(&second, &reader, &["commands", "store"]);
+    let mut opened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
+    assert_eq!(
+        invoke(&mut opened, "reader", "fresh", Value::Null).unwrap(),
+        json!(false)
+    );
+    let mut reopened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
+    assert_eq!(
+        invoke(&mut reopened, "reader", "seen", Value::Null).unwrap(),
+        json!(true)
+    );
+    let mut unscoped = ModHost::open(root.join("first")).unwrap();
+    assert!(
+        invoke(&mut unscoped, "shared", "count", Value::Null)
+            .unwrap_err()
+            .to_string()
+            .contains("state_checkout_unavailable")
+    );
+    assert!(
+        unscoped.status()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["error"].is_null())
+    );
+
+    let _thread = codex_omd::StateThread::enter(Some("t2".into()));
+    assert_eq!(
+        invoke(&mut one, "threaded", "fill", json!(150_000)).unwrap(),
+        Value::Null
+    );
+    assert!(
+        invoke(&mut one, "threaded", "fill", json!(200_000))
+            .unwrap_err()
+            .to_string()
+            .contains("state_limit")
+    );
 }
 
 #[test]

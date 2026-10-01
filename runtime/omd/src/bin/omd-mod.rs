@@ -129,7 +129,7 @@ fn plugin_preview(codex: &str, home: &str, id: &str, candidate: &str) -> io::Res
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
         )
     };
     match args {
@@ -278,9 +278,15 @@ fn run(args: &[String]) -> io::Result<Value> {
                 "installed_contracts":status["installed_contract_types"]}),
             )
         }
-        [command, root, scenario] if command == "test" => {
+        [command, root, scenario, thread @ ..] if command == "test" && thread.len() <= 1 => {
             let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
-            ModHost::open(PathBuf::from(root).canonicalize()?)?.offline_test(scenario)
+            let mut host = ModHost::open_in(
+                PathBuf::from(root).canonicalize()?,
+                |_| Ok(()),
+                &std::env::current_dir()?,
+            )?;
+            let _thread = codex_omd::StateThread::enter(thread.first().cloned());
+            host.offline_test(scenario)
         }
         [command, root, output] if command == "diagnostics" => {
             let bundle = ModHost::open(PathBuf::from(root).canonicalize()?)?.diagnostic_bundle();
@@ -289,8 +295,15 @@ fn run(args: &[String]) -> io::Result<Value> {
             Ok(serde_json::json!({"bundle":output,"redacted":true}))
         }
         [command, denial] if command == "explain" => Ok(ModHost::capability_explanation(denial)),
-        [command, root, id, name, payload] if command == "command" => {
-            let mut host = ModHost::open(PathBuf::from(root).canonicalize()?)?;
+        [command, root, id, name, payload, thread @ ..]
+            if command == "command" && thread.len() <= 1 =>
+        {
+            let mut host = ModHost::open_in(
+                PathBuf::from(root).canonicalize()?,
+                |_| Ok(()),
+                &std::env::current_dir()?,
+            )?;
+            let _thread = codex_omd::StateThread::enter(thread.first().cloned());
             host.invoke(
                 id,
                 host.generation(),

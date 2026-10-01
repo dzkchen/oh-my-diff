@@ -425,6 +425,7 @@ impl Notifier {
         let handle = tokio::runtime::Handle::current();
         let notifier = self.clone();
         tokio::task::spawn_blocking(move || {
+            let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
             let Some(core) = notifier.core.upgrade() else {
                 return;
             };

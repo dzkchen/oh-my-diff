@@ -1,4 +1,7 @@
 use codex_file_system::FileSystemSandboxContext;
+use codex_protocol::permissions::FileSystemAccessMode;
+use codex_protocol::permissions::FileSystemPath;
+use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSandboxPolicyContext;
 use codex_protocol::permissions::ReadDenyMatcher;
@@ -457,14 +460,52 @@ impl WorkspaceAuthority {
     }
 }
 
+/// Keeps host-written checkout state under `<repository>/.omd/state` read-only for the session.
+pub(crate) fn protect_checkout_state(
+    policy: &mut FileSystemSandboxPolicy,
+    repository: &std::path::Path,
+) -> Result<(), String> {
+    let path = AbsolutePathBuf::from_absolute_path_checked(repository.join(".omd").join("state"))
+        .map_err(|error| error.to_string())?;
+    policy.entries.push(FileSystemSandboxEntry::new(
+        FileSystemPath::Path { path: path.into() },
+        FileSystemAccessMode::Read,
+    ));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use codex_protocol::models::PermissionProfile;
-    use codex_protocol::permissions::FileSystemAccessMode;
-    use codex_protocol::permissions::FileSystemPath;
-    use codex_protocol::permissions::FileSystemSandboxEntry;
     use codex_protocol::permissions::NetworkSandboxPolicy;
+
+    #[test]
+    fn checkout_state_stays_read_only_inside_a_writable_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let cwd =
+            PathUri::from_abs_path(&AbsolutePathBuf::from_absolute_path_checked(&root).unwrap());
+        let mut policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry::new(
+            FileSystemPath::Path { path: cwd.clone() },
+            FileSystemAccessMode::Write,
+        )]);
+        protect_checkout_state(&mut policy, &root).unwrap();
+        let profile =
+            PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
+        let context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
+        let authority = WorkspaceAuthority {
+            repository: root.clone(),
+            session_root: None,
+            session_database: None,
+            policy,
+            context,
+        };
+        assert!(authority.writable(&root.join("src/app.rs")));
+        assert!(authority.readable(&root.join(".omd/state/board.json")));
+        assert!(!authority.writable(&root.join(".omd/state/board.json")));
+        assert!(authority.writable(&root.join(".omd/session-1/scratch")));
+    }
 
     #[test]
     fn local_snapshot_authority_keeps_temporary_metadata_and_read_denials() {

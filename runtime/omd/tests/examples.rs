@@ -33,6 +33,7 @@ const HOST_FEATURES: &[&str] = &[
     "terminal_tabs_v1",
     "session_ports_v1",
     "builtins_mod_commands_v1",
+    "state_scopes_v1",
 ];
 
 #[test]

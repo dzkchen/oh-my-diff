@@ -217,10 +217,26 @@ pub(in crate::mods) fn output_replaced(
     });
 }
 
+pub(in crate::mods) fn visible_paths(
+    root: &std::path::Path,
+    paths: Vec<String>,
+    include_ignored: bool,
+    readable: impl Fn(&std::path::Path) -> bool,
+) -> Vec<String> {
+    let filter = codex_omd::watch_filter::WatchFilter::new(root);
+    paths
+        .into_iter()
+        .filter(|path| include_ignored || !filter.ignored(root, path))
+        .filter(|path| readable(&root.join(path)))
+        .take(128)
+        .collect()
+}
+
 pub(in crate::mods) async fn external_changes(
     core: &Core,
     lead: &Lead,
     paths: &[String],
+    include_ignored: bool,
 ) -> Vec<Value> {
     let Ok(authority) = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await
     else {
@@ -229,22 +245,20 @@ pub(in crate::mods) async fn external_changes(
     let root = lead.host.repository.clone();
     let paths = paths.to_vec();
     let changes = tokio::task::spawn_blocking(move || {
-        let filter = codex_omd::watch_filter::WatchFilter::new(&root);
-        paths
-            .into_iter()
-            .filter(|path| !filter.ignored(&root, path))
-            .filter(|path| authority.readable(&root.join(path)))
-            .take(128)
-            .map(|path| {
-                let full = root.join(&path);
-                let after = std::fs::symlink_metadata(&full)
-                    .ok()
-                    .filter(|metadata| metadata.is_file() && metadata.len() <= HASH_BYTES)
-                    .and_then(|_| std::fs::read(&full).ok())
-                    .map(|bytes| crate::execution::hash(&bytes));
-                json!({"path": path, "before": null, "after": after})
-            })
-            .collect::<Vec<_>>()
+        visible_paths(&root, paths, include_ignored, |path| {
+            authority.readable(path)
+        })
+        .into_iter()
+        .map(|path| {
+            let full = root.join(&path);
+            let after = std::fs::symlink_metadata(&full)
+                .ok()
+                .filter(|metadata| metadata.is_file() && metadata.len() <= HASH_BYTES)
+                .and_then(|_| std::fs::read(&full).ok())
+                .map(|bytes| crate::execution::hash(&bytes));
+            json!({"path": path, "before": null, "after": after})
+        })
+        .collect::<Vec<_>>()
     })
     .await
     .unwrap_or_default();

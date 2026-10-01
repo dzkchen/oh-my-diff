@@ -86,6 +86,29 @@
       "source": "mods/first-party/omd_continue",
       "version": "0.1.0-preview.1"
     },
+    "omd_editor": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "commands",
+        "terminal",
+        "store",
+        "lifecycle",
+        "events",
+        "exec",
+        "fs.read",
+        "fs.write",
+        "composer"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "54f90dcba624058a3de23c969bef350205b4da4ddf512a317f2430400fc06923",
+        "mod.json": "b9a2dc75e2de576e0c751d876a0280322e4000fdd23e76a725667f7455feaae6"
+      },
+      "id": "omd_editor",
+      "package_sha256": "13b77718494e5d1059a79776faad9cfa7feaedc8dcb1a25fc22dcaf393d9cd40",
+      "source": "mods/first-party/omd_editor",
+      "version": "0.1.0-preview.1"
+    },
     "omd_frecency": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
@@ -282,11 +305,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "c9299eae19079ee4a9c051359c7c34d98cec667e6ef2dd4184b7b627ecbe9250",
+        "index.ts": "42ed76adc48091fd018b74fffd4943e40bae1d53d6e202bc31b735d8a631e297",
         "mod.json": "32213506f0aa980dfac9fa852e429cf73142f453a7b3951a2f5fa4d0909a0521"
       },
       "id": "omd_lsp_view",
-      "package_sha256": "da7dc1b71d3762a9be051d99fdf896bba5676d126bf54f9cdaf312ee2b8c43ed",
+      "package_sha256": "f9bb9b97969c6ab53714e4a3a4f80a61f52b47696d6908781e4a9904fb91a17e",
       "source": "mods/first-party/omd_lsp_view",
       "version": "0.2.0-preview.1"
     },
@@ -605,6 +628,30 @@
       "package_sha256": "9b39f1b065fc4656f953c47c0a5b9c4e5d1cbfd1cbd776bad3e1c41b5115bc7c",
       "source": "mods/first-party/omd_research",
       "version": "0.2.0-preview.1"
+    },
+    "omd_shared_checkout": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "commands",
+        "terminal",
+        "store",
+        "lifecycle",
+        "events",
+        "exec",
+        "fs.read",
+        "middleware",
+        "approvals",
+        "builtins"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "e667a2aaa43c17c3a2f43ca40f710b407317c5db7ba76d26ab727d6058617b56",
+        "mod.json": "fab76b1a174877bbf84352764501335101f8e7db9a06a41de6812ebf64ad0d17"
+      },
+      "id": "omd_shared_checkout",
+      "package_sha256": "d935543177681c638a1874509f78eb2ad2309de73c10f830dbb728d41ecdf397",
+      "source": "mods/first-party/omd_shared_checkout",
+      "version": "0.1.0-preview.1"
     },
     "omd_source_knowledge": {
       "api": "0.2.0-experimental.5",

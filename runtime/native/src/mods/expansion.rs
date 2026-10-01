@@ -177,7 +177,9 @@ pub(super) async fn run<T: Send + 'static>(
     let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
     let generation = Arc::new(AtomicU64::new(0));
     let (flag, current) = (cancelled.clone(), generation.clone());
+    let thread = lead.thread.to_string();
     let handle = tokio::task::spawn_blocking(move || {
+        let _thread = codex_omd::StateThread::enter(Some(thread));
         let facts = {
             let runtime = runtime.lock().ok()?;
             current.store(runtime.generation(), Ordering::Release);

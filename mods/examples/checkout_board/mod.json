@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "checkout_board",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "state_scope": "checkout",
+  "license": "Apache-2.0",
+  "capabilities": [
+    "store",
+    "terminal",
+    "commands"
+  ],
+  "compatibility": {
+    "required_features": [
+      "state_scopes_v1",
+      "terminal_surface_v1"
+    ]
+  }
+}

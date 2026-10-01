@@ -451,6 +451,14 @@
       "why_mod": "Lists the TCP listeners of the current session's background terminals from the live host."
     },
     {
+      "path": "mods/examples/checkout_board",
+      "id": "checkout_board",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Keeps one state per Git checkout that every OMD session working there shares."
+    },
+    {
       "path": "mods/examples/image_preview",
       "id": "image_preview",
       "version": "1.0.0",
@@ -673,6 +681,22 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the notes vault view, wiki-link index, note commands, its own command-argument completion and opt-in agent tools; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_editor",
+      "id": "omd_editor",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns editable file buffers, their rendering, key handling, Git gutter and conflict recovery over public key documents, workspace transactions and watches, composing omd_panes, omd_git and omd_lsp_view through their commands; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_shared_checkout",
+      "id": "omd_shared_checkout",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the shared-checkout registry, path reservations, handoffs and Git lease in mod state and enforces them for agent patches, Git commands and recognizable shell writes through approval middleware; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_lsp_view",

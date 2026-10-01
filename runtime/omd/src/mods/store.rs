@@ -12,6 +12,7 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -83,6 +84,96 @@ pub struct ModStore {
     pub(super) root: PathBuf,
 }
 
+pub(super) const SCOPED_STATE_LIMIT: usize = 196_608;
+
+#[derive(Clone, Debug)]
+pub(super) enum StateLocation {
+    Store { id: String, scope: String },
+    Directory(PathBuf, String),
+    Unavailable(&'static str),
+}
+
+fn lock(path: &Path) -> Result<File> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(path)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => return Ok(file),
+            Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn state_value(bytes: &[u8], version: u32) -> Result<Value> {
+    let state: Value = serde_json::from_slice(bytes)?;
+    if state["schema"] != super::MOD_STATE_STORAGE_SCHEMA_VERSION || state["version"] != version {
+        return Err(failure(
+            "state_migration_required: previous state preserved",
+        ));
+    }
+    Ok(state["value"].clone())
+}
+
+fn directory_state(directory: &Path, name: &str, version: u32) -> Result<Value> {
+    match read(&directory.join(name), SCOPED_STATE_LIMIT as u64) {
+        Ok(bytes) => state_value(&bytes, version),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
+        Err(error) => Err(error),
+    }
+}
+
+fn write_directory_state(
+    directory: &Path,
+    name: &str,
+    version: u32,
+    previous: &Value,
+    value: &Value,
+) -> Result<()> {
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(directory)?;
+    if directory.canonicalize()? != directory {
+        return Err(failure("state_directory_invalid"));
+    }
+    let _lock = lock(&directory.join(".lock"))?;
+    if &directory_state(directory, name, version)? != previous {
+        return Err(failure("state_conflict: reload before retry"));
+    }
+    let bytes = serde_json::to_vec(
+        &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
+    )?;
+    if bytes.len() > SCOPED_STATE_LIMIT {
+        return Err(failure("state_limit"));
+    }
+    let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&temporary);
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    let result = (|| {
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, directory.join(name))?;
+        File::open(directory)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
 impl ModStore {
     pub fn create(root: PathBuf, node: PathBuf) -> Result<Self> {
         std::fs::create_dir(&root)?;
@@ -105,23 +196,7 @@ impl ModStore {
     }
 
     pub(super) fn lock(&self) -> Result<File> {
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(self.root.join("store.lock"))?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        loop {
-            match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
-                Ok(()) => return Ok(file),
-                Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
+        lock(&self.root.join("store.lock"))
     }
 
     pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
@@ -368,14 +443,33 @@ impl ModStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
             Err(e) => return Err(e),
         };
-        let state: Value = serde_json::from_slice(&bytes)?;
-        if state["schema"] != super::MOD_STATE_STORAGE_SCHEMA_VERSION || state["version"] != version
-        {
-            return Err(failure(
-                "state_migration_required: previous state preserved",
-            ));
+        state_value(&bytes, version)
+    }
+
+    pub(super) fn scoped_state(&self, location: &StateLocation, version: u32) -> Result<Value> {
+        match location {
+            StateLocation::Store { id, scope } => self.state(id, scope, version),
+            StateLocation::Directory(directory, name) => directory_state(directory, name, version),
+            StateLocation::Unavailable(_) => Ok(Value::Null),
         }
-        Ok(state["value"].clone())
+    }
+
+    pub(super) fn write_scoped_state(
+        &self,
+        location: &StateLocation,
+        version: u32,
+        previous: &Value,
+        value: &Value,
+    ) -> Result<()> {
+        match location {
+            StateLocation::Store { id, scope } => {
+                self.write_state(id, scope, version, previous, value)
+            }
+            StateLocation::Directory(directory, name) => {
+                write_directory_state(directory, name, version, previous, value)
+            }
+            StateLocation::Unavailable(reason) => Err(failure(*reason)),
+        }
     }
 
     pub(super) fn write_state(

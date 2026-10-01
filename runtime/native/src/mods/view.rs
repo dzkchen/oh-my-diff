@@ -88,9 +88,16 @@ impl Views {
         codex_omd::client_surface::redraw();
     }
 
-    pub(super) fn base(&self, owner: &Host, terminal: ModTerminalView, input: Value) {
+    pub(super) fn base(
+        &self,
+        owner: &Host,
+        terminal: ModTerminalView,
+        input: Value,
+        rendered_ms: u64,
+    ) {
         self.update(owner, |state| {
             state.snapshot.revision = state.snapshot.revision.saturating_add(1);
+            state.snapshot.rendered_ms = rendered_ms;
             state.snapshot.view = terminal.view;
             state.snapshot.owner = terminal.owner;
             state.snapshot.contributors = terminal.contributors;

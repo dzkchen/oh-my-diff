@@ -298,6 +298,42 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_editor",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in built-in editor: file buffers with multi-line syntax colors, Git gutter markers, find, undo/redo, explicit saves through fingerprinted transactions, reviewed conflict recovery and code intelligence on unsaved buffers",
+      "source": "mods/first-party/omd_editor",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, store_thread_v1, events_v1, timers_v1, exec_v1, terminal_input_v1, terminal_style_v1, workspace_fs_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_shared_checkout",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in shared-checkout coordination: read-only participants by default, explicit path reservations checked for patches and recognizable shell writes, handoffs, stale-registration recovery, serialized Git writes and worktree recommendations",
+      "source": "mods/first-party/omd_shared_checkout",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; state_scopes_v1, approval_v1, events_v1, store_thread_v1, timers_v1, builtins_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_lsp_view",
       "version": "0.1.0-preview.1",
       "extension_type": "mod",

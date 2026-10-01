@@ -141,7 +141,9 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
                 (core.views.clone(), core.host.clone(), label.clone());
             let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
             let flag = cancelled.clone();
+            let thread = self.lead.thread.to_string();
             let job = tokio::task::spawn_blocking(move || {
+                let _thread = codex_omd::StateThread::enter(Some(thread));
                 let poisoned = || std::io::Error::other("mod runtime poisoned");
                 let facts = facts(&*runtime.lock().map_err(|_| poisoned())?);
                 let active = || !flag.load(Ordering::Acquire);

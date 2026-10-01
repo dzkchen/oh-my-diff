@@ -15,6 +15,7 @@ pub(in crate::mods) enum Pending {
         owner: String,
         watch: String,
         paths: Vec<String>,
+        include_ignored: bool,
     },
     Broadcast {
         event: &'static str,
@@ -100,6 +101,7 @@ pub(in crate::mods) fn lead_started(core: &Arc<Core>, lead: &Lead, forked: Optio
     if let Some(parent) = forked
         && let Err(error) =
             codex_omd::data_store::fork_thread_data(&lead.host.root, &parent.to_string(), &thread)
+        && !error.to_string().starts_with("store_thread_exists")
     {
         core.views.diagnostic(
             &core.host,
@@ -210,11 +212,13 @@ pub(super) async fn deliver(core: &Arc<Core>) -> bool {
                 owner,
                 watch,
                 paths,
+                include_ignored,
             } => {
                 let Some(lead) = core.expansion.lead(thread) else {
                     continue;
                 };
-                let changes = super::activity::external_changes(core, &lead, &paths).await;
+                let changes =
+                    super::activity::external_changes(core, &lead, &paths, include_ignored).await;
                 if changes.is_empty() {
                     continue;
                 }
@@ -327,6 +331,8 @@ pub(in crate::mods) fn watch(
         recursive: bool,
         #[serde(default)]
         debounce_ms: Option<u64>,
+        #[serde(default)]
+        include_ignored: bool,
     }
     fn recursive() -> bool {
         true
@@ -363,7 +369,8 @@ pub(in crate::mods) fn watch(
         .get()
         .cloned()
         .ok_or("watch_unavailable: no session")?;
-    let (owner, thread) = (caller.id.to_owned(), lead.thread);
+    let (owner, thread, include_ignored) =
+        (caller.id.to_owned(), lead.thread, input.include_ignored);
     let sink: crate::workspace_watch::ChangeSink =
         Arc::new(move |watch: &str, paths: Vec<String>| {
             if let Some(core) = weak.upgrade() {
@@ -374,6 +381,7 @@ pub(in crate::mods) fn watch(
                         owner: owner.clone(),
                         watch: watch.to_owned(),
                         paths,
+                        include_ignored,
                     },
                 );
             }

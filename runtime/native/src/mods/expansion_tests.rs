@@ -1001,3 +1001,19 @@ async fn dynamic_tools_cannot_shadow_another_mods_exposed_tool_name() {
         )
         .unwrap();
 }
+
+#[test]
+fn watched_changes_skip_ignored_paths_unless_included() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join(".gitignore"), "build/\n").unwrap();
+    let paths = vec!["src/a.rs".to_owned(), "build/out.js".to_owned()];
+    assert_eq!(
+        super::activity::visible_paths(&root, paths.clone(), false, |_| true),
+        vec!["src/a.rs"]
+    );
+    assert_eq!(
+        super::activity::visible_paths(&root, paths, true, |_| true),
+        vec!["src/a.rs", "build/out.js"]
+    );
+}

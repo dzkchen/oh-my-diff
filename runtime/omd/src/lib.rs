@@ -157,6 +157,7 @@ pub use mods::ModViewPatch;
 pub use mods::ModViewSnapshot;
 pub use mods::OMD_HOST_RELEASE;
 pub use mods::SUPPORTED_MOD_APIS;
+pub use mods::StateThread;
 pub use mods::event_shared;
 pub use mods::invoke_shared;
 pub use mods::mod_command_reference;

@@ -267,10 +267,10 @@ pub(super) fn install(
             .map(|_| ())
             .map_err(std::io::Error::other)
     };
-    let runtime =
-        ModHost::open_validated(host.root.clone(), validator).map_err(|e| e.to_string())?;
-    let input_runtime =
-        ModHost::open_validated(host.root.clone(), validator).map_err(|e| e.to_string())?;
+    let runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
+        .map_err(|e| e.to_string())?;
+    let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
+        .map_err(|e| e.to_string())?;
     let runtime = Arc::new(Mutex::new(runtime));
     host.accounts.install_mod_runtime(runtime.clone());
     let views = Arc::new(view::Views::new());
@@ -312,6 +312,7 @@ fn publish(
 ) {
     let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
         "presentation": views.current_presentation()});
+    let rendered_ms = codex_omd::ModViewSnapshot::clock();
     let mut terminal = runtime.terminal_view(input.clone(), active);
     let status = runtime.status();
     let mut errors = status["mods"]
@@ -372,7 +373,7 @@ fn publish(
             },
         );
     }
-    views.base(host, terminal, input);
+    views.base(host, terminal, input, rendered_ms);
     let _ = host.persist_json("mod-status.json", &status);
     let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
     if codex_omd::BuiltinSnapshot::read(&host.root) != builtins {
@@ -470,8 +471,10 @@ impl Core {
             }
         }
         let ledger = lead.map(Lead::ledger).unwrap_or(Value::Null);
+        let thread = lead.map(|lead| lead.thread.to_string());
         let flag = cancelled.clone();
         let job = tokio::task::spawn_blocking(move || {
+            let _thread = codex_omd::StateThread::enter(thread);
             let Some(facts) = runtime.lock().ok().map(|runtime| {
                 codex_omd::observe_workspace_changes(
                     &host.repository,
@@ -801,7 +804,12 @@ impl Mods {
 }
 
 impl codex_extension_api::ConfigContributor<Config> for Mods {
-    fn prepare_thread_config(&self, config: &mut Config) -> Result<(), String> {
+    fn prepare_thread_config(
+        &self,
+        config: &mut Config,
+        thread: Option<&str>,
+        forked_from: Option<&str>,
+    ) -> Result<(), String> {
         let profile = config.permissions.effective_permission_profile();
         if matches!(profile, PermissionProfile::External { .. }) {
             return Err("mods_require_native_sandbox_for_host_owned_files".into());
@@ -827,6 +835,10 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
         let mut filesystem = profile.file_system_sandbox_policy();
         filesystem
             .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
+        crate::workspace_operations::protect_checkout_state(
+            &mut filesystem,
+            &self.host.repository,
+        )?;
         let protected = PermissionProfile::from_runtime_permissions(
             &filesystem,
             profile.network_sandbox_policy(),
@@ -847,6 +859,10 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
             Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
             Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
         };
+        if let (Some(thread), Some(parent)) = (thread, forked_from) {
+            let _ = codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread);
+        }
+        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
         self.compaction_decision(&mut runtime, config)?;
         self.routing_decision(&mut runtime, config)
     }
@@ -980,7 +996,9 @@ impl TurnLifecycleContributor for Mods {
             let unavailable = || UserInputDecision::Deny {
                 notice: "Mod input hook unavailable; the prompt was not sent.".into(),
             };
+            let thread = thread_id(input.thread_store);
             tokio::task::spawn_blocking(move || {
+                let _thread = codex_omd::StateThread::enter(thread);
                 let Ok(mut runtime) = runtime.lock() else {
                     return unavailable();
                 };
@@ -1402,7 +1420,9 @@ impl ToolLifecycleContributor for Mods {
             let runtime = self.runtime.clone();
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
+            let thread = payload["thread_id"].as_str().map(str::to_owned);
             let result = tokio::task::spawn_blocking(move || {
+                let _thread = codex_omd::StateThread::enter(thread);
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
                 let _ = runtime.event_guarded(
                     "tool_call",

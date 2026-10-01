@@ -19,7 +19,8 @@ on `omd_lsp_view/request`, and the mod's own channel callback calls
 `omd.lsp`'s `query` method and republishes the view. Results open in a popup;
 Pin to pane moves them to the `omd_lsp_view/lsp` site (`/pane split right lsp`
 in `omd_panes`). Enter on a location shows the surrounding lines with Open in
-pane (`omd_panes`), Open in editor (the host's `editor` setting) and Back;
+pane (`omd_panes`), Open in editor (the host's `editor` setting), Edit here
+(an `omd_editor` buffer, on the same line even with unsaved edits) and Back;
 Enter on a code action applies it after a confirmation. Formatting also
 confirms first. Without an enabled `omd_lsp_sync` the host keeps this mod
 inactive with `service_provider_missing`; if the provider fails later, the

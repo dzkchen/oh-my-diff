@@ -64,6 +64,7 @@
       "tool_specs_v1",
       "events_v1",
       "store_thread_v1",
+      "state_scopes_v1",
       "turn_activity_v1",
       "binary_evidence_v1",
       "package_controls_v1",

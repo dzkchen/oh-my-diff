@@ -71,6 +71,7 @@
         "tool_specs_v1",
         "events_v1",
         "store_thread_v1",
+        "state_scopes_v1",
         "turn_activity_v1",
         "binary_evidence_v1",
         "package_controls_v1",
@@ -860,7 +861,7 @@
       "evidence": [
         "rust:omd/tests/integration.rs::mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries",
         "rust:omd/tests/mods.rs::project_scope_takes_precedence_over_user_scope_without_sharing_state",
-        "rust:omd/tests/mods.rs::mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates"
+        "rust:omd/tests/mods.rs::mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates"
       ]
     },
     {
@@ -1139,6 +1140,7 @@
         "omd_claude_cli",
         "omd_continue",
         "omd_coordination",
+        "omd_editor",
         "omd_frecency",
         "omd_git",
         "omd_graph_navigator",
@@ -1165,6 +1167,7 @@
         "omd_recovery",
         "omd_repository_analysis",
         "omd_research",
+        "omd_shared_checkout",
         "omd_source_knowledge",
         "omd_task_tools",
         "omd_theme",
@@ -1214,6 +1217,10 @@
     "omd_coordination": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_coordination"
+    },
+    "omd_editor": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_editor"
     },
     "omd_frecency": {
       "version": "0.1.0-preview.1",
@@ -1318,6 +1325,10 @@
     "omd_research": {
       "version": "0.2.0-preview.1",
       "source": "mods/first-party/omd_research"
+    },
+    "omd_shared_checkout": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_shared_checkout"
     },
     "omd_source_knowledge": {
       "version": "0.1.0-preview.3",

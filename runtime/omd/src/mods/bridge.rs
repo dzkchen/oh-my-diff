@@ -101,14 +101,18 @@ pub(super) fn run(
     event: &str,
     name: &str,
     payload: Value,
+    replay: &[Value],
     active: &dyn Fn() -> bool,
     host: &mut dyn FnMut(ModHostCall) -> Result<Value>,
     progress: &mut dyn FnMut(String),
     virtual_time_ms: Option<u64>,
     scope: &InvocationScope,
 ) -> Result<Reply> {
-    let mut receipts = Vec::new();
-    let mut expected = Vec::new();
+    let mut receipts = replay.to_vec();
+    let mut expected = replay
+        .iter()
+        .map(|receipt| serde_json::from_value::<ModHostCall>(receipt["call"].clone()))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut forwarded = 0;
     let mut waited = Duration::ZERO;
     let mut request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
@@ -129,6 +133,7 @@ pub(super) fn run(
         "adapter": loaded.adapter,
     });
     request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
+    request["receipts"] = Value::Array(replay.to_vec());
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
     let evaluated = process::evaluate(node, &request, budget, active, &mut |frame| {
@@ -188,7 +193,7 @@ pub(super) fn run(
     });
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
-    let reply: Reply = serde_json::from_value(evaluated?)?;
+    let mut reply: Reply = serde_json::from_value(evaluated?)?;
     if event != "inspect" && reply.registrations != loaded.registrations {
         return Err(failure("registration_changed_during_callback"));
     }
@@ -196,6 +201,7 @@ pub(super) fn run(
         return Err(failure("invalid_host_call_receipts"));
     }
     forward(event, &reply.updates, &mut forwarded, progress)?;
+    reply.receipts = receipts;
     Ok(reply)
 }
 

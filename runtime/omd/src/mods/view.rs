@@ -861,6 +861,8 @@ pub struct ModViewSnapshot {
     #[serde(default)]
     pub revision: u64,
     #[serde(default)]
+    pub rendered_ms: u64,
+    #[serde(default)]
     pub view: ModView,
     #[serde(default)]
     pub owner: Option<String>,
@@ -1669,6 +1671,13 @@ impl ModView {
 }
 
 impl ModViewSnapshot {
+    pub fn clock() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+            .unwrap_or_default()
+    }
+
     pub fn read(path: &Path) -> Result<Self> {
         let value: Value = serde_json::from_slice(&store::read(path, 131_072)?)?;
         let mut snapshot: Self = serde_json::from_value(value)?;

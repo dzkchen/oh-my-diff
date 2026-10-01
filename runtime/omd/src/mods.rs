@@ -83,6 +83,41 @@ pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
 pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
 
+thread_local! {
+    static STATE_THREAD: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Binds `state_scope: "thread"` mod state to a session thread for invocations on this OS thread.
+pub struct StateThread(Option<String>);
+
+impl StateThread {
+    pub fn enter(thread: Option<String>) -> Self {
+        Self(STATE_THREAD.with(|current| current.replace(thread)))
+    }
+}
+
+impl Drop for StateThread {
+    fn drop(&mut self) {
+        STATE_THREAD.with(|current| *current.borrow_mut() = self.0.take());
+    }
+}
+
+fn bound_thread() -> Option<String> {
+    STATE_THREAD.with(|current| current.borrow().clone())
+}
+
+fn state_thread(payload: &Value) -> Option<String> {
+    bound_thread().or_else(|| {
+        [
+            &payload["thread_id"],
+            &payload["ledger"]["thread_id"],
+            &payload["scope"]["thread_id"],
+        ]
+        .into_iter()
+        .find_map(|value| value.as_str().map(str::to_owned))
+    })
+}
+
 #[derive(Default)]
 struct InvocationScope {
     calls: Cell<usize>,
@@ -206,6 +241,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "tool_specs_v1",
     "events_v1",
     "store_thread_v1",
+    "state_scopes_v1",
     "turn_activity_v1",
     "binary_evidence_v1",
     "package_controls_v1",
@@ -855,6 +891,11 @@ pub struct ModPackage {
     #[serde(default = "default_entrypoint")]
     pub entrypoint: String,
     pub state_version: u32,
+    #[serde(
+        default = "default_state_scope",
+        skip_serializing_if = "is_store_scope"
+    )]
+    pub state_scope: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -973,6 +1014,14 @@ fn default_hook_budget_ms() -> u64 {
     1000
 }
 
+fn default_state_scope() -> String {
+    "store".to_owned()
+}
+
+fn is_store_scope(scope: &str) -> bool {
+    scope == "store"
+}
+
 impl ModPackage {
     fn validate(&self) -> Result<()> {
         if api_support(&self.api).is_none() {
@@ -1043,12 +1092,13 @@ impl ModPackage {
             || self.version.is_empty()
             || self.version.len() > 64
             || self.state_version == 0
+            || !matches!(self.state_scope.as_str(), "store" | "thread" | "checkout")
             || !version(&self.version)
             || !(25..=2000).contains(&self.hook_budget_ms)
             || !package_file(&self.entrypoint)
         {
             return Err(failure(
-                "incompatible_package: valid identity/version, supported API and positive state_version required",
+                "incompatible_package: valid identity/version, supported API, positive state_version and state_scope store, thread or checkout required",
             ));
         }
         if self.description.as_deref().is_some_and(|text| {
@@ -1519,6 +1569,8 @@ struct Reply {
     host_call: Option<ModHostCall>,
     #[serde(default)]
     updates: Vec<String>,
+    #[serde(skip)]
+    receipts: Vec<Value>,
 }
 
 #[derive(Clone)]
@@ -1581,6 +1633,7 @@ pub struct ModHost {
     tool_validator: fn(&Value) -> Result<()>,
     virtual_time_ms: Option<u64>,
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
+    checkout: Option<PathBuf>,
 }
 
 enum Access<'a> {
@@ -1600,6 +1653,7 @@ impl Access<'_> {
 }
 
 struct Invocation {
+    location: store::StateLocation,
     loaded: Loaded,
     dynamic: Vec<String>,
     previous_state: Value,
@@ -1650,14 +1704,22 @@ fn invoke(
     scope: &InvocationScope,
 ) -> Result<Value> {
     let _frame = scope.enter(id)?;
-    let invocation = access.with(|runtime| runtime.begin(id, generation, active))?;
-    let reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
+    let thread = state_thread(&payload);
+    let started = Instant::now();
+    let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
+    let mut replay: Vec<Value> = Vec::new();
+    loop {
+        let replaying = !replay.is_empty();
+        let invocation =
+            access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
+        let mut reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
         bridge::run(
             &invocation.node,
             &invocation.loaded,
             event,
             name,
-            payload,
+            payload.clone(),
+            &replay,
             active,
             &mut |call| {
                 let private = call.operation.starts_with("sessions.")
@@ -1700,7 +1762,70 @@ fn invoke(
             scope,
         )
     });
-    access.with(|runtime| runtime.finish(id, generation, event, name, invocation, reply, active))
+        // A retry replays recorded host results; a divergent replay of read-only calls runs fresh.
+        if replaying && reply.is_err() {
+            if replay.iter().all(read_only_receipt) && started.elapsed() < budget {
+                replay.clear();
+                continue;
+            }
+            reply = Err(failure("state_conflict: reload before retry"));
+        }
+        let receipts = reply.as_ref().ok().map(|reply| reply.receipts.clone());
+        match access
+            .with(|runtime| runtime.finish(id, generation, event, name, invocation, reply, active))
+        {
+            Err(error)
+                if started.elapsed() < budget
+                    && error.to_string().starts_with("state_conflict") =>
+            {
+                let Some(receipts) = receipts else {
+                    return Err(error);
+                };
+                replay = receipts;
+            }
+            result => return result,
+        }
+    }
+}
+
+fn read_only_receipt(receipt: &Value) -> bool {
+    let arguments = &receipt["call"]["arguments"];
+    match receipt["call"]["operation"].as_str().unwrap_or_default() {
+        "workspace.read"
+        | "workspace.list"
+        | "workspace.stat"
+        | "workspace.fingerprint"
+        | "store.get"
+        | "store.list"
+        | "store.export"
+        | "evidence.read"
+        | "sessions.list"
+        | "sessions.read"
+        | "routes.list"
+        | "task.status"
+        | "contract.status"
+        | "agents.list"
+        | "process.which"
+        | "process.status"
+        | "sidecars.status"
+        | "app.routes"
+        | "credentials.list"
+        | "turns.activity"
+        | "composer.read"
+        | "packages.list"
+        | "packages.preview"
+        | "exec.output_page"
+        | "terminal.image_sample" => true,
+        "workspace.check_access" => arguments["write"] != true,
+        "exec.run" => {
+            arguments["write"] != true
+                && arguments["network"]
+                    .as_str()
+                    .is_none_or(|network| network == "none")
+                && arguments["unix_sockets"].is_null()
+        }
+        _ => false,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1766,6 +1891,23 @@ impl ModHost {
     }
 
     pub fn open_validated(root: PathBuf, tool_validator: fn(&Value) -> Result<()>) -> Result<Self> {
+        Self::open_with(root, tool_validator, None)
+    }
+
+    /// Opens the host for a session repository so checkout-scoped state is known at registration.
+    pub fn open_in(
+        root: PathBuf,
+        tool_validator: fn(&Value) -> Result<()>,
+        repository: &Path,
+    ) -> Result<Self> {
+        Self::open_with(root, tool_validator, Some(repository))
+    }
+
+    fn open_with(
+        root: PathBuf,
+        tool_validator: fn(&Value) -> Result<()>,
+        repository: Option<&Path>,
+    ) -> Result<Self> {
         let store = ModStore::open(root)?;
         let mut host = Self {
             store,
@@ -1781,9 +1923,70 @@ impl ModHost {
             tool_validator,
             virtual_time_ms: None,
             dynamic_tools: BTreeMap::new(),
+            checkout: None,
         };
+        if let Some(repository) = repository {
+            host.set_checkout(repository);
+        }
         host.reload()?;
         Ok(host)
+    }
+
+    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else `.omd/state`.
+    pub fn set_checkout(&mut self, repository: &Path) {
+        self.checkout = repository
+            .ancestors()
+            .find_map(|directory| {
+                let marker = directory.join(".git");
+                let metadata = std::fs::symlink_metadata(&marker).ok()?;
+                let git = if metadata.is_dir() {
+                    marker
+                } else if metadata.is_file() {
+                    let text = std::fs::read_to_string(&marker).ok()?;
+                    directory.join(text.strip_prefix("gitdir:")?.trim())
+                } else {
+                    return None;
+                };
+                git.canonicalize().ok()
+            })
+            .map(|git| git.join("omd").join("state"))
+            .or_else(|| {
+                repository
+                    .canonicalize()
+                    .ok()
+                    .map(|directory| directory.join(".omd").join("state"))
+            });
+    }
+
+    fn state_location(
+        &self,
+        package: &ModPackage,
+        scope: &str,
+        thread: Option<&str>,
+    ) -> store::StateLocation {
+        let name = format!("{}.json", package.id);
+        match package.state_scope.as_str() {
+            "thread" => match thread.filter(|thread| crate::resource_data::token(thread)) {
+                Some(thread) => store::StateLocation::Directory(
+                    self.store
+                        .root
+                        .join("data")
+                        .join("threads")
+                        .join(thread)
+                        .join(".state"),
+                    name,
+                ),
+                None => store::StateLocation::Unavailable("state_thread_unavailable"),
+            },
+            "checkout" => match &self.checkout {
+                Some(directory) => store::StateLocation::Directory(directory.clone(), name),
+                None => store::StateLocation::Unavailable("state_checkout_unavailable"),
+            },
+            _ => store::StateLocation::Store {
+                id: package.id.clone(),
+                scope: scope.to_owned(),
+            },
+        }
     }
 
     pub fn reload(&mut self) -> Result<bool> {
@@ -1865,11 +2068,14 @@ impl ModHost {
                 if let Some(Err(error)) = &adapter {
                     return Err(failure(error.to_string()));
                 }
-                loaded.state = self.store.state(
-                    &loaded.package.id,
+                let location = self.state_location(
+                    &loaded.package,
                     &loaded.selection.scope,
-                    loaded.package.state_version,
-                )?;
+                    bound_thread().as_deref(),
+                );
+                loaded.state = self
+                    .store
+                    .scoped_state(&location, loaded.package.state_version)?;
                 let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;
                 Self::validate_registrations(&loaded.package, &reply.registrations)?;
                 if reply.state != loaded.state {
@@ -2382,6 +2588,7 @@ impl ModHost {
             event,
             name,
             payload,
+            &[],
             active,
             &mut |_| {
                 Err(failure(
@@ -2536,6 +2743,7 @@ impl ModHost {
         id: &str,
         generation: u64,
         active: &dyn Fn() -> bool,
+        thread: Option<&str>,
     ) -> Result<Invocation> {
         if !active() {
             return Err(failure("callback_cancelled"));
@@ -2553,12 +2761,12 @@ impl ModHost {
                 "mod_failed: {error}; explicitly reload to recover"
             )));
         }
-        loaded.state = self.store.state(
-            &loaded.package.id,
-            &loaded.selection.scope,
-            loaded.package.state_version,
-        )?;
+        let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
+        loaded.state = self
+            .store
+            .scoped_state(&location, loaded.package.state_version)?;
         Ok(Invocation {
+            location,
             dynamic: self
                 .dynamic_tools
                 .get(id)
@@ -2577,6 +2785,7 @@ impl ModHost {
     fn accept(
         &mut self,
         loaded: &Loaded,
+        location: &store::StateLocation,
         event: &str,
         reply: Reply,
         active: &dyn Fn() -> bool,
@@ -2649,9 +2858,8 @@ impl ModHost {
             if !loaded.package.capabilities.iter().any(|c| c == "store") {
                 return Err(failure("state_capability_denied"));
             }
-            self.store.write_state(
-                &loaded.package.id,
-                &loaded.selection.scope,
+            self.store.write_scoped_state(
+                location,
                 loaded.package.state_version,
                 &loaded.state,
                 &reply.state,
@@ -2671,7 +2879,15 @@ impl ModHost {
         reply: Result<Reply>,
         active: &dyn Fn() -> bool,
     ) -> Result<Value> {
-        let result = reply.and_then(|reply| self.accept(&invocation.loaded, event, reply, active));
+        let result = reply.and_then(|reply| {
+            self.accept(
+                &invocation.loaded,
+                &invocation.location,
+                event,
+                reply,
+                active,
+            )
+        });
         if generation != self.generation {
             return result.map(|(value, _)| value);
         }
@@ -2698,6 +2914,8 @@ impl ModHost {
                 let message = error.to_string();
                 if ![
                     "state_conflict",
+                    "state_thread_unavailable",
+                    "state_checkout_unavailable",
                     "callback_cancelled",
                     "host_receipt_limit",
                     "host_result_limit",

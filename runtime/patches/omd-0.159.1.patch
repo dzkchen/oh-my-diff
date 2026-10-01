@@ -1341,7 +1341,7 @@ index e76b3e268..959d105ab 100644
 +    );
 +}
 diff --git a/codex-rs/core/src/thread_manager.rs b/codex-rs/core/src/thread_manager.rs
-index db3d358ec..fc19c8edc 100644
+index db3d358ec..ccfd21f8a 100644
 --- a/codex-rs/core/src/thread_manager.rs
 +++ b/codex-rs/core/src/thread_manager.rs
 @@ -284,6 +284,7 @@ pub struct StartThreadOptions {
@@ -1419,7 +1419,7 @@ index db3d358ec..fc19c8edc 100644
              mut reserved_thread_id,
              disabled_plugin_ids,
          } = options;
-@@ -2214,12 +2240,31 @@ impl ThreadManagerState {
+@@ -2214,12 +2240,44 @@ impl ThreadManagerState {
                      .await,
                  )
              };
@@ -1441,16 +1441,102 @@ index db3d358ec..fc19c8edc 100644
              instructions.user_provider = None;
              config.startup_warnings.extend(supplied.warnings);
          }
-+        if !matches!(session_source, SessionSource::SubAgent(_)) {
++        if !matches!(session_source, SessionSource::SubAgent(_))
++            && !extensions.config_contributors().is_empty()
++        {
++            let thread = match &initial_history {
++                InitialHistory::Resumed(resumed) => resumed.conversation_id,
++                InitialHistory::New | InitialHistory::Cleared | InitialHistory::Forked(_) => {
++                    *reserved_thread_id
++                        .get_or_insert_with(|| agent_control.runtime().generate_thread_id())
++                }
++            }
++            .to_string();
++            let forked_from = forked_from_thread_id
++                .filter(|_| matches!(&initial_history, InitialHistory::Forked(_)))
++                .map(|thread| thread.to_string());
 +            for contributor in extensions.config_contributors() {
 +                contributor
-+                    .prepare_thread_config(&mut config)
++                    .prepare_thread_config(&mut config, Some(&thread), forked_from.as_deref())
 +                    .map_err(CodexErr::Fatal)?;
 +            }
 +        }
          let parent_rollout_thread_trace = self
              .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
              .await;
+diff --git a/codex-rs/core/src/thread_manager_tests.rs b/codex-rs/core/src/thread_manager_tests.rs
+index 99321ce69..8e3aa0612 100644
+--- a/codex-rs/core/src/thread_manager_tests.rs
++++ b/codex-rs/core/src/thread_manager_tests.rs
+@@ -3311,3 +3311,68 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
+         1,
+     );
+ }
++
++#[tokio::test]
++async fn config_contributors_receive_the_thread_id_the_new_thread_uses() {
++    struct Recorder(Arc<std::sync::Mutex<Vec<String>>>);
++
++    impl codex_extension_api::ConfigContributor<Config> for Recorder {
++        fn prepare_thread_config(
++            &self,
++            _config: &mut Config,
++            thread: Option<&str>,
++            forked_from: Option<&str>,
++        ) -> Result<(), String> {
++            self.0
++                .lock()
++                .unwrap_or_else(std::sync::PoisonError::into_inner)
++                .push(format!(
++                    "{}|{}",
++                    thread.unwrap_or("-"),
++                    forked_from.unwrap_or("-")
++                ));
++            Ok(())
++        }
++    }
++
++    let temp_dir = tempdir().expect("tempdir");
++    let mut config = test_config().await;
++    config.codex_home = temp_dir.path().join("codex-home").abs();
++    config.cwd = config.codex_home.abs();
++    std::fs::create_dir_all(&config.codex_home).expect("create codex home");
++    let records = Arc::new(std::sync::Mutex::new(Vec::new()));
++    let mut extensions = codex_extension_api::ExtensionRegistryBuilder::new();
++    extensions.config_contributor(Arc::new(Recorder(Arc::clone(&records))));
++    let auth_manager =
++        AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
++    let manager = ThreadManager::new(
++        &config,
++        auth_manager.clone(),
++        build_models_manager(&config, auth_manager),
++        crate::CodexAppsToolsCache::default(),
++        SessionSource::Exec,
++        Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
++        Arc::new(extensions.build()),
++        Arc::new(crate::test_support::EmptyUserInstructionsProvider),
++        /*analytics_events_client*/ None,
++        passthrough_image_store(),
++        thread_store_from_config(&config, /*state_db*/ None),
++        /*agent_graph_store*/ None,
++        TEST_INSTALLATION_ID.to_string(),
++        /*attestation_provider*/ None,
++        /*external_time_provider*/ None,
++    );
++    let started = manager
++        .start_thread(StartThreadOptions {
++            environments: Some(Vec::new()),
++            ..StartThreadOptions::new(config.clone())
++        })
++        .await
++        .expect("start thread");
++    assert_eq!(
++        *records
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner),
++        vec![format!("{}|-", started.thread_id)]
++    );
++}
 diff --git a/codex-rs/core/src/tools/approvals.rs b/codex-rs/core/src/tools/approvals.rs
 index e892a6e80..f978cb089 100644
 --- a/codex-rs/core/src/tools/approvals.rs
@@ -3334,7 +3420,7 @@ index 0bfa07bd5..4434361e7 100644
      exec_span.record("thread.id", primary_thread_id_for_span.as_str());
 
 diff --git a/codex-rs/ext/extension-api/src/contributors.rs b/codex-rs/ext/extension-api/src/contributors.rs
-index bb2b162ce..b2a58a05a 100644
+index bb2b162ce..2a0cbb4a8 100644
 --- a/codex-rs/ext/extension-api/src/contributors.rs
 +++ b/codex-rs/ext/extension-api/src/contributors.rs
 @@ -11,17 +11,22 @@ use codex_tools::ToolExecutor;
@@ -3445,19 +3531,26 @@ index bb2b162ce..b2a58a05a 100644
  }
 
  /// Extension contribution that can add turn-local model input.
-@@ -295,6 +347,11 @@ pub trait TurnInputContributor: Send + Sync {
+@@ -295,6 +347,18 @@ pub trait TurnInputContributor: Send + Sync {
  /// Implementations should treat the supplied values as immutable before/after
  /// snapshots of the effective thread configuration.
  pub trait ConfigContributor<C>: Send + Sync {
 +    /// Selects configuration before a new lead thread is admitted by native lifecycle policy.
-+    fn prepare_thread_config(&self, _config: &mut C) -> Result<(), String> {
++    /// `thread` is the resumed thread's id or the id reserved for the new thread; `forked_from`
++    /// names the source thread of a fork.
++    fn prepare_thread_config(
++        &self,
++        _config: &mut C,
++        _thread: Option<&str>,
++        _forked_from: Option<&str>,
++    ) -> Result<(), String> {
 +        Ok(())
 +    }
 +
      /// Called after the host commits a changed thread configuration.
      fn on_config_changed(
          &self,
-@@ -381,6 +438,20 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -381,6 +445,20 @@ pub trait ToolLifecycleContributor: Send + Sync {
      /// Excludes nested code-mode calls. Observers must return promptly.
      fn on_tool_dispatch(&self, _input: ToolDispatchInput<'_>) {}
 
@@ -3478,7 +3571,7 @@ index bb2b162ce..b2a58a05a 100644
      /// Called after pre-tool hooks finalize an invocation and before execution.
      ///
      /// Calls blocked by hooks, or whose hook-provided input cannot be applied,
-@@ -397,6 +468,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -397,6 +475,11 @@ pub trait ToolLifecycleContributor: Send + Sync {
          Box::pin(std::future::ready(()))
      }
 
@@ -3490,7 +3583,7 @@ index bb2b162ce..b2a58a05a 100644
      /// Runs before the MCP result is sent to the client and model.
      fn on_mcp_tool_result<'a>(&'a self, _input: McpToolResultInput<'a>) -> ToolLifecycleFuture<'a> {
          Box::pin(std::future::ready(()))
-@@ -415,6 +491,94 @@ pub trait ToolLifecycleContributor: Send + Sync {
+@@ -415,6 +498,94 @@ pub trait ToolLifecycleContributor: Send + Sync {
      fn on_tool_timing(&self, _input: ToolTimingInput<'_>) {}
  }
 
@@ -17868,10 +17961,10 @@ index 000000000..c1851f83a
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..ead311cf6
+index 000000000..5763aa74e
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1546 @@
+@@ -0,0 +1,1566 @@
 +mod agents;
 +mod evidence;
 +mod expansion;
@@ -18141,10 +18234,10 @@ index 000000000..ead311cf6
 +            .map(|_| ())
 +            .map_err(std::io::Error::other)
 +    };
-+    let runtime =
-+        ModHost::open_validated(host.root.clone(), validator).map_err(|e| e.to_string())?;
-+    let input_runtime =
-+        ModHost::open_validated(host.root.clone(), validator).map_err(|e| e.to_string())?;
++    let runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
++        .map_err(|e| e.to_string())?;
++    let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
++        .map_err(|e| e.to_string())?;
 +    let runtime = Arc::new(Mutex::new(runtime));
 +    host.accounts.install_mod_runtime(runtime.clone());
 +    let views = Arc::new(view::Views::new());
@@ -18186,6 +18279,7 @@ index 000000000..ead311cf6
 +) {
 +    let input = json!({"event": event, "ledger": ledger, "identity": terminal_identity(runtime),
 +        "presentation": views.current_presentation()});
++    let rendered_ms = codex_omd::ModViewSnapshot::clock();
 +    let mut terminal = runtime.terminal_view(input.clone(), active);
 +    let status = runtime.status();
 +    let mut errors = status["mods"]
@@ -18246,7 +18340,7 @@ index 000000000..ead311cf6
 +            },
 +        );
 +    }
-+    views.base(host, terminal, input);
++    views.base(host, terminal, input, rendered_ms);
 +    let _ = host.persist_json("mod-status.json", &status);
 +    let builtins = codex_omd::BuiltinSnapshot::from_controls(&runtime.builtin_controls());
 +    if codex_omd::BuiltinSnapshot::read(&host.root) != builtins {
@@ -18344,8 +18438,10 @@ index 000000000..ead311cf6
 +            }
 +        }
 +        let ledger = lead.map(Lead::ledger).unwrap_or(Value::Null);
++        let thread = lead.map(|lead| lead.thread.to_string());
 +        let flag = cancelled.clone();
 +        let job = tokio::task::spawn_blocking(move || {
++            let _thread = codex_omd::StateThread::enter(thread);
 +            let Some(facts) = runtime.lock().ok().map(|runtime| {
 +                codex_omd::observe_workspace_changes(
 +                    &host.repository,
@@ -18675,7 +18771,12 @@ index 000000000..ead311cf6
 +}
 +
 +impl codex_extension_api::ConfigContributor<Config> for Mods {
-+    fn prepare_thread_config(&self, config: &mut Config) -> Result<(), String> {
++    fn prepare_thread_config(
++        &self,
++        config: &mut Config,
++        thread: Option<&str>,
++        forked_from: Option<&str>,
++    ) -> Result<(), String> {
 +        let profile = config.permissions.effective_permission_profile();
 +        if matches!(profile, PermissionProfile::External { .. }) {
 +            return Err("mods_require_native_sandbox_for_host_owned_files".into());
@@ -18701,6 +18802,10 @@ index 000000000..ead311cf6
 +        let mut filesystem = profile.file_system_sandbox_policy();
 +        filesystem
 +            .preserve_deny_read_restrictions_from(&FileSystemSandboxPolicy::restricted(denies));
++        crate::workspace_operations::protect_checkout_state(
++            &mut filesystem,
++            &self.host.repository,
++        )?;
 +        let protected = PermissionProfile::from_runtime_permissions(
 +            &filesystem,
 +            profile.network_sandbox_policy(),
@@ -18721,6 +18826,10 @@ index 000000000..ead311cf6
 +            Err(std::sync::TryLockError::Poisoned(_)) => return Err("mod_runtime_poisoned".into()),
 +            Err(std::sync::TryLockError::WouldBlock) => return Ok(()),
 +        };
++        if let (Some(thread), Some(parent)) = (thread, forked_from) {
++            let _ = codex_omd::data_store::fork_thread_data(&self.host.root, parent, thread);
++        }
++        let _thread = codex_omd::StateThread::enter(thread.map(str::to_owned));
 +        self.compaction_decision(&mut runtime, config)?;
 +        self.routing_decision(&mut runtime, config)
 +    }
@@ -18854,7 +18963,9 @@ index 000000000..ead311cf6
 +            let unavailable = || UserInputDecision::Deny {
 +                notice: "Mod input hook unavailable; the prompt was not sent.".into(),
 +            };
++            let thread = thread_id(input.thread_store);
 +            tokio::task::spawn_blocking(move || {
++                let _thread = codex_omd::StateThread::enter(thread);
 +                let Ok(mut runtime) = runtime.lock() else {
 +                    return unavailable();
 +                };
@@ -19276,7 +19387,9 @@ index 000000000..ead311cf6
 +            let runtime = self.runtime.clone();
 +            let cancelled = Arc::new(AtomicBool::new(false));
 +            let _cancellation = Cancellation(cancelled.clone());
++            let thread = payload["thread_id"].as_str().map(str::to_owned);
 +            let result = tokio::task::spawn_blocking(move || {
++                let _thread = codex_omd::StateThread::enter(thread);
 +                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +                let _ = runtime.event_guarded(
 +                    "tool_call",
@@ -19420,10 +19533,10 @@ index 000000000..ead311cf6
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..af59ddc83
+index 000000000..a4f1a6d85
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
-@@ -0,0 +1,2173 @@
+@@ -0,0 +1,2174 @@
 +use super::*;
 +use codex_core::CodexThread;
 +use codex_protocol::protocol::EventMsg;
@@ -19851,6 +19964,7 @@ index 000000000..af59ddc83
 +        let handle = tokio::runtime::Handle::current();
 +        let notifier = self.clone();
 +        tokio::task::spawn_blocking(move || {
++            let _thread = codex_omd::StateThread::enter(Some(lead.thread.to_string()));
 +            let Some(core) = notifier.core.upgrade() else {
 +                return;
 +            };
@@ -21818,10 +21932,10 @@ index 000000000..71e5e45ea
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..2410dc51e
+index 000000000..b2ea220e2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,457 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -22001,7 +22115,9 @@ index 000000000..2410dc51e
 +    let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
 +    let generation = Arc::new(AtomicU64::new(0));
 +    let (flag, current) = (cancelled.clone(), generation.clone());
++    let thread = lead.thread.to_string();
 +    let handle = tokio::task::spawn_blocking(move || {
++        let _thread = codex_omd::StateThread::enter(Some(thread));
 +        let facts = {
 +            let runtime = runtime.lock().ok()?;
 +            current.store(runtime.generation(), Ordering::Release);
@@ -22279,10 +22395,10 @@ index 000000000..2410dc51e
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/mods/expansion/activity.rs b/codex-rs/ext/omd/src/mods/expansion/activity.rs
 new file mode 100644
-index 000000000..d0be9d7ac
+index 000000000..a9b9912d3
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/activity.rs
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,359 @@
 +use super::*;
 +use codex_omd::turn_activity::ActivityRecord;
 +use codex_omd::turn_activity::TurnActivityLog;
@@ -22502,10 +22618,26 @@ index 000000000..d0be9d7ac
 +    });
 +}
 +
++pub(in crate::mods) fn visible_paths(
++    root: &std::path::Path,
++    paths: Vec<String>,
++    include_ignored: bool,
++    readable: impl Fn(&std::path::Path) -> bool,
++) -> Vec<String> {
++    let filter = codex_omd::watch_filter::WatchFilter::new(root);
++    paths
++        .into_iter()
++        .filter(|path| include_ignored || !filter.ignored(root, path))
++        .filter(|path| readable(&root.join(path)))
++        .take(128)
++        .collect()
++}
++
 +pub(in crate::mods) async fn external_changes(
 +    core: &Core,
 +    lead: &Lead,
 +    paths: &[String],
++    include_ignored: bool,
 +) -> Vec<Value> {
 +    let Ok(authority) = crate::workspace_operations::WorkspaceAuthority::for_lead(lead).await
 +    else {
@@ -22514,22 +22646,20 @@ index 000000000..d0be9d7ac
 +    let root = lead.host.repository.clone();
 +    let paths = paths.to_vec();
 +    let changes = tokio::task::spawn_blocking(move || {
-+        let filter = codex_omd::watch_filter::WatchFilter::new(&root);
-+        paths
-+            .into_iter()
-+            .filter(|path| !filter.ignored(&root, path))
-+            .filter(|path| authority.readable(&root.join(path)))
-+            .take(128)
-+            .map(|path| {
-+                let full = root.join(&path);
-+                let after = std::fs::symlink_metadata(&full)
-+                    .ok()
-+                    .filter(|metadata| metadata.is_file() && metadata.len() <= HASH_BYTES)
-+                    .and_then(|_| std::fs::read(&full).ok())
-+                    .map(|bytes| crate::execution::hash(&bytes));
-+                json!({"path": path, "before": null, "after": after})
-+            })
-+            .collect::<Vec<_>>()
++        visible_paths(&root, paths, include_ignored, |path| {
++            authority.readable(path)
++        })
++        .into_iter()
++        .map(|path| {
++            let full = root.join(&path);
++            let after = std::fs::symlink_metadata(&full)
++                .ok()
++                .filter(|metadata| metadata.is_file() && metadata.len() <= HASH_BYTES)
++                .and_then(|_| std::fs::read(&full).ok())
++                .map(|bytes| crate::execution::hash(&bytes));
++            json!({"path": path, "before": null, "after": after})
++        })
++        .collect::<Vec<_>>()
 +    })
 +    .await
 +    .unwrap_or_default();
@@ -22766,10 +22896,10 @@ index 000000000..41c09bf0c
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/delivery.rs b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
 new file mode 100644
-index 000000000..eda74cf7d
+index 000000000..d9d188134
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/delivery.rs
-@@ -0,0 +1,526 @@
+@@ -0,0 +1,534 @@
 +use super::*;
 +use crate::managed_process::ProcessNotice;
 +
@@ -22787,6 +22917,7 @@ index 000000000..eda74cf7d
 +        owner: String,
 +        watch: String,
 +        paths: Vec<String>,
++        include_ignored: bool,
 +    },
 +    Broadcast {
 +        event: &'static str,
@@ -22872,6 +23003,7 @@ index 000000000..eda74cf7d
 +    if let Some(parent) = forked
 +        && let Err(error) =
 +            codex_omd::data_store::fork_thread_data(&lead.host.root, &parent.to_string(), &thread)
++        && !error.to_string().starts_with("store_thread_exists")
 +    {
 +        core.views.diagnostic(
 +            &core.host,
@@ -22982,11 +23114,13 @@ index 000000000..eda74cf7d
 +                owner,
 +                watch,
 +                paths,
++                include_ignored,
 +            } => {
 +                let Some(lead) = core.expansion.lead(thread) else {
 +                    continue;
 +                };
-+                let changes = super::activity::external_changes(core, &lead, &paths).await;
++                let changes =
++                    super::activity::external_changes(core, &lead, &paths, include_ignored).await;
 +                if changes.is_empty() {
 +                    continue;
 +                }
@@ -23099,6 +23233,8 @@ index 000000000..eda74cf7d
 +        recursive: bool,
 +        #[serde(default)]
 +        debounce_ms: Option<u64>,
++        #[serde(default)]
++        include_ignored: bool,
 +    }
 +    fn recursive() -> bool {
 +        true
@@ -23135,7 +23271,8 @@ index 000000000..eda74cf7d
 +        .get()
 +        .cloned()
 +        .ok_or("watch_unavailable: no session")?;
-+    let (owner, thread) = (caller.id.to_owned(), lead.thread);
++    let (owner, thread, include_ignored) =
++        (caller.id.to_owned(), lead.thread, input.include_ignored);
 +    let sink: crate::workspace_watch::ChangeSink =
 +        Arc::new(move |watch: &str, paths: Vec<String>| {
 +            if let Some(core) = weak.upgrade() {
@@ -23146,6 +23283,7 @@ index 000000000..eda74cf7d
 +                        owner: owner.clone(),
 +                        watch: watch.to_owned(),
 +                        paths,
++                        include_ignored,
 +                    },
 +                );
 +            }
@@ -23828,10 +23966,10 @@ index 000000000..13341482d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..42a1c5378
+index 000000000..d376b5fb9
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,1003 @@
+@@ -0,0 +1,1019 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
@@ -24834,6 +24972,22 @@ index 000000000..42a1c5378
 +            json!({"name": "z", "description": "Z.", "parameters": schema}),
 +        )
 +        .unwrap();
++}
++
++#[test]
++fn watched_changes_skip_ignored_paths_unless_included() {
++    let dir = tempfile::tempdir().unwrap();
++    let root = dir.path().canonicalize().unwrap();
++    std::fs::write(root.join(".gitignore"), "build/\n").unwrap();
++    let paths = vec!["src/a.rs".to_owned(), "build/out.js".to_owned()];
++    assert_eq!(
++        super::activity::visible_paths(&root, paths.clone(), false, |_| true),
++        vec!["src/a.rs"]
++    );
++    assert_eq!(
++        super::activity::visible_paths(&root, paths, true, |_| true),
++        vec!["src/a.rs", "build/out.js"]
++    );
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
@@ -26765,10 +26919,10 @@ index 000000000..4945b07ef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/tools.rs b/codex-rs/ext/omd/src/mods/tools.rs
 new file mode 100644
-index 000000000..855c7e704
+index 000000000..aa31dfe62
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/tools.rs
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,211 @@
 +use super::*;
 +
 +struct Tool {
@@ -26912,7 +27066,9 @@ index 000000000..855c7e704
 +                (core.views.clone(), core.host.clone(), label.clone());
 +            let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
 +            let flag = cancelled.clone();
++            let thread = self.lead.thread.to_string();
 +            let job = tokio::task::spawn_blocking(move || {
++                let _thread = codex_omd::StateThread::enter(Some(thread));
 +                let poisoned = || std::io::Error::other("mod runtime poisoned");
 +                let facts = facts(&*runtime.lock().map_err(|_| poisoned())?);
 +                let active = || !flag.load(Ordering::Acquire);
@@ -26980,10 +27136,10 @@ index 000000000..855c7e704
 +}
 diff --git a/codex-rs/ext/omd/src/mods/view.rs b/codex-rs/ext/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..abf30d80c
+index 000000000..8f2b35a14
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/view.rs
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,209 @@
 +use super::*;
 +use codex_omd::ModActivity;
 +use codex_omd::ModPanel;
@@ -27074,9 +27230,16 @@ index 000000000..abf30d80c
 +        codex_omd::client_surface::redraw();
 +    }
 +
-+    pub(super) fn base(&self, owner: &Host, terminal: ModTerminalView, input: Value) {
++    pub(super) fn base(
++        &self,
++        owner: &Host,
++        terminal: ModTerminalView,
++        input: Value,
++        rendered_ms: u64,
++    ) {
 +        self.update(owner, |state| {
 +            state.snapshot.revision = state.snapshot.revision.saturating_add(1);
++            state.snapshot.rendered_ms = rendered_ms;
 +            state.snapshot.view = terminal.view;
 +            state.snapshot.owner = terminal.owner;
 +            state.snapshot.contributors = terminal.contributors;
@@ -27188,11 +27351,14 @@ index 000000000..abf30d80c
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 000000000..ae601709d
+index 000000000..73145ecb1
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,654 @@
+@@ -0,0 +1,695 @@
 +use codex_file_system::FileSystemSandboxContext;
++use codex_protocol::permissions::FileSystemAccessMode;
++use codex_protocol::permissions::FileSystemPath;
++use codex_protocol::permissions::FileSystemSandboxEntry;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
 +use codex_protocol::permissions::FileSystemSandboxPolicyContext;
 +use codex_protocol::permissions::ReadDenyMatcher;
@@ -27651,14 +27817,52 @@ index 000000000..ae601709d
 +    }
 +}
 +
++/// Keeps host-written checkout state under `<repository>/.omd/state` read-only for the session.
++pub(crate) fn protect_checkout_state(
++    policy: &mut FileSystemSandboxPolicy,
++    repository: &std::path::Path,
++) -> Result<(), String> {
++    let path = AbsolutePathBuf::from_absolute_path_checked(repository.join(".omd").join("state"))
++        .map_err(|error| error.to_string())?;
++    policy.entries.push(FileSystemSandboxEntry::new(
++        FileSystemPath::Path { path: path.into() },
++        FileSystemAccessMode::Read,
++    ));
++    Ok(())
++}
++
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
 +    use codex_protocol::models::PermissionProfile;
-+    use codex_protocol::permissions::FileSystemAccessMode;
-+    use codex_protocol::permissions::FileSystemPath;
-+    use codex_protocol::permissions::FileSystemSandboxEntry;
 +    use codex_protocol::permissions::NetworkSandboxPolicy;
++
++    #[test]
++    fn checkout_state_stays_read_only_inside_a_writable_repository() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().canonicalize().unwrap();
++        let cwd =
++            PathUri::from_abs_path(&AbsolutePathBuf::from_absolute_path_checked(&root).unwrap());
++        let mut policy = FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry::new(
++            FileSystemPath::Path { path: cwd.clone() },
++            FileSystemAccessMode::Write,
++        )]);
++        protect_checkout_state(&mut policy, &root).unwrap();
++        let profile =
++            PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
++        let context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
++        let authority = WorkspaceAuthority {
++            repository: root.clone(),
++            session_root: None,
++            session_database: None,
++            policy,
++            context,
++        };
++        assert!(authority.writable(&root.join("src/app.rs")));
++        assert!(authority.readable(&root.join(".omd/state/board.json")));
++        assert!(!authority.writable(&root.join(".omd/state/board.json")));
++        assert!(authority.writable(&root.join(".omd/session-1/scratch")));
++    }
 +
 +    #[test]
 +    fn local_snapshot_authority_keeps_temporary_metadata_and_read_denials() {
@@ -32555,10 +32759,10 @@ index 000000000..0ec327579
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..48a0e06ba
+index 000000000..bdb13401a
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,330 @@
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
@@ -32690,7 +32894,7 @@ index 000000000..48a0e06ba
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(
-+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON",
++            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
 +        )
 +    };
 +    match args {
@@ -32839,9 +33043,15 @@ index 000000000..48a0e06ba
 +                "installed_contracts":status["installed_contract_types"]}),
 +            )
 +        }
-+        [command, root, scenario] if command == "test" => {
++        [command, root, scenario, thread @ ..] if command == "test" && thread.len() <= 1 => {
 +            let scenario: Value = serde_json::from_slice(&std::fs::read(scenario)?)?;
-+            ModHost::open(PathBuf::from(root).canonicalize()?)?.offline_test(scenario)
++            let mut host = ModHost::open_in(
++                PathBuf::from(root).canonicalize()?,
++                |_| Ok(()),
++                &std::env::current_dir()?,
++            )?;
++            let _thread = codex_omd::StateThread::enter(thread.first().cloned());
++            host.offline_test(scenario)
 +        }
 +        [command, root, output] if command == "diagnostics" => {
 +            let bundle = ModHost::open(PathBuf::from(root).canonicalize()?)?.diagnostic_bundle();
@@ -32850,8 +33060,15 @@ index 000000000..48a0e06ba
 +            Ok(serde_json::json!({"bundle":output,"redacted":true}))
 +        }
 +        [command, denial] if command == "explain" => Ok(ModHost::capability_explanation(denial)),
-+        [command, root, id, name, payload] if command == "command" => {
-+            let mut host = ModHost::open(PathBuf::from(root).canonicalize()?)?;
++        [command, root, id, name, payload, thread @ ..]
++            if command == "command" && thread.len() <= 1 =>
++        {
++            let mut host = ModHost::open_in(
++                PathBuf::from(root).canonicalize()?,
++                |_| Ok(()),
++                &std::env::current_dir()?,
++            )?;
++            let _thread = codex_omd::StateThread::enter(thread.first().cloned());
 +            host.invoke(
 +                id,
 +                host.generation(),
@@ -37987,10 +38204,10 @@ index 000000000..6ee428998
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..e07fbbc30
+index 000000000..d8959696e
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,171 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
@@ -38150,6 +38367,7 @@ index 000000000..e07fbbc30
 +pub use mods::ModViewSnapshot;
 +pub use mods::OMD_HOST_RELEASE;
 +pub use mods::SUPPORTED_MOD_APIS;
++pub use mods::StateThread;
 +pub use mods::event_shared;
 +pub use mods::invoke_shared;
 +pub use mods::mod_command_reference;
@@ -38344,10 +38562,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..89b7f901c
+index 000000000..31e99db2d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,3574 @@
+@@ -0,0 +1,3792 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -38432,6 +38650,41 @@ index 000000000..89b7f901c
 +pub const MOD_API_VERSION: &str = "0.2.0-experimental.5";
 +pub const MOD_CALLBACK_TOTAL_BUDGET_MS: u64 = 5_000;
 +pub const MOD_SERVICE_DEPTH_LIMIT: usize = 8;
++
++thread_local! {
++    static STATE_THREAD: RefCell<Option<String>> = const { RefCell::new(None) };
++}
++
++/// Binds `state_scope: "thread"` mod state to a session thread for invocations on this OS thread.
++pub struct StateThread(Option<String>);
++
++impl StateThread {
++    pub fn enter(thread: Option<String>) -> Self {
++        Self(STATE_THREAD.with(|current| current.replace(thread)))
++    }
++}
++
++impl Drop for StateThread {
++    fn drop(&mut self) {
++        STATE_THREAD.with(|current| *current.borrow_mut() = self.0.take());
++    }
++}
++
++fn bound_thread() -> Option<String> {
++    STATE_THREAD.with(|current| current.borrow().clone())
++}
++
++fn state_thread(payload: &Value) -> Option<String> {
++    bound_thread().or_else(|| {
++        [
++            &payload["thread_id"],
++            &payload["ledger"]["thread_id"],
++            &payload["scope"]["thread_id"],
++        ]
++        .into_iter()
++        .find_map(|value| value.as_str().map(str::to_owned))
++    })
++}
 +
 +#[derive(Default)]
 +struct InvocationScope {
@@ -38556,6 +38809,7 @@ index 000000000..89b7f901c
 +    "tool_specs_v1",
 +    "events_v1",
 +    "store_thread_v1",
++    "state_scopes_v1",
 +    "turn_activity_v1",
 +    "binary_evidence_v1",
 +    "package_controls_v1",
@@ -39205,6 +39459,11 @@ index 000000000..89b7f901c
 +    #[serde(default = "default_entrypoint")]
 +    pub entrypoint: String,
 +    pub state_version: u32,
++    #[serde(
++        default = "default_state_scope",
++        skip_serializing_if = "is_store_scope"
++    )]
++    pub state_scope: String,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub description: Option<String>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -39323,6 +39582,14 @@ index 000000000..89b7f901c
 +    1000
 +}
 +
++fn default_state_scope() -> String {
++    "store".to_owned()
++}
++
++fn is_store_scope(scope: &str) -> bool {
++    scope == "store"
++}
++
 +impl ModPackage {
 +    fn validate(&self) -> Result<()> {
 +        if api_support(&self.api).is_none() {
@@ -39393,12 +39660,13 @@ index 000000000..89b7f901c
 +            || self.version.is_empty()
 +            || self.version.len() > 64
 +            || self.state_version == 0
++            || !matches!(self.state_scope.as_str(), "store" | "thread" | "checkout")
 +            || !version(&self.version)
 +            || !(25..=2000).contains(&self.hook_budget_ms)
 +            || !package_file(&self.entrypoint)
 +        {
 +            return Err(failure(
-+                "incompatible_package: valid identity/version, supported API and positive state_version required",
++                "incompatible_package: valid identity/version, supported API, positive state_version and state_scope store, thread or checkout required",
 +            ));
 +        }
 +        if self.description.as_deref().is_some_and(|text| {
@@ -39869,6 +40137,8 @@ index 000000000..89b7f901c
 +    host_call: Option<ModHostCall>,
 +    #[serde(default)]
 +    updates: Vec<String>,
++    #[serde(skip)]
++    receipts: Vec<Value>,
 +}
 +
 +#[derive(Clone)]
@@ -39931,6 +40201,7 @@ index 000000000..89b7f901c
 +    tool_validator: fn(&Value) -> Result<()>,
 +    virtual_time_ms: Option<u64>,
 +    dynamic_tools: BTreeMap<String, Vec<ModTool>>,
++    checkout: Option<PathBuf>,
 +}
 +
 +enum Access<'a> {
@@ -39950,6 +40221,7 @@ index 000000000..89b7f901c
 +}
 +
 +struct Invocation {
++    location: store::StateLocation,
 +    loaded: Loaded,
 +    dynamic: Vec<String>,
 +    previous_state: Value,
@@ -40000,14 +40272,22 @@ index 000000000..89b7f901c
 +    scope: &InvocationScope,
 +) -> Result<Value> {
 +    let _frame = scope.enter(id)?;
-+    let invocation = access.with(|runtime| runtime.begin(id, generation, active))?;
-+    let reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
++    let thread = state_thread(&payload);
++    let started = Instant::now();
++    let budget = Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS);
++    let mut replay: Vec<Value> = Vec::new();
++    loop {
++        let replaying = !replay.is_empty();
++        let invocation =
++            access.with(|runtime| runtime.begin(id, generation, active, thread.as_deref()))?;
++        let mut reply = registered_call(&invocation.loaded, &invocation.dynamic, event, name).and_then(|()| {
 +        bridge::run(
 +            &invocation.node,
 +            &invocation.loaded,
 +            event,
 +            name,
-+            payload,
++            payload.clone(),
++            &replay,
 +            active,
 +            &mut |call| {
 +                let private = call.operation.starts_with("sessions.")
@@ -40050,7 +40330,70 @@ index 000000000..89b7f901c
 +            scope,
 +        )
 +    });
-+    access.with(|runtime| runtime.finish(id, generation, event, name, invocation, reply, active))
++        // A retry replays recorded host results; a divergent replay of read-only calls runs fresh.
++        if replaying && reply.is_err() {
++            if replay.iter().all(read_only_receipt) && started.elapsed() < budget {
++                replay.clear();
++                continue;
++            }
++            reply = Err(failure("state_conflict: reload before retry"));
++        }
++        let receipts = reply.as_ref().ok().map(|reply| reply.receipts.clone());
++        match access
++            .with(|runtime| runtime.finish(id, generation, event, name, invocation, reply, active))
++        {
++            Err(error)
++                if started.elapsed() < budget
++                    && error.to_string().starts_with("state_conflict") =>
++            {
++                let Some(receipts) = receipts else {
++                    return Err(error);
++                };
++                replay = receipts;
++            }
++            result => return result,
++        }
++    }
++}
++
++fn read_only_receipt(receipt: &Value) -> bool {
++    let arguments = &receipt["call"]["arguments"];
++    match receipt["call"]["operation"].as_str().unwrap_or_default() {
++        "workspace.read"
++        | "workspace.list"
++        | "workspace.stat"
++        | "workspace.fingerprint"
++        | "store.get"
++        | "store.list"
++        | "store.export"
++        | "evidence.read"
++        | "sessions.list"
++        | "sessions.read"
++        | "routes.list"
++        | "task.status"
++        | "contract.status"
++        | "agents.list"
++        | "process.which"
++        | "process.status"
++        | "sidecars.status"
++        | "app.routes"
++        | "credentials.list"
++        | "turns.activity"
++        | "composer.read"
++        | "packages.list"
++        | "packages.preview"
++        | "exec.output_page"
++        | "terminal.image_sample" => true,
++        "workspace.check_access" => arguments["write"] != true,
++        "exec.run" => {
++            arguments["write"] != true
++                && arguments["network"]
++                    .as_str()
++                    .is_none_or(|network| network == "none")
++                && arguments["unix_sockets"].is_null()
++        }
++        _ => false,
++    }
 +}
 +
 +#[allow(clippy::too_many_arguments)]
@@ -40116,6 +40459,23 @@ index 000000000..89b7f901c
 +    }
 +
 +    pub fn open_validated(root: PathBuf, tool_validator: fn(&Value) -> Result<()>) -> Result<Self> {
++        Self::open_with(root, tool_validator, None)
++    }
++
++    /// Opens the host for a session repository so checkout-scoped state is known at registration.
++    pub fn open_in(
++        root: PathBuf,
++        tool_validator: fn(&Value) -> Result<()>,
++        repository: &Path,
++    ) -> Result<Self> {
++        Self::open_with(root, tool_validator, Some(repository))
++    }
++
++    fn open_with(
++        root: PathBuf,
++        tool_validator: fn(&Value) -> Result<()>,
++        repository: Option<&Path>,
++    ) -> Result<Self> {
 +        let store = ModStore::open(root)?;
 +        let mut host = Self {
 +            store,
@@ -40131,9 +40491,70 @@ index 000000000..89b7f901c
 +            tool_validator,
 +            virtual_time_ms: None,
 +            dynamic_tools: BTreeMap::new(),
++            checkout: None,
 +        };
++        if let Some(repository) = repository {
++            host.set_checkout(repository);
++        }
 +        host.reload()?;
 +        Ok(host)
++    }
++
++    /// Selects where `state_scope: "checkout"` mod state lives: the Git directory, else `.omd/state`.
++    pub fn set_checkout(&mut self, repository: &Path) {
++        self.checkout = repository
++            .ancestors()
++            .find_map(|directory| {
++                let marker = directory.join(".git");
++                let metadata = std::fs::symlink_metadata(&marker).ok()?;
++                let git = if metadata.is_dir() {
++                    marker
++                } else if metadata.is_file() {
++                    let text = std::fs::read_to_string(&marker).ok()?;
++                    directory.join(text.strip_prefix("gitdir:")?.trim())
++                } else {
++                    return None;
++                };
++                git.canonicalize().ok()
++            })
++            .map(|git| git.join("omd").join("state"))
++            .or_else(|| {
++                repository
++                    .canonicalize()
++                    .ok()
++                    .map(|directory| directory.join(".omd").join("state"))
++            });
++    }
++
++    fn state_location(
++        &self,
++        package: &ModPackage,
++        scope: &str,
++        thread: Option<&str>,
++    ) -> store::StateLocation {
++        let name = format!("{}.json", package.id);
++        match package.state_scope.as_str() {
++            "thread" => match thread.filter(|thread| crate::resource_data::token(thread)) {
++                Some(thread) => store::StateLocation::Directory(
++                    self.store
++                        .root
++                        .join("data")
++                        .join("threads")
++                        .join(thread)
++                        .join(".state"),
++                    name,
++                ),
++                None => store::StateLocation::Unavailable("state_thread_unavailable"),
++            },
++            "checkout" => match &self.checkout {
++                Some(directory) => store::StateLocation::Directory(directory.clone(), name),
++                None => store::StateLocation::Unavailable("state_checkout_unavailable"),
++            },
++            _ => store::StateLocation::Store {
++                id: package.id.clone(),
++                scope: scope.to_owned(),
++            },
++        }
 +    }
 +
 +    pub fn reload(&mut self) -> Result<bool> {
@@ -40215,11 +40636,14 @@ index 000000000..89b7f901c
 +                if let Some(Err(error)) = &adapter {
 +                    return Err(failure(error.to_string()));
 +                }
-+                loaded.state = self.store.state(
-+                    &loaded.package.id,
++                let location = self.state_location(
++                    &loaded.package,
 +                    &loaded.selection.scope,
-+                    loaded.package.state_version,
-+                )?;
++                    bound_thread().as_deref(),
++                );
++                loaded.state = self
++                    .store
++                    .scoped_state(&location, loaded.package.state_version)?;
 +                let reply = Self::run(&config.node, &loaded, "inspect", "", Value::Null, &|| true)?;
 +                Self::validate_registrations(&loaded.package, &reply.registrations)?;
 +                if reply.state != loaded.state {
@@ -40732,6 +41156,7 @@ index 000000000..89b7f901c
 +            event,
 +            name,
 +            payload,
++            &[],
 +            active,
 +            &mut |_| {
 +                Err(failure(
@@ -40886,6 +41311,7 @@ index 000000000..89b7f901c
 +        id: &str,
 +        generation: u64,
 +        active: &dyn Fn() -> bool,
++        thread: Option<&str>,
 +    ) -> Result<Invocation> {
 +        if !active() {
 +            return Err(failure("callback_cancelled"));
@@ -40903,12 +41329,12 @@ index 000000000..89b7f901c
 +                "mod_failed: {error}; explicitly reload to recover"
 +            )));
 +        }
-+        loaded.state = self.store.state(
-+            &loaded.package.id,
-+            &loaded.selection.scope,
-+            loaded.package.state_version,
-+        )?;
++        let location = self.state_location(&loaded.package, &loaded.selection.scope, thread);
++        loaded.state = self
++            .store
++            .scoped_state(&location, loaded.package.state_version)?;
 +        Ok(Invocation {
++            location,
 +            dynamic: self
 +                .dynamic_tools
 +                .get(id)
@@ -40927,6 +41353,7 @@ index 000000000..89b7f901c
 +    fn accept(
 +        &mut self,
 +        loaded: &Loaded,
++        location: &store::StateLocation,
 +        event: &str,
 +        reply: Reply,
 +        active: &dyn Fn() -> bool,
@@ -40999,9 +41426,8 @@ index 000000000..89b7f901c
 +            if !loaded.package.capabilities.iter().any(|c| c == "store") {
 +                return Err(failure("state_capability_denied"));
 +            }
-+            self.store.write_state(
-+                &loaded.package.id,
-+                &loaded.selection.scope,
++            self.store.write_scoped_state(
++                location,
 +                loaded.package.state_version,
 +                &loaded.state,
 +                &reply.state,
@@ -41021,7 +41447,15 @@ index 000000000..89b7f901c
 +        reply: Result<Reply>,
 +        active: &dyn Fn() -> bool,
 +    ) -> Result<Value> {
-+        let result = reply.and_then(|reply| self.accept(&invocation.loaded, event, reply, active));
++        let result = reply.and_then(|reply| {
++            self.accept(
++                &invocation.loaded,
++                &invocation.location,
++                event,
++                reply,
++                active,
++            )
++        });
 +        if generation != self.generation {
 +            return result.map(|(value, _)| value);
 +        }
@@ -41048,6 +41482,8 @@ index 000000000..89b7f901c
 +                let message = error.to_string();
 +                if ![
 +                    "state_conflict",
++                    "state_thread_unavailable",
++                    "state_checkout_unavailable",
 +                    "callback_cancelled",
 +                    "host_receipt_limit",
 +                    "host_result_limit",
@@ -42432,10 +42868,10 @@ index 000000000..7202d28aa
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..9b83bc48a
+index 000000000..a4940e930
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,234 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -42539,14 +42975,18 @@ index 000000000..9b83bc48a
 +    event: &str,
 +    name: &str,
 +    payload: Value,
++    replay: &[Value],
 +    active: &dyn Fn() -> bool,
 +    host: &mut dyn FnMut(ModHostCall) -> Result<Value>,
 +    progress: &mut dyn FnMut(String),
 +    virtual_time_ms: Option<u64>,
 +    scope: &InvocationScope,
 +) -> Result<Reply> {
-+    let mut receipts = Vec::new();
-+    let mut expected = Vec::new();
++    let mut receipts = replay.to_vec();
++    let mut expected = replay
++        .iter()
++        .map(|receipt| serde_json::from_value::<ModHostCall>(receipt["call"].clone()))
++        .collect::<std::result::Result<Vec<_>, _>>()?;
 +    let mut forwarded = 0;
 +    let mut waited = Duration::ZERO;
 +    let mut request = json!({"source": loaded.source, "filename": loaded.selection.path.join("index.ts"),
@@ -42567,6 +43007,7 @@ index 000000000..9b83bc48a
 +        "adapter": loaded.adapter,
 +    });
 +    request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
++    request["receipts"] = Value::Array(replay.to_vec());
 +    let started = Instant::now();
 +    let budget = Duration::from_millis(loaded.package.hook_budget_ms);
 +    let evaluated = process::evaluate(node, &request, budget, active, &mut |frame| {
@@ -42626,7 +43067,7 @@ index 000000000..9b83bc48a
 +    });
 +    let execution = started.elapsed().saturating_sub(waited);
 +    scope.charge_execution(execution)?;
-+    let reply: Reply = serde_json::from_value(evaluated?)?;
++    let mut reply: Reply = serde_json::from_value(evaluated?)?;
 +    if event != "inspect" && reply.registrations != loaded.registrations {
 +        return Err(failure("registration_changed_during_callback"));
 +    }
@@ -42634,6 +43075,7 @@ index 000000000..9b83bc48a
 +        return Err(failure("invalid_host_call_receipts"));
 +    }
 +    forward(event, &reply.updates, &mut forwarded, progress)?;
++    reply.receipts = receipts;
 +    Ok(reply)
 +}
 +
@@ -45025,10 +45467,10 @@ index 000000000..bba35b542
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..22bb827c6
+index 000000000..99b7d3cfb
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,493 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -45043,6 +45485,7 @@ index 000000000..22bb827c6
 +use std::fs::OpenOptions;
 +use std::io::Read;
 +use std::io::Write;
++use std::os::unix::fs::DirBuilderExt;
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::path::Path;
 +use std::path::PathBuf;
@@ -45114,6 +45557,96 @@ index 000000000..22bb827c6
 +    pub(super) root: PathBuf,
 +}
 +
++pub(super) const SCOPED_STATE_LIMIT: usize = 196_608;
++
++#[derive(Clone, Debug)]
++pub(super) enum StateLocation {
++    Store { id: String, scope: String },
++    Directory(PathBuf, String),
++    Unavailable(&'static str),
++}
++
++fn lock(path: &Path) -> Result<File> {
++    let file = OpenOptions::new()
++        .create(true)
++        .truncate(false)
++        .write(true)
++        .mode(0o600)
++        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
++        .open(path)?;
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
++    loop {
++        match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
++            Ok(()) => return Ok(file),
++            Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
++                std::thread::sleep(std::time::Duration::from_millis(20));
++            }
++            Err(error) => return Err(error.into()),
++        }
++    }
++}
++
++fn state_value(bytes: &[u8], version: u32) -> Result<Value> {
++    let state: Value = serde_json::from_slice(bytes)?;
++    if state["schema"] != super::MOD_STATE_STORAGE_SCHEMA_VERSION || state["version"] != version {
++        return Err(failure(
++            "state_migration_required: previous state preserved",
++        ));
++    }
++    Ok(state["value"].clone())
++}
++
++fn directory_state(directory: &Path, name: &str, version: u32) -> Result<Value> {
++    match read(&directory.join(name), SCOPED_STATE_LIMIT as u64) {
++        Ok(bytes) => state_value(&bytes, version),
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
++        Err(error) => Err(error),
++    }
++}
++
++fn write_directory_state(
++    directory: &Path,
++    name: &str,
++    version: u32,
++    previous: &Value,
++    value: &Value,
++) -> Result<()> {
++    std::fs::DirBuilder::new()
++        .recursive(true)
++        .mode(0o700)
++        .create(directory)?;
++    if directory.canonicalize()? != directory {
++        return Err(failure("state_directory_invalid"));
++    }
++    let _lock = lock(&directory.join(".lock"))?;
++    if &directory_state(directory, name, version)? != previous {
++        return Err(failure("state_conflict: reload before retry"));
++    }
++    let bytes = serde_json::to_vec(
++        &json!({"schema": super::MOD_STATE_STORAGE_SCHEMA_VERSION, "version": version, "value": value}),
++    )?;
++    if bytes.len() > SCOPED_STATE_LIMIT {
++        return Err(failure("state_limit"));
++    }
++    let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
++    let _ = std::fs::remove_file(&temporary);
++    let mut file = OpenOptions::new()
++        .create_new(true)
++        .write(true)
++        .mode(0o600)
++        .open(&temporary)?;
++    let result = (|| {
++        file.write_all(&bytes)?;
++        file.sync_all()?;
++        std::fs::rename(&temporary, directory.join(name))?;
++        File::open(directory)?.sync_all()
++    })();
++    if result.is_err() {
++        let _ = std::fs::remove_file(&temporary);
++    }
++    result
++}
++
 +impl ModStore {
 +    pub fn create(root: PathBuf, node: PathBuf) -> Result<Self> {
 +        std::fs::create_dir(&root)?;
@@ -45136,23 +45669,7 @@ index 000000000..22bb827c6
 +    }
 +
 +    pub(super) fn lock(&self) -> Result<File> {
-+        let file = OpenOptions::new()
-+            .create(true)
-+            .truncate(false)
-+            .write(true)
-+            .mode(0o600)
-+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-+            .open(self.root.join("store.lock"))?;
-+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-+        loop {
-+            match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
-+                Ok(()) => return Ok(file),
-+                Err(rustix::io::Errno::WOULDBLOCK) if std::time::Instant::now() < deadline => {
-+                    std::thread::sleep(std::time::Duration::from_millis(20));
-+                }
-+                Err(error) => return Err(error.into()),
-+            }
-+        }
++        lock(&self.root.join("store.lock"))
 +    }
 +
 +    pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
@@ -45399,14 +45916,33 @@ index 000000000..22bb827c6
 +            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
 +            Err(e) => return Err(e),
 +        };
-+        let state: Value = serde_json::from_slice(&bytes)?;
-+        if state["schema"] != super::MOD_STATE_STORAGE_SCHEMA_VERSION || state["version"] != version
-+        {
-+            return Err(failure(
-+                "state_migration_required: previous state preserved",
-+            ));
++        state_value(&bytes, version)
++    }
++
++    pub(super) fn scoped_state(&self, location: &StateLocation, version: u32) -> Result<Value> {
++        match location {
++            StateLocation::Store { id, scope } => self.state(id, scope, version),
++            StateLocation::Directory(directory, name) => directory_state(directory, name, version),
++            StateLocation::Unavailable(_) => Ok(Value::Null),
 +        }
-+        Ok(state["value"].clone())
++    }
++
++    pub(super) fn write_scoped_state(
++        &self,
++        location: &StateLocation,
++        version: u32,
++        previous: &Value,
++        value: &Value,
++    ) -> Result<()> {
++        match location {
++            StateLocation::Store { id, scope } => {
++                self.write_state(id, scope, version, previous, value)
++            }
++            StateLocation::Directory(directory, name) => {
++                write_directory_state(directory, name, version, previous, value)
++            }
++            StateLocation::Unavailable(reason) => Err(failure(*reason)),
++        }
 +    }
 +
 +    pub(super) fn write_state(
@@ -45430,10 +45966,10 @@ index 000000000..22bb827c6
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..dc0db9189
+index 000000000..db8700c17
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,1707 @@
+@@ -0,0 +1,1716 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -46297,6 +46833,8 @@ index 000000000..dc0db9189
 +    #[serde(default)]
 +    pub revision: u64,
 +    #[serde(default)]
++    pub rendered_ms: u64,
++    #[serde(default)]
 +    pub view: ModView,
 +    #[serde(default)]
 +    pub owner: Option<String>,
@@ -47105,6 +47643,13 @@ index 000000000..dc0db9189
 +}
 +
 +impl ModViewSnapshot {
++    pub fn clock() -> u64 {
++        std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
++            .unwrap_or_default()
++    }
++
 +    pub fn read(path: &Path) -> Result<Self> {
 +        let value: Value = serde_json::from_slice(&store::read(path, 131_072)?)?;
 +        let mut snapshot: Self = serde_json::from_value(value)?;
@@ -51748,10 +52293,10 @@ index 000000000..330b7bc69
 +}
 diff --git a/codex-rs/omd/tests/examples.rs b/codex-rs/omd/tests/examples.rs
 new file mode 100644
-index 000000000..c812b63ff
+index 000000000..26dad48ab
 --- /dev/null
 +++ b/codex-rs/omd/tests/examples.rs
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,110 @@
 +use codex_omd::{ModHost, ModStore};
 +use std::path::Path;
 +
@@ -51787,6 +52332,7 @@ index 000000000..c812b63ff
 +    "terminal_tabs_v1",
 +    "session_ports_v1",
 +    "builtins_mod_commands_v1",
++    "state_scopes_v1",
 +];
 +
 +#[test]
@@ -54086,10 +54632,10 @@ index 000000000..c0e95eb24
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..8a26de99f
+index 000000000..dc601ab58
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2413 @@
+@@ -0,0 +1,2664 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -54213,7 +54759,7 @@ index 000000000..8a26de99f
 +const COUNTER: &str = "export default api => api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); })";
 +
 +#[test]
-+fn mod_state_refreshes_per_call_and_racing_writers_fail_without_lost_updates() {
++fn mod_state_refreshes_per_call_and_racing_writers_retry_without_lost_updates() {
 +    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', () => { const value = Number(api.state.get() ?? 0); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return value; }); }";
 +    let (temp, _, _) = fixture(source, &["commands", "store"]);
 +    let mut first = host(&temp);
@@ -54232,10 +54778,261 @@ index 000000000..8a26de99f
 +    std::thread::sleep(std::time::Duration::from_millis(200));
 +    assert_eq!(invoke(&mut second, "count").unwrap(), json!(4));
 +    let (mut first, result) = racing.join().unwrap();
-+    assert!(result.unwrap_err().to_string().contains("state_conflict"));
-+    assert_eq!(invoke(&mut first, "count").unwrap(), json!(5));
++    assert_eq!(result.unwrap(), json!(4));
++    assert_eq!(invoke(&mut first, "count").unwrap(), json!(105));
 +    let mut resumed = host(&temp);
-+    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(6));
++    assert_eq!(invoke(&mut resumed, "count").unwrap(), json!(106));
++}
++
++#[test]
++fn conflict_retries_replay_host_results_and_refuse_divergent_callbacks() {
++    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('slow', key => { const value = Number(api.state.get() ?? 0); const read = key === 'write' ? api.host.tryCall('store.put', { key: `k${value}`, value: 1, expected_revision: null }) : api.host.tryCall('store.get', { key: key === 'state' ? `k${value}` : 'fixed' }); const end = Date.now() + 500; while (Date.now() < end) {} api.state.set(value + 100); return read.ok; }); }";
++    let (temp, _, _) = fixture(source, &["commands", "store"]);
++    let mut first = host(&temp);
++    let mut second = host(&temp);
++    let count = |runtime: &mut ModHost| {
++        let generation = runtime.generation();
++        runtime.invoke("fixture", generation, "command", "count", Value::Null)
++    };
++    let race = |first: &mut ModHost, second: &mut ModHost, key: &str| {
++        let calls = AtomicUsize::new(0);
++        let result = std::thread::scope(|scope| {
++            let slow = scope.spawn(|| {
++                let generation = first.generation();
++                first.invoke_with(
++                    "fixture",
++                    generation,
++                    "command",
++                    "slow",
++                    json!(key),
++                    || true,
++                    |_| {
++                        calls.fetch_add(1, Ordering::SeqCst);
++                        Ok(Value::Null)
++                    },
++                )
++            });
++            std::thread::sleep(std::time::Duration::from_millis(200));
++            count(second).unwrap();
++            slow.join().unwrap()
++        });
++        (result, calls.load(Ordering::SeqCst))
++    };
++    assert_eq!(count(&mut second).unwrap(), json!(1));
++    let (result, calls) = race(&mut first, &mut second, "fixed");
++    assert_eq!((result.unwrap(), calls), (json!(true), 1));
++    assert_eq!(count(&mut second).unwrap(), json!(103));
++    let (result, calls) = race(&mut first, &mut second, "state");
++    assert_eq!((result.unwrap(), calls), (json!(true), 2));
++    assert_eq!(count(&mut second).unwrap(), json!(205));
++    let (result, calls) = race(&mut first, &mut second, "write");
++    assert!(
++        result
++            .unwrap_err()
++            .to_string()
++            .starts_with("state_conflict")
++    );
++    assert_eq!(calls, 1);
++    assert_eq!(count(&mut second).unwrap(), json!(207));
++    assert!(first.status()["mods"][0]["error"].is_null());
++}
++
++#[test]
++fn scoped_state_follows_the_session_thread_or_the_git_checkout() {
++    let source = "export default api => { api.command('count', () => { api.state.set(Number(api.state.get() ?? 0)+1); return api.state.get(); }); api.command('fill', size => { api.state.set('x'.repeat(Number(size))); return null; }); }";
++    let temp = TempDir::new().unwrap();
++    let root = temp.path().canonicalize().unwrap();
++    let checkout = root.join("checkout");
++    std::fs::create_dir_all(checkout.join(".git")).unwrap();
++    std::fs::create_dir_all(checkout.join("sub")).unwrap();
++    let linked = root.join("linked");
++    std::fs::create_dir_all(checkout.join(".git/worktrees/linked")).unwrap();
++    std::fs::create_dir(&linked).unwrap();
++    std::fs::write(
++        linked.join(".git"),
++        format!(
++            "gitdir: {}\n",
++            checkout.join(".git/worktrees/linked").display()
++        ),
++    )
++    .unwrap();
++    let scoped = |id: &str, scope: &str| {
++        let path = package(&root, id, source, &["commands", "store"]);
++        let mut manifest: Value =
++            serde_json::from_slice(&std::fs::read(path.join("mod.json")).unwrap()).unwrap();
++        manifest["state_scope"] = json!(scope);
++        std::fs::write(
++            path.join("mod.json"),
++            serde_json::to_vec(&manifest).unwrap(),
++        )
++        .unwrap();
++        path
++    };
++    let (threaded, shared, invalid) = (
++        scoped("threaded", "thread"),
++        scoped("shared", "checkout"),
++        scoped("invalid", "global"),
++    );
++    let first = ModStore::create(root.join("first"), node()).unwrap();
++    let second = ModStore::create(root.join("second"), node()).unwrap();
++    for path in [&threaded, &shared] {
++        trust(&first, path, &["commands", "store"]);
++    }
++    trust(&second, &shared, &["commands", "store"]);
++    assert!(
++        ModStore::inspect_package(&invalid)
++            .unwrap_err()
++            .to_string()
++            .contains("state_scope")
++    );
++    let invoke = |runtime: &mut ModHost, id: &str, name: &str, payload: Value| {
++        let generation = runtime.generation();
++        runtime.invoke(id, generation, "command", name, payload)
++    };
++    let mut one = ModHost::open(root.join("first")).unwrap();
++    let mut two = ModHost::open(root.join("second")).unwrap();
++    one.set_checkout(&checkout.join("sub"));
++    two.set_checkout(&checkout);
++
++    {
++        let _thread = codex_omd::StateThread::enter(Some("t1".into()));
++        assert_eq!(
++            invoke(&mut one, "threaded", "count", Value::Null).unwrap(),
++            json!(1)
++        );
++        assert_eq!(
++            invoke(&mut one, "threaded", "count", Value::Null).unwrap(),
++            json!(2)
++        );
++    }
++    {
++        let _thread = codex_omd::StateThread::enter(Some("t2".into()));
++        assert_eq!(
++            invoke(&mut one, "threaded", "count", Value::Null).unwrap(),
++            json!(1)
++        );
++    }
++    assert_eq!(
++        invoke(&mut one, "threaded", "count", json!({"thread_id": "t1"})).unwrap(),
++        json!(3)
++    );
++    assert!(
++        invoke(&mut one, "threaded", "count", Value::Null)
++            .unwrap_err()
++            .to_string()
++            .contains("state_thread_unavailable")
++    );
++    assert!(codex_omd::data_store::fork_thread_data(&root.join("first"), "t1", "t3").unwrap());
++    assert_eq!(
++        invoke(&mut one, "threaded", "count", json!({"thread_id": "t3"})).unwrap(),
++        json!(4)
++    );
++    assert!(codex_omd::data_store::remove_thread_data(&root.join("first"), "t1").unwrap());
++    assert_eq!(
++        invoke(&mut one, "threaded", "count", json!({"thread_id": "t1"})).unwrap(),
++        json!(1)
++    );
++    assert!(!root.join("first/state-threaded.json").exists());
++
++    assert_eq!(
++        invoke(&mut one, "shared", "count", Value::Null).unwrap(),
++        json!(1)
++    );
++    assert_eq!(
++        invoke(&mut two, "shared", "count", Value::Null).unwrap(),
++        json!(2)
++    );
++    assert_eq!(
++        invoke(&mut one, "shared", "count", Value::Null).unwrap(),
++        json!(3)
++    );
++    assert!(checkout.join(".git/omd/state/shared.json").is_file());
++    let mut linked_host = ModHost::open(root.join("second")).unwrap();
++    linked_host.set_checkout(&linked);
++    assert_eq!(
++        invoke(&mut linked_host, "shared", "count", Value::Null).unwrap(),
++        json!(1)
++    );
++    let plain = root.join("plain");
++    std::fs::create_dir(&plain).unwrap();
++    let mut outside = ModHost::open(root.join("second")).unwrap();
++    outside.set_checkout(&plain);
++    assert_eq!(
++        invoke(&mut outside, "shared", "count", Value::Null).unwrap(),
++        json!(1)
++    );
++    assert!(plain.join(".omd/state/shared.json").is_file());
++    let cli = |cwd: &std::path::Path, args: &[&str]| {
++        let output = std::process::Command::new(env!("CARGO_BIN_EXE_omd-mod"))
++            .arg("command")
++            .arg(root.join("first"))
++            .args(args)
++            .current_dir(cwd)
++            .env("OMD_TEST_NODE", node())
++            .output()
++            .unwrap();
++        if output.status.success() {
++            Ok(serde_json::from_slice::<Value>(&output.stdout).unwrap())
++        } else {
++            Err(String::from_utf8_lossy(&output.stderr).into_owned())
++        }
++    };
++    assert_eq!(
++        cli(&checkout, &["threaded", "count", "null", "t5"]),
++        Ok(json!(1))
++    );
++    assert_eq!(
++        cli(&checkout, &["threaded", "count", "null", "t5"]),
++        Ok(json!(2))
++    );
++    assert!(
++        cli(&checkout, &["threaded", "count", "null"])
++            .unwrap_err()
++            .contains("state_thread_unavailable")
++    );
++    assert_eq!(
++        cli(&checkout.join("sub"), &["shared", "count", "null"]),
++        Ok(json!(4))
++    );
++    let reader = scoped("reader", "checkout");
++    std::fs::write(reader.join("index.ts"), "export default api => { const seen = api.state.get() !== null; api.command(seen ? 'seen' : 'fresh', () => { api.state.set(true); return seen; }); }").unwrap();
++    trust(&second, &reader, &["commands", "store"]);
++    let mut opened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
++    assert_eq!(
++        invoke(&mut opened, "reader", "fresh", Value::Null).unwrap(),
++        json!(false)
++    );
++    let mut reopened = ModHost::open_in(root.join("second"), |_| Ok(()), &checkout).unwrap();
++    assert_eq!(
++        invoke(&mut reopened, "reader", "seen", Value::Null).unwrap(),
++        json!(true)
++    );
++    let mut unscoped = ModHost::open(root.join("first")).unwrap();
++    assert!(
++        invoke(&mut unscoped, "shared", "count", Value::Null)
++            .unwrap_err()
++            .to_string()
++            .contains("state_checkout_unavailable")
++    );
++    assert!(
++        unscoped.status()["mods"]
++            .as_array()
++            .unwrap()
++            .iter()
++            .all(|item| item["error"].is_null())
++    );
++
++    let _thread = codex_omd::StateThread::enter(Some("t2".into()));
++    assert_eq!(
++        invoke(&mut one, "threaded", "fill", json!(150_000)).unwrap(),
++        Value::Null
++    );
++    assert!(
++        invoke(&mut one, "threaded", "fill", json!(200_000))
++            .unwrap_err()
++            .to_string()
++            .contains("state_limit")
++    );
 +}
 +
 +#[test]
@@ -63336,10 +64133,10 @@ index 000000000..d3e30397b
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..5df1a348f
+index 000000000..c0d0dcf6e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,779 @@
+@@ -0,0 +1,798 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -63874,9 +64671,10 @@ index 000000000..5df1a348f
 +fn preview(
 +    runtime: &mut ModHost,
 +    paths: &crate::omd::ModPaths,
-+    invocation: &ModInvocation,
++    context: &ModContext,
 +) -> Option<ModViewSnapshot> {
 +    let mut snapshot = ModViewSnapshot::read(&paths.evidence.join("mod-view.json")).ok()?;
++    snapshot.rendered_ms = ModViewSnapshot::clock();
 +    let terminal = runtime.terminal_view(snapshot.input.clone(), || true);
 +    snapshot.revision = snapshot.revision.saturating_add(1);
 +    snapshot.view = terminal.view;
@@ -63885,8 +64683,8 @@ index 000000000..5df1a348f
 +    snapshot.diagnostics.extend(terminal.diagnostics);
 +    snapshot.diagnostics.truncate(16);
 +    snapshot.input["ledger"] = serde_json::json!({
-+        "thread_id": invocation.context.thread_id.map(|id| id.to_string()),
-+        "cwd": invocation.context.repository,
++        "thread_id": context.thread_id.map(|id| id.to_string()),
++        "cwd": context.repository,
 +    });
 +    Some(snapshot)
 +}
@@ -63896,9 +64694,12 @@ index 000000000..5df1a348f
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner);
 +    if host.is_none() {
-+        *host = Some(Arc::new(Mutex::new(
-+            ModHost::open(store).map_err(|e| e.to_string())?,
-+        )));
++        let runtime = match crate::omd::mod_paths() {
++            Some(paths) => ModHost::open_in(store, |_| Ok(()), &paths.repository),
++            None => ModHost::open(store),
++        }
++        .map_err(|e| e.to_string())?;
++        *host = Some(Arc::new(Mutex::new(runtime)));
 +    }
 +    host.clone()
 +        .ok_or_else(|| "mod runtime unavailable".to_owned())
@@ -63954,7 +64755,7 @@ index 000000000..5df1a348f
 +pub(crate) fn invoke_event(id: &str, event: &str, payload: Value) -> Option<Result<Value, String>> {
 +    let paths = crate::omd::mod_paths()?;
 +    let runtime = shared_host(paths.store.clone()?).ok()?;
-+    let (generation, grants) = {
++    let (generation, grants, before) = {
 +        let mut runtime = runtime
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -63962,10 +64763,15 @@ index 000000000..5df1a348f
 +        if !runtime.registered(id, event) {
 +            return None;
 +        }
-+        (runtime.generation(), owner_grants(&runtime))
++        (
++            runtime.generation(),
++            owner_grants(&runtime),
++            runtime.state(id).cloned(),
++        )
 +    };
 +    let policy = codex_protocol::permissions::FileSystemSandboxPolicy::read_only();
 +    let thread = crate::mod_surface::current_thread();
++    let _thread = codex_omd::StateThread::enter(thread.clone());
 +    let scope = CallScope {
 +        context: codex_omd::app_routes::InvocationContext::Event,
 +        thread: thread.as_deref(),
@@ -63991,12 +64797,20 @@ index 000000000..5df1a348f
 +        },
 +        |_| {},
 +    );
-+    record_status(
-+        &runtime
++    let snapshot = {
++        let mut runtime = runtime
 +            .lock()
-+            .unwrap_or_else(std::sync::PoisonError::into_inner),
-+        &paths,
-+    );
++            .unwrap_or_else(std::sync::PoisonError::into_inner);
++        record_status(&runtime, &paths);
++        let changed = runtime.state(id) != before.as_ref();
++        active_context()
++            .filter(|_| changed)
++            .and_then(|context| preview(&mut runtime, &paths, &context))
++    };
++    if let Some(snapshot) = snapshot {
++        crate::mod_ui::preview(snapshot);
++        codex_omd::client_surface::redraw();
++    }
 +    Some(result.map_err(|error| error.to_string()))
 +}
 +
@@ -64032,6 +64846,7 @@ index 000000000..5df1a348f
 +}
 +
 +pub(crate) fn list_view(payload: Value) -> Option<Vec<codex_omd::ModComponent>> {
++    let _thread = codex_omd::StateThread::enter(crate::mod_surface::current_thread());
 +    try_with_host(|runtime, _| {
 +        runtime
 +            .list_view(payload, || true)
@@ -64061,6 +64876,7 @@ index 000000000..5df1a348f
 +        (runtime.generation(), owner_grants(&runtime))
 +    };
 +    let thread = invocation.context.thread_id.map(|id| id.to_string());
++    let _thread = codex_omd::StateThread::enter(thread.clone());
 +    let scope = CallScope {
 +        context: codex_omd::app_routes::InvocationContext::User,
 +        thread: thread.as_deref(),
@@ -64096,7 +64912,7 @@ index 000000000..5df1a348f
 +            .lock()
 +            .unwrap_or_else(std::sync::PoisonError::into_inner),
 +        &paths,
-+        invocation,
++        &invocation.context,
 +    );
 +    Ok(ModCommandResult { outcome, preview })
 +}
@@ -65240,10 +66056,10 @@ index 000000000..911dd26c9
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..5986bb1bc
+index 000000000..4825fbbdd
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,2283 @@
+@@ -0,0 +1,2286 @@
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModColor;
@@ -65527,13 +66343,16 @@ index 000000000..5986bb1bc
 +                .iter()
 +                .any(|panel| panel.title == "Mod errors");
 +    }
++    let recovering = incoming
++        .view
++        .panels
++        .iter()
++        .any(|panel| panel.title == "Mod errors");
++    if preview.rendered_ms > 0 && incoming.rendered_ms > 0 {
++        return !recovering && incoming.rendered_ms <= preview.rendered_ms;
++    }
 +    (preview.epoch == incoming.epoch && preview.revision > incoming.revision)
-+        || (site(&preview.view, "dialog").is_some()
-+            && !incoming
-+                .view
-+                .panels
-+                .iter()
-+                .any(|panel| panel.title == "Mod errors"))
++        || (site(&preview.view, "dialog").is_some() && !recovering)
 +}
 +
 +fn collect_component(component: &ModComponent, interaction: &mut Interaction) {
@@ -67261,7 +68080,7 @@ index 000000000..5986bb1bc
 +    if let Some(focused) = interaction.focused.clone()
 +        && let Some(ComponentTarget::Terminal(session)) = interaction.targets.get(&focused)
 +    {
-+        if (key.code, key.modifiers) == (KeyCode::Char(']'), KeyModifiers::CONTROL) {
++        if crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
 +            interaction.focused = None;
 +        } else {
 +            crate::mod_pty::key(&interaction.owners, session, key);
@@ -67275,7 +68094,7 @@ index 000000000..5986bb1bc
 +            interaction.focused = None;
 +            return None;
 +        }
-+        if (key.code, key.modifiers) == (KeyCode::Char(']'), KeyModifiers::CONTROL) {
++        if crate::key_hint::ctrl(KeyCode::Char(']')).is_press(key) {
 +            interaction.focused = None;
 +        } else {
 +            let text = match key.code {
@@ -67529,10 +68348,10 @@ index 000000000..5986bb1bc
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..308edfd36
+index 000000000..74856d183
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,995 @@
+@@ -0,0 +1,1014 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -67627,6 +68446,12 @@ index 000000000..308edfd36
 +            Some(ModInput::Consumed)
 +        ));
 +        assert!(!paste("composer"));
++        assert!(focus("buffer"));
++        assert!(matches!(
++            press(KeyCode::Char('5'), KeyModifiers::CONTROL),
++            Some(ModInput::Consumed)
++        ));
++        assert_eq!(INTERACTION.lock().unwrap().focused, None);
 +        assert!(focus("buffer"));
 +        assert!(press(KeyCode::Char('c'), KeyModifiers::CONTROL).is_none());
 +        assert_eq!(INTERACTION.lock().unwrap().focused, None);
@@ -67804,7 +68629,7 @@ index 000000000..308edfd36
 +}
 +
 +#[test]
-+fn modal_preview_survives_stale_redraw_but_yields_to_recovery() {
++fn modal_preview_survives_older_renders_but_yields_to_newer_ones_and_recovery() {
 +    let mut preview = snapshot(serde_json::json!({
 +        "sites":{"dialog":{"components":[{
 +            "type":"dialog","id":"settings","label":"Settings","title":"Settings","children":[]
@@ -67823,6 +68648,19 @@ index 000000000..308edfd36
 +        lines: vec!["workspace failed".into()],
 +    });
 +    assert!(!preserve_preview(&preview, &stale));
++    stale.view.panels.clear();
++    preview.rendered_ms = 1_000;
++    stale.rendered_ms = 999;
++    assert!(preserve_preview(&preview, &stale));
++    let mut later = snapshot(serde_json::json!({
++        "sites":{"dialog":{"components":[{
++            "type":"dialog","id":"settings","label":"Settings","title":"Settings v2","children":[]
++        }]}}
++    }));
++    later.rendered_ms = 1_001;
++    assert!(!preserve_preview(&preview, &later));
++    later.view.sites.clear();
++    assert!(!preserve_preview(&preview, &later));
 +}
 +
 +#[test]

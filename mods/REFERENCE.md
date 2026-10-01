@@ -206,6 +206,32 @@ namespace or resets it without running any mod code. `evidence.write
 {media_type, content, label?}` stores content-addressed evidence and returns a
 `ResourceRef`; `evidence.read` reads it back in bounded pages.
 
+`api.state` is re-read before every callback and written back with a
+compare-and-swap. If another process wrote it meanwhile, the host runs the
+callback again against the fresh state, within the callback's 5 s budget,
+answering its host calls from the results already recorded, so no operation
+runs twice. If a retry asks for a different host call, it runs again fresh when
+every recorded call was read-only; otherwise it fails with the transient
+`state_conflict`, because an operation that already ran is never repeated.
+Its location follows the manifest's `state_scope` (`state_scopes_v1`).
+`"store"` (the default) keeps one state of at most 64 KiB in the mod store,
+shared by every OMD process that uses that store. `"thread"` keeps one state per
+session thread with the thread's data: it forks with the thread and is removed
+when the thread is deleted. Routing and compaction decisions made while a
+thread is set up see that thread's state (a fork's copy is made first), and
+registration reads the state of the thread whose callback reloaded the mods
+(none at process start). `"checkout"` keeps one state per checkout, shared by
+every OMD process working there whatever its mod store: in
+`<git-dir>/omd/state/<mod>.json` for a Git checkout (a linked worktree has its
+own) and in `<directory>/.omd/state/<mod>.json` otherwise; the session sandbox
+keeps `.omd/state` read-only for agent commands and mod workspace writes, as
+Codex does for `.git`. `omd-mod command
+STORE MOD NAME JSON [THREAD]` and `omd-mod test STORE SCENARIO [THREAD]` use the
+given thread and the checkout of their working directory. Thread and checkout
+state may be up to 192 KiB, but a callback result, including its state, stays
+within 256 KiB. Package update, migration and rollback commands act on
+`"store"` state only.
+
 ### Routes
 
 Routes are configuration, not names in the API. `<OMD_MOD_STORE>/host.json`
@@ -469,8 +495,9 @@ A mod can never approve, and a failing middleware counts as `ask`.
 namespace; subscribers declare channel patterns and receive `channel` events
 (256 events / 1 MiB per subscriber). `process.start {notify: ['output','exit']}`
 delivers coalesced `process_event`s. `workspace.watch {paths, recursive?,
-debounce_ms?}` reports external edits as `workspace_change` with source
-`external` (16 watches per mod, ignored and protected paths excluded). Watches
+debounce_ms?, include_ignored?}` reports external edits as `workspace_change`
+with source `external` (16 watches per mod; protected paths are always
+excluded, Git-ignored paths unless `include_ignored` is true). Watches
 and timers end when their mod is disabled or its source changes, and each
 delivery runs in the thread that registered it. A `channel`, `timer`,
 `process_event` or watched `workspace_change` callback that changes its mod's
@@ -601,8 +628,16 @@ events}`, each event `{key, text}` or `{paste, truncated?}` (a paste is at most
 64 KiB). Input waiting for one component arrives in order as one batch of at
 most 64 events and 64 KiB, so a slow callback adds at most one batch of lag;
 beyond 256 queued events input is dropped and the next batch reports
-`dropped`. Ctrl+] leaves the component; Ctrl+C leaves it and keeps its native
-meaning (interrupt or quit); Esc goes to the mod.
+`dropped`. Ctrl+] leaves the component (terminals without the kitty keyboard
+protocol send it as Ctrl+5, which also leaves); Ctrl+C leaves it and keeps its
+native meaning (interrupt or quit); Esc goes to the mod. Input callbacks run in
+the terminal process with read-only workspace access, and the view redraws as
+soon as one changes the mod's state; a key that must write (a save) publishes
+an `events.publish` hop whose `channel` callback runs with the session's
+access. Terminal-side callbacks (slash commands, input) run beside the session,
+so their hop can arrive before their own `api.state` write lands: keep the
+request in state and, when the `channel` callback does not find it yet, serve
+it from a short `events.schedule` timer.
 The mod owns the buffer, cursor and selection and draws them as spans; a key
 `document` keeps its scroll across content changes and scrolls to `selected`.
 A paste into a focused `terminal` component goes to the PTY, bracketed when
@@ -651,7 +686,7 @@ interaction. Operations:
   that the mod can type into the pane.
   Sessions belong to the calling mod (four per mod, sixteen in all), render
   only in views that mod owns or contributes to, and stop when it unloads. A
-  focused `terminal` component receives keys; Ctrl+] leaves it.
+  focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
 - `builtins.invoke {command} | {action}` runs a built-in command or key action
   from user contexts; `command` may also name a mod command such as
   `omd_git:status` (`builtins_mod_commands_v1`), which runs as if typed once
