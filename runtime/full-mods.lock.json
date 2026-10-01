@@ -164,6 +164,26 @@
       "source": "mods/first-party/omd_guideline_governance",
       "version": "0.1.0-preview.1"
     },
+    "omd_herdr": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "exec",
+        "network",
+        "threads",
+        "lifecycle",
+        "store",
+        "commands"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "04263f27fbe1718ec848f6c404c665bf634b9ec1f493813d7a91aa1d15234344",
+        "mod.json": "6ad6ffe7db0b53d8e664f7d283e7510a70880448e401ee2e31fa767cf38f8812"
+      },
+      "id": "omd_herdr",
+      "package_sha256": "87290fee253986eb5dbe6f594770d058e3644d651048360724317dcdb7250e88",
+      "source": "mods/first-party/omd_herdr",
+      "version": "0.1.0-preview.1"
+    },
     "omd_inspector": {
       "api": "0.2.0-experimental.5",
       "capabilities": [
@@ -269,6 +289,30 @@
       "package_sha256": "da7dc1b71d3762a9be051d99fdf896bba5676d126bf54f9cdaf312ee2b8c43ed",
       "source": "mods/first-party/omd_lsp_view",
       "version": "0.2.0-preview.1"
+    },
+    "omd_mcp": {
+      "api": "0.2.0-experimental.5",
+      "capabilities": [
+        "threads",
+        "inventory",
+        "config",
+        "packages",
+        "config.write",
+        "composer",
+        "terminal",
+        "commands",
+        "store",
+        "events"
+      ],
+      "extension_type": "mod",
+      "files": {
+        "index.ts": "c241313cebe1ae3bfe436e31395c981b0407dbe1bc2d0ddab6b059d808eab82e",
+        "mod.json": "af28040708f9532d4a05add7a2ad77f18a1d27b387b823ad35077b799d0c034a"
+      },
+      "id": "omd_mcp",
+      "package_sha256": "0a1e5e9372506da9126bb477c400eeb6e12ab6374b91151d83277fb2bb87a9f7",
+      "source": "mods/first-party/omd_mcp",
+      "version": "0.1.0-preview.1"
     },
     "omd_model_picker": {
       "api": "0.2.0-experimental.5",

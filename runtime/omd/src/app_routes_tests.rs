@@ -248,6 +248,20 @@ fn config_writes_refuse_authority_and_unknown_keys() {
     assert_eq!(write("tui.keymap.global.copy"), "ok");
     assert_eq!(write("sandbox_mode"), "app_config_key_refused");
     assert_eq!(write("mcp_servers.x.command"), "app_config_key_refused");
+    assert_eq!(write("mcp_servers.x.enabled"), "ok");
+    assert_eq!(write("mcp_servers.x"), "app_config_key_refused");
+    assert_eq!(write("mcp_servers"), "app_config_key_refused");
+    assert_eq!(write("plugins.p@m.enabled"), "ok");
+    assert_eq!(write("plugins.p@m.mcp_servers.s.disabled_tools"), "ok");
+    assert_eq!(
+        write("plugins.p@m.mcp_servers.s.default_tools_approval_mode"),
+        "app_config_key_refused"
+    );
+    assert_eq!(
+        write("plugins.p@m.mcp_servers.s.tools.t.approval_mode"),
+        "app_config_key_refused"
+    );
+    assert_eq!(write("plugins"), "app_config_key_refused");
     assert_eq!(
         write("profiles.work.approval_policy"),
         "app_config_key_refused"

@@ -705,6 +705,22 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_herdr",
+      "id": "omd_herdr",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Maps native thread status notifications to Herdr pane reports with the session resume command and releases the pane on exit, through declared environment metadata, exec.run and a granted Unix socket; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_mcp",
+      "id": "omd_mcp",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the MCP server sidebar from startup notifications, per-server status, failed tool calls, the redacted configuration and plugin inventory, confirmed enable/disable writes, reload and composer-drafted upstream codex mcp setup commands; installed inactive in OMD+."
     }
   ],
   "synthetic_fixtures": [

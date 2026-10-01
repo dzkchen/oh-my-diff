@@ -217,8 +217,9 @@ pub fn app_request(
     .map_err(|error| error.to_string())?;
     let confirm = route
         .confirm
-        .then(|| format!("Mod {caller} requests {method}."));
-    let value = call(
+        .then(|| confirmation(caller, &method, &arguments["params"]))
+        .transpose()?;
+    let mut value = call(
         caller,
         "app.request",
         arguments,
@@ -227,6 +228,21 @@ pub fn app_request(
         confirm,
         active,
     )?;
+    if method == "config/read" {
+        if let Some(config) = value.get_mut("config") {
+            redact_config(config);
+        }
+        for layer in value
+            .get_mut("layers")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(config) = layer.get_mut("config") {
+                redact_config(config);
+            }
+        }
+    }
     if matches!(method.as_str(), "thread/start" | "thread/fork")
         && let Some(created) = value["thread"]["id"].as_str()
         && let Ok(mut visible) = VISIBLE.lock()
@@ -237,6 +253,81 @@ pub fn app_request(
         }
     }
     Ok(value)
+}
+
+fn redact_config(config: &mut Value) {
+    for (table, maps, values, url) in [
+        (
+            "mcp_servers",
+            &["env", "http_headers"][..],
+            &["/bearer_token", "/oauth/client_secret"][..],
+            "url",
+        ),
+        (
+            "model_providers",
+            &["http_headers", "query_params"][..],
+            &["/experimental_bearer_token"][..],
+            "base_url",
+        ),
+    ] {
+        for entry in config
+            .get_mut(table)
+            .and_then(Value::as_object_mut)
+            .into_iter()
+            .flat_map(|entries| entries.values_mut())
+        {
+            for map in maps {
+                for value in entry
+                    .get_mut(*map)
+                    .and_then(Value::as_object_mut)
+                    .into_iter()
+                    .flat_map(|map| map.values_mut())
+                {
+                    *value = Value::from("<redacted>");
+                }
+            }
+            for pointer in values {
+                if let Some(value) = entry.pointer_mut(pointer).filter(|value| !value.is_null()) {
+                    *value = Value::from("<redacted>");
+                }
+            }
+            if let Some(value) = entry.get_mut(url)
+                && let Some(redacted) = value.as_str().map(redact_url)
+            {
+                *value = Value::from(redacted);
+            }
+        }
+    }
+}
+
+fn redact_url(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let (authority, tail) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
+    let authority = authority.rsplit_once('@').map_or_else(
+        || authority.to_owned(),
+        |(_, host)| format!("<redacted>@{host}"),
+    );
+    let tail = if tail.is_empty() || tail == "/" {
+        tail
+    } else {
+        "/<redacted>"
+    };
+    if scheme.is_empty() {
+        format!("{authority}{tail}")
+    } else {
+        format!("{scheme}://{authority}{tail}")
+    }
+}
+
+fn confirmation(caller: &str, method: &str, params: &Value) -> Result<String, String> {
+    if params.is_null() {
+        return Ok(format!("Mod {caller} requests {method}."));
+    }
+    let detail = params.to_string();
+    if detail.len() > 2000 {
+        return Err(format!("app_confirmation_too_large: {method}"));
+    }
+    Ok(format!("Mod {caller} requests {method} with {detail}."))
 }
 
 pub fn call(

@@ -55,6 +55,8 @@ contains only the packages labeled `bundled` below.
 | `omd_frecency@0.1.0-preview.1` | `mod` | `mods/first-party/omd_frecency` | Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage and serves the omd.frecency ranking service; installed inactive in OMD+. |
 | `omd_plan_panel@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_panel` | Pins Codex's update_plan steps above the composer from turn/plan/updated notifications in a wrapped above_composer site with a collapse key; installed inactive in OMD+. |
 | `omd_profiles@0.1.0-preview.1` | `mod` | `mods/first-party/omd_profiles` | Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+. |
+| `omd_herdr@0.1.0-preview.1` | `mod` | `mods/first-party/omd_herdr` | Maps native thread status notifications to Herdr pane reports with the session resume command and releases the pane on exit, through declared environment metadata, exec.run and a granted Unix socket; installed inactive in OMD+. |
+| `omd_mcp@0.1.0-preview.1` | `mod` | `mods/first-party/omd_mcp` | Owns the MCP server sidebar from startup notifications, per-server status, failed tool calls, the redacted configuration and plugin inventory, confirmed enable/disable writes, reload and composer-drafted upstream codex mcp setup commands; installed inactive in OMD+. |
 
 ## Author examples
 

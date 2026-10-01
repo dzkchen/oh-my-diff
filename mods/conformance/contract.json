@@ -963,7 +963,7 @@
       "replace": null,
       "timing": "user commands and event callbacks; turn-starting methods only from user contexts",
       "ownership": "mod: which routed method; host: the route table, per-method class, contexts, confirmation and thread scope",
-      "limits": "only methods in `app.routes`; thread-scoped methods reach the current thread and threads the mod started or forked; local media paths are refused; `mcpServer/tool/call` is confirmed per call; `command/exec`, `process/*`, `fs/*`, `thread/shellCommand` and credential flows are excluded; the in-process app-server only (`client_surface_unavailable` otherwise); 256 events / 1 MiB per mod queue",
+      "limits": "only methods in `app.routes`; thread-scoped methods reach the current thread and threads the mod started or forked; local media paths are refused; `mcpServer/tool/call` is confirmed per call; confirmations show the exact parameters and refuse requests over 2,000 bytes; `config/read` redacts MCP server and model provider secret values and URL credentials; config writes reach writable keys and listed sub-keys only (`mcp_servers.<name>.enabled`, plugin enablement and tool lists); `command/exec`, `process/*`, `fs/*`, `thread/shellCommand` and credential flows are excluded; the in-process app-server only (`client_surface_unavailable` otherwise); 256 events / 1 MiB per mod queue",
       "native": "hooks cannot call the app-server or observe its notifications",
       "covers": {
         "capabilities": [
@@ -987,7 +987,10 @@
         "patch:capability_context_and_unrouted_methods_are_enforced",
         "patch:authority_fields_are_refused_but_null_is_absent",
         "patch:user_commands_authorize_app_requests_before_the_app_loop",
-        "patch:queue_coalesces_deltas_and_drops_oldest_with_a_count"
+        "patch:queue_coalesces_deltas_and_drops_oldest_with_a_count",
+        "patch:config_writes_refuse_authority_and_unknown_keys",
+        "patch:confirmations_name_the_exact_request",
+        "patch:config_reads_redact_secret_values"
       ],
       "replace_note": null
     },

@@ -728,12 +728,26 @@ fn source_use(
                 arguments: Value::Null,
             }
             .capability()?;
-            package
+            let mut used = package
                 .capabilities
                 .iter()
                 .filter(|declared| *declared == capability)
                 .cloned()
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            if !used.is_empty()
+                && matches!(
+                    operation.as_str(),
+                    "exec.run" | "process.start" | "terminal.pty"
+                )
+                && (visible.contains("unix_sockets") || visible.contains("network:"))
+                && package
+                    .capabilities
+                    .iter()
+                    .any(|declared| declared == "network")
+            {
+                used.push("network".to_owned());
+            }
+            used
         };
         if used.is_empty() {
             return Err(failure(format!("undeclared_operation_use: {operation}")));

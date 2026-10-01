@@ -16,7 +16,7 @@
   "terminal.list": "P10 `replace('list')`: restyle this native list view; keys, selection and persistence stay native.",
   "terminal.view": "Q10 `view` event: observe this native view opening and closing; open it by invoking its command; hide it by hiding that command. `access` lists what is allowed.",
   "config.read": "Q1 `config/read`: read the effective value and its origin (secrets redacted).",
-  "config.write": "Q1 `config/value/write` / `config/batchWrite` for this key, with a native confirmation naming the mod and value; also readable."
+  "config.write": "Q1 `config/value/write` / `config/batchWrite` for this key, with a native confirmation naming the mod and value; also readable. `subkeys` limits writes to those sub-key patterns (`*` matches one segment)."
  },
  "exclusions": {
   "credentials": "Authentication, login, logout, token refresh and credential setup stay kernel-only. Mods see opaque credential profiles through Q6 and never start or answer login flows.",
@@ -31,7 +31,7 @@
   "protocol_internal": "Connection handshake, subscription bookkeeping, attestation, clock or raw internal streams, not a user-facing surface. OMD's `model_request` and `response_stream` events expose the observed request and stream.",
   "deprecated": "Deprecated upstream compatibility method; its replacement is routed.",
   "platform_windows": "Windows sandbox setup; OMD targets macOS and Linux builds.",
-  "authority_config": "Sets sandbox, approvals, permissions, credentials, network or proxy access, command execution, provider endpoints, trust or data locations. Readable through `config.read`; never writable by mods, even with confirmation.",
+  "authority_config": "Sets sandbox, approvals, permissions, credentials, network or proxy access, command execution, provider endpoints, trust or data locations. Readable through `config.read`; never writable by mods, even with confirmation, except listed `subkeys` that only switch user-configured entries on or off.",
   "unmediated_tool_call": "Calls an MCP tool outside a model turn, bypassing per-call approval and accounting. Mods register their own tools or spawn agents."
  },
  "surfaces": {
@@ -2875,7 +2875,10 @@
    "route": "config.write"
   },
   "config_key:mcp_servers": {
-   "exclude": "authority_config"
+   "exclude": "authority_config",
+   "subkeys": [
+    "*.enabled"
+   ]
   },
   "config_key:memories": {
    "route": "config.write"
@@ -3046,7 +3049,13 @@
    "route": "config.write"
   },
   "config_key:plugins": {
-   "route": "config.write"
+   "route": "config.write",
+   "subkeys": [
+    "*.enabled",
+    "*.mcp_servers.*.enabled",
+    "*.mcp_servers.*.enabled_tools",
+    "*.mcp_servers.*.disabled_tools"
+   ]
   },
   "config_key:profile": {
    "route": "config.write"

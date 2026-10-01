@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "omd_mcp",
+  "version": "0.1.0-preview.1",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "description": "MCP server status, tools and startup failures in the sidebar, reload, enable/disable and reviewed setup through upstream codex mcp commands",
+  "license": "Apache-2.0",
+  "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_mcp"},
+  "capabilities": ["threads", "inventory", "config", "packages", "config.write", "composer", "terminal", "commands", "store", "events"],
+  "subscriptions": {"app": ["mcpServer/startupStatus/updated", "item/completed"], "channels": ["omd_mcp/update"]},
+  "compatibility": {"required_features": ["app_v1", "events_v1", "store_v1", "terminal_render_sites_v1"]}
+}

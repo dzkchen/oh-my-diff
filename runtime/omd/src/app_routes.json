@@ -1813,5 +1813,16 @@
   "tui.theme",
   "tui.vim_mode_default",
   "web_search"
- ]
+ ],
+ "config_subkeys": {
+  "mcp_servers": [
+   "*.enabled"
+  ],
+  "plugins": [
+   "*.enabled",
+   "*.mcp_servers.*.enabled",
+   "*.mcp_servers.*.enabled_tools",
+   "*.mcp_servers.*.disabled_tools"
+  ]
+ }
 }

@@ -414,7 +414,18 @@ current thread and threads the mod itself started or forked. Local image and
 audio inputs must be `{resource}` references; raw paths are refused.
 Turn-starting methods run only from user contexts; `turn/steer` runs from
 events into a running turn; `mcpServer/tool/call` asks for a native
-confirmation on every call.
+confirmation on every call. A confirmation names the mod, the method and its
+exact parameters; a confirmed request whose parameters exceed 2,000 bytes is
+refused (`app_confirmation_too_large`). Config writes accept only writable
+keys; under the protected `mcp_servers` table only `mcp_servers.<name>.enabled`
+is writable, and plugin keys are limited to `plugins.<id>.enabled` and a plugin
+server's `enabled`, `enabled_tools` and `disabled_tools`.
+`config/read` results replace the values of MCP server `env`, `http_headers`,
+`bearer_token` and `oauth.client_secret` and of model provider `http_headers`,
+`query_params` and `experimental_bearer_token` with `<redacted>`, and reduce an
+MCP server `url` or provider `base_url` to scheme, host and port (user
+information becomes `<redacted>@`, anything after the host `/<redacted>`), in
+the effective config and in each layer.
 `command/exec`, `process/*`, `fs/*`, `thread/shellCommand`,
 `thread/inject_items` and credential flows are excluded. Declare
 `subscriptions.app` in the manifest to receive `app_notification` (deltas
@@ -1015,8 +1026,11 @@ filesystem or process access.
 The source-use report is derived from registrations and literal host/service
 calls. It compares declared capabilities, service imports/exports, and admitted
 environment access with what the source uses; undeclared use is rejected and
-unused grants are reported. Diagnostics explain how to narrow or explicitly
-approve authority, but tooling cannot grant permissions by itself.
+unused grants are reported (a declared `network` grant counts as used when
+`exec.run`, `process.start` or `terminal.pty` source passes a `unix_sockets` or
+`network` option outside comments and strings). Diagnostics explain how to
+narrow or explicitly approve authority, but tooling cannot grant permissions by
+itself.
 
 ## Composition and safety
 

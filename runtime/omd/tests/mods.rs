@@ -1484,6 +1484,19 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     );
     let status = host(&temp).status();
     assert_eq!(status["mods"][0]["unused_grants"], json!(["agents"]));
+    let (temp, _, _) = fixture(
+        "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',unix_sockets:['S']}))",
+        &["commands", "exec", "network"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
+    let (temp, _, _) = fixture(
+        "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env'})) // unix_sockets",
+        &["commands", "exec", "network"],
+    );
+    assert_eq!(
+        host(&temp).status()["mods"][0]["unused_grants"],
+        json!(["network"])
+    );
     let policies = &status["field_policies"];
     assert_eq!(policies["response_stream"]["raw_usage"], "observe_only");
     assert_eq!(policies["model_request"]["effective"], "alterable");

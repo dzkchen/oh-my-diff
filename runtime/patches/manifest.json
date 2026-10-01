@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.159.1.patch",
-    "sha256": "a4d2d9c743b35521ba7a82c14cc72c95e3dbd26e715c29a2d3796853cf7998d2"
+    "sha256": "b5a9901f7952d965b588c2e3d543378b2231abd929edc7590fb5379c0c413462"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -469,15 +469,15 @@
     },
     "codex-rs/omd/src/app_routes.json": {
       "before": null,
-      "after": "6af10ef3ae9ab8f342e5b46c3d3378c23b09ade5d66b425f784d874427f0597d"
+      "after": "37938958764213ecb3ff142b41795c5daab2d15bd0ab530155650e71289124fb"
     },
     "codex-rs/omd/src/app_routes.rs": {
       "before": null,
-      "after": "2bde285e9de40f4962a282d9f290f86fe6a222cbbd0a302b0a81570924033444"
+      "after": "10b0afa11b9bde72743d458c91cbeb44012411f526aaf8f4cc9353ec66c6b301"
     },
     "codex-rs/omd/src/app_routes_tests.rs": {
       "before": null,
-      "after": "4d7adf20776c56193ff487dadbeb24c1ecaa28d43221ee06713e7ba8e25c09fe"
+      "after": "cb1b7128a5f454436ac1e8a27ff02a48f9da88b7155849705fb0d99aceddc1d0"
     },
     "codex-rs/omd/src/bin/omd-contract.rs": {
       "before": null,
@@ -509,11 +509,11 @@
     },
     "codex-rs/omd/src/client_surface.rs": {
       "before": null,
-      "after": "087ddf7fcc4561e9b3e8386d2df253dae4e3e5d9e0a83f16409353b0a72e9682"
+      "after": "7146174ff907b3a97a8720129b91a6acfa6017a52ec7d6d6a320760bf0512f0a"
     },
     "codex-rs/omd/src/client_surface_tests.rs": {
       "before": null,
-      "after": "fe96607ebcf143e94cc1c9903a8355e977588e8c5a611fceac015961b7a5ebad"
+      "after": "5de360168ae99995f84b61b802baf39db24740cdce0881300285c5c403de0888"
     },
     "codex-rs/omd/src/contract_document.rs": {
       "before": null,
@@ -565,7 +565,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "d8d865c297b577a374e090954b59c4468c16266a823ba3217d15aaf3cf5a37a1"
+      "after": "3ec12eebbbb173ba49ef3a1746559ee5c8dca9ba36c183772c8fa1e0a78c1fbc"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -685,7 +685,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "566f47c15d523cef12f3935694be4ef88254d817049c742df823a53889b590a1"
+      "after": "d875e109283282912efe3cd5f8e73a3d44d4419bafbaab4a0595b85f68ffda16"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,

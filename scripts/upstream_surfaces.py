@@ -385,7 +385,7 @@ def check(checkout, table):
 
 
 def host_table(table):
-    requests, notifications, server_requests, authority, writable = {}, [], [], [], []
+    requests, notifications, server_requests, authority, writable, subkeys = {}, [], [], [], [], {}
     for surface_id, entry in sorted(table["surfaces"].items()):
         kind, name = surface_id.split(":", 1)
         route = entry.get("route")
@@ -397,8 +397,11 @@ def host_table(table):
             server_requests.append(name)
         elif kind == "config_key":
             (authority if entry.get("exclude") == "authority_config" else writable).append(name)
+            if "subkeys" in entry:
+                subkeys[name] = entry["subkeys"]
     return {"schema": 1, "upstream": table.get("upstream"), "requests": requests, "notifications": notifications,
-            "server_requests": server_requests, "authority_config": authority, "writable_config": writable}
+            "server_requests": server_requests, "authority_config": authority, "writable_config": writable,
+            "config_subkeys": subkeys}
 
 
 def main(argv=None):

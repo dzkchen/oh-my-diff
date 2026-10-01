@@ -109,3 +109,51 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     wake();
     assert_eq!(woken.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn confirmations_name_the_exact_request() {
+    assert_eq!(
+        confirmation(
+            "m",
+            "config/value/write",
+            &json!({"keyPath": "mcp_servers.docs.enabled", "value": false})
+        )
+        .unwrap(),
+        r#"Mod m requests config/value/write with {"keyPath":"mcp_servers.docs.enabled","value":false}."#
+    );
+    assert_eq!(
+        confirmation(
+            "m",
+            "mcpServer/tool/call",
+            &json!({"arguments": "x".repeat(2000)})
+        ),
+        Err("app_confirmation_too_large: mcpServer/tool/call".to_owned())
+    );
+}
+
+#[test]
+fn config_reads_redact_secret_values() {
+    let mut config = json!({
+        "model": "m",
+        "mcp_servers": {"plain": {"command": "plain"}, "web": {"url": "https://user:s8@web.example:8443/mcp?token=s9&mode=full#s10"}, "local": {"url": "http://127.0.0.1:3920/mcp"}, "docs": {"command": "docs", "env": {"TOKEN": "s1"}, "http_headers": {"Authorization": "s2"}, "bearer_token": "s3", "oauth": {"client_id": "id", "client_secret": "s4"}}},
+        "model_providers": {"p": {"base_url": "https://p/v1?key=s11", "http_headers": {"X-Key": "s5"}, "query_params": {"key": "s6"}, "experimental_bearer_token": "s7"}}
+    });
+    redact_config(&mut config);
+    let text = config.to_string();
+    assert!((1..=11).all(|index| !text.contains(&format!("s{index}"))));
+    assert_eq!(config["mcp_servers"]["docs"]["env"]["TOKEN"], "<redacted>");
+    assert_eq!(config["mcp_servers"]["docs"]["oauth"]["client_id"], "id");
+    assert_eq!(
+        config["model_providers"]["p"]["base_url"],
+        "https://p/<redacted>"
+    );
+    assert_eq!(
+        config["mcp_servers"]["web"]["url"],
+        "https://<redacted>@web.example:8443/<redacted>"
+    );
+    assert_eq!(
+        config["mcp_servers"]["local"]["url"],
+        "http://127.0.0.1:3920/<redacted>"
+    );
+    assert_eq!(config["mcp_servers"]["plain"], json!({"command": "plain"}));
+}

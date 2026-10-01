@@ -15,6 +15,7 @@ struct Table {
     server_requests: BTreeSet<String>,
     authority_config: BTreeSet<String>,
     writable_config: BTreeSet<String>,
+    config_subkeys: BTreeMap<String, Vec<String>>,
 }
 
 static TABLE: LazyLock<Table> = LazyLock::new(|| {
@@ -321,6 +322,21 @@ pub fn check_config_key(key: &str) -> io::Result<()> {
     let first = parts[0].to_owned();
     let second = parts.get(1).map(|part| format!("{first}.{part}"));
     let table = &*TABLE;
+    if let Some(patterns) = table.config_subkeys.get(&first) {
+        let matches = patterns.iter().any(|pattern| {
+            let pattern: Vec<&str> = pattern.split('.').collect();
+            pattern.len() + 1 == parts.len()
+                && pattern
+                    .iter()
+                    .zip(&parts[1..])
+                    .all(|(expected, part)| *expected == "*" || expected == part)
+        });
+        return if matches {
+            Ok(())
+        } else {
+            Err(denied("app_config_key_refused", key))
+        };
+    }
     if table.authority_config.contains(&first)
         || second
             .as_ref()
