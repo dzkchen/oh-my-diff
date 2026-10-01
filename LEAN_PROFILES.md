@@ -74,12 +74,12 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 mod and the `omd_mods` control screen, both enabled, and launches patched Codex
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs thirty-three first-party candidate mods. A fresh OMD+ store enables
+`--profile full` installs thirty-six first-party candidate mods. A fresh OMD+ store enables
 `omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods` and `omd_model_picker`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
 navigation, guideline governance, Pi prompts, repository analysis, source
-knowledge, task tools, theme, reactive rules, programmable context, `/continue`, `/preview`, the Muse route, panes and file tree, the notes vault, frecency file ranking, the plan panel and plan-mode removal are installed but disabled. Advisor every-turn selection and the separate research preset
+knowledge, task tools, theme, reactive rules, programmable context, `/continue`, `/preview`, the Muse route, panes and file tree, the notes vault, frecency file ranking, the plan panel, plan-mode removal, account and provider profiles, the workspace layout with its palettes and task worktrees are installed but disabled. Advisor every-turn selection and the separate research preset
 require their own explicit host policy and allowance; installation does not
 activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its

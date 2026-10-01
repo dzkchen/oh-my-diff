@@ -196,6 +196,8 @@ export interface HostOperations {
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
   'terminal.notify': { arguments: { title: string; body?: string }; result: { delivered: boolean; method: 'osc9' | 'osc99' | 'osc777' | 'bel' | 'none'; reason?: string } };
   'terminal.show_thread': { arguments: { thread_id: string }; result: { shown: boolean } };
+  'terminal.commands': { arguments: null; result: { commands: { command: string; description: string; owner: string | null }[] } };
+  'sessions.ports': { arguments: null; result: { ports: { port: number; pid: number; address: string }[] } };
   'terminal.import_file': { arguments: { path: string; max_bytes?: number; lifetime?: 'thread' | 'package' }; result: ResourceRef | Declined };
   'terminal.image_sample': { arguments: { resource: ResourceRef; columns: number; rows: number }; result: { width: number; height: number; rgba: number[] } };
   'composer.read': { arguments: null; result: { text: string; cursor: number; attachments: { kind: 'image'; label: string }[] } };
@@ -253,7 +255,7 @@ export interface Events {
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
-  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[] }; output: void };
+  component_event: { input: { component: string; kind: 'select' | 'activate' | 'find' | 'input' | 'resize'; range?: TerminalRange; anchor?: string | null; matches?: number; error?: string; events?: TerminalInputEvent[]; dropped?: number; ratio?: number[]; index?: number }; output: void };
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
 }

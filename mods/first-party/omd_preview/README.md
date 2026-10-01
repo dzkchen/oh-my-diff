@@ -10,6 +10,7 @@ and opens it in the browser.
 /preview PATH            a workspace Markdown, code or diff file
 /preview PATH --watch    also re-render PATH whenever it changes (at most 8 files)
 /preview ... --inline    show it in a terminal dialog instead
+/preview server [PORT]   open a server this session is listening on
 /preview unwatch         stop watching files
 /preview close           close the inline dialog
 ```
@@ -38,7 +39,7 @@ characters); images, math and diagrams render only in the browser. A declined
 or unavailable browser leaves the written path in the message.
 
 Capabilities: `commands`, `terminal`, `store`, `sessions` (reads responses
-through `thread/turns/list`), `exec` and `fs.write` (the renderer writes under
+through `thread/turns/list` and listening ports through `sessions.ports`), `exec` and `fs.write` (the renderer writes under
 `.omd/preview`), `fs.read`, `events` and `lifecycle` (the watch timer). There is
 no pandoc, puppeteer, LaTeX or PDF export, and the terminal does not show
 rendered page images.

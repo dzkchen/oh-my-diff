@@ -29,6 +29,10 @@ const HOST_FEATURES: &[&str] = &[
     "completion_arguments_v1",
     "terminal_editor_v1",
     "pty_programs_v1",
+    "terminal_commands_v1",
+    "terminal_tabs_v1",
+    "session_ports_v1",
+    "builtins_mod_commands_v1",
 ];
 
 #[test]

@@ -1,14 +1,14 @@
 import type { ModAPI, TerminalView } from '@oh-my-diff/mod-api';
 
-type Notes = { lines: string[]; row: number; col: number };
+type Notes = { lines: string[]; row: number; col: number; tab?: number };
 
 export default function activate(api: ModAPI) {
   const notes = (): Notes => (api.state.get() as Notes | null) ?? { lines: [''], row: 0, col: 0 };
   api.replace('terminal', (): TerminalView => {
-    const { lines, row, col } = notes();
+    const { lines, row, col, tab = 0 } = notes();
     return {
       layout: { split: 'horizontal', ratio: [1, 3], children: [
-        { tabs: [{ title: 'Diff', node: { content: 'site:layout_explorer/diff' } }, { title: 'Notes', node: { content: 'site:layout_explorer/notes' } }] },
+        { tabs: [{ title: 'Diff', node: { content: 'site:layout_explorer/diff' } }, { title: 'Notes', node: { content: 'site:layout_explorer/notes' } }], active: tab },
         { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript' }, { content: 'composer' }] },
       ] },
       backdrop: { ascii: { text: '·  ', dim: 0.6 } },
@@ -26,6 +26,7 @@ export default function activate(api: ModAPI) {
     };
   });
   api.on('component_event', event => {
+    if (event.kind === 'select' && event.component === 'r.0') api.state.set({ ...notes(), tab: event.index ?? 0 });
     if (event.component !== 'explorer-notes' || !event.events) return;
     let { lines, row, col } = notes();
     const insert = (text: string) => {
@@ -50,7 +51,7 @@ export default function activate(api: ModAPI) {
         col = Math.min(col, lines[row].length);
       }
     }
-    api.state.set({ lines, row, col });
+    api.state.set({ ...notes(), lines, row, col });
   });
   api.command('open', anchor => ({ display: `open ${String(anchor)}` }));
 }

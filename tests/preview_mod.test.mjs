@@ -42,6 +42,7 @@ function invoke(repository, state, event, payload, name) {
       const run = spawnSync(args.program, args.argv, { cwd: repository, input: args.stdin, encoding: 'utf8' });
       value = { exit_code: run.status, stdout: run.stdout, stderr: run.stderr };
     } else if (operation === 'terminal.open') value = { opened: true };
+    else if (operation === 'sessions.ports') value = { ports: [{ port: 3000, pid: 7, address: '127.0.0.1:3000' }, { port: 5173, pid: 8, address: '*:5173' }] };
     else value = { delivered: 1, dropped: 0 };
     receipts.push({ call: output.host_call, value });
   }
@@ -93,6 +94,18 @@ test('preview renders sanitized HTML for responses and files, keeps watched file
     assert.equal(command('close', inline.state).state.inline, null);
     assert.equal(invoke(repository, { ...inline.state, inline: null }, 'terminal', { event: 'redraw', ledger: null }).value, null);
     assert.match(command('--bogus').value.display, /^usage:/);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('preview server opens a port the session is listening on', () => {
+  const repository = realpathSync(mkdtempSync(join(tmpdir(), 'omd-preview-')));
+  try {
+    assert.equal(invoke(repository, null, 'command', 'server', 'preview').value.display, 'Listening: 3000, 5173; use /preview server PORT');
+    const opened = invoke(repository, null, 'command', 'server 5173', 'preview');
+    assert.equal(opened.value.display, 'Opened http://localhost:5173');
+    assert.deepEqual(opened.calls.at(-1).arguments, { url: 'http://localhost:5173' });
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

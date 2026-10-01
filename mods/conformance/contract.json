@@ -1227,7 +1227,7 @@
       "group": "terminal",
       "decision": "Layout, notifications, composer and built-in actions",
       "observe": "`component_event` (including ordered, batched key and paste input from focused `keys: true` panes and documents), `view` and `focus`",
-      "alter": "`terminal.notify`, `terminal.show_thread`, confirmed `terminal.import_file` with thread/package lifetime, bounded `terminal.image_sample`, `composer.read`/`write` and `builtins.invoke`",
+      "alter": "`terminal.notify`, `terminal.show_thread`, the read-only `terminal.commands` inventory and `sessions.ports` listeners, confirmed `terminal.import_file` with thread/package lifetime, bounded `terminal.image_sample`, `composer.read`/`write` and `builtins.invoke`",
       "replace": null,
       "timing": "user commands; composer writes and imports from user contexts",
       "ownership": "mod: content; host: rendering, focus, confirmation and rate limits",
@@ -1250,10 +1250,14 @@
           "composer.read",
           "composer.write",
           "builtins.invoke",
-          "terminal.image_sample"
+          "terminal.image_sample",
+          "terminal.commands",
+          "sessions.ports"
         ]
       },
       "evidence": [
+        "rust:host_feature_examples_load_and_register_together",
+        "patch:listeners_follow_descendants_and_deduplicate_ports",
         "patch:view_changes_are_diffed_per_frame",
         "patch:splits_tabs_and_chat_union_place_regions",
         "patch:actions_resolve_to_their_effective_binding_and_refuse_approval",

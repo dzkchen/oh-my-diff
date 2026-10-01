@@ -9,6 +9,8 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "credentials.request",
     "terminal.notify",
     "terminal.show_thread",
+    "terminal.commands",
+    "sessions.ports",
     "terminal.import_file",
     "terminal.image_sample",
     "composer.read",

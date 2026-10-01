@@ -6905,7 +6905,7 @@ index 60bd8e7e7..55cbd3337 100644
                      style,
                  );
 diff --git a/codex-rs/tui/src/chatwidget.rs b/codex-rs/tui/src/chatwidget.rs
-index eb9c9cdfa..efc2b4568 100644
+index eb9c9cdfa..759b5d750 100644
 --- a/codex-rs/tui/src/chatwidget.rs
 +++ b/codex-rs/tui/src/chatwidget.rs
 @@ -320,9 +320,11 @@ use self::plugins::PluginListFetchState;
@@ -6920,7 +6920,15 @@ index eb9c9cdfa..efc2b4568 100644
  mod session_model_selection;
  use self::notifications::Notification;
  pub(crate) use self::session_model_selection::AstraModelPickerAction;
-@@ -2008,7 +2010,13 @@ impl ChatWidget {
+@@ -664,6 +666,7 @@ pub(crate) struct ChatWidget {
+     pub(crate) fork_in_progress: bool,
+     misalignment_policy_violation: Option<misalignment_policy::MisalignmentViolation>,
+     normal_placeholder_text: String,
++    pending_mod_command: Option<(crate::mod_runtime::ModSlashCommand, String)>,
+     side_placeholder_text: String,
+     forked_from: Option<ThreadId>,
+     interrupted_turn_notice_mode: InterruptedTurnNoticeMode,
+@@ -2008,7 +2011,13 @@ impl ChatWidget {
 
      #[cfg(test)]
      pub(crate) fn status_line_text(&self) -> Option<String> {
@@ -6936,7 +6944,7 @@ index eb9c9cdfa..efc2b4568 100644
 
      pub(crate) fn clear_token_usage(&mut self) {
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index fb4575ab0..1320f8892 100644
+index fb4575ab0..e33326fe6 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -39,7 +39,11 @@ impl ChatWidget {
@@ -6952,6 +6960,14 @@ index fb4575ab0..1320f8892 100644
          let side_placeholder = SIDE_PLACEHOLDER.to_string();
 
          let model_override = model.as_deref();
+@@ -230,6 +234,7 @@ impl ChatWidget {
+             fork_in_progress: false,
+             misalignment_policy_violation: None,
+             normal_placeholder_text: placeholder,
++            pending_mod_command: None,
+             side_placeholder_text: side_placeholder,
+             forked_from: None,
+             interrupted_turn_notice_mode: InterruptedTurnNoticeMode::Default,
 diff --git a/codex-rs/tui/src/chatwidget/empty_state_policy.rs b/codex-rs/tui/src/chatwidget/empty_state_policy.rs
 index 017c9fb06..20b50af23 100644
 --- a/codex-rs/tui/src/chatwidget/empty_state_policy.rs
@@ -33939,10 +33955,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..2e1cedca8
+index 000000000..5451c49d4
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,259 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
@@ -33954,6 +33970,8 @@ index 000000000..2e1cedca8
 +    "credentials.request",
 +    "terminal.notify",
 +    "terminal.show_thread",
++    "terminal.commands",
++    "sessions.ports",
 +    "terminal.import_file",
 +    "terminal.image_sample",
 +    "composer.read",
@@ -38146,10 +38164,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..c212ced30
+index 000000000..edb0934bd
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,3554 @@
+@@ -0,0 +1,3560 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -38383,6 +38401,10 @@ index 000000000..c212ced30
 +    "terminal_editor_v1",
 +    "pty_programs_v1",
 +    "route_reload_v1",
++    "terminal_commands_v1",
++    "terminal_tabs_v1",
++    "session_ports_v1",
++    "builtins_mod_commands_v1",
 +];
 +pub const MOD_HOST_OPERATIONS: &[&str] = &[
 +    "exec.run",
@@ -38443,6 +38465,8 @@ index 000000000..c212ced30
 +    "turns.activity",
 +    "terminal.notify",
 +    "terminal.show_thread",
++    "terminal.commands",
++    "sessions.ports",
 +    "terminal.import_file",
 +    "terminal.image_sample",
 +    "composer.read",
@@ -42214,10 +42238,10 @@ index 000000000..7202d28aa
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..26bdd3e51
+index 000000000..9b83bc48a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,228 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -42250,7 +42274,9 @@ index 000000000..26bdd3e51
 +            | "workspace.request_rename" => Ok("fs.write"),
 +            "store.get" | "store.put" | "store.delete" | "store.list" | "store.export"
 +            | "store.reset" | "evidence.write" | "evidence.read" => Ok("store"),
-+            "sessions.list" | "sessions.read" | "sessions.snapshot" => Ok("sessions"),
++            "sessions.list" | "sessions.read" | "sessions.snapshot" | "sessions.ports" => {
++                Ok("sessions")
++            }
 +            "routes.list" | "providers.register" | "providers.unregister" => Ok("model"),
 +            "task.status" | "workspace.integrate" => Ok("agents"),
 +            "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict" => {
@@ -42270,6 +42296,7 @@ index 000000000..26bdd3e51
 +            "turns.activity" => Ok("sessions"),
 +            "terminal.notify"
 +            | "terminal.show_thread"
++            | "terminal.commands"
 +            | "terminal.import_file"
 +            | "terminal.image_sample"
 +            | "terminal.open"
@@ -51527,10 +51554,10 @@ index 000000000..330b7bc69
 +}
 diff --git a/codex-rs/omd/tests/examples.rs b/codex-rs/omd/tests/examples.rs
 new file mode 100644
-index 000000000..b9175dc29
+index 000000000..c812b63ff
 --- /dev/null
 +++ b/codex-rs/omd/tests/examples.rs
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,109 @@
 +use codex_omd::{ModHost, ModStore};
 +use std::path::Path;
 +
@@ -51562,6 +51589,10 @@ index 000000000..b9175dc29
 +    "completion_arguments_v1",
 +    "terminal_editor_v1",
 +    "pty_programs_v1",
++    "terminal_commands_v1",
++    "terminal_tabs_v1",
++    "session_ports_v1",
++    "builtins_mod_commands_v1",
 +];
 +
 +#[test]
@@ -59012,10 +59043,10 @@ index 000000000..c6e7242a7
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..ebf929e7f
+index 000000000..905b8cefb
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,751 @@
+@@ -0,0 +1,846 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -59650,6 +59681,34 @@ index 000000000..ebf929e7f
 +            }
 +            "packages.apply" => apply_package(package),
 +            "composer.read" => Ok(self.chat_widget.mod_composer_read()),
++            "terminal.commands" => Ok(self.chat_widget.mod_command_inventory()),
++            "sessions.ports" => {
++                let Some(thread_id) = call.thread.clone() else {
++                    let _ = call.reply.send(Err("session_ports_unavailable: no thread".into()));
++                    return;
++                };
++                let request = codex_app_server_protocol::ClientRequest::ThreadBackgroundTerminalsList {
++                    request_id: app_server.next_request_id(),
++                    params: codex_app_server_protocol::ThreadBackgroundTerminalsListParams {
++                        thread_id,
++                        cursor: None,
++                        limit: Some(64),
++                    },
++                };
++                let handle = app_server.request_handle();
++                let reply = call.reply;
++                tokio::spawn(async move {
++                    let result = match handle
++                        .request_typed::<codex_app_server_protocol::ThreadBackgroundTerminalsListResponse>(request)
++                        .await
++                    {
++                        Ok(list) => listening_ports(list.data.iter().filter_map(|terminal| terminal.os_pid).collect()).await,
++                        Err(error) => Err(error.to_string()),
++                    };
++                    let _ = reply.send(result);
++                });
++                return;
++            }
 +            "composer.write" => {
 +                let attachments =
 +                    call.arguments["attach"]
@@ -59726,9 +59785,76 @@ index 000000000..ebf929e7f
 +    }
 +}
 +
++async fn listening_ports(roots: Vec<u32>) -> Result<Value, String> {
++    if roots.is_empty() {
++        return Ok(json!({"ports": []}));
++    }
++    let run = |program: &'static str, args: Vec<String>| async move {
++        tokio::time::timeout(
++            std::time::Duration::from_secs(3),
++            tokio::process::Command::new(program).args(args).kill_on_drop(true).output(),
++        )
++        .await
++        .map_err(|_| format!("session_ports_timeout: {program}"))?
++        .map_err(|error| format!("session_ports_unavailable: {program}: {error}"))
++    };
++    let table = run("/bin/ps", vec!["-axo".into(), "pid=,ppid=".into()]).await?;
++    let pids = descendants(&String::from_utf8_lossy(&table.stdout), &roots);
++    let lsof = ["/usr/sbin/lsof", "/usr/bin/lsof"]
++        .into_iter()
++        .find(|path| std::path::Path::new(path).exists())
++        .ok_or("session_ports_unavailable: lsof")?;
++    let pids = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
++    let output = run(lsof, ["-nP", "-w", "-a", "-iTCP", "-sTCP:LISTEN", "-Fpn", "-p", &pids].map(str::to_owned).to_vec()).await?;
++    Ok(json!({"ports": parse_listeners(&String::from_utf8_lossy(&output.stdout))}))
++}
++
++fn descendants(table: &str, roots: &[u32]) -> Vec<u32> {
++    let pairs = table
++        .lines()
++        .filter_map(|line| {
++            let mut fields = line.split_whitespace().map(str::parse::<u32>);
++            Some((fields.next()?.ok()?, fields.next()?.ok()?))
++        })
++        .collect::<Vec<_>>();
++    let mut found = roots.to_vec();
++    let mut index = 0;
++    while index < found.len() && found.len() < 256 {
++        let parent = found[index];
++        found.extend(pairs.iter().filter(|(pid, ppid)| *ppid == parent && !found.contains(pid)).map(|(pid, _)| *pid).collect::<Vec<_>>());
++        index += 1;
++    }
++    found.truncate(256);
++    found
++}
++
++fn parse_listeners(output: &str) -> Vec<Value> {
++    let mut pid = 0;
++    let mut ports = std::collections::BTreeMap::new();
++    for line in output.lines() {
++        if let Some(value) = line.strip_prefix('p') {
++            pid = value.parse().unwrap_or(0);
++        } else if let Some(address) = line.strip_prefix('n')
++            && let Some(port) = address.rsplit(':').next().and_then(|port| port.parse::<u16>().ok())
++        {
++            ports.entry(port).or_insert_with(|| json!({"port": port, "pid": pid, "address": address}));
++        }
++    }
++    ports.into_values().take(32).collect()
++}
++
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++
++    #[test]
++    fn listeners_follow_descendants_and_deduplicate_ports() {
++        assert_eq!(descendants("10 1\n11 10\n12 11\n13 99\n", &[10]), [10, 11, 12]);
++        assert_eq!(
++            parse_listeners("p11\nn*:5173\nn[::1]:5173\np12\nn127.0.0.1:3000\n"),
++            [json!({"port": 3000, "pid": 12, "address": "127.0.0.1:3000"}), json!({"port": 5173, "pid": 11, "address": "*:5173"})]
++        );
++    }
 +
 +    #[test]
 +    fn open_targets_are_web_urls_or_inert_files() {
@@ -60093,10 +60219,10 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..60e14484a
+index 000000000..8b107cc89
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,231 @@
 +use super::*;
 +use crate::mod_runtime::ModCommandResult;
 +use crate::mod_runtime::ModSlashCommand;
@@ -60117,7 +60243,26 @@ index 000000000..60e14484a
 +        }
 +    }
 +
++    pub(crate) fn mod_command_inventory(&self) -> serde_json::Value {
++        use crate::bottom_pane::slash_commands::SlashCommandItem;
++        let commands = crate::bottom_pane::slash_commands::commands_for_input(
++            self.builtin_command_flags(),
++            &self.current_model_service_tier_commands(),
++        );
++        let entry = |command: &str, description: &str, owner: Option<&str>| {
++            serde_json::json!({"command": command, "description": description, "owner": owner})
++        };
++        serde_json::json!({"commands": commands.iter().map(|item| match item {
++            SlashCommandItem::Builtin(command) => entry(command.command(), command.description(), None),
++            SlashCommandItem::ServiceTier(command) => entry(&command.name, &command.description, None),
++            SlashCommandItem::Mod(command) => {
++                entry(&command.invocation, &command.description, Some(&command.target.id))
++            }
++        }).collect::<Vec<_>>()})
++    }
++
 +    pub(crate) fn run_mod_command(&mut self, command: ModSlashCommand, args: String) {
++        self.pending_mod_command = None;
 +        let tx = self.app_event_tx.clone();
 +        let invocation = command.invocation.clone();
 +        let context = self.mod_context();
@@ -60142,6 +60287,15 @@ index 000000000..60e14484a
 +        invocation: String,
 +        result: Result<ModCommandResult, String>,
 +    ) {
++        // A mod command invoked by another mod runs once the invoking command has finished.
++        let pending = self.pending_mod_command.take();
++        self.show_mod_command_result(invocation, result);
++        if let Some((command, args)) = pending {
++            self.run_mod_command(command, args);
++        }
++    }
++
++    fn show_mod_command_result(&mut self, invocation: String, result: Result<ModCommandResult, String>) {
 +        let ModCommandResult { outcome, preview } = match result {
 +            Ok(result) => result,
 +            Err(error) => {
@@ -60238,8 +60392,14 @@ index 000000000..60e14484a
 +            .as_str()
 +            .ok_or("builtins_command_required")?
 +            .trim_start_matches('/');
-+        let command = <crate::slash_command::SlashCommand as std::str::FromStr>::from_str(name)
-+            .map_err(|_| format!("builtins_command_unknown: {name}"))?;
++        let args = arguments["args"].as_str().unwrap_or_default().to_owned();
++        let Ok(command) = <crate::slash_command::SlashCommand as std::str::FromStr>::from_str(name)
++        else {
++            let command = crate::mod_runtime::find(name)
++                .ok_or_else(|| format!("builtins_command_unknown: {name}"))?;
++            self.pending_mod_command = Some((command, args));
++            return Ok(serde_json::json!({"invoked": true}));
++        };
 +        use crate::slash_command::SlashCommand;
 +        if matches!(
 +            command,
@@ -62148,10 +62308,10 @@ index 000000000..52d0fb56f
 +}
 diff --git a/codex-rs/tui/src/mod_layout.rs b/codex-rs/tui/src/mod_layout.rs
 new file mode 100644
-index 000000000..229ddd671
+index 000000000..e55f7c5b9
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_layout.rs
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,303 @@
 +use codex_omd::ModLayout;
 +use codex_omd::ModSplit;
 +use crossterm::event::MouseButton;
@@ -62381,6 +62541,10 @@ index 000000000..229ddd671
 +                .then(|| tab_at(bar, event.column).map(|index| (bar.path.clone(), index)))
 +                .flatten()
 +            }) {
++                crate::mod_surface::terminal_event(
++                    "component_event",
++                    serde_json::json!({"component": path, "kind": "select", "index": index}),
++                );
 +                state.active.insert(path, index);
 +                return true;
 +            }

@@ -14,7 +14,8 @@
     "required_features": [
       "terminal_surface_v1",
       "terminal_input_v1",
-      "terminal_style_v1"
+      "terminal_style_v1",
+      "terminal_tabs_v1"
     ]
   }
 }

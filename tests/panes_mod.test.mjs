@@ -98,7 +98,12 @@ function fixture(launch = '') {
     return result.value;
   };
   const view = () => invoke(state, 'terminal', { event: 'redraw', ledger: null }).value;
-  return { repository, store, answers, calls, command, view, event: (event, payload) => { state = invoke(state, event, payload).state; }, state: () => state };
+  const service = (name, input) => {
+    const result = invoke(state, 'service', input, name);
+    state = result.state;
+    return result.value;
+  };
+  return { repository, store, answers, calls, command, view, service, event: (event, payload) => { state = invoke(state, event, payload).state; }, state: () => state };
 }
 
 test('panes split, focus, move, resize and persist a valid layout per thread', () => {
@@ -133,6 +138,45 @@ test('panes split, focus, move, resize and persist a valid layout per thread', (
     event('resume', { thread_id: 'thread-1', last_turn: null, restarted: true });
     assert.deepEqual(view().layout.children[1], { content: 'site:sidebar' });
     assert.equal(state().revision, 7);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('tabs hold pane layouts beside the conversation and follow keys, clicks and the cockpit preset', () => {
+  const { repository, command, view, service, event, state } = fixture();
+  try {
+    command('pane', 'tab new');
+    assert.deepEqual(view().layout, { split: 'horizontal', ratio: [50, 50], children: [
+      { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript' }, { content: 'composer' }] },
+      { tabs: [{ title: 'Shell .', node: { content: 'site:omd_panes/p1-shell' } }], active: 0 }] });
+    command('pane', 'tab new diff');
+    command('pane', 'split down diff src');
+    command('pane', 'tab rename review');
+    assert.deepEqual(view().layout.children[1].tabs.map(tab => tab.title), ['Shell .', 'review']);
+    assert.deepEqual(service('omd.panes.tabs', null), { titles: ['Shell .', 'review'], active: 1 });
+    command('pane', 'tab 1');
+    assert.equal(state().layout.active, 'p1');
+    assert.equal(view().layout.children[1].active, 0);
+    assert.equal(view().keybindings['Alt+2'].args, 'tab 2');
+    event('component_event', { component: 'r.1', kind: 'select', index: 1 });
+    assert.equal(state().layout.active, 'p2');
+    command('pane', 'focus left');
+    assert.equal(state().layout.active, 'chat');
+    command('pane', 'move right');
+    assert.equal(state().layout.root.children[0], 'chat');
+    command('pane', 'tab close');
+    assert.deepEqual(view().layout.children[1], { tabs: [{ title: 'Shell .', node: { content: 'site:omd_panes/p1-shell' } }], active: 0 });
+    command('pane', 'tab close');
+    assert.equal(view().layout, undefined);
+    service('omd.panes.cockpit', null);
+    assert.deepEqual(view().layout.children.map(child => child.content ?? child.tabs?.map(tab => `${tab.title}:${tab.node.content}`) ?? 'chat'),
+      ['site:omd_layout/sessions', 'chat', ['Changes:site:sidebar', 'Files:site:omd_panes/p3-tree', 'Diff:site:omd_panes/p4-diff']]);
+    command('tree', 'select src/app.ts');
+    assert.deepEqual(service('omd.panes.find', { query: 'VALUE', regex: false, case: false }).views, [{ path: 'src/app.ts', matches: 1 }]);
+    const viewer = Object.entries(view().sites).find(([name]) => name.endsWith('-viewer'))[1].components;
+    assert.deepEqual(viewer[1].find, { query: 'VALUE', regex: false, case: false });
+    assert.match(viewer[2].text, /1 matches for VALUE/);
   } finally {
     rmSync(repository, { recursive: true, force: true });
   }

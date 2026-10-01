@@ -435,6 +435,22 @@
       "why_mod": "Keeps thread-scoped state that forks and deletes with the live thread."
     },
     {
+      "path": "mods/examples/command_help",
+      "id": "command_help",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Lists the session's built-in and mod slash commands from the live terminal inventory."
+    },
+    {
+      "path": "mods/examples/port_list",
+      "id": "port_list",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Lists the TCP listeners of the current session's background terminals from the live host."
+    },
+    {
       "path": "mods/examples/image_preview",
       "id": "image_preview",
       "version": "1.0.0",
@@ -605,7 +621,7 @@
     {
       "path": "mods/first-party/omd_preview",
       "id": "omd_preview",
-      "version": "0.1.0-preview.2",
+      "version": "0.1.0-preview.3",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the user-typed /preview command, its packaged Markdown renderer, file watches and the inline preview dialog; installed inactive in OMD+."
@@ -629,10 +645,26 @@
     {
       "path": "mods/first-party/omd_panes",
       "id": "omd_panes",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the pane layout, file tree, viewer and shell panes through public layout, terminal, PTY, workspace-transaction and thread-store primitives, ranking tree find through the optional omd.frecency service; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_layout",
+      "id": "omd_layout",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Composes the session list, find, quick open and palettes from app-server thread, model and skill inventory, the terminal command inventory and the optional omd.panes, omd.worktrees and omd.frecency services; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_worktree",
+      "id": "omd_worktree",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Creates, switches, integrates and removes task worktrees through fixed Git argument lists, guarded exec writes, native prompts and app-server thread starts bound to registered worktree roots; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_notes",

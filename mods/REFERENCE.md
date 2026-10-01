@@ -43,10 +43,10 @@ native work.
 | `model` | `routes.list`, `routes.select`, `providers.*`, the `routing` event |
 | `agents` | `agents.*`, `model.complete`, `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
-| `sessions` | `sessions.list`, `sessions.read`, `turns.activity`, turn evidence on `turn_end` |
+| `sessions` | `sessions.list`, `sessions.read`, `sessions.ports`, `turns.activity`, turn evidence on `turn_end` |
 | `contracts` | `api.contract`, `receipts.submit`, `task.complete`, `contract.status`, `contract.restrict`, the `contract` event |
 | `builtins` | `api.builtins` |
-| `terminal` | `terminal` and `list` events; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `terminal.import_file`, `terminal.open`, `terminal.prompt` |
+| `terminal` | `terminal` and `list` events; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `terminal.commands`, `terminal.import_file`, `terminal.open`, `terminal.prompt` |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification` |
 | `approvals` | the `approval` middleware and `approval_result`; `app_server_request` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, the `channel` and `timer` events |
@@ -601,7 +601,9 @@ region, `terminal`, `document`, `diff` and `list` components without a
 mouse drag on a split border sends `component_event {kind: 'resize',
 component, ratio}`, where `component` is the split's path (`r` for the root,
 then `.N` per child index) and `ratio` its new percentages, so a mod can keep
-the ratio in its layout. View
+the ratio in its layout. Clicking a tab title switches the tab and sends
+`component_event {kind: 'select', component, index}` with the `tabs` node's
+path (`terminal_tabs_v1`), so the owner can keep `active` in its layout. View
 `keybindings` accept `Ctrl+`, `Alt+` and `Shift+` combinations of letters,
 digits, F2–F12 and named keys (`Up`, `PageDown`, `Enter`, ...), except
 terminal control keys and Shift+Tab; a binding that collides with a native key
@@ -610,6 +612,14 @@ interaction. Operations:
 
 - `terminal.notify {title, body?}` uses the configured notification method
   with a focus condition and a 2 s rate limit.
+- `terminal.commands` (`terminal_commands_v1`) returns `{commands: [{command,
+  description, owner}]}`: the built-in and mod slash commands the composer
+  would offer now, with `owner` naming the mod or `null` for built-ins. It is
+  read-only; run one with `builtins.invoke`.
+- `sessions.ports` (`session_ports_v1`, `sessions` capability) returns
+  `{ports: [{port, pid, address}]}`: TCP listeners owned by the current
+  thread's background terminals and their child processes, read by the host
+  outside the mod sandbox (at most 32 ports, 3 s per probe).
 - `terminal.show_thread`, `terminal.import_file` (confirmed, at most 8 MiB),
   `composer.read` and `composer.write` (text and `{image}` resource
   attachments). The import confirmation shows the resolved path.
@@ -632,7 +642,9 @@ interaction. Operations:
   only in views that mod owns or contributes to, and stop when it unloads. A
   focused `terminal` component receives keys; Ctrl+] leaves it.
 - `builtins.invoke {command} | {action}` runs a built-in command or key action
-  from user contexts; `api.builtins({keys, commands: {replace}})` overlays key
+  from user contexts; `command` may also name a mod command such as
+  `omd_git:status` (`builtins_mod_commands_v1`), which runs as if typed once
+  the invoking command finishes; `api.builtins({keys, commands: {replace}})` overlays key
   bindings (never `approval.*`) and routes a built-in command to a mod command.
 
 ### Composer completion (`completion_v1`)

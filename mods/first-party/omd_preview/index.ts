@@ -4,7 +4,7 @@ const DIR = '.omd/preview';
 const INLINE_CHARACTERS = 40_000;
 const MAX_WATCHES = 8;
 const POLL_MS = 2_000;
-const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview unwatch | /preview close';
+const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview server [PORT] | /preview unwatch | /preview close';
 
 type Inline = { title: string; kind: string; text: string };
 type State = { inline: Inline | null; revision: number; watch: string[]; hashes: Record<string, string> };
@@ -70,6 +70,13 @@ export default function activate(api: ModAPI) {
     if (target === 'unwatch') {
       save({ watch: [], hashes: {} });
       return { display: 'Stopped watching preview files' };
+    }
+    if (words[0] === 'server') {
+      const { ports } = api.host.call('sessions.ports', null);
+      const port = words[1] ? ports.find(item => String(item.port) === words[1]) : ports.length === 1 ? ports[0] : undefined;
+      if (!port) return { display: ports.length ? `Listening: ${ports.map(item => item.port).join(', ')}; use /preview server PORT` : 'No server started by this session is listening' };
+      const opened = api.host.tryCall('terminal.open', { url: `http://localhost:${port.port}` });
+      return { display: opened.ok && 'opened' in opened.value ? `Opened http://localhost:${port.port}` : `Not opened${opened.ok ? '' : `: ${opened.error}`}` };
     }
     if (target === 'list') {
       const lines = responses(10).map((text, index) => `${index + 1}. ${text.replace(/\s+/g, ' ').slice(0, 90)}`);

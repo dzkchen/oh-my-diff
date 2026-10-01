@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_panes",
-  "version": "0.1.0-preview.1",
+  "version": "0.1.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Recursive split panes with a Git-aware file tree, file viewer, shell, diff, mod-panel and browser panes",
@@ -9,8 +9,8 @@
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_panes"},
   "capabilities": ["commands", "terminal", "store", "lifecycle", "events", "exec", "fs.read", "fs.write", "pty", "network", "composer", "services"],
   "subscriptions": {"channels": ["omd_panes/*"]},
-  "services": {"imports": [{"name": "omd.frecency", "version": "1.0.0", "optional": true}]},
-  "compatibility": {"required_features": ["app_v1", "events_v1", "exec_v1", "store_thread_v1", "terminal_surface_v1", "terminal_pty_v1", "pty_programs_v1", "terminal_prompt_v1", "service_dispatch_v1", "terminal_editor_v1", "terminal_style_v1", "workspace_fs_v1"]},
+  "services": {"imports": [{"name": "omd.frecency", "version": "1.0.0", "optional": true}], "exports": [{"name": "omd.panes", "version": "1.0.0", "methods": {"tabs": {"input": "null", "output": "object"}, "show_tab": {"input": "object", "output": "object"}, "find": {"input": "object", "output": "object"}, "cockpit": {"input": "null", "output": "object"}, "open": {"input": "object", "output": "object"}}}]},
+  "compatibility": {"required_features": ["app_v1", "events_v1", "exec_v1", "store_thread_v1", "terminal_surface_v1", "terminal_pty_v1", "pty_programs_v1", "terminal_prompt_v1", "service_dispatch_v1", "terminal_editor_v1", "terminal_style_v1", "terminal_tabs_v1", "workspace_fs_v1"]},
   "settings_schema": {
     "type": "object",
     "properties": {

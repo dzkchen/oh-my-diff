@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "id": "command_help",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": ["commands", "terminal", "builtins"],
+  "compatibility": {
+    "required_features": ["terminal_commands_v1", "builtins_mod_commands_v1"]
+  }
+}

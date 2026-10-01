@@ -3,15 +3,17 @@ import type { CommandResult, Json, KeyAction, KeyName, LayoutNode, ModAPI, PtyRe
 type Kind = 'chat' | 'tree' | 'viewer' | 'shell' | 'diff' | 'site' | 'browser';
 type Pane = { kind: Kind; cwd?: string; argv?: string[]; site?: string; path?: string; session?: string };
 type Split = { split: 'horizontal' | 'vertical'; ratio: number[]; children: Node[] };
-type Node = string | Split;
+type Tabs = { tabs: { title: string; node: Node }[]; active: number };
+type Node = string | Split | Tabs;
 type Layout = { root: Node; panes: Record<string, Pane>; active: string; next: number };
 type View = { path: string; start: number; total: number; lines: string[]; line: number | null; range: [number, number] | null; revision: number; error: string | null };
 type State = {
   layout: Layout; revision: number | null; repository: string | null; prefix: string | null; running: string[];
   expanded: string[]; listings: Record<string, string[]>; truncated: string[]; status: Record<string, string>; dirs: Record<string, string>;
   selected: string | null; find: string[] | null; views: Record<string, View>; diffs: Record<string, string>;
-  backup: { reference: ResourceRef; paths: string[] } | null; watch: string | null; watched: string[];
+  backup: { reference: ResourceRef; paths: string[] } | null; watch: string | null; watched: string[]; search: Search | null;
 };
+type Search = { query: string; regex: boolean; case: boolean };
 type Direction = 'left' | 'right' | 'up' | 'down';
 type Rect = { x: number; y: number; w: number; h: number };
 
@@ -27,12 +29,13 @@ const KEYWORDS = new Set(['as', 'async', 'await', 'break', 'case', 'catch', 'cla
 const LANGUAGE = /\.(?:pyi?|[cm]?[jt]sx?|rs|java)$/;
 
 const chat = (): Layout => ({ root: 'chat', panes: { chat: { kind: 'chat' } }, active: 'chat', next: 1 });
-const leaves = (node: Node): string[] => typeof node === 'string' ? [node] : node.children.flatMap(leaves);
-const parentOf = (node: Node, target: Node): [Split, number] | null => {
+const kids = (node: Split | Tabs): Node[] => 'tabs' in node ? node.tabs.map(tab => tab.node) : node.children;
+const leaves = (node: Node): string[] => typeof node === 'string' ? [node] : kids(node).flatMap(leaves);
+const parentOf = (node: Node, target: Node): [Split | Tabs, number] | null => {
   if (typeof node === 'string') return null;
-  const index = node.children.indexOf(target);
+  const index = kids(node).indexOf(target);
   if (index >= 0) return [node, index];
-  for (const child of node.children) {
+  for (const child of kids(node)) {
     const found = parentOf(child, target);
     if (found) return found;
   }
@@ -40,8 +43,28 @@ const parentOf = (node: Node, target: Node): [Split, number] | null => {
 };
 const replace = (layout: Layout, old: Node, next: Node) => {
   const found = parentOf(layout.root, old);
-  if (found) found[0].children[found[1]] = next;
-  else layout.root = next;
+  if (!found) layout.root = next;
+  else if ('tabs' in found[0]) found[0].tabs[found[1]].node = next;
+  else found[0].children[found[1]] = next;
+};
+const detach = (layout: Layout, node: Node) => {
+  const found = parentOf(layout.root, node);
+  if (!found) return;
+  const [parent, index] = found;
+  if ('tabs' in parent) {
+    parent.tabs.splice(index, 1);
+    parent.active = Math.max(0, Math.min(parent.active - (index < parent.active ? 1 : 0), parent.tabs.length - 1));
+    if (!parent.tabs.length) detach(layout, parent);
+    return;
+  }
+  parent.children.splice(index, 1);
+  parent.ratio = normalize(parent.ratio.filter((_, position) => position !== index));
+  if (parent.children.length === 1) replace(layout, parent, parent.children[0]);
+};
+// The tab commands keep at most one tab group, beside the conversation.
+const groupOf = (node: Node): Tabs | null => typeof node === 'string' ? null : 'tabs' in node ? node : kids(node).map(groupOf).find(Boolean) ?? null;
+const reveal = (layout: Layout) => {
+  for (let node: Node = layout.active, found = parentOf(layout.root, node); found; node = found[0], found = parentOf(layout.root, node)) if ('tabs' in found[0]) found[0].active = found[1];
 };
 const normalize = (ratio: number[]) => {
   const total = ratio.reduce((sum, value) => sum + value, 0) || 1;
@@ -52,6 +75,7 @@ const rects = (node: Node, rect: Rect, out: Record<string, Rect> = {}): Record<s
     out[node] = rect;
     return out;
   }
+  if ('tabs' in node) return rects(node.tabs[node.active].node, rect, out);
   const total = node.ratio.reduce((sum, value) => sum + value, 0);
   let offset = 0;
   node.children.forEach((child, index) => {
@@ -64,6 +88,7 @@ const rects = (node: Node, rect: Rect, out: Record<string, Rect> = {}): Record<s
 const neighbor = (layout: Layout, id: string, direction: Direction): string | null => {
   const all = rects(layout.root, { x: 0, y: 0, w: 1, h: 1 });
   const from = all[id];
+  if (!from) return null;
   const across = direction === 'left' || direction === 'right';
   let best: string | null = null;
   let score = 1e-6;
@@ -77,9 +102,24 @@ const neighbor = (layout: Layout, id: string, direction: Direction): string | nu
   }
   return best;
 };
+const label = (text: string, limit = 32) => {
+  let out = '';
+  let bytes = 0;
+  for (const char of text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')) {
+    const code = char.codePointAt(0) ?? 0;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    if (bytes > limit) break;
+    out += char;
+  }
+  return out;
+};
+const titleOf = (pane: Pane) => label(pane.kind === 'tree' ? 'Files' : pane.kind === 'viewer' ? pane.path ?? 'Viewer' : pane.kind === 'diff' ? `Diff ${pane.path ?? 'HEAD'}`
+  : pane.kind === 'browser' ? `Browser ${pane.session ?? 'default'}` : pane.kind === 'site' ? pane.site ?? 'Panel' : pane.kind === 'chat' ? 'Conversation'
+    : pane.argv ? pane.argv.join(' ') : `Shell ${pane.cwd ?? '.'}`);
 const siteName = (id: string, pane: Pane) => pane.kind === 'site' ? pane.site ?? 'sidebar' : `omd_panes/${id}-${pane.kind}`;
 const native = (layout: Layout, node: Node): LayoutNode => typeof node !== 'string'
-  ? { split: node.split, ratio: node.ratio, children: node.children.map(child => native(layout, child)) }
+  ? 'tabs' in node ? { tabs: node.tabs.map(tab => ({ title: tab.title, node: native(layout, tab.node) })), active: node.active }
+    : { split: node.split, ratio: node.ratio, children: node.children.map(child => native(layout, child)) }
   : layout.panes[node].kind === 'chat'
     ? { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript' }, { content: 'composer' }] }
     : { content: `site:${siteName(node, layout.panes[node])}` as `site:${string}/${string}` };
@@ -89,7 +129,8 @@ const valid = (layout: Layout) => {
   const cells = ids.reduce((total, id) => total + (layout.panes[id].kind === 'chat' ? 2 : 1), 0);
   const fits = (node: Node, depth: number): boolean => typeof node === 'string'
     ? depth + (layout.panes[node].kind === 'chat' ? 1 : 0) <= 4
-    : node.children.length <= 4 && node.children.every(child => fits(child, depth + 1));
+    : 'tabs' in node ? node.tabs.length <= 6 && !leaves(node).includes('chat') && node.tabs.every(tab => fits(tab.node, depth + 1))
+      : node.children.length <= 4 && node.children.every(child => fits(child, depth + 1));
   return cells <= 12 && new Set(sites).size === sites.length && fits(layout.root, 1);
 };
 const words = (value: Json) => String(value ?? '').trim().split(/\s+/).filter(Boolean);
@@ -103,7 +144,7 @@ const tone = (code?: string): TerminalTone => !code ? 'normal' : code === '!!' ?
 export default function activate(api: ModAPI) {
   const glyph = api.settings.icons === 'ascii' ? { open: '- ', closed: '+ ', active: '*', idle: 'o' } : { open: '▾ ', closed: '▸ ', active: '●', idle: '○' };
   const empty = (): State => ({ layout: chat(), revision: null, repository: null, prefix: null, running: [], expanded: [], listings: {}, truncated: [], status: {}, dirs: {},
-    selected: null, find: null, views: {}, diffs: {}, backup: null, watch: null, watched: [] });
+    selected: null, find: null, views: {}, diffs: {}, backup: null, watch: null, watched: [], search: null });
   const load = (): State => ({ ...empty(), ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
   const has = (state: State, kind: Kind) => leaves(state.layout.root).some(id => state.layout.panes[id].kind === kind);
@@ -117,6 +158,7 @@ export default function activate(api: ModAPI) {
   };
 
   const commit = (state: State) => {
+    reveal(state.layout);
     const put = (expected: number | null) => api.host.tryCall('store.put', { key: 'layout', scope: 'thread', value: state.layout as unknown as Json, expected_revision: expected });
     let saved = put(state.revision);
     if (!saved.ok) {
@@ -138,8 +180,8 @@ export default function activate(api: ModAPI) {
     layout.panes[id] = pane;
     const orientation = direction === 'down' ? 'vertical' : 'horizontal';
     const found = parentOf(layout.root, anchor);
-    if (found && found[0].split === orientation && found[0].children.length < 4) {
-      const [split, index] = found;
+    const [split, index] = found ?? [];
+    if (split && 'split' in split && index !== undefined && split.split === orientation && split.children.length < 4) {
       split.ratio.splice(index, 1, split.ratio[index] / 2, split.ratio[index] / 2);
       split.children.splice(index + 1, 0, id);
       split.ratio = normalize(split.ratio);
@@ -148,12 +190,7 @@ export default function activate(api: ModAPI) {
     return id;
   };
   const remove = (state: State, id: string) => {
-    const found = parentOf(state.layout.root, id);
-    if (!found) return;
-    const [split, index] = found;
-    split.children.splice(index, 1);
-    split.ratio = normalize(split.ratio.filter((_, position) => position !== index));
-    if (split.children.length === 1) replace(state.layout, split, split.children[0]);
+    detach(state.layout, id);
     delete state.layout.panes[id];
     delete state.views[id];
     delete state.diffs[id];
@@ -284,7 +321,7 @@ export default function activate(api: ModAPI) {
       const root = layout.root;
       layout.panes[id] = { kind: 'tree' };
       layout.active = id;
-      if (typeof root !== 'string' && root.split === 'horizontal' && root.children.length < 4) {
+      if (typeof root !== 'string' && 'split' in root && root.split === 'horizontal' && root.children.length < 4) {
         root.children.unshift(id);
         root.ratio = normalize([root.ratio.reduce((sum, value) => sum + value, 0) / 3, ...root.ratio]);
       } else layout.root = { split: 'horizontal', ratio: [25, 75], children: [id, root] };
@@ -316,24 +353,18 @@ export default function activate(api: ModAPI) {
     return null;
   };
 
-  const create = (state: State, anchor: string, direction: 'right' | 'down', spec: string[]): CommandResult => {
+  const paneFor = (state: State, spec: string[]): Pane | null => {
     const [kind = 'shell', ...rest] = { notes: ['site', 'omd_notes/notes'], lsp: ['site', 'omd_lsp_view/lsp'] }[spec[0] ?? ''] ?? spec;
     const dir = state.selected && state.listings[state.selected] ? state.selected : parent(state.selected ?? '');
-    const pane: Pane | null = kind === 'shell' ? { kind: 'shell', cwd: clean(rest[0] ?? dir) || '.' }
+    return kind === 'shell' ? { kind: 'shell', cwd: clean(rest[0] ?? dir) || '.' }
       : kind === 'run' && rest.length ? { kind: 'shell', argv: rest, cwd: clean(dir) || '.' }
         : kind === 'diff' ? { kind: 'diff', ...(rest[0] ? { path: clean(rest[0]) ?? undefined } : {}) }
           : kind === 'site' && /^(sidebar|[a-z0-9_-]{1,24}\/[a-z0-9_-]{1,32})$/.test(rest[0] ?? '') ? { kind: 'site', site: rest[0] }
             : kind === 'browser' ? { kind: 'browser', session: /^[A-Za-z0-9][\w-]{0,31}$/.test(rest[0] ?? '') ? rest[0] : 'default' }
-              : null;
-    if (kind === 'tree') return done(state, openTree(state));
-    if (kind === 'view') return openFile(state, rest.join(' '), anchor);
-    if (!pane) return { display: 'usage: /pane split right|down [shell [DIR] | run CMD... | diff [PATH] | site NAME | notes | lsp | browser [SESSION] | tree | view PATH]' };
-    let id = '';
-    const refused = edit(state, layout => {
-      id = insert(layout, anchor, direction, pane);
-      return null;
-    });
-    if (refused) return { display: refused };
+              : kind === 'tree' ? { kind: 'tree' } : null;
+  };
+  const launch = (state: State, id: string): CommandResult => {
+    const pane = state.layout.panes[id];
     if (pane.kind === 'shell' || pane.kind === 'browser') {
       const failed = start(state, id);
       if (failed) {
@@ -342,6 +373,66 @@ export default function activate(api: ModAPI) {
       }
     }
     if (pane.kind === 'diff') readDiff(state, id);
+    if (pane.kind === 'tree') refresh(state, null);
+    return done(state, null);
+  };
+  const create = (state: State, anchor: string, direction: 'right' | 'down', spec: string[]): CommandResult => {
+    if (spec[0] === 'tree') return done(state, openTree(state));
+    if (spec[0] === 'view') return openFile(state, spec.slice(1).join(' '), anchor);
+    const pane = paneFor(state, spec);
+    if (!pane) return { display: 'usage: /pane split right|down [shell [DIR] | run CMD... | diff [PATH] | site NAME | notes | lsp | browser [SESSION] | tree | view PATH]' };
+    let id = '';
+    const refused = edit(state, layout => {
+      id = insert(layout, anchor, direction, pane);
+      return null;
+    });
+    return refused ? { display: refused } : launch(state, id);
+  };
+  const tab = (state: State, op: string | undefined, rest: string[]): CommandResult => {
+    const group = groupOf(state.layout.root);
+    if (op === 'new') {
+      const pane = paneFor(state, rest);
+      if (!pane) return { display: 'usage: /pane tab new [shell [DIR] | run CMD... | diff [PATH] | site NAME | notes | lsp | browser [SESSION] | tree]' };
+      let id = '';
+      const refused = edit(state, layout => {
+        const target = groupOf(layout.root);
+        if (target || layout.active !== 'chat') {
+          id = `p${layout.next++}`;
+          layout.panes[id] = pane;
+          if (target) target.tabs.push({ title: titleOf(pane), node: id });
+          else replace(layout, layout.active, { tabs: [{ title: titleOf(layout.panes[layout.active]), node: layout.active }, { title: titleOf(pane), node: id }], active: 1 });
+        } else replace(layout, id = insert(layout, 'chat', 'right', pane), { tabs: [{ title: titleOf(pane), node: id }], active: 0 });
+        layout.active = id;
+        return null;
+      });
+      return refused ? { display: refused } : launch(state, id);
+    }
+    if (!group) return { display: 'No tabs yet; /pane tab new [KIND] opens one' };
+    if (op === 'close') {
+      for (const id of leaves(group.tabs[group.active].node)) remove(state, id);
+      rewatch();
+      return done(state, null);
+    }
+    if (op === 'rename') {
+      const title = label(rest.join(' ').trim());
+      if (!title) return { display: 'usage: /pane tab rename TITLE' };
+      group.tabs[group.active].title = title;
+      return done(state, null);
+    }
+    const count = group.tabs.length;
+    const index = op === 'next' ? (group.active + 1) % count : op === 'prev' ? (group.active + count - 1) % count : Number(op) - 1;
+    if (!group.tabs[index]) return { display: 'usage: /pane tab new [KIND] | close | rename TITLE | next | prev | 1-6' };
+    group.active = index;
+    state.layout.active = leaves(group.tabs[index].node)[0];
+    return done(state, null);
+  };
+  const cockpit = (state: State) => {
+    for (const pane of leaves(state.layout.root)) if (pane !== 'chat') remove(state, pane);
+    state.layout = { root: { split: 'horizontal', ratio: [22, 48, 30], children: ['p1', 'chat', { tabs: [{ title: 'Changes', node: 'p2' }, { title: 'Files', node: 'p3' }, { title: 'Diff', node: 'p4' }], active: 0 }] },
+      panes: { chat: { kind: 'chat' }, p1: { kind: 'site', site: 'omd_layout/sessions' }, p2: { kind: 'site', site: 'sidebar' }, p3: { kind: 'tree' }, p4: { kind: 'diff' } }, active: 'chat', next: 5 };
+    refresh(state, null);
+    readDiff(state, 'p4');
+    rewatch();
     return done(state, null);
   };
   const done = (state: State, message: string | null): CommandResult => {
@@ -371,9 +462,12 @@ export default function activate(api: ModAPI) {
       case 'move': {
         const other = direction && neighbor(layout, id, direction);
         if (!other) return null;
-        const swap = (node: Node): Node => typeof node === 'string' ? node === id ? other : node === other ? id : node : { ...node, children: node.children.map(swap) };
-        layout.root = swap(layout.root);
-        return done(state, null);
+        const swap = (node: Node): Node => typeof node === 'string' ? node === id ? other : node === other ? id : node
+          : 'tabs' in node ? { ...node, tabs: node.tabs.map(item => ({ ...item, node: swap(item.node) })) } : { ...node, children: node.children.map(swap) };
+        return done(state, edit(state, current => {
+          current.root = swap(current.root);
+          return null;
+        }));
       }
       case 'grow':
       case 'shrink': {
@@ -381,7 +475,7 @@ export default function activate(api: ModAPI) {
         let current: Node = id;
         for (let found = parentOf(layout.root, current); found; current = found[0], found = parentOf(layout.root, current)) {
           const [split, index] = found;
-          if (split.split !== orientation) continue;
+          if (!('split' in split) || split.split !== orientation) continue;
           const other = index + 1 < split.children.length ? index + 1 : index - 1;
           const total = split.ratio.reduce((sum, item) => sum + item, 0);
           const step = Math.round(total / 10) * (op === 'grow' ? 1 : -1);
@@ -408,8 +502,12 @@ export default function activate(api: ModAPI) {
         state.layout = chat();
         rewatch();
         return done(state, null);
+      case 'tab':
+        return tab(state, rest[0], rest.slice(1));
+      case 'cockpit':
+        return cockpit(state);
       default:
-        return { display: 'usage: /pane [split right|down KIND | focus left|right|up|down|ID | move DIR | grow|shrink width|height | close | restart | reset] [@ID]' };
+        return { display: 'usage: /pane [split right|down KIND | focus left|right|up|down|ID | move DIR | grow|shrink width|height | close | restart | reset | tab new|close|rename|next|prev|N | cockpit] [@ID]' };
     }
   }), { description: 'Split, focus, move, resize and close panes (Alt+h/j/k/l focus, Alt+v/Alt+o split, Alt+x close, Alt+e files)' });
 
@@ -631,11 +729,16 @@ export default function activate(api: ModAPI) {
 
   api.on('component_event', event => {
     const state = load();
-    if (event.kind === 'resize' && event.ratio) {
-      let node: Node | undefined = state.layout.root;
-      for (const part of event.component.split('.').slice(1)) node = typeof node === 'string' || !node ? undefined : node.children[Number(part)];
-      if (!node || typeof node === 'string' || node.ratio.length !== event.ratio.length) return;
+    const node = /^r(\.\d+)*$/.test(event.component) ? event.component.split('.').slice(1)
+      .reduce<Node | undefined>((current, part) => typeof current === 'string' || !current ? undefined : kids(current)[Number(part)], state.layout.root) : undefined;
+    if (node && typeof node !== 'string' && 'split' in node && event.kind === 'resize' && event.ratio?.length === node.ratio.length) {
       node.ratio = normalize(event.ratio);
+      commit(state);
+      return;
+    }
+    if (node && typeof node !== 'string' && 'tabs' in node && event.kind === 'select' && event.index !== undefined && node.tabs[event.index]) {
+      node.active = event.index;
+      state.layout.active = leaves(node.tabs[event.index].node)[0];
       commit(state);
       return;
     }
@@ -664,6 +767,29 @@ export default function activate(api: ModAPI) {
   };
   api.on('start', restore);
   api.on('resume', restore);
+  api.provide({ name: 'omd.panes', version: '1.0.0', methods: { tabs: { input: 'null', output: 'object' }, show_tab: { input: 'object', output: 'object' }, find: { input: 'object', output: 'object' }, cockpit: { input: 'null', output: 'object' }, open: { input: 'object', output: 'object' } } }, {
+    tabs: () => {
+      const { layout } = load();
+      const group = groupOf(layout.root);
+      return { titles: group ? group.tabs.map(item => item.title) : [], active: group?.active ?? null };
+    },
+    show_tab: input => {
+      const shown = tab(load(), String(Number((input as { index?: number }).index) + 1), []);
+      return { display: (shown as { display?: string } | null)?.display ?? null };
+    },
+    find: input => {
+      const state = load();
+      const search = input as Partial<Search>;
+      state.search = typeof search.query === 'string' && search.query ? { query: label(search.query, 256), regex: search.regex === true, case: search.case === true } : null;
+      save(state);
+      return { views: Object.values(state.views).map(view => ({ path: view.path, matches: state.search ? matches(view.lines, state.search) : 0 })) };
+    },
+    cockpit: () => {
+      cockpit(load());
+      return { layout: 'cockpit' };
+    },
+    open: input => ({ display: (openFile(load(), String((input as { path?: string }).path ?? '')) as { display?: string } | null)?.display ?? null }),
+  });
   api.on('channel', event => {
     const state = load();
     const find = event.data as { query: string; scope: string; paths: string[] } | null;
@@ -688,9 +814,7 @@ export default function activate(api: ModAPI) {
   const menu = (id: string, pane: Pane, active: boolean): TerminalComponent => {
     const options: TerminalSelectOption[] = ['focus', 'split right', 'split down', 'move left', 'move right', 'move up', 'move down', 'grow width', 'shrink width', 'grow height', 'shrink height',
       ...(pane.kind === 'shell' || pane.kind === 'browser' ? ['restart'] : []), 'close'].map(option => ({ value: option, label: option }));
-    const title = pane.kind === 'tree' ? 'Files' : pane.kind === 'viewer' ? pane.path ?? 'Viewer' : pane.kind === 'diff' ? `Diff ${pane.path ?? 'HEAD'}`
-      : pane.kind === 'browser' ? `Browser ${pane.session ?? 'default'}` : pane.argv ? pane.argv.join(' ') : `Shell ${pane.cwd ?? '.'}`;
-    return { type: 'select', id: `omd_panes_${id}_menu`, label: `${active ? glyph.active : glyph.idle} ${title}`, value: 'focus', options, action: { command: 'omd_panes:pane', args: `@${id}` } };
+    return { type: 'select', id: `omd_panes_${id}_menu`, label: `${active ? glyph.active : glyph.idle} ${titleOf(pane)}`, value: 'focus', options, action: { command: 'omd_panes:pane', args: `@${id}` } };
   };
   const treeBody = (state: State, id: string): TerminalComponent[] => {
     const rows: TerminalListRow[] = [];
@@ -730,6 +854,15 @@ export default function activate(api: ModAPI) {
         options: ['symbols', 'diagnostics', 'format'].map(action => ({ value: `${action} ${selected}`, label: action })), action: { command: 'omd_lsp_view:lsp' } }] : []),
     ];
   };
+  const matches = (lines: string[], search: Search): number | string => {
+    try {
+      const pattern = new RegExp(search.regex ? search.query : search.query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), search.case ? 'g' : 'gi');
+      return lines.reduce((total, line) => total + [...line.matchAll(pattern)].filter(match => match[0]).length, 0);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return 'invalid pattern';
+    }
+  };
   const viewerBody = (state: State, id: string): TerminalComponent[] => {
     const view = state.views[id];
     if (!view) return [{ type: 'text', id: `omd_panes_${id}_empty`, label: 'Viewer', text: 'Open a file with /open PATH or from the file tree', tone: 'muted' }];
@@ -738,6 +871,7 @@ export default function activate(api: ModAPI) {
     const document: TerminalComponent = { type: 'document', id: `omd_panes_${id}_doc_${view.revision}`, label: view.path,
       lines: view.lines.map((text, index) => [{ text: `${String(view.start + index + 1).padStart(width)} `, tone: 'muted' }, { text }]),
       anchors: view.lines.map((_, index) => String(view.start + index + 1)),
+      ...(state.search ? { find: state.search } : {}),
       ...(view.line && view.line > view.start && view.line <= view.start + view.lines.length ? { selected: { start: view.line - view.start - 1, end: view.line - view.start - 1 } } : {}),
       action: { command: 'omd_panes:view', args: `line @${id}` } };
     const line = view.line;
@@ -747,7 +881,7 @@ export default function activate(api: ModAPI) {
     const paging = [...(view.start > 0 ? ['previous'] : []), ...(view.start + view.lines.length < view.total ? ['next'] : [])];
     return [
       document,
-      { type: 'text', id: `omd_panes_${id}_position`, label: 'Position', text: `lines ${view.start + 1}-${view.start + view.lines.length} of ${view.total}${line ? ` · line ${line}` : ' · Enter selects a line'}`, tone: 'muted' },
+      { type: 'text', id: `omd_panes_${id}_position`, label: 'Position', text: `lines ${view.start + 1}-${view.start + view.lines.length} of ${view.total}${line ? ` · line ${line}` : ' · Enter selects a line'}${state.search ? ` · ${matches(view.lines, state.search)} matches for ${state.search.query}` : ''}`, tone: 'muted' },
       ...(line || paging.length ? [{ type: 'select' as const, id: `omd_panes_${id}_line`, label: line ? `Lines ${span}` : 'Page', value: line ? 'insert' : paging[0],
         options: [...(line ? ['insert', 'editor'] : []), ...paging, 'reload'].map(action => ({ value: action, label: action === 'insert' ? `insert ${view.path}:${span}` : action })), action: { command: 'omd_panes:view', args: `@${id}` } }] : []),
       ...(line && api.settings.lsp === true && LANGUAGE.test(view.path) ? [{ type: 'select' as const, id: `omd_panes_${id}_lsp`, label: 'Code intelligence', value: `definition ${view.path}:${line}:${symbols[0]?.split(':')[1] ?? 1}`,
@@ -780,6 +914,7 @@ export default function activate(api: ModAPI) {
       'Alt+v': pane('split right'), 'Alt+o': pane('split down'), 'Alt+x': pane('close'),
       'Alt+Shift+Left': pane('shrink width'), 'Alt+Shift+Right': pane('grow width'), 'Alt+Shift+Up': pane('shrink height'), 'Alt+Shift+Down': pane('grow height'),
       'Ctrl+Alt+Left': pane('move left'), 'Ctrl+Alt+Right': pane('move right'), 'Ctrl+Alt+Up': pane('move up'), 'Ctrl+Alt+Down': pane('move down'),
+      'Alt+c': pane('tab new'), 'Alt+1': pane('tab 1'), 'Alt+2': pane('tab 2'), 'Alt+3': pane('tab 3'), 'Alt+4': pane('tab 4'), 'Alt+5': pane('tab 5'), 'Alt+6': pane('tab 6'),
       ...(focus ? { 'Alt+t': { focus } } : {}),
       ...(state.selected ? { 'Alt+y': { copy: state.selected, label: 'path' } } : {}),
     };

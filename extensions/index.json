@@ -245,7 +245,7 @@
     },
     {
       "id": "omd_preview",
-      "version": "0.1.0-preview.2",
+      "version": "0.1.0-preview.3",
       "extension_type": "mod",
       "capability": "User-typed /preview of responses and Markdown, code or diff files as sanitized HTML in the browser or an inline dialog",
       "source": "mods/first-party/omd_preview",
@@ -263,7 +263,7 @@
     },
     {
       "id": "omd_panes",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "capability": "Opt-in recursive split panes with a Git-aware file tree, viewer, shell, diff, mod-panel and browser panes, persisted per session",
       "source": "mods/first-party/omd_panes",
@@ -342,6 +342,42 @@
       "license": "Apache-2.0",
       "maintainer": "Oh My Diff",
       "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, store_v1, terminal_render_sites_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_layout",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in workspace layout: project-grouped session list with status shared across terminals, unread, worktree, context and listening ports, plus find, quick open, jump and command palettes over panes, Git and worktrees",
+      "source": "mods/first-party/omd_layout",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, terminal_commands_v1, service_dispatch_v1, terminal_surface_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
+      "id": "omd_worktree",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in task worktrees: create from a base ref with derived branch names, opt-in shared/copied setup and a bound session, switch, import, reviewed integration and confirmed cleanup that keeps dirty and unmerged work",
+      "source": "mods/first-party/omd_worktree",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, exec_v1, guarded_exec_v1, terminal_prompt_v1, service_dispatch_v1; Node 24.18.0",
       "tested_versions": [
         "Codex 0.159.1",
         "OMD 0.1.0",

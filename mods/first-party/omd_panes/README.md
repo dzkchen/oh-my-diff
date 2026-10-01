@@ -1,6 +1,6 @@
 # omd_panes
 
-Opt-in first-party mod (`0.1.0-preview.1`, API `0.2.0-experimental.5`) that
+Opt-in first-party mod (`0.1.0-preview.2`, API `0.2.0-experimental.5`) that
 arranges the terminal into recursive split panes: the conversation, a
 Git-aware file tree, a file viewer, shell and command panes with their own
 working directory, a `git diff` pane, other mods' panels, and an in-harness
@@ -11,6 +11,8 @@ browser.
                        | site NAME | notes | lsp | browser [SESSION]]
 /pane focus left|right|up|down|ID     /pane move left|right|up|down
 /pane grow|shrink width|height        /pane close | restart | reset | (list)
+/pane tab new [KIND...] | close | rename TITLE | next | prev | 1-6
+/pane cockpit                                    sessions, conversation and tabs
 /tree [select PATH | find QUERY | refresh]      toggle the file tree
 /open PATH[:LINE]                                open a file in the viewer
 ```
@@ -28,10 +30,27 @@ active pane (marked `●` in its menu row).
 | Alt+e | toggle the file tree |
 | Alt+t | move keyboard focus into the active pane (Ctrl+] leaves a shell) |
 | Alt+y | copy the selected tree path |
+| Alt+c / Alt+1–6 | open a new tab / show tab N |
 
 The mouse works too: each pane's first row is a menu (click to run the shown
 action, scroll to pick another), dragging a split border resizes it, and
-clicking a row or component focuses it.
+clicking a row or component focuses it. Clicking a tab title switches the tab
+and is saved with the layout.
+
+**Tabs.** Tabs hold pane layouts beside the conversation, which always stays
+outside them so Codex's transcript, composer and approvals remain visible.
+`/pane tab new` turns the active pane into the first tab (or opens a tab group
+right of the conversation) and adds a tab with a new pane of the given kind;
+splits inside a tab stay in that tab. Up to six tabs share the 12-cell limit.
+Closing a tab's last pane removes the tab. `/pane cockpit` replaces the panes
+with the Herdr/Crush-style cockpit: the `omd_layout` session list, the
+conversation, and Changes (the sidebar with `omd_git` and `omd_workspace`),
+Files and Diff tabs.
+
+**Services.** `omd.panes` 1.0.0 lets other mods list and show tabs, open a file
+in the viewer, apply the cockpit and set a find query; viewers then highlight
+the matches and report their count. `omd_layout` uses it for jump, quick open
+and find.
 
 **Layout.** The layout is a tree of splits persisted per session in the
 thread-scoped store, so resuming a session restores its panes and forking
@@ -82,11 +101,10 @@ text client with loopback-only network.
 Capabilities: `commands`, `terminal`, `store`, `lifecycle`, `events` (watch
 registration), `exec` (`git`, `awk`, `mkdir`, `find`), `fs.read`, `fs.write`,
 `pty`, `network` (the browser pane's loopback client), `composer` and
-`services` (the optional `omd.frecency` ranking).
+`services` (the optional `omd.frecency` ranking and the `omd.panes` export).
 
 Ported from [neoism](https://github.com/parkers0405/neoism) (Parker Settle and
 the Neoism contributors, MIT; see `THIRD_PARTY_NOTICES.md`): panes and splits,
 per-pane working directories, the file tree and its operations. This package
-reimplements that behavior over the OMD mod API and copies no code. Tabs, the
-session and worktree list, quick open and palettes belong to Post-launch
-Batch 5a.
+reimplements that behavior over the OMD mod API and copies no code. The session
+and worktree list, quick open and palettes are in `omd_layout`.

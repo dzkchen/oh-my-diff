@@ -30,7 +30,9 @@ impl ModHostCall {
             | "workspace.request_rename" => Ok("fs.write"),
             "store.get" | "store.put" | "store.delete" | "store.list" | "store.export"
             | "store.reset" | "evidence.write" | "evidence.read" => Ok("store"),
-            "sessions.list" | "sessions.read" | "sessions.snapshot" => Ok("sessions"),
+            "sessions.list" | "sessions.read" | "sessions.snapshot" | "sessions.ports" => {
+                Ok("sessions")
+            }
             "routes.list" | "providers.register" | "providers.unregister" => Ok("model"),
             "task.status" | "workspace.integrate" => Ok("agents"),
             "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict" => {
@@ -50,6 +52,7 @@ impl ModHostCall {
             "turns.activity" => Ok("sessions"),
             "terminal.notify"
             | "terminal.show_thread"
+            | "terminal.commands"
             | "terminal.import_file"
             | "terminal.image_sample"
             | "terminal.open"
