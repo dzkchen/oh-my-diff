@@ -1,4 +1,4 @@
-import type { CommandResult, Json, ModAPI, TerminalComponent } from '@oh-my-diff/mod-api';
+import type { CommandResult, Json, ModAPI, TerminalComponent } from '../../api.d.ts';
 
 const DIR = '.omd/preview';
 const INLINE_CHARACTERS = 40_000;
@@ -24,7 +24,7 @@ export default function activate(api: ModAPI) {
 
   const render = (output: string, title: string, source?: string, markdown?: string): Rendered => {
     const watch = source !== undefined && load().watch.includes(source);
-    const input = markdown === undefined ? '' : `globalThis.markdown = ${JSON.stringify(markdown)};\n`;
+    const input = markdown === undefined ? '' : `const markdown = ${JSON.stringify(markdown)};\n`;
     const run = api.host.tryCall('exec.run', {
       program: 'node',
       argv: ['--input-type=module', '-', output, title, watch ? 'watch' : '', ...(source ? [source] : [])],

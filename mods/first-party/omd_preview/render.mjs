@@ -224,7 +224,7 @@ function kindOf(path) {
 const [output, title, watch, source] = process.argv.slice(2);
 if (source && statSync(source).size > MAX_BYTES) throw new Error(`${source} exceeds the 5 MB preview limit`);
 const base = relative(dirname(resolve(output)), source ? dirname(resolve(source)) : process.cwd());
-const html = page(title, renderSource(source ? readFileSync(source, 'utf8') : globalThis.markdown, kindOf(source ?? ''), base ? `${base}/` : ''), watch === 'watch');
+const html = page(title, renderSource(source ? readFileSync(source, 'utf8') : markdown, kindOf(source ?? ''), base ? `${base}/` : ''), watch === 'watch');
 mkdirSync(dirname(output), { recursive: true });
 writeFileSync(output, html);
 process.stdout.write(resolve(output));

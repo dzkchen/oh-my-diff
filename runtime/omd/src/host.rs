@@ -99,6 +99,55 @@ pub struct Host<'a> {
     pub record_changes: bool,
 }
 
+const CREDENTIAL_PATHS: &[&str] = &[
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".config/gh",
+    ".config/gcloud",
+    ".docker",
+    ".kube",
+    ".netrc",
+    ".git-credentials",
+    ".npmrc",
+    "Library/Keychains",
+];
+
+pub fn secret_like(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    name.starts_with("AWS_")
+        || ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL"]
+            .iter()
+            .any(|part| name.contains(part))
+}
+
+fn credential_paths() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|home| home.join(".codex")))
+        .into_iter()
+        .chain(
+            home.iter()
+                .flat_map(|home| CREDENTIAL_PATHS.iter().map(|path| home.join(path))),
+        )
+        .collect()
+}
+
+/// Denies mod commands reading or writing protected paths, Codex home and credential locations.
+pub fn deny_protected(profile: &mut String, protected: &[PathBuf]) -> Result<(), String> {
+    for root in protected.iter().cloned().chain(credential_paths()) {
+        for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
+            let literal = serde_json::to_string(&path.to_string_lossy())
+                .map_err(|error| error.to_string())?;
+            profile.push_str(&format!(
+                "\n(deny file-read* file-write* (literal {literal}) (subpath {literal}))"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn served(operation: &str) -> bool {
     matches!(
         operation,
@@ -622,8 +671,8 @@ impl Host<'_> {
         if input.write && !granted("fs.write") {
             return Err("capability_denied: fs.write".into());
         }
-        if !input.unix_sockets.is_empty() && !granted("network") {
-            return Err("capability_denied: network".into());
+        if !input.unix_sockets.is_empty() && !granted("unix_sockets") {
+            return Err("capability_denied: unix_sockets".into());
         }
         if input.required_access.is_some() && !input.write {
             return Err("exec_access_requires_write".into());

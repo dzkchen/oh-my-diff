@@ -1,4 +1,4 @@
-import type { CommandResult, Json, ModAPI, TerminalComponent } from '@oh-my-diff/mod-api';
+import type { CommandResult, Json, ModAPI, TerminalComponent } from '../../api.d.ts';
 
 type Vault = 'project' | 'personal';
 type Item = { label: string; value: string };

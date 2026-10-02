@@ -39,7 +39,8 @@ native work.
 | `outputs` | the `tool_output` replacement and observers |
 | `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, read-only `workspace.check_access`, `workspace.snapshot`, `workspace.fingerprint`, `workspace.watch`, the `workspace_change` event; `app.request fuzzyFileSearch*` |
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
-| `network` | `exec.run` and `process.start` with `network: "loopback"`; `exec.run` `unix_sockets` |
+| `network` | `exec.run` and `process.start` with `network: "loopback"` |
+| `unix_sockets` | `exec.run` `unix_sockets` |
 | `model` | `routes.list`, `routes.select`, `providers.*`, the `routing` event |
 | `agents` | `agents.*`, `model.complete`, `task.status`, `workspace.integrate` |
 | `store` | `store.*`, `evidence.write`, `evidence.read`, `api.state` |
@@ -52,7 +53,7 @@ native work.
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, the `completion` replacement |
-| `packages` | `packages.list`, `packages.preview`, `packages.apply`, `packages.reload` |
+| `packages` | `packages.list`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, the `tool_specs` replacement |
 | `context`, `commands`, `lifecycle`, `input`, `interception`, `compaction`, `middleware`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
 
@@ -88,7 +89,7 @@ concurrent. Without `write` the
 repository is read-only; with `network: "loopback"` only local binding is
 allowed. `unix_sockets` names up to 4 declared `exec_environment` variables
 whose host values are Unix sockets the command may connect to; it needs the
-`network` capability. Each value must be an absolute, canonical path outside the
+`unix_sockets` capability. Each value must be an absolute, canonical path outside the
 repository to an existing socket owned by the current user, or the call fails
 with `exec_socket_unavailable`; the mod never supplies the path and no IP network
 is added. Cancellation kills the process group and returns `exec_cancelled`.
@@ -630,7 +631,7 @@ most 64 events and 64 KiB, so a slow callback adds at most one batch of lag;
 beyond 256 queued events input is dropped and the next batch reports
 `dropped`. Ctrl+] leaves the component (terminals without the kitty keyboard
 protocol send it as Ctrl+5, which also leaves); Ctrl+C leaves it and keeps its
-native meaning (interrupt or quit); Esc goes to the mod. Input callbacks run in
+native meaning (interrupt or quit); Esc goes to the mod and leaves the component or closes the dialog. Input callbacks run in
 the terminal process with read-only workspace access, and the view redraws as
 soon as one changes the mod's state; a key that must write (a save) publishes
 an `events.publish` hop whose `channel` callback runs with the session's
@@ -749,7 +750,7 @@ and applies exactly the confirmed plan or refuses if the package, lock or
 selection changed. An update resolves dependencies through the index the
 package came from and previews the capabilities it adds. `packages.reload`
 makes every enabled selection revalidate at the next safe boundary, retrying
-failed mods. `/omd` stays the native recovery path; its Mods row opens `/mods`
+failed mods. `settings.write {id?, values}` saves schema-checked settings (`null` removes one) from user contexts and redraws at once; without `id` it writes the caller's own settings, with `id` it needs `packages`. Callbacks receive explicit settings over the schema's `default` values, and `packages.list` reports each mod's `settings` and `settings_schema`. `/omd` stays the native recovery path; its Mods row opens `/mods`
 when a mod provides it.
 
 ### Dynamic tools (`dynamic_tools_v1`)
@@ -780,7 +781,7 @@ has no host maximum, so a provider's context window is configuration.
 | --- | --- |
 | `omd-mod-author create DIR ID` | Minimal typed package with pnpm scripts and offline tests |
 | `omd-mod-author examples DIR` | Live routing, coordination, recovery, terminal, workflow, and stream-replacement mod examples |
-| `pnpm check` | Strict TypeScript validation against this exact SDK |
+| `pnpm check` | Strict TypeScript validation against this exact SDK, plus the engine's erasable-syntax check |
 | `pnpm test` | Engine-owned scenario execution with no provider requests |
 | `pnpm run run` | Runs the same deterministic scenario and prints the full trace |
 | `pnpm debug` | Runs an intentional failure and retains its mapped source location |
@@ -793,7 +794,7 @@ has no host maximum, so a provider's context window is configuration.
 
 The `omd-mod` binary is part of the OMD engine. Set `OMD_MOD_BIN` only when a
 development build is not already on `PATH`; set `OMD_MOD_NODE` to the supported
-Node 24.18.0 executable. pnpm is the package manager. The repository also
+Node 24.x executable, 24.18 or later. pnpm is the package manager. The repository also
 publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
 
 ## Package commands
@@ -1052,8 +1053,11 @@ shapes fail closed.
 
 ## Diagnostics and source maps
 
-The engine transforms TypeScript with an inline source map and runs Node with
-source maps enabled, so callback stacks resolve to the authored `index.ts` line.
+The engine strips TypeScript types in place, so callback stacks report the
+authored line and column as `<package>/<file>:line:col`. Only erasable syntax
+loads: `enum`, namespaces with values and constructor parameter properties fail
+with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`, and `pnpm check` reports them before
+packaging.
 Status retains a bounded per-mod log containing event, handler, generation,
 outcome, and elapsed microseconds plus aggregate timing. It never adds mod-side
 filesystem or process access.
@@ -1082,9 +1086,7 @@ at 8 MiB.
 `service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and host-operation provenance when a consumer calls it. A nested call shares the initiating callback's cancellation, 32-call and 5 s execution budgets; recursive providers and chains beyond eight callback frames fail closed. Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation. Offline `host_calls` records the actual mod caller for every mocked operation.
 
 The host answers each host call inside the running callback, so a callback
-runs once. `hook_budget_ms` bounds the callback's own JavaScript time; waiting
-for host calls does not count. A separate 5 s host total bounds the callback's
-execution; exceeding it fails the callback with `callback_execution_budget`.
+runs once. `hook_budget_ms` bounds the callback's own JavaScript time. A separate 5 s total bounds the callback's JavaScript time plus its waits on terminal operations that need no user answer; exceeding it fails the callback with `callback_execution_budget`. Confirmations and prompts may wait longer, and other host operations keep their own timeouts.
 Offline runners without an interactive host replay the callback once per host
 call instead.
 

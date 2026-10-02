@@ -36,6 +36,7 @@ const CORE_OPERATIONS: &[&str] = &[
     "packages.list",
     "packages.preview",
     "packages.reload",
+    "settings.write",
     "tools.define",
     "tools.undefine",
     "events.schedule",
@@ -327,6 +328,7 @@ pub(super) async fn dispatch(
             .await
         }
         "packages.reload" => Err("host_operation_user_only: packages.reload".into()),
+        "settings.write" => Err("host_operation_user_only: settings.write".into()),
         _ => surface(lead, caller, request, cancelled).await,
     }
 }
@@ -411,17 +413,20 @@ async fn surface(
         .as_ref()
         .map(|grants| grants.capabilities.clone())
         .ok_or("host_caller_inactive")?;
-    let routes = lead
-        .host
-        .route_config()
-        .0
-        .routes
-        .iter()
-        .filter(|route| route.roles.contains(&config::RouteRole::Lead))
-        .map(|route| (route.model.clone(), route.provider.clone()))
-        .collect::<Vec<_>>();
-    let repository = lead.host.repository.clone();
     let (id, operation) = (caller.id.to_owned(), request.operation);
+    let routes = if operation == "app.request" {
+        lead.host
+            .route_config()
+            .0
+            .routes
+            .iter()
+            .filter(|route| route.roles.contains(&config::RouteRole::Lead))
+            .map(|route| (route.model.clone(), route.provider.clone()))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let repository = lead.host.repository.clone();
     let arguments = request.arguments;
     let cancelled = cancelled.clone();
     tokio::task::spawn_blocking(move || {

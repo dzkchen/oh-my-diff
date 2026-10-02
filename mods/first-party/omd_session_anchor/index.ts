@@ -3,7 +3,7 @@ import type { ModAPI } from '../../api.d.ts';
 export default function activate(api: ModAPI) {
   api.on('start', () => api.state.set(0));
   api.replace('compaction', ({ token_limit }) => ({
-    threshold: typeof token_limit === 'number' ? Math.max(4096, Math.floor(token_limit * 0.8)) : 8192,
+    ...(typeof token_limit === 'number' ? { threshold: Math.max(4096, Math.floor(token_limit * 0.8)) } : {}),
     prompt: 'Preserve the current task, remaining acceptance work, candidate and check evidence, and unresolved failures. Revalidate each detail against available evidence and mark uncertain facts explicitly.',
   }));
   api.on('compaction_end', () => {

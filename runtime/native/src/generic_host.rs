@@ -139,15 +139,7 @@ fn sandboxed_seatbelt(
     if args.first().map(String::as_str) != Some("-p") || args.len() < 2 {
         return Err("exec_sandbox_unavailable".to_owned());
     }
-    for root in protected {
-        for path in std::iter::once(root.clone()).chain(root.canonicalize().ok()) {
-            let literal = serde_json::to_string(&path.to_string_lossy())
-                .map_err(|error| error.to_string())?;
-            args[1].push_str(&format!(
-                "\n(deny file-read* file-write* (literal {literal}) (subpath {literal}))"
-            ));
-        }
-    }
+    codex_omd::host::deny_protected(&mut args[1], protected)?;
     let mut command = Command::new(executable);
     command.args(args).current_dir(cwd);
     Ok(command)

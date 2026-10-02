@@ -1,4 +1,4 @@
-import type { Json, ModAPI, TerminalComponent } from '@oh-my-diff/mod-api';
+import type { Json, ModAPI, TerminalComponent } from '../../api.d.ts';
 
 type Item = { label: string; value: string };
 type View = { title: string; status: 'working' | 'ready' | 'error'; message: string; items: Item[]; action: 'open' | 'apply'; text: string | null;

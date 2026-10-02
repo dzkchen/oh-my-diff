@@ -61,7 +61,7 @@ def run(archive, sha256, upstream, output):
                 error = call([*install[:7], "0" * 64, *install[8:]], environment, True)
                 assert "SHA-256 mismatch" in error and not prefix.exists()
             call(install, environment, parse=False)
-            status = call([bin_dir / "omd-package", "status"], environment)
+            status = call([bin_dir / "omd-package", "status", "--json"], environment)
             assert status["profile"] == profile and status["package_control"] == str(bin_dir / "omd-package")
             assert status["author"]["files"] and (bin_dir / "omd-mod-author").is_file()
             assert {item["id"] for item in status["packages"] if item["installed"]} == set(lean_profiles.profile_packages(profile))

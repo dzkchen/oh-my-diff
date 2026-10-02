@@ -149,7 +149,7 @@ impl HostConfig {
         let config = match std::fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.is_file() && metadata.len() <= 262_144 => {
                 serde_json::from_slice::<Self>(&std::fs::read(&path).map_err(|e| e.to_string())?)
-                    .map_err(|error| format!("invalid {HOST_CONFIG}: {error}"))?
+                    .map_err(|error| format!("invalid {}: {error}", path.display()))?
             }
             Ok(_) => return Err(format!("{HOST_CONFIG} must be a bounded regular file")),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::default(),

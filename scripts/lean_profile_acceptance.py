@@ -75,7 +75,7 @@ def run(artifact_dir, upstream, output):
         assert platform["profile_label"] == "OMD Core"
         assert [item["id"] for item in platform["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_mods"]
         assert platform["installed_tools"] == ["omd", "omd-contract"] and platform["plugin_bundle"] is None
-        assert call([base / "platform-bin/omd-package", "status"], env)["profile"] == "platform"
+        assert call([base / "platform-bin/omd-package", "status", "--json"], env)["profile"] == "platform"
         assert "omd COMMAND" in call([base / "platform-bin/omd", "--help"], env)["usage"]
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
         version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
@@ -131,7 +131,7 @@ def run(artifact_dir, upstream, output):
                    "--node", node, "--store", full_store]
         full = command("full", *install)
         assert full["profile_label"] == "OMD+"
-        assert call([base / "full-bin/omd-package", "status"], env)["profile"] == "full"
+        assert call([base / "full-bin/omd-package", "status", "--json"], env)["profile"] == "full"
         active = [item["id"] for item in full["packages"] if item["loaded_by_profile"]]
         assert active == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_workspace"]
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]

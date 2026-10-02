@@ -1,4 +1,4 @@
-import type { CommandResult, Json, KeyAction, KeyName, LayoutNode, ModAPI, PtyRequest, ResourceRef, TerminalComponent, TerminalListRow, TerminalRenderSite, TerminalSelectOption, TerminalTone } from '@oh-my-diff/mod-api';
+import type { CommandResult, Json, KeyAction, KeyName, LayoutNode, ModAPI, PtyRequest, ResourceRef, TerminalComponent, TerminalListRow, TerminalRenderSite, TerminalSelectOption, TerminalTone } from '../../api.d.ts';
 
 type Kind = 'chat' | 'tree' | 'viewer' | 'shell' | 'diff' | 'site' | 'browser';
 type Pane = { kind: Kind; cwd?: string; argv?: string[]; site?: string; path?: string; session?: string };

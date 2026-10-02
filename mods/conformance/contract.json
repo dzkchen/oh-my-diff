@@ -562,7 +562,7 @@
       "group": "tool",
       "decision": "One-shot sandboxed commands",
       "observe": "the result reports exit status, bounded output, timing, captured stdout digest and the program hash; snapshot commands return candidate-bound host execution evidence",
-      "alter": "`sha256` pins the program; `write`, `network` and `unix_sockets` widen only with `fs.write` and `network`; guarded writes recheck bounded command output and named path access under the host operation guard",
+      "alter": "`sha256` pins the program; `write`, `network` and `unix_sockets` widen only with `fs.write`, `network` and `unix_sockets`; guarded writes recheck bounded command output and named path access under the host operation guard",
       "replace": null,
       "timing": "any tool, command or lifecycle callback",
       "ownership": "mod: program and arguments; host: resolution, sandbox, environment, limits and cancellation",
@@ -571,7 +571,8 @@
       "covers": {
         "capabilities": [
           "exec",
-          "network"
+          "network",
+          "unix_sockets"
         ],
         "events": [],
         "replacements": [],
@@ -1278,7 +1279,7 @@
       "group": "coordination",
       "decision": "Package controls",
       "observe": "`packages.list` (every store selection with the session's effective, pending and failed state) and `packages.preview`",
-      "alter": "`packages.apply` installs, updates, removes, rolls back, enables, disables or re-trusts an edited selection after a native confirmation; `packages.reload` revalidates every selection",
+      "alter": "`packages.apply` installs, updates, removes, rolls back, enables, disables or re-trusts an edited selection after a native confirmation; `packages.reload` revalidates every selection; `settings.write` saves schema-checked settings for the caller, or with `packages` for another mod, and redraws at once",
       "replace": null,
       "timing": "user contexts; changes apply at the next boundary",
       "ownership": "mod: request; host: previewed plan, confirmation, trust and lock",
@@ -1294,14 +1295,16 @@
           "packages.list",
           "packages.preview",
           "packages.apply",
-          "packages.reload"
+          "packages.reload",
+          "settings.write"
         ]
       },
       "evidence": [
         "patch:install_enable_disable_and_remove_through_previewed_controls",
         "patch:stale_previews_and_invalid_requests_are_refused",
         "patch:dependency_trees_preview_every_grant_and_install_as_confirmed",
-        "patch:trusted_selections_toggle_retrust_and_report_session_state"
+        "patch:trusted_selections_toggle_retrust_and_report_session_state",
+        "rust:settings_write_merges_schema_checked_values_over_defaults"
       ],
       "replace_note": null
     },

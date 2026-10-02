@@ -207,6 +207,7 @@ async function copyExamples(directory) {
 
 function checkProject(directory) {
   command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
+  stripTypeScriptTypes(readFileSync(join(directory, 'index.ts'), 'utf8'));
 }
 
 function trustPackage(store, directory) {

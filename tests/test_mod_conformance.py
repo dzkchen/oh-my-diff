@@ -49,7 +49,7 @@ class ContractTests(unittest.TestCase):
                 self.assertNotRegex(source, r"\b__omd\w*")
                 self.assertNotIn("globalThis", source)
                 body = "\n".join(line for line in source.splitlines() if not line.startswith("import "))
-                for symbol in set(re.findall(r"\bapi\.(\w+)", body)):
+                for symbol in set(re.findall(r"(?<![\w./])api\.(\w+)", body)):
                     self.assertIn(symbol, published)
                 self.assertNotIn(manifest["id"], rust, "a first-party mod is named in host source")
 

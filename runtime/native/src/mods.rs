@@ -154,6 +154,27 @@ struct Mods {
     turns: Mutex<BTreeMap<String, TurnRecord>>,
     sessions: Mutex<BTreeMap<String, std::sync::Weak<Session>>>,
     workspace_before: Mutex<BTreeMap<String, Result<codex_omd::WorkspaceIndex, String>>>,
+    worktrees: Mutex<BTreeMap<std::path::PathBuf, Arc<Host>>>,
+}
+
+impl Mods {
+    fn host_for(&self, cwd: &std::path::Path) -> Option<Arc<Host>> {
+        if cwd == self.host.repository {
+            return Some(self.host.clone());
+        }
+        let cwd = cwd.canonicalize().ok()?;
+        let mut worktrees = self.worktrees.lock().ok()?;
+        if let Some(host) = worktrees.get(&cwd) {
+            return Some(host.clone());
+        }
+        codex_omd::app_routes::session_roots(&self.host.repository)
+            .contains(&cwd)
+            .then(|| {
+                let host = Arc::new(self.host.for_worktree(cwd.clone()));
+                worktrees.insert(cwd, host.clone());
+                host
+            })
+    }
 }
 
 impl std::ops::Deref for Mods {
@@ -271,6 +292,7 @@ pub(super) fn install(
         .map_err(|e| e.to_string())?;
     let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
         .map_err(|e| e.to_string())?;
+    let _ = host.persist_json("mod-status.json", &runtime.status());
     let runtime = Arc::new(Mutex::new(runtime));
     host.accounts.install_mod_runtime(runtime.clone());
     let views = Arc::new(view::Views::new());
@@ -288,6 +310,7 @@ pub(super) fn install(
         turns: Mutex::new(BTreeMap::new()),
         sessions: Mutex::new(BTreeMap::new()),
         workspace_before: Mutex::new(BTreeMap::new()),
+        worktrees: Mutex::new(BTreeMap::new()),
     });
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
@@ -594,7 +617,7 @@ impl Core {
             }
             self.event(
                 "workspace_change",
-                json!({"repository":self.host.repository,"source":source,"call_id":call_id,
+                json!({"repository":lead.host.repository,"source":source,"call_id":call_id,
                     "changes":changes,"status":status,"reason":reason}),
                 (lead.owner == "lead").then_some(lead),
             )
@@ -607,7 +630,7 @@ impl Core {
             if lead.owner != "lead" {
                 return;
             }
-            for recorded in codex_omd::take_workspace_changes(&self.host.repository) {
+            for recorded in codex_omd::take_workspace_changes(&lead.host.repository) {
                 self.workspace_change(lead, recorded.source, None, recorded.changes)
                     .await;
             }
@@ -650,7 +673,9 @@ impl Mods {
     ) -> Result<(), String> {
         let compaction = runtime.event(
             "compaction",
-            json!({"token_limit":config.model_auto_compact_token_limit,"context_window":config.model_context_window}),
+            json!({"token_limit":config.model_auto_compact_token_limit
+                .or_else(|| config.model_context_window.map(|window| window * 9 / 10)),
+                "context_window":config.model_context_window}),
         );
         let mut selected: Option<(String, Option<String>)> = None;
         for (id, result) in compaction {
@@ -869,6 +894,13 @@ impl codex_extension_api::ConfigContributor<Config> for Mods {
 }
 
 impl TurnLifecycleContributor for Mods {
+    fn turn_start_phase(
+        &self,
+        _thread_store: &codex_extension_api::ExtensionData,
+    ) -> codex_extension_api::TurnStartPhase {
+        codex_extension_api::TurnStartPhase::RegularTaskStart
+    }
+
     fn on_turn_abort<'a>(
         &'a self,
         input: codex_extension_api::TurnAbortInput<'a>,
@@ -1072,7 +1104,7 @@ impl TurnLifecycleContributor for Mods {
                 .presentation(&lead.thread.to_string(), Some("started"));
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
-            let session_repository = self.host.repository.clone();
+            let session_repository = lead.host.repository.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 if let Ok(mut runtime) = runtime.lock() {
                     runtime.turn_boundary();
@@ -1142,16 +1174,16 @@ impl ThreadLifecycleContributor<Config> for Mods {
             let Ok(thread) = ThreadId::from_string(input.thread_store.level_id()) else {
                 return;
             };
-            if input.config.cwd.as_path() != self.host.repository {
+            let Some(host) = self.host_for(input.config.cwd.as_path()) else {
                 self.views.diagnostic(
                     &self.host,
                     "session",
                     Some(format!(
-                        "Mods are inactive for thread {thread}: its working directory is not the launch repository"
+                        "Mods are inactive for thread {thread}: its working directory is neither the launch repository nor one of its worktrees"
                     )),
                 );
                 return;
-            }
+            };
             if self
                 .host
                 .accounts
@@ -1180,7 +1212,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
             };
             let session = match parent_session {
                 Some(session) => session,
-                None => match self.host.open_session(
+                None => match host.open_session(
                     thread,
                     input
                         .thread_store
@@ -1199,11 +1231,10 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 },
             };
             let route = (owner == "lead")
-                .then(|| self.host.lead_route(input.config))
+                .then(|| host.lead_route(input.config))
                 .flatten();
             if let Err(error) =
-                self.host
-                    .enroll(thread, &session, &owner, route.as_ref(), Some(input.config))
+                host.enroll(thread, &session, &owner, route.as_ref(), Some(input.config))
             {
                 self.views.diagnostic(
                     &self.host,
@@ -1222,7 +1253,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 })
                 .await
                 .unwrap_or_default();
-                let mut resolved = contract::SessionContract::resolve(&self.host, &documents);
+                let mut resolved = contract::SessionContract::resolve(&host, &documents);
                 if let Err(error) = resolved.restore(&session.contract_state) {
                     resolved.invalidate(error);
                 }
@@ -1239,7 +1270,7 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 permission_profile: Arc::new(std::sync::Mutex::new(
                     input.config.permissions.effective_permission_profile(),
                 )),
-                host: self.host.clone(),
+                host,
                 session,
                 thread,
                 owner: owner.clone(),
@@ -1368,7 +1399,7 @@ impl ToolLifecycleContributor for Mods {
                 arguments,
             );
             let runtime = self.runtime.clone();
-            let repository = self.host.repository.clone();
+            let repository = lead.host.repository.clone();
             let snapshot = tokio::task::spawn_blocking(move || {
                 let observed = runtime
                     .lock()
@@ -1537,7 +1568,7 @@ impl ToolLifecycleContributor for Mods {
                 .ok()
                 .and_then(|mut snapshots| snapshots.remove(input.call_id));
             if let Some(before) = before {
-                let repository = self.host.repository.clone();
+                let repository = lead.host.repository.clone();
                 let changes = tokio::task::spawn_blocking(move || {
                     let after = codex_omd::WorkspaceIndex::capture(
                         &repository,

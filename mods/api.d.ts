@@ -1,7 +1,7 @@
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
-  | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
+  | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
   | 'pty' | 'history' | 'outputs';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
@@ -128,7 +128,7 @@ export type TurnActivity = {
   files: { path: string; before: string | null; after: string | null; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external' }[];
   truncated: boolean;
 };
-export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'selection'; installed: boolean; enabled: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[] };
+export type PackageState = { id: string; kind: 'mod'; version: string; description: string | null; scope: 'user' | 'project'; path: string | null; source: 'local' | 'repository' | 'package' | 'selection'; installed: boolean; enabled: boolean; effective: boolean; pending: 'reload' | null; failed: string | null; api: string; compatible: boolean; grants: string[]; conflicts: string[]; settings_schema: Json; settings: { [key: string]: Json } };
 export type PackageSource = { kind: 'local'; path: string } | { kind: 'repository'; repository: string; revision: string; subdirectory?: string } | { kind: 'package'; index: string; id: string; version: string };
 export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollback' | 'enable' | 'disable' | 'trust'; id?: string; source?: PackageSource; index?: string; scope?: 'user' | 'project' };
 export type KeymapAction = `${string}.${string}`;
@@ -207,6 +207,7 @@ export interface HostOperations {
   'packages.preview': { arguments: PackageRequest & { expected_generation?: number }; result: { action: string; id: string; changes: Json; grants_added: string[]; conflicts: string[] } };
   'packages.apply': { arguments: PackageRequest & { expected_generation: number }; result: { status: 'applied'; generation: number } | Declined };
   'packages.reload': { arguments: null; result: { generation: number; failed: string[]; applies: 'next_boundary' } };
+  'settings.write': { arguments: { id?: string; values: { [key: string]: Json } }; result: { settings: { [key: string]: Json } } };
   'terminal.open': { arguments: { url: string } | { path: string } | { path: string; line?: number; editor: true }; result: { opened: true } | Declined };
   'terminal.prompt': { arguments: { kind: 'confirm'; title: string; message: string } | { kind: 'text'; title: string; message: string; masked?: boolean }; result: { status: 'accepted'; value?: string } | Declined };
   'terminal.pty': { arguments: PtyRequest; result: { session: string; running: true } | { written: number } | { text: string; running: boolean; exit_code: number | null } | { stopped: true } | Declined };

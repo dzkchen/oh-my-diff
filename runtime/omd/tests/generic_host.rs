@@ -95,6 +95,14 @@ fn caller<'a>(capabilities: &'a [String], environment: &'a [String], origin: Ori
     }
 }
 
+// Tests share the `fixture` caller, so parallel exec runs would hit its concurrency cap.
+static EXEC: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn exec_slot() -> std::sync::MutexGuard<'static, ()> {
+    EXEC.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn owner() -> PolicyOwner {
     PolicyOwner {
         id: "fixture".into(),
@@ -110,6 +118,7 @@ fn strings(values: &[&str]) -> Vec<String> {
 
 #[test]
 fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
+    let _exec = exec_slot();
     let (_temp, repository, data, authority) = setup();
     let active = || true;
     let host = Host {
@@ -186,6 +195,7 @@ fn exec_output_artifact_is_paged_and_bound_to_the_caller() {
 
 #[test]
 fn exec_output_store_evicts_oldest_artifacts_instead_of_failing() {
+    let _exec = exec_slot();
     let (_temp, _repository, data, authority) = setup();
     let active = || true;
     let host = Host {
@@ -227,6 +237,7 @@ fn exec_output_store_evicts_oldest_artifacts_instead_of_failing() {
 
 #[test]
 fn exec_output_quota_spans_every_thread_and_source_of_a_mod() {
+    let _exec = exec_slot();
     let (_temp, _repository, data, authority) = setup();
     let active = || true;
     let host = Host {
@@ -273,6 +284,7 @@ fn exec_output_quota_spans_every_thread_and_source_of_a_mod() {
 
 #[test]
 fn exec_guards_recheck_output_before_a_write() {
+    let _exec = exec_slot();
     let (_temp, repository, data, authority) = setup();
     let active = || true;
     let host = Host {
@@ -338,6 +350,7 @@ fn exec_guards_recheck_output_before_a_write() {
 
 #[test]
 fn exec_guards_fail_closed_on_command_failure_and_truncation() {
+    let _exec = exec_slot();
     let (_temp, repository, data, authority) = setup();
     let active = || true;
     let host = Host {
@@ -375,6 +388,7 @@ fn exec_guards_fail_closed_on_command_failure_and_truncation() {
 
 #[test]
 fn workspace_access_checks_named_paths_and_guarded_write_authority() {
+    let _exec = exec_slot();
     let (_temp, repository, data, authority) = setup();
     let active = || true;
     let host = Host {
@@ -450,6 +464,7 @@ fn workspace_access_checks_named_paths_and_guarded_write_authority() {
 
 #[test]
 fn exec_run_admits_only_inherited_user_sockets() {
+    let _exec = exec_slot();
     let (temp, repository, data, authority) = setup();
     let active = || true;
     let host = Host {
@@ -464,7 +479,7 @@ fn exec_run_admits_only_inherited_user_sockets() {
     let _inside = std::os::unix::net::UnixListener::bind(&inside).unwrap();
     let name = "EXEC_SOCKET_FIXTURE";
     let environment = strings(&[name]);
-    let capabilities = strings(&["exec", "network"]);
+    let capabilities = strings(&["exec", "unix_sockets"]);
     let run = |capabilities: &[String], name: &str| {
         host.call(
             &caller(capabilities, &environment, Origin::Tool),
@@ -473,8 +488,8 @@ fn exec_run_admits_only_inherited_user_sockets() {
         )
     };
     assert_eq!(
-        run(&strings(&["exec"]), name).unwrap_err(),
-        "capability_denied: network"
+        run(&strings(&["exec", "network"]), name).unwrap_err(),
+        "capability_denied: unix_sockets"
     );
     assert_eq!(
         run(&capabilities, "UNDECLARED").unwrap_err(),
@@ -506,6 +521,7 @@ fn exec_run_admits_only_inherited_user_sockets() {
 
 #[test]
 fn exec_run_bounds_program_environment_output_time_and_authority() {
+    let _exec = exec_slot();
     let (_temp, repository, data, authority) = setup();
     let active = || true;
     let host = Host {

@@ -271,6 +271,17 @@ def status(prefix, bin_dir):
             "installer_configured_optional_services": [], "shared_state": record["shared_state"]}
 
 
+def status_summary(result):
+    lines = [f"{result['product']} {result['profile_label']} · mode {result['activation']} · mod API {result['mod_api']}",
+             f"store {result['store']}"]
+    for package in result["packages"]:
+        state = "failed: " + package["error"] if package["error"] else "active" if package["active"] else (
+            "enabled" if package["enabled_in_store"] else "installed" if package["installed"] else "missing")
+        lines.append(f"  {package['id']}: {state}")
+    lines.append("omd-package status --json prints every detail")
+    return "\n".join(lines)
+
+
 def activate(prefix, bin_dir, selection):
     record = load(prefix)
     check(record, bin_dir)
@@ -593,11 +604,11 @@ def uninstall(prefix, bin_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Install and inspect the local OMD Core and OMD+ candidate profiles")
-    parser.add_argument("--prefix", type=Path, required=True)
-    parser.add_argument("--bin-dir", type=Path, required=True)
-    commands = parser.add_subparsers(dest="command", required=True)
-    install_parser = commands.add_parser("install")
+    parser = argparse.ArgumentParser(prog="omd-package", description="Install, inspect and switch the OMD Core and OMD+ profiles")
+    parser.add_argument("--prefix", type=Path, required=True, help=argparse.SUPPRESS)
+    parser.add_argument("--bin-dir", type=Path, required=True, help=argparse.SUPPRESS)
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    install_parser = commands.add_parser("install", help="install a profile (used by install.sh)")
     install_parser.add_argument("--profile", choices=PROFILE_LABELS, required=True,
                                 help="platform: OMD Core; full: OMD+")
     install_parser.add_argument("--binary", type=Path, required=True)
@@ -608,11 +619,12 @@ def main():
     install_parser.add_argument("--node", type=Path, required=True)
     install_parser.add_argument("--store", type=Path, required=True)
     install_parser.add_argument("--attach-store", action="store_true")
-    commands.add_parser("status")
-    activate_parser = commands.add_parser("activate")
+    status_parser = commands.add_parser("status", help="show the installed profile and its mods")
+    status_parser.add_argument("--json", action="store_true", help="print the full status as JSON")
+    activate_parser = commands.add_parser("activate", help="switch between OMD Core, OMD+ and upstream-style direct mode")
     activate_parser.add_argument("selection", choices=("platform", "full", "direct"),
                                  help="platform: OMD Core; full: OMD+; direct: upstream-style behavior")
-    mod_parser = commands.add_parser("mod")
+    mod_parser = commands.add_parser("mod", help="enable or disable one profile mod")
     mod_parser.add_argument("action", choices=("enable", "disable"))
     mod_parser.add_argument("identifier", choices=PACKAGES)
     for name in ROUTES:
@@ -625,13 +637,16 @@ def main():
                 route_parser.add_argument(f"--{flag}")
             route_parser.add_argument("--reasoning", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
-    commands.add_parser("uninstall")
+    commands.add_parser("uninstall", help="remove this installation and its launchers")
     args = parser.parse_args()
     prefix, bin_dir = support.validate_locations(args.prefix, args.bin_dir)
     if args.command == "install":
         result = install(args)
     elif args.command == "status":
         result = status(prefix, bin_dir)
+        if not args.json:
+            print(status_summary(result))
+            return
     elif args.command == "activate":
         result = activate(prefix, bin_dir, args.selection)
     elif args.command == "mod":

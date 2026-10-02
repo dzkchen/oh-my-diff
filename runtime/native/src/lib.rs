@@ -145,7 +145,10 @@ pub fn install(
         return Err("the mod store must be canonical and outside the repository".into());
     }
     let stamp = host_config_stamp(&root);
-    let config = HostConfig::load(&root, &repository)?;
+    let config = match HostConfig::load(&root, &repository) {
+        Ok(config) => config,
+        Err(error) => return inactive(&root, error),
+    };
     accounting::set_credential_root(root.clone());
     let host = Arc::new(Host {
         repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
@@ -164,7 +167,14 @@ pub fn install(
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or_default(),
     });
-    mods::install(registry, host)
+    let root = host.root.clone();
+    mods::install(registry, host).or_else(|error| inactive(&root, error))
+}
+
+/// Leaves mods inactive and records why, so clients can report it and offer a state reset.
+fn inactive(root: &std::path::Path, error: String) -> Result<(), String> {
+    let status = serde_json::json!({"activation_error": error, "mods": [], "rejected": []});
+    persist_view(root, "mod-status.json", status.to_string().as_bytes())
 }
 
 fn persist(
@@ -223,6 +233,29 @@ fn request_route(route: &Route) -> accounting::RequestRoute {
 }
 
 impl Host {
+    /// The same host serving a linked worktree of the launch repository as its own checkout.
+    fn for_worktree(&self, repository: PathBuf) -> Host {
+        self.route_config();
+        let routes = self
+            .routes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Host {
+            repository_identity: execution::hash(repository.as_os_str().as_encoded_bytes()),
+            routes: std::sync::Mutex::new(RouteTable {
+                stamp: routes.stamp,
+                config: routes.config.clone(),
+                error: routes.error.clone(),
+            }),
+            root: self.root.clone(),
+            repository,
+            config: self.config.clone(),
+            accounts: self.accounts.clone(),
+            manager: self.manager.clone(),
+            epoch: self.epoch,
+        }
+    }
+
     fn route_config(&self) -> (Arc<HostConfig>, Option<String>) {
         let stamp = host_config_stamp(&self.root);
         let mut table = self
@@ -285,6 +318,17 @@ impl Host {
             || sessions.canonicalize().map_err(|e| e.to_string())? != sessions
         {
             return Err("session_store_not_canonical".into());
+        }
+        if !resumed {
+            let current = thread.to_string();
+            // Ledgers hold a resumable thread's spend allowance, so only evidence ages out.
+            codex_omd::data_store::prune_thread_directories(&sessions, |name| {
+                name == current || name.starts_with("ledger-")
+            });
+            codex_omd::data_store::prune_thread_directories(
+                &self.root.join("data").join("threads"),
+                |name| name == current,
+            );
         }
         let task = Arc::new(ledger::open(
             &sessions,

@@ -95,7 +95,24 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
         None,
     )
     .unwrap();
-    assert_eq!(wait(receiver, &|| false).unwrap_err(), "callback_cancelled");
+    assert_eq!(
+        wait(receiver, &|| false, None).unwrap_err(),
+        "callback_cancelled"
+    );
+    let receiver = submit(
+        "m",
+        "terminal.notify",
+        json!({"title": "t"}),
+        event,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(
+        wait(receiver, &|| true, Some(std::time::Instant::now()))
+            .unwrap_err()
+            .starts_with("callback_execution_budget")
+    );
     drop(replaced);
     assert!(hub().surface.is_none());
 

@@ -868,6 +868,8 @@ pub struct ModViewSnapshot {
     pub owner: Option<String>,
     #[serde(default)]
     pub contributors: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub component_owners: BTreeMap<String, String>,
     #[serde(default)]
     pub input: Value,
     #[serde(default)]
@@ -1234,19 +1236,18 @@ impl ModComponent {
 }
 
 impl ModRenderSite {
-    fn valid(&self, patch: bool, ids: &mut BTreeSet<String>) -> bool {
+    fn invalid(&self, patch: bool, ids: &mut BTreeSet<String>) -> Option<String> {
         let mut count = 0;
         let mut slots = 0;
-        let valid = self
+        if let Some(index) = self
             .components
             .iter()
-            .all(|component| component.validate(1, &mut count, ids, &mut slots));
-        valid
-            && if patch && self.mode == ModSiteMode::Wrap {
-                slots == 1
-            } else {
-                slots == 0
-            }
+            .position(|component| !component.validate(1, &mut count, ids, &mut slots))
+        {
+            return Some(format!("components[{index}]"));
+        }
+        let expected = usize::from(patch && self.mode == ModSiteMode::Wrap);
+        (slots != expected).then(|| "slot".to_owned())
     }
 }
 
@@ -1300,12 +1301,33 @@ fn valid_status(status: &[String]) -> bool {
             .all(|segment| !segment.is_empty() && visible(segment, 40))
 }
 
-fn valid_sites(sites: &BTreeMap<String, ModRenderSite>, patch: bool) -> bool {
+fn invalid_sites(sites: &BTreeMap<String, ModRenderSite>, patch: bool) -> Option<String> {
+    if sites.len() > 8 {
+        return Some("sites".into());
+    }
     let mut ids = BTreeSet::new();
-    sites.len() <= 8
-        && sites
-            .iter()
-            .all(|(name, site)| valid_site(name) && site.valid(patch, &mut ids))
+    sites.iter().find_map(|(name, site)| {
+        if !valid_site(name) {
+            return Some(format!("sites.{name}"));
+        }
+        site.invalid(patch, &mut ids)
+            .map(|field| format!("sites.{name}.{field}"))
+    })
+}
+
+/// Every component id rendered in these sites, including nested children.
+pub fn site_component_ids(sites: &BTreeMap<String, ModRenderSite>) -> BTreeSet<String> {
+    component_ids_of(sites.values().flat_map(|site| &site.components))
+}
+
+pub fn component_ids_of<'a>(
+    components: impl IntoIterator<Item = &'a ModComponent>,
+) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for component in components {
+        component_ids(component, &mut ids);
+    }
+    ids
 }
 
 fn component_ids(component: &ModComponent, ids: &mut BTreeSet<String>) {
@@ -1439,42 +1461,76 @@ impl ModThemePatch {
 impl ModViewPatch {
     pub fn parse(value: Value) -> Result<Self> {
         let patch: Self = serde_json::from_value(value)?;
-        if patch
-            .session_title_suffix
-            .as_ref()
-            .is_some_and(|text| !visible(text, 80))
-            || patch
-                .greeting
-                .as_ref()
-                .is_some_and(|text| !visible(text, 256))
-            || patch.sidebar_width.is_some_and(|width| width > 60)
-            || patch
-                .title
-                .as_ref()
-                .is_some_and(|title| !visible(title, 1024))
-            || !valid_sites(&patch.sites, true)
-            || !valid_status(&patch.status)
-            || !valid_bindings(&patch.keybindings)
-            || !valid_templates(&patch.message_template, &patch.tool_template)
-            || patch
-                .theme
-                .syntax
-                .as_ref()
-                .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
-            || patch
-                .placeholder
-                .as_ref()
-                .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80))
-            || !valid_glyphs(&patch.theme.glyphs)
-            || patch.layout.as_ref().is_some_and(|layout| !layout.valid())
-            || patch
-                .backdrop
-                .as_ref()
-                .is_some_and(|backdrop| !backdrop.valid())
-            || !valid_surface_styles(&patch.surface_styles)
-            || serde_json::to_vec(&patch)?.len() > 16_384
-        {
-            return Err(failure("invalid_terminal_patch"));
+        let invalid = [
+            (
+                "session_title_suffix",
+                patch
+                    .session_title_suffix
+                    .as_ref()
+                    .is_some_and(|text| !visible(text, 80)),
+            ),
+            (
+                "greeting",
+                patch
+                    .greeting
+                    .as_ref()
+                    .is_some_and(|text| !visible(text, 256)),
+            ),
+            (
+                "sidebar_width",
+                patch.sidebar_width.is_some_and(|width| width > 60),
+            ),
+            (
+                "title",
+                patch
+                    .title
+                    .as_ref()
+                    .is_some_and(|title| !visible(title, 1024)),
+            ),
+            ("status", !valid_status(&patch.status)),
+            ("keybindings", !valid_bindings(&patch.keybindings)),
+            (
+                "templates",
+                !valid_templates(&patch.message_template, &patch.tool_template),
+            ),
+            (
+                "theme.syntax",
+                patch
+                    .theme
+                    .syntax
+                    .as_ref()
+                    .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128)),
+            ),
+            (
+                "placeholder",
+                patch
+                    .placeholder
+                    .as_ref()
+                    .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80)),
+            ),
+            ("theme.glyphs", !valid_glyphs(&patch.theme.glyphs)),
+            (
+                "layout",
+                patch.layout.as_ref().is_some_and(|layout| !layout.valid()),
+            ),
+            (
+                "backdrop",
+                patch
+                    .backdrop
+                    .as_ref()
+                    .is_some_and(|backdrop| !backdrop.valid()),
+            ),
+            (
+                "surface_styles",
+                !valid_surface_styles(&patch.surface_styles),
+            ),
+            ("size", serde_json::to_vec(&patch)?.len() > 65_536),
+        ]
+        .into_iter()
+        .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
+        .or_else(|| invalid_sites(&patch.sites, true));
+        if let Some(field) = invalid {
+            return Err(failure(format!("invalid_terminal_patch: {field}")));
         }
         Ok(patch)
     }
@@ -1618,49 +1674,83 @@ impl ModViewPatch {
 impl ModView {
     pub fn parse(value: Value) -> Result<Self> {
         let view: Self = serde_json::from_value(value)?;
-        if view
-            .session_title_suffix
-            .as_ref()
-            .is_some_and(|text| !visible(text, 80))
-            || view
-                .greeting
-                .as_ref()
-                .is_some_and(|text| !visible(text, 256))
-            || view.sidebar_width > 60
-            || view.panels.len() > 8
-            || view
-                .title
-                .as_ref()
-                .is_some_and(|title| !visible(title, 1024))
-            || !valid_templates(&view.message_template, &view.tool_template)
-            || view.panels.iter().any(|panel| !panel.valid(32))
-            || [&view.header, &view.footer]
-                .into_iter()
-                .flatten()
-                .any(|panel| !panel.valid(3))
-            || !valid_sites(&view.sites, false)
-            || !valid_status(&view.status)
-            || !valid_bindings(&view.keybindings)
-            || !valid_focus_targets(&view.keybindings, &view.sites)
-            || view
-                .theme
-                .syntax
-                .as_ref()
-                .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128))
-            || view
-                .placeholder
-                .as_ref()
-                .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80))
-            || !valid_glyphs(&view.theme.glyphs)
-            || view.layout.as_ref().is_some_and(|layout| !layout.valid())
-            || view
-                .backdrop
-                .as_ref()
-                .is_some_and(|backdrop| !backdrop.valid())
-            || !valid_surface_styles(&view.surface_styles)
-            || serde_json::to_vec(&view)?.len() > 16_384
-        {
-            return Err(failure("invalid_terminal_view"));
+        let invalid = [
+            (
+                "session_title_suffix",
+                view.session_title_suffix
+                    .as_ref()
+                    .is_some_and(|text| !visible(text, 80)),
+            ),
+            (
+                "greeting",
+                view.greeting
+                    .as_ref()
+                    .is_some_and(|text| !visible(text, 256)),
+            ),
+            ("sidebar_width", view.sidebar_width > 60),
+            (
+                "panels",
+                view.panels.len() > 8 || view.panels.iter().any(|panel| !panel.valid(32)),
+            ),
+            (
+                "title",
+                view.title
+                    .as_ref()
+                    .is_some_and(|title| !visible(title, 1024)),
+            ),
+            (
+                "templates",
+                !valid_templates(&view.message_template, &view.tool_template),
+            ),
+            (
+                "header",
+                view.header.as_ref().is_some_and(|panel| !panel.valid(3)),
+            ),
+            (
+                "footer",
+                view.footer.as_ref().is_some_and(|panel| !panel.valid(3)),
+            ),
+            ("status", !valid_status(&view.status)),
+            ("keybindings", !valid_bindings(&view.keybindings)),
+            (
+                "keybindings.focus",
+                !valid_focus_targets(&view.keybindings, &view.sites),
+            ),
+            (
+                "theme.syntax",
+                view.theme
+                    .syntax
+                    .as_ref()
+                    .is_some_and(|syntax| syntax.is_empty() || !visible(syntax, 128)),
+            ),
+            (
+                "placeholder",
+                view.placeholder
+                    .as_ref()
+                    .is_some_and(|placeholder| placeholder.is_empty() || !visible(placeholder, 80)),
+            ),
+            ("theme.glyphs", !valid_glyphs(&view.theme.glyphs)),
+            (
+                "layout",
+                view.layout.as_ref().is_some_and(|layout| !layout.valid()),
+            ),
+            (
+                "backdrop",
+                view.backdrop
+                    .as_ref()
+                    .is_some_and(|backdrop| !backdrop.valid()),
+            ),
+            (
+                "surface_styles",
+                !valid_surface_styles(&view.surface_styles),
+            ),
+            ("size", serde_json::to_vec(&view)?.len() > 262_144),
+        ]
+        .into_iter()
+        .find_map(|(field, invalid)| invalid.then(|| field.to_owned()))
+        .or_else(|| invalid_sites(&view.sites, false));
+        if let Some(field) = invalid {
+            return Err(failure(format!("invalid_terminal_view: {field}")));
         }
         Ok(view)
     }
@@ -1679,7 +1769,7 @@ impl ModViewSnapshot {
     }
 
     pub fn read(path: &Path) -> Result<Self> {
-        let value: Value = serde_json::from_slice(&store::read(path, 131_072)?)?;
+        let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
         let mut snapshot: Self = serde_json::from_value(value)?;
         snapshot.view = ModView::parse(serde_json::to_value(&snapshot.view)?)?;
         if snapshot

@@ -181,7 +181,10 @@ pub(super) async fn finish(
             "turn-usage-{}.json",
             crate::execution::hash(format!("{}:{turn}", lead.thread).as_bytes())
         ),
-        &json!({"scope":"session","before":cursor.usage_start,"after":lead.session.task.cost_capture().ok()}),
+        &usage_delta(
+            &cursor.usage_start,
+            &json!(lead.session.task.cost_capture().ok()),
+        ),
     )?;
     let root = lead.host.root.clone();
     let mut results = BTreeMap::new();
@@ -210,4 +213,32 @@ pub(super) async fn finish(
         results.insert(owner, json!({"evidence":reference}));
     }
     Ok(results)
+}
+
+/// This turn's usage: counters minus their turn-start values and only attempts made or changed since.
+fn usage_delta(before: &Value, after: &Value) -> Value {
+    let Some(fields) = after.as_object() else {
+        return json!({"scope": "turn", "usage": after});
+    };
+    let mut delta = serde_json::Map::from_iter([("scope".to_owned(), json!("turn"))]);
+    for (key, value) in fields {
+        let value = match (value, &before[key]) {
+            (Value::Number(after), Value::Number(before)) if key != "schema" => {
+                match (after.as_u64(), before.as_u64()) {
+                    (Some(after), Some(before)) => json!(after.saturating_sub(before)),
+                    _ => value.clone(),
+                }
+            }
+            (Value::Array(after), Value::Array(before)) => Value::Array(
+                after
+                    .iter()
+                    .filter(|item| !before.contains(item))
+                    .cloned()
+                    .collect(),
+            ),
+            _ => value.clone(),
+        };
+        delta.insert(key.clone(), value);
+    }
+    Value::Object(delta)
 }

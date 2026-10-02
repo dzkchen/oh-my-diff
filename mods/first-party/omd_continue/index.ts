@@ -1,4 +1,4 @@
-import type { ModAPI, TurnActivity } from '@oh-my-diff/mod-api';
+import type { ModAPI, TurnActivity } from '../../api.d.ts';
 
 const INSTRUCTION = 'Resume the interrupted task. First check the workspace, conversation and running processes to find the last completed step, partial edits and side effects. Continue from the first unfinished step without redoing or reverting finished work, then run the relevant verification.';
 

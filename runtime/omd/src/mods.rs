@@ -39,6 +39,7 @@ pub use view::ModTone;
 pub use view::ModView;
 pub use view::ModViewPatch;
 pub use view::ModViewSnapshot;
+pub use view::component_ids_of;
 pub use view::mod_command_reference;
 pub use view::mod_key_name;
 pub use view::valid_glyphs;
@@ -151,12 +152,19 @@ impl InvocationScope {
         self.stack.borrow().iter().any(|item| item == id)
     }
 
-    fn charge_execution(&self, elapsed: Duration) -> Result<()> {
-        let total = self.execution.get().saturating_add(elapsed);
-        self.execution.set(total);
-        if total > Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS) {
+    fn check_execution(&self, elapsed: Duration) -> Result<()> {
+        if self.execution.get().saturating_add(elapsed)
+            > Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS)
+        {
             return Err(failure("callback_execution_budget"));
         }
+        Ok(())
+    }
+
+    fn charge_execution(&self, elapsed: Duration) -> Result<()> {
+        self.check_execution(elapsed)?;
+        self.execution
+            .set(self.execution.get().saturating_add(elapsed));
         Ok(())
     }
 
@@ -342,6 +350,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "packages.preview",
     "packages.apply",
     "packages.reload",
+    "settings.write",
     "terminal.open",
     "terminal.prompt",
     "terminal.pty",
@@ -369,6 +378,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "fs.read",
     "fs.write",
     "network",
+    "unix_sockets",
     "model",
     "agents",
     "store",
@@ -770,18 +780,23 @@ fn source_use(
                 .filter(|declared| *declared == capability)
                 .cloned()
                 .collect::<Vec<_>>();
+            let declared = |name: &str| package.capabilities.iter().any(|cap| cap == name);
             if !used.is_empty()
                 && matches!(
                     operation.as_str(),
                     "exec.run" | "process.start" | "terminal.pty"
                 )
-                && (visible.contains("unix_sockets") || visible.contains("network:"))
-                && package
-                    .capabilities
-                    .iter()
-                    .any(|declared| declared == "network")
+                && visible.contains("network:")
+                && declared("network")
             {
                 used.push("network".to_owned());
+            }
+            if !used.is_empty()
+                && operation == "exec.run"
+                && visible.contains("unix_sockets")
+                && declared("unix_sockets")
+            {
+                used.push("unix_sockets".to_owned());
             }
             used
         };
@@ -1423,10 +1438,43 @@ fn setting_value(value: &Value, definition: &serde_json::Map<String, Value>) -> 
             .is_none_or(|values| values.contains(value))
 }
 
+/// Explicit settings over the schema's `default` values.
+pub fn effective_settings(
+    schema: Option<&Value>,
+    settings: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    let mut effective: BTreeMap<String, Value> = schema
+        .and_then(|schema| schema["properties"].as_object())
+        .into_iter()
+        .flatten()
+        .filter_map(|(name, definition)| Some((name.clone(), definition.get("default")?.clone())))
+        .collect();
+    effective.extend(settings.clone());
+    effective
+}
+
+/// Merges `values` into a mod's stored settings (`null` removes one) and saves them schema-checked.
+pub fn write_settings(store: &ModStore, id: &str, values: &Value) -> Result<Value> {
+    let values = values
+        .as_object()
+        .ok_or_else(|| failure("settings_values_must_be_object"))?;
+    let path = store.selection_status()?["selections"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|selection| selection["id"] == id && selection["effective"] == true)
+        .and_then(|selection| selection["path"].as_str().map(PathBuf::from))
+        .ok_or_else(|| failure(format!("mod_not_enabled: {id}")))?;
+    let settings = store.merge_settings(&path, values)?;
+    let (package, _, _) = store::package(&path)?;
+    Ok(json!({"settings": effective_settings(package.settings_schema.as_ref(), &settings)}))
+}
+
 fn validate_settings(package: &ModPackage, settings: &BTreeMap<String, Value>) -> Result<()> {
     let Some(schema) = &package.settings_schema else {
         return Ok(());
     };
+    let effective = effective_settings(Some(schema), settings);
     let object = schema
         .as_object()
         .ok_or_else(|| failure("invalid_settings_schema"))?;
@@ -1446,7 +1494,7 @@ fn validate_settings(package: &ModPackage, settings: &BTreeMap<String, Value>) -
     {
         if required
             .as_str()
-            .is_none_or(|name| !settings.contains_key(name))
+            .is_none_or(|name| !effective.contains_key(name))
         {
             return Err(failure("required_setting_missing"));
         }
@@ -1479,6 +1527,33 @@ pub struct ModSelection {
     pub settings: BTreeMap<String, Value>,
     #[serde(default = "user_scope")]
     pub scope: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_environment: Vec<String>,
+}
+
+impl ModPackage {
+    pub fn secret_environment(&self) -> Vec<String> {
+        self.exec_environment
+            .iter()
+            .filter(|name| crate::host::secret_like(name))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Refuses secret-like `exec_environment` names the user did not trust by name.
+pub(crate) fn check_secret_environment(package: &ModPackage, trusted: &[String]) -> Result<()> {
+    match package
+        .secret_environment()
+        .into_iter()
+        .find(|name| !trusted.contains(name))
+    {
+        Some(name) => Err(failure(format!(
+            "secret_environment_requires_explicit_trust: {} {name}",
+            package.id
+        ))),
+        None => Ok(()),
+    }
 }
 
 fn user_scope() -> String {
@@ -1501,6 +1576,72 @@ pub struct ModConfiguration {
     pub revision: u64,
     pub node: PathBuf,
     pub mods: Vec<ModSelection>,
+}
+
+impl ModConfiguration {
+    pub fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
+        let mut config: Self = serde_json::from_slice(bytes)
+            .map_err(|error| failure(format!("invalid {}: {error}", path.display())))?;
+        if !config.node.is_file() {
+            config.node = node_on_path().ok_or_else(|| {
+                failure(format!(
+                    "node_unavailable: {} is missing and no node is on PATH",
+                    config.node.display()
+                ))
+            })?;
+        }
+        Ok(config)
+    }
+}
+
+/// Active and failed mod counts from a host status: failed covers erroring and rejected mods.
+pub fn mod_counts(status: &Value) -> (usize, usize) {
+    let mods = status["mods"].as_array().map_or(&[][..], Vec::as_slice);
+    let failed = mods.iter().filter(|item| !item["error"].is_null()).count();
+    let rejected = status["rejected"].as_array().map_or(0, Vec::len);
+    (mods.len() - failed, failed + rejected)
+}
+
+pub fn activation_failures(status: &Value) -> Vec<String> {
+    let mods = status["mods"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            Some(format!(
+                "{}: {}",
+                item["id"].as_str().unwrap_or("mod"),
+                item["error"].as_str()?
+            ))
+        });
+    let rejected = status["rejected"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|item| {
+            format!(
+                "{}: {}",
+                item["id"]
+                    .as_str()
+                    .or_else(|| item["path"].as_str())
+                    .unwrap_or("mod"),
+                item["reason"].as_str().unwrap_or("rejected")
+            )
+        });
+    status["activation_error"]
+        .as_str()
+        .map(str::to_owned)
+        .into_iter()
+        .chain(mods)
+        .chain(rejected)
+        .collect()
+}
+
+/// The first real `node` executable on PATH; version-manager shims resolve to other programs.
+pub fn node_on_path() -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .filter_map(|directory| directory.join("node").canonicalize().ok())
+        .find(|node| node.file_name() == Some("node".as_ref()) && node.is_file())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -1533,6 +1674,8 @@ pub struct ModTerminalView {
     pub owner: Option<String>,
     #[serde(default)]
     pub contributors: Vec<String>,
+    #[serde(default)]
+    pub component_owners: BTreeMap<String, String>,
     #[serde(default)]
     pub diagnostics: Vec<String>,
 }
@@ -1594,7 +1737,21 @@ struct ModTelemetry {
     invocations: u64,
     total_micros: u128,
     last_micros: u128,
+    faults: u32,
+    last_error: Option<String>,
     logs: Vec<Value>,
+}
+
+const MOD_FAULT_LIMIT: u32 = 5;
+
+impl Loaded {
+    fn fault(&mut self, error: String) {
+        self.telemetry.faults = self.telemetry.faults.saturating_add(1);
+        if self.telemetry.faults >= MOD_FAULT_LIMIT && self.error.is_none() {
+            self.error = Some(error.clone());
+        }
+        self.telemetry.last_error = Some(error);
+    }
 }
 
 impl ModTelemetry {
@@ -1634,6 +1791,8 @@ pub struct ModHost {
     virtual_time_ms: Option<u64>,
     dynamic_tools: BTreeMap<String, Vec<ModTool>>,
     checkout: Option<PathBuf>,
+    valid_views: BTreeMap<String, Value>,
+    renders: BTreeMap<String, (String, Value, Instant)>,
 }
 
 enum Access<'a> {
@@ -1924,6 +2083,8 @@ impl ModHost {
             virtual_time_ms: None,
             dynamic_tools: BTreeMap::new(),
             checkout: None,
+            valid_views: BTreeMap::new(),
+            renders: BTreeMap::new(),
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -1990,12 +2151,13 @@ impl ModHost {
     }
 
     pub fn reload(&mut self) -> Result<bool> {
-        let bytes = store::read(&self.store.root.join("mods.json"), 65_536)?;
+        let path = self.store.root.join("mods.json");
+        let bytes = store::read(&path, 65_536)?;
         let hash = digest(&bytes);
         if hash == self.configuration_sha256 {
             return Ok(false);
         }
-        let config: ModConfiguration = serde_json::from_slice(&bytes)?;
+        let config = ModConfiguration::parse(&bytes, &path)?;
         if config.schema != 1 || !config.node.is_absolute() {
             return Err(failure("invalid_mod_configuration"));
         }
@@ -2021,12 +2183,29 @@ impl ModHost {
         let adapters = Self::adapters(&selected);
         let mut next = BTreeMap::new();
         for (id, (selection, package, source)) in selected {
+            // An unchanged trusted selection and adapter keep their inspection; only changed mods run again.
+            if let Some(previous) = self.loaded.get(&id).filter(|previous| {
+                previous.error.is_none()
+                    && previous.adapter.as_ref()
+                        == package
+                            .adapter
+                            .as_deref()
+                            .and_then(|name| adapters.get(name))
+                    && serde_json::to_value(&previous.selection).ok()
+                        == serde_json::to_value(&selection).ok()
+            }) {
+                next.insert(id, previous.clone());
+                continue;
+            }
             let assets = if package.assets.is_empty() {
                 BTreeMap::new()
             } else {
                 let (_, _, hash, files) = store::package_with_assets(&selection.path)?;
                 if hash != selection.sha256 {
-                    return Err(failure(format!("untrusted_source: {}", package.id)));
+                    return Err(failure(format!(
+                        "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
+                        package.id
+                    )));
                 }
                 if files.values().map(String::len).sum::<usize>() > 128 * 1024 {
                     return Err(failure(format!(
@@ -2100,14 +2279,31 @@ impl ModHost {
                     loaded.unused_grants = unused_grants;
                     loaded.unused_environment = unused_environment;
                 }
-                Err(error) => fail(initial, &mut loaded, error)?,
+                // A mod without a working previous version fails alone instead of blocking the reload.
+                Err(error) => fail(
+                    initial
+                        || self
+                            .loaded
+                            .get(&id)
+                            .is_none_or(|previous| previous.error.is_some()),
+                    &mut loaded,
+                    error,
+                )?,
             }
             next.insert(id, loaded);
         }
-        Self::resolve_conflicts(&mut next, initial)?;
-        Self::resolve_services(&mut next, initial)?;
-        Self::resolve_virtual_readers(&mut next, initial)?;
-        let order = Self::resolve_dependencies(&mut next, initial)?;
+        // Mods without a working previous version fail alone; working ones keep reloads transactional.
+        let working: BTreeSet<String> = self
+            .loaded
+            .iter()
+            .filter(|(_, loaded)| loaded.error.is_none())
+            .map(|(id, _)| id.clone())
+            .collect();
+        let lenient = |id: &str| initial || !working.contains(id);
+        Self::resolve_conflicts(&mut next, &lenient)?;
+        Self::resolve_services(&mut next, &lenient)?;
+        Self::resolve_virtual_readers(&mut next, &lenient)?;
+        let order = Self::resolve_dependencies(&mut next, &lenient)?;
         self.selections = (
             config
                 .mods
@@ -2179,7 +2375,10 @@ impl ModHost {
                 }
                 let (package, source, hash) = store::package(&selection.path)?;
                 if hash != selection.sha256 {
-                    return Err(failure(format!("untrusted_source: {}", package.id)));
+                    return Err(failure(format!(
+                        "untrusted_source: {} changed after it was trusted; review it, then re-trust it in /omd or with omd-mod trust",
+                        package.id
+                    )));
                 }
                 let granted: BTreeSet<_> = selection.capabilities.iter().collect();
                 if package.capabilities.iter().any(|c| !granted.contains(c))
@@ -2190,6 +2389,7 @@ impl ModHost {
                 {
                     return Err(failure(format!("capability_denied: {}", package.id)));
                 }
+                check_secret_environment(&package, &selection.secret_environment)?;
                 validate_settings(&package, &selection.settings)?;
                 Ok((package, source))
             })();
@@ -2235,7 +2435,10 @@ impl ModHost {
     }
 
     /// Every claimant of a contested slot is disabled; none silently wins.
-    fn resolve_conflicts(next: &mut BTreeMap<String, Loaded>, initial: bool) -> Result<()> {
+    fn resolve_conflicts(
+        next: &mut BTreeMap<String, Loaded>,
+        lenient: &dyn Fn(&str) -> bool,
+    ) -> Result<()> {
         let mut tools: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut points: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut contracts: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -2271,13 +2474,16 @@ impl ModHost {
         conflicts.extend(contested("contract_conflict", contracts));
         for (id, reason) in conflicts {
             if let Some(loaded) = next.get_mut(&id) {
-                fail(initial, loaded, failure(reason))?;
+                fail(lenient(&id), loaded, failure(reason))?;
             }
         }
         Ok(())
     }
 
-    fn resolve_services(next: &mut BTreeMap<String, Loaded>, initial: bool) -> Result<()> {
+    fn resolve_services(
+        next: &mut BTreeMap<String, Loaded>,
+        lenient: &dyn Fn(&str) -> bool,
+    ) -> Result<()> {
         let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (id, loaded) in next.iter().filter(|(_, loaded)| loaded.error.is_none()) {
             for contract in &loaded.registrations.services {
@@ -2294,7 +2500,7 @@ impl ModHost {
             );
             for provider in providers {
                 if let Some(loaded) = next.get_mut(provider) {
-                    fail(initial, loaded, failure(reason.clone()))?;
+                    fail(lenient(provider), loaded, failure(reason.clone()))?;
                 }
             }
         }
@@ -2346,7 +2552,7 @@ impl ModHost {
             }
             for (id, reason) in unavailable {
                 if let Some(loaded) = next.get_mut(&id) {
-                    fail(initial, loaded, failure(reason))?;
+                    fail(lenient(&id), loaded, failure(reason))?;
                 }
             }
         }
@@ -2393,7 +2599,7 @@ impl ModHost {
     /// Resolves declared dependencies and returns the activation order.
     fn resolve_dependencies(
         next: &mut BTreeMap<String, Loaded>,
-        initial: bool,
+        lenient: &dyn Fn(&str) -> bool,
     ) -> Result<Vec<String>> {
         loop {
             let unavailable: Vec<(String, String)> = next
@@ -2434,7 +2640,7 @@ impl ModHost {
             }
             for (id, reason) in unavailable {
                 if let Some(loaded) = next.get_mut(&id) {
-                    fail(initial, loaded, failure(reason))?;
+                    fail(lenient(&id), loaded, failure(reason))?;
                 }
             }
         }
@@ -2463,7 +2669,7 @@ impl ModHost {
             );
             for id in remaining {
                 if let Some(loaded) = next.get_mut(&id) {
-                    fail(initial, loaded, failure(reason.clone()))?;
+                    fail(lenient(&id), loaded, failure(reason.clone()))?;
                 }
             }
         }
@@ -2834,13 +3040,6 @@ impl ModHost {
         {
             return Err(failure("exclusive_replacement_registration_required"));
         }
-        if event == "terminal" && !reply.value.is_null() {
-            if replaces("terminal") {
-                ModView::parse(reply.value.clone())?;
-            } else {
-                ModViewPatch::parse(reply.value.clone())?;
-            }
-        }
         if event == "input" {
             let decision = ModInputDecision::parse(&reply.value)?;
             if matches!(decision, ModInputDecision::Rewrite(_)) && !replaces("input") {
@@ -2902,6 +3101,7 @@ impl ModHost {
                 current
                     .telemetry
                     .record(self.generation, event, name, elapsed, "ok");
+                current.telemetry.faults = 0;
                 if state != previous_state {
                     current.state = state;
                 }
@@ -2924,8 +3124,9 @@ impl ModHost {
                 ]
                 .iter()
                 .any(|transient| message.trim_start_matches("Error: ").starts_with(transient))
+                    && event != "service"
                 {
-                    current.error = Some(message);
+                    current.fault(message);
                 }
                 Err(error)
             }
@@ -3129,6 +3330,13 @@ impl ModHost {
         Ok(payload)
     }
 
+    fn stream_fault(&mut self, id: &str, prior: u32, error: &str) {
+        if let Some(loaded) = self.loaded.get_mut(id) {
+            loaded.telemetry.faults = prior;
+            loaded.fault(error.to_owned());
+        }
+    }
+
     pub fn response_stream(
         &mut self,
         mut payload: Value,
@@ -3146,6 +3354,10 @@ impl ModHost {
                 break;
             }
             payload["text"] = effective.clone();
+            let prior = self
+                .loaded
+                .get(&id)
+                .map_or(0, |loaded| loaded.telemetry.faults);
             let value = match self.invoke_guarded(
                 &id,
                 self.generation,
@@ -3189,9 +3401,7 @@ impl ModHost {
                     None
                 };
                 if let Some(error) = error {
-                    if let Some(loaded) = self.loaded.get_mut(&id) {
-                        loaded.error = Some(error.to_owned());
-                    }
+                    self.stream_fault(&id, prior, error);
                     fallback.push(json!({"origin":id,"error":error}));
                     continue;
                 }
@@ -3200,10 +3410,8 @@ impl ModHost {
                 continue;
             }
             if protected {
-                let error = "protected_stream_field_is_observe_only".to_owned();
-                if let Some(loaded) = self.loaded.get_mut(&id) {
-                    loaded.error = Some(error.clone());
-                }
+                let error = "protected_stream_field_is_observe_only";
+                self.stream_fault(&id, prior, error);
                 fallback.push(json!({"origin":id,"error":error}));
                 continue;
             }
@@ -3214,10 +3422,8 @@ impl ModHost {
                 .and_then(Value::as_str)
                 .filter(|text| text.len() <= 8192)
             else {
-                let error = "invalid_stream_transformation".to_owned();
-                if let Some(loaded) = self.loaded.get_mut(&id) {
-                    loaded.error = Some(error.clone());
-                }
+                let error = "invalid_stream_transformation";
+                self.stream_fault(&id, prior, error);
                 fallback.push(json!({"origin":id,"error":error}));
                 continue;
             };
@@ -3346,42 +3552,129 @@ impl ModHost {
 
     pub fn terminal_view(&mut self, payload: Value, active: impl Fn() -> bool) -> ModTerminalView {
         let owner = self.replacement_owner("terminal");
-        let results = self.event_guarded("terminal", payload, active);
+        let thread = state_thread(&payload);
+        let results: Vec<_> = self
+            .event_ids("terminal")
+            .into_iter()
+            .map(|id| {
+                let key = self.loaded.get(&id).and_then(|loaded| {
+                    let location = self.state_location(
+                        &loaded.package,
+                        &loaded.selection.scope,
+                        thread.as_deref(),
+                    );
+                    let state = self
+                        .store
+                        .scoped_state(&location, loaded.package.state_version)
+                        .ok()?;
+                    Some(digest(
+                        json!([
+                            loaded.selection.sha256,
+                            loaded.selection.settings,
+                            state,
+                            payload
+                        ])
+                        .to_string()
+                        .as_bytes(),
+                    ))
+                });
+                // Renders may read the clock, so a cached one lives for a second.
+                if let (Some(key), Some((cached, value, at))) = (&key, self.renders.get(&id))
+                    && key == cached
+                    && at.elapsed() < Duration::from_secs(1)
+                {
+                    return (id, Ok(value.clone()));
+                }
+                let result = self.invoke_guarded(
+                    &id,
+                    self.generation,
+                    "terminal",
+                    "",
+                    payload.clone(),
+                    &active,
+                );
+                match (&result, key) {
+                    (Ok(value), Some(key)) => {
+                        self.renders
+                            .insert(id.clone(), (key, value.clone(), Instant::now()));
+                    }
+                    _ => {
+                        self.renders.remove(&id);
+                    }
+                }
+                (id, result)
+            })
+            .collect();
         let mut view = ModView::default();
         let mut patches = Vec::new();
         let mut diagnostics = Vec::new();
         for (id, result) in results {
-            match result {
-                Ok(value) if value.is_null() => {}
-                Ok(value) if owner.as_deref() == Some(id.as_str()) => match ModView::parse(value) {
-                    Ok(candidate) => view = candidate,
-                    Err(error) => diagnostics.push(format!("{id}: {error}")),
-                },
-                Ok(value) => match ModViewPatch::parse(value) {
-                    Ok(patch) => patches.push((id, patch)),
-                    Err(error) => diagnostics.push(format!("{id}: {error}")),
-                },
-                Err(error) => diagnostics.push(format!("{id}: {error}")),
+            let owned = owner.as_deref() == Some(id.as_str());
+            let parse = |value: Value| {
+                if owned {
+                    ModView::parse(value).map(|view| (Some(view), None))
+                } else {
+                    ModViewPatch::parse(value).map(|patch| (None, Some(patch)))
+                }
+            };
+            let parsed = match result {
+                Ok(value) if value.is_null() => {
+                    self.valid_views.remove(&id);
+                    continue;
+                }
+                Ok(value) => parse(value.clone()).inspect(|_| {
+                    self.valid_views.insert(id.clone(), value);
+                }),
+                Err(error) => Err(error),
+            };
+            let parsed = parsed.or_else(|error| {
+                diagnostics.push(format!("{id}: {error}"));
+                let last = self.valid_views.get(&id).cloned().ok_or(error)?;
+                parse(last)
+            });
+            match parsed {
+                Ok((Some(candidate), _)) => view = candidate,
+                Ok((_, Some(patch))) => patches.push((id, patch)),
+                _ => {}
             }
         }
+        let mut component_owners: BTreeMap<String, String> = owner
+            .iter()
+            .flat_map(|owner| {
+                view::site_component_ids(&view.sites)
+                    .into_iter()
+                    .map(move |component| (component, owner.clone()))
+            })
+            .collect();
         let mut replaced_sites = BTreeSet::new();
         let mut completed_tools_owner = false;
         let mut contributors = Vec::new();
-        for (id, patch) in patches {
+        for (id, mut patch) in patches {
+            if view
+                .sites
+                .get("dialog")
+                .is_some_and(|dialog| !dialog.components.is_empty())
+            {
+                patch.sites.remove("dialog");
+            }
+            let components = view::site_component_ids(&patch.sites);
             match patch.apply(&mut view, &mut replaced_sites, &mut completed_tools_owner) {
-                Ok(()) => contributors.push(id),
-                Err(error) => {
-                    diagnostics.push(format!("{id}: {error}"));
-                    if let Some(loaded) = self.loaded.get_mut(&id) {
-                        loaded.error = Some(error.to_string());
-                    }
+                Ok(()) => {
+                    component_owners.extend(
+                        components
+                            .into_iter()
+                            .map(|component| (component, id.clone())),
+                    );
+                    contributors.push(id);
                 }
+                Err(error) => diagnostics.push(format!("{id}: {error}")),
             }
         }
         ModTerminalView {
             view,
             owner,
             contributors,
+            component_owners,
             diagnostics,
         }
     }
@@ -3672,7 +3965,8 @@ impl ModHost {
             None => "unreported",
         };
         json!({"codex_version": codex_version, "install_profile": install_profile, "mode": mode,
-            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count()}})
+            "mods": {"installed": self.selections.0, "enabled": self.selections.1, "active": self.active().count(),
+                "failed": self.loaded.len() - self.active().count() + self.rejected.len()}})
     }
 
     pub fn generation(&self) -> u64 {

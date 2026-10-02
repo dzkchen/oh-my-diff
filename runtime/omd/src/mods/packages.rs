@@ -2,6 +2,31 @@ use super::*;
 
 impl ModStore {
     pub fn settings(&self, path: &Path, settings: BTreeMap<String, Value>) -> Result<()> {
+        self.update_settings(path, |current| *current = settings)
+            .map(drop)
+    }
+
+    pub fn merge_settings(
+        &self,
+        path: &Path,
+        values: &serde_json::Map<String, Value>,
+    ) -> Result<BTreeMap<String, Value>> {
+        self.update_settings(path, |settings| {
+            for (name, value) in values {
+                if value.is_null() {
+                    settings.remove(name);
+                } else {
+                    settings.insert(name.clone(), value.clone());
+                }
+            }
+        })
+    }
+
+    fn update_settings(
+        &self,
+        path: &Path,
+        change: impl FnOnce(&mut BTreeMap<String, Value>),
+    ) -> Result<BTreeMap<String, Value>> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         let mut config = self.configuration()?;
@@ -14,13 +39,16 @@ impl ModStore {
         if hash != selection.sha256 {
             return Err(failure("source_changed: inspect and trust the new digest"));
         }
+        let mut settings = selection.settings.clone();
+        change(&mut settings);
         validate_settings(&package, &settings)?;
-        selection.settings = settings;
+        selection.settings = settings.clone();
         config.revision = config
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.write("mods.json", &serde_json::to_value(config)?)
+        self.write("mods.json", &serde_json::to_value(config)?)?;
+        Ok(settings)
     }
 
     pub fn discover(user: &Path, project: &Path) -> Result<Value> {
@@ -77,14 +105,11 @@ impl ModStore {
             .find(|m| m.path == path)
             .ok_or_else(|| failure("package_not_trusted"))?;
         let (package, source, hash) = store::package(path)?;
-        if selection.enabled
-            || hash != selection.sha256
+        if hash != selection.sha256
             || selection.capabilities != package.capabilities
             || !package.capabilities.iter().any(|c| c == "store")
         {
-            return Err(failure(
-                "migration_requires_disabled_trusted_store_capability",
-            ));
+            return Err(failure("migration_requires_trusted_store_capability"));
         }
         let name = ModStore::state_name(&package.id, &selection.scope);
         let previous: Value =

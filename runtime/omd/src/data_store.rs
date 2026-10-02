@@ -79,6 +79,34 @@ fn now() -> u128 {
         .unwrap_or_default()
 }
 
+fn newest_change(path: &Path) -> Option<std::time::SystemTime> {
+    let mut newest = fs::symlink_metadata(path).ok()?.modified().ok()?;
+    for entry in fs::read_dir(path).ok()?.filter_map(Result::ok) {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && let Some(changed) = newest_change(&entry.path())
+        {
+            newest = newest.max(changed);
+        }
+    }
+    Some(newest)
+}
+
+/// Removes directories in which nothing changed for 30 days, except those `keep` names.
+pub fn prune_thread_directories(directory: &Path, keep: impl Fn(&str) -> bool) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86_400);
+    for entry in entries.filter_map(Result::ok) {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && !keep(&entry.file_name().to_string_lossy())
+            && newest_change(&entry.path()).is_some_and(|changed| changed < cutoff)
+        {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 fn thread_directory(root: &Path, thread: &str) -> io::Result<PathBuf> {
     if !crate::resource_data::token(thread) || root.canonicalize()? != root {
         return Err(failure("store_thread_invalid"));

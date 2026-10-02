@@ -239,14 +239,14 @@ fn the_single_terminal_owner_binds_keys_that_may_target_another_mods_command() {
             .unwrap(),
         json!("pong")
     );
-    let reserved = runtime.event("terminal", json!({"event":"reserved","checkpoint":null}));
+    let reserved = runtime.terminal_view(json!({"event":"reserved","checkpoint":null}), || true);
     assert!(
-        reserved[0]
-            .1
-            .as_ref()
-            .unwrap_err()
-            .to_string()
-            .contains("invalid_terminal_view")
+        reserved
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("invalid_terminal_view")),
+        "{:?}",
+        reserved.diagnostics
     );
 }
 
@@ -359,6 +359,30 @@ fn disabling_a_shared_service_provider_stops_only_its_required_consumer() {
         std::fs::read_to_string(&types)
             .unwrap()
             .contains("'shared.echo@1.0.0'")
+    );
+}
+
+#[test]
+fn repeated_stream_validation_faults_disable_the_mod() {
+    let temp = TempDir::new().unwrap();
+    let (root, store) = workspace(&temp);
+    let stream = written(
+        &root,
+        "stream",
+        "export default api => api.middleware('response_stream', () => ({text: 'x'}))",
+        &["middleware"],
+        json!({}),
+    );
+    trust(&store, &stream, &["middleware"]);
+    let mut runtime = host(&temp);
+    let delta = json!({"kind":"response.output_text.delta","raw_sha256":"00","raw_usage":null,
+        "opaque_reasoning":false,"protected":true,"text":"hello"});
+    for _ in 0..5 {
+        runtime.response_stream(delta.clone(), || true).unwrap();
+    }
+    assert_eq!(
+        runtime.status()["mods"][0]["error"],
+        json!("protected_stream_field_is_observe_only")
     );
 }
 
@@ -496,6 +520,9 @@ fn mods_share_the_event_pipeline_and_the_store_without_crossing_boundaries() {
     assert_eq!(observed[0], ("alpha".to_string(), "alpha".to_string()));
     assert!(observed[1].1.contains("beta failed"), "{:?}", observed[1]);
     assert!(observed[2].1.contains("context_limit"), "{:?}", observed[2]);
+    for _ in 1..5 {
+        runtime.event("context", Value::Null);
+    }
     let remaining = runtime.event("context", Value::Null);
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].0, "alpha");

@@ -56,6 +56,7 @@ fn store_with_node(temp: &TempDir) -> ModStore {
 
 fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
     ModInstallRequest {
+        action: None,
         source: ModPackageSource::Local {
             path: path.to_path_buf(),
         },
@@ -70,6 +71,7 @@ fn request(path: &Path, capabilities: &[&str]) -> ModInstallRequest {
                     capabilities: capabilities.iter().map(|value| value.to_string()).collect(),
                     dependencies: false,
                     lifecycle: Vec::new(),
+                    secret_environment: Vec::new(),
                 },
             )]),
         },
@@ -413,6 +415,7 @@ fn dependency_resolution_requires_separate_exact_trust_and_rejects_cycles() {
             capabilities: vec!["context".into()],
             dependencies: false,
             lifecycle: Vec::new(),
+            secret_environment: Vec::new(),
         },
     );
     assert!(
@@ -437,6 +440,7 @@ fn dependency_resolution_requires_separate_exact_trust_and_rejects_cycles() {
             capabilities: vec!["context".into()],
             dependencies: false,
             lifecycle: Vec::new(),
+            secret_environment: Vec::new(),
         },
     );
     let plan = store.package_plan(install.clone()).unwrap();
@@ -537,6 +541,7 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
         subdirectory: "repo_mod".into(),
     };
     let install = ModInstallRequest {
+        action: None,
         source: source.clone(),
         index: None,
         scope: "user".into(),
@@ -554,6 +559,7 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
     let unavailable = root.join("repository-unavailable");
     std::fs::rename(&repository, &unavailable).unwrap();
     let offline = ModInstallRequest {
+        action: None,
         source: ModPackageSource::Repository {
             repository: repository.display().to_string(),
             revision,
@@ -575,6 +581,7 @@ fn repository_revision_is_immutable_and_cached_for_offline_reuse() {
     );
 
     let invalid = ModInstallRequest {
+        action: None,
         source: ModPackageSource::Repository {
             repository: unavailable.display().to_string(),
             revision: "main".into(),

@@ -119,6 +119,14 @@ impl<'call> ToolExecutor<ToolCall<'call>> for Tool {
         ToolExposure::Deferred
     }
 
+    fn search_info(&self) -> Option<codex_tools::ToolSearchInfo> {
+        let source = (!self.id.is_empty()).then(|| codex_tools::ToolSearchSourceInfo {
+            name: format!("{} mod tools", self.id),
+            description: Some(format!("Tools of the enabled {} mod", self.id)),
+        });
+        codex_tools::ToolSearchInfo::from_tool_spec(self.spec(), source)
+    }
+
     fn handle<'a>(&'a self, call: ToolCall<'call>) -> ToolExecutorFuture<'a>
     where
         'call: 'a,

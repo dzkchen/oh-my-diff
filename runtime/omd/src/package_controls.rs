@@ -22,6 +22,8 @@ struct Selection {
     sha256: String,
     capabilities: Vec<String>,
     enabled: bool,
+    secret_environment: Vec<String>,
+    exec_environment: Value,
 }
 
 pub struct PackagePreview {
@@ -71,6 +73,7 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
     let lock = store.package_lock()?;
     let status = store.selection_status()?;
     let selections = status["selections"].as_array().cloned().unwrap_or_default();
+    let configured = store.configuration()?.mods;
     let runtime_list = |key: &str| {
         runtime
             .and_then(|runtime| runtime[key].as_array())
@@ -130,6 +133,15 @@ pub fn list(store: &ModStore, runtime: Option<&Value>) -> io::Result<Value> {
                 "api": api,
                 "compatible": crate::SUPPORTED_MOD_APIS.iter().any(|(version, _, _)| *version == api),
                 "grants": selection["capabilities"],
+                "settings_schema": manifest["settings_schema"],
+                "settings": crate::effective_settings(
+                    manifest.get("settings_schema"),
+                    &configured
+                        .iter()
+                        .find(|item| selection["path"].as_str() == item.path.to_str())
+                        .map(|item| item.settings.clone())
+                        .unwrap_or_default(),
+                ),
                 "conflicts": selection["reason"]
                     .as_str()
                     .filter(|reason| reason.contains("conflict"))
@@ -249,7 +261,18 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             let (id, current) = selected(store, &arguments)?;
             let inspected = ModStore::inspect_package(&current.path)?;
             let sha256 = inspected["sha256"].as_str().unwrap_or_default().to_owned();
-            if sha256 == current.sha256 {
+            let exec_environment: Vec<String> =
+                serde_json::from_value(inspected["manifest"]["exec_environment"].clone())
+                    .unwrap_or_default();
+            let secret_environment: Vec<String> = exec_environment
+                .into_iter()
+                .filter(|name| crate::host::secret_like(name))
+                .collect();
+            if sha256 == current.sha256
+                && secret_environment
+                    .iter()
+                    .all(|name| current.secret_environment.contains(name))
+            {
                 return Err(failure("package_source_unchanged"));
             }
             let capabilities: Vec<String> =
@@ -262,6 +285,8 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
             let trusted = Selection {
                 sha256,
                 capabilities,
+                exec_environment: inspected["manifest"]["exec_environment"].clone(),
+                secret_environment,
                 ..current
             };
             (id, None, None, Some(trusted), Some(added))
@@ -273,7 +298,9 @@ pub fn preview(store: &ModStore, arguments: Value) -> io::Result<PackagePreview>
     let changes = match (&plan, &selection) {
         (Some(plan), _) => plan.changes.clone(),
         (None, Some(selection)) if arguments.action == "trust" => {
-            json!({"sha256": selection.sha256, "enabled": selection.enabled})
+            json!({"sha256": selection.sha256, "enabled": selection.enabled,
+                "exec_environment": selection.exec_environment,
+                "secret_environment": selection.secret_environment})
         }
         _ => json!({"enabled": arguments.action == "enable"}),
     };
@@ -359,6 +386,9 @@ fn selected(store: &ModStore, arguments: &Arguments) -> io::Result<(String, Sele
         sha256: selection["sha256"].as_str().unwrap_or_default().to_owned(),
         capabilities: serde_json::from_value(selection["capabilities"].clone())?,
         enabled: selection["selected"] == true,
+        secret_environment: serde_json::from_value(selection["secret_environment"].clone())
+            .unwrap_or_default(),
+        exec_environment: selection["exec_environment"].clone(),
     };
     Ok((id, current))
 }
@@ -371,6 +401,7 @@ fn requested(
     activate: bool,
 ) -> io::Result<(ModInstallRequest, crate::ModPackagePlan)> {
     let mut request = ModInstallRequest {
+        action: None,
         offline: matches!(source, ModPackageSource::Local { .. }),
         source,
         index,
@@ -423,11 +454,12 @@ pub fn apply(store: &ModStore, control: &PackageControl) -> io::Result<Value> {
             store.enable(&selection.path, control.action == "enable")?;
         }
         ("trust", None, Some(selection)) => {
-            store.trust(
+            store.trust_with_secrets(
                 selection.path.clone(),
                 &selection.sha256,
                 selection.capabilities.clone(),
                 &selection.scope,
+                selection.secret_environment.clone(),
             )?;
             if selection.enabled {
                 store.enable(&selection.path, true)?;

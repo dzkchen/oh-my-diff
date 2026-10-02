@@ -36,7 +36,38 @@ fn command(node: &Path) -> Result<Command> {
     Ok(command)
 }
 
-static SPARE: Mutex<Option<(PathBuf, Child)>> = Mutex::new(None);
+type Spares = (Vec<(PathBuf, Child)>, Option<Instant>);
+
+static SPARES: Mutex<Spares> = Mutex::new((Vec::new(), None));
+const BUSY_RUNNERS: usize = 3;
+const IDLE_AFTER: Duration = Duration::from_secs(5);
+
+fn stop(mut child: Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Trims the warm pool back to one runner once callbacks have been idle for five seconds.
+fn reap() {
+    static REAPER: std::sync::Once = std::sync::Once::new();
+    REAPER.call_once(|| {
+        std::thread::spawn(|| {
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+                let Ok(mut spares) = SPARES.lock() else {
+                    return;
+                };
+                if spares.1.is_some_and(|last| last.elapsed() >= IDLE_AFTER) {
+                    while spares.0.len() > 1 {
+                        if let Some((_, child)) = spares.0.pop() {
+                            stop(child);
+                        }
+                    }
+                }
+            }
+        });
+    });
+}
 
 fn spawn(node: &Path) -> Result<Child> {
     command(node)?
@@ -56,16 +87,22 @@ fn spawn(node: &Path) -> Result<Child> {
 }
 
 fn runner(node: &Path) -> Result<Child> {
-    let mut spare = SPARE.lock().map_err(|_| failure("mod_runner_poisoned"))?;
-    let warm = spare.take().and_then(|(path, mut child)| {
-        if path == node && matches!(child.try_wait(), Ok(None)) {
-            return Some(child);
+    let mut spares = SPARES.lock().map_err(|_| failure("mod_runner_poisoned"))?;
+    let busy = spares.1.is_some_and(|last| last.elapsed() < IDLE_AFTER);
+    spares.1 = Some(Instant::now());
+    for (_, child) in spares.0.extract_if(.., |(path, child)| {
+        path != node || !matches!(child.try_wait(), Ok(None))
+    }) {
+        stop(child);
+    }
+    let warm = (!spares.0.is_empty()).then(|| spares.0.remove(0).1);
+    while spares.0.len() < if busy { BUSY_RUNNERS } else { 1 } {
+        match spawn(node) {
+            Ok(child) => spares.0.push((node.to_path_buf(), child)),
+            Err(_) => break,
         }
-        let _ = child.kill();
-        let _ = child.wait();
-        None
-    });
-    *spare = spawn(node).ok().map(|child| (node.to_path_buf(), child));
+    }
+    reap();
     warm.map_or_else(|| spawn(node), Ok)
 }
 
@@ -158,10 +195,15 @@ pub(super) fn evaluate(
     let output = output?;
     let status = status?;
     let value: Value = serde_json::from_slice(&output).map_err(|_| {
-        failure(format!(
-            "mod_process_failed: {}",
-            String::from_utf8_lossy(&errors)
-        ))
+        let errors = String::from_utf8_lossy(&errors);
+        if errors.contains("heap out of memory") || errors.contains("Reached heap limit") {
+            failure("mod_out_of_memory: the mod exceeded its 64 MB heap")
+        } else {
+            failure(format!(
+                "mod_process_failed: {}",
+                errors.lines().next().unwrap_or_default()
+            ))
+        }
     })?;
     if !status.success() || value.get("error").is_some() {
         return Err(failure(

@@ -57,7 +57,7 @@ fn version(value: &str) -> bool {
 impl ModHost {
     pub(super) fn resolve_virtual_readers(
         next: &mut BTreeMap<String, Loaded>,
-        initial: bool,
+        lenient: &dyn Fn(&str) -> bool,
     ) -> Result<()> {
         let mut owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (id, loaded) in next.iter().filter(|(_, loaded)| loaded.error.is_none()) {
@@ -72,7 +72,7 @@ impl ModHost {
             for id in ids {
                 if let Some(loaded) = next.get_mut(&id) {
                     fail(
-                        initial,
+                        lenient(&id),
                         loaded,
                         failure(format!("virtual_provider_conflict: {scheme}")),
                     )?;

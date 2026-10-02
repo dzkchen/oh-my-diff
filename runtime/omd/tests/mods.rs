@@ -512,6 +512,9 @@ fn mod_context_is_bounded_and_callback_failure_is_isolated() {
             .contains("context_limit")
     );
     assert_eq!(*results[1].1.as_ref().unwrap(), json!({"text":"hello"}));
+    for _ in 1..5 {
+        assert_eq!(runtime.event("context", Value::Null).len(), 2);
+    }
     assert_eq!(runtime.event("context", Value::Null).len(), 1);
 }
 
@@ -724,7 +727,7 @@ fn migration_is_explicit_bounded_and_preserves_previous_state() {
             .migrate(&path)
             .unwrap_err()
             .to_string()
-            .contains("disabled")
+            .contains("migration_requires_different_state_version")
     );
 }
 
@@ -1493,7 +1496,20 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
     );
     trust(&store, &first, &["services"]);
     trust(&store, &second, &["services"]);
-    trust(&store, &missing, &["services"]);
+    let sha256 = ModStore::inspect_package(&missing).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(missing.clone(), &sha256, vec!["services".into()], "user")
+        .unwrap();
+    assert!(
+        store
+            .enable(&missing, true)
+            .unwrap_err()
+            .to_string()
+            .contains("service_provider_missing: missing needs the absent.service service")
+    );
     trust(&store, &optional, &["commands", "services"]);
     trust(&store, &versioned, &["services"]);
     trust(&store, &incompatible, &["services"]);
@@ -1514,11 +1530,6 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
         errors["second"]
             .unwrap()
             .contains("service_provider_collision")
-    );
-    assert!(
-        errors["missing"]
-            .unwrap()
-            .contains("service_provider_missing")
     );
     assert_eq!(errors["optional"], None);
     assert!(
@@ -1559,8 +1570,15 @@ fn missing_incompatible_optional_cyclic_and_colliding_services_fail_independentl
         json!({"exports":[contract("cycle.b","1.0.0")],"imports":[{"name":"cycle.a","version":"1.0.0"}]}),
         &["services"],
     );
-    trust(&store, &a, &["services"]);
+    let sha256 = ModStore::inspect_package(&a).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    store
+        .trust(a.clone(), &sha256, vec!["services".into()], "user")
+        .unwrap();
     trust(&store, &b, &["services"]);
+    store.enable(&a, true).unwrap();
     let status = host(&temp).status();
     assert!(status["mods"].as_array().unwrap().iter().all(|entry| {
         entry["error"]
@@ -1737,12 +1755,12 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     assert_eq!(status["mods"][0]["unused_grants"], json!(["agents"]));
     let (temp, _, _) = fixture(
         "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',unix_sockets:['S']}))",
-        &["commands", "exec", "network"],
+        &["commands", "exec", "unix_sockets"],
     );
     assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let (temp, _, _) = fixture(
-        "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env'})) // unix_sockets",
-        &["commands", "exec", "network"],
+        "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',unix_sockets:['S']}))",
+        &["commands", "exec", "network", "unix_sockets"],
     );
     assert_eq!(
         host(&temp).status()["mods"][0]["unused_grants"],
@@ -2074,7 +2092,8 @@ fn a_mod_that_throws_while_activating_is_disabled_with_a_source_located_error() 
         .unwrap();
     let error = broken["error"].as_str().unwrap();
     assert!(error.contains("ACTIVATION_SENTINEL"), "{error}");
-    assert!(error.contains("index.ts:2:"), "{error}");
+    assert!(error.contains("fixture/index.ts:1:"), "{error}");
+    assert!(!error.contains(root.to_str().unwrap()), "{error}");
     let results = runtime.event("context", Value::Null);
     assert_eq!(results.len(), 1);
     assert_eq!(*results[0].1.as_ref().unwrap(), json!({"text":"hello"}));
@@ -2381,6 +2400,11 @@ fn exclusive_decisions_require_a_replacement_registration_while_observers_compos
             .to_string()
             .contains("invalid_routing_result")
     );
+    assert!(runtime.status()["mods"][0]["error"].is_null());
+    assert_eq!(runtime.status()["mods"][0]["telemetry"]["faults"], 1);
+    for _ in 1..5 {
+        let _ = runtime.event("routing", json!({}));
+    }
     assert!(runtime.status()["mods"][0]["error"].is_string());
 
     let temp = TempDir::new().unwrap();
@@ -2457,7 +2481,10 @@ fn author_declarations_source_maps_telemetry_and_redacted_diagnostics_are_host_o
     assert!(!encoded.contains(path.to_str().unwrap()), "{encoded}");
     assert!(!encoded.contains(store.to_str().unwrap()), "{encoded}");
     assert!(!encoded.contains("sk-authorsecret123456789"), "{encoded}");
-    assert!(encoded.contains("$MOD/fixture"));
+    assert!(
+        error.contains("fixture/index.ts:3") && !error.contains(path.to_str().unwrap()),
+        "{error}"
+    );
     assert!(
         ModHost::capability_explanation("capability_denied: task")["fix"]
             .as_str()
@@ -2615,6 +2642,158 @@ fn rich_lines_and_boxes_are_bounded() {
 }
 
 #[test]
+fn an_invalid_terminal_view_keeps_the_last_valid_one_and_names_the_field() {
+    let (temp, _, _) = fixture(
+        "export default api => api.on('terminal', input => ({status:[input.bad ? 'x'.repeat(41) : 'ok']}))",
+        &["terminal"],
+    );
+    let mut runtime = host(&temp);
+    assert_eq!(
+        runtime.terminal_view(json!({}), || true).view.status,
+        ["ok"]
+    );
+    let terminal = runtime.terminal_view(json!({"bad": true}), || true);
+    assert_eq!(terminal.view.status, ["ok"]);
+    assert!(
+        terminal.diagnostics[0].contains("invalid_terminal_patch: status"),
+        "{:?}",
+        terminal.diagnostics
+    );
+    for _ in 0..5 {
+        runtime.terminal_view(
+            json!({"bad": true, "attempt": runtime.generation()}),
+            || true,
+        );
+    }
+    assert!(runtime.status()["mods"][0]["error"].is_null());
+}
+
+#[test]
+fn a_second_dialog_waits_without_failing_its_mod() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for id in ["alpha", "beta"] {
+        let source = format!(
+            "export default api => api.on('terminal', () => ({{sites:{{dialog:{{components:[{{type:'text',id:'{id}_text',label:'{id}',text:'{id}'}}]}}}}}}))"
+        );
+        let path = package(&root, id, &source, &["terminal"]);
+        trust(&store, &path, &["terminal"]);
+    }
+    let mut runtime = host(&temp);
+    let terminal = runtime.terminal_view(json!({}), || true);
+    let dialog = &terminal.view.sites["dialog"].components;
+    assert_eq!(dialog.len(), 1, "{dialog:?}");
+    assert_eq!(
+        terminal
+            .component_owners
+            .get("alpha_text")
+            .map(String::as_str),
+        Some("alpha")
+    );
+    assert!(
+        runtime.status()["mods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["error"].is_null())
+    );
+}
+
+#[test]
+fn secret_like_exec_environment_needs_explicit_trust_by_name() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let path = package(&root, "fixture", "export default () => {}", &["exec"]);
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["exec_environment"] = json!(["NVIM", "OPENAI_API_KEY"]);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let grant = || vec!["exec".to_owned()];
+    assert!(
+        store
+            .trust(path.clone(), &sha256, grant(), "user")
+            .unwrap_err()
+            .to_string()
+            .contains("secret_environment_requires_explicit_trust: fixture OPENAI_API_KEY")
+    );
+    store
+        .trust_with_secrets(
+            path.clone(),
+            &sha256,
+            grant(),
+            "user",
+            vec!["OPENAI_API_KEY".into()],
+        )
+        .unwrap();
+    store.enable(&path, true).unwrap();
+    assert_eq!(host(&temp).status()["mods"][0]["id"], "fixture");
+}
+
+#[test]
+fn keys_and_pastes_reach_only_the_component_owner() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for (id, component) in [("alpha", "a"), ("beta", "b")] {
+        let source = format!(
+            "export default api => api.on('terminal', () => ({{sites:{{'{id}/pane':{{components:[{{type:'pane',id:'{component}',label:'{id}',keys:true,children:[]}}]}}}}}}))"
+        );
+        let path = package(&root, id, &source, &["terminal"]);
+        trust(&store, &path, &["terminal"]);
+    }
+    let terminal = host(&temp).terminal_view(json!({}), || true);
+    assert_eq!(
+        terminal.component_owners,
+        [
+            ("a".to_owned(), "alpha".to_owned()),
+            ("b".to_owned(), "beta".to_owned())
+        ]
+        .into(),
+        "{:?}",
+        terminal.diagnostics
+    );
+}
+
+#[test]
+fn settings_write_merges_schema_checked_values_over_defaults() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let path = package(
+        &root,
+        "fixture",
+        "export default api => api.command('read', () => JSON.stringify(api.settings))",
+        &["commands"],
+    );
+    let manifest = path.join("mod.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    value["settings_schema"] = json!({"type":"object","required":["mode"],"properties":{
+        "mode":{"type":"string","enum":["a","b"],"default":"a"},"count":{"type":"number"}}});
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    trust(&store, &path, &["commands"]);
+    let read = |runtime: &mut ModHost| {
+        let generation = runtime.generation();
+        runtime
+            .invoke("fixture", generation, "command", "read", Value::Null)
+            .unwrap()
+    };
+    assert_eq!(read(&mut host(&temp)), json!(r#"{"mode":"a"}"#));
+    assert_eq!(
+        codex_omd::write_settings(&store, "fixture", &json!({"mode":"b","count":2})).unwrap(),
+        json!({"settings":{"mode":"b","count":2}})
+    );
+    assert!(codex_omd::write_settings(&store, "fixture", &json!({"mode":"c"})).is_err());
+    codex_omd::write_settings(&store, "fixture", &json!({"mode":null})).unwrap();
+    assert_eq!(read(&mut host(&temp)), json!(r#"{"count":2,"mode":"a"}"#));
+}
+
+#[test]
 fn terminal_identity_reports_profile_mode_and_mod_counts() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -2634,7 +2813,7 @@ fn terminal_identity_reports_profile_mode_and_mod_counts() {
     assert_eq!(
         identity,
         json!({"codex_version":"0.157.0","install_profile":"platform_only","mode":"platform",
-        "mods":{"installed":2,"enabled":1,"active":1}})
+        "mods":{"installed":2,"enabled":1,"active":1,"failed":0}})
     );
     assert_eq!(
         runtime.identity("0.157.0", Some("arbitrary"), "enabled")["install_profile"],

@@ -2,8 +2,9 @@ import { stripTypeScriptTypes } from 'node:module';
 import { createContext, SourceTextModule } from 'node:vm';
 import { readSync, writeSync } from 'node:fs';
 
-if (process.versions.node !== '24.18.0') {
-  process.stdout.write(JSON.stringify({ error: 'unsupported_runtime: Node 24.18.0 required' }));
+const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+if (nodeMajor !== 24 || nodeMinor < 18) {
+  process.stdout.write(JSON.stringify({ error: `unsupported_runtime: Node 24.18 or a later 24.x is required, found ${process.versions.node}` }));
   process.exit(1);
 }
 
@@ -205,20 +206,20 @@ try {
   const setup = new SourceTextModule(bootstrap, { context });
   await setup.link(() => { throw new Error('unsupported_import'); });
   await setup.evaluate({ timeout: request.hook_budget_ms });
-  const source = stripTypeScriptTypes(request.source, { mode: 'transform', sourceMap: true, sourceUrl: request.filename });
+  const source = stripTypeScriptTypes(request.source);
   const mod = new SourceTextModule(source, { context, identifier: request.filename });
   const adapter = request.surface?.adapter;
   let adapt = null;
   const aliases = new Map();
   if (adapter) {
-    const adapterSource = stripTypeScriptTypes(adapter.source, { mode: 'transform', sourceMap: true, sourceUrl: adapter.filename });
+    const adapterSource = stripTypeScriptTypes(adapter.source);
     const adapterModule = new SourceTextModule(adapterSource, { context, identifier: adapter.filename });
     await adapterModule.link(() => { throw new Error('unsupported_import: adapter modules are self-contained'); });
     await adapterModule.evaluate({ timeout: request.hook_budget_ms });
     adapt = adapterModule.namespace.default;
     if (typeof adapt !== 'function') throw new Error('adapter_default_export_required');
     for (const [specifier, module] of Object.entries(adapter.aliases ?? {})) {
-      const aliasSource = module.filename.endsWith('.ts') ? stripTypeScriptTypes(module.source, { mode: 'transform', sourceMap: true, sourceUrl: module.filename }) : module.source;
+      const aliasSource = module.filename.endsWith('.ts') ? stripTypeScriptTypes(module.source) : module.source;
       const aliased = new SourceTextModule(aliasSource, { context, identifier: module.filename });
       await aliased.link(() => { throw new Error('unsupported_import: adapter aliases are self-contained'); });
       aliases.set(specifier, aliased);
@@ -260,6 +261,15 @@ try {
   if (context.__result.length > 262144) throw new Error('output_limit');
   process.stdout.write(context.__result);
 } catch (error) {
-  process.stdout.write(JSON.stringify({ error: String(error?.stack ?? error).slice(0, 768) }));
+  const files = [request.filename, request.surface?.adapter?.filename,
+    ...Object.values(request.surface?.adapter?.aliases ?? {}).map(module => module.filename)].filter(Boolean);
+  const directories = [...new Set(files.map(file => file.slice(0, file.lastIndexOf('/'))))];
+  const relative = text => directories.reduce((line, directory) =>
+    line.replaceAll(directory + '/', directory.slice(directory.lastIndexOf('/') + 1) + '/'), text);
+  const lines = String(error?.stack ?? error).split('\n');
+  const frames = lines.filter(line => /^\s+at /.test(line));
+  const described = [...lines.filter(line => !/^\s+at /.test(line)),
+    ...frames.filter(line => directories.some(directory => line.includes(directory + '/'))).slice(0, 4)];
+  process.stdout.write(JSON.stringify({ error: relative(described.join('\n')).slice(0, 768) }));
   process.exitCode = 1;
 }

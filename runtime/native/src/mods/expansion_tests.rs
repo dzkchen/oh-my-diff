@@ -118,6 +118,7 @@ fn mods(core: &Arc<Core>) -> Mods {
         turns: Mutex::new(BTreeMap::new()),
         sessions: Mutex::new(BTreeMap::new()),
         workspace_before: Mutex::new(BTreeMap::new()),
+        worktrees: Mutex::new(BTreeMap::new()),
     }
 }
 
@@ -149,20 +150,44 @@ fn routes_reload_from_host_config_and_select_routes_added_after_enrollment() {
             "input_microusd_per_million": 0, "cached_microusd_per_million": 0, "output_microusd_per_million": 0,
             "reservation_microusd": 0, "max_output_tokens": 1000, "input_token_ceiling": 1000, "included_subscription": true}})
     };
-    let write = |value: &Value| std::fs::write(lead.host.root.join("host.json"), value.to_string()).unwrap();
+    let write = |value: &Value| {
+        std::fs::write(lead.host.root.join("host.json"), value.to_string()).unwrap()
+    };
     write(&json!({"routes": [route("first", "local")]}));
-    let first = lead.host.route_config().0.route("first", config::RouteRole::Lead, None).cloned().unwrap();
-    lead.host.enroll(lead.thread, &lead.session, "lead", Some(&first), None).unwrap();
-    let select = |name: &str| select_route(lead, "fixture", json!({"route": name, "scope": "thread"}));
+    let first = lead
+        .host
+        .route_config()
+        .0
+        .route("first", config::RouteRole::Lead, None)
+        .cloned()
+        .unwrap();
+    lead.host
+        .enroll(lead.thread, &lead.session, "lead", Some(&first), None)
+        .unwrap();
+    let select =
+        |name: &str| select_route(lead, "fixture", json!({"route": name, "scope": "thread"}));
     assert_eq!(select("added"), Err("route_not_configured: added".into()));
-    write(&json!({"routes": [route("first", "local"), route("added", "local"), route("other", "remote")]}));
+    write(
+        &json!({"routes": [route("first", "local"), route("added", "local"), route("other", "remote")]}),
+    );
     assert_eq!(select("added").unwrap()["route"]["model"], "added-model");
-    assert_eq!(take_route_selection(&lead.thread.to_string()), Some("added".into()));
-    assert_eq!(select("other"), Err("route_unavailable_for_thread: other".into()));
+    assert_eq!(
+        take_route_selection(&lead.thread.to_string()),
+        Some("added".into())
+    );
+    assert_eq!(
+        select("other"),
+        Err("route_unavailable_for_thread: other".into())
+    );
     assert_eq!(select("first").unwrap()["route"]["name"], "first");
     write(&json!({"routes": "invalid"}));
     assert!(select("added").is_ok());
-    assert!(select("later").unwrap_err().starts_with("route_not_configured: later; invalid host.json"));
+    let error = select("later").unwrap_err();
+    assert!(
+        error.starts_with("route_not_configured: later; invalid /")
+            && error.contains("/host.json: "),
+        "{error}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

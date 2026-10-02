@@ -32,6 +32,8 @@ pub struct ModPackageGrant {
     pub dependencies: bool,
     #[serde(default)]
     pub lifecycle: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_environment: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -43,6 +45,8 @@ pub struct ModPackageTrust {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModInstallRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
     pub source: ModPackageSource,
     #[serde(default)]
     pub index: Option<PathBuf>,
@@ -74,6 +78,8 @@ pub struct ModLockedPackage {
     pub state_version: u32,
     pub dependencies: Vec<ModDependency>,
     pub capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exec_environment: Vec<String>,
     pub settings_schema_sha256: String,
     pub lifecycle: Vec<String>,
     pub scope: String,
@@ -158,6 +164,15 @@ impl ModStore {
     }
 
     pub fn package_plan(&self, request: ModInstallRequest) -> Result<ModPackagePlan> {
+        if request
+            .action
+            .as_deref()
+            .is_some_and(|action| !matches!(action, "install" | "update"))
+        {
+            return Err(failure(
+                "package_plan_action_invalid: use install or update; remove, rollback, enable and disable have their own commands",
+            ));
+        }
         let _guard = self.lock()?;
         self.recover_package_transaction()?;
         self.package_plan_locked(request, false)
@@ -178,6 +193,7 @@ impl ModStore {
             return Err(failure("unsupported_scope: user or project"));
         }
         let existing = self.read_package_lock()?;
+        let config = self.configuration()?;
         let mut resolved = BTreeMap::new();
         let mut visiting = Vec::new();
         let root = self.resolve_requested(
@@ -198,7 +214,7 @@ impl ModStore {
                     .settings
                     .get(&resolved.package.id)
                     .cloned()
-                    .or_else(|| previous.map(|locked| locked.settings.clone()))
+                    .or_else(|| previous.map(|locked| selected_settings(&config, locked)))
                     .unwrap_or_default();
                 validate_settings(&resolved.package, &settings)?;
                 resolved.locked.settings = settings;
@@ -282,6 +298,7 @@ impl ModStore {
                 capabilities: package.trust.capabilities.clone(),
                 settings: package.settings.clone(),
                 scope: package.scope.clone(),
+                secret_environment: package.trust.secret_environment.clone(),
             };
             if let Some(selection) = selection {
                 config.mods[selection] = next;
@@ -385,6 +402,7 @@ impl ModStore {
                 "state_migration_required: previous state preserved",
             ));
         }
+        self.check_service_providers(&manifest, &package.path)?;
         self.state(&package.id, &package.scope, package.state_version)?;
         package.enabled = true;
         let path = package.path.clone();
@@ -476,7 +494,7 @@ impl ModStore {
                 "integrity":{"from":current.integrity,"to":previous.integrity},
                 "capabilities":{"from":current.capabilities,"to":previous.capabilities},
                 "dependencies":{"from":current.dependencies,"to":previous.dependencies},
-                "settings_preserved":current.settings}),
+                "settings_preserved":selected_settings(&self.configuration()?, current)}),
             confirmation: String::new(),
         };
         plan.confirmation = digest(&serde_json::to_vec(&plan)?);
@@ -501,8 +519,8 @@ impl ModStore {
             .ok_or_else(|| failure("package_not_installed"))?;
         let current_path = current.path.clone();
         previous.path = previous.cache_path.clone();
-        previous.settings = current.settings.clone();
-        previous.enabled = false;
+        previous.settings = selected_settings(&self.configuration()?, &current);
+        previous.enabled = current.enabled && previous.state_version == current.state_version;
         validate_settings(&store::package(&previous.path)?.0, &previous.settings)?;
         let history = lock.history.entry(id.to_owned()).or_default();
         history.pop();
@@ -522,10 +540,11 @@ impl ModStore {
         *selection = ModSelection {
             path: previous.path,
             sha256: previous.integrity,
-            enabled: false,
+            enabled: previous.enabled,
             capabilities: previous.trust.capabilities,
             settings: previous.settings,
             scope: previous.scope,
+            secret_environment: previous.trust.secret_environment,
         };
         config.revision = config
             .revision
@@ -626,6 +645,7 @@ impl ModStore {
             capabilities: package.capabilities.clone(),
             dependencies: !package.dependencies.is_empty(),
             lifecycle: package.lifecycle.keys().cloned().collect(),
+            secret_environment: package.secret_environment(),
         };
         let grant = match request.trust.packages.get(&package.id) {
             Some(grant) => grant.clone(),
@@ -638,6 +658,7 @@ impl ModStore {
                 package.id
             )));
         }
+        super::check_secret_environment(&package, &grant.secret_environment)?;
         let declared_lifecycle = package.lifecycle.keys().cloned().collect::<Vec<_>>();
         if grant.lifecycle != declared_lifecycle {
             return Err(failure(format!(
@@ -675,6 +696,7 @@ impl ModStore {
             state_version: package.state_version,
             dependencies: package.dependencies.clone(),
             capabilities: package.capabilities.clone(),
+            exec_environment: package.exec_environment.clone(),
             settings_schema_sha256: digest(
                 &serde_json::to_vec(&package.settings_schema).unwrap_or_default(),
             ),
@@ -1144,6 +1166,8 @@ fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> 
                 "migration_required":previous.is_some_and(|value|value.state_version != package.state_version) && !package.enabled},
             "dependencies":{"from":previous.map(|value|&value.dependencies),"to":package.dependencies},
             "capabilities":{"from":previous.map(|value|&value.capabilities),"to":package.capabilities},
+            "exec_environment":{"from":previous.map(|value|&value.exec_environment),"to":package.exec_environment},
+            "secret_environment":{"from":previous.map(|value|&value.trust.secret_environment),"to":package.trust.secret_environment},
             "settings_schema_sha256":{"from":previous.map(|value|&value.settings_schema_sha256),"to":package.settings_schema_sha256},
             "settings":{"from":previous.map(|value|&value.settings),"to":package.settings},
             "lifecycle":{"from":previous.map(|value|&value.lifecycle),"to":package.lifecycle},
@@ -1164,4 +1188,18 @@ fn package_changes(existing: &ModPackageLock, packages: &[ModLockedPackage]) -> 
             Value::Bool(true),
         ),
     ]))
+}
+
+fn selected_settings(
+    config: &ModConfiguration,
+    locked: &ModLockedPackage,
+) -> BTreeMap<String, Value> {
+    config
+        .mods
+        .iter()
+        .find(|selection| selection.scope == locked.scope && selection.path == locked.path)
+        .map_or_else(
+            || locked.settings.clone(),
+            |selection| selection.settings.clone(),
+        )
 }

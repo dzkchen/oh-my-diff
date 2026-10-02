@@ -188,6 +188,26 @@ impl ModStore {
         Ok(store)
     }
 
+    /// Moves a corrupt store file aside; a reset `mods.json` keeps no mods selected.
+    pub fn reset(&self, name: &str) -> Result<PathBuf> {
+        if !matches!(name, "mods.json" | "host.json") {
+            return Err(failure("store_file_not_resettable"));
+        }
+        let path = self.root.join(name);
+        let aside = self.root.join(format!("{name}.corrupt"));
+        std::fs::rename(&path, &aside)?;
+        if name == "mods.json" {
+            let config = ModConfiguration {
+                schema: 1,
+                revision: 0,
+                node: super::node_on_path().ok_or_else(|| failure("node_unavailable"))?,
+                mods: Vec::new(),
+            };
+            self.write("mods.json", &serde_json::to_value(config)?)?;
+        }
+        Ok(aside)
+    }
+
     pub fn open(root: PathBuf) -> Result<Self> {
         if !root.is_absolute() || root.canonicalize()? != root || !root.is_dir() {
             return Err(failure("canonical_store_path_required"));
@@ -230,7 +250,8 @@ impl ModStore {
     }
 
     pub fn configuration(&self) -> Result<ModConfiguration> {
-        serde_json::from_slice(&read(&self.root.join("mods.json"), 65_536)?).map_err(failure)
+        let path = self.root.join("mods.json");
+        ModConfiguration::parse(&read(&path, 65_536)?, &path)
     }
 
     pub fn selection_status(&self) -> Result<Value> {
@@ -240,7 +261,7 @@ impl ModStore {
         let mut groups = std::collections::BTreeMap::<String, Vec<usize>>::new();
         for selection in &configuration.mods {
             let inspected = package(&selection.path);
-            let (mut id, error) = match inspected {
+            let (mut id, error, environment) = match inspected {
                 Ok((manifest, _, integrity)) => {
                     let error = if integrity != selection.sha256 {
                         Some("source_changed: inspect and trust the new digest".to_owned())
@@ -256,13 +277,14 @@ impl ModStore {
                     {
                         Some("capability_denied".to_owned())
                     } else {
-                        super::validate_settings(&manifest, &selection.settings)
+                        super::check_secret_environment(&manifest, &selection.secret_environment)
+                            .and_then(|()| super::validate_settings(&manifest, &selection.settings))
                             .err()
                             .map(|error| error.to_string())
                     };
-                    (Some(manifest.id), error)
+                    (Some(manifest.id), error, manifest.exec_environment)
                 }
-                Err(error) => (None, Some(error.to_string())),
+                Err(error) => (None, Some(error.to_string()), Vec::new()),
             };
             if id.is_none() {
                 id = lock
@@ -290,6 +312,8 @@ impl ModStore {
                 "managed": managed,
                 "sha256": selection.sha256,
                 "capabilities": selection.capabilities,
+                "exec_environment": environment,
+                "secret_environment": selection.secret_environment,
                 "settings_keys": selection.settings.keys().collect::<Vec<_>>(),
                 "settings_sha256": digest(&serde_json::to_vec(&selection.settings)?),
                 "error": error,
@@ -345,6 +369,17 @@ impl ModStore {
         capabilities: Vec<String>,
         scope: &str,
     ) -> Result<()> {
+        self.trust_with_secrets(path, sha256, capabilities, scope, Vec::new())
+    }
+
+    pub fn trust_with_secrets(
+        &self,
+        path: PathBuf,
+        sha256: &str,
+        capabilities: Vec<String>,
+        scope: &str,
+        secret_environment: Vec<String>,
+    ) -> Result<()> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         if !super::MOD_SCOPES.contains(&scope) {
@@ -357,6 +392,7 @@ impl ModStore {
         if capabilities != package.capabilities {
             return Err(failure("explicit_exact_capability_grant_required"));
         }
+        super::check_secret_environment(&package, &secret_environment)?;
         let mut config = self.configuration()?;
         let settings = config
             .mods
@@ -377,6 +413,7 @@ impl ModStore {
             capabilities,
             settings,
             scope: scope.to_owned(),
+            secret_environment: package.secret_environment(),
         });
         self.write("mods.json", &serde_json::to_value(config)?)
     }
@@ -403,10 +440,11 @@ impl ModStore {
             .find(|m| m.path == path)
             .ok_or_else(|| failure("package_not_trusted"))?;
         if enabled {
-            let (_, _, hash) = package(path)?;
+            let (manifest, _, hash) = package(path)?;
             if hash != selection.sha256 {
                 return Err(failure("source_changed: inspect and trust the new digest"));
             }
+            self.check_service_providers(&manifest, path)?;
         }
         selection.enabled = enabled;
         config.revision = config
@@ -414,6 +452,59 @@ impl ModStore {
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
         self.write("mods.json", &serde_json::to_value(config)?)
+    }
+
+    /// Refuses enabling a mod whose required service no other enabled mod provides.
+    pub(super) fn check_service_providers(&self, package: &ModPackage, path: &Path) -> Result<()> {
+        let selections = self.configuration()?.mods;
+        for import in package
+            .services
+            .imports
+            .iter()
+            .filter(|import| !import.optional)
+        {
+            let providers = selections
+                .iter()
+                .filter(|selection| selection.path != path)
+                .filter_map(|selection| {
+                    let (manifest, _, _) = super::store::package(&selection.path).ok()?;
+                    manifest
+                        .services
+                        .exports
+                        .iter()
+                        .any(|export| export.name == import.name)
+                        .then(|| {
+                            let cyclic = manifest.services.imports.iter().any(|import| {
+                                package
+                                    .services
+                                    .exports
+                                    .iter()
+                                    .any(|export| export.name == import.name)
+                            });
+                            (manifest.id, selection.enabled || cyclic)
+                        })
+                })
+                .collect::<Vec<_>>();
+            // A cyclic provider is left to activation, which reports the dependency cycle.
+            if providers.iter().any(|(_, ready)| *ready) {
+                continue;
+            }
+            let names = providers.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+            return Err(failure(if names.is_empty() {
+                format!(
+                    "service_provider_missing: {} needs the {} service and no installed mod provides it",
+                    package.id, import.name
+                )
+            } else {
+                format!(
+                    "service_provider_missing: {} needs the {} service; enable {} first",
+                    package.id,
+                    import.name,
+                    names.join(" or ")
+                )
+            }));
+        }
+        Ok(())
     }
 
     pub fn reload(&self) -> Result<()> {

@@ -129,7 +129,7 @@ fn plugin_preview(codex: &str, home: &str, id: &str, candidate: &str) -> io::Res
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
         )
     };
     match args {
@@ -216,14 +216,22 @@ fn run(args: &[String]) -> io::Result<Value> {
         [command, path] if command == "inspect" => {
             ModStore::inspect_package(&PathBuf::from(path).canonicalize()?)
         }
-        [command, root, path, sha, capabilities] | [command, root, path, sha, capabilities, _]
-            if command == "trust" =>
-        {
-            let scope = match args {
-                [.., scope] if args.len() == 6 => scope.as_str(),
-                _ => "user",
-            };
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust(
+        [command, root, path, sha, capabilities, rest @ ..] if command == "trust" => {
+            let mut scope = "user";
+            let mut secrets = Vec::new();
+            let mut rest = rest.iter();
+            while let Some(argument) = rest.next() {
+                if argument == "--allow-secret-env" {
+                    secrets.push(
+                        rest.next()
+                            .ok_or_else(|| io::Error::other("--allow-secret-env needs a NAME"))?
+                            .clone(),
+                    );
+                } else {
+                    scope = argument;
+                }
+            }
+            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust_with_secrets(
                 PathBuf::from(path).canonicalize()?,
                 sha,
                 capabilities
@@ -232,14 +240,16 @@ fn run(args: &[String]) -> io::Result<Value> {
                     .map(str::to_string)
                     .collect(),
                 scope,
+                secrets,
             )?;
             Ok(Value::String(format!(
                 "trusted in the {scope} scope; disabled until explicitly enabled"
             )))
         }
         [command, root, path] if command == "enable" || command == "disable" => {
+            let path = PathBuf::from(path);
             ModStore::open(PathBuf::from(root).canonicalize()?)?
-                .enable(&PathBuf::from(path), command == "enable")?;
+                .enable(&path.canonicalize().unwrap_or(path), command == "enable")?;
             Ok(Value::String(
                 "selection saved; takes effect at the next turn boundary".into(),
             ))

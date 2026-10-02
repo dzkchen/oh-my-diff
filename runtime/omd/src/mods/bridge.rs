@@ -65,6 +65,8 @@ impl ModHostCall {
             "packages.list" | "packages.preview" | "packages.apply" | "packages.reload" => {
                 Ok("packages")
             }
+            "settings.write" if self.arguments["id"].is_string() => Ok("packages"),
+            "settings.write" => Ok("commands"),
             _ if operation.starts_with("agents.") && MOD_HOST_OPERATIONS.contains(&operation) => {
                 Ok("agents")
             }
@@ -89,6 +91,13 @@ impl ModHostCall {
             if self.arguments["network"] == "loopback" {
                 capabilities.push("network");
             }
+        }
+        if self.operation == "exec.run"
+            && self.arguments["unix_sockets"]
+                .as_array()
+                .is_some_and(|sockets| !sockets.is_empty())
+        {
+            capabilities.push("unix_sockets");
         }
         Ok(capabilities)
     }
@@ -120,7 +129,7 @@ pub(super) fn run(
         "assets": loaded.assets,
         "entrypoint": loaded.package.entrypoint,
         "entrypoint_sha256": digest(loaded.source.as_bytes()),
-        "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": loaded.selection.settings,
+        "capabilities": loaded.package.capabilities, "adapter": loaded.package.adapter, "settings": effective_settings(loaded.package.settings_schema.as_ref(), &loaded.selection.settings),
         "state": loaded.state, "event": event, "name": name, "payload": payload, "interactive": true,
         "hook_budget_ms": loaded.package.hook_budget_ms,"environment":loaded.package.environment});
     request["field_policies"] = ModHost::field_policies();
@@ -166,6 +175,8 @@ pub(super) fn run(
             return Err(failure("callback_cancelled"));
         }
         let call_started = Instant::now();
+        let exempt = !crate::client_surface::SURFACE_OPERATIONS.contains(&call.operation.as_str())
+            || crate::client_surface::awaits_user(&call.operation, &call.arguments);
         scope.charge_call()?;
         let result = host(call.clone());
         let mut receipt = match result {
@@ -188,7 +199,10 @@ pub(super) fn run(
             return Err(failure("host_receipt_limit"));
         }
         scope.charge_receipt(serde_json::to_vec(&receipt)?.len())?;
-        waited += call_started.elapsed();
+        if exempt {
+            waited += call_started.elapsed();
+        }
+        scope.check_execution(started.elapsed().saturating_sub(waited))?;
         Ok(receipt)
     });
     let execution = started.elapsed().saturating_sub(waited);

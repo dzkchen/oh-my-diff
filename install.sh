@@ -206,7 +206,7 @@ def set_links(root, bin_dir):
 
 def status(generation, upstream, bin_dir):
     details = receipt(generation)
-    output = run([generation / "bin/omd-package", "status"], env=environment(upstream, bin_dir))
+    output = run([generation / "bin/omd-package", "status", "--json"], env=environment(upstream, bin_dir))
     result = json.loads(output)
     if result["profile"] != details["profile"]:
         fail("installed profile differs from its receipt")

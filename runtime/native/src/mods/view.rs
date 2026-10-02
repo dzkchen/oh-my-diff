@@ -101,6 +101,7 @@ impl Views {
             state.snapshot.view = terminal.view;
             state.snapshot.owner = terminal.owner;
             state.snapshot.contributors = terminal.contributors;
+            state.snapshot.component_owners = terminal.component_owners;
             state.snapshot.input = input;
             state
                 .diagnostics

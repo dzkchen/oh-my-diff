@@ -2,7 +2,7 @@ use crate::app_routes::InvocationContext;
 use serde_json::Value;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const SURFACE_OPERATIONS: &[&str] = &[
     "app.request",
@@ -28,6 +28,16 @@ pub const USER_ONLY_OPERATIONS: &[&str] = &[
     "builtins.invoke",
     "packages.apply",
 ];
+
+pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
+    USER_ONLY_OPERATIONS.contains(&operation)
+        || operation == "terminal.prompt"
+        || (operation == "app.request"
+            && arguments["method"]
+                .as_str()
+                .and_then(crate::app_routes::route)
+                .is_some_and(|route| route.confirm))
+}
 
 pub type Reply = SyncSender<Result<Value, String>>;
 
@@ -157,10 +167,17 @@ pub fn submit(
 pub fn wait(
     receiver: Receiver<Result<Value, String>>,
     active: &dyn Fn() -> bool,
+    deadline: Option<Instant>,
 ) -> Result<Value, String> {
     loop {
         if !active() {
             return Err("callback_cancelled".into());
+        }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err(format!(
+                "callback_execution_budget: the client did not answer within {} ms",
+                crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS
+            ));
         }
         match receiver.recv_timeout(Duration::from_millis(20)) {
             Ok(result) => return result,
@@ -174,7 +191,7 @@ pub fn wait(
 
 const VISIBLE_THREADS: usize = 256;
 
-static VISIBLE: Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>> =
+static VISIBLE: Mutex<std::collections::BTreeMap<String, std::collections::VecDeque<String>>> =
     Mutex::new(std::collections::BTreeMap::new());
 
 #[allow(clippy::too_many_arguments)]
@@ -200,7 +217,7 @@ pub fn app_request(
         .lock()
         .map_err(|_| "app_visibility_poisoned")?
         .get(caller)
-        .cloned()
+        .map(|threads| threads.iter().cloned().collect())
         .unwrap_or_default();
     let route = crate::app_routes::authorize(
         &method,
@@ -248,9 +265,10 @@ pub fn app_request(
         && let Ok(mut visible) = VISIBLE.lock()
     {
         let threads = visible.entry(caller.to_owned()).or_default();
-        if threads.len() < VISIBLE_THREADS {
-            threads.insert(created.to_owned());
+        if threads.len() >= VISIBLE_THREADS {
+            threads.pop_front();
         }
+        threads.push_back(created.to_owned());
     }
     Ok(value)
 }
@@ -339,9 +357,12 @@ pub fn call(
     confirm: Option<String>,
     active: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
+    let deadline = (confirm.is_none() && !awaits_user(operation, &arguments))
+        .then(|| Instant::now() + Duration::from_millis(crate::mods::MOD_CALLBACK_TOTAL_BUDGET_MS));
     wait(
         submit(caller, operation, arguments, context, thread, confirm)?,
         active,
+        deadline,
     )
 }
 
