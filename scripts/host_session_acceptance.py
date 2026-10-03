@@ -73,9 +73,9 @@ def run(argv, cwd, env=None):
 
 AGENT_PROBE = '''export default function activate(api) {
   api.tool({ name: 'run', description: 'Exercise owned agent handles', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
-    const spawn = () => api.host.call('agents.spawn', { role: 'probe', route: 'worker', prompt: 'Reply WORKER_OK.', workspace: 'read_only', tools: [] });
-    const first = spawn();
-    const second = spawn();
+    const spawn = prompt => api.host.call('agents.spawn', { role: 'probe', route: 'worker', prompt, workspace: 'read_only', tools: [] });
+    const first = spawn('Reply WORKER_OK.');
+    const second = spawn('Reply WORKER_OK again.');
     const listed = api.host.call('agents.list', null).map(agent => agent.handle).sort();
     const cancelled = api.host.call('agents.cancel', { handle: second.handle }).cancelled;
     let result = api.host.call('agents.wait', { handle: first.handle, consume: true });

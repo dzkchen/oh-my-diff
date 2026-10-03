@@ -28188,10 +28188,10 @@ index 000000000..49d2dda74
 +}
 diff --git a/codex-rs/ext/omd/src/workspace_operations.rs b/codex-rs/ext/omd/src/workspace_operations.rs
 new file mode 100644
-index 000000000..73145ecb1
+index 000000000..1ce664104
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/workspace_operations.rs
-@@ -0,0 +1,695 @@
+@@ -0,0 +1,697 @@
 +use codex_file_system::FileSystemSandboxContext;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
@@ -28661,6 +28661,7 @@ index 000000000..73145ecb1
 +) -> Result<(), String> {
 +    let path = AbsolutePathBuf::from_absolute_path_checked(repository.join(".omd").join("state"))
 +        .map_err(|error| error.to_string())?;
++    std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
 +    policy.entries.push(FileSystemSandboxEntry::new(
 +        FileSystemPath::Path { path: path.into() },
 +        FileSystemAccessMode::Read,
@@ -28687,6 +28688,7 @@ index 000000000..73145ecb1
 +        protect_checkout_state(&mut policy, &root).unwrap();
 +        let profile =
 +            PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
++        codex_protocol::intersect_effective_permission_profiles(&profile, &profile, &root).unwrap();
 +        let context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
 +        let authority = WorkspaceAuthority {
 +            repository: root.clone(),

@@ -467,6 +467,7 @@ pub(crate) fn protect_checkout_state(
 ) -> Result<(), String> {
     let path = AbsolutePathBuf::from_absolute_path_checked(repository.join(".omd").join("state"))
         .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
     policy.entries.push(FileSystemSandboxEntry::new(
         FileSystemPath::Path { path: path.into() },
         FileSystemAccessMode::Read,
@@ -493,6 +494,7 @@ mod tests {
         protect_checkout_state(&mut policy, &root).unwrap();
         let profile =
             PermissionProfile::from_runtime_permissions(&policy, NetworkSandboxPolicy::Restricted);
+        codex_protocol::intersect_effective_permission_profiles(&profile, &profile, &root).unwrap();
         let context = FileSystemSandboxContext::from_permission_profile(profile, cwd);
         let authority = WorkspaceAuthority {
             repository: root.clone(),
