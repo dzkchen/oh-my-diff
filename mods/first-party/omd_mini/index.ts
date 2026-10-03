@@ -32,7 +32,7 @@ export default function activate(api: ModAPI) {
     // The launcher acts on a request after the run that wrote it exits, so a request left from an earlier run is spent.
     const request = requestKey(launch);
     const old = request ? api.host.tryCall('store.get', { key: request.key, scope: 'user' }) : null;
-    if (request && old?.ok && old.value) api.host.tryCall('store.delete', { key: request.key, expected_revision: old.value.revision, scope: 'user' });
+    if (request && old?.ok && old.value && (old.value.value as { run?: number } | null)?.run !== request.run) api.host.tryCall('store.delete', { key: request.key, expected_revision: old.value.revision, scope: 'user' });
   };
   api.on('start', detect);
   api.on('resume', detect);
@@ -81,9 +81,9 @@ export default function activate(api: ModAPI) {
     const state = saved();
     const target: Mode = state.mode === 'mini' ? 'full' : 'mini';
     if (state.busy) return { display: 'A turn is running; switch once it finishes or after interrupting it with Esc.' };
-    const before = api.host.call('store.get', { key: 'thread' });
-    api.host.call('store.put', { key: 'thread', value: true, expected_revision: before?.revision ?? null });
-    const thread = api.host.call('store.get', { key: 'thread' })?.provenance.thread_id ?? null;
+    const before = api.host.call('store.get', { key: 'thread', scope: 'thread' });
+    api.host.call('store.put', { key: 'thread', value: true, expected_revision: before?.revision ?? null, scope: 'thread' });
+    const thread = api.host.call('store.get', { key: 'thread', scope: 'thread' })?.provenance.thread_id ?? null;
     if (!thread || !THREAD.test(thread)) return { display: 'This session has no thread to resume yet; send a message first.' };
     const request = requestKey(state.launch);
     if (!request) return { display: `This session was not started by \`omd mini\`. Quit, then run \`${target === 'mini' ? 'omd mini' : 'codex'} resume ${thread}\`.` };

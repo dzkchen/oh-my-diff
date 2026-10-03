@@ -75,6 +75,8 @@ test('switching records a request for this launch run, refuses mid-turn and can 
   invoke('turn_end', { turn_id: 't1', outcome: 'aborted' });
   assert.match(invoke('command', '', 'switch').display, /reopens this session in the full interface/);
   assert.deepEqual(store[`user:switch_${launch}`].value, { run: 2, target: 'full', thread });
+  invoke('start', null);
+  assert.deepEqual(store[`user:switch_${launch}`].value, { run: 2, target: 'full', thread });
   assert.match(invoke('command', '', 'switch').display, /^Switch cancelled/);
   assert.equal(store[`user:switch_${launch}`], undefined);
   assert.ok(calls.every(call => call.operation !== 'exec.run' || call.args.program === 'env'));

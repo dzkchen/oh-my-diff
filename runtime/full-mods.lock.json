@@ -352,11 +352,11 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "a84cd28552ca18b349e5964ea60260aca11f2bb00732712a0ba7c6b394b816dc",
+        "index.ts": "fb9ed1a65b21df5e9143cd70d1072e40b3fd1c311dd704714eb59506a34400fd",
         "mod.json": "b43b8d4ede4a28df979c764e3960eb73d77797e4d1d4e2cce9bb307fc65e2c81"
       },
       "id": "omd_mini",
-      "package_sha256": "5f041650392ed36ace3173db216feb3b3d996c0e7c9defb777b7c067117647b8",
+      "package_sha256": "17900b999d4dfbb9fcc0328e254133a2feb863adcf5ae6c63bd53110e9fb54e0",
       "source": "mods/first-party/omd_mini",
       "version": "0.1.0-preview.1"
     },
