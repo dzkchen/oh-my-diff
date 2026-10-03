@@ -9,10 +9,11 @@ const names = ['context', 'coordination', 'guard', 'interception', 'kernel', 're
   'service-consumer', 'service-provider', 'service_request', 'terminal', 'virtual_reader', 'workflow', 'workspace'];
 const surface = {
   events: { context: 'context', agent_end: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle',
-    tool_before: 'interception', model_request: 'middleware', response_stream: 'middleware', tool_result: 'lifecycle',
-    compaction: 'compaction', routing: 'model', input: 'input', terminal: 'terminal',
+    model_request: 'middleware', response_stream: 'middleware', tool_result: 'lifecycle',
+    compaction: 'compaction', routing: 'model', terminal: 'terminal',
     workspace_change: 'fs.read', workspace_pre_rename: 'fs.write' },
-  replacements: ['context', 'routing', 'compaction', 'tool_before', 'terminal', 'input'],
+  replacements: ['context', 'routing', 'compaction', 'terminal'],
+  intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', input: 'input' },
   middleware: ['model_request', 'response_stream', 'tool_result'], state: 'store', contracts: 'contracts',
 };
 
@@ -66,11 +67,14 @@ test('coordination fails before agent spawn without two distinct included routes
 });
 
 test('guard and interception keep scoped input and status behavior', () => {
-  assert.deepEqual(run('guard', 'input', { text: 'sk_1234567890123456', attachments: 0 }).value,
-    { deny: 'the prompt appears to contain a credential' });
-  assert.match(run('guard', 'input', { text: '@@review src/main.ts', attachments: 0 }).value.text, /correctness risks/);
-  assert.deepEqual(run('interception', 'tool_before', { tool: 'omd_status', arguments: {}, call_id: 'one' }).value,
-    { tool: 'mod_interception_status', arguments: {} });
+  const intercept = (name, surface, input) => run(name, 'intercept', { surface, input, origin: { caller: 'user' } }, { name: '0' });
+  assert.deepEqual(intercept('guard', 'input', { thread_id: null, text: 'sk_1234567890123456', attachments: 0 }).value,
+    { result: { deny: 'the prompt appears to contain a credential' } });
+  const review = intercept('guard', 'input', { thread_id: null, text: '@@review src/main.ts', attachments: 0 }).host_call;
+  assert.equal(review.operation, 'continuation.next');
+  assert.match(review.arguments.input.text, /correctness risks/);
+  assert.deepEqual(intercept('interception', 'tool', { tool: 'omd_status', arguments: { verbose: true }, call_id: 'one' }).host_call.arguments,
+    { input: { tool: 'mod_interception_status', arguments: {}, call_id: 'one' } });
   const status = run('interception', 'tool', {}, { name: 'status' });
   assert.deepEqual(status.host_call, { operation: 'task.status', arguments: null });
 });

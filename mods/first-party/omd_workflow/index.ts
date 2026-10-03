@@ -296,11 +296,12 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
         api.state.set({ ...leads, [event.thread_id]: { ...(object(existing) ? existing : {}), no_progress_paused: true } });
       }
     });
-    api.replace('tool_before', ({ tool, thread_id }) => {
-      if (['mod_omd_workflow_checkpoint', 'mod_omd_workflow_cancel'].includes(tool)) return null;
+    api.intercept('tool', { required: true }, (e, next) => {
+      if (['mod_omd_workflow_checkpoint', 'mod_omd_workflow_cancel'].includes(e.tool)) return next(e);
       const state = api.state.get();
-      if (thread_id && object(state) && object(state[thread_id]) && state[thread_id].no_progress_paused === true) return { deny: 'workflow_paused_no_progress' };
-      return null;
+      const thread = e.thread_id && object(state) ? state[e.thread_id] : null;
+      if (object(thread) && thread.no_progress_paused === true) return { deny: 'workflow_paused_no_progress' };
+      return next(e);
     });
   }
   const delegate = (input: Json): Json => {

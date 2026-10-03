@@ -40,6 +40,8 @@ BUILTIN_SLASH = {
 }
 EVENTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
     r"pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
+INTERCEPTS = dict(re.findall(r'\("([a-z_]+)", "([a-z_.]+)"\)', re.search(
+    r"pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];", (ROOT / "runtime/omd/src/mods.rs").read_text()).group(1)))
 REGISTRATIONS = {"tool": "tools", "command": "commands", "middleware": "middleware", "provide": "services", "contract": "contracts"}
 NATIVE_KEY = re.compile(r"""['"`](alt\+[bdfrvx]|ctrl\+shift\+f|f8)['"`]""", re.IGNORECASE)
 
@@ -133,6 +135,7 @@ class Host:
 def registered(path):
     source = "\n".join(file.read_text() for file in path.rglob("*.ts") if "node_modules" not in file.parts)
     found = {EVENTS[name] for name in re.findall(r"api\.(?:on|replace)\(\s*'([a-z_]+)'", source) if name in EVENTS}
+    found |= {INTERCEPTS[name] for name in re.findall(r"api\.intercept\(\s*'([a-z_]+)'", source) if name in INTERCEPTS}
     return found | {capability for call, capability in REGISTRATIONS.items() if f"api.{call}(" in source}
 
 

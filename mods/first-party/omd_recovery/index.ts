@@ -89,8 +89,8 @@ export default function activate(api: ModAPI) {
     remember({ operation: 'delegation', outage_action: outage });
     return api.services.call('omd.workflow', 'delegate', { ...prepared, outage_action: outage });
   });
-  api.replace('tool_before', ({ tool, arguments: input }) => tool === 'omd_escalate' ? { tool: 'mod_omd_recovery_recover', arguments: input }
-    : tool === 'omd_contribute' ? { tool: 'mod_omd_recovery_delegate', arguments: input } : null);
+  api.intercept('tool', { match: { tool: ['omd_escalate', 'omd_contribute'] } }, (e, next) =>
+    next({ ...e, tool: e.tool === 'omd_escalate' ? 'mod_omd_recovery_recover' : 'mod_omd_recovery_delegate' }));
   api.on('tool_result', event => remember({ operation: 'tool_result', event }));
   command('outage', () => {
     const decisions = api.state.get();

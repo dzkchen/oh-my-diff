@@ -1,4 +1,5 @@
 use super::*;
+use codex_extension_api::ToolLifecycleContributor as _;
 use codex_extension_api::ToolOutputContributor;
 use codex_omd::ModStore;
 use std::path::Path;
@@ -119,6 +120,8 @@ fn mods(core: &Arc<Core>) -> Mods {
         sessions: Mutex::new(BTreeMap::new()),
         workspace_before: Mutex::new(BTreeMap::new()),
         worktrees: Mutex::new(BTreeMap::new()),
+        pending: Mutex::new(BTreeMap::new()),
+        answered: Mutex::new(BTreeMap::new()),
     }
 }
 
@@ -206,20 +209,42 @@ fn routes_reload_from_host_config_and_select_routes_added_after_enrollment() {
     );
 }
 
+struct NoHistory;
+
+impl codex_extension_api::ConversationHistorySnapshot for NoHistory {
+    fn history_version(&self) -> u64 {
+        0
+    }
+
+    fn user_message_revision(&self) -> u64 {
+        0
+    }
+
+    fn items(&self) -> Box<dyn Iterator<Item = &codex_extension_api::ResponseItem> + Send + '_> {
+        Box::new(std::iter::empty())
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn tool_output_owner_replaces_text_observers_append_and_original_stays_readable() {
+async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_original() {
     let Some(fixture) = fixture(&[
         Package {
             id: "budget",
-            capabilities: &["outputs", "store"],
+            capabilities: &["interception", "store"],
             manifest: Value::Null,
-            source: "export default function (api) {\n  api.replace('tool_output', event => event.bytes > 4\n    ? { text: `trimmed ${event.bytes} ${event.tool} ${event.arguments.path} ${typeof event.original}` }\n    : null);\n}\n",
+            source: "export default function (api) {\n  api.intercept('tool', async (e, next) => {\n    const r = await next({ ...e, arguments: { ...e.arguments, checked: true } });\n    return r.output.length > 4 ? { ...r, output: `trimmed ${r.output.length} ${e.tool} ${e.arguments.path}` } : r;\n  });\n}\n",
+        },
+        Package {
+            id: "cache",
+            capabilities: &["interception"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'cached' } }, () => ({ output: 'from cache', success: true }));\n}\n",
         },
         Package {
             id: "lint",
             capabilities: &["outputs", "agents"],
             manifest: Value::Null,
-            source: "export default function (api) {\n  api.on('tool_output', event => event.text.startsWith('trimmed') && event.original === null ? { append: `lint: ${api.host.tryCall('model.complete', { route: 'missing', prompt: 'lint' }).error}` } : null);\n}\n",
+            source: "export default function (api) {\n  api.on('tool_output', event => event.text.startsWith('trimmed') ? { append: `lint: ${api.host.tryCall('model.complete', { route: 'missing', prompt: 'lint' }).error}` } : null);\n}\n",
         },
     ]) else {
         return;
@@ -227,32 +252,70 @@ async fn tool_output_owner_replaces_text_observers_append_and_original_stays_rea
     *fixture.lead.session.contract.lock().unwrap() =
         crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
     let mods = mods(&fixture.core);
-    assert!(mods.expansion.tool_output_active());
     let (session_store, thread_store, turn_store) = (
         ExtensionData::new("session".to_owned()),
         ExtensionData::new("thread".to_owned()),
         ExtensionData::new("turn".to_owned()),
     );
     thread_store.insert(fixture.lead.clone());
-    let tool = ToolName::plain("read");
-    let input = |text: &'static str| codex_extension_api::ToolOutputInput {
+    let payload = codex_tools::ToolPayload::Function {
+        arguments: r#"{"path":"a.txt"}"#.to_owned(),
+    };
+    let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
         session_store: &session_store,
         thread_store: &thread_store,
         turn_store: &turn_store,
         turn_id: "turn-1",
-        call_id: "call-1",
-        tool_name: &tool,
-        arguments: Some(r#"{"path":"a.txt"}"#),
+        root_turn_id: None,
+        call_id,
+        originating_item_id: None,
+        tool_name: tool,
+        mcp_tool: None,
+        permissions: Box::pin(async { None }),
+        payload: &payload,
+        conversation_history: Arc::new(NoHistory),
+        source: codex_extension_api::ToolCallSource::Direct,
+    };
+    static READ: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("read"));
+    static CACHED: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("cached"));
+    let output = |call_id: &'static str, text: &'static str| codex_extension_api::ToolOutputInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        call_id,
+        tool_name: &READ,
+        arguments: Some(r#"{"path":"a.txt","checked":true}"#),
         success: true,
         text,
     };
+    let ToolInterception::Continue(Some((tool, codex_tools::ToolPayload::Function { arguments }))) =
+        mods.intercept_tool(start("call-1", &READ)).await.unwrap()
+    else {
+        panic!("the effective call must reach the native executor");
+    };
     assert_eq!(
-        mods.replace_tool_output(input("hello world"))
+        (tool.name.as_str(), arguments.as_str()),
+        ("read", r#"{"checked":true,"path":"a.txt"}"#)
+    );
+    assert_eq!(
+        mods.replace_tool_output(output("call-1", "hello world"))
             .await
             .as_deref(),
-        Some("trimmed 11 read a.txt object\n\nlint: provider_not_registered_or_stopped")
+        Some("trimmed 11 read a.txt\n\nlint: provider_not_registered_or_stopped")
     );
-    assert_eq!(mods.replace_tool_output(input("ok")).await, None);
+    mods.intercept_tool(start("call-2", &READ)).await.unwrap();
+    assert_eq!(mods.replace_tool_output(output("call-2", "ok")).await, None);
+    assert_eq!(
+        mods.intercept_tool(start("call-3", &CACHED)).await.unwrap(),
+        ToolInterception::Respond {
+            output: "trimmed 10 cached a.txt".into(),
+            success: true
+        }
+    );
+    assert_eq!(mods.answered.lock().unwrap()["call-3"], "cache");
 
     let source = fixture
         .core

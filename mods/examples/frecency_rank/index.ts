@@ -4,11 +4,11 @@ type Counts = Record<string, number>;
 
 export default function activate(api: ModAPI) {
   const counts = (): Counts => (api.state.get() ?? {}) as Counts;
-  api.on('input', event => {
-    const next = counts();
-    for (const [, path] of event.text.matchAll(/@([\w./-]+)/g)) next[path] = (next[path] ?? 0) + 1;
-    api.state.set(next);
-    return null;
+  api.intercept('input', (event, next) => {
+    const seen = counts();
+    for (const [, path] of event.text.matchAll(/@([\w./-]+)/g)) seen[path] = (seen[path] ?? 0) + 1;
+    api.state.set(seen);
+    return next(event);
   });
   api.command('recent', path => ({ display: `recent ${String(path)}` }));
   api.replace('completion', event => {

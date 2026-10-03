@@ -97,7 +97,6 @@ export interface TerminalView {
 export type TerminalPatch = Omit<TerminalView, 'panels' | 'header' | 'footer'>;
 export type CommandResult = Json | { display?: string; insert?: string; submit?: string };
 export type CompactionDecision = number | { threshold?: number; prompt?: string } | null;
-export type InputDecision = null | { text: string } | { deny: string };
 
 export type ExecResult = { exit_code: number | null; signal: string | null; stdout: string; stdout_sha256: string; stdout_bytes: number; output_artifact: ResourceRef | null; stderr: string; stdout_truncated: boolean; stdout_preview_truncated: boolean; stderr_truncated: boolean; stderr_preview_truncated: boolean; timed_out: boolean; duration_ms: number; program: { path: string; sha256: string }; guards_verified: number };
 export type ExecGuard = { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdout_sha256: string };
@@ -220,8 +219,6 @@ export interface Events {
   migrate: { input: { from: number; to: number }; output: void };
   routing: { input: { routes: RouteInfo[]; model: string | null; provider: string; reasoning: string | null }; output: { route: string } | null };
   compaction: { input: { token_limit: number | null; context_window: number | null }; output: CompactionDecision };
-  input: { input: { text: string; attachments: number }; output: InputDecision };
-  tool_before: { input: { tool: string; arguments: Json; call_id: string; thread_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; output: { deny: string } | { arguments: Json; tool?: string } | null };
   tool_exposure: { input: { thread_id: string | null; ledger: Ledger | null; available: string[] }; output: { enable: string[] } };
   terminal: { input: { event: string; ledger: Ledger | null; identity?: TerminalIdentity; presentation?: TerminalPresentation | null }; output: TerminalView | TerminalPatch | null };
   list: { input: TerminalListEvent; output: TerminalComponent[] | null };
@@ -229,7 +226,7 @@ export interface Events {
   resume: { input: { thread_id: string; last_turn: { turn_id: string; status: 'completed' | 'interrupted' | 'failed' | 'in_progress' } | null; restarted: boolean }; output: void };
   idle: { input: Json; output: void };
   stop: { input: Json; output: void };
-  tool_result: { input: { call_id: string; agent_id: string | null; thread_id: string | null; tool: string; outcome: 'succeeded' | 'unsuccessful' | 'blocked' | 'failed' | 'failed_before_handler' | 'aborted'; call_sha256: string | null; result_sha256: string | null; result_complete: boolean }; output: void };
+  tool_result: { input: { call_id: string; agent_id: string | null; thread_id: string | null; tool: string; outcome: 'succeeded' | 'unsuccessful' | 'blocked' | 'failed' | 'failed_before_handler' | 'aborted'; answered_by: string | null; call_sha256: string | null; result_sha256: string | null; result_complete: boolean }; output: void };
   workspace_change: { input: { repository: string; source: 'tool' | 'transaction' | 'exec' | 'rescan' | 'external'; call_id: string | null; watch_id?: string; changes: { path: string; before: string | null; after: string | null }[]; status: 'observed' | 'unavailable'; reason?: string | null }; output: void };
   workspace_pre_rename: { input: { repository: string; old: string; new: string; expected: Record<string, string | null> }; output: { status: 'ready'; expected: Record<string, string | null>; writes: Record<string, string> } | { status: 'fallback'; reason: string } | void };
   turn_start: { input: { turn_id: string }; output: void };
@@ -250,7 +247,7 @@ export interface Events {
   app_server_request: { input: { method: string; request_id: Json; phase: 'requested' | 'resolved'; params: Json; resolution: Json }; output: void };
   approval: { input: { id: string; kind: 'exec' | 'stdin' | 'execve' | 'patch' | 'mcp_tool' | 'network' | 'permissions'; thread_id: string; turn_id: string | null; agent_id: string | null; host_decision: 'ask' | 'skip'; policy: string; details: Json }; output: null | { deny: string } | { ask: string } };
   approval_result: { input: { id: string; kind: string; decision: 'approved' | 'approved_for_session' | 'amended' | 'denied' | 'aborted' | 'timed_out'; source: 'user' | 'guardian' | 'hook' | 'mod' | 'policy'; mod?: string }; output: void };
-  tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; tail: string | null; bytes: number; original: ResourceRef | null }; output: null | { text: string } | { append: string } };
+  tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; tail: string | null; bytes: number }; output: null | { append: string } };
   completion: { input: { kind: 'mention'; query: string; candidates: { path: string; score: number }[] } | { kind: 'argument'; command: string; query: string; line: string }; output: null | { items: { path: string }[] } | { items: { insert: string }[] } };
   history: { input: { thread_id: string; agent_id: string | null; model: string | null; items: HistoryItem[] }; output: null | HistoryEdit };
   tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json }[] } };
@@ -262,6 +259,28 @@ export interface Events {
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
 }
+export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
+export interface InterceptSurfaces {
+  tool: { input: { tool: string; arguments: Json; call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean }; answer: { output: string; success: boolean } | { deny: string } };
+  host_operation: { input: { operation: keyof HostOperations; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
+  input: { input: { thread_id: string | null; text: string; attachments: number }; result: { text: string }; answer: { deny: string } };
+  model_request: { input: { request_id: string; scope: Json; routes: RouteInfo[]; original: RouteInfo; route: string }; result: { route: string }; answer: { deny: string } };
+}
+export type InterceptTraceEntry = { index: number; mod: string; outcome: 'returned' | 'passed' | 'skipped' | 'kept' | 'caught' | 'rejected'; attempts: number; ms?: number; received: Json; returned?: Json; reason?: string; location?: string; required?: boolean };
+export type Next<S extends keyof InterceptSurfaces> = ((input: InterceptSurfaces[S]['input']) => Promise<InterceptSurfaces[S]['result']>) & {
+  readonly event: S;
+  readonly origin: { readonly caller: string; readonly thread_id?: string | null; readonly agent_id?: string | null; readonly call_id?: string };
+  readonly signal: { readonly aborted: boolean };
+  readonly trace: readonly InterceptTraceEntry[];
+  readonly budget: { readonly ms: number; readonly remainingMs: number; readonly hostCalls: number };
+  is(pattern: string): boolean;
+  readonly error?: { readonly kind: 'throw' | 'timeout'; readonly message: string };
+  readonly called?: boolean;
+};
+export type InterceptResult<S extends keyof InterceptSurfaces> = InterceptSurfaces[S]['result'] | InterceptSurfaces[S]['answer'];
+export type InterceptHandler<S extends keyof InterceptSurfaces> = (input: Readonly<InterceptSurfaces[S]['input']>, next: Next<S>) => InterceptResult<S> | Promise<InterceptResult<S>>;
+export type InterceptOptions = { match?: InterceptMatcher; required?: boolean; before?: string[]; after?: string[] };
+export type InterceptRegistration<S extends keyof InterceptSurfaces> = { catch(handler: InterceptHandler<S>): void };
 export type BuiltinControls = { commands?: { hide?: string[]; replace?: Record<string, string> }; modes?: { disable?: string[] }; keys?: Record<KeymapAction, KeymapKey | null> };
 export interface ModAPI {
   readonly version: '0.2.0-experimental.5';
@@ -275,7 +294,11 @@ export interface ModAPI {
   readonly services: { call<T extends Json = Json>(name: string, method: string, input?: Json): T };
   on<K extends keyof Events>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   middleware<K extends 'model_request' | 'response_stream' | 'prompt' | 'session' | 'agent' | 'tool_call' | 'tool_result' | 'host_operation' | 'approval'>(event: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
-  replace<K extends 'context' | 'routing' | 'compaction' | 'tool_before' | 'terminal' | 'input' | 'list' | 'tool_output' | 'tool_batch' | 'tool_specs' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  intercept<S extends keyof InterceptSurfaces>(pattern: S, handler: InterceptHandler<S>): InterceptRegistration<S>;
+  intercept<S extends keyof InterceptSurfaces>(pattern: S, options: InterceptOptions, handler: InterceptHandler<S>): InterceptRegistration<S>;
+  intercept(pattern: string, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
+  intercept(pattern: string, options: InterceptOptions, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
+  replace<K extends 'context' | 'routing' | 'compaction' | 'terminal' | 'list' | 'tool_batch' | 'tool_specs' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   contract(document: ContractDocument): void;
   builtins(controls: BuiltinControls): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;

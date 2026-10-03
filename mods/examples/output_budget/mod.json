@@ -6,11 +6,11 @@
   "state_version": 1,
   "license": "Apache-2.0",
   "capabilities": [
-    "outputs"
+    "interception"
   ],
   "compatibility": {
     "required_features": [
-      "tool_output_v1"
+      "continuation_middleware_v1"
     ]
   }
 }

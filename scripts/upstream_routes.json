@@ -3682,11 +3682,11 @@
   },
   "extension_trait:ToolLifecycleContributor": {
    "route": "mod.event",
-   "via": "tool_before, tool_result, tool_call"
+   "via": "intercept('tool'), tool_result, tool_call"
   },
   "extension_trait:TurnInputContributor": {
    "route": "mod.event",
-   "via": "input"
+   "via": "intercept('input')"
   },
   "extension_trait:TurnItemContributor": {
    "route": "mod.event",
@@ -3725,7 +3725,7 @@
   },
   "hook_event:PreToolUse": {
    "route": "mod.event",
-   "via": "tool_before (replace); Q4 adds schema, raw arguments and batch context"
+   "via": "intercept('tool') with schema, raw arguments and batch context"
   },
   "hook_event:SessionEnd": {
    "route": "mod.event",

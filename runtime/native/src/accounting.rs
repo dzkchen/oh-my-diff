@@ -118,12 +118,20 @@ pub fn global() -> Arc<Accounts> {
         .clone()
 }
 
+/// Serves a model interceptor's own host call for a thread: `(thread, caller, call, active)`.
+pub type ModDispatcher = Arc<
+    dyn Fn(&str, &str, codex_omd::ModHostCall, &dyn Fn() -> bool) -> std::io::Result<Value>
+        + Send
+        + Sync,
+>;
+
 #[derive(Default)]
 pub struct Accounts(
     pub Mutex<BTreeMap<String, Account>>,
     Mutex<Option<Arc<Mutex<codex_omd::ModHost>>>>,
     AtomicU64,
     Arc<AtomicUsize>,
+    Mutex<Option<ModDispatcher>>,
 );
 
 const MIDDLEWARE_WAIT: Duration = Duration::from_secs(2);
@@ -139,6 +147,12 @@ impl Accounts {
     pub fn install_mod_runtime(&self, runtime: Arc<Mutex<codex_omd::ModHost>>) {
         if let Ok(mut installed) = self.1.lock() {
             *installed = Some(runtime);
+        }
+    }
+
+    pub fn install_mod_dispatcher(&self, dispatcher: ModDispatcher) {
+        if let Ok(mut installed) = self.4.lock() {
+            *installed = Some(dispatcher);
         }
     }
 
@@ -279,34 +293,91 @@ impl Accounts {
                     "tools":[],"available":true,"credential":route.credential})
             }));
         }
-        let payload = json!({"request_id":request_id,"scope":{"thread_id":thread,
-            "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
-            "kind":if account.owner == "lead" {"main"} else {"subagent"}},
+        let payload = json!({"request_id":request_id,"scope":payload_scope(account, thread),
             "routes":routes,"original":original,"effective":original,"provenance":[]});
-        let effective = match Self::middleware(
+        let mut selected = original["name"].as_str().unwrap_or_default().to_owned();
+        match Self::middleware(
             mods,
             &self.3,
             !account.owner.starts_with("mod-"),
             "model_request",
             |runtime| runtime.model_request(payload, || account.task.check_active().is_ok()),
         )? {
-            Hook::Ran(effective) => effective.map_err(denied)?,
-            Hook::Absent => return Ok(None),
+            Hook::Ran(effective) => {
+                let effective = effective.map_err(denied)?;
+                if effective["provenance"]
+                    .as_array()
+                    .is_some_and(|provenance| !provenance.is_empty())
+                {
+                    Self::record_middleware(
+                        account,
+                        &json!({"kind":"model_request","value":effective}),
+                    )?;
+                }
+                selected = effective["effective"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+            }
+            Hook::Absent => {}
             Hook::Skipped(reason) => {
                 Self::record_middleware(
                     account,
                     &json!({"kind":"middleware_skipped","hook":"model_request","request_id":request_id,"reason":reason}),
                 )?;
-                return Ok(None);
+            }
+        }
+        let deadline = Instant::now() + MIDDLEWARE_WAIT;
+        let intercepting = loop {
+            match mods.try_lock() {
+                Ok(runtime) => break runtime.intercepts("model_request"),
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(denied("mod runtime poisoned"));
+                }
+                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => break true,
             }
         };
-        if effective["provenance"]
-            .as_array()
-            .is_some_and(|provenance| !provenance.is_empty())
-        {
-            Self::record_middleware(account, &json!({"kind":"model_request","value":effective}))?;
+        if intercepting {
+            let dispatcher = self.4.lock().ok().and_then(|dispatcher| dispatcher.clone());
+            let active = || account.task.check_active().is_ok();
+            let input = json!({"request_id":request_id,"scope":payload_scope(account, thread),
+                "routes":routes,"original":original,"route":selected});
+            let origin = json!({"caller":"engine","thread_id":thread,
+                "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) }});
+            let chain = codex_omd::intercept_shared(
+                mods,
+                "model_request",
+                input,
+                origin,
+                active,
+                |caller, call| match &dispatcher {
+                    Some(dispatch) => dispatch(thread, caller, call, &active),
+                    None => Err(std::io::Error::other(
+                        "host_operation_unavailable: no session dispatcher",
+                    )),
+                },
+                |input| Ok(json!({"route": input["route"]})),
+            )
+            .map_err(denied)?;
+            if !chain.trace.is_empty() {
+                Self::record_middleware(
+                    account,
+                    &json!({"kind":"intercept","surface":"model_request","value":chain}),
+                )?;
+            }
+            if let Some(reason) = chain.result["deny"].as_str() {
+                return Err(denied(format!(
+                    "a mod refused this model request: {reason}"
+                )));
+            }
+            selected = chain.result["route"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
         }
-        let selected = effective["effective"]["name"].as_str().unwrap_or_default();
         if selected == original["name"].as_str().unwrap_or_default() {
             return Ok(None);
         }
@@ -319,6 +390,12 @@ impl Accounts {
             .map(Some)
             .ok_or_else(|| denied("mod selected a route that is not configured for this thread"))
     }
+}
+
+fn payload_scope(account: &Account, thread: &str) -> Value {
+    json!({"thread_id":thread,
+        "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) },
+        "kind":if account.owner == "lead" {"main"} else {"subagent"}})
 }
 
 fn switch_route(

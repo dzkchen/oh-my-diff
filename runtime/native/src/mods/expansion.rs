@@ -113,7 +113,7 @@ impl LeadHandle {
 }
 
 impl State {
-    fn current(&self) -> Option<Lead> {
+    pub(super) fn current(&self) -> Option<Lead> {
         self.current
             .lock()
             .ok()?
@@ -121,7 +121,7 @@ impl State {
             .and_then(LeadHandle::upgrade)
     }
 
-    fn lead(&self, thread: ThreadId) -> Option<Lead> {
+    pub(super) fn lead(&self, thread: ThreadId) -> Option<Lead> {
         self.leads.lock().ok()?.get(&thread)?.upgrade()
     }
 

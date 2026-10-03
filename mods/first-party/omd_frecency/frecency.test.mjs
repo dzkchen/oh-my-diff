@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
-const surface = { events: { input: 'input', turn_start: 'lifecycle', completion: 'composer' }, replacements: ['completion'], middleware: [], state: 'store', contracts: 'contracts' };
+const surface = { events: { turn_start: 'lifecycle', completion: 'composer' }, replacements: ['completion'], middleware: [], intercept: { input: 'input' }, state: 'store', contracts: 'contracts' };
 
 function run(event, payload, host, name = '', state = null) {
   const receipts = [];
@@ -55,9 +55,11 @@ test('mentions rank by fuzzy tier, frecency and Git status, tolerate typos and d
 
 test('submitted prompts queue paths; the next turn learns only files Git does not ignore', () => {
   const none = () => { throw new Error('no host call'); };
-  assert.equal(run('input', { text: 'explain the failing build', attachments: 0 }, none).state, null);
-  const queued = run('input', { text: 'Fix `@src/a.ts:12`, "docs/my notes.md" and (build/out.js)', attachments: 0 }, none);
-  assert.equal(queued.value, null);
+  const submit = text => run('intercept', { surface: 'input', input: { text, attachments: 0 }, origin: { caller: 'user' } },
+    call => call.operation === 'continuation.next' ? { result: { text: call.arguments.input.text }, trace: [] } : none(), '0');
+  assert.equal(submit('explain the failing build').state, null);
+  const queued = submit('Fix `@src/a.ts:12`, "docs/my notes.md" and (build/out.js)');
+  assert.deepEqual(queued.value, { result: { text: 'Fix `@src/a.ts:12`, "docs/my notes.md" and (build/out.js)' } });
   assert.deepEqual(queued.state, ['src/a.ts', 'docs/my notes.md', 'build/out.js']);
   const { host, writes } = repository({ tick: 4, files: { 'src/a.ts': [2, 1] } }, 'src/a.ts\0docs/my notes.md\0');
   const learned = run('turn_start', { turn_id: 't' }, host, '', queued.state);

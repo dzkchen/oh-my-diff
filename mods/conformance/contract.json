@@ -163,7 +163,7 @@
       "group": "coordination",
       "decision": "Request, stream and session middleware",
       "observe": "`model_request`, `response_stream`, `prompt`, `session`, `agent`, `tool_call` and `host_operation` middleware observe in order",
-      "alter": "`response_stream` may rewrite unprotected text or stop at an output boundary with an optional retry instruction; `model_request` may pick a configured route",
+      "alter": "`response_stream` may rewrite unprotected text or stop at an output boundary with an optional retry instruction; `model_request` may pick a configured route; `intercept('model_request')` and `intercept('host_operation')` wrap the route choice and every mod host call as continuations under the caller's grants",
       "replace": null,
       "timing": "per request and per streamed event",
       "ownership": "mod: the transformation; host: protected fields, boundaries, retry limit and provenance",
@@ -183,13 +183,19 @@
           "host_operation"
         ],
         "replacements": [],
-        "operations": []
+        "operations": [],
+        "intercepts": [
+          "model_request",
+          "host_operation"
+        ]
       },
       "evidence": [
         "rust:request_and_stream_middleware_preserve_authority_and_provenance",
         "rust:stream_control_is_bounded_to_output_boundaries_and_current_api",
         "patch:stream_control_stops_only_at_output_boundaries_and_carries_the_retry",
-        "node:typed middleware and services register without ambient authority"
+        "node:typed middleware and services register without ambient authority",
+        "rust:host_operation_continuations_retry_and_answer_under_the_actual_caller",
+        "rust:input_and_model_request_continuations_pass_downstream_results_or_deny"
       ]
     },
     {
@@ -252,30 +258,30 @@
     {
       "id": "context.input",
       "group": "context_recovery",
-      "decision": "Submitted prompt: observe, deny or rewrite",
-      "observe": "text and attachment count",
-      "alter": "deny with a reason (any observer may veto)",
-      "replace": "input",
+      "decision": "Submitted prompt: transform or deny",
+      "observe": "`intercept('input')` with the thread, text and attachment count",
+      "alter": "pass rewritten text to `next`, or return `{deny}`; interceptors compose in continuation order",
+      "replace": null,
       "timing": "before native prompt hooks, skill/mention resolution and history, in TUI and exec",
       "ownership": "host: submission path, attachments, history and the visible notice",
-      "limits": "a rewrite or denial is always shown to the user; attachments are retained; two rewrites cannot compose",
+      "limits": "a rewrite or denial is always shown to the user; attachments are retained; a handler returns only what `next` returned or `{deny}`, so it cannot bypass an inner required interceptor",
       "native": "`user_prompt_submit` hooks can block a prompt or add context; competing rewrites are resolved by whichever hook finishes last",
       "covers": {
         "capabilities": [
           "input"
         ],
-        "events": [
-          "input"
-        ],
-        "replacements": [
+        "events": [],
+        "replacements": [],
+        "intercepts": [
           "input"
         ],
         "operations": []
       },
       "evidence": [
-        "rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny"
+        "rust:input_and_model_request_continuations_pass_downstream_results_or_deny",
+        "node:lifecycle events and interceptors require their capabilities"
       ],
-      "replace_note": "exclusive rewrite"
+      "replace_note": "composed interceptors, no exclusive owner"
     },
     {
       "id": "context.compaction",
@@ -462,30 +468,32 @@
     {
       "id": "tool.interception",
       "group": "tool",
-      "decision": "Tool call interception: observe, deny, rewrite arguments or retarget",
-      "observe": "tool name, arguments and call ID",
-      "alter": "deny with a reason from any observer",
-      "replace": "tool_before (exclusive argument rewrite or retarget)",
-      "timing": "before native hooks and permission checks",
+      "decision": "Tool call continuation: transform, retarget, deny, answer or inspect the result",
+      "observe": "`intercept('tool')` with the tool, arguments, call, thread, agent, schema and batch position; `next` resolves to the executed result",
+      "alter": "pass a changed tool or arguments to `next`, return `{deny}`, transform the result, or answer without running the tool",
+      "replace": null,
+      "timing": "before native hooks and permission checks; the result returns after the handler and before upstream truncation",
       "ownership": "host: permissions, the executor and completion evidence",
-      "limits": "a replacement cannot forge native completion evidence or escape the sandbox; only one rewrite may exist",
-      "native": "`pre_tool_use` blocks or rewrites input; the last-finishing hook silently wins a contested rewrite and no hook can retarget the call",
+      "limits": "the effective call re-enters native permissions; a synthetic answer is recorded as `answered_by` and cannot forge completion evidence; a tool runs once per dispatch",
+      "native": "`pre_tool_use` blocks or rewrites input; the last-finishing hook silently wins a contested rewrite, no hook can retarget the call or answer it",
       "covers": {
         "capabilities": [
           "interception"
         ],
-        "events": [
-          "tool_before"
-        ],
-        "replacements": [
-          "tool_before"
+        "events": [],
+        "replacements": [],
+        "intercepts": [
+          "tool"
         ],
         "operations": []
       },
       "evidence": [
-        "rust:exclusive_replacement_conflicts_fail_before_activation"
+        "rust:continuations_compose_transforms_inspect_results_and_short_circuit",
+        "rust:continuation_failures_skip_keep_catch_or_fail_closed",
+        "patch:tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_original",
+        "patch:mod_interception_denies_answers_or_routes_through_registered_native_handler"
       ],
-      "replace_note": null
+      "replace_note": "composed interceptors, no exclusive owner"
     },
     {
       "id": "tool.commands",
@@ -507,7 +515,7 @@
         "operations": []
       },
       "evidence": [
-        "rust:command_outcomes_and_input_decisions_are_validated",
+        "rust:command_outcomes_are_validated",
         "patch:namespaced_commands_always_exist_and_bare_aliases_only_when_unique"
       ],
       "replace_note": null
@@ -1058,14 +1066,14 @@
     {
       "id": "tool.output",
       "group": "tool",
-      "decision": "Tool-output replacement and composable feedback",
-      "observe": "`tool_output` with bounded text, byte count and, for the owner, the stored original",
+      "decision": "Tool-output feedback",
+      "observe": "`tool_output` with bounded text and byte count after any interceptor result",
       "alter": "observers append up to 4 KiB each (16 KiB total) of feedback",
-      "replace": "tool_output (exclusive)",
+      "replace": null,
       "timing": "after the handler returns, before upstream truncation and history recording",
-      "ownership": "mod: model-visible text; host: call id, status, the retrievable original and the ledger hashes",
-      "limits": "replacement \u2264 64 KiB; handlers see the first 48 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers; originals rotate per mod (newest 256)",
-      "native": "PostToolUse hooks can add feedback but cannot keep a retrievable original or compose with a replacement",
+      "ownership": "mod: appended feedback; host: call id, status, the retrievable original and the ledger hashes",
+      "limits": "handlers see the first 48 KiB plus a 16 KiB tail; feedback extends any output by at most 16 KiB; image and audio items appear as markers",
+      "native": "PostToolUse hooks can add feedback but cannot keep a retrievable original",
       "covers": {
         "capabilities": [
           "outputs"
@@ -1073,13 +1081,11 @@
         "events": [
           "tool_output"
         ],
-        "replacements": [
-          "tool_output"
-        ],
+        "replacements": [],
         "operations": []
       },
       "evidence": [
-        "patch:tool_output_owner_replaces_text_observers_append_and_original_stays_readable",
+        "patch:tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_original",
         "patch:tool_output_without_owner_is_not_offered",
         "patch:tool_output_contributor_replaces_model_visible_text_within_limit"
       ],
@@ -1120,7 +1126,7 @@
       "replace": "tool_specs (exclusive)",
       "timing": "when the tool router is built for a turn",
       "ownership": "mod: descriptions and visibility; host: execution, schemas it accepts and admission",
-      "limits": "invalid schemas are ignored; tools still map arguments back through `tool_before`",
+      "limits": "invalid schemas are ignored; calls still pass through the tool interceptors",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -1456,8 +1462,15 @@
       "id": "exclusive_versus_middleware",
       "rule": "`api.on` is middleware: observers compose, may veto (`deny`), contribute additive context, and on the current API contribute bounded terminal patches. `api.replace` is exclusive: one mod per replacement point, claimed at activation. A non-null `routing` or `compaction` decision without replacement fails visibly; older terminal observers also remain observe-only. A context replacer drops observer fragments with a notice naming both sides.",
       "evidence": [
-        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose",
-        "rust:input_rewrite_requires_exclusive_replacement_while_observers_may_deny"
+        "rust:exclusive_decisions_require_a_replacement_registration_while_observers_compose"
+      ]
+    },
+    {
+      "id": "continuation_order",
+      "rule": "Interceptors compose as one continuation chain per operation: ordinary handlers wrap required ones; each tier follows explicit `before`/`after`, then consumers outside their dependencies, then mod ID and registration order, and a cycle disables its mods. A failure before `next` skips the handler, after `next` keeps the downstream result, a `.catch` handler may answer instead, and a required handler's failure or unavailability fails the operation closed. A reload lets running handlers finish.",
+      "evidence": [
+        "rust:continuation_order_cancellation_and_reload_are_explicit",
+        "rust:continuation_failures_skip_keep_catch_or_fail_closed"
       ]
     },
     {

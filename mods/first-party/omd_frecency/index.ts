@@ -93,10 +93,10 @@ export default function activate(api: ModAPI) {
     },
   });
 
-  api.on('input', event => {
+  api.intercept('input', (event, next) => {
     const tokens = mentioned(event.text);
     if (tokens.length) api.state.set([...new Set([...(api.state.get() as string[] | null ?? []), ...tokens])].slice(-16));
-    return null;
+    return next(event);
   });
 
   api.on('turn_start', () => {

@@ -51,6 +51,7 @@
       "store_v1",
       "routes_v1",
       "stream_control_v1",
+      "continuation_middleware_v1",
       "builtins_v1",
       "contracts_v2",
       "framed_process_v1",

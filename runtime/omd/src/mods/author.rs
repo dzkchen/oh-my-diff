@@ -262,6 +262,46 @@ impl ModHost {
                 ))
             }
             "response_stream" => self.response_stream(payload, || active),
+            "intercept" => {
+                let surface = required_string(step, "surface")?;
+                let mut replies = step
+                    .get("core")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter();
+                let mut core_calls = Vec::new();
+                let mut core = |input: Value| {
+                    core_calls.push(input);
+                    let reply = replies
+                        .next()
+                        .ok_or_else(|| failure("offline_core_reply_missing"))?;
+                    match reply.get("error").and_then(Value::as_str) {
+                        Some(error) => Err(failure(error)),
+                        None => Ok(reply.get("value").cloned().unwrap_or(Value::Null)),
+                    }
+                };
+                let origin = step
+                    .get("origin")
+                    .cloned()
+                    .unwrap_or_else(|| json!({"caller": "offline"}));
+                let chain = chain::intercept(
+                    &mut Access::Held(self),
+                    &mut |caller, call| host.call(caller, call),
+                    &mut chain::Core::Call(&mut core),
+                    surface,
+                    payload,
+                    origin,
+                    &|| active,
+                    &InvocationScope::default(),
+                )?;
+                let mut value = serde_json::to_value(chain)?;
+                for entry in value["trace"].as_array_mut().into_iter().flatten() {
+                    entry.as_object_mut().map(|entry| entry.remove("ms"));
+                }
+                value["core_calls"] = Value::Array(core_calls);
+                Ok(value)
+            }
             "event" | "tool_outcome" | "agent" => {
                 let event = match kind {
                     "tool_outcome" => "tool_result",

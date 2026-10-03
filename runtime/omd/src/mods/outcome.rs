@@ -9,13 +9,6 @@ pub struct ModCommandOutcome {
     pub submit: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ModInputDecision {
-    Keep,
-    Rewrite(String),
-    Deny(String),
-}
-
 fn text(value: &Value, limit: usize) -> Result<String> {
     let text = value
         .as_str()
@@ -81,28 +74,6 @@ impl ModCommandOutcome {
                 display: Some(truncated(serde_json::to_string_pretty(other)?)),
                 ..Self::default()
             }),
-        }
-    }
-}
-
-impl ModInputDecision {
-    pub fn parse(value: &Value) -> Result<Self> {
-        let Some(object) = value.as_object() else {
-            return if value.is_null() {
-                Ok(Self::Keep)
-            } else {
-                Err(failure("invalid_input_decision"))
-            };
-        };
-        match object
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .as_slice()
-        {
-            ["text"] => Ok(Self::Rewrite(text(&object["text"], 61_440)?)),
-            ["deny"] => Ok(Self::Deny(text(&object["deny"], 512)?)),
-            _ => Err(failure("invalid_input_decision")),
         }
     }
 }

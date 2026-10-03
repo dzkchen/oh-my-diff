@@ -9,7 +9,8 @@ const manifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_recove
 const native = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const events = native.match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
 const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
-  replacements: ['tool_before'], middleware: ['model_request'], state: 'store' };
+  replacements: [], middleware: ['model_request'], state: 'store',
+  intercept: Object.fromEntries([...native.match(/pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])) };
 const evidence = { reference: 'evidence:history', sha256: 'b'.repeat(64) };
 const routes = [
   { name: 'lead', roles: ['lead', 'worker'], available: true, provider: 'fixture', model: 'lead', billing: 'included_subscription' },

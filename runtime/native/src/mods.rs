@@ -1,6 +1,7 @@
 mod agents;
 mod evidence;
 mod expansion;
+mod intercept;
 mod operations;
 pub(crate) mod services;
 mod snapshots;
@@ -18,7 +19,6 @@ use codex_extension_api::UserInputInterceptInput;
 use codex_omd::ModGrants;
 use codex_omd::ModHost;
 use codex_omd::ModHostCall;
-use codex_omd::ModInputDecision;
 use codex_omd::ModTool;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::PermissionProfileSnapshot;
@@ -155,9 +155,47 @@ struct Mods {
     sessions: Mutex<BTreeMap<String, std::sync::Weak<Session>>>,
     workspace_before: Mutex<BTreeMap<String, Result<codex_omd::WorkspaceIndex, String>>>,
     worktrees: Mutex<BTreeMap<std::path::PathBuf, Arc<Host>>>,
+    pending: Mutex<BTreeMap<String, PendingTool>>,
+    answered: Mutex<BTreeMap<String, String>>,
+}
+
+/// A tool chain waiting at its native executor for the call's result.
+struct PendingTool {
+    thread: String,
+    result: std::sync::mpsc::Sender<Result<Value, String>>,
+    chain: tokio::task::JoinHandle<Result<codex_omd::ModChain, String>>,
+    _cancellation: Cancellation,
 }
 
 impl Mods {
+    /// Hands a tool's result to its waiting chain and returns the settled chain.
+    async fn resume(
+        &self,
+        call_id: &str,
+        result: Result<Value, String>,
+    ) -> Option<Result<codex_omd::ModChain, String>> {
+        let PendingTool {
+            result: sender,
+            chain,
+            _cancellation,
+            ..
+        } = self.pending.lock().ok()?.remove(call_id)?;
+        let _ = sender.send(result);
+        Some(
+            chain
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|chain| chain),
+        )
+    }
+
+    /// Cancels chains whose call never reported a result before its turn ended.
+    fn release_pending(&self, thread: Option<String>) {
+        if let (Some(thread), Ok(mut pending)) = (thread, self.pending.lock()) {
+            pending.retain(|_, entry| entry.thread != thread);
+        }
+    }
+
     fn host_for(&self, cwd: &std::path::Path) -> Option<Arc<Host>> {
         if cwd == self.host.repository {
             return Some(self.host.clone());
@@ -311,7 +349,10 @@ pub(super) fn install(
         sessions: Mutex::new(BTreeMap::new()),
         workspace_before: Mutex::new(BTreeMap::new()),
         worktrees: Mutex::new(BTreeMap::new()),
+        pending: Mutex::new(BTreeMap::new()),
+        answered: Mutex::new(BTreeMap::new()),
     });
+    intercept::install_dispatcher(&extension.core);
     registry.config_contributor(extension.clone());
     registry.prompt_contributor(extension.clone());
     registry.thread_lifecycle_contributor(extension.clone());
@@ -906,6 +947,7 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnAbortInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            self.release_pending(thread_id(input.thread_store));
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -936,6 +978,7 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnErrorInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            self.release_pending(thread_id(input.thread_store));
             if let Some(thread) = thread_id(input.thread_store)
                 && lead_thread(input.thread_store)
                 && let Ok(mut turns) = self.turns.lock()
@@ -951,6 +994,7 @@ impl TurnLifecycleContributor for Mods {
         input: codex_extension_api::TurnStopInput<'a>,
     ) -> ExtensionFuture<'a, ()> {
         Box::pin(async move {
+            self.release_pending(thread_id(input.thread_store));
             let Some(lead) = input
                 .thread_store
                 .get::<Lead>()
@@ -1019,61 +1063,67 @@ impl TurnLifecycleContributor for Mods {
             if !lead_thread(input.thread_store) {
                 return UserInputDecision::Keep;
             }
+            let Some(lead) = input.thread_store.get::<Lead>() else {
+                return UserInputDecision::Keep;
+            };
             let runtime = self.input_runtime.clone();
-            let payload = json!({"text":input.text,"attachments":input.attachments});
-            let prompt = json!({"thread_id":thread_id(input.thread_store),"turn_id":Value::Null,
+            let thread = thread_id(input.thread_store);
+            let prompt = json!({"thread_id":thread,"turn_id":Value::Null,
                 "original":input.text,"effective":input.text,"provenance":[]});
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
-            let unavailable = || UserInputDecision::Deny {
-                notice: "Mod input hook unavailable; the prompt was not sent.".into(),
+            let unavailable = |error: String| UserInputDecision::Deny {
+                notice: format!("Mod input interception failed; the prompt was not sent: {error}"),
             };
-            let thread = thread_id(input.thread_store);
-            tokio::task::spawn_blocking(move || {
-                let _thread = codex_omd::StateThread::enter(thread);
-                let Ok(mut runtime) = runtime.lock() else {
-                    return unavailable();
-                };
+            let (flag, scoped) = (cancelled.clone(), thread.clone());
+            let intercepting = tokio::task::spawn_blocking(move || {
+                let _thread = codex_omd::StateThread::enter(scoped);
+                let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
                 runtime.turn_boundary();
-                let _ = runtime.event_guarded("prompt", prompt, || {
-                    !cancelled.load(Ordering::Acquire)
-                });
-                let mut rewrite: Option<(String, String)> = None;
-                for (id, result) in runtime.event_guarded("input", payload, || {
-                    !cancelled.load(Ordering::Acquire)
-                }) {
-                    match result.and_then(|value| ModInputDecision::parse(&value)) {
-                        Err(error) => {
-                            return UserInputDecision::Deny {
-                                notice: format!("Mod {id} input hook failed; the prompt was not sent and the mod is disabled until reload: {error}"),
-                            };
-                        }
-                        Ok(ModInputDecision::Keep) => {}
-                        Ok(ModInputDecision::Deny(reason)) => {
-                            return UserInputDecision::Deny {
-                                notice: format!("Mod {id} denied this prompt: {reason}"),
-                            };
-                        }
-                        Ok(ModInputDecision::Rewrite(text)) => {
-                            if rewrite.is_some() {
-                                return UserInputDecision::Deny {
-                                    notice: "mod_input_rewrite_conflict; the prompt was not sent.".into(),
-                                };
-                            }
-                            rewrite = Some((id, text));
-                        }
-                    }
-                }
-                match rewrite {
-                    Some((id, text)) => UserInputDecision::Rewrite {
-                        notice: format!("Mod {id} rewrote this prompt. The model received:\n{}", preview(&text)),
-                        text,
-                    },
-                    None => UserInputDecision::Keep,
-                }
+                let _ = runtime.event_guarded("prompt", prompt, || !flag.load(Ordering::Acquire));
+                Ok::<_, String>(runtime.intercepts("input"))
             })
             .await
-            .unwrap_or_else(|_| unavailable())
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
+            match intercepting {
+                Ok(true) => {}
+                Ok(false) => return UserInputDecision::Keep,
+                Err(error) => return unavailable(error),
+            }
+            let payload =
+                json!({"thread_id":thread,"text":input.text,"attachments":input.attachments});
+            let origin = json!({"caller":"user","thread_id":thread});
+            let chain = intercept::chain(
+                self.core.clone(),
+                lead,
+                self.input_runtime.clone(),
+                "input",
+                payload,
+                origin,
+                cancelled,
+                |input| Ok(json!({"text": input["text"]})),
+            )
+            .await;
+            match chain {
+                Err(error) => unavailable(error),
+                Ok(chain) => match (chain.result["deny"].as_str(), chain.result["text"].as_str()) {
+                    (Some(reason), _) => UserInputDecision::Deny {
+                        notice: format!(
+                            "Mod {} denied this prompt: {reason}",
+                            intercept::settled_by(&chain)
+                        ),
+                    },
+                    (None, Some(text)) if text != input.text => UserInputDecision::Rewrite {
+                        notice: format!(
+                            "Mods rewrote this prompt. The model received:\n{}",
+                            preview(text)
+                        ),
+                        text: text.to_owned(),
+                    },
+                    _ => UserInputDecision::Keep,
+                },
+            }
         })
     }
 
@@ -1425,13 +1475,13 @@ impl ToolLifecycleContributor for Mods {
     fn intercept_tool<'a>(
         &'a self,
         input: ToolStartInput<'a>,
-    ) -> ExtensionFuture<'a, Result<Option<(ToolName, codex_tools::ToolPayload)>, String>> {
+    ) -> ExtensionFuture<'a, Result<ToolInterception, String>> {
         Box::pin(async move {
-            if input.thread_store.get::<Lead>().is_none() {
-                return Ok(None);
-            }
+            let Some(lead) = input.thread_store.get::<Lead>() else {
+                return Ok(ToolInterception::Continue(None));
+            };
             let codex_tools::ToolPayload::Function { arguments } = input.payload else {
-                return Ok(None);
+                return Ok(ToolInterception::Continue(None));
             };
             let original_tool = input.tool_name.clone();
             let scope_agent_id = agent_id(input.thread_store);
@@ -1444,80 +1494,113 @@ impl ToolLifecycleContributor for Mods {
                 &arguments,
                 &raw_arguments,
             );
-            payload["thread_id"] = json!(
-                input
-                    .thread_store
-                    .get::<Lead>()
-                    .map(|lead| lead.thread.to_string())
-            );
+            payload["thread_id"] = json!(lead.thread.to_string());
+            payload["agent_id"] = json!(scope_agent_id);
             let runtime = self.runtime.clone();
-            let cancelled = Arc::new(AtomicBool::new(false));
-            let _cancellation = Cancellation(cancelled.clone());
-            let thread = payload["thread_id"].as_str().map(str::to_owned);
-            let result = tokio::task::spawn_blocking(move || {
-                let _thread = codex_omd::StateThread::enter(thread);
+            let observed = json!({"tool":original_tool.to_string(),"arguments":payload["arguments"],
+                "call_id":payload["call_id"],"agent_id":scope_agent_id});
+            let thread = lead.thread.to_string();
+            let intercepting = tokio::task::spawn_blocking(move || {
+                let _thread = codex_omd::StateThread::enter(Some(thread));
                 let mut runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
-                let _ = runtime.event_guarded(
-                    "tool_call",
-                    json!({"tool":original_tool.to_string(),"arguments":payload["arguments"],
-                        "call_id":payload["call_id"],"agent_id":scope_agent_id}),
-                    || !cancelled.load(Ordering::Acquire),
-                );
-                let mut replacement = None;
-                for (id, result) in runtime.event_guarded("tool_before", payload, || {
-                    !cancelled.load(Ordering::Acquire)
-                }) {
-                    let value =
-                        result.map_err(|e| format!("mod_interception_failed: {id}: {e}"))?;
-                    if value.is_null() {
-                        continue;
-                    }
-                    let object = value.as_object().ok_or("invalid_interception_result")?;
-                    if object.is_empty()
-                        || object.len() > 2
-                        || object
-                            .keys()
-                            .any(|key| !["arguments", "tool", "deny"].contains(&key.as_str()))
-                    {
-                        return Err("invalid_interception_result".into());
-                    }
-                    if let Some(reason) = value.get("deny").and_then(Value::as_str) {
-                        return Err(format!(
-                            "mod_tool_denied: {id}: {}",
-                            reason.chars().take(512).collect::<String>()
-                        ));
-                    }
-                    let arguments = value
-                        .get("arguments")
-                        .filter(|v| v.is_object())
-                        .ok_or("invalid_interception_result")?;
-                    if replacement.is_some() {
-                        return Err("mod_tool_replacement_conflict".into());
-                    }
-                    let target = match value.get("tool") {
-                        None => original_tool.clone(),
-                        Some(value) => ToolName::plain(
-                            value
-                                .as_str()
-                                .filter(|s| !s.is_empty() && s.len() <= 128)
-                                .ok_or("invalid_replacement_tool")?,
-                        ),
-                    };
-                    replacement = Some((
-                        target,
-                        codex_tools::ToolPayload::Function {
-                            arguments: serde_json::to_string(arguments)
-                                .map_err(|e| e.to_string())?,
-                        },
-                    ));
-                }
-                Ok(replacement)
+                let _ = runtime.event_guarded("tool_call", observed, || true);
+                Ok::<_, String>(runtime.intercepts("tool"))
             })
             .await
-            .map_err(|e| e.to_string())?;
-            self.cleanup_failed(input.thread_store.get::<Lead>().as_deref())
-                .await;
-            result
+            .map_err(|e| e.to_string())??;
+            if !intercepting {
+                self.cleanup_failed(Some(&lead)).await;
+                return Ok(ToolInterception::Continue(None));
+            }
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let cancellation = Cancellation(cancelled.clone());
+            let (reached, reached_at_executor) = tokio::sync::oneshot::channel::<Value>();
+            let (result, results) = std::sync::mpsc::channel::<Result<Value, String>>();
+            let (flag, mut reached) = (cancelled.clone(), Some(reached));
+            let executor = move |effective: Value| -> std::io::Result<Value> {
+                reached
+                    .take()
+                    .ok_or_else(|| std::io::Error::other("continuation_retry_unavailable"))?
+                    .send(effective)
+                    .map_err(|_| std::io::Error::other("tool_dispatch_stopped"))?;
+                loop {
+                    if flag.load(Ordering::Acquire) {
+                        return Err(std::io::Error::other("callback_cancelled"));
+                    }
+                    match results.recv_timeout(std::time::Duration::from_millis(20)) {
+                        Ok(result) => return result.map_err(std::io::Error::other),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            return Err(std::io::Error::other("tool_result_unavailable"));
+                        }
+                    }
+                }
+            };
+            let origin = json!({"caller":"model","thread_id":payload["thread_id"],
+                "agent_id":payload["agent_id"],"call_id":payload["call_id"]});
+            let chain = tokio::spawn(intercept::chain(
+                self.core.clone(),
+                lead,
+                self.runtime.clone(),
+                "tool",
+                payload.clone(),
+                origin,
+                cancelled,
+                executor,
+            ));
+            if let Ok(effective) = reached_at_executor.await {
+                if let Ok(mut pending) = self.pending.lock() {
+                    pending.insert(
+                        input.call_id.to_owned(),
+                        PendingTool {
+                            thread: payload["thread_id"].as_str().unwrap_or_default().to_owned(),
+                            result,
+                            chain,
+                            _cancellation: cancellation,
+                        },
+                    );
+                }
+                if effective["tool"] == payload["tool"]
+                    && effective["arguments"] == payload["arguments"]
+                {
+                    return Ok(ToolInterception::Continue(None));
+                }
+                let target = match effective["tool"].as_str() {
+                    Some(tool) if effective["tool"] != payload["tool"] => ToolName::plain(tool),
+                    _ => original_tool,
+                };
+                let arguments =
+                    serde_json::to_string(&effective["arguments"]).map_err(|e| e.to_string())?;
+                return Ok(ToolInterception::Continue(Some((
+                    target,
+                    codex_tools::ToolPayload::Function { arguments },
+                ))));
+            }
+            let chain = chain
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|chain| chain)
+                .map_err(|e| format!("mod_interception_failed: {e}"))?;
+            let by = intercept::settled_by(&chain);
+            if let Some(reason) = chain.result["deny"].as_str() {
+                return Err(format!(
+                    "mod_tool_denied: {by}: {}",
+                    reason.chars().take(512).collect::<String>()
+                ));
+            }
+            if let Ok(mut answered) = self.answered.lock() {
+                answered.insert(
+                    input.call_id.to_owned(),
+                    chain.answered_by.clone().unwrap_or(by),
+                );
+            }
+            Ok(ToolInterception::Respond {
+                output: chain.result["output"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                success: chain.result["success"].as_bool().unwrap_or(false),
+            })
         })
     }
 
@@ -1544,7 +1627,12 @@ impl ToolLifecycleContributor for Mods {
                     .and_then(|turn| turn.evidence.as_mut())
                 && cursor.tools.len() < 128
             {
-                cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":tool_outcome(input.outcome)}));
+                let answered_by = self
+                    .answered
+                    .lock()
+                    .ok()
+                    .and_then(|answered| answered.get(input.call_id).cloned());
+                cursor.tools.push(json!({"call_id":input.call_id.chars().take(128).collect::<String>(),"tool":input.tool_name.to_string().chars().take(128).collect::<String>(),"outcome":tool_outcome(input.outcome),"answered_by":answered_by}));
             }
             expansion::tool_finished(
                 &self.core,
@@ -1553,12 +1641,33 @@ impl ToolLifecycleContributor for Mods {
                 &input.tool_name.to_string(),
                 tool_outcome(input.outcome),
             );
+            if let Some(Err(error)) = self
+                .resume(
+                    input.call_id,
+                    Err(format!(
+                        "tool_result_unavailable: {}",
+                        tool_outcome(input.outcome)
+                    )),
+                )
+                .await
+            {
+                self.views.diagnostic(
+                    &self.host,
+                    "intercept",
+                    Some(format!("{}: {error}", input.call_id)),
+                );
+            }
+            let answered_by = self
+                .answered
+                .lock()
+                .ok()
+                .and_then(|mut answered| answered.remove(input.call_id));
             let event_lead = (lead.owner == "lead").then_some(&*lead);
             self.event(
                 "tool_result",
                 json!({"call_id": input.call_id, "agent_id":agent_id(input.thread_store),
                     "thread_id": lead.thread.to_string(), "tool": input.tool_name.to_string(),
-                    "outcome": tool_outcome(input.outcome),
+                    "outcome": tool_outcome(input.outcome), "answered_by": answered_by,
                     "call_sha256": input.call_sha256, "result_sha256": input.result_sha256,
                     "result_complete": input.result_sha256.is_some()}),
                 event_lead,

@@ -36,7 +36,7 @@ native work.
 | `exec` | `exec.run`, `process.*`, `sidecars.*`, the `process_event` event; `app.request mcpServer/tool/call` |
 | `pty` | `terminal.pty` (a writable pane also needs `fs.write`) |
 | `history` | the `history` replacement |
-| `outputs` | the `tool_output` replacement and observers |
+| `outputs` | `tool_output` observers |
 | `fs.read` | `workspace.read`, `workspace.list`, `workspace.stat`, read-only `workspace.check_access`, `workspace.snapshot`, `workspace.fingerprint`, `workspace.watch`, the `workspace_change` event; `app.request fuzzyFileSearch*` |
 | `fs.write` | write-mode `workspace.check_access`, `workspace.transaction`, `workspace.backup`, `workspace.restore`, `workspace.request_rename`, the `workspace_pre_rename` event, `exec.run` with `write: true` |
 | `network` | `exec.run` and `process.start` with `network: "loopback"` |
@@ -55,13 +55,16 @@ native work.
 | `composer` | `composer.read`, `composer.write`, the `completion` replacement |
 | `packages` | `packages.list`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
 | `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, the `tool_specs` replacement |
-| `context`, `commands`, `lifecycle`, `input`, `interception`, `compaction`, `middleware`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
+| `interception` | `tool` interceptors and the `tool_batch` replacement |
+| `input` | `input` interceptors |
+| `middleware` | `host_operation` and `model_request` interceptors and the middleware events |
+| `context`, `commands`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
 covers the accepted model-visible output with a fixed call ID; blocked, failed,
-aborted and unavailable lifecycle results have no result digest. `tool_before` supplies `thread_id`
-for thread-scoped interception decisions.
+aborted and unavailable lifecycle results have no result digest. `answered_by` names
+the mod that answered the call without running it.
 
 A manifest may list up to 16 `exec_environment` names that `exec.run` passes
 through from the host environment; `PATH`, `HOME`, `TMPDIR`, shell, loader and
@@ -497,18 +500,85 @@ before hooks, automatic review and full-access shortcuts. It returns `null`,
 A mod can never approve, and a failing middleware counts as `ask`.
 `approval_result` reports the decision and its source.
 
+### Continuation middleware (`continuation_middleware_v1`)
+
+`api.intercept(pattern, [options,] (e, next) => result)` wraps an operation.
+`pattern` is a surface name, `*`, a `*` glob or a `!` negation, and selects only
+surfaces the package's capabilities entitle: `tool` (`interception`), `input`
+(`input`), `model_request` and `host_operation` (`middleware`). Options are
+`match`, `required` and `before`/`after` (mod IDs). In `match`, a scalar matches
+by `===`, a RegExp tests a scalar as a string, an array is any-of and matches any
+element of an array value, and an object matches part of an object. A mod
+registers up to 16 interceptors during activation; `intercept` returns a
+registration whose `.catch(handler)` sets a fallback handler.
+
+`e` is a frozen copy of the effective input, and `await next(e2)` runs the rest
+of the chain and then the native executor. Only the listed fields may change:
+
+| Surface | Replaceable | `next` resolves to | A handler may return |
+| --- | --- | --- | --- |
+| `tool` | `tool`, `arguments` | `{output, success, truncated}` | that result, a changed `{output, success}` of at most 64 KiB, an answer without calling `next`, or `{deny}` |
+| `host_operation` | `arguments` | `{value}` | `{value}` or `{error}`, with or without calling `next` |
+| `input` | `text` | `{text}` | what `next` returned, or `{deny}` |
+| `model_request` | `route`, one of `routes` | `{route}` | what `next` returned, or `{deny}` |
+
+Tool inputs also carry `call_id`, `thread_id`, `agent_id`, `schema`,
+`raw_arguments` and `batch`; output beyond 48 KiB arrives truncated with
+`truncated: true`. A tool or host-operation answer runs nothing: the host
+records the answering mod as `answered_by` on `tool_result` and in turn
+evidence, and the answer cannot attest that a file changed or a process ran.
+Input and model-request handlers cannot answer for the engine, so an outer
+handler cannot bypass an inner required one. When a chain changes a tool's
+output, the host keeps the original as readable evidence of the mod that
+settled the result.
+
+`next` also carries `event`, `origin` (set by the host: `caller` is `model`,
+`user`, `engine` or the calling mod, plus thread, agent and call IDs),
+`signal.aborted`, `trace` (the entries beneath this handler on its latest call),
+`budget` (`ms`, `remainingMs`, `hostCalls`) and `is(pattern)`. Calling `next`
+suspends the callback: the host releases the runtime, runs the downstream chain,
+then replays the handler from its recorded host results. Code before `next` runs
+again, but its host calls are not repeated, so keep their arguments
+deterministic. A handler may call `next` up to three times; each call is a
+separate attempt through the same executor and admission, so a retried write or
+request is a second effect. A tool call runs once per dispatch, and a second
+`next` fails with `continuation_retry_unavailable`.
+
+Ordinary interceptors wrap required ones. Within each tier the order is
+explicit `before`/`after`, then consumers outside their dependencies, then mod
+ID, then registration order; a cycle disables the mods involved with
+`interceptor_order_conflict`. Required interceptors therefore see the final
+effective input. A mod never intercepts its own host calls, and host calls made
+inside an interceptor are not intercepted.
+
+A handler that throws, times out or returns an invalid result before calling
+`next` is skipped and the chain continues with its input; after `next`, the
+downstream result is kept and nothing runs again. A `.catch` handler runs
+instead with `next.error` (`kind`, `message`) and `next.called`; when `called`
+is true its `next` resolves to the recorded result. A failed required
+interceptor, a runtime still busy after 5 s, or a required interceptor of a
+faulted mod fails the operation closed with `intercept_required_failed`; disable
+or reload the mod in `/mods` to recover. Optional interceptors wait up to 2 s
+for a busy runtime and are then skipped with `mod_runtime_busy`. A reload during
+a chain lets running handlers finish; later operations use the new generation.
+
+Interceptors call host operations under their own grants with lifecycle-event
+access, including `terminal.prompt`. The host keeps the last 16 chains in status
+`chains`; each trace entry names the mod, `location`, `outcome` (`returned`,
+`passed`, `skipped`, `kept`, `caught` or `rejected`), attempts, own time and
+bounded inputs and results. Model-request chains are also appended to the
+session's `mod-middleware.jsonl`. The offline scenario step
+`{"type":"intercept","surface":"tool","payload":{...},"core":[{"value":...}]}`
+runs a chain against queued engine results (`{"error":...}` rejects) and returns
+it without timings.
+
 ### Tool output, feedback, batches and specs
 
-- `replace('tool_output')` (`tool_output_v1`) returns `{text}` of at most
-  64 KiB before upstream truncation and history recording. Handlers receive the
-  first 48 KiB as `text`, the last 16 KiB as `tail` when the output is longer,
-  and the total `bytes`. Image and audio items appear as `[image]` and
-  `[audio]` markers, and a replacement drops them. The owner receives
-  `original`, a readable evidence reference; originals rotate per mod, newest
-  256 kept.
 - `on('tool_output')` observers (`tool_feedback_v1`) return `{append}` of at
-  most 4 KiB, 16 KiB per call in total, added after any replacement at any
-  output size. Observers receive `original: null`.
+  most 4 KiB, 16 KiB per call in total, added after any interceptor result at
+  any output size. Handlers receive the first 48 KiB as `text`, the last 16 KiB
+  as `tail` when the output is longer, and the total `bytes`. Image and audio
+  items appear as `[image]` and `[audio]` markers.
 - Tool-output callbacks may call every host operation their grants allow in
   lifecycle events, such as language-server exchanges or `model.complete`,
   before the model sees the result. The output waits for them.
@@ -517,7 +587,6 @@ A mod can never approve, and a failing middleware counts as `ask`.
   through ordinary admission and approvals, and results fan out by call id.
 - `replace('tool_specs')` (`tool_specs_v1`) hides or re-describes
   model-visible tools per route; execution is unchanged.
-- `tool_before` also receives `schema`, `raw_arguments` and `batch`.
 
 ### Channels, processes and watches (`events_v1`)
 
@@ -1162,7 +1231,9 @@ once without hooks; other requests wait up to 2 s first. Each skip is recorded a
 `middleware_skipped` with the hook and reason, and a skipped or unsubscribed
 stream runs without stream hooks for the rest of that response. The middleware
 log records only selections, transformations and fallbacks, and stops growing
-at 8 MiB.
+at 8 MiB. These skips apply to `api.middleware` hooks; interceptors hold the
+runtime only while a handler starts or settles, never while `next` waits, and
+follow the required/optional waits of continuation middleware.
 
 `service_dispatch_v1` keeps a service provider's own capability grants, source identity, storage namespace and host-operation provenance when a consumer calls it. A nested call shares the initiating callback's cancellation, 32-call and 5 s execution budgets; recursive providers and chains beyond eight callback frames fail closed. Standalone invocations without a provider-aware host dispatcher refuse that provider's host operation. Offline `host_calls` records the actual mod caller for every mocked operation.
 
@@ -1173,7 +1244,7 @@ call instead.
 
 Dependencies run before consumers and remaining mods use lexical ID order.
 Project scope shadows user scope without inheriting its state or grants.
-Observers compose in that order; exclusive replacements, contract IDs, service
+Observers compose in that order; interceptors follow the continuation order above. Exclusive replacements, contract IDs, service
 providers, and namespaced tools fail closed when contested. Native permissions,
 credentials, accounting, cancellation, evidence, workflow enforcement, and
 provider authorization remain outside the mod API.

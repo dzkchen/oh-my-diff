@@ -136,77 +136,110 @@ pub(super) fn run(
         "events": MOD_EVENTS.iter().map(|(event, capability)| (event.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
         "replacements": MOD_REPLACEMENT_POINTS,
         "middleware": MOD_MIDDLEWARE_EVENTS,
+        "intercept": MOD_INTERCEPT_SURFACES.iter().map(|(surface, capability)| (surface.to_string(), json!(capability))).collect::<serde_json::Map<_, _>>(),
         "state": "store",
         "contracts": "contracts",
         "adapter": loaded.adapter,
     });
     request["virtual_time_ms"] = virtual_time_ms.map_or(Value::Null, Value::from);
-    request["receipts"] = Value::Array(replay.to_vec());
     let started = Instant::now();
     let budget = Duration::from_millis(loaded.package.hook_budget_ms);
-    let evaluated = process::evaluate(node, &request, budget, active, &mut |frame| {
-        if event == "inspect" {
-            return Err(failure("invalid_host_call_sequence"));
+    // A continuation suspends the callback; it replays from its receipts once the downstream chain settles.
+    let mut reply: Reply = loop {
+        request["receipts"] = Value::Array(receipts.clone());
+        let evaluated = process::evaluate(node, &request, budget, active, &mut |frame| {
+            if event == "inspect" {
+                return Err(failure("invalid_host_call_sequence"));
+            }
+            let frame: Frame = serde_json::from_value(frame)?;
+            forward(event, &frame.updates, &mut forwarded, progress)?;
+            let call = frame.call;
+            if expected.len() >= 32 {
+                return Err(failure("host_call_limit"));
+            }
+            let capabilities = call.capabilities()?;
+            if call.operation.starts_with("context.")
+                && !loaded
+                    .package
+                    .capabilities
+                    .iter()
+                    .any(|cap| cap == "context")
+            {
+                return Err(failure("capability_denied: context"));
+            }
+            if let Some(missing) = capabilities
+                .iter()
+                .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
+            {
+                return Err(failure(format!("capability_denied: {missing}")));
+            }
+            if !active() {
+                return Err(failure("callback_cancelled"));
+            }
+            let call_started = Instant::now();
+            let exempt = !crate::client_surface::SURFACE_OPERATIONS
+                .contains(&call.operation.as_str())
+                || crate::client_surface::awaits_user(&call.operation, &call.arguments);
+            scope.charge_call()?;
+            let result = host(call.clone());
+            let mut receipt = match result {
+                Ok(value) => json!({"call": call, "value": value}),
+                Err(error) => {
+                    json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
+                }
+            };
+            let bytes = serde_json::to_vec(&receipt)?.len();
+            let room = scope
+                .receipt_room()
+                .min(HOST_RECEIPT_BYTES.saturating_sub(serde_json::to_vec(&receipts)?.len()));
+            if bytes > room {
+                receipt = json!({"call": call, "error": format!(
+                "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
+            }
+            expected.push(call);
+            receipts.push(receipt.clone());
+            if serde_json::to_vec(&receipts)?.len() > HOST_RECEIPT_BYTES {
+                return Err(failure("host_receipt_limit"));
+            }
+            scope.charge_receipt(serde_json::to_vec(&receipt)?.len())?;
+            if exempt {
+                waited += call_started.elapsed();
+            }
+            scope.check_execution(started.elapsed().saturating_sub(waited))?;
+            Ok(receipt)
+        });
+        let reply: Reply = serde_json::from_value(evaluated?)?;
+        let Some(call) = reply
+            .host_call
+            .clone()
+            .filter(|call| call.operation == "continuation.next")
+            .filter(|call| reply.calls.split_last() == Some((call, &expected[..])))
+        else {
+            break reply;
+        };
+        if event != "intercept" {
+            return Err(failure("continuation_outside_interceptor"));
         }
-        let frame: Frame = serde_json::from_value(frame)?;
-        forward(event, &frame.updates, &mut forwarded, progress)?;
-        let call = frame.call;
         if expected.len() >= 32 {
             return Err(failure("host_call_limit"));
         }
-        let capabilities = call.capabilities()?;
-        if call.operation.starts_with("context.")
-            && !loaded
-                .package
-                .capabilities
-                .iter()
-                .any(|cap| cap == "context")
-        {
-            return Err(failure("capability_denied: context"));
-        }
-        if let Some(missing) = capabilities
-            .iter()
-            .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
-        {
-            return Err(failure(format!("capability_denied: {missing}")));
-        }
-        if !active() {
-            return Err(failure("callback_cancelled"));
-        }
-        let call_started = Instant::now();
-        let exempt = !crate::client_surface::SURFACE_OPERATIONS.contains(&call.operation.as_str())
-            || crate::client_surface::awaits_user(&call.operation, &call.arguments);
         scope.charge_call()?;
-        let result = host(call.clone());
-        let mut receipt = match result {
+        let call_started = Instant::now();
+        let receipt = match host(call.clone()) {
             Ok(value) => json!({"call": call, "value": value}),
             Err(error) => {
                 json!({"call": call, "error": error.to_string().chars().take(768).collect::<String>()})
             }
         };
-        let bytes = serde_json::to_vec(&receipt)?.len();
-        let room = scope
-            .receipt_room()
-            .min(HOST_RECEIPT_BYTES.saturating_sub(serde_json::to_vec(&receipts)?.len()));
-        if bytes > room {
-            receipt = json!({"call": call, "error": format!(
-                "host_result_limit: the {bytes}-byte result exceeds the {room} bytes left in this callback; the operation ran, request a smaller page or an artifact")});
-        }
+        waited += call_started.elapsed();
         expected.push(call);
-        receipts.push(receipt.clone());
+        receipts.push(receipt);
         if serde_json::to_vec(&receipts)?.len() > HOST_RECEIPT_BYTES {
             return Err(failure("host_receipt_limit"));
         }
-        scope.charge_receipt(serde_json::to_vec(&receipt)?.len())?;
-        if exempt {
-            waited += call_started.elapsed();
-        }
-        scope.check_execution(started.elapsed().saturating_sub(waited))?;
-        Ok(receipt)
-    });
+    };
     let execution = started.elapsed().saturating_sub(waited);
     scope.charge_execution(execution)?;
-    let mut reply: Reply = serde_json::from_value(evaluated?)?;
     if event != "inspect" && reply.registrations != loaded.registrations {
         return Err(failure("registration_changed_during_callback"));
     }

@@ -9,6 +9,7 @@ const currentSurface = {
   events: Object.fromEntries([...table('MOD_EVENTS').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
   replacements: [...table('MOD_REPLACEMENT_POINTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
   middleware: [...table('MOD_MIDDLEWARE_EVENTS').matchAll(/"([a-z_]+)"/g)].map(match => match[1]),
+  intercept: Object.fromEntries([...table('MOD_INTERCEPT_SURFACES').matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])),
   state: 'store', contracts: 'contracts',
 };
 function run(source, extra = {}) {
@@ -71,14 +72,21 @@ test('commands carry descriptions and tools carry labels and bounded progress', 
   assert.match(run(source, { capabilities: ['commands', 'tools'], event: 'command', name: 'bad' }).error, /progress_outside_tool/);
   assert.match(run('export default api => api.command("x", () => null, {hidden:true})', { capabilities: ['commands'] }).error, /unsupported_command_option/);
 });
-test('input and lifecycle events require their capabilities', () => {
+test('lifecycle events and interceptors require their capabilities', () => {
   const events = ['turn_start', 'turn_end', 'compaction_start', 'compaction_end', 'agent_end'];
   const lifecycle = run(`export default api => { for (const e of ${JSON.stringify(events)}) api.on(e, () => null); }`, { capabilities: ['lifecycle'] });
   assert.deepEqual(lifecycle.registrations.events, events);
-  assert.match(run('export default api => api.replace("input", () => null)', { capabilities: ['lifecycle'] }).error, /capability_denied: input/);
-  const input = run('export default api => api.replace("input", ({text}) => ({text: text + "!"}))', { capabilities: ['input'], event: 'input', payload: { text: 'hi', attachments: 0 } });
-  assert.deepEqual(input.value, { text: 'hi!' });
-  assert.deepEqual(input.registrations.replacements, ['input']);
+  const source = 'export default api => api.intercept("*", {match: {text: /^h/}}, (e, next) => next({...e, text: e.text + "!"}))';
+  assert.match(run(source, { capabilities: ['lifecycle'] }).error, /unsupported_intercept_pattern_or_capability: \*/);
+  const payload = { surface: 'input', input: { text: 'hi', attachments: 0 }, origin: { caller: 'user' } };
+  const extra = { capabilities: ['input'], event: 'intercept', name: '0', payload };
+  const suspended = run(source, extra);
+  assert.deepEqual(suspended.host_call, { operation: 'continuation.next', arguments: { input: { text: 'hi!', attachments: 0 } } });
+  assert.deepEqual(suspended.registrations.interceptors, [{ pattern: '*', match: { text: { $regex: '^h', $flags: '' } }, required: false,
+    before: [], after: [], catch: false, location: 'fixture.ts:1:27' }]);
+  const replayed = run(source, { ...extra, receipts: [{ call: suspended.host_call, value: { result: { text: 'hi!' }, trace: [] } }] });
+  assert.deepEqual(replayed.value, { result: { text: 'hi!' } });
+  assert.deepEqual(run(source, { ...extra, payload: { ...payload, input: { text: 'yo', attachments: 0 } } }).value, { unmatched: true });
 });
 
 test('typed middleware and services register without ambient authority', () => {

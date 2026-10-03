@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_recovery",
-  "version": "0.2.0-preview.1",
+  "version": "0.2.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Escalates a failed step to one bounded read-only advisory call with the exact failing evidence",

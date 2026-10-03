@@ -38,6 +38,7 @@ def host_sets():
     capabilities = re.findall(r'"([a-z_.]+)"', constant("MOD_CAPABILITIES"))
     events = re.findall(r'\("([a-z_]+)", "[a-z_.]+"\)', constant("MOD_EVENTS"))
     replacements = re.findall(r'"([a-z_]+)"', constant("MOD_REPLACEMENT_POINTS"))
+    intercepts = re.findall(r'\("([a-z_]+)", "[a-z_.]+"\)', constant("MOD_INTERCEPT_SURFACES"))
     capability_match = re.search(r"match operation \{(.*?)\n            _ if", BRIDGE.read_text(), re.S)
     operations = re.findall(r'"([a-z_]+\.[a-z_]+)"', constant("MOD_HOST_OPERATIONS"))
     arms = re.findall(r'"([a-z_]+\.[a-z_]+)"\s*(?=\||=>)', capability_match.group(1))
@@ -47,6 +48,7 @@ def host_sets():
         "capabilities": set(capabilities),
         "events": set(events),
         "replacements": set(replacements),
+        "intercepts": set(intercepts),
         "operations": set(operations),
     }
 
@@ -79,7 +81,7 @@ def check(contract, version, sets):
         if decision["group"] not in GROUPS:
             problems.append(f"{decision['id']}: unknown group {decision['group']}")
         for key in sets:
-            covered[key] |= set(decision["covers"][key])
+            covered[key] |= set(decision["covers"].get(key, []))
         if not decision["evidence"]:
             problems.append(f"{decision['id']}: no executable evidence")
     for key, authoritative in sets.items():
@@ -124,7 +126,8 @@ def render(contract):
         "operation that is not documented here fails `scripts/mod_conformance.py`.",
         "",
         "`observe` is middleware (`api.on`): several mods compose. `replace` is exclusive",
-        "(`api.replace`): one mod per point, claimed before activation.",
+        "(`api.replace`): one mod per point, claimed before activation. Interceptors",
+        "(`api.intercept`) wrap an operation and compose as an ordered continuation chain.",
         "",
     ]
     for group, title in GROUPS.items():
@@ -205,7 +208,7 @@ def main():
     print(
         f"contract {contract['api']}: {len(contract['decisions'])} decisions, "
         f"{len(contract['composition'])} composition rules, all capabilities, events, "
-        f"replacement points and host operations documented with resolved evidence"
+        f"replacement points, intercept surfaces and host operations documented with resolved evidence"
     )
 
 

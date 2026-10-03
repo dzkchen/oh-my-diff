@@ -39,6 +39,7 @@ globals.__exchange = frame => {
     process.exit(1);
   }
 };
+globals.__clock = () => performance.now();
 const context = createContext(globals, {
   codeGeneration: { strings: false, wasm: false },
 });
@@ -55,7 +56,8 @@ const handlers = new Map();
 const tools = new Map();
 let dynamicTools = null;
 const commands = new Map();
-const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [] };
+const registrations = { tools: [], commands: [], events: [], replacements: [], contracts: [], builtins: [], interceptors: [] };
+const interceptors = [];
 const surface = request.surface;
 registrations.services = [];
 registrations.virtual_reads = [];
@@ -69,7 +71,9 @@ const calls = [];
 const receipts = request.receipts ?? [];
 const suspension = Object.freeze({});
 const exchange = globalThis.__exchange;
+const clock = globalThis.__clock;
 delete globalThis.__exchange;
+delete globalThis.__clock;
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
@@ -87,7 +91,7 @@ function hostTryCall(operation, arguments_ = null) {
     if (receipt.error) return { ok: false, error: receipt.error };
     return { ok: true, value: structuredCloneFallback(receipt.value) };
   }
-  if (request.interactive) {
+  if (request.interactive && operation !== 'continuation.next') {
     const receipt = JSON.parse(exchange(JSON.stringify({ call, updates })));
     return receipt.error ? { ok: false, error: receipt.error } : { ok: true, value: receipt.value };
   }
@@ -100,6 +104,87 @@ function hostCall(operation, arguments_ = null) {
   return result.value;
 }
 function structuredCloneFallback(value) { return JSON.parse(JSON.stringify(value)); }
+function deepFreeze(value) {
+  if (value && typeof value === 'object') { Object.values(value).forEach(deepFreeze); Object.freeze(value); }
+  return value;
+}
+function globMatch(glob, text) {
+  const parts = glob.split('*');
+  if (parts.length === 1) return glob === text;
+  if (!text.startsWith(parts[0]) || !text.endsWith(parts[parts.length - 1])) return false;
+  let at = parts[0].length;
+  for (const part of parts.slice(1, -1)) {
+    const found = text.indexOf(part, at);
+    if (found < 0) return false;
+    at = found + part.length;
+  }
+  return at <= text.length - parts[parts.length - 1].length;
+}
+function surfaces(pattern) {
+  if (typeof pattern !== 'string' || pattern === '!*' || pattern.length > 64) return [];
+  const negated = pattern.startsWith('!');
+  return Object.keys(surface.intercept).filter(name => request.capabilities.includes(surface.intercept[name])
+    && globMatch(negated ? pattern.slice(1) : pattern, name) !== negated);
+}
+function serializeMatcher(value, depth = 0) {
+  if (depth > 6) throw new Error('invalid_interceptor_matcher: deeper than 6 levels');
+  if (value instanceof RegExp) return { $regex: value.source, $flags: value.flags };
+  if (Array.isArray(value)) return value.map(item => serializeMatcher(item, depth + 1));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    if (key.startsWith('$')) throw new Error('invalid_interceptor_matcher: keys cannot start with $');
+    return [key, serializeMatcher(item, depth + 1)];
+  }));
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+  throw new Error('invalid_interceptor_matcher');
+}
+function matches(matcher, value) {
+  if (Array.isArray(matcher)) return matcher.some(alternative => matches(alternative, value));
+  if (Array.isArray(value)) return value.some(item => matches(matcher, item));
+  if (matcher instanceof RegExp) {
+    matcher.lastIndex = 0;
+    return value !== undefined && value !== null && typeof value !== 'object' && matcher.test(String(value));
+  }
+  if (matcher && typeof matcher === 'object') return !!value && typeof value === 'object' && Object.entries(matcher).every(([key, item]) => matches(item, value[key]));
+  return matcher === value;
+}
+function intercept(event) {
+  const entry = interceptors[Number(request.name)];
+  if (!entry) throw new Error('unknown_handler');
+  const { surface: name, input, original, origin, caught } = event;
+  if (!caught && entry.matcher !== null && !matches(entry.matcher, input)) return { unmatched: true };
+  const started = clock();
+  let trace = Object.freeze([]);
+  const signal = { aborted: false };
+  const next = argument => {
+    if (argument === undefined) return Promise.reject(new Error('continuation_input_required: ' + entry.location));
+    if (caught?.called) return caught.error_after_next ? Promise.reject(new Error(caught.error_after_next)) : Promise.resolve(deepFreeze(structuredCloneFallback(caught.result)));
+    let reply;
+    try {
+      reply = hostCall('continuation.next', { input: argument });
+    } catch (error) {
+      if (error === suspension) throw error;
+      if (String(error?.message).startsWith('callback_cancelled')) signal.aborted = true;
+      return Promise.reject(error);
+    }
+    trace = deepFreeze(reply.trace);
+    return Promise.resolve(deepFreeze(reply.result));
+  };
+  Object.defineProperties(next, {
+    event: { value: name },
+    original: { value: deepFreeze(original) },
+    origin: { value: deepFreeze(origin) },
+    signal: { value: Object.freeze({ get aborted() { return signal.aborted; } }) },
+    trace: { get: () => trace },
+    budget: { value: Object.freeze({ ms: request.hook_budget_ms, get remainingMs() { return Math.max(0, request.hook_budget_ms - (clock() - started)); }, get hostCalls() { return Math.max(0, 32 - calls.length); } }) },
+    is: { value: pattern => surfaces(pattern).includes(name) },
+  });
+  if (caught) Object.defineProperties(next, { error: { value: deepFreeze(caught.error) }, called: { value: caught.called } });
+  const handler = caught ? entry.catch : entry.handler;
+  return Promise.resolve(handler(deepFreeze(structuredCloneFallback(input)), next)).then(result => {
+    if (result === undefined) throw new Error('interceptor_result_required: ' + entry.location);
+    return { result };
+  });
+}
 function requireCapability(name) {
   if (!request.capabilities.includes(name)) throw new Error('capability_denied: ' + name);
 }
@@ -132,6 +217,27 @@ const api = Object.freeze({
     if (event === 'approval') requireCapability('approvals');
     unique(handlers, event, handler);
     registrations.events.push(event);
+  },
+  intercept(pattern, options, handler) {
+    if (handler === undefined) [options, handler] = [{}, options];
+    if (!activating) throw new Error('interceptor_registration_outside_activation');
+    if (!surfaces(pattern).length) throw new Error('unsupported_intercept_pattern_or_capability: ' + pattern);
+    if (typeof handler !== 'function') throw new Error('handler_required: ' + pattern);
+    const known = ['match', 'required', 'before', 'after'];
+    for (const key of Object.keys(options ?? {})) if (!known.includes(key)) throw new Error('unsupported_interceptor_option: ' + key);
+    const frame = String(new Error().stack).split(String.fromCharCode(10)).find(line => line.includes(request.filename)) ?? '';
+    const at = frame.slice(frame.lastIndexOf(request.filename) + request.filename.length).split(')')[0];
+    const entry = { handler, catch: null, matcher: options?.match ?? null, location: request.filename.slice(request.filename.lastIndexOf('/') + 1) + at };
+    const registration = { pattern, match: entry.matcher === null ? null : serializeMatcher(entry.matcher), required: options?.required === true,
+      before: [...(options?.before ?? [])], after: [...(options?.after ?? [])], catch: false, location: entry.location };
+    interceptors.push(entry);
+    registrations.interceptors.push(registration);
+    return Object.freeze({ catch(fallback) {
+      if (!activating || entry.catch) throw new Error('interceptor_catch_conflict: ' + entry.location);
+      if (typeof fallback !== 'function') throw new Error('handler_required: catch');
+      entry.catch = fallback;
+      registration.catch = true;
+    } });
   },
   replace(point, handler) {
     if (!surface.replacements.includes(point)) throw new Error('unsupported_replacement_point: ' + point);
@@ -198,7 +304,7 @@ const api = Object.freeze({
   }),
   unsupported(operation) { throw new Error('unsupported_operation: ' + operation); },
 });
-globalThis.__omd = { api, handlers, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
+globalThis.__omd = { api, handlers, intercept, tools, dynamicTool: name => dynamicTools && (input => dynamicTools({ name, arguments: input })), commands, serviceHandlers, virtualReaders, registrations, updates,
   state: () => state, request, calls,
   pending: () => pending, ready: () => { activating = false; }, suspension };
 `;
@@ -244,7 +350,8 @@ try {
       const handler = request.event === 'tool' ? tools.get(request.name) ?? globalThis.__omd.dynamicTool(request.name)
         : request.event === 'command' ? commands.get(request.name)
         : request.event === 'virtual_read' ? virtualReaders.get(request.name)
-        : request.event === 'service' ? serviceHandlers.get(request.name) : handlers.get(request.event);
+        : request.event === 'service' ? serviceHandlers.get(request.name)
+        : request.event === 'intercept' ? globalThis.__omd.intercept : handlers.get(request.event);
       if (!handler && ['tool', 'command', 'service'].includes(request.event)) throw new Error('unknown_handler');
       if (handler) value = await handler(request.payload) ?? null;
     }

@@ -58,6 +58,7 @@
         "store_v1",
         "routes_v1",
         "stream_control_v1",
+        "continuation_middleware_v1",
         "builtins_v1",
         "contracts_v2",
         "framed_process_v1",
@@ -201,7 +202,7 @@
       "name": "omd_recovery",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_recovery)",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "capabilities": [
         "agents",
         "commands",
@@ -641,7 +642,7 @@
       "name": "omd_workflow",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_workflow)",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "capabilities": [
         "agents",
         "commands",
@@ -956,10 +957,10 @@
         "upstream_plugin_coexistence",
         "duplicate_tools"
       ],
-      "result": "A mod observes, denies or retargets a tool call before the native handler, permission check and hook chain run; it cannot forge the native outcome, and upstream hook dispatch itself stays unmodified.",
+      "result": "Mod interceptors compose around a tool call: they rewrite, retarget, deny or answer it before the native handler, permission check and hook chain run, and inspect its result after; an answer is recorded as the mod's and cannot forge the native outcome, and upstream hook dispatch itself stays unmodified.",
       "evidence": [
-        "patch:mod_interception_denies_or_routes_through_registered_native_handler",
-        "rust:omd/tests/mods.rs::input_rewrite_requires_exclusive_replacement_while_observers_may_deny"
+        "patch:mod_interception_denies_answers_or_routes_through_registered_native_handler",
+        "rust:omd/tests/mods.rs::continuations_compose_transforms_inspect_results_and_short_circuit"
       ]
     },
     {
@@ -1225,7 +1226,7 @@
       "source": "mods/first-party/omd_editor"
     },
     "omd_frecency": {
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "source": "mods/first-party/omd_frecency"
     },
     "omd_git": {
@@ -1321,7 +1322,7 @@
       "source": "mods/first-party/omd_reactive_rules"
     },
     "omd_recovery": {
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "source": "mods/first-party/omd_recovery"
     },
     "omd_repository_analysis": {
@@ -1353,7 +1354,7 @@
       "source": "mods/first-party/omd_typed_tasks"
     },
     "omd_workflow": {
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "source": "mods/first-party/omd_workflow"
     },
     "omd_workspace": {

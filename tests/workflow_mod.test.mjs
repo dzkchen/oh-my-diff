@@ -9,7 +9,8 @@ const source = readFileSync(new URL('../mods/first-party/omd_workflow/index.ts',
 const manifest = JSON.parse(readFileSync(new URL('../mods/first-party/omd_workflow/mod.json', import.meta.url), 'utf8'));
 const native = readFileSync(new URL('../runtime/omd/src/mods.rs', import.meta.url), 'utf8');
 const events = native.match(/pub const MOD_EVENTS:[\s\S]*?= &\[([\s\S]*?)\];/)[1];
-const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: [], middleware: ['model_request'], state: 'store', contracts: 'contracts' };
+const intercepts = Object.fromEntries([...native.match(/pub const MOD_INTERCEPT_SURFACES:[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]]));
+const surface = { events: Object.fromEntries([...events.matchAll(/\("([a-z_]+)", "([a-z_.]+)"\)/g)].map(match => [match[1], match[2]])), replacements: [], middleware: ['model_request'], intercept: intercepts, state: 'store', contracts: 'contracts' };
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const candidate = digest('candidate');
 const criterion = 'Preserve the current work';
@@ -144,15 +145,21 @@ test('checkpoint survives a new invocation, is compare-and-set, and cannot rewri
 test('no-progress policy pauses repeated complete results and resumes only after checkpoint progress', () => {
   const run = fixture();
   const settings = { check: { program: 'check', argv: [] }, max_no_progress_calls: 2 };
-  const policySurface = { ...surface, replacements: ['tool_before'] };
   let modState = invoke('begin', { objective: 'Make the requested change', acceptance_criteria: [criterion] },
-    run.host, { settings, surface: policySurface }).state;
+    run.host, { settings }).state;
   const result = { thread_id: 'thread-1', agent_id: null, tool: 'exec_command', outcome: 'succeeded',
     call_sha256: digest('same-call'), result_sha256: digest('same-output'), result_complete: true };
   const event = (name, payload) => {
-    const reply = invoke('', payload, run.host, { event: name, settings, surface: policySurface, state: modState });
+    const reply = invoke('', payload, run.host, { event: name, settings, state: modState });
     modState = reply.state;
     return reply.value;
+  };
+  const executed = { output: 'ran', success: true };
+  const intercept = input => {
+    const host = call => call.operation === 'continuation.next' ? { result: executed, trace: [] } : run.host(call);
+    const reply = invoke('0', { surface: 'tool', input, origin: { caller: 'model' } }, host, { event: 'intercept', settings, state: modState });
+    modState = reply.state;
+    return reply.value.result;
   };
   event('tool_result', result);
   event('tool_result', result);
@@ -161,13 +168,13 @@ test('no-progress policy pauses repeated complete results and resumes only after
   event('tool_result', { ...result, tool: 'wait_agent' });
   event('tool_result', result);
   assert.equal(run.state.get('task').value.status, 'paused');
-  assert.deepEqual(event('tool_before', { tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'next' }),
+  assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'next' }),
     { deny: 'workflow_paused_no_progress' });
-  assert.equal(event('tool_before', { tool: 'mod_omd_workflow_checkpoint', thread_id: 'thread-1', arguments: {}, call_id: 'repair' }), null);
+  assert.deepEqual(intercept({ tool: 'mod_omd_workflow_checkpoint', thread_id: 'thread-1', arguments: {}, call_id: 'repair' }), executed);
   modState = invoke('checkpoint', { remaining_work: ['Try a different approach'] }, run.host,
-    { settings, surface: policySurface, state: modState }).state;
+    { settings, state: modState }).state;
   assert.equal(run.state.get('task').value.status, 'active');
-  assert.equal(event('tool_before', { tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'retry' }), null);
+  assert.deepEqual(intercept({ tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'retry' }), executed);
   event('tool_result', result);
   assert.equal(run.state.get('task').value.calls[result.call_sha256].unchanged_calls, 1);
 });
@@ -175,7 +182,7 @@ test('no-progress policy pauses repeated complete results and resumes only after
 test('no-progress detection keeps pausing after many distinct calls by evicting the oldest observations', () => {
   const run = fixture();
   const settings = { check: { program: 'check', argv: [] }, max_no_progress_calls: 1 };
-  const options = { settings, surface: { ...surface, replacements: ['tool_before'] } };
+  const options = { settings };
   let modState = invoke('begin', { objective: 'Make the requested change', acceptance_criteria: [criterion] }, run.host, options).state;
   const entry = run.state.get('task');
   const seeded = Object.fromEntries(Array.from({ length: 128 }, (_, index) =>

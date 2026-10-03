@@ -83,7 +83,7 @@
     },
     {
       "id": "omd_recovery",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "extension_type": "mod",
       "capability": "Failure-aware escalation and delegation dispatch",
       "source": "mods/first-party/omd_recovery",
@@ -371,7 +371,7 @@
     },
     {
       "id": "omd_frecency",
-      "version": "0.1.0-preview.1",
+      "version": "0.1.0-preview.2",
       "extension_type": "mod",
       "capability": "Opt-in @ mention and file-tree find ranking by typo-tolerant fuzzy match, per-project frecency learned from submitted prompts and Git status",
       "source": "mods/first-party/omd_frecency",
@@ -851,7 +851,7 @@
     },
     {
       "id": "omd_workflow",
-      "version": "0.2.0-preview.1",
+      "version": "0.2.0-preview.2",
       "extension_type": "mod",
       "capability": "Workflow contracts: checkpoints, reviewed contributions, exact-candidate checks and completion gates",
       "source": "mods/first-party/omd_workflow",

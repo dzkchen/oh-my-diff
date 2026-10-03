@@ -180,6 +180,7 @@ pub(crate) fn process_request_allowed(
 }
 
 pub(crate) const LIFECYCLE_EVENTS: &[&str] = &[
+    "intercept",
     "start",
     "resume",
     "idle",

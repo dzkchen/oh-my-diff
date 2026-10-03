@@ -1,5 +1,9 @@
 mod author;
 mod bridge;
+mod chain;
+pub use chain::ModChain;
+pub use chain::ModInterceptor;
+pub use chain::intercept_shared;
 mod packages;
 mod view;
 pub use view::MOD_KEY_LIMIT;
@@ -45,7 +49,6 @@ pub use view::mod_key_name;
 pub use view::valid_glyphs;
 mod outcome;
 pub use outcome::ModCommandOutcome;
-pub use outcome::ModInputDecision;
 mod package_manager;
 mod process;
 pub use bridge::ModHostCall;
@@ -152,6 +155,13 @@ impl InvocationScope {
         self.stack.borrow().iter().any(|item| item == id)
     }
 
+    fn child(&self) -> InvocationScope {
+        InvocationScope {
+            stack: RefCell::new(self.stack.borrow().clone()),
+            ..InvocationScope::default()
+        }
+    }
+
     fn check_execution(&self, elapsed: Duration) -> Result<()> {
         if self.execution.get().saturating_add(elapsed)
             > Duration::from_millis(MOD_CALLBACK_TOTAL_BUDGET_MS)
@@ -236,6 +246,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "store_v1",
     "routes_v1",
     "stream_control_v1",
+    "continuation_middleware_v1",
     "builtins_v1",
     "contracts_v2",
     "framed_process_v1",
@@ -404,9 +415,7 @@ pub const MOD_CAPABILITIES: &[&str] = &[
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
     ("migrate", "store"),
-    ("tool_before", "interception"),
     ("tool_exposure", "tools"),
-    ("input", "input"),
     ("routing", "model"),
     ("terminal", "terminal"),
     ("list", "terminal"),
@@ -448,18 +457,21 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("history", "history"),
 ];
 pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
-    "tool_before",
     "routing",
     "terminal",
     "compaction",
     "context",
-    "input",
     "list",
-    "tool_output",
     "tool_batch",
     "tool_specs",
     "completion",
     "history",
+];
+pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
+    ("tool", "interception"),
+    ("host_operation", "middleware"),
+    ("model_request", "middleware"),
+    ("input", "input"),
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "model_request",
@@ -855,6 +867,16 @@ fn source_use(
     }
     if !registrations.virtual_reads.is_empty() {
         capabilities.insert("virtual_reads".to_owned());
+    }
+    for interceptor in &registrations.interceptors {
+        capabilities.extend(
+            MOD_INTERCEPT_SURFACES
+                .iter()
+                .filter(|(surface, _)| {
+                    chain::selects(&interceptor.pattern, surface, &package.capabilities)
+                })
+                .map(|(_, capability)| (*capability).to_owned()),
+        );
     }
     if source.contains(".state.get(") || source.contains(".state.set(") {
         capabilities.insert("store".to_owned());
@@ -1710,6 +1732,8 @@ struct Registrations {
     virtual_reads: Vec<ModVirtualReader>,
     #[serde(default)]
     dynamic_tools: bool,
+    #[serde(default)]
+    interceptors: Vec<ModInterceptor>,
 }
 
 #[derive(Deserialize)]
@@ -1805,11 +1829,13 @@ pub struct ModHost {
     checkout: Option<PathBuf>,
     valid_views: BTreeMap<String, Value>,
     renders: BTreeMap<String, (String, Value, Instant)>,
+    chains: Vec<Value>,
 }
 
 enum Access<'a> {
     Held(&'a mut ModHost),
     Shared(&'a Mutex<ModHost>),
+    Bounded(&'a Mutex<ModHost>, Duration),
 }
 
 impl Access<'_> {
@@ -1819,9 +1845,40 @@ impl Access<'_> {
             Access::Shared(runtime) => run(&mut *runtime
                 .lock()
                 .map_err(|_| failure("mod_runtime_poisoned"))?),
+            Access::Bounded(runtime, wait) => {
+                let deadline = Instant::now() + *wait;
+                loop {
+                    match runtime.try_lock() {
+                        Ok(mut runtime) => return run(&mut runtime),
+                        Err(std::sync::TryLockError::Poisoned(_)) => {
+                            return Err(failure("mod_runtime_poisoned"));
+                        }
+                        Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                            std::thread::sleep(Duration::from_millis(2));
+                        }
+                        Err(std::sync::TryLockError::WouldBlock) => {
+                            return Err(failure("mod_runtime_busy"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn bounded(&mut self, wait: Duration) -> Access<'_> {
+        match self {
+            Access::Held(runtime) => Access::Held(runtime),
+            Access::Shared(runtime) | Access::Bounded(runtime, _) => Access::Bounded(runtime, wait),
         }
     }
 }
+
+type NextFn<'n> = dyn FnMut(
+        &mut Access<'_>,
+        &mut dyn FnMut(&str, ModHostCall) -> Result<Value>,
+        Value,
+    ) -> Result<Value>
+    + 'n;
 
 struct Invocation {
     location: store::StateLocation,
@@ -1838,6 +1895,10 @@ fn registered_call(loaded: &Loaded, dynamic: &[String], event: &str, name: &str)
         "tool" if loaded.registrations.tools.iter().any(|t| t.name == name) => (),
         "tool" if dynamic.iter().any(|tool| tool == name) => (),
         "command" if loaded.registrations.commands.iter().any(|c| c.name == name) => (),
+        "intercept"
+            if name
+                .parse::<usize>()
+                .is_ok_and(|index| index < loaded.registrations.interceptors.len()) => {}
         "virtual_read"
             if loaded
                 .registrations
@@ -1873,6 +1934,7 @@ fn invoke(
     host: &mut dyn FnMut(&str, ModHostCall) -> Result<Value>,
     progress: &mut dyn FnMut(String),
     scope: &InvocationScope,
+    mut next: Option<&mut NextFn<'_>>,
 ) -> Result<Value> {
     let _frame = scope.enter(id)?;
     let thread = state_thread(&payload);
@@ -1893,27 +1955,43 @@ fn invoke(
             &replay,
             active,
             &mut |call| {
+                if call.operation == "continuation.next" {
+                    let input = call.arguments.get("input").cloned().unwrap_or(Value::Null);
+                    return match next.as_mut() {
+                        Some(next) => next(&mut *access, &mut *host, input),
+                        None => Err(failure("continuation_outside_interceptor")),
+                    };
+                }
                 let private = call.operation.starts_with("sessions.")
                     || call.operation.starts_with("evidence.");
                 let before = json!({"phase":"before","caller":id,"operation":call.operation,"arguments":if private {Value::Null} else {call.arguments.clone()}});
                 let _ = access.with(|runtime| {
                     Ok(runtime.event_except("host_operation", before, id, active, scope))
                 });
-                let result = if call.operation == "mods.service" {
-                    let mut guarded = |caller: &str, call: ModHostCall| {
-                        if matches!(call.operation.as_str(), "tools.define" | "tools.undefine") {
-                            return Err(failure(format!(
-                                "host_operation_unavailable: {} is not available inside a service call",
-                                call.operation
-                            )));
-                        }
-                        host(caller, call)
-                    };
-                    access.with(|runtime| {
-                        runtime.call_service(id, generation, call.arguments.clone(), active, &mut guarded, scope)
+                let intercepted = !private
+                    && event != "intercept"
+                    && access
+                        .with(|runtime| Ok(runtime.intercepts("host_operation")))
+                        .unwrap_or(false);
+                let result = if intercepted {
+                    let input = json!({"operation": call.operation, "arguments": call.arguments});
+                    let origin = json!({"caller": id, "thread_id": thread});
+                    chain::intercept(
+                        &mut *access,
+                        &mut *host,
+                        &mut chain::Core::Host { caller: id.to_owned(), generation },
+                        "host_operation",
+                        input,
+                        origin,
+                        active,
+                        scope,
+                    )
+                    .and_then(|chain| match chain.result.get("error").and_then(Value::as_str) {
+                        Some(error) => Err(failure(error)),
+                        None => Ok(chain.result["value"].clone()),
                     })
                 } else {
-                    host(id, call.clone())
+                    chain::dispatch(&mut *access, &mut *host, id, generation, call.clone(), active, scope)
                 };
                 let after = match &result {
                     Ok(value) => {
@@ -2022,6 +2100,7 @@ pub fn invoke_shared(
         &mut host,
         &mut progress,
         &InvocationScope::default(),
+        None,
     )
 }
 
@@ -2097,6 +2176,7 @@ impl ModHost {
             checkout: None,
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
+            chains: Vec::new(),
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -2484,6 +2564,10 @@ impl ModHost {
         let mut conflicts = contested("tool_name_conflict", tools);
         conflicts.extend(contested("replacement_conflict", points));
         conflicts.extend(contested("contract_conflict", contracts));
+        if let Err(cycle) = chain::order(next) {
+            let reason = format!("interceptor_order_conflict: {}", cycle.join(", "));
+            conflicts.extend(cycle.into_iter().map(|id| (id, reason.clone())));
+        }
         for (id, reason) in conflicts {
             if let Some(loaded) = next.get_mut(&id) {
                 fail(lenient(&id), loaded, failure(reason))?;
@@ -2789,7 +2873,7 @@ impl ModHost {
         }) {
             return Err(failure("invalid_replacement_point"));
         }
-        Ok(())
+        chain::validate(&registrations.interceptors, &package.capabilities)
     }
 
     fn run(
@@ -2953,6 +3037,7 @@ impl ModHost {
             host,
             progress,
             scope,
+            None,
         )
     }
 
@@ -3044,18 +3129,6 @@ impl ModHost {
             });
             if !valid {
                 return Err(failure("invalid_routing_result"));
-            }
-        }
-        if event == "tool_before"
-            && reply.value.get("arguments").is_some()
-            && !replaces("tool_before")
-        {
-            return Err(failure("exclusive_replacement_registration_required"));
-        }
-        if event == "input" {
-            let decision = ModInputDecision::parse(&reply.value)?;
-            if matches!(decision, ModInputDecision::Rewrite(_)) && !replaces("input") {
-                return Err(failure("exclusive_replacement_registration_required"));
             }
         }
         if matches!(
@@ -4052,7 +4125,10 @@ impl ModHost {
             "session": {"phase":"observe_only","thread_id":"observe_only","cause":"observe_only"},
             "agent": {"phase":"observe_only","agent_id":"observe_only","parent_agent_id":"observe_only","role":"observe_only","status":"observe_only"},
             "tool_call": {"call_id":"observe_only","agent_id":"observe_only","tool":"observe_only","arguments":"observe_only"},
-            "tool_before": {"call_id":"observe_only","thread_id":"observe_only","tool":"replaceable","arguments":"replaceable","deny":"alterable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
+            "intercept.tool": {"call_id":"observe_only","thread_id":"observe_only","agent_id":"observe_only","tool":"replaceable","arguments":"replaceable","schema":"observe_only","raw_arguments":"observe_only","batch":"observe_only"},
+            "intercept.host_operation": {"operation":"observe_only","arguments":"replaceable"},
+            "intercept.input": {"thread_id":"observe_only","text":"replaceable","attachments":"observe_only"},
+            "intercept.model_request": {"request_id":"observe_only","scope":"observe_only","routes":"observe_only","original":"observe_only","route":"replaceable"},
             "tool_exposure": {"thread_id":"observe_only","ledger":"observe_only","available":"observe_only","enable":"alterable"},
             "tool_result": {"call_id":"observe_only","agent_id":"observe_only","thread_id":"observe_only","tool":"observe_only","outcome":"observe_only","call_sha256":"observe_only","result_sha256":"observe_only","result_complete":"observe_only"},
             "host_operation": {"phase":"observe_only","caller":"observe_only","operation":"observe_only","arguments":"observe_only","result":"observe_only","error":"observe_only"}
@@ -4070,6 +4146,7 @@ impl ModHost {
             "installed_contract_types": self.store.root.join("installed-contracts.d.ts"),
             "active_host_types": self.store.root.join("active-host.d.ts"),
             "service_calls": self.service_calls,
+            "chains": self.chains,
             "mods": self.loaded.iter().map(|(id, m)| json!({"id": id, "version": m.package.version,
                 "api":m.package.api,"api_stability":api_support(&m.package.api).map(|support|support.0),
                 "entrypoint":m.package.entrypoint,"license":m.package.license,

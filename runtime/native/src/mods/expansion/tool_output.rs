@@ -68,23 +68,6 @@ async fn original(
     .map_err(|error| error.to_string())?
 }
 
-fn decision(value: Value) -> Result<Option<String>, String> {
-    match value {
-        Value::Null => Ok(None),
-        Value::Object(object) if object.len() == 1 => {
-            let text = object
-                .get("text")
-                .and_then(Value::as_str)
-                .ok_or("invalid_tool_output_decision")?;
-            if text.len() > codex_extension_api::TOOL_OUTPUT_REPLACEMENT_BYTES {
-                return Err("tool_output_replacement_too_large".into());
-            }
-            Ok(Some(text.to_owned()))
-        }
-        _ => Err("invalid_tool_output_decision".into()),
-    }
-}
-
 fn append(value: Value) -> Result<Option<String>, String> {
     match value {
         Value::Null => Ok(None),
@@ -99,6 +82,7 @@ fn append(value: Value) -> Result<Option<String>, String> {
 impl ToolOutputContributor for Mods {
     fn replacing(&self, _thread_store: &ExtensionData) -> bool {
         self.expansion.tool_output_active()
+            || self.pending.lock().is_ok_and(|pending| !pending.is_empty())
     }
 
     fn replace_tool_output<'a>(
@@ -106,27 +90,77 @@ impl ToolOutputContributor for Mods {
         input: ToolOutputInput<'a>,
     ) -> ExtensionFuture<'a, Option<String>> {
         Box::pin(async move {
-            if !self.expansion.tool_output_active() {
-                return None;
+            let diagnostic = |message: String| {
+                self.views
+                    .diagnostic(&self.host, "tool_output", Some(message));
+            };
+            let executed = json!({"output": bounded(input.text, HEAD_BYTES), "success": input.success,
+                "truncated": input.text.len() > HEAD_BYTES});
+            let mut text = None;
+            let mut replaced_by = "feedback".to_owned();
+            match self.resume(input.call_id, Ok(executed.clone())).await {
+                Some(Ok(chain)) if chain.result != executed => {
+                    replaced_by = super::super::intercept::settled_by(&chain);
+                    text = Some(match chain.result["deny"].as_str() {
+                        Some(reason) => format!("mod_tool_denied: {replaced_by}: {reason}"),
+                        None => chain.result["output"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    });
+                }
+                Some(Err(error)) => {
+                    replaced_by = "intercept".to_owned();
+                    text = Some(format!("mod_interception_failed: {error}"));
+                }
+                _ => {}
             }
-            let lead = input.thread_store.get::<Lead>()?;
+            let Some(lead) = input.thread_store.get::<Lead>() else {
+                return text;
+            };
+            if text.is_some() && replaced_by != "intercept" {
+                let (runtime, id) = (self.runtime.clone(), replaced_by.clone());
+                let source = tokio::task::spawn_blocking(move || {
+                    runtime
+                        .lock()
+                        .ok()
+                        .and_then(|runtime| runtime.grants(&id))
+                        .map(|grants| grants.source_sha256)
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(source) = source
+                    && let Err(error) =
+                        original(&lead, &replaced_by, &source, input.call_id, input.text).await
+                {
+                    diagnostic(format!("{replaced_by}: original unavailable: {error}"));
+                }
+            }
+            if !self.expansion.tool_output_active() {
+                if let Some(text) = &text {
+                    activity::output_replaced(
+                        &self.core,
+                        &lead,
+                        input.call_id,
+                        &replaced_by,
+                        input.text,
+                        text,
+                    );
+                }
+                return text;
+            }
             let runtime = self.runtime.clone();
-            let (owner, observers) = tokio::task::spawn_blocking(move || {
+            let observers = tokio::task::spawn_blocking(move || {
                 let runtime = runtime.lock().ok()?;
-                let owner = runtime.replacement_owner("tool_output");
-                let observers = runtime
-                    .owners()
-                    .into_iter()
-                    .map(|(id, _)| id)
-                    .filter(|id| {
-                        runtime.registered(id, "tool_output") && owner.as_ref() != Some(id)
-                    })
-                    .collect::<Vec<_>>();
-                let owner = owner.and_then(|owner| {
-                    let source = runtime.grants(&owner)?.source_sha256;
-                    Some((owner, source))
-                });
-                Some((owner, observers))
+                Some(
+                    runtime
+                        .owners()
+                        .into_iter()
+                        .map(|(id, _)| id)
+                        .filter(|id| runtime.registered(id, "tool_output"))
+                        .collect::<Vec<_>>(),
+                )
             })
             .await
             .ok()
@@ -138,45 +172,12 @@ impl ToolOutputContributor for Mods {
                         .unwrap_or_else(|_| Value::String(bounded(raw, HEAD_BYTES).to_owned()))
                 })
                 .unwrap_or(Value::Null);
-            let payload = |text: &str, original: Value| {
+            let payload = |text: &str| {
                 json!({"call_id": input.call_id, "tool": input.tool_name.to_string(),
                     "arguments": arguments, "success": input.success,
                     "text": bounded(text, HEAD_BYTES), "tail": tail(text, TAIL_BYTES),
-                    "bytes": text.len(), "original": original})
+                    "bytes": text.len()})
             };
-            let diagnostic = |message: String| {
-                self.views
-                    .diagnostic(&self.host, "tool_output", Some(message));
-            };
-            let mut text = None;
-            let mut replaced_by = "feedback".to_owned();
-            if let Some((owner, source)) = owner {
-                match original(&lead, &owner, &source, input.call_id, input.text).await {
-                    Ok(reference) => {
-                        let result = invoke_one(
-                            &self.core,
-                            &lead,
-                            owner.clone(),
-                            "tool_output",
-                            payload(input.text, reference),
-                        )
-                        .await;
-                        match result.map(|result| result.and_then(decision)) {
-                            Some(Ok(Some(replacement))) => {
-                                text = Some(replacement);
-                                replaced_by = owner;
-                            }
-                            Some(Err(error)) => {
-                                diagnostic(format!("{owner}: {error}; output kept"))
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(error) => diagnostic(format!(
-                        "{owner}: original unavailable, output kept: {error}"
-                    )),
-                }
-            }
             let mut appended = String::new();
             for id in observers {
                 let current = text.as_deref().unwrap_or(input.text);
@@ -185,7 +186,7 @@ impl ToolOutputContributor for Mods {
                     &lead,
                     id.clone(),
                     "tool_output",
-                    payload(current, Value::Null),
+                    payload(current),
                 )
                 .await
                 else {

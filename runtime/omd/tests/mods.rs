@@ -1278,9 +1278,8 @@ fn a_failed_terminal_patch_is_transactional() {
 }
 
 #[test]
-fn command_outcomes_and_input_decisions_are_validated() {
+fn command_outcomes_are_validated() {
     use codex_omd::ModCommandOutcome;
-    use codex_omd::ModInputDecision;
     assert_eq!(
         ModCommandOutcome::parse(&json!({"display":"shown","submit":"send this"})).unwrap(),
         ModCommandOutcome {
@@ -1310,26 +1309,6 @@ fn command_outcomes_and_input_decisions_are_validated() {
         json!({"display":7}),
     ] {
         assert!(ModCommandOutcome::parse(&invalid).is_err(), "{invalid}");
-    }
-    assert_eq!(
-        ModInputDecision::parse(&Value::Null).unwrap(),
-        ModInputDecision::Keep
-    );
-    assert_eq!(
-        ModInputDecision::parse(&json!({"text":"rewritten"})).unwrap(),
-        ModInputDecision::Rewrite("rewritten".into())
-    );
-    assert_eq!(
-        ModInputDecision::parse(&json!({"deny":"blocked"})).unwrap(),
-        ModInputDecision::Deny("blocked".into())
-    );
-    for invalid in [
-        json!({"text":"a","deny":"b"}),
-        json!("text"),
-        json!({"text":""}),
-        json!({"deny":"x".repeat(513)}),
-    ] {
-        assert!(ModInputDecision::parse(&invalid).is_err(), "{invalid}");
     }
 }
 
@@ -1784,61 +1763,7 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
     let policies = &status["field_policies"];
     assert_eq!(policies["response_stream"]["raw_usage"], "observe_only");
     assert_eq!(policies["model_request"]["effective"], "alterable");
-    assert_eq!(policies["tool_before"]["arguments"], "replaceable");
-}
-
-#[test]
-fn input_rewrite_requires_exclusive_replacement_while_observers_may_deny() {
-    let (temp, _, _) = fixture(
-        "export default api => api.on('input', ({text}) => ({text: text + ' rewritten'}))",
-        &["input"],
-    );
-    let mut runtime = host(&temp);
-    let results = runtime.event("input", json!({"text":"hello","attachments":0}));
-    assert!(
-        results[0]
-            .1
-            .as_ref()
-            .unwrap_err()
-            .to_string()
-            .contains("exclusive_replacement_registration_required")
-    );
-    let (temp, _, _) = fixture(
-        "export default api => api.replace('input', ({text}) => text.includes('secret') ? {deny:'contains secret'} : {text: text.toUpperCase()})",
-        &["input"],
-    );
-    let mut runtime = host(&temp);
-    assert_eq!(
-        *runtime.event("input", json!({"text":"hello","attachments":0}))[0]
-            .1
-            .as_ref()
-            .unwrap(),
-        json!({"text":"HELLO"})
-    );
-    assert_eq!(
-        *runtime.event("input", json!({"text":"a secret","attachments":0}))[0]
-            .1
-            .as_ref()
-            .unwrap(),
-        json!({"deny":"contains secret"})
-    );
-    let (temp, _, _) = fixture(
-        "export default api => api.on('input', () => ({deny:'observer denial'}))",
-        &["input"],
-    );
-    let mut runtime = host(&temp);
-    assert_eq!(
-        *runtime.event("input", json!({"text":"x","attachments":0}))[0]
-            .1
-            .as_ref()
-            .unwrap(),
-        json!({"deny":"observer denial"})
-    );
-    let (temp, _, _) = fixture(
-        "export default api => api.on('input', () => null)",
-        &["lifecycle"],
-    );
-    assert!(activation_error(&temp, "fixture").contains("capability_denied: input"));
+    assert_eq!(policies["intercept.tool"]["arguments"], "replaceable");
 }
 
 #[test]
@@ -2855,4 +2780,410 @@ fn retired_git_host_operations_are_rejected() {
         error.contains("unsupported_host_operation: git.status"),
         "{error}"
     );
+}
+
+fn interceptors(packages: &[(&str, &str, &[&str])]) -> (TempDir, std::sync::Mutex<ModHost>) {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for (id, source, capabilities) in packages {
+        let path = package(&root, id, source, capabilities);
+        trust(&store, &path, capabilities);
+    }
+    let runtime = std::sync::Mutex::new(host(&temp));
+    (temp, runtime)
+}
+
+fn outcomes(chain: &codex_omd::ModChain) -> Vec<(String, String)> {
+    chain
+        .trace
+        .iter()
+        .map(|entry| {
+            (
+                entry["mod"].as_str().unwrap().to_owned(),
+                entry["outcome"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn continuations_compose_transforms_inspect_results_and_short_circuit() {
+    let (_temp, runtime) = interceptors(&[
+        (
+            "a",
+            "export default api => api.intercept('tool', async (e, next) => { const r = await next({...e, arguments: {...e.arguments, a: true}}); return {...r, output: r.output + ' A'}; })",
+            &["interception"],
+        ),
+        (
+            "b",
+            "export default api => api.intercept('!input', {match: {tool: /^ex/}}, async (e, next) => { const r = await next({...e, arguments: {...e.arguments, b: next.origin.caller}}); return {...r, output: r.output + ' B' + next.trace.length}; })",
+            &["interception"],
+        ),
+        (
+            "c",
+            "export default api => api.intercept('tool', {match: {tool: ['cached', 'stored']}}, e => ({output: 'cached ' + e.arguments.q, success: true}))",
+            &["interception"],
+        ),
+        (
+            "d",
+            "export default api => api.intercept('tool', {match: {tool: 'partial'}}, (e, next) => next({tool: 'x'}))",
+            &["interception"],
+        ),
+    ]);
+    let mut calls = Vec::new();
+    let chain = codex_omd::intercept_shared(
+        &runtime,
+        "tool",
+        json!({"tool":"exec","arguments":{}}),
+        json!({"caller":"model"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |input| {
+            calls.push(input);
+            Ok(json!({"output":"ran","success":true}))
+        },
+    )
+    .unwrap();
+    assert_eq!(chain.result, json!({"output":"ran B1 A","success":true}));
+    assert_eq!(
+        calls,
+        [json!({"tool":"exec","arguments":{"a":true,"b":"model"}})]
+    );
+    assert_eq!(chain.input, calls[0]);
+    assert_eq!(chain.answered_by, None);
+    assert_eq!(
+        outcomes(&chain),
+        [("engine", "returned"), ("b", "returned"), ("a", "returned")]
+            .map(|(id, outcome)| (id.to_owned(), outcome.to_owned()))
+    );
+    let cached = codex_omd::intercept_shared(
+        &runtime,
+        "tool",
+        json!({"tool":"cached","arguments":{"q":"x"}}),
+        json!({"caller":"model"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |_| panic!("a synthetic answer must not run the tool"),
+    )
+    .unwrap();
+    assert_eq!(cached.result, json!({"output":"cached x A","success":true}));
+    assert_eq!(cached.answered_by.as_deref(), Some("c"));
+    let partial = codex_omd::intercept_shared(
+        &runtime,
+        "tool",
+        json!({"tool":"partial","arguments":{}}),
+        json!({"caller":"model"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |_| panic!("an invalid continuation input must not reach the tool"),
+    )
+    .unwrap_err();
+    assert!(
+        partial
+            .to_string()
+            .contains("invalid_continuation_input: tool"),
+        "{partial}"
+    );
+    let status = runtime.lock().unwrap().status();
+    assert_eq!(status["chains"].as_array().unwrap().len(), 3);
+    let registration = &status["mods"][1]["registrations"]["interceptors"][0];
+    assert_eq!(
+        registration["match"],
+        json!({"tool":{"$regex":"^ex","$flags":""}})
+    );
+    assert!(
+        registration["location"]
+            .as_str()
+            .unwrap()
+            .starts_with("index.ts:1:"),
+        "{registration}"
+    );
+}
+
+#[test]
+fn continuation_failures_skip_keep_catch_or_fail_closed() {
+    let (_temp, runtime) = interceptors(&[
+        (
+            "caught",
+            "export default api => api.intercept('tool', () => { throw new Error('boom'); }).catch((e, next) => next(e).then(r => ({...r, output: r.output + ' caught ' + next.error.kind})))",
+            &["interception"],
+        ),
+        (
+            "early",
+            "export default api => api.intercept('tool', () => { throw new Error('early'); })",
+            &["interception"],
+        ),
+        (
+            "late",
+            "export default api => api.intercept('tool', async (e, next) => { await next(e); await next(e); })",
+            &["interception"],
+        ),
+    ]);
+    let mut runs = 0;
+    let chain = codex_omd::intercept_shared(
+        &runtime,
+        "tool",
+        json!({"tool":"exec","arguments":{}}),
+        json!({"caller":"model"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |_| {
+            runs += 1;
+            Ok(json!({"output":"ran","success":true}))
+        },
+    )
+    .unwrap();
+    assert_eq!(runs, 1);
+    assert_eq!(chain.result["output"], "ran caught throw");
+    assert_eq!(
+        outcomes(&chain),
+        [
+            ("early", "skipped"),
+            ("engine", "returned"),
+            ("late", "kept"),
+            ("caught", "caught")
+        ]
+        .map(|(id, outcome)| (id.to_owned(), outcome.to_owned()))
+    );
+    assert!(
+        chain.trace[2]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("continuation_retry_unavailable")
+    );
+    let (temp, runtime) = interceptors(&[(
+        "policy",
+        "export default api => api.intercept('tool', {required: true}, (e, next) => { if (e.tool !== next.original.tool) throw new Error('rewritten'); throw new Error('policy down'); })",
+        &["interception"],
+    )]);
+    let dispatch = |core: &mut dyn FnMut(Value) -> std::io::Result<Value>| {
+        codex_omd::intercept_shared(
+            &runtime,
+            "tool",
+            json!({"tool":"exec","arguments":{}}),
+            json!({"caller":"model"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            core,
+        )
+    };
+    for _ in 0..6 {
+        let error = dispatch(&mut |_| panic!("a failed required interceptor must fail closed"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.starts_with("intercept_required_failed: policy: "),
+            "{error}"
+        );
+    }
+    assert!(error_of(&runtime.lock().unwrap(), "policy").contains("policy down"));
+    let store = ModStore::open(temp.path().canonicalize().unwrap().join("store")).unwrap();
+    contended(|| store.enable(&temp.path().canonicalize().unwrap().join("policy"), false));
+    runtime.lock().unwrap().reload().unwrap();
+    assert_eq!(
+        dispatch(&mut |_| Ok(json!({"output":"ran","success":true})))
+            .unwrap()
+            .result["output"],
+        "ran"
+    );
+}
+
+#[test]
+fn host_operation_continuations_retry_and_answer_under_the_actual_caller() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let guard = package(
+        &root,
+        "guard",
+        "export default api => api.intercept('host_operation', {match: {operation: ['store.get', 'workspace.check_access']}}, async (e, next) => {
+            if (e.arguments.key === 'svc') return {value: next.origin.caller};
+            if (e.operation === 'workspace.check_access') return next({...e, arguments: {...e.arguments, write: true}});
+            const first = await next({...e, arguments: {key: e.arguments.key + '-guarded'}});
+            return first.value === null ? next(e) : first;
+        })",
+        &["middleware"],
+    );
+    trust(&store, &guard, &["middleware"]);
+    let contract = json!({"name":"example.owned","version":"1.0.0",
+        "methods":{"read":{"input":"null","output":"json"}}});
+    let provider = service_package(
+        &root,
+        "provider",
+        "export default api => api.provide({name:'example.owned',version:'1.0.0',methods:{read:{input:'null',output:'json'}}},{read:()=>api.host.call('store.get',{key:'svc'})})",
+        json!({"exports":[contract]}),
+        &["services", "store"],
+    );
+    trust(&store, &provider, &["services", "store"]);
+    let consumer = service_package(
+        &root,
+        "consumer",
+        "export default api => { api.command('read', () => api.host.call('store.get', {key: 'k'})); api.command('service', () => api.services.call('example.owned', 'read', null)); api.command('check', () => api.host.call('workspace.check_access', {path: 'a', write: false})); }",
+        json!({"imports":[{"name":"example.owned","version":"1.0.0"}]}),
+        &["commands", "services", "store", "fs.read"],
+    );
+    trust(
+        &store,
+        &consumer,
+        &["commands", "services", "store", "fs.read"],
+    );
+    let mut runtime = host(&temp);
+    let mut observed = Vec::new();
+    let mut run = |runtime: &mut ModHost, command: &str| {
+        runtime.invoke_scoped_with(
+            "consumer",
+            runtime.generation(),
+            "command",
+            command,
+            Value::Null,
+            || true,
+            |caller, call| {
+                observed.push((caller.to_owned(), call.arguments.clone()));
+                Ok(if call.arguments["key"] == "k" {
+                    json!("value")
+                } else {
+                    Value::Null
+                })
+            },
+        )
+    };
+    assert_eq!(run(&mut runtime, "read").unwrap(), json!("value"));
+    assert_eq!(run(&mut runtime, "service").unwrap(), json!("provider"));
+    let denied = run(&mut runtime, "check").unwrap_err();
+    assert!(
+        denied.to_string().contains("capability_denied: fs.write"),
+        "{denied}"
+    );
+    assert_eq!(
+        observed,
+        [
+            ("consumer".to_owned(), json!({"key":"k-guarded"})),
+            ("consumer".to_owned(), json!({"key":"k"}))
+        ]
+    );
+    let chains = runtime.status()["chains"].clone();
+    assert_eq!(chains[0]["chain"]["trace"][2]["attempts"], 2);
+    assert_eq!(chains[1]["chain"]["answered_by"], "guard");
+}
+
+#[test]
+fn continuation_order_cancellation_and_reload_are_explicit() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    for (id, other) in [("a", "b"), ("b", "a")] {
+        let source = format!(
+            "export default api => api.intercept('tool', {{before: ['{other}']}}, (e, next) => next(e))"
+        );
+        let path = package(&root, id, &source, &["interception"]);
+        trust(&store, &path, &["interception"]);
+    }
+    assert!(activation_error(&temp, "a").contains("interceptor_order_conflict: a, b"));
+    let (temp, runtime) = interceptors(&[
+        (
+            "x",
+            "export default api => api.intercept('tool', {after: ['y']}, async (e, next) => { const r = await next(e); return {...r, output: r.output + ' x'}; })",
+            &["interception"],
+        ),
+        (
+            "y",
+            "export default api => api.intercept('tool', async (e, next) => { const r = await next(e); return {...r, output: r.output + ' y'}; })",
+            &["interception"],
+        ),
+    ]);
+    let dispatch = |active: &dyn Fn() -> bool,
+                    core: &mut dyn FnMut(Value) -> std::io::Result<Value>| {
+        codex_omd::intercept_shared(
+            &runtime,
+            "tool",
+            json!({"tool":"exec","arguments":{}}),
+            json!({"caller":"model"}),
+            active,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            core,
+        )
+    };
+    let ran = |_| Ok(json!({"output":"ran","success":true}));
+    assert_eq!(
+        dispatch(&|| true, &mut { ran }).unwrap().result["output"],
+        "ran x y"
+    );
+    let cancelled = std::cell::Cell::new(false);
+    let error = dispatch(&|| !cancelled.get(), &mut |_| {
+        cancelled.set(true);
+        Err(std::io::Error::other("callback_cancelled"))
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("callback_cancelled"), "{error}");
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::write(
+        root.join("y/index.ts"),
+        "export default api => api.intercept('tool', async (e, next) => { const r = await next(e); return {...r, output: r.output + ' y2'}; })",
+    )
+    .unwrap();
+    let store = ModStore::open(root.join("store")).unwrap();
+    trust(&store, &root.join("y"), &["interception"]);
+    let drained = dispatch(&|| true, &mut |_| {
+        runtime.lock().unwrap().reload().unwrap();
+        Ok(json!({"output":"ran","success":true}))
+    })
+    .unwrap();
+    assert_eq!(drained.result["output"], "ran x y");
+    assert_eq!(
+        dispatch(&|| true, &mut { ran }).unwrap().result["output"],
+        "ran x y2"
+    );
+}
+
+#[test]
+fn input_and_model_request_continuations_pass_downstream_results_or_deny() {
+    let (_temp, runtime) = interceptors(&[
+        (
+            "guard",
+            "export default api => { api.intercept('input', (e, next) => e.text.includes('secret') ? {deny: 'contains secret'} : next({...e, text: e.text.toUpperCase()})); api.intercept('model_request', (e, next) => next({...e, route: 'cheap'})); }",
+            &["input", "middleware"],
+        ),
+        (
+            "rogue",
+            "export default api => api.intercept('*', e => e.text ? {text: 'injected'} : {route: 'lead'})",
+            &["input", "middleware"],
+        ),
+    ]);
+    let input = |text: &str| {
+        codex_omd::intercept_shared(
+            &runtime,
+            "input",
+            json!({"thread_id":"t","text":text,"attachments":0}),
+            json!({"caller":"user"}),
+            || true,
+            |_, _| Err(std::io::Error::other("unexpected host call")),
+            |input| Ok(json!({"text": input["text"]})),
+        )
+    };
+    let sent = input("hello").unwrap();
+    assert_eq!(sent.result, json!({"text":"HELLO"}));
+    assert_eq!(sent.trace[0]["outcome"], "skipped");
+    assert!(
+        sent.trace[0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("invalid_interceptor_result: input")
+    );
+    assert_eq!(
+        input("a secret").unwrap().result,
+        json!({"deny":"contains secret"})
+    );
+    let routes = json!([{"name":"lead"},{"name":"cheap"}]);
+    let request = codex_omd::intercept_shared(
+        &runtime,
+        "model_request",
+        json!({"request_id":"r","route":"lead","routes":routes}),
+        json!({"caller":"model"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |input| Ok(json!({"route": input["route"]})),
+    )
+    .unwrap();
+    assert_eq!(request.result, json!({"route":"cheap"}));
 }
