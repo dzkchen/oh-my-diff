@@ -570,7 +570,9 @@ surfaces the package's capabilities entitle: `tool` (`interception`), `input`
 (`tools`). Options are
 `match`, `required` and `before`/`after` (mod IDs). In `match`, a scalar matches
 by `===`, a RegExp tests a scalar as a string, an array is any-of and matches any
-element of an array value, and an object matches part of an object. A mod
+element of an array value, and an object matches part of an object. `match`
+is checked against the input each interceptor actually receives, so a rewrite
+by an outer interceptor reaches every guard that matches the new input. A mod
 registers up to 16 interceptors during activation; `intercept` returns a
 registration whose `.catch(handler)` sets a fallback handler.
 
@@ -661,7 +663,8 @@ a chain lets running handlers finish; later operations use the new generation.
 
 Interceptors call host operations under their own grants with lifecycle-event
 access, including `terminal.prompt`. The host keeps the last 16 chains in status
-`chains`; each trace entry names the mod, `location`, `outcome` (`returned`,
+`chains` with bounded inputs and results (values over 2 KiB become a sha256 and
+byte count); each trace entry names the mod, `location`, `outcome` (`returned`,
 `passed`, `skipped`, `kept`, `caught` or `rejected`), attempts, own time and
 bounded inputs and results. Model-request chains are also appended to the
 session's `mod-middleware.jsonl`. The offline scenario step
@@ -723,6 +726,22 @@ or for the thread. `sidecars.start {id, credential?, secrets?}` injects a
 host-approved credential and the caller's own secrets (`OMD_SECRETS`, JSON
 `[{id, label, origin, value}]`) into the sidecar only; values never reach the
 mod runtime or the model.
+
+Every credential profile sends its token to one origin, fixed at enrollment:
+`chatgpt` to `https://chatgpt.com`, `api_key` to `https://api.openai.com`, and
+`provider` to the `https` origin passed as `origin` to
+`credentials.request {action: 'enroll', kind: 'provider', label, provider?,
+origin}`, which the enrollment prompt shows. A route `credential` is injected
+only into requests whose URL has that origin; any other route fails with
+`credential_origin_mismatch`. Sidecars never receive credential tokens
+(`credential_gateway_v1`): when the host's service grant lists profile IDs in
+`credentials` (network required), the sidecar gets `OMD_CREDENTIAL_GATEWAY`, a
+loopback URL with a per-sidecar secret path that closes when the sidecar stops.
+A request to `$OMD_CREDENTIAL_GATEWAY/PROFILE/PATH` is sent over HTTPS to
+`PATH` on that profile's origin with `Authorization: Bearer` (or `x-api-key`
+when the request sets `x-omd-credential-header: x-api-key`) and the response
+streams back; redirects aren't followed. `omd-mod credentials STORE` lists
+profiles without secrets.
 
 ### Thread store, resume and turn activity (`store_thread_v1`, `turn_activity_v1`)
 
@@ -1052,6 +1071,7 @@ publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
 | `omd-mod package-plan STORE REQUEST_JSON` | Resolve and preview the exact graph, authority, settings, and activation changes |
 | `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION` | Re-resolve and atomically apply only the unchanged preview |
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
+| `omd-mod credentials STORE` | List credential profiles (id, label, kind, provider, origin, status) without secret material |
 | `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
 | `omd-mod selection-status STORE` | Show saved user/project selections, precedence, source errors, and setting keys without running mod code |
 | `omd-mod package-enable STORE ID` | Re-enable an unchanged trusted package at the next turn boundary, retaining settings and state |
@@ -1371,11 +1391,20 @@ directory hash root has pinned. While the root-owned daemon plist exists,
 - accepts a mod selection only when the broker holds the same grant (path,
   digest, capabilities, scope and secret environment), otherwise
   `grant_not_brokered`; enabling, disabling and settings changes don't touch
-  the grant;
+  the grant. Only `trust`, `trust-all` and package installs or updates add
+  grants, and only for the selections they change, so an entry another process
+  adds to `mods.json` is never granted by an unrelated change. Removing a
+  selection revokes its grant without authorization. A running mod whose grant
+  disappears is unloaded at the next reload, and all mods unload while the
+  broker can't be reached. The host re-reads grants when `mods.json` changes and
+  at most every 2 s otherwise;
 - anchors every task-ledger record and contract-state write in the broker and
   refuses a ledger or contract state that differs from its anchor
   (`evidence_anchor_mismatch`, `contract_state_anchor_mismatch`), including a
-  deleted one;
+  deleted one. State that was never anchored (created before `broker install`
+  or after `broker reset`) is anchored as found when it is next opened. A
+  record is written before it is anchored, and a record whose anchor fails is
+  removed;
 - fails closed with `authority_broker_unavailable` when the broker can't be
   reached; mods stay inactive and the session continues without them.
 
@@ -1394,8 +1423,12 @@ protect against an administrator or root, or a user who re-pins a replaced
 binary with sudo. Same-user processes can still read every user-readable file
 (for example `~/.codex/auth.json` or other secret files), edit the mod store
 (the host then rejects what the broker doesn't confirm) and drive OMD
-interactively, in which case the authentication dialog still appears. OMD
-offers no secrets-read API. Installs, upgrades and rollbacks pin their binaries
+interactively, in which case the authentication dialog still appears, and use
+enrolled credentials against their enrolled origins through OMD or a sidecar's
+gateway path. Credential tokens leave OMD only toward their enrolled origin, but
+a mod's own secrets (`OMD_SECRETS`) are placed in its sidecar's environment, and
+service grants in `host.json` are user-writable, so a same-user process that
+edits a grant can read those secrets. OMD offers no secrets-read API. Installs, upgrades and rollbacks pin their binaries
 (one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
 but keeps credentials. `omd-package broker uninstall` removes the daemon, account,
 rights and all broker state, returning to same-user mode.

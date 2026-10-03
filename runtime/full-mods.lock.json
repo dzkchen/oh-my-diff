@@ -544,13 +544,13 @@
       ],
       "extension_type": "mod",
       "files": {
-        "index.ts": "dd4748e50213e9f2a071f83b457c77fd7025b7937a0f8ec6883a3a5c679d7e1f",
+        "index.ts": "5cb6895accf3e63502b9aaa12e5d7fc511c3c385385407f4e98dae0ad874070c",
         "mod.json": "a9083141e3905ef22e112dd44e98c501a9192bd670191e5d6d6bc9fcc628dd80",
-        "router.mjs": "7083c5b1e3b3e9e3359b0ac050c479af831e0adacd8f35b1ff9246072ac989a5",
-        "setup.mjs": "10ba6f1e3222cb11b693423daed54be4963238e91bfd416c4946daa5121441d9"
+        "router.mjs": "f9d99b43616877703f2ca980ca37106a67a17ad7f11cfd17372fbb92303528ad",
+        "setup.mjs": "1e3cc9c6a9464c09dcb890b6fda99476b34c3625ce6e6522670155ea78eb38b8"
       },
       "id": "omd_profiles",
-      "package_sha256": "4b29e2606a4de5072851a74184e5612f481a06aa5b4dd106f73bf26cc26ed8d8",
+      "package_sha256": "3699b23839c1004a77c3805d7df9d9ed03d412d850688a0a0861946e2f43023a",
       "source": "mods/first-party/omd_profiles",
       "version": "0.1.0-preview.1"
     },

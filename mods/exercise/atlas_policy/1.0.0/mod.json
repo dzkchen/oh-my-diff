@@ -2,12 +2,12 @@
   "schema": 1,
   "id": "atlas_policy",
   "version": "1.0.0",
-  "api": "0.1.0-experimental.5",
+  "api": "0.2.0-experimental.5",
   "state_version": 1,
   "license": "Apache-2.0",
   "provenance": {
     "maintainer": "Atlas Mods (full-API conformance exercise author)",
     "source": "mods/exercise/atlas_policy"
   },
-  "capabilities": ["commands", "routing", "state"]
+  "capabilities": ["commands", "model", "store"]
 }

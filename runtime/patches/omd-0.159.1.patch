@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 815f5b1d6..e9649c2cc 100644
+index 815f5b1d6..9a1315a0e 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2113,6 +2113,7 @@ dependencies = [
@@ -26,7 +26,7 @@ index 815f5b1d6..e9649c2cc 100644
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4146,6 +4149,54 @@ dependencies = [
+@@ -4146,6 +4149,56 @@ dependencies = [
   "wiremock",
  ]
 
@@ -71,17 +71,19 @@ index 815f5b1d6..e9649c2cc 100644
 + "codex-utils-path-uri",
 + "codex-utils-pty",
 + "http 1.4.0",
++ "reqwest 0.12.28",
 + "serde",
 + "serde_json",
 + "sha2 0.10.9",
 + "tempfile",
++ "tiny_http",
 + "tokio",
 +]
 +
  [[package]]
  name = "codex-otel"
  version = "0.159.1"
-@@ -4764,6 +4815,8 @@ dependencies = [
+@@ -4764,6 +4817,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -90,7 +92,7 @@ index 815f5b1d6..e9649c2cc 100644
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4785,6 +4838,7 @@ dependencies = [
+@@ -4785,6 +4840,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -14725,10 +14727,10 @@ index 000000000..6c44c5e1a
 +)
 diff --git a/codex-rs/ext/omd/Cargo.toml b/codex-rs/ext/omd/Cargo.toml
 new file mode 100644
-index 000000000..b3d8f64bf
+index 000000000..045c280f1
 --- /dev/null
 +++ b/codex-rs/ext/omd/Cargo.toml
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,35 @@
 +[package]
 +name = "codex-omd-extension"
 +version = "0.159.1"
@@ -14753,10 +14755,12 @@ index 000000000..b3d8f64bf
 +codex-utils-pty = { workspace = true }
 +codex-utils-path-uri = { workspace = true }
 +http = { workspace = true }
++reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
 +serde = { workspace = true, features = ["derive"] }
 +serde_json = { workspace = true }
 +tokio = { workspace = true, features = ["io-util", "process", "time", "sync"] }
 +sha2 = { workspace = true }
++tiny_http = { workspace = true }
 +codex-file-system = { workspace = true }
 +codex-sandboxing = { workspace = true }
 +
@@ -14764,10 +14768,10 @@ index 000000000..b3d8f64bf
 +tempfile = { workspace = true }
 diff --git a/codex-rs/ext/omd/src/accounting.rs b/codex-rs/ext/omd/src/accounting.rs
 new file mode 100644
-index 000000000..27e6f395f
+index 000000000..b689dbbb2
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting.rs
-@@ -0,0 +1,1088 @@
+@@ -0,0 +1,1122 @@
 +use codex_api::request_observer::ResponseAttempt;
 +use codex_api::request_observer::ResponseObserver;
 +use codex_client::EncodedJsonBody;
@@ -14845,8 +14849,10 @@ index 000000000..27e6f395f
 +    let root = CREDENTIAL_ROOT
 +        .get()
 +        .ok_or_else(|| denied("credential store unavailable"))?;
++    let origin = codex_omd::credentials::url_origin(&request.url)
++        .ok_or_else(|| denied("request URL has no origin"))?;
 +    let secret = codex_omd::credentials::CredentialProfiles::open(root)
-+        .and_then(|profiles| profiles.secret(profile))
++        .and_then(|profiles| profiles.secret(profile, &origin))
 +        .map_err(|error| denied(error.to_string()))?;
 +    let mut value = http::HeaderValue::from_str(&format!("Bearer {}", secret.token))
 +        .map_err(|_| denied("credential token is not a valid header"))?;
@@ -14895,10 +14901,12 @@ index 000000000..27e6f395f
 +        + Sync,
 +>;
 +
++type RequiredSurfaces = Arc<Mutex<Vec<&'static str>>>;
++
 +#[derive(Default)]
 +pub struct Accounts(
 +    pub Mutex<BTreeMap<String, Account>>,
-+    Mutex<Option<Arc<Mutex<codex_omd::ModHost>>>>,
++    Mutex<Option<(Arc<Mutex<codex_omd::ModHost>>, RequiredSurfaces)>>,
 +    AtomicU64,
 +    Arc<AtomicUsize>,
 +    Mutex<Option<ModDispatcher>>,
@@ -14914,9 +14922,13 @@ index 000000000..27e6f395f
 +}
 +
 +impl Accounts {
-+    pub fn install_mod_runtime(&self, runtime: Arc<Mutex<codex_omd::ModHost>>) {
++    pub fn install_mod_runtime(
++        &self,
++        runtime: Arc<Mutex<codex_omd::ModHost>>,
++        required: RequiredSurfaces,
++    ) {
 +        if let Ok(mut installed) = self.1.lock() {
-+            *installed = Some(runtime);
++            *installed = Some((runtime, required));
 +        }
 +    }
 +
@@ -14927,7 +14939,20 @@ index 000000000..27e6f395f
 +    }
 +
 +    fn mods(&self) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
-+        self.1.lock().ok().and_then(|installed| installed.clone())
++        self.1
++            .lock()
++            .ok()
++            .and_then(|installed| installed.as_ref().map(|(runtime, _)| runtime.clone()))
++    }
++
++    fn required(&self, surface: &str) -> bool {
++        self.1.lock().ok().is_none_or(|installed| {
++            installed.as_ref().is_none_or(|(_, required)| {
++                required
++                    .lock()
++                    .map_or(true, |required| required.contains(&surface))
++            })
++        })
 +    }
 +
 +    fn middleware<T>(
@@ -15104,22 +15129,35 @@ index 000000000..27e6f395f
 +                Err(std::sync::TryLockError::Poisoned(_)) => {
 +                    return Err(denied("mod runtime poisoned"));
 +                }
++                Err(std::sync::TryLockError::WouldBlock)
++                    if account.owner.starts_with("mod-")
++                        && self.3.load(Ordering::Acquire) == 0
++                        && !self.required("model_request") =>
++                {
++                    Self::record_middleware(
++                        account,
++                        &json!({"kind":"intercept_skipped","surface":"model_request","request_id":request_id,"reason":"mod_callback_in_flight"}),
++                    )?;
++                    break None;
++                }
 +                Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
 +                    std::thread::sleep(Duration::from_millis(2));
 +                }
-+                Err(std::sync::TryLockError::WouldBlock) => break true,
++                Err(std::sync::TryLockError::WouldBlock) => break Some(true),
 +            }
 +        };
-+        if intercepting {
++        if let Some(required) = intercepting {
 +            let dispatcher = self.4.lock().ok().and_then(|dispatcher| dispatcher.clone());
 +            let active = || account.task.check_active().is_ok();
 +            let input = json!({"request_id":request_id,"scope":payload_scope(account, thread),
 +                "routes":routes,"original":original,"route":selected});
 +            let origin = json!({"caller":"engine","thread_id":thread,
 +                "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) }});
++            let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
 +            let chain = codex_omd::intercept_shared(
 +                mods,
 +                "model_request",
++                required,
 +                input,
 +                origin,
 +                active,
@@ -15858,10 +15896,10 @@ index 000000000..27e6f395f
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..7a2922b17
+index 000000000..fb77b3b7a
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,585 @@
+@@ -0,0 +1,615 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -16001,9 +16039,9 @@ index 000000000..7a2922b17
 +        )
 +        .unwrap();
 +    store.enable(&package, true).unwrap();
-+    accounts.install_mod_runtime(Arc::new(Mutex::new(
-+        ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap(),
-+    )));
++    let runtime = ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap();
++    let required = runtime.required_surfaces();
++    accounts.install_mod_runtime(Arc::new(Mutex::new(runtime)), required);
 +}
 +
 +fn fast_route() -> RequestRoute {
@@ -16018,25 +16056,26 @@ index 000000000..7a2922b17
 +}
 +
 +#[test]
-+fn credential_routes_replace_auth_at_the_request_boundary_and_fail_closed() {
++fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
 +    let (root, accounts, _task, mut request, body) = setup();
 +    let store = root.path().join("store");
 +    std::fs::create_dir(&store).unwrap();
 +    let store = store.canonicalize().unwrap();
 +    set_credential_root(store.clone());
 +    let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
-+    let profile = profiles.create("work key", "api_key", None).unwrap();
-+    accounts
-+        .0
-+        .lock()
-+        .unwrap()
-+        .get_mut("child")
-+        .unwrap()
-+        .credential = Some(profile.id.clone());
++    let profile = profiles.create("work key", "api_key", None, None).unwrap();
++    let route = |url: &str| {
++        let mut accounts = accounts.0.lock().unwrap();
++        let account = accounts.get_mut("child").unwrap();
++        account.credential = Some(profile.id.clone());
++        account.url = url.into();
++    };
 +    request.headers.insert(
 +        http::header::AUTHORIZATION,
 +        "Bearer session".parse().unwrap(),
 +    );
++    request.url = "https://api.openai.com/v1/responses".into();
++    route(&request.url);
 +    let refused = accounts
 +        .before_send(&mut request, Some(&body))
 +        .err()
@@ -16045,6 +16084,15 @@ index 000000000..7a2922b17
 +    profiles
 +        .store_auth(&profile.id, r#"{"OPENAI_API_KEY":"sk-profile"}"#)
 +        .unwrap();
++    request.url = "http://localhost/responses".into();
++    route(&request.url);
++    let refused = accounts
++        .before_send(&mut request, Some(&body))
++        .err()
++        .unwrap();
++    assert!(format!("{refused:?}").contains("credential_origin_mismatch"));
++    request.url = "https://api.openai.com/v1/responses".into();
++    route(&request.url);
 +    assert!(accounts.before_send(&mut request, Some(&body)).is_ok());
 +    assert_eq!(
 +        request.headers.get(http::header::AUTHORIZATION).unwrap(),
@@ -16097,6 +16145,26 @@ index 000000000..7a2922b17
 +    assert_eq!(recorded.raw_usage, Some(usage));
 +    let log = std::fs::read_to_string(root.path().join("evidence/mod-middleware.jsonl")).unwrap();
 +    assert!(log.contains("fast") && log.contains("raw_usage"));
++}
++
++#[test]
++fn mod_worker_requests_skip_only_optional_interceptors_while_the_runtime_is_busy() {
++    for (options, refused) in [("", false), ("{required: true}, ", true)] {
++        let (root, accounts, _task, mut request, body) = setup();
++        let source = format!(
++            "export default api => api.intercept('model_request', {options}(e, next) => next(e))"
++        );
++        install_middleware(&accounts, root.path(), &source);
++        accounts.0.lock().unwrap().get_mut("child").unwrap().owner =
++            "mod-request_router-child".into();
++        let runtime = accounts.mods().unwrap();
++        let _busy = runtime.lock().unwrap();
++        let result = accounts.prepare(&mut request, &mut Some(body));
++        assert_eq!(
++            result.is_err_and(|error| format!("{error:?}").contains("mod_runtime_busy")),
++            refused
++        );
++    }
 +}
 +
 +#[test]
@@ -16694,10 +16762,10 @@ index 000000000..7aa4300d3
 +}
 diff --git a/codex-rs/ext/omd/src/contract.rs b/codex-rs/ext/omd/src/contract.rs
 new file mode 100644
-index 000000000..c4b18e175
+index 000000000..cd27753e8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/contract.rs
-@@ -0,0 +1,938 @@
+@@ -0,0 +1,946 @@
 +use super::*;
 +use codex_omd::ContractDocument;
 +use codex_omd::Gate;
@@ -16849,8 +16917,16 @@ index 000000000..c4b18e175
 +        if bytes.len() > STATE_BYTES {
 +            return Err("contract_state_byte_limit".into());
 +        }
-+        if anchor.is_some_and(|anchor| anchor.last != Some(codex_omd::broker::sha256(&bytes))) {
-+            return Err("contract_state_anchor_mismatch".into());
++        let digest = codex_omd::broker::sha256(&bytes);
++        match anchor {
++            Some(anchor) if anchor.count == 0 => {
++                codex_omd::broker::seed(path, 1, &codex_omd::broker::chain("", &digest), &digest)
++                    .map_err(|error| error.to_string())?;
++            }
++            Some(anchor) if anchor.last != Some(digest) => {
++                return Err("contract_state_anchor_mismatch".into());
++            }
++            _ => {}
 +        }
 +        self.restore_value(serde_json::from_slice(&bytes).map_err(|error| error.to_string())?)
 +    }
@@ -17635,6 +17711,356 @@ index 000000000..c4b18e175
 +                .is_empty()
 +        );
 +    }
++}
+diff --git a/codex-rs/ext/omd/src/credential_gateway.rs b/codex-rs/ext/omd/src/credential_gateway.rs
+new file mode 100644
+index 000000000..2aeafdf57
+--- /dev/null
++++ b/codex-rs/ext/omd/src/credential_gateway.rs
+@@ -0,0 +1,262 @@
++use codex_omd::credentials::CredentialProfiles;
++use std::collections::BTreeMap;
++use std::collections::BTreeSet;
++use std::io;
++use std::io::Read;
++use std::io::Write;
++use std::path::PathBuf;
++use std::sync::Arc;
++use std::sync::Mutex;
++use std::sync::OnceLock;
++
++const BODY_BYTES: u64 = 16 * 1024 * 1024;
++const HEADER: &str = "x-omd-credential-header";
++
++type Routes = Arc<Mutex<BTreeMap<String, (PathBuf, BTreeSet<String>)>>>;
++
++struct Gateway {
++    port: u16,
++    routes: Routes,
++}
++
++/// Keeps a sidecar's gateway path open; dropping it revokes the path.
++pub(crate) struct Registration {
++    key: String,
++    routes: Routes,
++}
++
++impl Drop for Registration {
++    fn drop(&mut self) {
++        if let Ok(mut routes) = self.routes.lock() {
++            routes.remove(&self.key);
++        }
++    }
++}
++
++static GATEWAY: OnceLock<Result<Gateway, String>> = OnceLock::new();
++
++fn gateway() -> io::Result<&'static Gateway> {
++    GATEWAY
++        .get_or_init(|| {
++            let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| e.to_string())?;
++            let port = server
++                .server_addr()
++                .to_ip()
++                .ok_or("credential_gateway_unavailable")?
++                .port();
++            // A blocking client must not be built on an async runtime thread.
++            let client = std::thread::spawn(|| {
++                reqwest::blocking::Client::builder()
++                    .timeout(None::<std::time::Duration>)
++                    .redirect(reqwest::redirect::Policy::none())
++                    .build()
++            })
++            .join()
++            .map_err(|_| "credential_gateway_unavailable")?
++            .map_err(|e| e.to_string())?;
++            let routes = Routes::default();
++            let served = routes.clone();
++            std::thread::spawn(move || {
++                for request in server.incoming_requests() {
++                    let (client, routes) = (client.clone(), served.clone());
++                    std::thread::spawn(move || forward(&client, &routes, request));
++                }
++            });
++            Ok(Gateway { port, routes })
++        })
++        .as_ref()
++        .map_err(|error| io::Error::other(error.clone()))
++}
++
++/// Opens `http://127.0.0.1:PORT/KEY`; `KEY/PROFILE/PATH` reaches `PATH` on that profile's enrolled origin.
++pub(crate) fn register(
++    store: PathBuf,
++    profiles: BTreeSet<String>,
++) -> io::Result<(String, Registration)> {
++    let gateway = gateway()?;
++    let mut bytes = [0u8; 16];
++    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
++    let key = bytes
++        .iter()
++        .map(|byte| format!("{byte:02x}"))
++        .collect::<String>();
++    gateway
++        .routes
++        .lock()
++        .map_err(|_| io::Error::other("credential_gateway_poisoned"))?
++        .insert(key.clone(), (store, profiles));
++    Ok((
++        format!("http://127.0.0.1:{}/{key}", gateway.port),
++        Registration {
++            key,
++            routes: gateway.routes.clone(),
++        },
++    ))
++}
++
++fn forward(client: &reqwest::blocking::Client, routes: &Routes, mut request: tiny_http::Request) {
++    let response = upstream(client, routes, &mut request);
++    let _ = match response {
++        Ok(upstream) => {
++            let status = upstream.status().as_u16();
++            let headers = upstream
++                .headers()
++                .iter()
++                .filter(|(name, _)| {
++                    !matches!(
++                        name.as_str(),
++                        "content-length"
++                            | "transfer-encoding"
++                            | "connection"
++                            | "trailer"
++                            | "upgrade"
++                    )
++                })
++                .filter_map(|(name, value)| {
++                    tiny_http::Header::from_bytes(name.as_str(), value.as_bytes()).ok()
++                })
++                .collect();
++            let length = upstream.content_length().map(|length| length as usize);
++            if length.is_none()
++                && request.method() != &tiny_http::Method::Head
++                && !matches!(status, 204 | 304)
++            {
++                stream(request, status, headers, upstream)
++            } else {
++                request.respond(tiny_http::Response::new(
++                    tiny_http::StatusCode(status),
++                    headers,
++                    upstream,
++                    length,
++                    None,
++                ))
++            }
++        }
++        Err((status, error)) => {
++            request.respond(tiny_http::Response::from_string(error).with_status_code(status))
++        }
++    };
++}
++
++/// tiny_http's chunked encoder holds 8 KiB before writing, so streamed replies are framed and flushed here.
++fn stream(
++    request: tiny_http::Request,
++    status: u16,
++    headers: Vec<tiny_http::Header>,
++    mut body: impl Read,
++) -> io::Result<()> {
++    let mut writer = request.into_writer();
++    let reason = tiny_http::StatusCode(status).default_reason_phrase();
++    write!(writer, "HTTP/1.1 {status} {reason}\r\n")?;
++    for header in headers {
++        write!(writer, "{}: {}\r\n", header.field, header.value)?;
++    }
++    writer.write_all(b"Transfer-Encoding: chunked\r\n\r\n")?;
++    let mut buffer = [0; 8192];
++    loop {
++        let read = body.read(&mut buffer)?;
++        write!(writer, "{read:x}\r\n")?;
++        writer.write_all(&buffer[..read])?;
++        writer.write_all(b"\r\n")?;
++        writer.flush()?;
++        if read == 0 {
++            return Ok(());
++        }
++    }
++}
++
++fn upstream(
++    client: &reqwest::blocking::Client,
++    routes: &Routes,
++    request: &mut tiny_http::Request,
++) -> Result<reqwest::blocking::Response, (u16, String)> {
++    let denied = |error: &str| (403, error.to_owned());
++    let mut parts = request.url().trim_start_matches('/').splitn(3, '/');
++    let (key, profile, rest) = (
++        parts.next().unwrap_or_default(),
++        parts.next().unwrap_or_default().to_owned(),
++        parts.next().unwrap_or_default().to_owned(),
++    );
++    let store = routes
++        .lock()
++        .map_err(|_| denied("credential_gateway_poisoned"))?
++        .get(key)
++        .filter(|(_, profiles)| profiles.contains(&profile))
++        .map(|(store, _)| store.clone())
++        .ok_or_else(|| denied("credential_not_host_approved"))?;
++    let profiles = CredentialProfiles::open(&store).map_err(|e| denied(&e.to_string()))?;
++    let origin = profiles
++        .profile(&profile)
++        .map_err(|e| denied(&e.to_string()))?
++        .destination()
++        .map(str::to_owned)
++        .ok_or_else(|| denied("credential_origin_missing"))?;
++    let secret = profiles
++        .secret(&profile, &origin)
++        .map_err(|e| denied(&e.to_string()))?;
++    let mut headers = reqwest::header::HeaderMap::new();
++    let mut style = None;
++    for header in request.headers() {
++        let name = header.field.as_str().as_str().to_ascii_lowercase();
++        if name == HEADER {
++            style = Some(header.value.as_str().to_owned());
++        } else if !matches!(
++            name.as_str(),
++            "host"
++                | "authorization"
++                | "x-api-key"
++                | "chatgpt-account-id"
++                | "cookie"
++                | "connection"
++                | "content-length"
++                | "transfer-encoding"
++                | "proxy-authorization"
++        ) && let (Ok(name), Ok(value)) = (
++            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
++            reqwest::header::HeaderValue::from_bytes(header.value.as_bytes()),
++        ) {
++            headers.append(name, value);
++        }
++    }
++    let (name, value) = match style.as_deref() {
++        None | Some("authorization") => (
++            reqwest::header::AUTHORIZATION,
++            format!("Bearer {}", secret.token),
++        ),
++        Some("x-api-key") => (
++            reqwest::header::HeaderName::from_static("x-api-key"),
++            secret.token,
++        ),
++        Some(_) => return Err((400, format!("{HEADER} must be authorization or x-api-key"))),
++    };
++    let mut value = reqwest::header::HeaderValue::from_str(&value)
++        .map_err(|_| denied("credential token is not a valid header"))?;
++    value.set_sensitive(true);
++    headers.insert(name, value);
++    if let Some(account) = secret.account_id
++        && let Ok(account) = reqwest::header::HeaderValue::from_str(&account)
++    {
++        headers.insert("chatgpt-account-id", account);
++    }
++    let mut body = Vec::new();
++    request
++        .as_reader()
++        .take(BODY_BYTES + 1)
++        .read_to_end(&mut body)
++        .map_err(|e| (400, e.to_string()))?;
++    if body.len() as u64 > BODY_BYTES {
++        return Err((413, "credential_gateway_body_limit".to_owned()));
++    }
++    let method = reqwest::Method::from_bytes(request.method().as_str().as_bytes())
++        .map_err(|_| (405, "method_unsupported".to_owned()))?;
++    client
++        .request(method, format!("{origin}/{rest}"))
++        .headers(headers)
++        .body(body)
++        .send()
++        .map_err(|e| (502, format!("credential_gateway_upstream: {e}")))
++}
++
++#[cfg(test)]
++#[path = "credential_gateway_tests.rs"]
++mod tests;
+diff --git a/codex-rs/ext/omd/src/credential_gateway_tests.rs b/codex-rs/ext/omd/src/credential_gateway_tests.rs
+new file mode 100644
+index 000000000..cf0256e64
+--- /dev/null
++++ b/codex-rs/ext/omd/src/credential_gateway_tests.rs
+@@ -0,0 +1,76 @@
++use super::*;
++
++fn get(url: &str) -> (u16, String) {
++    let response = reqwest::blocking::get(url).unwrap();
++    (response.status().as_u16(), response.text().unwrap())
++}
++
++#[test]
++fn only_registered_sidecars_reach_approved_profiles_until_revoked() {
++    let temp = tempfile::tempdir().unwrap();
++    let store = temp.path().canonicalize().unwrap();
++    let profiles = CredentialProfiles::local(&store).unwrap();
++    let approved = profiles
++        .create("up", "provider", Some("up"), Some("https://up.example"))
++        .unwrap();
++    let other = profiles.create("other", "api_key", None, None).unwrap();
++    let (base, registration) = register(store, BTreeSet::from([approved.id.clone()])).unwrap();
++    let port = base.rsplit_once('/').unwrap().0;
++    assert_eq!(
++        get(&format!("{port}/unknown/{}/v1", approved.id)),
++        (403, "credential_not_host_approved".into())
++    );
++    assert_eq!(
++        get(&format!("{base}/{}/v1", other.id)),
++        (403, "credential_not_host_approved".into())
++    );
++    assert_eq!(
++        get(&format!("{base}/{}/v1", approved.id)),
++        (403, format!("credential_not_enrolled: {}", approved.id))
++    );
++    drop(registration);
++    assert_eq!(
++        get(&format!("{base}/{}/v1", approved.id)),
++        (403, "credential_not_host_approved".into())
++    );
++}
++
++struct Paced(Vec<&'static [u8]>, std::sync::mpsc::Receiver<()>);
++
++impl Read for Paced {
++    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
++        if self.0.len() == 1 {
++            let _ = self.1.recv();
++        }
++        let Some(piece) = self.0.pop() else {
++            return Ok(0);
++        };
++        buffer[..piece.len()].copy_from_slice(piece);
++        Ok(piece.len())
++    }
++}
++
++#[test]
++fn streamed_replies_reach_the_client_before_the_body_ends() {
++    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
++    let port = server.server_addr().to_ip().unwrap().port();
++    let (more, wait) = std::sync::mpsc::channel();
++    std::thread::spawn(move || {
++        let body = Paced(vec![&b"data: 2\n\n"[..], &b"data: 1\n\n"[..]], wait);
++        stream(server.recv().unwrap(), 200, Vec::new(), body).unwrap();
++    });
++    let mut response = reqwest::blocking::Client::builder()
++        .timeout(std::time::Duration::from_secs(5))
++        .build()
++        .unwrap()
++        .get(format!("http://127.0.0.1:{port}/"))
++        .send()
++        .unwrap();
++    let mut first = [0; 9];
++    response.read_exact(&mut first).unwrap();
++    assert_eq!(&first, b"data: 1\n\n");
++    more.send(()).unwrap();
++    let mut rest = String::new();
++    response.read_to_string(&mut rest).unwrap();
++    assert_eq!(rest, "data: 2\n\n");
 +}
 diff --git a/codex-rs/ext/omd/src/execution.rs b/codex-rs/ext/omd/src/execution.rs
 new file mode 100644
@@ -18653,13 +19079,14 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..fabc4b4bb
+index 000000000..4256f8d3b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,641 @@
+@@ -0,0 +1,638 @@
 +mod accounting;
 +mod config;
 +mod contract;
++mod credential_gateway;
 +mod execution;
 +mod generic_host;
 +mod ledger;
@@ -19168,12 +19595,10 @@ index 000000000..fabc4b4bb
 +        Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
 +    }
 +
++    /// Holds the contract lock so concurrent writers anchor and store states in the same order.
 +    fn persist_contract(&self) -> Result<(), String> {
-+        let status = self
-+            .contract
-+            .lock()
-+            .map_err(|_| "contract_lock_poisoned")?
-+            .status();
++        let mut contract = self.contract.lock().map_err(|_| "contract_lock_poisoned")?;
++        let status = contract.status();
 +        let bytes = serde_json::to_vec(&status).map_err(|error| error.to_string())?;
 +        if status["status"] == "unavailable" {
 +            return Err("contract_unavailable".into());
@@ -19181,28 +19606,26 @@ index 000000000..fabc4b4bb
 +        let result = if bytes.len() > contract::STATE_BYTES {
 +            Err("contract_state_byte_limit".into())
 +        } else {
-+            codex_omd::broker::anchor(&self.contract_state, &codex_omd::broker::sha256(&bytes))
-+                .map_err(|error| error.to_string())
-+                .and_then(|()| {
-+                    persist(
-+                        self.contract_state
-+                            .parent()
-+                            .ok_or("contract_state_parent_missing")?,
-+                        self.contract_state
-+                            .file_name()
-+                            .and_then(|name| name.to_str())
-+                            .ok_or("contract_state_name_invalid")?,
-+                        &bytes,
-+                        true,
-+                    )
-+                })
++            persist(
++                self.contract_state
++                    .parent()
++                    .ok_or("contract_state_parent_missing")?,
++                self.contract_state
++                    .file_name()
++                    .and_then(|name| name.to_str())
++                    .ok_or("contract_state_name_invalid")?,
++                &bytes,
++                true,
++            )
++            .and_then(|()| {
++                codex_omd::broker::anchor(&self.contract_state, &codex_omd::broker::sha256(&bytes))
++                    .map_err(|error| error.to_string())
++            })
 +        };
 +        if let Err(error) = &result {
-+            self.contract
-+                .lock()
-+                .map_err(|_| "contract_lock_poisoned")?
-+                .invalidate(error.clone());
++            contract.invalidate(error.clone());
 +        }
++        drop(contract);
 +        result?;
 +        persist(&self.evidence, "contract.json", &bytes, false)
 +    }
@@ -20286,10 +20709,10 @@ index 000000000..467e238b6
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..da5b473de
+index 000000000..b65ebe544
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1776 @@
+@@ -0,0 +1,1782 @@
 +mod agents;
 +mod evidence;
 +mod expansion;
@@ -20626,8 +21049,9 @@ index 000000000..da5b473de
 +    let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
 +        .map_err(|e| e.to_string())?;
 +    let _ = host.persist_json("mod-status.json", &runtime.status());
++    let required = runtime.required_surfaces();
 +    let runtime = Arc::new(Mutex::new(runtime));
-+    host.accounts.install_mod_runtime(runtime.clone());
++    host.accounts.install_mod_runtime(runtime.clone(), required);
 +    let views = Arc::new(view::Views::new());
 +    let input_runtime = Arc::new(Mutex::new(input_runtime));
 +    let extension = Arc::new(Mods {
@@ -21381,11 +21805,11 @@ index 000000000..da5b473de
 +            .await
 +            .map_err(|error| error.to_string())
 +            .and_then(|result| result);
-+            match intercepting {
-+                Ok(true) => {}
-+                Ok(false) => return UserInputDecision::Keep,
++            let required = match intercepting {
++                Ok(Some(required)) => required,
++                Ok(None) => return UserInputDecision::Keep,
 +                Err(error) => return unavailable(error),
-+            }
++            };
 +            let payload =
 +                json!({"thread_id":thread,"text":input.text,"attachments":input.attachments});
 +            let origin = json!({"caller":"user","thread_id":thread});
@@ -21394,6 +21818,7 @@ index 000000000..da5b473de
 +                lead,
 +                self.input_runtime.clone(),
 +                "input",
++                required,
 +                payload,
 +                origin,
 +                cancelled,
@@ -21631,6 +22056,9 @@ index 000000000..da5b473de
 +                owner: owner.clone(),
 +                depth,
 +            });
++            if let Some(lead) = input.thread_store.get::<Lead>() {
++                self.core.expansion.thread_started(&lead);
++            }
 +            if owner == "lead" {
 +                if let Some(lead) = input.thread_store.get::<Lead>() {
 +                    self.views.start_thread(input.thread_store);
@@ -21832,10 +22260,10 @@ index 000000000..da5b473de
 +            })
 +            .await
 +            .map_err(|e| e.to_string())??;
-+            if !intercepting {
++            let Some(required) = intercepting else {
 +                self.cleanup_failed(Some(&lead)).await;
 +                return Ok(ToolInterception::Continue(None));
-+            }
++            };
 +            let cancelled = Arc::new(AtomicBool::new(false));
 +            let cancellation = Cancellation(cancelled.clone());
 +            let (reached, reached_at_executor) = tokio::sync::oneshot::channel::<Value>();
@@ -21900,6 +22328,7 @@ index 000000000..da5b473de
 +                lead,
 +                self.runtime.clone(),
 +                "tool",
++                required,
 +                payload.clone(),
 +                origin,
 +                cancelled,
@@ -24498,10 +24927,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..90451505d
+index 000000000..201b81d04
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,537 @@
+@@ -0,0 +1,563 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -24558,10 +24987,12 @@ index 000000000..90451505d
 +    approval: AtomicBool,
 +    approval_result: AtomicBool,
 +    tool_specs: AtomicBool,
++    tool_specs_required: AtomicBool,
 +    tool_batch: AtomicBool,
 +    gates: Mutex<std::collections::VecDeque<(String, String)>>,
 +    current: Mutex<Option<LeadHandle>>,
 +    leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
++    threads: Mutex<std::collections::HashMap<ThreadId, (LeadHandle, String, u32)>>,
 +    commands: Mutex<std::collections::HashSet<String>>,
 +    running: Mutex<BTreeMap<String, String>>,
 +    restarted: Mutex<BTreeMap<String, bool>>,
@@ -24634,13 +25065,37 @@ index 000000000..90451505d
 +        self.leads.lock().ok()?.get(&thread)?.upgrade()
 +    }
 +
++    /// Any live thread's own `Lead`, worker and subagent threads included.
++    pub(super) fn thread(&self, thread: ThreadId) -> Option<Lead> {
++        let threads = self.threads.lock().ok()?;
++        let (handle, owner, depth) = threads.get(&thread)?;
++        Some(Lead {
++            owner: owner.clone(),
++            depth: *depth,
++            ..handle.upgrade()?
++        })
++    }
++
++    pub(super) fn thread_started(&self, lead: &Lead) {
++        if let Ok(mut threads) = self.threads.lock() {
++            threads.retain(|_, (handle, ..)| handle.session.strong_count() > 0);
++            threads.insert(
++                lead.thread,
++                (LeadHandle::new(lead), lead.owner.clone(), lead.depth),
++            );
++        }
++    }
++
 +    fn refresh(&self, runtime: &ModHost) -> bool {
 +        self.tool_output
 +            .store(runtime.has_event("tool_output"), Ordering::Release);
 +        self.approval
 +            .store(runtime.has_event("approval"), Ordering::Release);
++        let tool_specs = runtime.intercepts("tool_specs");
 +        self.tool_specs
-+            .store(runtime.intercepts("tool_specs"), Ordering::Release);
++            .store(tool_specs.is_some(), Ordering::Release);
++        self.tool_specs_required
++            .store(tool_specs == Some(true), Ordering::Release);
 +        self.tool_batch.store(
 +            runtime.replacement_owner("tool_batch").is_some(),
 +            Ordering::Release,
@@ -26606,10 +27061,10 @@ index 000000000..04e2a51aa
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
 new file mode 100644
-index 000000000..99f5d43db
+index 000000000..389601d04
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion/tool_specs.rs
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,106 @@
 +use super::*;
 +use codex_extension_api::ToolSpecAdjustment;
 +use codex_extension_api::ToolSpecContributor;
@@ -26689,6 +27144,7 @@ index 000000000..99f5d43db
 +        let chain = codex_omd::intercept_shared(
 +            &self.runtime,
 +            "tool_specs",
++            self.expansion.tool_specs_required.load(Ordering::Acquire),
 +            payload,
 +            origin,
 +            || true,
@@ -26717,10 +27173,10 @@ index 000000000..99f5d43db
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..25d01d4ab
+index 000000000..4928b3baf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,1474 @@
+@@ -0,0 +1,1475 @@
 +use super::*;
 +use codex_extension_api::ToolLifecycleContributor as _;
 +use codex_extension_api::ToolOutputContributor;
@@ -27206,6 +27662,7 @@ index 000000000..25d01d4ab
 +    let chain = codex_omd::intercept_shared(
 +        &fixture.core.runtime,
 +        "tool",
++        false,
 +        json!({"tool": "read", "arguments": {}}),
 +        json!({"caller": "probe"}),
 +        || true,
@@ -28197,10 +28654,10 @@ index 000000000..25d01d4ab
 +}
 diff --git a/codex-rs/ext/omd/src/mods/intercept.rs b/codex-rs/ext/omd/src/mods/intercept.rs
 new file mode 100644
-index 000000000..14a096457
+index 000000000..5dab06331
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/intercept.rs
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,151 @@
 +use super::*;
 +use codex_omd::data_store::Origin;
 +use operations::Caller;
@@ -28212,13 +28669,14 @@ index 000000000..14a096457
 +    lead: Arc<Lead>,
 +    runtime: Arc<Mutex<ModHost>>,
 +    surface: &'static str,
++    required: bool,
 +    input: Value,
 +    origin: Value,
 +    cancelled: Arc<AtomicBool>,
 +    executor: impl FnMut(Value) -> std::io::Result<Value> + Send + 'static,
 +) -> Result<codex_omd::ModChain, String> {
 +    let (facts, generation) = {
-+        let runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
++        let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
 +        (facts(&runtime), runtime.generation())
 +    };
 +    let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
@@ -28229,6 +28687,7 @@ index 000000000..14a096457
 +        codex_omd::intercept_shared(
 +            &runtime,
 +            surface,
++            required,
 +            input,
 +            origin,
 +            active,
@@ -28307,9 +28766,8 @@ index 000000000..14a096457
 +            }
 +            let lead = ThreadId::from_string(thread)
 +                .ok()
-+                .and_then(|thread| core.expansion.lead(thread))
-+                .or_else(|| core.expansion.current())
-+                .ok_or_else(|| unavailable("no session"))?;
++                .and_then(|thread| core.expansion.thread(thread))
++                .ok_or_else(|| unavailable("no session for this thread"))?;
 +            let ((source, grants), generation) = {
 +                let runtime = core
 +                    .runtime
@@ -28320,39 +28778,34 @@ index 000000000..14a096457
 +                    runtime.generation(),
 +                )
 +            };
-+            let (reply, receiver) = std::sync::mpsc::sync_channel(1);
 +            let cancelled = Arc::new(AtomicBool::new(false));
 +            let _cancellation = Cancellation(cancelled.clone());
-+            let caller = caller.to_owned();
-+            handle.spawn(async move {
-+                let value = operations::dispatch(
-+                    &core,
-+                    &lead,
-+                    Caller {
-+                        id: &caller,
-+                        source: &source,
-+                        grants,
-+                        generation,
-+                        origin: Origin::Event,
-+                        record_changes: true,
-+                    },
-+                    None,
-+                    request,
-+                    &cancelled,
-+                )
-+                .await;
-+                let _ = reply.send(value.map_err(std::io::Error::other));
-+            });
-+            loop {
-+                if !active() {
-+                    return Err(std::io::Error::other("callback_cancelled"));
-+                }
-+                match receiver.recv_timeout(std::time::Duration::from_millis(20)) {
-+                    Ok(value) => return value,
-+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-+                    Err(error) => return Err(std::io::Error::other(error)),
-+                }
-+            }
++            tokio::task::block_in_place(|| {
++                handle.block_on(async {
++                    tokio::select! {
++                        value = operations::dispatch(
++                            &core,
++                            &lead,
++                            Caller {
++                                id: caller,
++                                source: &source,
++                                grants,
++                                generation,
++                                origin: Origin::Event,
++                                record_changes: true,
++                            },
++                            None,
++                            request,
++                            &cancelled,
++                        ) => value.map_err(std::io::Error::other),
++                        () = async {
++                            while active() {
++                                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++                            }
++                        } => Err(std::io::Error::other("callback_cancelled")),
++                    }
++                })
++            })
 +        },
 +    ));
 +}
@@ -28934,16 +29387,17 @@ index 000000000..e70785c9a
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..d6c6015eb
+index 000000000..db5d59bdf
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,685 @@
+@@ -0,0 +1,676 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
 +use codex_protocol::permissions::FileSystemAccessMode;
 +use codex_protocol::permissions::FileSystemPath;
 +use codex_protocol::permissions::FileSystemSandboxPolicy;
++use std::collections::BTreeSet;
 +use std::path::Path;
 +use std::time::Duration;
 +
@@ -28969,7 +29423,7 @@ index 000000000..d6c6015eb
 +    #[serde(default)]
 +    read_hashes: BTreeMap<PathBuf, String>,
 +    #[serde(default)]
-+    credentials: BTreeMap<String, String>,
++    credentials: BTreeSet<String>,
 +}
 +
 +#[derive(Default)]
@@ -28984,6 +29438,7 @@ index 000000000..d6c6015eb
 +    job: Option<tokio::task::JoinHandle<Result<Value, String>>>,
 +    task: Arc<Task>,
 +    worker: String,
++    _gateway: Option<crate::credential_gateway::Registration>,
 +}
 +
 +impl Drop for Service {
@@ -29078,13 +29533,11 @@ index 000000000..d6c6015eb
 +            #[serde(default)]
 +            input: Option<Value>,
 +            #[serde(default)]
-+            credential: Option<String>,
-+            #[serde(default)]
 +            secrets: Vec<String>,
 +        }
 +        let selection: Selection =
 +            serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
-+        if (selection.credential.is_some() || !selection.secrets.is_empty())
++        if !selection.secrets.is_empty()
 +            && !matches!(
 +                request.operation.as_str(),
 +                "sidecars.start" | "providers.register"
@@ -29299,31 +29752,21 @@ index 000000000..d6c6015eb
 +                .r#set
 +                .insert(environment.clone(), value.trim_end().to_string());
 +        }
-+        if let Some(profile) = &selection.credential {
-+            let environment = grant
-+                .credentials
-+                .iter()
-+                .find(|(_, approved)| *approved == profile)
-+                .map(|(environment, _)| environment.clone())
-+                .ok_or("credential_not_host_approved")?;
-+            if environment == "OMD_READY_TOKEN"
-+                || environment.is_empty()
-+                || environment.len() > 64
-+                || !environment
-+                    .bytes()
-+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_')
-+            {
-+                return Err("invalid_credential_environment_key".into());
-+            }
-+            let secret = codex_omd::credentials::CredentialProfiles::open(&host.root)
-+                .and_then(|profiles| profiles.secret(profile))
-+                .map_err(|error| error.to_string())?;
++        let gateway = if grant.credentials.is_empty() {
++            None
++        } else if !grant.network || grant.credentials.len() > 32 {
++            return Err("credential_gateway_requires_network".into());
++        } else {
++            let (url, registration) =
++                crate::credential_gateway::register(host.root.clone(), grant.credentials.clone())
++                    .map_err(|error| error.to_string())?;
 +            config
 +                .permissions
 +                .shell_environment_policy
 +                .r#set
-+                .insert(environment, secret.token);
-+        }
++                .insert("OMD_CREDENTIAL_GATEWAY".to_owned(), url);
++            Some(registration)
++        };
 +        if !selection.secrets.is_empty() {
 +            let profiles = codex_omd::credentials::CredentialProfiles::open(&host.root)
 +                .map_err(|error| error.to_string())?;
@@ -29502,6 +29945,7 @@ index 000000000..d6c6015eb
 +                job: Some(job),
 +                task: lead.session.task.clone(),
 +                worker: worker.clone(),
++                _gateway: gateway,
 +            },
 +        );
 +        // Every mod shares these records, so wait for readiness without holding the lock.
@@ -29567,7 +30011,7 @@ index 000000000..d6c6015eb
 +            }
 +        }
 +        Ok(
-+            json!({"id":grant.id,"status":if port.is_some() {"ready"} else {"starting"},"secret_references":grant.secrets.values().collect::<Vec<_>>(),"credential":selection.credential}),
++            json!({"id":grant.id,"status":if port.is_some() {"ready"} else {"starting"},"secret_references":grant.secrets.values().collect::<Vec<_>>(),"credentials":grant.credentials}),
 +        )
 +    }
 +}
@@ -31825,10 +32269,10 @@ index 000000000..82e68d714
 +event, capability or host configuration field names a feature.
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 000000000..65edce5f4
+index 000000000..5be0eb627
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1429 @@
+@@ -0,0 +1,1449 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -31838,6 +32282,7 @@ index 000000000..65edce5f4
 +use std::fs::{self};
 +use std::io::Write;
 +use std::io::{self};
++use std::path::Path;
 +use std::path::PathBuf;
 +use std::sync::Mutex;
 +use std::time::Duration;
@@ -32064,6 +32509,12 @@ index 000000000..65edce5f4
 +    fn create_inner(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
 +        Self::validate_limits(&limits)?;
 +        fs::create_dir(&evidence)?;
++        Self::create_in(limits, &evidence).inspect_err(|_| {
++            let _ = fs::remove_dir(&evidence);
++        })
++    }
++
++    fn create_in(limits: Limits, evidence: &Path) -> io::Result<Self> {
 +        let evidence = evidence.canonicalize()?;
 +        if crate::broker::anchored(&evidence)?.is_some_and(|anchor| anchor.count > 0) {
 +            return Err(denied("evidence_anchor_mismatch"));
@@ -32153,7 +32604,7 @@ index 000000000..65edce5f4
 +        };
 +        let mut created_unix_millis = None;
 +        let mut recorded_limits = None;
-+        let mut head = String::new();
++        let (mut head, mut last) = (String::new(), String::new());
 +        for entry in records {
 +            let metadata = entry.metadata()?;
 +            if entry.file_type()?.is_symlink()
@@ -32163,7 +32614,8 @@ index 000000000..65edce5f4
 +                return Err(denied("resume evidence must be a bounded regular file"));
 +            }
 +            let bytes = fs::read(entry.path())?;
-+            head = crate::broker::chain(&head, &crate::broker::sha256(&bytes));
++            last = crate::broker::sha256(&bytes);
++            head = crate::broker::chain(&head, &last);
 +            let value: Value = serde_json::from_slice(&bytes)?;
 +            let sequence = value["sequence"]
 +                .as_u64()
@@ -32383,10 +32835,14 @@ index 000000000..65edce5f4
 +        if state.status == TaskStatus::Stopped {
 +            return Err(denied("stopped task cannot resume"));
 +        }
-+        if crate::broker::anchored(&evidence)?
-+            .is_some_and(|anchor| anchor.count != state.sequence || anchor.head != head)
-+        {
-+            return Err(denied("evidence_anchor_mismatch"));
++        match crate::broker::anchored(&evidence)? {
++            Some(anchor) if anchor.count == 0 => {
++                crate::broker::seed(&evidence, state.sequence, &head, &last)?;
++            }
++            Some(anchor) if anchor.count != state.sequence || anchor.head != head => {
++                return Err(denied("evidence_anchor_mismatch"));
++            }
++            _ => {}
 +        }
 +        let created_unix_millis =
 +            created_unix_millis.ok_or_else(|| denied("created timestamp missing"))?;
@@ -32469,13 +32925,21 @@ index 000000000..65edce5f4
 +            if bytes.len() > 1_048_576 {
 +                return Err(denied("evidence event exceeds size limit"));
 +            }
-+            crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes))?;
++            let path = self.evidence.join(format!("{:08}.json", state.sequence));
 +            let mut file = OpenOptions::new()
 +                .write(true)
 +                .create_new(true)
-+                .open(self.evidence.join(format!("{:08}.json", state.sequence)))?;
-+            file.write_all(&bytes)?;
-+            file.sync_all()
++                .open(&path)?;
++            let written = file
++                .write_all(&bytes)
++                .and_then(|()| file.sync_all())
++                .and_then(|()| {
++                    crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes))
++                });
++            if written.is_err() {
++                let _ = fs::remove_file(&path);
++            }
++            written
 +        })();
 +        if result.is_err() {
 +            state.status = TaskStatus::Stopped;
@@ -36122,10 +36586,10 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..40003c359
+index 000000000..cb89055d7
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,408 @@
+@@ -0,0 +1,412 @@
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
@@ -36258,7 +36722,7 @@ index 000000000..40003c359
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(
-+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
++            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations/credentials STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
 +        )
 +    };
 +    match args {
@@ -36438,6 +36902,10 @@ index 000000000..40003c359
 +                "selection saved; takes effect at the next turn boundary".into(),
 +            ))
 +        }
++        [command, root] if command == "credentials" => Ok(Value::Array(
++            codex_omd::credentials::CredentialProfiles::open(&PathBuf::from(root).canonicalize()?)?
++                .visible("")?,
++        )),
 +        [command, root] if command == "reload" => {
 +            ModStore::open(PathBuf::from(root).canonicalize()?)?.reload()?;
 +            Ok(Value::String(
@@ -37397,10 +37865,10 @@ index 000000000..ba97c6052
 +}
 diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
 new file mode 100644
-index 000000000..d73af0b90
+index 000000000..b5bc8500f
 --- /dev/null
 +++ b/codex-rs/omd/src/broker.rs
-@@ -0,0 +1,798 @@
+@@ -0,0 +1,854 @@
 +use serde::Deserialize;
 +use serde_json::Value;
 +use serde_json::json;
@@ -37595,6 +38063,17 @@ index 000000000..d73af0b90
 +    Ok(())
 +}
 +
++/// Anchors state that existed before its stream was ever anchored, for example before broker install.
++pub fn seed(stream: &Path, count: u64, head: &str, last: &str) -> io::Result<()> {
++    if deployed() {
++        call(
++            "anchor.seed",
++            json!({"stream": stream, "count": count, "head": head, "last": last}),
++        )?;
++    }
++    Ok(())
++}
++
 +pub fn anchored(stream: &Path) -> io::Result<Option<Anchor>> {
 +    if !deployed() {
 +        return Ok(None);
@@ -37712,9 +38191,13 @@ index 000000000..d73af0b90
 +}
 +
 +fn text<'a>(arguments: &'a Value, key: &str) -> io::Result<&'a str> {
++    text_within(arguments, key, 4096)
++}
++
++fn text_within<'a>(arguments: &'a Value, key: &str, limit: usize) -> io::Result<&'a str> {
 +    arguments[key]
 +        .as_str()
-+        .filter(|value| !value.is_empty() && value.len() <= 4096)
++        .filter(|value| !value.is_empty() && value.len() <= limit)
 +        .ok_or_else(|| failure("authority_request_invalid"))
 +}
 +
@@ -37744,7 +38227,15 @@ index 000000000..d73af0b90
 +    }
 +
 +    pub fn serve(self: Arc<Self>, listener: UnixListener, gate: Arc<dyn Gate>) {
-+        for stream in listener.incoming().flatten() {
++        for stream in listener.incoming() {
++            let Ok(mut stream) = stream else {
++                std::thread::sleep(std::time::Duration::from_millis(100));
++                continue;
++            };
++            if gate.peer(&stream).is_err() {
++                let _ = stream.write_all(b"{\"error\":\"authority_peer_unverified\"}\n");
++                continue;
++            }
 +            let (broker, gate) = (self.clone(), gate.clone());
 +            std::thread::spawn(move || broker.connection(stream, &*gate));
 +        }
@@ -37752,9 +38243,6 @@ index 000000000..d73af0b90
 +
 +    fn connection(&self, stream: UnixStream, gate: &dyn Gate) -> io::Result<()> {
 +        let mut writer = stream.try_clone()?;
-+        if gate.peer(&stream).is_err() {
-+            return writer.write_all(b"{\"error\":\"authority_peer_unverified\"}\n");
-+        }
 +        let peer = stream.try_clone()?;
 +        let mut reader = BufReader::new(stream);
 +        let mut challenge = None;
@@ -37823,10 +38311,16 @@ index 000000000..d73af0b90
 +
 +    fn right(&self, op: &str, arguments: &Value) -> io::Result<Option<&'static str>> {
 +        Ok(match op {
-+            "grants.put"
-+            | "credentials.store_secret"
-+            | "credentials.store_auth"
-+            | "credentials.set_default" => Some(GRANT_RIGHT),
++            "grants.put" => {
++                let _state = self
++                    .state
++                    .lock()
++                    .map_err(|_| failure("authority_state_poisoned"))?;
++                self.adds_grants(arguments)?.then_some(GRANT_RIGHT)
++            }
++            "credentials.store_secret" | "credentials.store_auth" | "credentials.set_default" => {
++                Some(GRANT_RIGHT)
++            }
 +            "credentials.remove" => {
 +                let _state = self
 +                    .state
@@ -37839,6 +38333,20 @@ index 000000000..d73af0b90
 +            "policy.put" => Some(POLICY_RIGHT),
 +            _ => None,
 +        })
++    }
++
++    /// Revoking grants needs no authorization; adding any does.
++    fn adds_grants(&self, arguments: &Value) -> io::Result<bool> {
++        let current = read_json(
++            &self.store(arguments)?.join("grants.json"),
++            json!({"generation": 0, "grants": []}),
++        )?;
++        let granted = current["grants"].as_array().cloned().unwrap_or_default();
++        Ok(arguments["grants"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .any(|grant| !granted.contains(grant)))
 +    }
 +
 +    fn dispatch(&self, op: &str, arguments: Value, authorized: bool) -> io::Result<Value> {
@@ -37859,7 +38367,9 @@ index 000000000..d73af0b90
 +                serde_json::to_value(self.profiles(&arguments)?.profile(id()?)?)?
 +            }
 +            "credentials.secret" => {
-+                let secret = self.profiles(&arguments)?.secret(id()?)?;
++                let secret = self
++                    .profiles(&arguments)?
++                    .secret(id()?, text(&arguments, "origin")?)?;
 +                json!({"token": secret.token, "account_id": secret.account_id})
 +            }
 +            "credentials.owned_secret" => self
@@ -37869,6 +38379,7 @@ index 000000000..d73af0b90
 +                text(&arguments, "label")?,
 +                text(&arguments, "kind")?,
 +                arguments["provider"].as_str(),
++                arguments["origin"].as_str(),
 +            )?)?,
 +            "credentials.create_secret" => {
 +                serde_json::to_value(self.profiles(&arguments)?.create_secret(
@@ -37891,7 +38402,7 @@ index 000000000..d73af0b90
 +            }
 +            "credentials.store_auth" => {
 +                self.profiles(&arguments)?
-+                    .store_auth(id()?, text(&arguments, "auth")?)?;
++                    .store_auth(id()?, text_within(&arguments, "auth", 65_536)?)?;
 +                Value::Null
 +            }
 +            "credentials.set_default" => {
@@ -37903,6 +38414,9 @@ index 000000000..d73af0b90
 +                json!({"generation": 0, "grants": []}),
 +            )?,
 +            "grants.put" => {
++                if !authorized && self.adds_grants(&arguments)? {
++                    return Err(failure("authority_authorization_denied"));
++                }
 +                let path = self.store(&arguments)?.join("grants.json");
 +                let current = read_json(&path, json!({"generation": 0, "grants": []}))?;
 +                if arguments["generation"] != current["generation"] {
@@ -37933,7 +38447,7 @@ index 000000000..d73af0b90
 +                write_private(&path, &policy)?;
 +                Value::Null
 +            }
-+            "anchor.get" | "anchor.append" => {
++            "anchor.get" | "anchor.append" | "anchor.seed" => {
 +                let stream = text(&arguments, "stream")?;
 +                let path = private_directory(&self.root.join("anchors"))?
 +                    .join(format!("{}.json", sha256(stream.as_bytes())));
@@ -37941,7 +38455,17 @@ index 000000000..d73af0b90
 +                    &path,
 +                    json!({"stream": stream, "count": 0, "head": "", "last": null}),
 +                )?;
-+                if op == "anchor.append" {
++                if op == "anchor.seed" {
++                    if anchor["count"] != 0 {
++                        return Err(failure("authority_anchor_exists"));
++                    }
++                    anchor = json!({"stream": stream,
++                        "count": arguments["count"].as_u64().filter(|count| *count > 0)
++                            .ok_or_else(|| failure("authority_request_invalid"))?,
++                        "head": digest_text(&arguments, "head")?,
++                        "last": digest_text(&arguments, "last")?});
++                    write_private(&path, &anchor)?;
++                } else if op == "anchor.append" {
 +                    let entry = digest_text(&arguments, "sha256")?;
 +                    anchor = json!({"stream": stream,
 +                        "count": anchor["count"].as_u64().unwrap_or_default() + 1,
@@ -38201,10 +38725,10 @@ index 000000000..d73af0b90
 +mod tests;
 diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
 new file mode 100644
-index 000000000..fafdd3799
+index 000000000..e7418189b
 --- /dev/null
 +++ b/codex-rs/omd/src/broker_tests.rs
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,254 @@
 +use super::*;
 +use std::sync::atomic::AtomicBool;
 +use std::sync::atomic::Ordering;
@@ -38293,7 +38817,7 @@ index 000000000..fafdd3799
 +    let request = json!({"op": "grants.put", "arguments": put, "nonce": nonce,
 +        "authorization": "token"});
 +    assert_eq!(client.send(&request).unwrap()["generation"], 1);
-+    assert_eq!(error(client.send(&request)), "authority_challenge_invalid");
++    assert_eq!(error(client.send(&request)), "authority_grants_stale");
 +    let other = json!({"store": store, "generation": 1, "grants": ["b"]});
 +    assert_eq!(
 +        error(client.authorized(
@@ -38310,6 +38834,8 @@ index 000000000..fafdd3799
 +        client.call("grants.get", json!({"store": store})).unwrap(),
 +        json!({"generation": 2, "grants": ["b"]})
 +    );
++    let revoke = json!({"store": store, "generation": 2, "grants": []});
++    assert_eq!(client.call("grants.put", revoke).unwrap()["generation"], 3);
 +    assert_eq!(
 +        error(client.call("policy.put", json!({"key": "k", "value": 1}))),
 +        "authority_challenge_invalid"
@@ -38320,13 +38846,7 @@ index 000000000..fafdd3799
 +    assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
 +    assert_eq!(
 +        *gate.asked.lock().unwrap(),
-+        [
-+            GRANT_RIGHT,
-+            GRANT_RIGHT,
-+            GRANT_RIGHT,
-+            GRANT_RIGHT,
-+            POLICY_RIGHT
-+        ]
++        [GRANT_RIGHT, GRANT_RIGHT, GRANT_RIGHT, POLICY_RIGHT]
 +    );
 +}
 +
@@ -38361,6 +38881,18 @@ index 000000000..fafdd3799
 +        error(client.call("anchor.append", json!({"stream": "/ledger", "sha256": "x"}))),
 +        "authority_request_invalid"
 +    );
++    let seed = |stream: &str| json!({"stream": stream, "count": 2, "head": anchor.head, "last": anchor.last});
++    assert_eq!(
++        error(client.call("anchor.seed", seed("/ledger"))),
++        "authority_anchor_exists"
++    );
++    client.call("anchor.seed", seed("/older")).unwrap();
++    assert_eq!(
++        client
++            .call("anchor.get", json!({"stream": "/older"}))
++            .unwrap()["head"],
++        anchor.head
++    );
 +}
 +
 +#[test]
@@ -38368,7 +38900,7 @@ index 000000000..fafdd3799
 +    let gate = Arc::new(TestGate::default());
 +    let (_temp, socket, store) = serve(gate.clone());
 +    let profiles = crate::credentials::CredentialProfiles::brokered(&store, &socket);
-+    let key = profiles.create("key", "api_key", None).unwrap();
++    let key = profiles.create("key", "api_key", None, None).unwrap();
 +    assert!(
 +        profiles
 +            .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-broker"}"#)
@@ -38378,10 +38910,16 @@ index 000000000..fafdd3799
 +    profiles
 +        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-broker"}"#)
 +        .unwrap();
-+    assert_eq!(profiles.secret(&key.id).unwrap().token, "sk-broker");
++    assert_eq!(
++        profiles
++            .secret(&key.id, "https://api.openai.com")
++            .unwrap()
++            .token,
++        "sk-broker"
++    );
 +    assert_eq!(profiles.public(&key).unwrap()["status"], "ready");
 +    assert!(!store.join("credentials").exists());
-+    let empty = profiles.create("empty", "api_key", None).unwrap();
++    let empty = profiles.create("empty", "api_key", None, None).unwrap();
 +    gate.allow.store(false, Ordering::SeqCst);
 +    assert!(profiles.remove(&empty.id).unwrap());
 +    assert!(profiles.remove(&key.id).is_err());
@@ -38395,11 +38933,17 @@ index 000000000..fafdd3799
 +    let temp = tempfile::tempdir().unwrap();
 +    let base = temp.path().canonicalize().unwrap();
 +    let profiles = crate::credentials::CredentialProfiles::open(&base).unwrap();
-+    let key = profiles.create("dummy", "api_key", None).unwrap();
++    let key = profiles.create("dummy", "api_key", None, None).unwrap();
 +    profiles
 +        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-dummy"}"#)
 +        .unwrap();
-+    assert_eq!(profiles.secret(&key.id).unwrap().token, "sk-dummy");
++    assert_eq!(
++        profiles
++            .secret(&key.id, "https://api.openai.com")
++            .unwrap()
++            .token,
++        "sk-dummy"
++    );
 +    assert!(!base.join("credentials").exists());
 +    assert_eq!(
 +        fs::read_dir(ROOT).unwrap_err().kind(),
@@ -40078,10 +40622,10 @@ index 000000000..2c27d1cd4
 +}
 diff --git a/codex-rs/omd/src/credentials.rs b/codex-rs/omd/src/credentials.rs
 new file mode 100644
-index 000000000..426d1dea4
+index 000000000..df8573ed1
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials.rs
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,544 @@
 +use serde::{Deserialize, Serialize};
 +use std::fs;
 +use std::io::{self, Write};
@@ -40104,6 +40648,17 @@ index 000000000..426d1dea4
 +    pub origin: Option<String>,
 +    #[serde(default, skip_serializing_if = "Option::is_none")]
 +    pub owner: Option<String>,
++}
++
++impl CredentialProfile {
++    /// The only origin this profile's token is ever sent to.
++    pub fn destination(&self) -> Option<&str> {
++        match self.kind.as_str() {
++            "chatgpt" => Some("https://chatgpt.com"),
++            "api_key" => Some("https://api.openai.com"),
++            _ => self.origin.as_deref(),
++        }
++    }
 +}
 +
 +#[derive(Default, Deserialize, Serialize)]
@@ -40152,6 +40707,19 @@ index 000000000..426d1dea4
 +
 +fn text(value: &str, limit: usize) -> bool {
 +    !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
++}
++
++/// `scheme://host[:port]` of `url`, lowercased and without a default port.
++pub fn url_origin(url: &str) -> Option<String> {
++    let (scheme, rest) = url.split_once("://")?;
++    let authority = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
++    let scheme = scheme.to_ascii_lowercase();
++    let authority = match (scheme.as_str(), authority.rsplit_once(':')) {
++        ("https", Some((host, "443"))) | ("http", Some((host, "80"))) => host.to_owned(),
++        _ => authority,
++    };
++    let value = format!("{scheme}://{authority}");
++    origin(&value).then_some(value)
 +}
 +
 +pub fn origin(value: &str) -> bool {
@@ -40299,7 +40867,7 @@ index 000000000..426d1dea4
 +        let ready = self.enrolled(&profile.id)?;
 +        Ok(
 +            serde_json::json!({"id": profile.id, "label": profile.label, "kind": profile.kind,
-+            "provider": profile.provider, "origin": profile.origin,
++            "provider": profile.provider, "origin": profile.destination(),
 +            "status": if ready { "ready" } else { "not_enrolled" }, "default": profile.default}),
 +        )
 +    }
@@ -40333,23 +40901,35 @@ index 000000000..426d1dea4
 +        Ok(home)
 +    }
 +
++    /// A `provider` profile is bound to an `https` origin; the other kinds have a fixed destination.
 +    pub fn create(
 +        &self,
 +        label: &str,
 +        kind: &str,
 +        provider: Option<&str>,
++        origin: Option<&str>,
 +    ) -> io::Result<CredentialProfile> {
 +        if let Some(value) = self.remote(
 +            "create",
-+            serde_json::json!({"label": label, "kind": kind, "provider": provider}),
++            serde_json::json!({"label": label, "kind": kind, "provider": provider, "origin": origin}),
 +            false,
 +        ) {
 +            return Ok(serde_json::from_value(value?)?);
 +        }
++        let invalid = || failure("credential_profile_invalid");
++        let origin = match (kind, origin) {
++            ("provider", Some(origin)) => Some(
++                url_origin(origin)
++                    .filter(|origin| origin.starts_with("https://"))
++                    .ok_or_else(invalid)?,
++            ),
++            ("provider", None) | (_, Some(_)) => return Err(invalid()),
++            _ => None,
++        };
 +        if !text(label, 64) || !KINDS.contains(&kind) || provider.is_some_and(|p| !text(p, 64)) {
-+            return Err(failure("credential_profile_invalid"));
++            return Err(invalid());
 +        }
-+        self.insert(label, kind, provider, None, None)
++        self.insert(label, kind, provider, origin.as_deref(), None)
 +    }
 +
 +    pub fn create_secret(
@@ -40403,8 +40983,15 @@ index 000000000..426d1dea4
 +        Ok(profile)
 +    }
 +
++    /// Asks for authorization only when the broker says the profile holds a secret.
 +    pub fn remove(&self, id: &str) -> io::Result<bool> {
-+        if let Some(value) = self.remote("remove", serde_json::json!({"id": id}), true) {
++        if let Some(value) = self.remote("remove", serde_json::json!({"id": id}), false) {
++            let value = match value {
++                Err(error) if error.to_string() == "authority_challenge_invalid" => self
++                    .remote("remove", serde_json::json!({"id": id}), true)
++                    .unwrap_or_else(|| Err(failure("authority_broker_unavailable"))),
++                value => value,
++            };
 +            return Ok(value?.as_bool().unwrap_or_default());
 +        }
 +        let removed = self.with_index(true, |index| {
@@ -40507,8 +41094,13 @@ index 000000000..426d1dea4
 +            "origin": profile.origin, "value": fs::read_to_string(path)?}))
 +    }
 +
-+    pub fn secret(&self, id: &str) -> io::Result<CredentialSecret> {
-+        if let Some(value) = self.remote("secret", serde_json::json!({"id": id}), false) {
++    /// Refuses unless `origin` is the profile's enrolled destination.
++    pub fn secret(&self, id: &str, origin: &str) -> io::Result<CredentialSecret> {
++        if let Some(value) = self.remote(
++            "secret",
++            serde_json::json!({"id": id, "origin": origin}),
++            false,
++        ) {
 +            let value = value?;
 +            return Ok(CredentialSecret {
 +                token: value["token"]
@@ -40520,6 +41112,9 @@ index 000000000..426d1dea4
 +            });
 +        }
 +        let profile = self.profile(id)?;
++        if profile.destination() != Some(origin) {
++            return Err(failure(format!("credential_origin_mismatch: {id}")));
++        }
 +        let path = self.home(id)?.join("auth.json");
 +        let metadata = fs::symlink_metadata(&path)
 +            .map_err(|_| failure(format!("credential_not_enrolled: {id}")))?;
@@ -40577,10 +41172,10 @@ index 000000000..426d1dea4
 +mod tests;
 diff --git a/codex-rs/omd/src/credentials_tests.rs b/codex-rs/omd/src/credentials_tests.rs
 new file mode 100644
-index 000000000..0dbe2a749
+index 000000000..ff33d185f
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials_tests.rs
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,195 @@
 +use super::*;
 +
 +fn profiles() -> (tempfile::TempDir, CredentialProfiles) {
@@ -40593,14 +41188,20 @@ index 000000000..0dbe2a749
 +#[test]
 +fn profiles_get_private_homes_and_one_default() {
 +    let (_temp, profiles) = profiles();
-+    let work = profiles.create("work", "chatgpt", None).unwrap();
++    let work = profiles.create("work", "chatgpt", None, None).unwrap();
 +    let key = profiles
-+        .create("openrouter", "api_key", Some("openrouter"))
++        .create(
++            "openrouter",
++            "provider",
++            Some("openrouter"),
++            Some("https://OpenRouter.ai:443/api/v1"),
++        )
 +        .unwrap();
 +    assert_eq!(
 +        (work.id.as_str(), work.default, key.default),
 +        ("p1", true, false)
 +    );
++    assert_eq!(key.destination(), Some("https://openrouter.ai"));
 +    let home = profiles.home(&key.id).unwrap();
 +    use std::os::unix::fs::PermissionsExt;
 +    assert_eq!(
@@ -40624,11 +41225,11 @@ index 000000000..0dbe2a749
 +#[test]
 +fn removing_the_default_promotes_another_and_clears_its_home() {
 +    let (_temp, profiles) = profiles();
-+    profiles.create("a", "chatgpt", None).unwrap();
++    profiles.create("a", "chatgpt", None, None).unwrap();
 +    profiles
 +        .create_secret("site", "https://example.com", "vault")
 +        .unwrap();
-+    profiles.create("b", "chatgpt", None).unwrap();
++    profiles.create("b", "chatgpt", None, None).unwrap();
 +    let home = profiles.home("p1").unwrap();
 +    assert!(profiles.remove("p1").unwrap());
 +    assert!(!home.exists());
@@ -40647,17 +41248,30 @@ index 000000000..0dbe2a749
 +#[test]
 +fn invalid_profiles_and_limits_are_refused() {
 +    let (_temp, profiles) = profiles();
-+    assert!(profiles.create("", "chatgpt", None).is_err());
-+    assert!(profiles.create("x\n", "chatgpt", None).is_err());
-+    assert!(profiles.create("x", "oauth2", None).is_err());
-+    profiles.create("x", "chatgpt", None).unwrap();
-+    assert!(profiles.create("x", "chatgpt", None).is_err());
++    assert!(profiles.create("", "chatgpt", None, None).is_err());
++    assert!(profiles.create("x\n", "chatgpt", None, None).is_err());
++    assert!(profiles.create("x", "oauth2", None, None).is_err());
++    assert!(profiles.create("x", "provider", None, None).is_err());
++    assert!(
++        profiles
++            .create("x", "provider", None, Some("http://example.com"))
++            .is_err()
++    );
++    assert!(
++        profiles
++            .create("x", "api_key", None, Some("https://example.com"))
++            .is_err()
++    );
++    profiles.create("x", "chatgpt", None, None).unwrap();
++    assert!(profiles.create("x", "chatgpt", None, None).is_err());
 +    for n in 1..PROFILE_LIMIT {
-+        profiles.create(&format!("p{n}"), "api_key", None).unwrap();
++        profiles
++            .create(&format!("p{n}"), "api_key", None, None)
++            .unwrap();
 +    }
 +    assert_eq!(
 +        profiles
-+            .create("overflow", "api_key", None)
++            .create("overflow", "api_key", None, None)
 +            .unwrap_err()
 +            .to_string(),
 +        "credential_profile_limit"
@@ -40669,11 +41283,11 @@ index 000000000..0dbe2a749
 +fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
 +    use base64::Engine;
 +    let (_temp, profiles) = profiles();
-+    let key = profiles.create("key", "api_key", None).unwrap();
-+    let chat = profiles.create("chat", "chatgpt", None).unwrap();
++    let key = profiles.create("key", "api_key", None, None).unwrap();
++    let chat = profiles.create("chat", "chatgpt", None, None).unwrap();
 +    assert!(
 +        profiles
-+            .secret(&key.id)
++            .secret(&key.id, "https://api.openai.com")
 +            .unwrap_err()
 +            .to_string()
 +            .starts_with("credential_not_enrolled")
@@ -40681,12 +41295,19 @@ index 000000000..0dbe2a749
 +    profiles
 +        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-test"}"#)
 +        .unwrap();
-+    let secret = profiles.secret(&key.id).unwrap();
++    let secret = profiles.secret(&key.id, "https://api.openai.com").unwrap();
++    assert!(!format!("{secret:?}").contains("sk-test"));
 +    assert_eq!(
 +        (secret.token.as_str(), secret.account_id),
 +        ("sk-test", None)
 +    );
-+    assert!(!format!("{:?}", profiles.secret(&key.id).unwrap()).contains("sk-test"));
++    assert_eq!(
++        profiles
++            .secret(&key.id, "https://evil.example")
++            .unwrap_err()
++            .to_string(),
++        "credential_origin_mismatch: p1"
++    );
 +    let jwt = |exp: u64| {
 +        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
 +            .encode(serde_json::json!({"exp": exp}).to_string());
@@ -40703,15 +41324,15 @@ index 000000000..0dbe2a749
 +    write(jwt(1));
 +    assert!(
 +        profiles
-+            .secret(&chat.id)
++            .secret(&chat.id, "https://chatgpt.com")
 +            .unwrap_err()
 +            .to_string()
 +            .starts_with("credential_expired")
 +    );
 +    write(jwt(u64::MAX / 2));
-+    let secret = profiles.secret(&chat.id).unwrap();
++    let secret = profiles.secret(&chat.id, "https://chatgpt.com").unwrap();
 +    assert_eq!(secret.account_id.as_deref(), Some("acct"));
-+    assert!(profiles.secret("p99").is_err());
++    assert!(profiles.secret("p99", "https://chatgpt.com").is_err());
 +}
 +
 +#[test]
@@ -40744,7 +41365,11 @@ index 000000000..0dbe2a749
 +        "hunter2"
 +    );
 +    assert!(profiles.owned_secret(&secret.id, "other").is_err());
-+    assert!(profiles.secret(&secret.id).is_err());
++    assert!(
++        profiles
++            .secret(&secret.id, "https://example.com:8443")
++            .is_err()
++    );
 +}
 diff --git a/codex-rs/omd/src/data_store.rs b/codex-rs/omd/src/data_store.rs
 new file mode 100644
@@ -43561,10 +44186,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..cbf031583
+index 000000000..16274dc6b
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4346 @@
+@@ -0,0 +1,4400 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -43636,6 +44261,7 @@ index 000000000..cbf031583
 +use std::io;
 +use std::path::Path;
 +use std::path::PathBuf;
++use std::sync::Arc;
 +use std::sync::Mutex;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -45483,6 +46109,9 @@ index 000000000..cbf031583
 +}
 +
 +const MOD_FAULT_LIMIT: u32 = 5;
++const BROKER_REFRESH: Duration = Duration::from_secs(2);
++
++type Brokered = Option<(u64, BTreeSet<String>)>;
 +
 +impl Loaded {
 +    fn fault(&mut self, error: String) {
@@ -45536,6 +46165,8 @@ index 000000000..cbf031583
 +    valid_views: BTreeMap<String, Value>,
 +    renders: BTreeMap<String, (String, Value, Instant)>,
 +    chains: Vec<Value>,
++    brokered: Option<(Instant, String, Brokered)>,
++    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 +}
 +
 +enum Access<'a> {
@@ -45674,12 +46305,10 @@ index 000000000..cbf031583
 +                let _ = access.with(|runtime| {
 +                    Ok(runtime.event_except("host_operation", before, id, active, scope))
 +                });
-+                let intercepted = !private
-+                    && event != "intercept"
-+                    && access
-+                        .with(|runtime| Ok(runtime.intercepts("host_operation")))
-+                        .unwrap_or(false);
-+                let result = if intercepted {
++                let intercepted = (!private && event != "intercept")
++                    .then(|| access.with(|runtime| Ok(runtime.intercepts("host_operation"))))
++                    .and_then(|intercepts| intercepts.ok().flatten());
++                let result = if let Some(required) = intercepted {
 +                    let input = json!({"operation": call.operation, "arguments": call.arguments});
 +                    let origin = json!({"caller": id, "thread_id": thread});
 +                    chain::intercept(
@@ -45687,6 +46316,7 @@ index 000000000..cbf031583
 +                        &mut *host,
 +                        &mut chain::Core::Host { caller: id.to_owned(), generation },
 +                        "host_operation",
++                        required,
 +                        input,
 +                        origin,
 +                        active,
@@ -45883,6 +46513,8 @@ index 000000000..cbf031583
 +            valid_views: BTreeMap::new(),
 +            renders: BTreeMap::new(),
 +            chains: Vec::new(),
++            brokered: None,
++            required_surfaces: Arc::default(),
 +        };
 +        if let Some(repository) = repository {
 +            host.set_checkout(repository);
@@ -45951,10 +46583,23 @@ index 000000000..cbf031583
 +    pub fn reload(&mut self) -> Result<bool> {
 +        let path = self.store.root.join("mods.json");
 +        let bytes = store::read(&path, 65_536)?;
-+        let brokered = store::brokered_grants(&self.store.root)?;
++        let sha256 = digest(&bytes);
++        let brokered = match self.brokered_grants(&sha256) {
++            Ok(brokered) => brokered,
++            Err(error) => {
++                if !self.loaded.is_empty() {
++                    self.loaded.clear();
++                    self.order.clear();
++                    self.generation += 1;
++                    self.dynamic_tools.clear();
++                    self.publish_required_surfaces();
++                }
++                self.configuration_sha256.clear();
++                return Err(error);
++            }
++        };
 +        let hash = format!(
-+            "{}:{}",
-+            digest(&bytes),
++            "{sha256}:{}",
 +            brokered.as_ref().map_or(0, |(generation, _)| *generation)
 +        );
 +        if hash == self.configuration_sha256 {
@@ -45975,6 +46620,9 @@ index 000000000..cbf031583
 +                        .capabilities
 +                        .iter()
 +                        .all(|cap| m.capabilities.contains(cap))
++                    && brokered
++                        .as_ref()
++                        .is_none_or(|(_, grants)| grants.contains(&store::grant(&json!(m))))
 +            })
 +        });
 +        if self.loaded.len() != retained {
@@ -46135,8 +46783,39 @@ index 000000000..cbf031583
 +        self.generation += 1;
 +        self.dynamic_tools.clear();
 +        self.reload_error = None;
++        self.publish_required_surfaces();
 +        self.write_installed_service_types()?;
 +        Ok(true)
++    }
++
++    /// Intercept surfaces with a required interceptor, readable while another caller holds the runtime.
++    pub fn required_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
++        self.required_surfaces.clone()
++    }
++
++    fn publish_required_surfaces(&self) {
++        let surfaces = MOD_INTERCEPT_SURFACES
++            .iter()
++            .map(|(surface, _)| *surface)
++            .filter(|surface| self.intercepts(surface) == Some(true))
++            .collect();
++        if let Ok(mut published) = self.required_surfaces.lock() {
++            *published = surfaces;
++        }
++    }
++
++    /// Re-asks the broker when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
++    fn brokered_grants(&mut self, digest: &str) -> Result<Brokered> {
++        if let Some((at, cached, grants)) = &self.brokered
++            && cached == digest
++            && at.elapsed() < BROKER_REFRESH
++        {
++            return Ok(grants.clone());
++        }
++        self.brokered = None;
++        let grants = store::brokered_grants(&self.store.root)?;
++        self.brokered = Some((Instant::now(), digest.to_owned(), grants.clone()));
++        Ok(grants)
 +    }
 +
 +    fn adapters(
@@ -47913,10 +48592,10 @@ index 000000000..cbf031583
 +}
 diff --git a/codex-rs/omd/src/mods/author.rs b/codex-rs/omd/src/mods/author.rs
 new file mode 100644
-index 000000000..d0f3c3aa1
+index 000000000..90b4b5338
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/author.rs
-@@ -0,0 +1,542 @@
+@@ -0,0 +1,543 @@
 +use super::*;
 +use std::collections::VecDeque;
 +
@@ -48209,6 +48888,7 @@ index 000000000..d0f3c3aa1
 +                    &mut |caller, call| host.call(caller, call),
 +                    &mut chain::Core::Call(&mut core),
 +                    surface,
++                    true,
 +                    payload,
 +                    origin,
 +                    &|| active,
@@ -48760,10 +49440,10 @@ index 000000000..d75ac3393
 +}
 diff --git a/codex-rs/omd/src/mods/chain.rs b/codex-rs/omd/src/mods/chain.rs
 new file mode 100644
-index 000000000..29d601a45
+index 000000000..d9c03417f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/chain.rs
-@@ -0,0 +1,814 @@
+@@ -0,0 +1,847 @@
 +use super::*;
 +use std::time::Duration;
 +
@@ -48809,6 +49489,7 @@ index 000000000..29d601a45
 +    required: bool,
 +    catch: bool,
 +    location: String,
++    matcher: Value,
 +    generation: u64,
 +}
 +
@@ -49211,6 +49892,9 @@ index 000000000..29d601a45
 +            );
 +            return result;
 +        };
++        if !link.matcher.is_null() && !may_match(&link.matcher, &input) {
++            return self.link(access, host, core, active, scope, k + 1, input);
++        }
 +        let mut attempts = Attempts::default();
 +        if scope.contains(&link.id) || self.origin["caller"] == link.id.as_str() {
 +            self.entry(
@@ -49464,13 +50148,28 @@ index 000000000..29d601a45
 +    host: &mut HostFn<'_>,
 +    core: &mut Core<'_>,
 +    surface: &str,
++    required: bool,
 +    input: Value,
 +    origin: Value,
 +    active: &dyn Fn() -> bool,
 +    scope: &InvocationScope,
 +) -> Result<ModChain> {
-+    let links = access.with(|runtime| Ok(runtime.links(surface, &input)))?;
-+    if links.is_empty() {
++    let wait = if required {
++        REQUIRED_WAIT
++    } else {
++        OPTIONAL_WAIT
++    };
++    let links = match access
++        .bounded(wait)
++        .with(|runtime| Ok(runtime.links(surface)))
++    {
++        Err(error) if !required && error.to_string().starts_with("mod_runtime_busy") => Vec::new(),
++        links => links?,
++    };
++    if links
++        .iter()
++        .all(|link| !link.matcher.is_null() && !may_match(&link.matcher, &input))
++    {
 +        let result = match core {
 +            Core::Call(run) => run(input.clone()),
 +            Core::Host { caller, generation } => {
@@ -49501,7 +50200,9 @@ index 000000000..29d601a45
 +        answered_by: chain.answered_by.filter(|_| !chain.executed),
 +        trace: chain.trace,
 +    };
-+    let entry = json!({"surface": surface, "origin": chain.origin, "error": result.as_ref().err().map(ToString::to_string), "chain": record});
++    let logged = json!({"result": bounded(&record.result), "input": bounded(&record.input),
++        "answered_by": record.answered_by, "trace": record.trace});
++    let entry = json!({"surface": surface, "origin": chain.origin, "error": result.as_ref().err().map(ToString::to_string), "chain": logged});
 +    let _ = access.with(|runtime| {
 +        runtime.chains.push(entry);
 +        if runtime.chains.len() > CHAIN_LOG {
@@ -49513,16 +50214,26 @@ index 000000000..29d601a45
 +}
 +
 +impl ModHost {
-+    pub fn intercepts(&self, surface: &str) -> bool {
-+        self.active().any(|(_, loaded)| {
-+            loaded.registrations.interceptors.iter().any(|interceptor| {
-+                selects(&interceptor.pattern, surface, &loaded.package.capabilities)
++    /// `Some(true)` when a required interceptor, including a faulted mod's, selects `surface`.
++    pub fn intercepts(&self, surface: &str) -> Option<bool> {
++        self.loaded
++            .values()
++            .flat_map(|loaded| {
++                loaded
++                    .registrations
++                    .interceptors
++                    .iter()
++                    .filter(|interceptor| {
++                        (loaded.error.is_none() || interceptor.required)
++                            && selects(&interceptor.pattern, surface, &loaded.package.capabilities)
++                    })
++                    .map(|interceptor| interceptor.required)
 +            })
-+        })
++            .max()
 +    }
 +
 +    /// Ordinary links wrap required ones; a faulted mod's required links stay and fail closed.
-+    fn links(&self, surface: &str, input: &Value) -> Vec<Link> {
++    fn links(&self, surface: &str) -> Vec<Link> {
 +        let order = order(&self.loaded).unwrap_or_default();
 +        let faulted = self
 +            .loaded
@@ -49539,7 +50250,6 @@ index 000000000..29d601a45
 +                for (index, interceptor) in loaded.registrations.interceptors.iter().enumerate() {
 +                    if interceptor.required == required
 +                        && selects(&interceptor.pattern, surface, &loaded.package.capabilities)
-+                        && (interceptor.matcher.is_null() || may_match(&interceptor.matcher, input))
 +                    {
 +                        links.push(Link {
 +                            id: id.clone(),
@@ -49547,6 +50257,7 @@ index 000000000..29d601a45
 +                            required,
 +                            catch: interceptor.catch,
 +                            location: interceptor.location.clone(),
++                            matcher: interceptor.matcher.clone(),
 +                            generation: self.generation,
 +                        });
 +                    }
@@ -49561,6 +50272,7 @@ index 000000000..29d601a45
 +pub fn intercept_shared(
 +    runtime: &Mutex<ModHost>,
 +    surface: &str,
++    required: bool,
 +    input: Value,
 +    origin: Value,
 +    active: impl Fn() -> bool,
@@ -49572,6 +50284,7 @@ index 000000000..29d601a45
 +        &mut host,
 +        &mut Core::Call(&mut core),
 +        surface,
++        required,
 +        input,
 +        origin,
 +        &active,
@@ -49665,10 +50378,10 @@ index 000000000..4973a2bbb
 +}
 diff --git a/codex-rs/omd/src/mods/package_manager.rs b/codex-rs/omd/src/mods/package_manager.rs
 new file mode 100644
-index 000000000..385512334
+index 000000000..2d6cbd611
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/package_manager.rs
-@@ -0,0 +1,1207 @@
+@@ -0,0 +1,1225 @@
 +use super::*;
 +use serde_json::Map;
 +use std::process::Command;
@@ -50243,7 +50956,19 @@ index 000000000..385512334
 +            for (package, event) in lifecycle {
 +                self.run_lifecycle(package, event)?;
 +            }
-+            self.write("mods.json", &serde_json::to_value(&config)?)?;
++            let previous = old_config["mods"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .map(store::grant)
++                .collect::<BTreeSet<_>>();
++            let approved = config
++                .mods
++                .iter()
++                .map(|selection| store::grant(&json!(selection)))
++                .filter(|grant| !previous.contains(grant))
++                .collect();
++            self.write_granting("mods.json", &serde_json::to_value(&config)?, &approved)?;
 +            self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
 +            std::fs::remove_file(self.root.join("package-transaction.json"))?;
 +            std::fs::File::open(&self.root)?.sync_all()?;
@@ -50263,7 +50988,13 @@ index 000000000..385512334
 +            Err(error) => return Err(error),
 +        };
 +        let transaction: Value = serde_json::from_slice(&bytes)?;
-+        self.write("mods.json", &transaction["old_config"])?;
++        let restored = transaction["old_config"]["mods"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .map(store::grant)
++            .collect();
++        self.write_granting("mods.json", &transaction["old_config"], &restored)?;
 +        self.write("packages.lock.json", &transaction["old_lock"])?;
 +        std::fs::remove_file(path)?;
 +        std::fs::File::open(&self.root)?.sync_all()
@@ -52134,10 +52865,10 @@ index 000000000..11ec22b0c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..16c107c34
+index 000000000..2912cf2a5
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,695 @@
+@@ -0,0 +1,741 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -52372,15 +53103,21 @@ index 000000000..16c107c34
 +        }
 +        let path = self.root.join(name);
 +        let aside = self.root.join(format!("{name}.corrupt"));
-+        std::fs::rename(&path, &aside)?;
-+        if name == "mods.json" {
-+            let config = ModConfiguration {
++        let empty = match name {
++            "mods.json" => Some(serde_json::to_value(ModConfiguration {
 +                schema: 1,
 +                revision: 0,
 +                node: super::node_on_path().ok_or_else(|| failure("node_unavailable"))?,
 +                mods: Vec::new(),
-+            };
-+            self.write("mods.json", &serde_json::to_value(config)?)?;
++            })?),
++            _ => None,
++        };
++        std::fs::rename(&path, &aside)?;
++        if let Some(config) = empty
++            && let Err(error) = self.write(name, &config)
++        {
++            let _ = std::fs::rename(&aside, &path);
++            return Err(error);
 +        }
 +        Ok(aside)
 +    }
@@ -52397,26 +53134,58 @@ index 000000000..16c107c34
 +    }
 +
 +    pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
++        self.write_granting(name, value, &BTreeSet::new())
++    }
++
++    /// Adds broker grants only for `approved` selections; dropped selections lose theirs without authorization.
++    pub(super) fn write_granting(
++        &self,
++        name: &str,
++        value: &Value,
++        approved: &BTreeSet<String>,
++    ) -> Result<()> {
 +        let bytes = serde_json::to_vec_pretty(value)?;
++        let brokered = match name {
++            "mods.json" => brokered_grants(&self.root)?,
++            _ => None,
++        };
++        let Some((mut generation, current)) = brokered else {
++            return self.write_staged(name, &bytes, || Ok(()));
++        };
++        let selected = value["mods"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .map(grant)
++            .collect::<BTreeSet<_>>();
++        let added = approved
++            .iter()
++            .filter(|grant| selected.contains(*grant) && !current.contains(*grant))
++            .cloned()
++            .collect::<BTreeSet<_>>();
 +        self.write_staged(name, &bytes, || {
-+            if name == "mods.json"
-+                && let Some((generation, current)) = brokered_grants(&self.root)?
-+            {
-+                let wanted = value["mods"]
-+                    .as_array()
-+                    .into_iter()
-+                    .flatten()
-+                    .map(grant)
-+                    .collect::<BTreeSet<_>>();
-+                if wanted != current {
-+                    crate::broker::authorized(
-+                        "grants.put",
-+                        json!({"store": self.root, "generation": generation, "grants": wanted}),
-+                    )?;
-+                }
++            if !added.is_empty() {
++                let granted = current.union(&added).collect::<BTreeSet<_>>();
++                generation = crate::broker::authorized(
++                    "grants.put",
++                    json!({"store": self.root, "generation": generation, "grants": granted}),
++                )?["generation"]
++                    .as_u64()
++                    .unwrap_or_default();
 +            }
 +            Ok(())
-+        })
++        })?;
++        let kept = selected
++            .into_iter()
++            .filter(|grant| current.contains(grant) || added.contains(grant))
++            .collect::<BTreeSet<_>>();
++        if kept.len() != current.len() + added.len() {
++            let _ = crate::broker::call(
++                "grants.put",
++                json!({"store": self.root, "generation": generation, "grants": kept}),
++            );
++        }
++        Ok(())
 +    }
 +
 +    pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
@@ -52601,6 +53370,7 @@ index 000000000..16c107c34
 +        let _lock = self.lock()?;
 +        self.recover_package_transaction()?;
 +        let mut config = self.configuration()?;
++        let mut trusted = BTreeSet::new();
 +        for Trust {
 +            path,
 +            sha256,
@@ -52629,6 +53399,7 @@ index 000000000..16c107c34
 +                .unwrap_or_default();
 +            super::validate_settings(&package, &settings)?;
 +            config.mods.retain(|m| m.path != path);
++            trusted.insert(path.clone());
 +            config.mods.push(ModSelection {
 +                path,
 +                sha256: actual,
@@ -52644,7 +53415,13 @@ index 000000000..16c107c34
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        self.write("mods.json", &serde_json::to_value(config)?)
++        let approved = config
++            .mods
++            .iter()
++            .filter(|selection| trusted.contains(&selection.path))
++            .map(|selection| grant(&json!(selection)))
++            .collect();
++        self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)
 +    }
 +
 +    pub fn revoke_authority(&self, path: &Path) -> Result<()> {
@@ -61882,10 +62659,10 @@ index 000000000..16a69c759
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..def8577eb
+index 000000000..604d5db6a
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,3309 @@
+@@ -0,0 +1,3317 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -64723,6 +65500,7 @@ index 000000000..def8577eb
 +    let chain = codex_omd::intercept_shared(
 +        &runtime,
 +        "tool",
++        true,
 +        json!({"tool":"exec","arguments":{}}),
 +        json!({"caller":"model"}),
 +        || true,
@@ -64748,6 +65526,7 @@ index 000000000..def8577eb
 +    let cached = codex_omd::intercept_shared(
 +        &runtime,
 +        "tool",
++        true,
 +        json!({"tool":"cached","arguments":{"q":"x"}}),
 +        json!({"caller":"model"}),
 +        || true,
@@ -64760,6 +65539,7 @@ index 000000000..def8577eb
 +    let partial = codex_omd::intercept_shared(
 +        &runtime,
 +        "tool",
++        true,
 +        json!({"tool":"partial","arguments":{}}),
 +        json!({"caller":"model"}),
 +        || true,
@@ -64812,6 +65592,7 @@ index 000000000..def8577eb
 +    let chain = codex_omd::intercept_shared(
 +        &runtime,
 +        "tool",
++        true,
 +        json!({"tool":"exec","arguments":{}}),
 +        json!({"caller":"model"}),
 +        || true,
@@ -64844,6 +65625,7 @@ index 000000000..def8577eb
 +        codex_omd::intercept_shared(
 +            &runtime,
 +            "tool",
++            true,
 +            json!({"tool":"exec","arguments":{}}),
 +            json!({"caller":"model"}),
 +            || true,
@@ -64980,6 +65762,7 @@ index 000000000..def8577eb
 +        codex_omd::intercept_shared(
 +            &runtime,
 +            "tool",
++            true,
 +            json!({"tool":"exec","arguments":{}}),
 +            json!({"caller":"model"}),
 +            active,
@@ -65037,6 +65820,7 @@ index 000000000..def8577eb
 +        codex_omd::intercept_shared(
 +            &runtime,
 +            "input",
++            true,
 +            json!({"thread_id":"t","text":text,"attachments":0}),
 +            json!({"caller":"user"}),
 +            || true,
@@ -65061,6 +65845,7 @@ index 000000000..def8577eb
 +    let request = codex_omd::intercept_shared(
 +        &runtime,
 +        "model_request",
++        true,
 +        json!({"request_id":"r","route":"lead","routes":routes}),
 +        json!({"caller":"model"}),
 +        || true,
@@ -67650,10 +68435,10 @@ index 000000000..03463c997
 +}
 diff --git a/codex-rs/tui/src/app/mod_credentials.rs b/codex-rs/tui/src/app/mod_credentials.rs
 new file mode 100644
-index 000000000..a87c64ff6
+index 000000000..09b7a26fc
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_credentials.rs
-@@ -0,0 +1,327 @@
+@@ -0,0 +1,332 @@
 +use super::App;
 +use crate::bottom_pane::SecretPromptView;
 +use codex_omd::client_surface::SurfaceCall;
@@ -67686,7 +68471,7 @@ index 000000000..a87c64ff6
 +        "enroll"
 +            if request.label.is_some()
 +                && match request.kind.as_deref() {
-+                    Some("secret") => request.origin.is_some(),
++                    Some("secret" | "provider") => request.origin.is_some(),
 +                    Some(_) => request.origin.is_none(),
 +                    None => false,
 +                } =>
@@ -67708,9 +68493,13 @@ index 000000000..a87c64ff6
 +            request.origin.unwrap_or_default()
 +        ),
 +        "enroll" => format!(
-+            "Mod {caller} wants to add a {} credential profile \"{}\". You sign in or enter the key here; the mod never sees it.",
++            "Mod {caller} wants to add a {} credential profile \"{}\"{}. You sign in or enter the key here; the mod never sees it, and OMD sends it only to that site.",
 +            request.kind.unwrap_or_default(),
-+            request.label.unwrap_or_default()
++            request.label.unwrap_or_default(),
++            request
++                .origin
++                .map(|origin| format!(" for {origin}"))
++                .unwrap_or_default()
 +        ),
 +        "remove" => {
 +            let id = request.profile.unwrap_or_default();
@@ -67829,6 +68618,7 @@ index 000000000..a87c64ff6
 +                                request.label.as_deref().unwrap_or_default(),
 +                                request.kind.as_deref().unwrap_or_default(),
 +                                request.provider.as_deref(),
++                                request.origin.as_deref(),
 +                            )
 +                            .map_err(|error| error.to_string())?
 +                    } else {
@@ -69641,10 +70431,10 @@ index 000000000..495b00f03
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 000000000..733d3a139
+index 000000000..f4f112266
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,237 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -69807,16 +70597,19 @@ index 000000000..733d3a139
 +                        )),
 +                        require_explicit_confirmation: true,
 +                        actions: vec![Box::new(move |tx| {
-+                            let result = ModStore::open(root.clone())
-+                                .and_then(|store| store.reset(name))
-+                                .map(|aside| {
-+                                    format!(
-+                                        "Moved {name} to {}. Restart Codex to load mods.",
-+                                        aside.display()
-+                                    )
-+                                })
-+                                .map_err(|error| error.to_string());
-+                            tx.send(AppEvent::OmdModToggled { result });
++                            let (root, tx) = (root.clone(), tx.clone());
++                            std::thread::spawn(move || {
++                                let result = ModStore::open(root)
++                                    .and_then(|store| store.reset(name))
++                                    .map(|aside| {
++                                        format!(
++                                            "Moved {name} to {}. Restart Codex to load mods.",
++                                            aside.display()
++                                        )
++                                    })
++                                    .map_err(|error| error.to_string());
++                                tx.send(AppEvent::OmdModToggled { result });
++                            });
 +                        })],
 +                        dismiss_on_select: true,
 +                        ..Default::default()

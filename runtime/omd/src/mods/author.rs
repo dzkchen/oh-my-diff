@@ -290,6 +290,7 @@ impl ModHost {
                     &mut |caller, call| host.call(caller, call),
                     &mut chain::Core::Call(&mut core),
                     surface,
+                    true,
                     payload,
                     origin,
                     &|| active,

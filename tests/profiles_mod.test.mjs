@@ -8,7 +8,7 @@ const mod = new URL('../mods/first-party/omd_profiles/', import.meta.url);
 const source = readFileSync(new URL('index.ts', mod), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('mod.json', mod), 'utf8'));
 const surface = { events: { routing: 'model', start: 'lifecycle', resume: 'lifecycle', turn_start: 'lifecycle', terminal: 'terminal' }, replacements: ['routing'], middleware: [], state: 'store', contracts: 'contracts' };
-const route = (name, billing) => ({ name, model: `${name}/up`, provider: 'omd_profiles', reasoning: 'high', roles: ['lead'], billing, tools: [], available: true, credential: `cred-${name}` });
+const route = (name, billing) => ({ name, model: `${name}/up`, provider: 'omd_profiles', reasoning: 'high', roles: ['lead'], billing, tools: [], available: true, credential: null });
 
 test('profile switches stay on the thread, ask before paid routes and report refusals', () => {
   const calls = [];
@@ -34,7 +34,7 @@ test('profile switches stay on the thread, ask before paid routes and report ref
   assert.deepEqual(invoke(state, 'routing', { routes: [], model: 'gpt', provider: 'openai', reasoning: null }).value, null);
   state = invoke(state, 'start', {}).state;
   assert.deepEqual(state.profiles.map(profile => profile.name), ['work', 'paid']);
-  assert.match(invoke(state, 'command', '', 'profile').value.display, /^○ work · work\/up · subscription · chatgpt work\n● paid · paid\/up · paid API · credential missing$/);
+  assert.match(invoke(state, 'command', '', 'profile').value.display, /^○ work · work\/up · subscription\n● paid · paid\/up · paid API$/);
   answer = 'declined';
   assert.equal(invoke(state, 'command', 'use paid', 'profile').value.display, 'Kept the current profile.');
   answer = 'accepted';

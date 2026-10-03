@@ -1,10 +1,10 @@
 import type { Json, ModAPI, RouteInfo } from '../../api.d.ts';
 
 const PROVIDER = 'omd_profiles';
-type Profile = { name: string; model: string; billing: RouteInfo['billing']; available: boolean; credential: string | null };
+type Profile = { name: string; model: string; billing: RouteInfo['billing']; available: boolean };
 type Saved = { profiles: Profile[]; current: string | null; notice: string | null; pending: string | null; ours: boolean };
 
-const USAGE = 'usage: /profile [use NAME | add chatgpt|api_key|provider LABEL [PROVIDER] | remove LABEL | refresh LABEL]';
+const USAGE = 'usage: /profile [use NAME | add chatgpt|api_key LABEL | add provider LABEL PROVIDER HTTPS_ORIGIN | remove LABEL | refresh LABEL]';
 
 export default function activate(api: ModAPI) {
   const saved = (): Saved => ({ profiles: [], current: null, notice: null, pending: null, ours: false, ...api.state.get() as unknown as Saved | null });
@@ -17,7 +17,7 @@ export default function activate(api: ModAPI) {
   const refresh = () => {
     const routes = api.host.tryCall('routes.list', null);
     if (routes.ok) store({ profiles: routes.value.filter(route => route.provider === PROVIDER && route.roles.includes('lead'))
-      .map(({ name, model, billing, available, credential }) => ({ name, model, billing, available, credential })) });
+      .map(({ name, model, billing, available }) => ({ name, model, billing, available })) });
   };
   const ensure = () => {
     const status = api.host.tryCall('sidecars.status', { id: PROVIDER });
@@ -53,14 +53,10 @@ export default function activate(api: ModAPI) {
   api.command('profile', value => {
     const [op = '', label = '', extra = ''] = String(value ?? '').trim().split(/\s+/);
     const { profiles, current, notice } = saved();
-    const credentials = api.host.tryCall('credentials.list', null);
-    const known = credentials.ok ? credentials.value : [];
     if (!op || op === 'list') {
       if (!profiles.length) return { display: 'No provider profiles. Enroll a credential with `/profile add`, then run the printed `omd-package profiles --setup` command.' };
-      return { display: [...notice ? [`Last switch failed: ${notice}`] : [], ...profiles.map(profile => {
-        const credential = known.find(item => item.id === profile.credential);
-        return `${profile.name === current ? '●' : '○'} ${profile.name} · ${profile.model} · ${profile.billing === 'included_subscription' ? 'subscription' : 'paid API'} · ${credential ? `${credential.kind} ${credential.label}` : 'credential missing'}${profile.available ? '' : ' · unavailable'}`;
-      })].join('\n') };
+      return { display: [...notice ? [`Last switch failed: ${notice}`] : [], ...profiles.map(profile =>
+        `${profile.name === current ? '●' : '○'} ${profile.name} · ${profile.model} · ${profile.billing === 'included_subscription' ? 'subscription' : 'paid API'}${profile.available ? '' : ' · unavailable'}`)].join('\n') };
     }
     if (op === 'use') {
       const profile = profiles.find(item => item.name === label);
@@ -72,15 +68,18 @@ export default function activate(api: ModAPI) {
       store({ pending: profile.name, notice: null });
       return { display: `Switching this thread to ${profile.name} at its next turn; its attachments and tool history are kept. Earlier reasoning is not sent to another account, and Chat Completions or Anthropic profiles get no hosted tools.` };
     }
-    if (op === 'add' && ['chatgpt', 'api_key', 'provider'].includes(label) && extra) {
-      const provider = String(value).trim().split(/\s+/)[3];
-      const enrolled = api.host.tryCall('credentials.request', { action: 'enroll', kind: label as 'chatgpt' | 'api_key' | 'provider', label: extra, ...provider ? { provider } : {} });
+    const [, , , provider = '', origin = ''] = String(value ?? '').trim().split(/\s+/);
+    if (op === 'add' && ['chatgpt', 'api_key', 'provider'].includes(label) && extra && (label === 'provider') === Boolean(provider && origin)) {
+      const enrolled = api.host.tryCall('credentials.request', label === 'provider'
+        ? { action: 'enroll', kind: 'provider', label: extra, provider, origin }
+        : { action: 'enroll', kind: label as 'chatgpt' | 'api_key', label: extra });
       if (!enrolled.ok || enrolled.value.status !== 'completed') return { display: enrolled.ok ? 'Enrollment cancelled.' : enrolled.error };
-      const url = label === 'chatgpt' ? 'https://chatgpt.com/backend-api/codex/responses' : label === 'api_key' ? 'https://api.openai.com/v1/responses' : 'URL';
+      const url = label === 'chatgpt' ? 'https://chatgpt.com/backend-api/codex/responses' : label === 'api_key' ? 'https://api.openai.com/v1/responses' : `${origin}/PATH`;
       return { display: `Enrolled ${label} credential "${extra}". Add a profile from a terminal, then /profile use NAME here (no restart):\nomd-package profiles --setup --add NAME --credential "${extra}" --protocol ${label === 'provider' ? 'chat|anthropic|responses' : 'responses'} --url ${url} --upstream-model MODEL${label === 'chatgpt' ? '' : ' --window TOKENS --paid INPUT_USD:OUTPUT_USD --allowance USD'}` };
     }
     if ((op === 'remove' || op === 'refresh') && label) {
-      const credential = known.find(item => item.label === label || item.id === label);
+      const credentials = api.host.tryCall('credentials.list', null);
+      const credential = (credentials.ok ? credentials.value : []).find(item => item.label === label || item.id === label);
       if (!credential) return { display: `Unknown credential ${label}` };
       const done = api.host.tryCall('credentials.request', { action: op, profile: credential.id });
       return { display: done.ok ? `${op === 'remove' ? 'Removal' : 'Refresh'} ${done.value.status} for ${credential.label}${op === 'remove' ? '; profiles using it stop at their next request until setup removes them' : ''}.` : done.error };

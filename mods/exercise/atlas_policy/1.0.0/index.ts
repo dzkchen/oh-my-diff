@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '@oh-my-diff/mod-api/0.1';
+import type { Json, ModAPI } from '@oh-my-diff/mod-api';
 
 const VERSION = '1.0.0';
 
@@ -13,7 +13,7 @@ export default function activate(api: ModAPI) {
   api.replace('routing', ({ routes }) => {
     const chosen = routes.find(route => route.name === (solo ? 'sol' : 'astra')) ?? routes[0];
     remember({ decision: 'routing', route: chosen?.name ?? null });
-    return chosen?.name ?? null;
+    return chosen ? { route: chosen.name } : null;
   });
 
   api.command('atlas', () => ({

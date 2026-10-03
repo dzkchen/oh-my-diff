@@ -139,6 +139,10 @@ def tracked(tree, *paths):
                                  *paths).decode().splitlines() if (tree / name).is_file()}
 
 
+def skipped(relative):
+    return any(part in ("target", "examples") for part in relative.parts) or relative.name in ("Cargo.lock", ".DS_Store")
+
+
 def sync(args):
     batch = batch_dir(args.batch)
     source = batch / "codex"
@@ -167,9 +171,17 @@ def sync(args):
     lock_path.write_text(json.dumps(lock, indent=2) + "\n")
     mirrors = 0
     for src, dst in MIRRORS:
-        for name in git(source, "ls-files", "--cached", "--others", "--exclude-standard", "--", src).decode().splitlines():
+        names = git(source, "ls-files", "--cached", "--others", "--exclude-standard", "--", src).decode().splitlines()
+        mirrored = {Path(name).relative_to(src) for name in names}
+        for stale in sorted((ROOT / dst).rglob("*")):
+            relative = stale.relative_to(ROOT / dst)
+            if (stale.is_file() and relative not in mirrored and not skipped(relative)
+                    and relative != Path("src/request_observer.rs")):
+                stale.unlink()
+                mirrors += 1
+        for name in names:
             relative = Path(name).relative_to(src)
-            if any(part in ("target", "examples") for part in relative.parts) or relative.name in ("Cargo.lock", ".DS_Store"):
+            if skipped(relative):
                 continue
             target = ROOT / dst / relative
             if (source / name).is_file():

@@ -321,17 +321,16 @@ def main():
             ["trust", str(scratch), inspected["path"], inspected["sha256"], ",".join(inspected["manifest"]["capabilities"])],
             env,
         )
-        engine(logs, "scratch-enable", binary, ["enable", str(scratch), inspected["path"]], env)
         negative = engine(
             logs,
             "missing-provider-diagnosis",
             binary,
-            ["test", str(scratch), str(SOURCES / "atlas_policy/2.0.0/debug.test.json")],
+            ["enable", str(scratch), inspected["path"]],
             env,
             expect_failure=True,
         ).strip()
-        if "service_provider_missing: atlas_policy requires example.formatter" not in negative:
-            raise RuntimeError(f"the author runner still hides the activation cause: {negative}")
+        if "service_provider_missing: atlas_policy needs the example.formatter service" not in negative:
+            raise RuntimeError(f"enabling a consumer without its provider hides the cause: {negative}")
 
         parity = private_symbol_parity()
         summary = {

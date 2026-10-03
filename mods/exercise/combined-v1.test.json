@@ -6,15 +6,48 @@
       "type": "event",
       "event": "routing",
       "payload": {
-        "routes": [
-          { "name": "sol", "model": "sol-model", "provider": "fixture", "reasoning": "high" },
-          { "name": "astra", "model": "astra-model", "provider": "fixture", "reasoning": "xhigh" }
-        ],
         "model": "astra-model",
         "provider": "fixture",
-        "reasoning": null
+        "reasoning": null,
+        "routes": [
+          {
+            "name": "sol",
+            "model": "sol-model",
+            "provider": "fixture",
+            "reasoning": "high",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
+          },
+          {
+            "name": "astra",
+            "model": "astra-model",
+            "provider": "fixture",
+            "reasoning": "xhigh",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
+          }
+        ]
       },
-      "expect": [{ "mod": "atlas_policy", "value": "sol" }]
+      "expect": [
+        {
+          "mod": "atlas_policy",
+          "value": {
+            "route": "sol"
+          }
+        }
+      ]
     },
     {
       "type": "invoke",
@@ -22,17 +55,33 @@
       "event": "command",
       "name": "atlas",
       "payload": null,
-      "expect": { "display": "atlas_policy 1.0.0 routes every turn to sol." }
+      "expect": {
+        "display": "atlas_policy 1.0.0 routes every turn to sol."
+      }
     },
     {
       "type": "terminal_mount",
       "mod": "atlas_console",
-      "payload": { "event": "draw", "checkpoint": null },
+      "payload": {
+        "event": "draw",
+        "ledger": null
+      },
       "expect": {
         "title": "Atlas console",
         "sidebar_width": 28,
-        "panels": [{ "title": "Events", "lines": ["draw"] }],
-        "keybindings": { "Alt+x": { "command": "counter:reset" } }
+        "panels": [
+          {
+            "title": "Events",
+            "lines": [
+              "draw"
+            ]
+          }
+        ],
+        "keybindings": {
+          "Alt+x": {
+            "command": "counter:reset"
+          }
+        }
       }
     },
     {
@@ -41,15 +90,30 @@
       "event": "tool",
       "name": "count",
       "payload": {},
-      "expect": { "count": 1 }
+      "expect": {
+        "count": 1
+      }
     },
     {
       "type": "terminal_interact",
       "mod": "atlas_console",
       "key": "Alt+x",
-      "payload": { "event": "draw", "checkpoint": null },
-      "expect": { "action": { "command": "counter:reset", "args": "" }, "result": { "display": "Counter reset to 0" } }
+      "payload": {
+        "event": "draw",
+        "ledger": null
+      },
+      "expect": {
+        "action": {
+          "command": "counter:reset",
+          "args": ""
+        },
+        "result": {
+          "display": "Counter reset to 0"
+        }
+      }
     },
-    { "type": "status" }
+    {
+      "type": "status"
+    }
   ]
 }

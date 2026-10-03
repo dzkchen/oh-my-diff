@@ -572,7 +572,19 @@ impl ModStore {
             for (package, event) in lifecycle {
                 self.run_lifecycle(package, event)?;
             }
-            self.write("mods.json", &serde_json::to_value(&config)?)?;
+            let previous = old_config["mods"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(store::grant)
+                .collect::<BTreeSet<_>>();
+            let approved = config
+                .mods
+                .iter()
+                .map(|selection| store::grant(&json!(selection)))
+                .filter(|grant| !previous.contains(grant))
+                .collect();
+            self.write_granting("mods.json", &serde_json::to_value(&config)?, &approved)?;
             self.write("packages.lock.json", &serde_json::to_value(&lock)?)?;
             std::fs::remove_file(self.root.join("package-transaction.json"))?;
             std::fs::File::open(&self.root)?.sync_all()?;
@@ -592,7 +604,13 @@ impl ModStore {
             Err(error) => return Err(error),
         };
         let transaction: Value = serde_json::from_slice(&bytes)?;
-        self.write("mods.json", &transaction["old_config"])?;
+        let restored = transaction["old_config"]["mods"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(store::grant)
+            .collect();
+        self.write_granting("mods.json", &transaction["old_config"], &restored)?;
         self.write("packages.lock.json", &transaction["old_lock"])?;
         std::fs::remove_file(path)?;
         std::fs::File::open(&self.root)?.sync_all()

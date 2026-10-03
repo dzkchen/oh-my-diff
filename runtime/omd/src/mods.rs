@@ -69,6 +69,7 @@ use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
@@ -1916,6 +1917,9 @@ struct ModTelemetry {
 }
 
 const MOD_FAULT_LIMIT: u32 = 5;
+const BROKER_REFRESH: Duration = Duration::from_secs(2);
+
+type Brokered = Option<(u64, BTreeSet<String>)>;
 
 impl Loaded {
     fn fault(&mut self, error: String) {
@@ -1969,6 +1973,8 @@ pub struct ModHost {
     valid_views: BTreeMap<String, Value>,
     renders: BTreeMap<String, (String, Value, Instant)>,
     chains: Vec<Value>,
+    brokered: Option<(Instant, String, Brokered)>,
+    required_surfaces: Arc<Mutex<Vec<&'static str>>>,
 }
 
 enum Access<'a> {
@@ -2107,12 +2113,10 @@ fn invoke(
                 let _ = access.with(|runtime| {
                     Ok(runtime.event_except("host_operation", before, id, active, scope))
                 });
-                let intercepted = !private
-                    && event != "intercept"
-                    && access
-                        .with(|runtime| Ok(runtime.intercepts("host_operation")))
-                        .unwrap_or(false);
-                let result = if intercepted {
+                let intercepted = (!private && event != "intercept")
+                    .then(|| access.with(|runtime| Ok(runtime.intercepts("host_operation"))))
+                    .and_then(|intercepts| intercepts.ok().flatten());
+                let result = if let Some(required) = intercepted {
                     let input = json!({"operation": call.operation, "arguments": call.arguments});
                     let origin = json!({"caller": id, "thread_id": thread});
                     chain::intercept(
@@ -2120,6 +2124,7 @@ fn invoke(
                         &mut *host,
                         &mut chain::Core::Host { caller: id.to_owned(), generation },
                         "host_operation",
+                        required,
                         input,
                         origin,
                         active,
@@ -2316,6 +2321,8 @@ impl ModHost {
             valid_views: BTreeMap::new(),
             renders: BTreeMap::new(),
             chains: Vec::new(),
+            brokered: None,
+            required_surfaces: Arc::default(),
         };
         if let Some(repository) = repository {
             host.set_checkout(repository);
@@ -2384,10 +2391,23 @@ impl ModHost {
     pub fn reload(&mut self) -> Result<bool> {
         let path = self.store.root.join("mods.json");
         let bytes = store::read(&path, 65_536)?;
-        let brokered = store::brokered_grants(&self.store.root)?;
+        let sha256 = digest(&bytes);
+        let brokered = match self.brokered_grants(&sha256) {
+            Ok(brokered) => brokered,
+            Err(error) => {
+                if !self.loaded.is_empty() {
+                    self.loaded.clear();
+                    self.order.clear();
+                    self.generation += 1;
+                    self.dynamic_tools.clear();
+                    self.publish_required_surfaces();
+                }
+                self.configuration_sha256.clear();
+                return Err(error);
+            }
+        };
         let hash = format!(
-            "{}:{}",
-            digest(&bytes),
+            "{sha256}:{}",
             brokered.as_ref().map_or(0, |(generation, _)| *generation)
         );
         if hash == self.configuration_sha256 {
@@ -2408,6 +2428,9 @@ impl ModHost {
                         .capabilities
                         .iter()
                         .all(|cap| m.capabilities.contains(cap))
+                    && brokered
+                        .as_ref()
+                        .is_none_or(|(_, grants)| grants.contains(&store::grant(&json!(m))))
             })
         });
         if self.loaded.len() != retained {
@@ -2568,8 +2591,39 @@ impl ModHost {
         self.generation += 1;
         self.dynamic_tools.clear();
         self.reload_error = None;
+        self.publish_required_surfaces();
         self.write_installed_service_types()?;
         Ok(true)
+    }
+
+    /// Intercept surfaces with a required interceptor, readable while another caller holds the runtime.
+    pub fn required_surfaces(&self) -> Arc<Mutex<Vec<&'static str>>> {
+        self.required_surfaces.clone()
+    }
+
+    fn publish_required_surfaces(&self) {
+        let surfaces = MOD_INTERCEPT_SURFACES
+            .iter()
+            .map(|(surface, _)| *surface)
+            .filter(|surface| self.intercepts(surface) == Some(true))
+            .collect();
+        if let Ok(mut published) = self.required_surfaces.lock() {
+            *published = surfaces;
+        }
+    }
+
+    /// Re-asks the broker when `mods.json` changes or the last answer is older than `BROKER_REFRESH`.
+    fn brokered_grants(&mut self, digest: &str) -> Result<Brokered> {
+        if let Some((at, cached, grants)) = &self.brokered
+            && cached == digest
+            && at.elapsed() < BROKER_REFRESH
+        {
+            return Ok(grants.clone());
+        }
+        self.brokered = None;
+        let grants = store::brokered_grants(&self.store.root)?;
+        self.brokered = Some((Instant::now(), digest.to_owned(), grants.clone()));
+        Ok(grants)
     }
 
     fn adapters(

@@ -334,8 +334,9 @@ pub(super) fn install(
     let input_runtime = ModHost::open_in(host.root.clone(), validator, &host.repository)
         .map_err(|e| e.to_string())?;
     let _ = host.persist_json("mod-status.json", &runtime.status());
+    let required = runtime.required_surfaces();
     let runtime = Arc::new(Mutex::new(runtime));
-    host.accounts.install_mod_runtime(runtime.clone());
+    host.accounts.install_mod_runtime(runtime.clone(), required);
     let views = Arc::new(view::Views::new());
     let input_runtime = Arc::new(Mutex::new(input_runtime));
     let extension = Arc::new(Mods {
@@ -1089,11 +1090,11 @@ impl TurnLifecycleContributor for Mods {
             .await
             .map_err(|error| error.to_string())
             .and_then(|result| result);
-            match intercepting {
-                Ok(true) => {}
-                Ok(false) => return UserInputDecision::Keep,
+            let required = match intercepting {
+                Ok(Some(required)) => required,
+                Ok(None) => return UserInputDecision::Keep,
                 Err(error) => return unavailable(error),
-            }
+            };
             let payload =
                 json!({"thread_id":thread,"text":input.text,"attachments":input.attachments});
             let origin = json!({"caller":"user","thread_id":thread});
@@ -1102,6 +1103,7 @@ impl TurnLifecycleContributor for Mods {
                 lead,
                 self.input_runtime.clone(),
                 "input",
+                required,
                 payload,
                 origin,
                 cancelled,
@@ -1339,6 +1341,9 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 owner: owner.clone(),
                 depth,
             });
+            if let Some(lead) = input.thread_store.get::<Lead>() {
+                self.core.expansion.thread_started(&lead);
+            }
             if owner == "lead" {
                 if let Some(lead) = input.thread_store.get::<Lead>() {
                     self.views.start_thread(input.thread_store);
@@ -1540,10 +1545,10 @@ impl ToolLifecycleContributor for Mods {
             })
             .await
             .map_err(|e| e.to_string())??;
-            if !intercepting {
+            let Some(required) = intercepting else {
                 self.cleanup_failed(Some(&lead)).await;
                 return Ok(ToolInterception::Continue(None));
-            }
+            };
             let cancelled = Arc::new(AtomicBool::new(false));
             let cancellation = Cancellation(cancelled.clone());
             let (reached, reached_at_executor) = tokio::sync::oneshot::channel::<Value>();
@@ -1608,6 +1613,7 @@ impl ToolLifecycleContributor for Mods {
                 lead,
                 self.runtime.clone(),
                 "tool",
+                required,
                 payload.clone(),
                 origin,
                 cancelled,

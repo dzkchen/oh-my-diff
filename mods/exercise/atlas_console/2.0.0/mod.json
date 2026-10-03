@@ -2,14 +2,14 @@
   "schema": 1,
   "id": "atlas_console",
   "version": "2.0.0",
-  "api": "0.1.0-experimental.6",
+  "api": "0.2.0-experimental.5",
   "state_version": 2,
   "license": "Apache-2.0",
   "provenance": {
     "maintainer": "Atlas Mods (full-API conformance exercise author)",
     "source": "mods/exercise/atlas_console"
   },
-  "capabilities": ["commands", "lifecycle", "state", "terminal"],
+  "capabilities": ["commands", "lifecycle", "store", "terminal"],
   "settings_schema": {
     "type": "object",
     "properties": {

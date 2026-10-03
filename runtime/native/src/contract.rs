@@ -149,8 +149,16 @@ impl SessionContract {
         if bytes.len() > STATE_BYTES {
             return Err("contract_state_byte_limit".into());
         }
-        if anchor.is_some_and(|anchor| anchor.last != Some(codex_omd::broker::sha256(&bytes))) {
-            return Err("contract_state_anchor_mismatch".into());
+        let digest = codex_omd::broker::sha256(&bytes);
+        match anchor {
+            Some(anchor) if anchor.count == 0 => {
+                codex_omd::broker::seed(path, 1, &codex_omd::broker::chain("", &digest), &digest)
+                    .map_err(|error| error.to_string())?;
+            }
+            Some(anchor) if anchor.last != Some(digest) => {
+                return Err("contract_state_anchor_mismatch".into());
+            }
+            _ => {}
         }
         self.restore_value(serde_json::from_slice(&bytes).map_err(|error| error.to_string())?)
     }

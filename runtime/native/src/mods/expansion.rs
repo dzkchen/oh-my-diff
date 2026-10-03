@@ -54,10 +54,12 @@ pub(super) struct State {
     approval: AtomicBool,
     approval_result: AtomicBool,
     tool_specs: AtomicBool,
+    tool_specs_required: AtomicBool,
     tool_batch: AtomicBool,
     gates: Mutex<std::collections::VecDeque<(String, String)>>,
     current: Mutex<Option<LeadHandle>>,
     leads: Mutex<std::collections::HashMap<ThreadId, LeadHandle>>,
+    threads: Mutex<std::collections::HashMap<ThreadId, (LeadHandle, String, u32)>>,
     commands: Mutex<std::collections::HashSet<String>>,
     running: Mutex<BTreeMap<String, String>>,
     restarted: Mutex<BTreeMap<String, bool>>,
@@ -130,13 +132,37 @@ impl State {
         self.leads.lock().ok()?.get(&thread)?.upgrade()
     }
 
+    /// Any live thread's own `Lead`, worker and subagent threads included.
+    pub(super) fn thread(&self, thread: ThreadId) -> Option<Lead> {
+        let threads = self.threads.lock().ok()?;
+        let (handle, owner, depth) = threads.get(&thread)?;
+        Some(Lead {
+            owner: owner.clone(),
+            depth: *depth,
+            ..handle.upgrade()?
+        })
+    }
+
+    pub(super) fn thread_started(&self, lead: &Lead) {
+        if let Ok(mut threads) = self.threads.lock() {
+            threads.retain(|_, (handle, ..)| handle.session.strong_count() > 0);
+            threads.insert(
+                lead.thread,
+                (LeadHandle::new(lead), lead.owner.clone(), lead.depth),
+            );
+        }
+    }
+
     fn refresh(&self, runtime: &ModHost) -> bool {
         self.tool_output
             .store(runtime.has_event("tool_output"), Ordering::Release);
         self.approval
             .store(runtime.has_event("approval"), Ordering::Release);
+        let tool_specs = runtime.intercepts("tool_specs");
         self.tool_specs
-            .store(runtime.intercepts("tool_specs"), Ordering::Release);
+            .store(tool_specs.is_some(), Ordering::Release);
+        self.tool_specs_required
+            .store(tool_specs == Some(true), Ordering::Release);
         self.tool_batch.store(
             runtime.replacement_owner("tool_batch").is_some(),
             Ordering::Release,

@@ -75,8 +75,10 @@ fn inject_credential(
     let root = CREDENTIAL_ROOT
         .get()
         .ok_or_else(|| denied("credential store unavailable"))?;
+    let origin = codex_omd::credentials::url_origin(&request.url)
+        .ok_or_else(|| denied("request URL has no origin"))?;
     let secret = codex_omd::credentials::CredentialProfiles::open(root)
-        .and_then(|profiles| profiles.secret(profile))
+        .and_then(|profiles| profiles.secret(profile, &origin))
         .map_err(|error| denied(error.to_string()))?;
     let mut value = http::HeaderValue::from_str(&format!("Bearer {}", secret.token))
         .map_err(|_| denied("credential token is not a valid header"))?;
@@ -125,10 +127,12 @@ pub type ModDispatcher = Arc<
         + Sync,
 >;
 
+type RequiredSurfaces = Arc<Mutex<Vec<&'static str>>>;
+
 #[derive(Default)]
 pub struct Accounts(
     pub Mutex<BTreeMap<String, Account>>,
-    Mutex<Option<Arc<Mutex<codex_omd::ModHost>>>>,
+    Mutex<Option<(Arc<Mutex<codex_omd::ModHost>>, RequiredSurfaces)>>,
     AtomicU64,
     Arc<AtomicUsize>,
     Mutex<Option<ModDispatcher>>,
@@ -144,9 +148,13 @@ enum Hook<T> {
 }
 
 impl Accounts {
-    pub fn install_mod_runtime(&self, runtime: Arc<Mutex<codex_omd::ModHost>>) {
+    pub fn install_mod_runtime(
+        &self,
+        runtime: Arc<Mutex<codex_omd::ModHost>>,
+        required: RequiredSurfaces,
+    ) {
         if let Ok(mut installed) = self.1.lock() {
-            *installed = Some(runtime);
+            *installed = Some((runtime, required));
         }
     }
 
@@ -157,7 +165,20 @@ impl Accounts {
     }
 
     fn mods(&self) -> Option<Arc<Mutex<codex_omd::ModHost>>> {
-        self.1.lock().ok().and_then(|installed| installed.clone())
+        self.1
+            .lock()
+            .ok()
+            .and_then(|installed| installed.as_ref().map(|(runtime, _)| runtime.clone()))
+    }
+
+    fn required(&self, surface: &str) -> bool {
+        self.1.lock().ok().is_none_or(|installed| {
+            installed.as_ref().is_none_or(|(_, required)| {
+                required
+                    .lock()
+                    .map_or(true, |required| required.contains(&surface))
+            })
+        })
     }
 
     fn middleware<T>(
@@ -334,22 +355,35 @@ impl Accounts {
                 Err(std::sync::TryLockError::Poisoned(_)) => {
                     return Err(denied("mod runtime poisoned"));
                 }
+                Err(std::sync::TryLockError::WouldBlock)
+                    if account.owner.starts_with("mod-")
+                        && self.3.load(Ordering::Acquire) == 0
+                        && !self.required("model_request") =>
+                {
+                    Self::record_middleware(
+                        account,
+                        &json!({"kind":"intercept_skipped","surface":"model_request","request_id":request_id,"reason":"mod_callback_in_flight"}),
+                    )?;
+                    break None;
+                }
                 Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(2));
                 }
-                Err(std::sync::TryLockError::WouldBlock) => break true,
+                Err(std::sync::TryLockError::WouldBlock) => break Some(true),
             }
         };
-        if intercepting {
+        if let Some(required) = intercepting {
             let dispatcher = self.4.lock().ok().and_then(|dispatcher| dispatcher.clone());
             let active = || account.task.check_active().is_ok();
             let input = json!({"request_id":request_id,"scope":payload_scope(account, thread),
                 "routes":routes,"original":original,"route":selected});
             let origin = json!({"caller":"engine","thread_id":thread,
                 "agent_id":if account.owner == "lead" { Value::Null } else { Value::String(account.owner.clone()) }});
+            let _thread = codex_omd::StateThread::enter(Some(thread.to_owned()));
             let chain = codex_omd::intercept_shared(
                 mods,
                 "model_request",
+                required,
                 input,
                 origin,
                 active,

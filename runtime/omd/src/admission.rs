@@ -7,6 +7,7 @@ use std::fs::OpenOptions;
 use std::fs::{self};
 use std::io::Write;
 use std::io::{self};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -233,6 +234,12 @@ impl Task {
     fn create_inner(limits: Limits, evidence: PathBuf) -> io::Result<Self> {
         Self::validate_limits(&limits)?;
         fs::create_dir(&evidence)?;
+        Self::create_in(limits, &evidence).inspect_err(|_| {
+            let _ = fs::remove_dir(&evidence);
+        })
+    }
+
+    fn create_in(limits: Limits, evidence: &Path) -> io::Result<Self> {
         let evidence = evidence.canonicalize()?;
         if crate::broker::anchored(&evidence)?.is_some_and(|anchor| anchor.count > 0) {
             return Err(denied("evidence_anchor_mismatch"));
@@ -322,7 +329,7 @@ impl Task {
         };
         let mut created_unix_millis = None;
         let mut recorded_limits = None;
-        let mut head = String::new();
+        let (mut head, mut last) = (String::new(), String::new());
         for entry in records {
             let metadata = entry.metadata()?;
             if entry.file_type()?.is_symlink()
@@ -332,7 +339,8 @@ impl Task {
                 return Err(denied("resume evidence must be a bounded regular file"));
             }
             let bytes = fs::read(entry.path())?;
-            head = crate::broker::chain(&head, &crate::broker::sha256(&bytes));
+            last = crate::broker::sha256(&bytes);
+            head = crate::broker::chain(&head, &last);
             let value: Value = serde_json::from_slice(&bytes)?;
             let sequence = value["sequence"]
                 .as_u64()
@@ -552,10 +560,14 @@ impl Task {
         if state.status == TaskStatus::Stopped {
             return Err(denied("stopped task cannot resume"));
         }
-        if crate::broker::anchored(&evidence)?
-            .is_some_and(|anchor| anchor.count != state.sequence || anchor.head != head)
-        {
-            return Err(denied("evidence_anchor_mismatch"));
+        match crate::broker::anchored(&evidence)? {
+            Some(anchor) if anchor.count == 0 => {
+                crate::broker::seed(&evidence, state.sequence, &head, &last)?;
+            }
+            Some(anchor) if anchor.count != state.sequence || anchor.head != head => {
+                return Err(denied("evidence_anchor_mismatch"));
+            }
+            _ => {}
         }
         let created_unix_millis =
             created_unix_millis.ok_or_else(|| denied("created timestamp missing"))?;
@@ -638,13 +650,21 @@ impl Task {
             if bytes.len() > 1_048_576 {
                 return Err(denied("evidence event exceeds size limit"));
             }
-            crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes))?;
+            let path = self.evidence.join(format!("{:08}.json", state.sequence));
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .open(self.evidence.join(format!("{:08}.json", state.sequence)))?;
-            file.write_all(&bytes)?;
-            file.sync_all()
+                .open(&path)?;
+            let written = file
+                .write_all(&bytes)
+                .and_then(|()| file.sync_all())
+                .and_then(|()| {
+                    crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes))
+                });
+            if written.is_err() {
+                let _ = fs::remove_file(&path);
+            }
+            written
         })();
         if result.is_err() {
             state.status = TaskStatus::Stopped;

@@ -6,15 +6,48 @@
       "type": "event",
       "event": "routing",
       "payload": {
-        "routes": [
-          { "name": "sol", "model": "sol-model", "provider": "fixture", "reasoning": "high" },
-          { "name": "astra", "model": "astra-model", "provider": "fixture", "reasoning": "xhigh" }
-        ],
         "model": "sol-model",
         "provider": "fixture",
-        "reasoning": null
+        "reasoning": null,
+        "routes": [
+          {
+            "name": "sol",
+            "model": "sol-model",
+            "provider": "fixture",
+            "reasoning": "high",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
+          },
+          {
+            "name": "astra",
+            "model": "astra-model",
+            "provider": "fixture",
+            "reasoning": "xhigh",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
+          }
+        ]
       },
-      "expect": [{ "mod": "atlas_policy", "value": "astra" }]
+      "expect": [
+        {
+          "mod": "atlas_policy",
+          "value": {
+            "route": "astra"
+          }
+        }
+      ]
     },
     {
       "type": "invoke",
@@ -22,7 +55,9 @@
       "event": "command",
       "name": "atlas",
       "payload": null,
-      "expect": { "display": "atlas_policy 1.0.0 routes every turn to astra." }
+      "expect": {
+        "display": "atlas_policy 1.0.0 routes every turn to astra."
+      }
     }
   ]
 }

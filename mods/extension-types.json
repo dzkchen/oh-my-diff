@@ -180,7 +180,7 @@
       "path": "mods/exercise/atlas_console/1.0.0",
       "extension_type": "mod",
       "role": "conformance_fixture",
-      "why_mod": "Exercises an older supported API row for live terminal replacement and state migration."
+      "why_mod": "Exercises the pre-upgrade package release for live terminal replacement and state migration."
     },
     {
       "path": "mods/exercise/atlas_console/2.0.0",
@@ -192,7 +192,7 @@
       "path": "mods/exercise/atlas_policy/1.0.0",
       "extension_type": "mod",
       "role": "conformance_fixture",
-      "why_mod": "Exercises an older supported API row for live routing policy and state migration."
+      "why_mod": "Exercises the pre-upgrade package release for live routing policy and state migration."
     },
     {
       "path": "mods/exercise/atlas_policy/2.0.0",
@@ -210,7 +210,7 @@
       "path": "mods/exercise/session_anchor",
       "extension_type": "mod",
       "role": "conformance_fixture",
-      "why_mod": "Exercises bounded live compaction and checkpoint-derived context across reload."
+      "why_mod": "Exercises bounded live compaction and anchored task context across reload."
     },
     {
       "path": "mods/first-party/omd_logo",

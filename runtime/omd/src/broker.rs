@@ -192,6 +192,17 @@ pub fn anchor(stream: &Path, sha256: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Anchors state that existed before its stream was ever anchored, for example before broker install.
+pub fn seed(stream: &Path, count: u64, head: &str, last: &str) -> io::Result<()> {
+    if deployed() {
+        call(
+            "anchor.seed",
+            json!({"stream": stream, "count": count, "head": head, "last": last}),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn anchored(stream: &Path) -> io::Result<Option<Anchor>> {
     if !deployed() {
         return Ok(None);
@@ -309,9 +320,13 @@ fn read_json(path: &Path, default: Value) -> io::Result<Value> {
 }
 
 fn text<'a>(arguments: &'a Value, key: &str) -> io::Result<&'a str> {
+    text_within(arguments, key, 4096)
+}
+
+fn text_within<'a>(arguments: &'a Value, key: &str, limit: usize) -> io::Result<&'a str> {
     arguments[key]
         .as_str()
-        .filter(|value| !value.is_empty() && value.len() <= 4096)
+        .filter(|value| !value.is_empty() && value.len() <= limit)
         .ok_or_else(|| failure("authority_request_invalid"))
 }
 
@@ -341,7 +356,15 @@ impl Broker {
     }
 
     pub fn serve(self: Arc<Self>, listener: UnixListener, gate: Arc<dyn Gate>) {
-        for stream in listener.incoming().flatten() {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            };
+            if gate.peer(&stream).is_err() {
+                let _ = stream.write_all(b"{\"error\":\"authority_peer_unverified\"}\n");
+                continue;
+            }
             let (broker, gate) = (self.clone(), gate.clone());
             std::thread::spawn(move || broker.connection(stream, &*gate));
         }
@@ -349,9 +372,6 @@ impl Broker {
 
     fn connection(&self, stream: UnixStream, gate: &dyn Gate) -> io::Result<()> {
         let mut writer = stream.try_clone()?;
-        if gate.peer(&stream).is_err() {
-            return writer.write_all(b"{\"error\":\"authority_peer_unverified\"}\n");
-        }
         let peer = stream.try_clone()?;
         let mut reader = BufReader::new(stream);
         let mut challenge = None;
@@ -420,10 +440,16 @@ impl Broker {
 
     fn right(&self, op: &str, arguments: &Value) -> io::Result<Option<&'static str>> {
         Ok(match op {
-            "grants.put"
-            | "credentials.store_secret"
-            | "credentials.store_auth"
-            | "credentials.set_default" => Some(GRANT_RIGHT),
+            "grants.put" => {
+                let _state = self
+                    .state
+                    .lock()
+                    .map_err(|_| failure("authority_state_poisoned"))?;
+                self.adds_grants(arguments)?.then_some(GRANT_RIGHT)
+            }
+            "credentials.store_secret" | "credentials.store_auth" | "credentials.set_default" => {
+                Some(GRANT_RIGHT)
+            }
             "credentials.remove" => {
                 let _state = self
                     .state
@@ -436,6 +462,20 @@ impl Broker {
             "policy.put" => Some(POLICY_RIGHT),
             _ => None,
         })
+    }
+
+    /// Revoking grants needs no authorization; adding any does.
+    fn adds_grants(&self, arguments: &Value) -> io::Result<bool> {
+        let current = read_json(
+            &self.store(arguments)?.join("grants.json"),
+            json!({"generation": 0, "grants": []}),
+        )?;
+        let granted = current["grants"].as_array().cloned().unwrap_or_default();
+        Ok(arguments["grants"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|grant| !granted.contains(grant)))
     }
 
     fn dispatch(&self, op: &str, arguments: Value, authorized: bool) -> io::Result<Value> {
@@ -456,7 +496,9 @@ impl Broker {
                 serde_json::to_value(self.profiles(&arguments)?.profile(id()?)?)?
             }
             "credentials.secret" => {
-                let secret = self.profiles(&arguments)?.secret(id()?)?;
+                let secret = self
+                    .profiles(&arguments)?
+                    .secret(id()?, text(&arguments, "origin")?)?;
                 json!({"token": secret.token, "account_id": secret.account_id})
             }
             "credentials.owned_secret" => self
@@ -466,6 +508,7 @@ impl Broker {
                 text(&arguments, "label")?,
                 text(&arguments, "kind")?,
                 arguments["provider"].as_str(),
+                arguments["origin"].as_str(),
             )?)?,
             "credentials.create_secret" => {
                 serde_json::to_value(self.profiles(&arguments)?.create_secret(
@@ -488,7 +531,7 @@ impl Broker {
             }
             "credentials.store_auth" => {
                 self.profiles(&arguments)?
-                    .store_auth(id()?, text(&arguments, "auth")?)?;
+                    .store_auth(id()?, text_within(&arguments, "auth", 65_536)?)?;
                 Value::Null
             }
             "credentials.set_default" => {
@@ -500,6 +543,9 @@ impl Broker {
                 json!({"generation": 0, "grants": []}),
             )?,
             "grants.put" => {
+                if !authorized && self.adds_grants(&arguments)? {
+                    return Err(failure("authority_authorization_denied"));
+                }
                 let path = self.store(&arguments)?.join("grants.json");
                 let current = read_json(&path, json!({"generation": 0, "grants": []}))?;
                 if arguments["generation"] != current["generation"] {
@@ -530,7 +576,7 @@ impl Broker {
                 write_private(&path, &policy)?;
                 Value::Null
             }
-            "anchor.get" | "anchor.append" => {
+            "anchor.get" | "anchor.append" | "anchor.seed" => {
                 let stream = text(&arguments, "stream")?;
                 let path = private_directory(&self.root.join("anchors"))?
                     .join(format!("{}.json", sha256(stream.as_bytes())));
@@ -538,7 +584,17 @@ impl Broker {
                     &path,
                     json!({"stream": stream, "count": 0, "head": "", "last": null}),
                 )?;
-                if op == "anchor.append" {
+                if op == "anchor.seed" {
+                    if anchor["count"] != 0 {
+                        return Err(failure("authority_anchor_exists"));
+                    }
+                    anchor = json!({"stream": stream,
+                        "count": arguments["count"].as_u64().filter(|count| *count > 0)
+                            .ok_or_else(|| failure("authority_request_invalid"))?,
+                        "head": digest_text(&arguments, "head")?,
+                        "last": digest_text(&arguments, "last")?});
+                    write_private(&path, &anchor)?;
+                } else if op == "anchor.append" {
                     let entry = digest_text(&arguments, "sha256")?;
                     anchor = json!({"stream": stream,
                         "count": anchor["count"].as_u64().unwrap_or_default() + 1,

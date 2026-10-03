@@ -9,13 +9,14 @@ pub(super) async fn chain(
     lead: Arc<Lead>,
     runtime: Arc<Mutex<ModHost>>,
     surface: &'static str,
+    required: bool,
     input: Value,
     origin: Value,
     cancelled: Arc<AtomicBool>,
     executor: impl FnMut(Value) -> std::io::Result<Value> + Send + 'static,
 ) -> Result<codex_omd::ModChain, String> {
     let (facts, generation) = {
-        let runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
+        let runtime = runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
         (facts(&runtime), runtime.generation())
     };
     let (requests, mut receiver) = tokio::sync::mpsc::channel::<HostRequest>(1);
@@ -26,6 +27,7 @@ pub(super) async fn chain(
         codex_omd::intercept_shared(
             &runtime,
             surface,
+            required,
             input,
             origin,
             active,
@@ -104,9 +106,8 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
             }
             let lead = ThreadId::from_string(thread)
                 .ok()
-                .and_then(|thread| core.expansion.lead(thread))
-                .or_else(|| core.expansion.current())
-                .ok_or_else(|| unavailable("no session"))?;
+                .and_then(|thread| core.expansion.thread(thread))
+                .ok_or_else(|| unavailable("no session for this thread"))?;
             let ((source, grants), generation) = {
                 let runtime = core
                     .runtime
@@ -117,39 +118,34 @@ pub(super) fn install_dispatcher(core: &Arc<Core>) {
                     runtime.generation(),
                 )
             };
-            let (reply, receiver) = std::sync::mpsc::sync_channel(1);
             let cancelled = Arc::new(AtomicBool::new(false));
             let _cancellation = Cancellation(cancelled.clone());
-            let caller = caller.to_owned();
-            handle.spawn(async move {
-                let value = operations::dispatch(
-                    &core,
-                    &lead,
-                    Caller {
-                        id: &caller,
-                        source: &source,
-                        grants,
-                        generation,
-                        origin: Origin::Event,
-                        record_changes: true,
-                    },
-                    None,
-                    request,
-                    &cancelled,
-                )
-                .await;
-                let _ = reply.send(value.map_err(std::io::Error::other));
-            });
-            loop {
-                if !active() {
-                    return Err(std::io::Error::other("callback_cancelled"));
-                }
-                match receiver.recv_timeout(std::time::Duration::from_millis(20)) {
-                    Ok(value) => return value,
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(error) => return Err(std::io::Error::other(error)),
-                }
-            }
+            tokio::task::block_in_place(|| {
+                handle.block_on(async {
+                    tokio::select! {
+                        value = operations::dispatch(
+                            &core,
+                            &lead,
+                            Caller {
+                                id: caller,
+                                source: &source,
+                                grants,
+                                generation,
+                                origin: Origin::Event,
+                                record_changes: true,
+                            },
+                            None,
+                            request,
+                            &cancelled,
+                        ) => value.map_err(std::io::Error::other),
+                        () = async {
+                            while active() {
+                                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                            }
+                        } => Err(std::io::Error::other("callback_cancelled")),
+                    }
+                })
+            })
         },
     ));
 }

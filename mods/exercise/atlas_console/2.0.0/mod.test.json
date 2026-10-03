@@ -1,40 +1,100 @@
 {
   "schema": 1,
   "virtual_time_ms": 1000,
-  "packages": ["../counter"],
-  "settings": { "atlas_console": { "side": "left" } },
+  "packages": [
+    "../counter"
+  ],
+  "settings": {
+    "atlas_console": {
+      "side": "left"
+    }
+  },
   "steps": [
-    { "type": "event", "event": "turn_start", "payload": { "turn_id": "turn-1" } },
-    { "type": "event", "event": "turn_end", "payload": { "turn_id": "turn-1", "outcome": "completed" } },
+    {
+      "type": "event",
+      "event": "turn_start",
+      "payload": {
+        "turn_id": "turn-1"
+      }
+    },
+    {
+      "type": "event",
+      "event": "turn_end",
+      "payload": {
+        "turn_id": "turn-1",
+        "outcome": "completed"
+      }
+    },
     {
       "type": "invoke",
       "mod": "atlas_console",
       "event": "command",
       "name": "density",
       "payload": "roomy",
-      "expect": { "display": "Atlas console density is roomy." }
+      "expect": {
+        "display": "Atlas console density is roomy."
+      }
     },
     {
       "type": "terminal_mount",
       "mod": "atlas_console",
-      "payload": { "event": "draw", "checkpoint": null },
+      "payload": {
+        "event": "draw",
+        "ledger": null
+      },
       "expect": {
         "title": "Atlas console 2.0.0",
         "sidebar_side": "left",
         "sidebar_width": 42,
         "panels": [
-          { "title": "Scope", "lines": ["density roomy", "latest draw"] },
-          { "title": "Activity", "lines": ["▸ turn turn-1", "■ turn turn-1 completed"] }
+          {
+            "title": "Scope",
+            "lines": [
+              "density roomy",
+              "latest draw"
+            ]
+          },
+          {
+            "title": "Activity",
+            "lines": [
+              "▸ turn turn-1",
+              "■ turn turn-1 completed"
+            ]
+          }
         ],
-        "header": { "title": "Atlas", "lines": ["outside-author console"] },
-        "footer": { "title": "Keys", "lines": ["F6 draft · Alt+r review · Alt+x reset counter · Alt+p policy"] },
-        "status": ["atlas:roomy"],
-        "theme": { "accent": 111, "user_message_background": "#1b2430", "success": 78, "attention": 214, "failure": "#ff5f5f" },
+        "header": {
+          "title": "Atlas",
+          "lines": [
+            "outside-author console"
+          ]
+        },
+        "footer": {
+          "title": "Keys",
+          "lines": [
+            "F6 draft · Alt+r review · Alt+x reset counter · Alt+p policy"
+          ]
+        },
+        "status": [
+          "atlas:roomy"
+        ],
+        "theme": {
+          "accent": 111,
+          "user_message_background": "#1b2430",
+          "success": 78,
+          "attention": 214,
+          "failure": "#ff5f5f"
+        },
         "keybindings": {
           "F6": "Summarize the remaining acceptance work.",
-          "Alt+r": { "submit": "Review the current changes and list remaining risks." },
-          "Alt+x": { "command": "counter:reset" },
-          "Alt+p": { "command": "atlas_policy:atlas" }
+          "Alt+r": {
+            "submit": "Review the current changes and list remaining risks."
+          },
+          "Alt+x": {
+            "command": "counter:reset"
+          },
+          "Alt+p": {
+            "command": "atlas_policy:atlas"
+          }
         },
         "message_template": "│ {text}",
         "tool_template": "› {text}"
@@ -44,8 +104,19 @@
       "type": "terminal_interact",
       "mod": "atlas_console",
       "key": "Alt+x",
-      "payload": { "event": "draw", "checkpoint": null },
-      "expect": { "action": { "command": "counter:reset", "args": "" }, "result": { "display": "Counter reset to 0" } }
+      "payload": {
+        "event": "draw",
+        "ledger": null
+      },
+      "expect": {
+        "action": {
+          "command": "counter:reset",
+          "args": ""
+        },
+        "result": {
+          "display": "Counter reset to 0"
+        }
+      }
     }
   ]
 }

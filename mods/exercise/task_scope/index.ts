@@ -1,32 +1,29 @@
-import type { Json, ModAPI } from '@oh-my-diff/mod-api/0.1';
+import type { Json, ModAPI } from '@oh-my-diff/mod-api';
 
-type Checkpoint = { remaining_work?: Json };
-
-function paths(value: Json): string[] {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return [];
-  const remaining = (value as Checkpoint).remaining_work;
-  return Array.isArray(remaining) ? remaining.filter((item): item is string => typeof item === 'string') : [];
-}
-
-function selected(checkpoint: Json): string[] {
-  const work = paths(checkpoint);
-  return [
-    ...(work.some(item => item.includes('scripts/')) ? ['check_python'] : []),
-    ...(work.some(item => item.includes('mods/')) ? ['check_typescript'] : []),
-  ];
-}
+const CHECKS: Record<string, { area: string; program: string; argv: string[] }> = {
+  check_python: { area: 'scripts/', program: 'python3', argv: ['-m', 'py_compile', 'scripts/mod_conformance.py'] },
+  check_typescript: { area: 'mods/', program: 'pnpm', argv: ['--dir', 'mods', 'check'] },
+};
 
 export default function activate(api: ModAPI) {
+  const scope = (): string[] => {
+    const stored = api.state.get();
+    return Array.isArray(stored) ? stored.filter((item): item is string => typeof item === 'string') : [];
+  };
+  const selected = () => Object.keys(CHECKS).filter(name => scope().some(path => path.includes(CHECKS[name].area)));
   const parameters = { type: 'object' as const, properties: {}, additionalProperties: false };
-  api.tool({ name: 'check_python', description: 'Check the Oh My Diff Python conformance script syntax.', parameters, task_scoped: true },
-    () => api.host.call('tools.exec', ['python3', '-m', 'py_compile', 'scripts/mod_conformance.py']));
-  api.tool({ name: 'check_typescript', description: 'Typecheck the Oh My Diff mod author package.', parameters, task_scoped: true },
-    () => api.host.call('tools.exec', ['pnpm', '--dir', 'mods', 'check']));
-  api.on('tool_exposure', ({ checkpoint, available }) => ({
-    enable: selected(checkpoint).filter(name => available.includes(name)),
-  }));
-  api.on('context', ({ checkpoint }) => {
-    const enabled = selected(checkpoint);
+  for (const [name, check] of Object.entries(CHECKS)) {
+    api.tool({ name, description: `Run ${check.program} ${check.argv.join(' ')}.`, parameters, task_scoped: true },
+      (): Json => api.host.call('exec.run', { program: check.program, argv: check.argv, timeout_ms: 120_000 }) as unknown as Json);
+  }
+  api.command('scope', text => {
+    const paths = String(text ?? '').split(/\s+/).filter(Boolean).slice(0, 16);
+    api.state.set(paths);
+    return { display: paths.length ? `Task scope: ${paths.join(', ')}` : 'Task scope cleared.' };
+  }, { description: 'Set the paths this task touches; matching checks become available' });
+  api.on('tool_exposure', ({ available }) => ({ enable: selected().filter(name => available.includes(name)) }));
+  api.on('context', () => {
+    const enabled = selected();
     return enabled.length ? { text: `Optional task checks available: ${enabled.join(', ')}. Native tool authorization still applies.` } : null;
   });
 }

@@ -22,6 +22,17 @@ pub struct CredentialProfile {
     pub owner: Option<String>,
 }
 
+impl CredentialProfile {
+    /// The only origin this profile's token is ever sent to.
+    pub fn destination(&self) -> Option<&str> {
+        match self.kind.as_str() {
+            "chatgpt" => Some("https://chatgpt.com"),
+            "api_key" => Some("https://api.openai.com"),
+            _ => self.origin.as_deref(),
+        }
+    }
+}
+
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Index {
@@ -68,6 +79,19 @@ fn failure(message: impl Into<String>) -> io::Error {
 
 fn text(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
+}
+
+/// `scheme://host[:port]` of `url`, lowercased and without a default port.
+pub fn url_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
+    let scheme = scheme.to_ascii_lowercase();
+    let authority = match (scheme.as_str(), authority.rsplit_once(':')) {
+        ("https", Some((host, "443"))) | ("http", Some((host, "80"))) => host.to_owned(),
+        _ => authority,
+    };
+    let value = format!("{scheme}://{authority}");
+    origin(&value).then_some(value)
 }
 
 pub fn origin(value: &str) -> bool {
@@ -215,7 +239,7 @@ impl CredentialProfiles {
         let ready = self.enrolled(&profile.id)?;
         Ok(
             serde_json::json!({"id": profile.id, "label": profile.label, "kind": profile.kind,
-            "provider": profile.provider, "origin": profile.origin,
+            "provider": profile.provider, "origin": profile.destination(),
             "status": if ready { "ready" } else { "not_enrolled" }, "default": profile.default}),
         )
     }
@@ -249,23 +273,35 @@ impl CredentialProfiles {
         Ok(home)
     }
 
+    /// A `provider` profile is bound to an `https` origin; the other kinds have a fixed destination.
     pub fn create(
         &self,
         label: &str,
         kind: &str,
         provider: Option<&str>,
+        origin: Option<&str>,
     ) -> io::Result<CredentialProfile> {
         if let Some(value) = self.remote(
             "create",
-            serde_json::json!({"label": label, "kind": kind, "provider": provider}),
+            serde_json::json!({"label": label, "kind": kind, "provider": provider, "origin": origin}),
             false,
         ) {
             return Ok(serde_json::from_value(value?)?);
         }
+        let invalid = || failure("credential_profile_invalid");
+        let origin = match (kind, origin) {
+            ("provider", Some(origin)) => Some(
+                url_origin(origin)
+                    .filter(|origin| origin.starts_with("https://"))
+                    .ok_or_else(invalid)?,
+            ),
+            ("provider", None) | (_, Some(_)) => return Err(invalid()),
+            _ => None,
+        };
         if !text(label, 64) || !KINDS.contains(&kind) || provider.is_some_and(|p| !text(p, 64)) {
-            return Err(failure("credential_profile_invalid"));
+            return Err(invalid());
         }
-        self.insert(label, kind, provider, None, None)
+        self.insert(label, kind, provider, origin.as_deref(), None)
     }
 
     pub fn create_secret(
@@ -319,8 +355,15 @@ impl CredentialProfiles {
         Ok(profile)
     }
 
+    /// Asks for authorization only when the broker says the profile holds a secret.
     pub fn remove(&self, id: &str) -> io::Result<bool> {
-        if let Some(value) = self.remote("remove", serde_json::json!({"id": id}), true) {
+        if let Some(value) = self.remote("remove", serde_json::json!({"id": id}), false) {
+            let value = match value {
+                Err(error) if error.to_string() == "authority_challenge_invalid" => self
+                    .remote("remove", serde_json::json!({"id": id}), true)
+                    .unwrap_or_else(|| Err(failure("authority_broker_unavailable"))),
+                value => value,
+            };
             return Ok(value?.as_bool().unwrap_or_default());
         }
         let removed = self.with_index(true, |index| {
@@ -423,8 +466,13 @@ impl CredentialProfiles {
             "origin": profile.origin, "value": fs::read_to_string(path)?}))
     }
 
-    pub fn secret(&self, id: &str) -> io::Result<CredentialSecret> {
-        if let Some(value) = self.remote("secret", serde_json::json!({"id": id}), false) {
+    /// Refuses unless `origin` is the profile's enrolled destination.
+    pub fn secret(&self, id: &str, origin: &str) -> io::Result<CredentialSecret> {
+        if let Some(value) = self.remote(
+            "secret",
+            serde_json::json!({"id": id, "origin": origin}),
+            false,
+        ) {
             let value = value?;
             return Ok(CredentialSecret {
                 token: value["token"]
@@ -436,6 +484,9 @@ impl CredentialProfiles {
             });
         }
         let profile = self.profile(id)?;
+        if profile.destination() != Some(origin) {
+            return Err(failure(format!("credential_origin_mismatch: {id}")));
+        }
         let path = self.home(id)?.join("auth.json");
         let metadata = fs::symlink_metadata(&path)
             .map_err(|_| failure(format!("credential_not_enrolled: {id}")))?;

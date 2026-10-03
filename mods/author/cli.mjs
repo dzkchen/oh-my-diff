@@ -247,7 +247,7 @@ function runScenario(directory, file) {
   const store = join(temporary, 'store');
   try {
     engineJson(['init', store, node]);
-    const packages = [directory, ...(scenario.packages || []).map(path => resolve(directory, path))];
+    const packages = [...(scenario.packages || []).map(path => resolve(directory, path)), directory];
     const installed = new Map(packages.map(packagePath => {
       const inspected = trustPackage(store, resolve(packagePath));
       return [inspected.manifest.id, inspected.path];

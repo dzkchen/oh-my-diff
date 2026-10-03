@@ -90,12 +90,12 @@ contains only the packages labeled `bundled` below.
 | `interception@2.0.0` | `mod` | `mods/examples/interception` | Exercises simple tool interception conformance only; user-facing tool policy belongs in a hook or plugin. |
 | `service_consumer@2.0.0` | `mod` | `mods/examples/service-consumer` | Exercises a host-routed service import only; a user-facing service consumer belongs in a plugin. |
 | `service_provider@2.0.0` | `mod` | `mods/examples/service-provider` | Exercises a host-routed service export only; a user-facing service belongs in a plugin. |
-| `atlas_console@1.0.0` | `mod` | `mods/exercise/atlas_console/1.0.0` | Exercises an older supported API row for live terminal replacement and state migration. |
+| `atlas_console@1.0.0` | `mod` | `mods/exercise/atlas_console/1.0.0` | Exercises the pre-upgrade package release for live terminal replacement and state migration. |
 | `atlas_console@2.0.0` | `mod` | `mods/exercise/atlas_console/2.0.0` | Exercises current live terminal replacement, interaction, and migrated state. |
-| `atlas_policy@1.0.0` | `mod` | `mods/exercise/atlas_policy/1.0.0` | Exercises an older supported API row for live routing policy and state migration. |
+| `atlas_policy@1.0.0` | `mod` | `mods/exercise/atlas_policy/1.0.0` | Exercises the pre-upgrade package release for live routing policy and state migration. |
 | `atlas_policy@2.0.0` | `mod` | `mods/exercise/atlas_policy/2.0.0` | Exercises current live routing, context, coordination, interception, and cross-mod service replacement. |
 | `task_scope@1.0.0` | `mod` | `mods/exercise/task_scope` | Exercises task-scoped optional tool exposure at each native sampling step. |
-| `session_anchor@1.0.0` | `mod` | `mods/exercise/session_anchor` | Exercises bounded live compaction and checkpoint-derived context across reload. |
+| `session_anchor@1.0.0` | `mod` | `mods/exercise/session_anchor` | Exercises bounded live compaction and anchored task context across reload. |
 | `approval_guard@1.0.0` | `mod` | `mods/examples/approval_guard` | Tightens live native approval decisions before hooks and automatic review, which hooks cannot force. |
 | `approval_delegate@1.0.0` | `mod` | `mods/examples/approval_delegate` | Approves routine check commands inside a user-delegated native approval grant, which hooks and skills cannot hold. |
 | `channel_pair@1.0.0` | `mod` | `mods/examples/channel_pair` | Publishes and receives namespaced in-process channel events between live mods. |

@@ -29,23 +29,24 @@ def run(store, scenario):
 
 
 def main():
-    steps = [{"type": "tool_exposure", "payload": {"remaining_work": ["fix scripts/mod_conformance.py"]}}
-             for _ in range(30)]
-    steps += [{"type": "tool_exposure", "payload": {"remaining_work": ["update README.md"]}}
-              for _ in range(10)]
-    scenario = {"schema": 1, "virtual_time_ms": 1000, "steps": steps}
+    exposure = {"type": "tool_exposure", "payload": None}
+    scope = lambda paths: {"type": "invoke", "mod": "task_scope", "event": "command", "name": "scope", "payload": paths}
+    steps = [exposure] * 30 + [exposure] * 10
+    scoped = [scope("scripts/mod_conformance.py"), *steps[:30], scope("README.md"), *steps[30:]]
     with tempfile.TemporaryDirectory(prefix="omd-author-surface-") as directory:
         store = Path(directory) / "store"
         scenario_path = Path(directory) / "scenario.json"
-        scenario_path.write_text(json.dumps(scenario, separators=(",", ":")))
+        baseline_path = Path(directory) / "baseline.json"
+        scenario_path.write_text(json.dumps({"schema": 1, "virtual_time_ms": 1000, "steps": scoped}, separators=(",", ":")))
+        baseline_path.write_text(json.dumps({"schema": 1, "virtual_time_ms": 1000, "steps": steps}, separators=(",", ":")))
         call("init", store, NODE)
         inspected = call("inspect", PACKAGE)
-        call("trust", store, PACKAGE, inspected["sha256"], "tools,context,execution")
+        call("trust", store, PACKAGE, inspected["sha256"], ",".join(inspected["manifest"]["capabilities"]))
         call("enable", store, PACKAGE)
         enabled = [run(store, scenario_path) for _ in range(3)]
         call("disable", store, PACKAGE)
-        disabled = [run(store, scenario_path) for _ in range(3)]
-    values = [step["value"] for step in enabled[-1][0]["steps"]]
+        disabled = [run(store, baseline_path) for _ in range(3)]
+    values = [step["value"] for step in enabled[-1][0]["steps"] if step["type"] == "tool_exposure"]
     telemetry = enabled[-1][0]["status"]["mods"][0]["telemetry"]
     callbacks = [entry["elapsed_micros"] / 1000 for entry in telemetry["logs"] if entry["event"] == "tool_exposure"]
     if len(callbacks) != len(steps):
@@ -58,7 +59,7 @@ def main():
         raise RuntimeError("disabled package exposed tools")
     output = {
         "schema": 1,
-        "codex": "0.155.1",
+        "codex": json.loads((ROOT / "upstream.lock.json").read_text())["tag"],
         "mod_api": enabled[-1][0]["status"]["api"],
         "paid_requests": 0,
         "samples": len(steps),

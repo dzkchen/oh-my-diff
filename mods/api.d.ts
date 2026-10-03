@@ -179,7 +179,7 @@ export interface HostOperations {
   'providers.register': { arguments: { id: string }; result: Json };
   'providers.unregister': { arguments: { id: string }; result: Json };
   'sidecars.invoke': { arguments: { id: string; input: Json }; result: { provider: string; program_sha256: string; source_hashes: Record<string, string>; result: Json; untrusted: true } };
-  'sidecars.start': { arguments: { id: string; credential?: string; secrets?: string[] }; result: Json };
+  'sidecars.start': { arguments: { id: string; secrets?: string[] }; result: Json };
   'sidecars.status': { arguments: { id: string }; result: Json };
   'sidecars.stop': { arguments: { id: string }; result: Json };
   'app.request': { arguments: { method: string; params: Json }; result: Json | Declined };
@@ -194,7 +194,7 @@ export interface HostOperations {
   'tools.invoke': { arguments: { tool: string; arguments: Json }; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
   'tools.check': { arguments: { tool: string; arguments: Json }; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
   'credentials.list': { arguments: null; result: CredentialProfile[] };
-  'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key' | 'provider'; label: string; provider?: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
+  'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key'; label: string; provider?: string } | { action: 'enroll'; kind: 'provider'; label: string; provider?: string; origin: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
   'turns.activity': { arguments: { thread_id?: string; turn_id?: string; last?: number } | null; result: { turns: TurnActivity[]; recording: boolean } };
   'terminal.notify': { arguments: { title: string; body?: string }; result: { delivered: boolean; method: 'osc9' | 'osc99' | 'osc777' | 'bel' | 'none'; reason?: string } };

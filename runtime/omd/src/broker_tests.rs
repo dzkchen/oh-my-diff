@@ -86,7 +86,7 @@ fn protected_mutations_need_a_single_use_challenge_and_authorization() {
     let request = json!({"op": "grants.put", "arguments": put, "nonce": nonce,
         "authorization": "token"});
     assert_eq!(client.send(&request).unwrap()["generation"], 1);
-    assert_eq!(error(client.send(&request)), "authority_challenge_invalid");
+    assert_eq!(error(client.send(&request)), "authority_grants_stale");
     let other = json!({"store": store, "generation": 1, "grants": ["b"]});
     assert_eq!(
         error(client.authorized(
@@ -103,6 +103,8 @@ fn protected_mutations_need_a_single_use_challenge_and_authorization() {
         client.call("grants.get", json!({"store": store})).unwrap(),
         json!({"generation": 2, "grants": ["b"]})
     );
+    let revoke = json!({"store": store, "generation": 2, "grants": []});
+    assert_eq!(client.call("grants.put", revoke).unwrap()["generation"], 3);
     assert_eq!(
         error(client.call("policy.put", json!({"key": "k", "value": 1}))),
         "authority_challenge_invalid"
@@ -113,13 +115,7 @@ fn protected_mutations_need_a_single_use_challenge_and_authorization() {
     assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
     assert_eq!(
         *gate.asked.lock().unwrap(),
-        [
-            GRANT_RIGHT,
-            GRANT_RIGHT,
-            GRANT_RIGHT,
-            GRANT_RIGHT,
-            POLICY_RIGHT
-        ]
+        [GRANT_RIGHT, GRANT_RIGHT, GRANT_RIGHT, POLICY_RIGHT]
     );
 }
 
@@ -154,6 +150,18 @@ fn anchors_chain_every_appended_digest() {
         error(client.call("anchor.append", json!({"stream": "/ledger", "sha256": "x"}))),
         "authority_request_invalid"
     );
+    let seed = |stream: &str| json!({"stream": stream, "count": 2, "head": anchor.head, "last": anchor.last});
+    assert_eq!(
+        error(client.call("anchor.seed", seed("/ledger"))),
+        "authority_anchor_exists"
+    );
+    client.call("anchor.seed", seed("/older")).unwrap();
+    assert_eq!(
+        client
+            .call("anchor.get", json!({"stream": "/older"}))
+            .unwrap()["head"],
+        anchor.head
+    );
 }
 
 #[test]
@@ -161,7 +169,7 @@ fn brokered_credentials_keep_secrets_in_the_broker_and_authorize_writes() {
     let gate = Arc::new(TestGate::default());
     let (_temp, socket, store) = serve(gate.clone());
     let profiles = crate::credentials::CredentialProfiles::brokered(&store, &socket);
-    let key = profiles.create("key", "api_key", None).unwrap();
+    let key = profiles.create("key", "api_key", None, None).unwrap();
     assert!(
         profiles
             .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-broker"}"#)
@@ -171,10 +179,16 @@ fn brokered_credentials_keep_secrets_in_the_broker_and_authorize_writes() {
     profiles
         .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-broker"}"#)
         .unwrap();
-    assert_eq!(profiles.secret(&key.id).unwrap().token, "sk-broker");
+    assert_eq!(
+        profiles
+            .secret(&key.id, "https://api.openai.com")
+            .unwrap()
+            .token,
+        "sk-broker"
+    );
     assert_eq!(profiles.public(&key).unwrap()["status"], "ready");
     assert!(!store.join("credentials").exists());
-    let empty = profiles.create("empty", "api_key", None).unwrap();
+    let empty = profiles.create("empty", "api_key", None, None).unwrap();
     gate.allow.store(false, Ordering::SeqCst);
     assert!(profiles.remove(&empty.id).unwrap());
     assert!(profiles.remove(&key.id).is_err());
@@ -188,11 +202,17 @@ fn deployed_broker_holds_credentials_and_detects_ledger_tampering() {
     let temp = tempfile::tempdir().unwrap();
     let base = temp.path().canonicalize().unwrap();
     let profiles = crate::credentials::CredentialProfiles::open(&base).unwrap();
-    let key = profiles.create("dummy", "api_key", None).unwrap();
+    let key = profiles.create("dummy", "api_key", None, None).unwrap();
     profiles
         .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-dummy"}"#)
         .unwrap();
-    assert_eq!(profiles.secret(&key.id).unwrap().token, "sk-dummy");
+    assert_eq!(
+        profiles
+            .secret(&key.id, "https://api.openai.com")
+            .unwrap()
+            .token,
+        "sk-dummy"
+    );
     assert!(!base.join("credentials").exists());
     assert_eq!(
         fs::read_dir(ROOT).unwrap_err().kind(),

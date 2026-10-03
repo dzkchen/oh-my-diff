@@ -77,6 +77,7 @@ impl ToolSpecContributor for Mods {
         let chain = codex_omd::intercept_shared(
             &self.runtime,
             "tool_specs",
+            self.expansion.tool_specs_required.load(Ordering::Acquire),
             payload,
             origin,
             || true,

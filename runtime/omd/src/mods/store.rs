@@ -232,15 +232,21 @@ impl ModStore {
         }
         let path = self.root.join(name);
         let aside = self.root.join(format!("{name}.corrupt"));
-        std::fs::rename(&path, &aside)?;
-        if name == "mods.json" {
-            let config = ModConfiguration {
+        let empty = match name {
+            "mods.json" => Some(serde_json::to_value(ModConfiguration {
                 schema: 1,
                 revision: 0,
                 node: super::node_on_path().ok_or_else(|| failure("node_unavailable"))?,
                 mods: Vec::new(),
-            };
-            self.write("mods.json", &serde_json::to_value(config)?)?;
+            })?),
+            _ => None,
+        };
+        std::fs::rename(&path, &aside)?;
+        if let Some(config) = empty
+            && let Err(error) = self.write(name, &config)
+        {
+            let _ = std::fs::rename(&aside, &path);
+            return Err(error);
         }
         Ok(aside)
     }
@@ -257,26 +263,58 @@ impl ModStore {
     }
 
     pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
+        self.write_granting(name, value, &BTreeSet::new())
+    }
+
+    /// Adds broker grants only for `approved` selections; dropped selections lose theirs without authorization.
+    pub(super) fn write_granting(
+        &self,
+        name: &str,
+        value: &Value,
+        approved: &BTreeSet<String>,
+    ) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(value)?;
+        let brokered = match name {
+            "mods.json" => brokered_grants(&self.root)?,
+            _ => None,
+        };
+        let Some((mut generation, current)) = brokered else {
+            return self.write_staged(name, &bytes, || Ok(()));
+        };
+        let selected = value["mods"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(grant)
+            .collect::<BTreeSet<_>>();
+        let added = approved
+            .iter()
+            .filter(|grant| selected.contains(*grant) && !current.contains(*grant))
+            .cloned()
+            .collect::<BTreeSet<_>>();
         self.write_staged(name, &bytes, || {
-            if name == "mods.json"
-                && let Some((generation, current)) = brokered_grants(&self.root)?
-            {
-                let wanted = value["mods"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(grant)
-                    .collect::<BTreeSet<_>>();
-                if wanted != current {
-                    crate::broker::authorized(
-                        "grants.put",
-                        json!({"store": self.root, "generation": generation, "grants": wanted}),
-                    )?;
-                }
+            if !added.is_empty() {
+                let granted = current.union(&added).collect::<BTreeSet<_>>();
+                generation = crate::broker::authorized(
+                    "grants.put",
+                    json!({"store": self.root, "generation": generation, "grants": granted}),
+                )?["generation"]
+                    .as_u64()
+                    .unwrap_or_default();
             }
             Ok(())
-        })
+        })?;
+        let kept = selected
+            .into_iter()
+            .filter(|grant| current.contains(grant) || added.contains(grant))
+            .collect::<BTreeSet<_>>();
+        if kept.len() != current.len() + added.len() {
+            let _ = crate::broker::call(
+                "grants.put",
+                json!({"store": self.root, "generation": generation, "grants": kept}),
+            );
+        }
+        Ok(())
     }
 
     pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
@@ -461,6 +499,7 @@ impl ModStore {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
         let mut config = self.configuration()?;
+        let mut trusted = BTreeSet::new();
         for Trust {
             path,
             sha256,
@@ -489,6 +528,7 @@ impl ModStore {
                 .unwrap_or_default();
             super::validate_settings(&package, &settings)?;
             config.mods.retain(|m| m.path != path);
+            trusted.insert(path.clone());
             config.mods.push(ModSelection {
                 path,
                 sha256: actual,
@@ -504,7 +544,13 @@ impl ModStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        self.write("mods.json", &serde_json::to_value(config)?)
+        let approved = config
+            .mods
+            .iter()
+            .filter(|selection| trusted.contains(&selection.path))
+            .map(|selection| grant(&json!(selection)))
+            .collect();
+        self.write_granting("mods.json", &serde_json::to_value(config)?, &approved)
     }
 
     pub fn revoke_authority(&self, path: &Path) -> Result<()> {

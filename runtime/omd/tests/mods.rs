@@ -2835,6 +2835,7 @@ fn continuations_compose_transforms_inspect_results_and_short_circuit() {
     let chain = codex_omd::intercept_shared(
         &runtime,
         "tool",
+        true,
         json!({"tool":"exec","arguments":{}}),
         json!({"caller":"model"}),
         || true,
@@ -2860,6 +2861,7 @@ fn continuations_compose_transforms_inspect_results_and_short_circuit() {
     let cached = codex_omd::intercept_shared(
         &runtime,
         "tool",
+        true,
         json!({"tool":"cached","arguments":{"q":"x"}}),
         json!({"caller":"model"}),
         || true,
@@ -2872,6 +2874,7 @@ fn continuations_compose_transforms_inspect_results_and_short_circuit() {
     let partial = codex_omd::intercept_shared(
         &runtime,
         "tool",
+        true,
         json!({"tool":"partial","arguments":{}}),
         json!({"caller":"model"}),
         || true,
@@ -2924,6 +2927,7 @@ fn continuation_failures_skip_keep_catch_or_fail_closed() {
     let chain = codex_omd::intercept_shared(
         &runtime,
         "tool",
+        true,
         json!({"tool":"exec","arguments":{}}),
         json!({"caller":"model"}),
         || true,
@@ -2956,6 +2960,7 @@ fn continuation_failures_skip_keep_catch_or_fail_closed() {
         codex_omd::intercept_shared(
             &runtime,
             "tool",
+            true,
             json!({"tool":"exec","arguments":{}}),
             json!({"caller":"model"}),
             || true,
@@ -3092,6 +3097,7 @@ fn continuation_order_cancellation_and_reload_are_explicit() {
         codex_omd::intercept_shared(
             &runtime,
             "tool",
+            true,
             json!({"tool":"exec","arguments":{}}),
             json!({"caller":"model"}),
             active,
@@ -3149,6 +3155,7 @@ fn input_and_model_request_continuations_pass_downstream_results_or_deny() {
         codex_omd::intercept_shared(
             &runtime,
             "input",
+            true,
             json!({"thread_id":"t","text":text,"attachments":0}),
             json!({"caller":"user"}),
             || true,
@@ -3173,6 +3180,7 @@ fn input_and_model_request_continuations_pass_downstream_results_or_deny() {
     let request = codex_omd::intercept_shared(
         &runtime,
         "model_request",
+        true,
         json!({"request_id":"r","route":"lead","routes":routes}),
         json!({"caller":"model"}),
         || true,

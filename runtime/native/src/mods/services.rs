@@ -4,6 +4,7 @@ use codex_protocol::models::PermissionProfileSnapshot;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -29,7 +30,7 @@ pub(crate) struct Grant {
     #[serde(default)]
     read_hashes: BTreeMap<PathBuf, String>,
     #[serde(default)]
-    credentials: BTreeMap<String, String>,
+    credentials: BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -44,6 +45,7 @@ struct Service {
     job: Option<tokio::task::JoinHandle<Result<Value, String>>>,
     task: Arc<Task>,
     worker: String,
+    _gateway: Option<crate::credential_gateway::Registration>,
 }
 
 impl Drop for Service {
@@ -138,13 +140,11 @@ impl Services {
             #[serde(default)]
             input: Option<Value>,
             #[serde(default)]
-            credential: Option<String>,
-            #[serde(default)]
             secrets: Vec<String>,
         }
         let selection: Selection =
             serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
-        if (selection.credential.is_some() || !selection.secrets.is_empty())
+        if !selection.secrets.is_empty()
             && !matches!(
                 request.operation.as_str(),
                 "sidecars.start" | "providers.register"
@@ -359,31 +359,21 @@ impl Services {
                 .r#set
                 .insert(environment.clone(), value.trim_end().to_string());
         }
-        if let Some(profile) = &selection.credential {
-            let environment = grant
-                .credentials
-                .iter()
-                .find(|(_, approved)| *approved == profile)
-                .map(|(environment, _)| environment.clone())
-                .ok_or("credential_not_host_approved")?;
-            if environment == "OMD_READY_TOKEN"
-                || environment.is_empty()
-                || environment.len() > 64
-                || !environment
-                    .bytes()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == b'_')
-            {
-                return Err("invalid_credential_environment_key".into());
-            }
-            let secret = codex_omd::credentials::CredentialProfiles::open(&host.root)
-                .and_then(|profiles| profiles.secret(profile))
-                .map_err(|error| error.to_string())?;
+        let gateway = if grant.credentials.is_empty() {
+            None
+        } else if !grant.network || grant.credentials.len() > 32 {
+            return Err("credential_gateway_requires_network".into());
+        } else {
+            let (url, registration) =
+                crate::credential_gateway::register(host.root.clone(), grant.credentials.clone())
+                    .map_err(|error| error.to_string())?;
             config
                 .permissions
                 .shell_environment_policy
                 .r#set
-                .insert(environment, secret.token);
-        }
+                .insert("OMD_CREDENTIAL_GATEWAY".to_owned(), url);
+            Some(registration)
+        };
         if !selection.secrets.is_empty() {
             let profiles = codex_omd::credentials::CredentialProfiles::open(&host.root)
                 .map_err(|error| error.to_string())?;
@@ -562,6 +552,7 @@ impl Services {
                 job: Some(job),
                 task: lead.session.task.clone(),
                 worker: worker.clone(),
+                _gateway: gateway,
             },
         );
         // Every mod shares these records, so wait for readiness without holding the lock.
@@ -627,7 +618,7 @@ impl Services {
             }
         }
         Ok(
-            json!({"id":grant.id,"status":if port.is_some() {"ready"} else {"starting"},"secret_references":grant.secrets.values().collect::<Vec<_>>(),"credential":selection.credential}),
+            json!({"id":grant.id,"status":if port.is_some() {"ready"} else {"starting"},"secret_references":grant.secrets.values().collect::<Vec<_>>(),"credentials":grant.credentials}),
         )
     }
 }

@@ -43,6 +43,7 @@ struct Link {
     required: bool,
     catch: bool,
     location: String,
+    matcher: Value,
     generation: u64,
 }
 
@@ -445,6 +446,9 @@ impl Chain {
             );
             return result;
         };
+        if !link.matcher.is_null() && !may_match(&link.matcher, &input) {
+            return self.link(access, host, core, active, scope, k + 1, input);
+        }
         let mut attempts = Attempts::default();
         if scope.contains(&link.id) || self.origin["caller"] == link.id.as_str() {
             self.entry(
@@ -698,13 +702,28 @@ pub(super) fn intercept(
     host: &mut HostFn<'_>,
     core: &mut Core<'_>,
     surface: &str,
+    required: bool,
     input: Value,
     origin: Value,
     active: &dyn Fn() -> bool,
     scope: &InvocationScope,
 ) -> Result<ModChain> {
-    let links = access.with(|runtime| Ok(runtime.links(surface, &input)))?;
-    if links.is_empty() {
+    let wait = if required {
+        REQUIRED_WAIT
+    } else {
+        OPTIONAL_WAIT
+    };
+    let links = match access
+        .bounded(wait)
+        .with(|runtime| Ok(runtime.links(surface)))
+    {
+        Err(error) if !required && error.to_string().starts_with("mod_runtime_busy") => Vec::new(),
+        links => links?,
+    };
+    if links
+        .iter()
+        .all(|link| !link.matcher.is_null() && !may_match(&link.matcher, &input))
+    {
         let result = match core {
             Core::Call(run) => run(input.clone()),
             Core::Host { caller, generation } => {
@@ -735,7 +754,9 @@ pub(super) fn intercept(
         answered_by: chain.answered_by.filter(|_| !chain.executed),
         trace: chain.trace,
     };
-    let entry = json!({"surface": surface, "origin": chain.origin, "error": result.as_ref().err().map(ToString::to_string), "chain": record});
+    let logged = json!({"result": bounded(&record.result), "input": bounded(&record.input),
+        "answered_by": record.answered_by, "trace": record.trace});
+    let entry = json!({"surface": surface, "origin": chain.origin, "error": result.as_ref().err().map(ToString::to_string), "chain": logged});
     let _ = access.with(|runtime| {
         runtime.chains.push(entry);
         if runtime.chains.len() > CHAIN_LOG {
@@ -747,16 +768,26 @@ pub(super) fn intercept(
 }
 
 impl ModHost {
-    pub fn intercepts(&self, surface: &str) -> bool {
-        self.active().any(|(_, loaded)| {
-            loaded.registrations.interceptors.iter().any(|interceptor| {
-                selects(&interceptor.pattern, surface, &loaded.package.capabilities)
+    /// `Some(true)` when a required interceptor, including a faulted mod's, selects `surface`.
+    pub fn intercepts(&self, surface: &str) -> Option<bool> {
+        self.loaded
+            .values()
+            .flat_map(|loaded| {
+                loaded
+                    .registrations
+                    .interceptors
+                    .iter()
+                    .filter(|interceptor| {
+                        (loaded.error.is_none() || interceptor.required)
+                            && selects(&interceptor.pattern, surface, &loaded.package.capabilities)
+                    })
+                    .map(|interceptor| interceptor.required)
             })
-        })
+            .max()
     }
 
     /// Ordinary links wrap required ones; a faulted mod's required links stay and fail closed.
-    fn links(&self, surface: &str, input: &Value) -> Vec<Link> {
+    fn links(&self, surface: &str) -> Vec<Link> {
         let order = order(&self.loaded).unwrap_or_default();
         let faulted = self
             .loaded
@@ -773,7 +804,6 @@ impl ModHost {
                 for (index, interceptor) in loaded.registrations.interceptors.iter().enumerate() {
                     if interceptor.required == required
                         && selects(&interceptor.pattern, surface, &loaded.package.capabilities)
-                        && (interceptor.matcher.is_null() || may_match(&interceptor.matcher, input))
                     {
                         links.push(Link {
                             id: id.clone(),
@@ -781,6 +811,7 @@ impl ModHost {
                             required,
                             catch: interceptor.catch,
                             location: interceptor.location.clone(),
+                            matcher: interceptor.matcher.clone(),
                             generation: self.generation,
                         });
                     }
@@ -795,6 +826,7 @@ impl ModHost {
 pub fn intercept_shared(
     runtime: &Mutex<ModHost>,
     surface: &str,
+    required: bool,
     input: Value,
     origin: Value,
     active: impl Fn() -> bool,
@@ -806,6 +838,7 @@ pub fn intercept_shared(
         &mut host,
         &mut Core::Call(&mut core),
         surface,
+        required,
         input,
         origin,
         &active,

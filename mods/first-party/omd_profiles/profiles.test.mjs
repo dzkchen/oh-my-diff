@@ -11,19 +11,21 @@ const router = fileURLToPath(new URL('./router.mjs', import.meta.url));
 const sse = events => events.map(event => `data: ${typeof event === 'string' ? event : JSON.stringify(event)}\n\n`).join('');
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 
-test('router adapts Responses requests to each protocol and keeps credentials and reasoning bounded', async () => {
+test('router adapts Responses requests to each protocol through the credential gateway and keeps reasoning bounded', async () => {
   const seen = {};
-  const upstream = createServer(async (request, response) => {
+  const gateway = createServer(async (request, response) => {
     let text = '';
     for await (const chunk of request) text += chunk;
-    seen[request.url] = { body: JSON.parse(text), headers: request.headers };
+    const [, key, credential, ...rest] = request.url.split('/');
+    const path = `/${rest.join('/')}`;
+    seen[path] = { body: JSON.parse(text), headers: request.headers, key, credential };
     response.writeHead(200, { 'content-type': 'text/event-stream' });
-    if (request.url === '/chat') response.end(sse([
+    if (path === '/chat') response.end(sse([
       { choices: [{ delta: { reasoning: 'think' } }] }, { choices: [{ delta: { content: 'Hel' } }] }, { choices: [{ delta: { content: 'lo' } }] },
       { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'exec_command', arguments: '{"cmd":' } }] } }] },
       { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"ls"}' } }] } }] },
       { choices: [], usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16, prompt_tokens_details: { cached_tokens: 2 } } }, '[DONE]']));
-    else if (request.url === '/anthropic') response.end(sse([
+    else if (path === '/anthropic') response.end(sse([
       { type: 'message_start', message: { usage: { input_tokens: 10, cache_read_input_tokens: 3, output_tokens: 1 } } },
       { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
       { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'plan' } },
@@ -36,17 +38,16 @@ test('router adapts Responses requests to each protocol and keeps credentials an
       { type: 'message_delta', usage: { output_tokens: 5 } }, { type: 'message_stop' }]));
     else response.end(sse([{ type: 'response.completed', response: { id: 'r', usage: {} } }]));
   });
-  const port = await listen(upstream);
+  const port = await listen(gateway);
   const directory = mkdtempSync(join(tmpdir(), 'omd-profiles-'));
   const probe = createServer();
   const free = await listen(probe);
   await new Promise(resolve => probe.close(resolve));
-  const base = `http://127.0.0.1:${port}`;
-  const profile = (name, protocol, path) => ({ name, protocol, url: `${base}${path}`, model: 'up-model', credential: name, max_output: 4096, reasoning: true });
+  const profile = (name, protocol, path) => ({ name, protocol, url: `https://up.example${path}`, model: 'up-model', credential: name, max_output: 4096, reasoning: true });
   writeFileSync(join(directory, 'route.json'), JSON.stringify({ port: free, profiles: { 'a/up': profile('a', 'responses', '/responses'), 'b/up': profile('b', 'responses', '/responses'),
     'c/up': profile('c', 'chat', '/chat'), 'd/up': profile('d', 'anthropic', '/anthropic') } }));
   const token = 'local-token-'.repeat(4);
-  const child = spawn(process.execPath, [router, 'serve', join(directory, 'route.json')], { env: { OMD_PROFILES_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready' }, stdio: 'ignore' });
+  const child = spawn(process.execPath, [router, 'serve', join(directory, 'route.json')], { env: { OMD_PROFILES_LOCAL_TOKEN: token, OMD_READY_TOKEN: 'ready', OMD_CREDENTIAL_GATEWAY: `http://127.0.0.1:${port}/key` }, stdio: 'ignore' });
   try {
     for (let attempt = 0; attempt < 50; attempt++) {
       if (await fetch(`http://127.0.0.1:${free}/_omd/ready`).then(reply => reply.ok, () => false)) break;
@@ -60,17 +61,17 @@ test('router adapts Responses requests to each protocol and keeps credentials an
       { type: 'function_call_output', call_id: 'old', output: '/repo' },
     ];
     const tools = [{ type: 'function', name: 'exec_command', description: 'run', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }, { type: 'custom', name: 'apply_patch', description: 'patch' }];
-    const ask = async (model, authorization = 'Bearer sk-test', history = input) => {
+    const ask = async (model, authorization = `Bearer ${token}`, history = input) => {
       const reply = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization, 'content-type': 'application/json' },
         body: JSON.stringify({ model, instructions: 'sys', input: history, tools, reasoning: { effort: 'high' }, stream: true, prompt_cache_key: 'conversation' }) });
       const text = await reply.text();
       return { status: reply.status, events: text.split('\n\n').filter(Boolean).map(frame => JSON.parse(frame.replace(/^data: /, ''))) };
     };
-    assert.equal((await ask('a/up', `Bearer ${token}`)).status, 401);
+    assert.equal((await ask('a/up', 'Bearer sk-test')).status, 401);
     assert.equal((await ask('missing/up')).status, 400);
     await ask('a/up');
     assert.equal(seen['/responses'].body.model, 'up-model');
-    assert.equal(seen['/responses'].headers.authorization, 'Bearer sk-test');
+    assert.deepEqual([seen['/responses'].key, seen['/responses'].credential, seen['/responses'].headers.authorization], ['key', 'a', undefined]);
     assert.ok(seen['/responses'].body.input.some(item => item.type === 'reasoning'));
     await ask('b/up');
     assert.ok(!seen['/responses'].body.input.some(item => item.type === 'reasoning'));
@@ -91,7 +92,7 @@ test('router adapts Responses requests to each protocol and keeps credentials an
     assert.deepEqual(chat.events.at(-1).response.usage, { input_tokens: 12, input_tokens_details: { cached_tokens: 2 }, output_tokens: 4, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 16 });
 
     const anthropic = await ask('d/up');
-    assert.equal(seen['/anthropic'].headers['x-api-key'], 'sk-test');
+    assert.equal(seen['/anthropic'].headers['x-omd-credential-header'], 'x-api-key');
     assert.equal(seen['/anthropic'].headers.authorization, undefined);
     assert.equal(seen['/anthropic'].body.system, 'sys\n\nrules');
     assert.deepEqual(seen['/anthropic'].body.messages.map(message => message.content.map(block => block.type)), [['text'], ['tool_use'], ['tool_result']]);
@@ -102,11 +103,11 @@ test('router adapts Responses requests to each protocol and keeps credentials an
     assert.equal(anthropic.events.at(-1).response.usage.output_tokens, 5);
     const thought = calls.find(item => item.type === 'reasoning');
     assert.match(thought.encrypted_content, /^omd-thinking:d:/);
-    await ask('d/up', 'Bearer sk-test', [input[1], thought, { type: 'custom_tool_call', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' }, { type: 'custom_tool_call_output', call_id: 't1', output: 'ok' }]);
+    await ask('d/up', `Bearer ${token}`, [input[1], thought, { type: 'custom_tool_call', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' }, { type: 'custom_tool_call_output', call_id: 't1', output: 'ok' }]);
     assert.deepEqual(seen['/anthropic'].body.messages[1].content.slice(0, 2), [{ type: 'thinking', thinking: 'plan', signature: 'sig' }, { type: 'tool_use', id: 't1', name: 'apply_patch', input: { input: '*** Begin Patch' } }]);
   } finally {
     child.kill();
-    upstream.close();
+    gateway.close();
     rmSync(directory, { recursive: true, force: true });
   }
 });

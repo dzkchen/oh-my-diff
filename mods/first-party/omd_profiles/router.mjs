@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const BODY_LIMIT = 64 * 1024 * 1024;
 const DROPPED = ['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding', 'keep-alive', 'upgrade',
-  'proxy-authorization', 'proxy-connection'];
+  'proxy-authorization', 'proxy-connection', 'authorization'];
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 async function bodyOf(request, limit = BODY_LIMIT) {
@@ -244,12 +244,19 @@ function post(url, headers, payload, signal) {
   });
 }
 
+// The native credential gateway adds the profile's token and only reaches the origin it was enrolled for.
+function through(profile) {
+  const gateway = process.env.OMD_CREDENTIAL_GATEWAY;
+  if (!gateway) throw Object.assign(new Error('credential_gateway_unavailable'), { status: 503 });
+  const target = new URL(profile.url);
+  return `${gateway}/${profile.credential}${target.pathname}${target.search}`;
+}
+
 export async function forward(body, profile, inbound, response, signal) {
-  const authorization = inbound.authorization ?? '';
-  if (!/^Bearer \S+$/.test(authorization)) throw Object.assign(new Error('profile_credential_missing'), { status: 401 });
+  const url = through(profile);
   if (profile.protocol === 'responses') {
     const headers = Object.fromEntries(Object.entries(inbound).filter(([key]) => !DROPPED.includes(key)));
-    const upstream = await post(profile.url, headers, JSON.stringify({ ...body, model: profile.model }), signal);
+    const upstream = await post(url, headers, JSON.stringify({ ...body, model: profile.model }), signal);
     response.writeHead(upstream.statusCode, Object.fromEntries(Object.entries(upstream.headers).filter(([key]) => !['transfer-encoding', 'connection', 'content-length'].includes(key))));
     for await (const chunk of upstream) response.write(chunk);
     return;
@@ -257,8 +264,8 @@ export async function forward(body, profile, inbound, response, signal) {
   const anthropic = profile.protocol === 'anthropic';
   const payload = JSON.stringify(anthropic ? anthropicRequest(body, profile) : chatRequest(body, profile));
   const headers = { 'content-type': 'application/json', accept: 'text/event-stream',
-    ...anthropic ? { 'x-api-key': authorization.slice(7), 'anthropic-version': '2023-06-01' } : { authorization } };
-  const upstream = await post(profile.url, headers, payload, signal);
+    ...anthropic ? { 'x-omd-credential-header': 'x-api-key', 'anthropic-version': '2023-06-01' } : {} };
+  const upstream = await post(url, headers, payload, signal);
   if (upstream.statusCode !== 200) {
     let text = '';
     for await (const chunk of upstream) if (text.length < 65_536) text += chunk;
@@ -333,7 +340,7 @@ async function serve(routePath) {
       const body = JSON.parse(await bodyOf(request));
       const table = JSON.parse(await readFile(routePath, 'utf8')).profiles ?? route.profiles;
       const profile = table[body.model];
-      if (request.headers.authorization === `Bearer ${token}`) throw Object.assign(new Error('profile_credential_missing'), { status: 401 });
+      if (request.headers.authorization !== `Bearer ${token}`) throw Object.assign(new Error('profile_caller_unauthorized'), { status: 401 });
       if (!profile) throw Object.assign(new Error(`profile_not_configured:${body.model}`), { status: 400 });
       const tokens = estimate(body.input);
       if (profile.window && tokens > profile.window) throw Object.assign(new Error(`context_length_exceeded: this thread (~${tokens} tokens) exceeds the ${profile.name} window of ${profile.window}; compact or switch back`), { status: 400 });

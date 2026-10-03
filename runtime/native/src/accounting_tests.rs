@@ -137,9 +137,9 @@ fn install_middleware(accounts: &Accounts, root: &Path, source: &str) {
         )
         .unwrap();
     store.enable(&package, true).unwrap();
-    accounts.install_mod_runtime(Arc::new(Mutex::new(
-        ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap(),
-    )));
+    let runtime = ModHost::open(root.join("mod-store").canonicalize().unwrap()).unwrap();
+    let required = runtime.required_surfaces();
+    accounts.install_mod_runtime(Arc::new(Mutex::new(runtime)), required);
 }
 
 fn fast_route() -> RequestRoute {
@@ -154,25 +154,26 @@ fn fast_route() -> RequestRoute {
 }
 
 #[test]
-fn credential_routes_replace_auth_at_the_request_boundary_and_fail_closed() {
+fn credential_routes_replace_auth_only_for_the_enrolled_origin() {
     let (root, accounts, _task, mut request, body) = setup();
     let store = root.path().join("store");
     std::fs::create_dir(&store).unwrap();
     let store = store.canonicalize().unwrap();
     set_credential_root(store.clone());
     let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
-    let profile = profiles.create("work key", "api_key", None).unwrap();
-    accounts
-        .0
-        .lock()
-        .unwrap()
-        .get_mut("child")
-        .unwrap()
-        .credential = Some(profile.id.clone());
+    let profile = profiles.create("work key", "api_key", None, None).unwrap();
+    let route = |url: &str| {
+        let mut accounts = accounts.0.lock().unwrap();
+        let account = accounts.get_mut("child").unwrap();
+        account.credential = Some(profile.id.clone());
+        account.url = url.into();
+    };
     request.headers.insert(
         http::header::AUTHORIZATION,
         "Bearer session".parse().unwrap(),
     );
+    request.url = "https://api.openai.com/v1/responses".into();
+    route(&request.url);
     let refused = accounts
         .before_send(&mut request, Some(&body))
         .err()
@@ -181,6 +182,15 @@ fn credential_routes_replace_auth_at_the_request_boundary_and_fail_closed() {
     profiles
         .store_auth(&profile.id, r#"{"OPENAI_API_KEY":"sk-profile"}"#)
         .unwrap();
+    request.url = "http://localhost/responses".into();
+    route(&request.url);
+    let refused = accounts
+        .before_send(&mut request, Some(&body))
+        .err()
+        .unwrap();
+    assert!(format!("{refused:?}").contains("credential_origin_mismatch"));
+    request.url = "https://api.openai.com/v1/responses".into();
+    route(&request.url);
     assert!(accounts.before_send(&mut request, Some(&body)).is_ok());
     assert_eq!(
         request.headers.get(http::header::AUTHORIZATION).unwrap(),
@@ -233,6 +243,26 @@ fn middleware_switches_only_configured_lead_routes_and_transforms_text() {
     assert_eq!(recorded.raw_usage, Some(usage));
     let log = std::fs::read_to_string(root.path().join("evidence/mod-middleware.jsonl")).unwrap();
     assert!(log.contains("fast") && log.contains("raw_usage"));
+}
+
+#[test]
+fn mod_worker_requests_skip_only_optional_interceptors_while_the_runtime_is_busy() {
+    for (options, refused) in [("", false), ("{required: true}, ", true)] {
+        let (root, accounts, _task, mut request, body) = setup();
+        let source = format!(
+            "export default api => api.intercept('model_request', {options}(e, next) => next(e))"
+        );
+        install_middleware(&accounts, root.path(), &source);
+        accounts.0.lock().unwrap().get_mut("child").unwrap().owner =
+            "mod-request_router-child".into();
+        let runtime = accounts.mods().unwrap();
+        let _busy = runtime.lock().unwrap();
+        let result = accounts.prepare(&mut request, &mut Some(body));
+        assert_eq!(
+            result.is_err_and(|error| format!("{error:?}").contains("mod_runtime_busy")),
+            refused
+        );
+    }
 }
 
 #[test]

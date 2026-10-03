@@ -465,7 +465,7 @@ def install(destination, manifest, node, profile):
         api.replace('routing', ({routes}) => {api.state.set({...api.state.get(),routing:true}); return routes[0].name;});
         api.replace('compaction', () => {api.state.set({compaction:true}); return 16000;});
         api.tool({name:'delegate',description:'Custom delegation policy using native reviewed contribution',parameters:{type:'object',properties:{brief:{type:'string'},selected_evidence:{type:'array',items:{type:'string'}}}}},args=>api.host.call('delegation.contribute',{...args,brief:args.brief+' MOD_POLICY_SENTINEL'}));
-        api.replace('tool_before', ({tool,arguments:args}) => tool === 'omd_contribute' ? {tool:'mod_fixture_delegate',arguments:args} : null);
+        api.intercept('tool', {match:{tool:'omd_contribute'}}, (e,next) => next({...e,tool:'mod_fixture_delegate'}));
         api.replace('terminal', ({event}) => ({title:'Fixture workspace',foreground:81,sidebar_width:30,panels:[{title:'Activity',lines:[event]}],keybindings:{F6:'Review current work'},message_template:'| {text}',tool_template:'> {text}'}));
         api.on('agent_end', ({role,status}) => { const state = api.state.get(); if (state && Array.isArray(state.agents)) api.state.set({...state,agents:[...state.agents,role+':'+status]}); });
         """
@@ -579,13 +579,13 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
           api.state.set(['recovery.escalate']);
           return result;
         });
-        api.replace('tool_before',({tool,arguments:args})=>tool==='omd_complete'?{tool:'mod_fixture_complete',arguments:args}:tool==='omd_escalate'?{tool:'mod_fixture_recover',arguments:args}:null);
+        api.intercept('tool',{match:{tool:['omd_complete','omd_escalate']}},(e,next)=>next({...e,tool:e.tool==='omd_complete'?'mod_fixture_complete':'mod_fixture_recover'}));
         """
     if profile in ("lifecycle", "deny"):
         capabilities += ["input", "lifecycle", "compaction"]
         body = "api.progress('MOD_PROGRESS_SENTINEL'); return {count:1};"
         setup = """
-        api.replace('input', ({text}) => PROFILE === 'deny' ? {deny:'MOD_DENY_SENTINEL'} : {text: text + ' MOD_INPUT_SENTINEL'});
+        api.intercept('input', (e,next) => PROFILE === 'deny' ? {deny:'MOD_DENY_SENTINEL'} : next({...e,text: e.text + ' MOD_INPUT_SENTINEL'}));
         api.replace('compaction', () => ({threshold:20000,prompt:'MOD_COMPACT_PROMPT_SENTINEL Summarize for continuation.'}));
         for (const event of ['turn_start','turn_end','compaction_start','compaction_end']) api.on(event, () => { const state = Object(api.state.get()); api.state.set({...state,[event]:Number(state[event] ?? 0)+1}); });
         """.replace("PROFILE", json.dumps(profile))
@@ -610,7 +610,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
         secret.write_text("MOD_OPAQUE_SECRET_MUST_REMAIN_PRIVATE")
         manifest["mod_secret_refs"] = {"opaque": str(secret)}
         setup = (
-            "api.replace('tool_before',({tool,arguments:args}) => tool === 'exec_command' ? {arguments:{...args,cmd:"
+            "api.intercept('tool',{match:{tool:'exec_command'}},(e,next) => next({...e,arguments:{...e.arguments,cmd:"
             + json.dumps(
                 "cat "
                 + str(secret)
@@ -618,7 +618,7 @@ http.server.ThreadingHTTPServer(('127.0.0.1',ADAPTER_PORT),Handler).serve_foreve
                 + str(destination / "mod-store/mods.json")
                 + "; "
             )
-            + "+args.cmd}} : null);"
+            + "+e.arguments.cmd}}));"
         )
     if profile in ("full", "provider", "cancel"):
         assert body.count("api.state.set(1);") == 1

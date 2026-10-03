@@ -20,18 +20,73 @@
             "name": "sol",
             "model": "sol-model",
             "provider": "fixture",
-            "reasoning": "high"
+            "reasoning": "high",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
           },
           {
             "name": "astra",
             "model": "astra-model",
             "provider": "fixture",
-            "reasoning": "xhigh"
+            "reasoning": "xhigh",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
+          }
+        ]
+      },
+      {
+        "result": [
+          {
+            "name": "sol",
+            "model": "sol-model",
+            "provider": "fixture",
+            "reasoning": "high",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
+          },
+          {
+            "name": "astra",
+            "model": "astra-model",
+            "provider": "fixture",
+            "reasoning": "xhigh",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
           }
         ]
       }
     ],
     "agents.spawn": [
+      {
+        "result": {
+          "handle": "zero",
+          "route": "sol",
+          "permissions": "read_only"
+        }
+      },
       {
         "result": {
           "handle": "one",
@@ -51,6 +106,13 @@
       {
         "result": {
           "status": "completed",
+          "text": "add fixed",
+          "consumed": true
+        }
+      },
+      {
+        "result": {
+          "status": "completed",
           "text": "sol inspected",
           "consumed": true
         }
@@ -63,19 +125,16 @@
         }
       }
     ],
-    "delegation.contribute": [
-      {
-        "result": {
-          "status": "completed"
-        }
-      }
-    ],
     "task.status": [
       {
         "result": {
-          "settings": {
-            "delegation": true
-          }
+          "ledger": {
+            "thread_id": "thread-1",
+            "cwd": "/repo",
+            "cost": null
+          },
+          "limits": {},
+          "worker_limits": {}
         }
       }
     ]
@@ -92,28 +151,46 @@
       "type": "event",
       "event": "routing",
       "payload": {
+        "model": "sol-model",
+        "provider": "fixture",
+        "reasoning": null,
         "routes": [
           {
             "name": "sol",
             "model": "sol-model",
             "provider": "fixture",
-            "reasoning": "high"
+            "reasoning": "high",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
           },
           {
             "name": "astra",
             "model": "astra-model",
             "provider": "fixture",
-            "reasoning": "xhigh"
+            "reasoning": "xhigh",
+            "roles": [
+              "lead",
+              "worker"
+            ],
+            "billing": "included_subscription",
+            "tools": [],
+            "available": true,
+            "credential": null
           }
-        ],
-        "model": "sol-model",
-        "provider": "fixture",
-        "reasoning": null
+        ]
       },
       "expect": [
         {
           "mod": "atlas_policy",
-          "value": "astra"
+          "value": {
+            "route": "astra"
+          }
         }
       ]
     },
@@ -123,24 +200,24 @@
       "payload": {
         "thread_id": "thread-1",
         "turn_id": "turn-1",
-        "checkpoint": {
-          "remaining_work": [
-            "make add return the sum"
-          ]
+        "ledger": {
+          "thread_id": "thread-1",
+          "cwd": "/repo",
+          "cost": null
         }
       },
       "expect": [
         {
           "mod": "atlas_policy",
           "value": {
-            "text": "atlas_policy 2.0.0 (paired) assembled turn turn-1. Only these paths are in scope: solution.py. Remaining acceptance work: make add return the sum. Native permissions, limits, review, accounting and evidence stay authoritative."
+            "text": "atlas_policy 2.0.0 (paired) assembled turn turn-1. Only these paths are in scope: solution.py. Native permissions, limits, accounting and evidence stay authoritative."
           }
         }
       ]
     },
     {
-      "type": "event",
-      "event": "tool_before",
+      "type": "intercept",
+      "surface": "tool",
       "payload": {
         "tool": "omd_contribute",
         "arguments": {
@@ -148,17 +225,75 @@
         },
         "call_id": "call-1"
       },
-      "expect": [
+      "core": [
         {
-          "mod": "atlas_policy",
           "value": {
+            "output": "delegated",
+            "success": true
+          }
+        }
+      ],
+      "expect": {
+        "result": {
+          "output": "delegated",
+          "success": true
+        },
+        "input": {
+          "tool": "mod_atlas_policy_delegate",
+          "arguments": {
+            "brief": "fix add"
+          },
+          "call_id": "call-1"
+        },
+        "answered_by": null,
+        "trace": [
+          {
+            "index": 1,
+            "mod": "engine",
+            "outcome": "returned",
+            "attempts": 1,
+            "returned": {
+              "output": "delegated",
+              "success": true
+            },
+            "received": {
+              "tool": "mod_atlas_policy_delegate",
+              "arguments": {
+                "brief": "fix add"
+              },
+              "call_id": "call-1"
+            }
+          },
+          {
+            "index": 0,
+            "mod": "atlas_policy",
+            "outcome": "passed",
+            "attempts": 1,
+            "returned": {
+              "output": "delegated",
+              "success": true
+            },
+            "received": {
+              "tool": "omd_contribute",
+              "arguments": {
+                "brief": "fix add"
+              },
+              "call_id": "call-1"
+            },
+            "location": "index.ts:66:7",
+            "required": false
+          }
+        ],
+        "core_calls": [
+          {
             "tool": "mod_atlas_policy_delegate",
             "arguments": {
               "brief": "fix add"
-            }
+            },
+            "call_id": "call-1"
           }
-        }
-      ]
+        ]
+      }
     },
     {
       "type": "invoke",
@@ -173,7 +308,9 @@
         ]
       },
       "expect": {
-        "status": "completed"
+        "status": "completed",
+        "text": "add fixed",
+        "consumed": true
       }
     },
     {
@@ -217,7 +354,7 @@
       "name": "atlas",
       "payload": null,
       "expect": {
-        "display": "atlas_policy 2.0.0 (paired) \u00b7 scope solution.py \u00b7 host settings read"
+        "display": "atlas_policy 2.0.0 (paired) · scope solution.py · task read"
       }
     }
   ]

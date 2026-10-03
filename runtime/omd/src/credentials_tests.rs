@@ -10,14 +10,20 @@ fn profiles() -> (tempfile::TempDir, CredentialProfiles) {
 #[test]
 fn profiles_get_private_homes_and_one_default() {
     let (_temp, profiles) = profiles();
-    let work = profiles.create("work", "chatgpt", None).unwrap();
+    let work = profiles.create("work", "chatgpt", None, None).unwrap();
     let key = profiles
-        .create("openrouter", "api_key", Some("openrouter"))
+        .create(
+            "openrouter",
+            "provider",
+            Some("openrouter"),
+            Some("https://OpenRouter.ai:443/api/v1"),
+        )
         .unwrap();
     assert_eq!(
         (work.id.as_str(), work.default, key.default),
         ("p1", true, false)
     );
+    assert_eq!(key.destination(), Some("https://openrouter.ai"));
     let home = profiles.home(&key.id).unwrap();
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(
@@ -41,11 +47,11 @@ fn profiles_get_private_homes_and_one_default() {
 #[test]
 fn removing_the_default_promotes_another_and_clears_its_home() {
     let (_temp, profiles) = profiles();
-    profiles.create("a", "chatgpt", None).unwrap();
+    profiles.create("a", "chatgpt", None, None).unwrap();
     profiles
         .create_secret("site", "https://example.com", "vault")
         .unwrap();
-    profiles.create("b", "chatgpt", None).unwrap();
+    profiles.create("b", "chatgpt", None, None).unwrap();
     let home = profiles.home("p1").unwrap();
     assert!(profiles.remove("p1").unwrap());
     assert!(!home.exists());
@@ -64,17 +70,30 @@ fn removing_the_default_promotes_another_and_clears_its_home() {
 #[test]
 fn invalid_profiles_and_limits_are_refused() {
     let (_temp, profiles) = profiles();
-    assert!(profiles.create("", "chatgpt", None).is_err());
-    assert!(profiles.create("x\n", "chatgpt", None).is_err());
-    assert!(profiles.create("x", "oauth2", None).is_err());
-    profiles.create("x", "chatgpt", None).unwrap();
-    assert!(profiles.create("x", "chatgpt", None).is_err());
+    assert!(profiles.create("", "chatgpt", None, None).is_err());
+    assert!(profiles.create("x\n", "chatgpt", None, None).is_err());
+    assert!(profiles.create("x", "oauth2", None, None).is_err());
+    assert!(profiles.create("x", "provider", None, None).is_err());
+    assert!(
+        profiles
+            .create("x", "provider", None, Some("http://example.com"))
+            .is_err()
+    );
+    assert!(
+        profiles
+            .create("x", "api_key", None, Some("https://example.com"))
+            .is_err()
+    );
+    profiles.create("x", "chatgpt", None, None).unwrap();
+    assert!(profiles.create("x", "chatgpt", None, None).is_err());
     for n in 1..PROFILE_LIMIT {
-        profiles.create(&format!("p{n}"), "api_key", None).unwrap();
+        profiles
+            .create(&format!("p{n}"), "api_key", None, None)
+            .unwrap();
     }
     assert_eq!(
         profiles
-            .create("overflow", "api_key", None)
+            .create("overflow", "api_key", None, None)
             .unwrap_err()
             .to_string(),
         "credential_profile_limit"
@@ -86,11 +105,11 @@ fn invalid_profiles_and_limits_are_refused() {
 fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     use base64::Engine;
     let (_temp, profiles) = profiles();
-    let key = profiles.create("key", "api_key", None).unwrap();
-    let chat = profiles.create("chat", "chatgpt", None).unwrap();
+    let key = profiles.create("key", "api_key", None, None).unwrap();
+    let chat = profiles.create("chat", "chatgpt", None, None).unwrap();
     assert!(
         profiles
-            .secret(&key.id)
+            .secret(&key.id, "https://api.openai.com")
             .unwrap_err()
             .to_string()
             .starts_with("credential_not_enrolled")
@@ -98,12 +117,19 @@ fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     profiles
         .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-test"}"#)
         .unwrap();
-    let secret = profiles.secret(&key.id).unwrap();
+    let secret = profiles.secret(&key.id, "https://api.openai.com").unwrap();
+    assert!(!format!("{secret:?}").contains("sk-test"));
     assert_eq!(
         (secret.token.as_str(), secret.account_id),
         ("sk-test", None)
     );
-    assert!(!format!("{:?}", profiles.secret(&key.id).unwrap()).contains("sk-test"));
+    assert_eq!(
+        profiles
+            .secret(&key.id, "https://evil.example")
+            .unwrap_err()
+            .to_string(),
+        "credential_origin_mismatch: p1"
+    );
     let jwt = |exp: u64| {
         let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::json!({"exp": exp}).to_string());
@@ -120,15 +146,15 @@ fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
     write(jwt(1));
     assert!(
         profiles
-            .secret(&chat.id)
+            .secret(&chat.id, "https://chatgpt.com")
             .unwrap_err()
             .to_string()
             .starts_with("credential_expired")
     );
     write(jwt(u64::MAX / 2));
-    let secret = profiles.secret(&chat.id).unwrap();
+    let secret = profiles.secret(&chat.id, "https://chatgpt.com").unwrap();
     assert_eq!(secret.account_id.as_deref(), Some("acct"));
-    assert!(profiles.secret("p99").is_err());
+    assert!(profiles.secret("p99", "https://chatgpt.com").is_err());
 }
 
 #[test]
@@ -161,5 +187,9 @@ fn secrets_are_origin_bound_and_readable_only_by_their_owner() {
         "hunter2"
     );
     assert!(profiles.owned_secret(&secret.id, "other").is_err());
-    assert!(profiles.secret(&secret.id).is_err());
+    assert!(
+        profiles
+            .secret(&secret.id, "https://example.com:8443")
+            .is_err()
+    );
 }

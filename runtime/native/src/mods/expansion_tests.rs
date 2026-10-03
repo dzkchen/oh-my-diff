@@ -483,6 +483,7 @@ async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
     let chain = codex_omd::intercept_shared(
         &fixture.core.runtime,
         "tool",
+        false,
         json!({"tool": "read", "arguments": {}}),
         json!({"caller": "probe"}),
         || true,

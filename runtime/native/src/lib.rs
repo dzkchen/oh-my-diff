@@ -1,6 +1,7 @@
 mod accounting;
 mod config;
 mod contract;
+mod credential_gateway;
 mod execution;
 mod generic_host;
 mod ledger;
@@ -509,12 +510,10 @@ impl Session {
         Ok(json!({"path": path, "sha256": execution::hash(&bytes)}))
     }
 
+    /// Holds the contract lock so concurrent writers anchor and store states in the same order.
     fn persist_contract(&self) -> Result<(), String> {
-        let status = self
-            .contract
-            .lock()
-            .map_err(|_| "contract_lock_poisoned")?
-            .status();
+        let mut contract = self.contract.lock().map_err(|_| "contract_lock_poisoned")?;
+        let status = contract.status();
         let bytes = serde_json::to_vec(&status).map_err(|error| error.to_string())?;
         if status["status"] == "unavailable" {
             return Err("contract_unavailable".into());
@@ -522,28 +521,26 @@ impl Session {
         let result = if bytes.len() > contract::STATE_BYTES {
             Err("contract_state_byte_limit".into())
         } else {
-            codex_omd::broker::anchor(&self.contract_state, &codex_omd::broker::sha256(&bytes))
-                .map_err(|error| error.to_string())
-                .and_then(|()| {
-                    persist(
-                        self.contract_state
-                            .parent()
-                            .ok_or("contract_state_parent_missing")?,
-                        self.contract_state
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .ok_or("contract_state_name_invalid")?,
-                        &bytes,
-                        true,
-                    )
-                })
+            persist(
+                self.contract_state
+                    .parent()
+                    .ok_or("contract_state_parent_missing")?,
+                self.contract_state
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or("contract_state_name_invalid")?,
+                &bytes,
+                true,
+            )
+            .and_then(|()| {
+                codex_omd::broker::anchor(&self.contract_state, &codex_omd::broker::sha256(&bytes))
+                    .map_err(|error| error.to_string())
+            })
         };
         if let Err(error) = &result {
-            self.contract
-                .lock()
-                .map_err(|_| "contract_lock_poisoned")?
-                .invalidate(error.clone());
+            contract.invalidate(error.clone());
         }
+        drop(contract);
         result?;
         persist(&self.evidence, "contract.json", &bytes, false)
     }

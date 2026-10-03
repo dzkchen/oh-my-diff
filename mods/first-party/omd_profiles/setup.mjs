@@ -25,9 +25,10 @@ export function profileEntry(options, credentials) {
   const { name, credential, protocol, url, model } = options;
   if (!/^[a-z0-9_-]{1,32}$/.test(name ?? '')) throw new Error('profile_name_invalid: lowercase letters, digits, _ or -');
   if (!PROTOCOLS.includes(protocol)) throw new Error(`profile_protocol_invalid: ${PROTOCOLS.join('|')}`);
-  if (!/^https?:\/\//.test(url ?? '') || !model) throw new Error('profile_url_and_upstream_model_required');
+  if (!/^https:\/\//.test(url ?? '') || !model) throw new Error('profile_url_and_upstream_model_required');
   const found = credentials.find(item => item.label === credential || item.id === credential);
   if (!found || found.kind === 'secret') throw new Error(`credential_not_enrolled: run /profile add in an OMD+ session first (${credential})`);
+  if (new URL(url).origin !== found.origin) throw new Error(`profile_url_origin_mismatch: ${found.label} is enrolled for ${found.origin}`);
   const paid = options.paid ? String(options.paid).split(':').map(Number) : null;
   if (paid && (paid.length !== 2 || paid.some(value => !Number.isFinite(value) || value <= 0))) throw new Error('profile_paid_invalid: INPUT_USD:OUTPUT_USD per million tokens, both above zero');
   if (found.kind !== 'chatgpt' && !paid) throw new Error('profile_paid_required: API-key profiles bill per request');
@@ -45,7 +46,7 @@ export function routeFor(slug, profile, template, url) {
   const window = profile.window ?? template.context_window;
   const [input, output] = (profile.paid ?? [0, 0]).map(usd => Math.round(usd * 1_000_000));
   const reservation = profile.paid ? Math.ceil((window * input + profile.max_output * output) / 1_000_000) : 0;
-  return { name: profile.name, roles: ['lead'], provider: 'omd_profiles', model: slug, credential: profile.credential,
+  return { name: profile.name, roles: ['lead'], provider: 'omd_profiles', model: slug,
     reasoning_effort: template.default_reasoning_level ?? 'medium', responses_url: `${url}/responses`,
     rates: { input_microusd_per_million: input, cached_microusd_per_million: input, output_microusd_per_million: output,
       reservation_microusd: reservation, max_output_tokens: profile.max_output, input_token_ceiling: window, included_subscription: !profile.paid } };
@@ -78,8 +79,9 @@ async function setup(recordPath, optionText) {
   const profiles = { ...previous.profiles };
   for (const [slug, profile] of Object.entries(profiles)) if (profile.name === options.remove || profile.name === options.add?.name) delete profiles[slug];
   if (options.add) {
-    const credentials = (await json(join(record.store, 'credentials', 'profiles.json'), { profiles: [] })).profiles;
-    const profile = profileEntry(options.add, credentials);
+    const listed = spawnSync(record.manager.installed_path, ['credentials', record.store], { encoding: 'utf8', timeout: 30000 });
+    if (listed.status !== 0) throw new Error(`credentials_unavailable: ${listed.stderr.trim()}`);
+    const profile = profileEntry(options.add, JSON.parse(listed.stdout));
     profiles[`${profile.name}/${profile.model}`] = profile;
   }
   if (!Object.keys(profiles).length) throw new Error('no_profiles: add one with --add');
@@ -111,7 +113,7 @@ async function setup(recordPath, optionText) {
   host.services = [...(host.services ?? []).filter(grant => grant.id !== 'omd_profiles'), {
     id: 'omd_profiles', mod_id: 'omd_profiles', program: node, program_sha256: sha(await readFile(node)),
     arguments: [join(mod, 'router.mjs'), 'serve', routePath], secrets: { OMD_PROFILES_LOCAL_TOKEN: 'omd_profiles_local_token' },
-    network: true, read_paths: readPaths, route: routes[slugs.indexOf(fallback)] }];
+    credentials: [...new Set(slugs.map(slug => profiles[slug].credential))], network: true, read_paths: readPaths, route: routes[slugs.indexOf(fallback)] }];
   await writeFile(routePath, `${JSON.stringify({ port, default: fallback, models: slugs.map(slug => ({ slug, family: profiles[slug].name })), profiles }, null, 2)}\n`);
   await writeFile(catalogPath, `${JSON.stringify({ models }, null, 2)}\n`);
   await writeFile(hostPath, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600 });

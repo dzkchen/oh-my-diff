@@ -1,4 +1,4 @@
-import type { Json, ModAPI } from '@oh-my-diff/mod-api/0.1';
+import type { Json, ModAPI } from '@oh-my-diff/mod-api';
 
 type Mode = 'solo' | 'paired' | 'entry';
 
@@ -45,12 +45,10 @@ export default function activate(api: ModAPI) {
       : routes.find(route => route.name === (mode() === 'solo' ? 'sol' : 'astra'));
     const chosen = selected ?? routes[0];
     remember({ decision: 'routing', mode: mode(), route: chosen?.name ?? null });
-    return chosen?.name ?? null;
+    return chosen ? { route: chosen.name } : null;
   });
 
-  api.replace('context', ({ turn_id, checkpoint }) => {
-    const record = checkpoint !== null && typeof checkpoint === 'object' && !Array.isArray(checkpoint) ? checkpoint : {};
-    const remaining = Array.isArray(record.remaining_work) ? record.remaining_work.map(String) : [];
+  api.replace('context', ({ turn_id }) => {
     const selected = focus();
     const headline = api.services.call<string>('example.formatter', 'format', `  ${banner()} assembled turn ${turn_id}  `);
     remember({ decision: 'context', turn: turn_id, selected });
@@ -60,16 +58,12 @@ export default function activate(api: ModAPI) {
         selected.length
           ? `Only these paths are in scope: ${selected.join(', ')}.`
           : 'No paths are declared in scope; ask before widening it.',
-        remaining.length
-          ? `Remaining acceptance work: ${remaining.join('; ')}.`
-          : 'No remaining acceptance work is recorded.',
-        'Native permissions, limits, review, accounting and evidence stay authoritative.',
+        'Native permissions, limits, accounting and evidence stay authoritative.',
       ].join(' '),
     };
   });
 
-  api.replace('tool_before', ({ tool, arguments: passed }) =>
-    tool === 'omd_contribute' ? { tool: 'mod_atlas_policy_delegate', arguments: passed } : null);
+  api.intercept('tool', { match: { tool: 'omd_contribute' } }, (e, next) => next({ ...e, tool: 'mod_atlas_policy_delegate' }));
 
   api.on('turn_start', ({ turn_id }) => remember({ decision: 'turn_start', turn: turn_id }));
 
@@ -79,7 +73,7 @@ export default function activate(api: ModAPI) {
     {
       name: 'delegate',
       label: 'Atlas delegation',
-      description: 'Delegate through the native reviewed contribution using the Atlas scope policy.',
+      description: 'Delegate a brief to one read-only worker using the Atlas scope policy.',
       parameters: {
         type: 'object',
         properties: { brief: { type: 'string' }, selected_evidence: { type: 'array', items: { type: 'string' } } },
@@ -97,7 +91,11 @@ export default function activate(api: ModAPI) {
         : [];
       const selected = declared.length ? requested.filter(path => declared.includes(path)) : requested;
       api.progress(`Atlas kept ${selected.length} of ${requested.length} requested paths`);
-      const result = api.host.call('delegation.contribute', { brief: `${banner()}: ${brief}`, selected_evidence: selected });
+      const route = api.host.call('routes.list', null)[0]?.name;
+      if (!route) throw new Error('no route available');
+      const agent = api.host.call('agents.spawn', { role: 'atlas_contributor', route,
+        prompt: `${banner()}: ${brief}\nEvidence in scope: ${selected.join(', ') || 'none'}.` });
+      const result = api.host.call('agents.wait', { handle: agent.handle, consume: true });
       remember({ decision: 'delegate', mode: mode(), requested, selected });
       return result;
     },
@@ -121,8 +119,7 @@ export default function activate(api: ModAPI) {
   );
 
   api.command('atlas', () => {
-    const status = api.host.call('task.status', null);
-    const settings = status !== null && typeof status === 'object' && !Array.isArray(status) ? status.settings : null;
-    return { display: `${banner()} · scope ${focus().join(', ') || 'none'} · host settings ${settings === null ? 'unavailable' : 'read'}` };
+    const status = api.host.tryCall('task.status', null);
+    return { display: `${banner()} · scope ${focus().join(', ') || 'none'} · task ${status.ok ? 'read' : 'unavailable'}` };
   }, { description: 'Show the Atlas coordination policy' });
 }
