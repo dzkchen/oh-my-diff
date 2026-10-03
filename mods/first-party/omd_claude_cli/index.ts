@@ -224,9 +224,17 @@ export default function activate(api: ModAPI): void {
     if (status.ok) api.host.tryCall('providers.unregister', { id: service });
     return api.host.tryCall('providers.register', { id: service }).ok;
   };
-  api.on('turn_start', () => {
+  // The provider is read once per thread at start or resume; each turn only restarts a stopped sidecar.
+  const detect = () => {
     const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
-    if (config.ok && (config.value as Row).config?.model_provider === 'omd_claude_cli') ensure();
+    const ours = config.ok && (config.value as Row).config?.model_provider === 'omd_claude_cli';
+    api.state.set(ours);
+    if (ours) ensure();
+  };
+  api.on('start', detect);
+  api.on('resume', detect);
+  api.on('turn_start', () => {
+    if (api.state.get() === true) ensure();
   });
   api.command('claude_route', () => ({ display: 'Claude CLI route: launch with `omd-package claude [--model family]` after `omd-package claude --setup`; subscription windows appear in /status limits.' }));
   if (api.settings.ask_claude !== true) return;

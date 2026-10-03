@@ -49,7 +49,7 @@ native work.
 | `builtins` | `api.builtins` |
 | `terminal` | `terminal` and `list` events; `component_event`, `view`, `focus`; `terminal.notify`, `terminal.show_thread`, `terminal.commands`, `terminal.import_file`, `terminal.open`, `terminal.prompt` |
 | `threads`, `config`, `config.write`, `inventory`, `account` | `app.request` for the routed app-server methods of that class; `app_notification` |
-| `approvals` | the `approval` middleware and `approval_result`; `app_server_request` |
+| `approvals` | the `approval` middleware (which also needs `middleware`) and `approval_result`; `app_server_request` |
 | `events` | `events.publish`, `events.schedule`, `events.cancel`, the `channel` and `timer` events |
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, the `completion` replacement |
@@ -84,8 +84,10 @@ most 64 KiB and 16 KiB so the result fits a callback's host-call transport;
 `stdout_preview_truncated`/`stderr_preview_truncated` report a shortened
 preview. Use `output_artifact` for complete output. Output draining shares the
 command's deadline and cancellation, so a descendant that keeps a pipe open
-cannot hold the call past its timeout. At most 4 runs per repository are
-concurrent. Without `write` the
+cannot hold the call past its timeout. At most 4 runs per mod are
+concurrent. Commands, buttons and keybindings run `exec.run` without
+network; `network: "loopback"` there fails with
+`exec_network_unavailable_in_commands`. Without `write` the
 repository is read-only; with `network: "loopback"` only local binding is
 allowed. `unix_sockets` names up to 4 declared `exec_environment` variables
 whose host values are Unix sockets the command may connect to; it needs the
@@ -245,10 +247,37 @@ among the lead routes on the same provider; `agents.spawn.route` names a worker
 route or a registered provider. Worker routes require a grant file whose hash,
 repository, provider, model and URL are rechecked on every request. Route lookups
 recheck `host.json` (`route_reload_v1`): an edited route list applies to new
-threads, `routes.list` and `routes.select` without restarting, while services,
-limits, secrets and protected paths stay as loaded at start. An invalid edit keeps
+threads, `routes.list` and `routes.select` without restarting. Each turn, worker
+start and `task.status` also apply edited `limits` and `worker_limits` (recorded in
+the thread's ledger, with spend so far still counted) and refresh the rates,
+credential and model of routes a running thread already uses; services, secrets
+and protected paths stay as loaded at start. An invalid edit keeps
 the previous routes and `routes.select` reports why. `routes.select` also admits
 a lead route added after the thread started when it is on the thread's provider.
+
+A route entry, with every field the host accepts:
+
+```json
+{"name": "reviewer", "provider": "openai", "model": "gpt-6.1-sol", "reasoning_effort": "medium",
+ "responses_url": "https://api.openai.com/v1/responses", "roles": ["worker"], "tools": ["exec_command"],
+ "mods": ["omd_workflow"], "credential": null, "grant": {"path": "/abs/grant.json", "sha256": "<sha256 of the file>"},
+ "rates": {"input_microusd_per_million": 1250000, "cached_microusd_per_million": 125000,
+           "output_microusd_per_million": 10000000, "reservation_microusd": 200000, "max_output_tokens": 32000,
+           "input_token_ceiling": 400000, "included_subscription": false}}
+```
+
+The grant file binds `{"schema": 1, "repository": "<repository identity>", "provider", "model",
+"responses_url", "revocable": true}` plus either `"included_subscription": true` (an `openai`
+ChatGPT route at the Codex subscription URL, zero reservation) or `"paid_api_key": true`. Any
+other provider, including a local one, is a paid API route: it needs `paid_api_key`, a nonzero
+`reservation_microusd` and a nonzero `limits.exposure_microusd` (lead) or
+`worker_limits.exposure_microusd` (workers) in `host.json`, both `0` by default. Grant files are
+operator actions; a mod cannot create one to authorize itself. Users select a workflow contract
+with `omd-package contract select ID@VERSION` (or `omd-contract select STORE REPOSITORY ID@VERSION`)
+in the repository, or from the terminal through a mod's `contract.select {contract}`
+(`contracts`, user actions only): the host shows a native confirmation that names any
+assurance the choice lowers, writes the same user selection and returns `{selected,
+applies: 'next_session'}` or `{status: 'declined'}`. It applies from the next session.
 
 ### Ledger
 
@@ -690,7 +719,7 @@ interaction. Operations:
   focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.
 - `builtins.invoke {command} | {action}` runs a built-in command or key action
   from user contexts; `command` may also name a mod command such as
-  `omd_git:status` (`builtins_mod_commands_v1`), which runs as if typed once
+  `omd_git:changes` (`builtins_mod_commands_v1`), which runs as if typed once
   the invoking command finishes; `api.builtins({keys, commands: {replace}})` overlays key
   bindings (never `approval.*`) and routes a built-in command to a mod command.
 
@@ -767,6 +796,53 @@ reset when the mod reloads.
 `host.json` may set `mod_limits` for `watches_per_mod` (up to 64),
 `paths_per_watch` (256), `timers_per_mod` (64), `pty_panes_per_mod` (8) and
 `completion_items` (1000); defaults are 16, 32, 16, 4 and 200.
+
+### Registration, view and callback rules
+
+The host enforces these; `scripts/mod_host_check.py` (`mise run mods:host-check`)
+loads every first-party package and example through the real host and reports
+any it refuses.
+
+- Registration: at most 16 tools and 16 commands per mod. Commands are invoked as
+  `/<id>:<name>`; the bare `/<name>` works only when no built-in command or other
+  mod uses that name. Mod ids use `a-z`, `0-9` and `_` up to 24 bytes, command
+  and tool names up to 32.
+- Views: each mod's view or patch has at most 12 keybindings; the view composed
+  from every mod has at most 64, and a key bound by two mods rejects the later
+  mod's patch. A view holds at most 64 components nested at most 6 deep;
+  component ids use `a-z`, `0-9` and `_`, up to 48 bytes, and are unique across
+  the composed view. A `select` has at most 16 options and a `list` at most 200
+  rows; row values, labels and spans are at most 256 bytes; `text`, `code` and
+  `markdown` at most 4,096 bytes; `diff` and `document` at most 49,152 bytes. A
+  view or patch is at most 64 KiB of JSON and the composed view 256 KiB. A
+  `wrap` site contains exactly one `slot`. Text fields refuse control characters
+  except newlines where a field is multi-line. The status row holds at most 4
+  segments of 40 characters across all mods. An invalid view is dropped with the
+  failing field named and the mod's last valid view stays; `omd-mod status`
+  reports the composed view's diagnostics under `terminal`.
+- Input and focus: a dialog focuses its first item when it opens; Esc, Ctrl+] or
+  a click outside releases focus and hides the dialog until a mod command runs,
+  and Esc reaches the focused component's owner as `component_event {kind:
+  'input', events: [{key: 'Esc'}]}`. Space on a focused `list` row activates it
+  like Enter. An `input` or `select` keeps the value it was created with per
+  component id; change the id to reset it.
+- Callback contexts: `terminal` and `list` renders get no host operations; draw
+  from `api.state`. Slash commands, buttons and keybindings run in the terminal
+  as user actions and reach only `exec.*`, `workspace.read/list/stat/check_access/
+  transaction/backup/restore`, `store.*`, the terminal operations (`app.request`,
+  `credentials.*`, `terminal.*`, `composer.*`, `builtins.invoke`, `packages.*`,
+  `contract.select`, `sessions.ports`, `settings.write`), `app.routes`, `turns.activity` and
+  `events.publish`; a service call works only while its provider needs no other
+  host operation. Component input callbacks run there too but not as user actions,
+  so `packages.apply`, `settings.write`, `builtins.invoke`, `credentials.request`
+  and `terminal.import_file` are refused. Anything else (`task.*`, `contract.*`,
+  `routes.*`, `evidence.*`, `workspace.snapshot/fingerprint`, `process.*`,
+  `agents.*`) goes through `events.publish` to the mod's own `channel` handler,
+  which runs with the session.
+- Settings: callbacks receive explicit settings over each `settings_schema`
+  property's `default`; give every property a default.
+- Memory: each mod runs with a 64 MB V8 heap; exceeding it fails the callback
+  with `mod_out_of_memory`.
 
 ### Streaming providers
 
@@ -981,7 +1057,7 @@ segments and commands. The `terminal` input carries a read-only `identity`
 (`terminal_identity_v1`): `codex_version` from the installed build,
 `install_profile` (`full`, `platform_only`, `private`, `unknown` or
 `unreported`), effective `mode` (`omd`), and installed,
-enabled and active mod counts. Upstream-style direct mode loads no mods.
+enabled, active and failed mod counts. Upstream-style direct mode loads no mods.
 
 `terminal_rich_line_v1` adds a one-row `line` component with up to 12 styled
 `spans` (`text`, `tone`, `bold`; 256 characters in total), whose `label` is

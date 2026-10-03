@@ -173,9 +173,9 @@ export default function activate(api: ModAPI) {
   const headline = (head: Head | null) => head ? `${head.branch ?? `detached @ ${head.oid?.slice(0, 7) ?? '?'}`}${head.upstream ? `  ${glyph.up}${head.ahead} ${glyph.down}${head.behind}` : ''}` : 'no commits';
   const describe = (entry: Entry) => `${entry.index}${entry.worktree} ${entry.original ? `${visible(entry.original)} ${glyph.arrow} ` : ''}${visible(entry.path)}`;
   const line = (id: string, label: string, text: string, tone: TerminalTone = 'normal'): TerminalComponent => ({ type: 'text', id, label, text, tone });
-  const button = (id: string, label: string, text: string, command: string): TerminalComponent => ({ type: 'button', id, label: trim(label, 128), text: trim(text, 200), action: { command: `omd_git:${command}` } });
+  const button = (id: string, label: string, text: string, command: string, args?: string): TerminalComponent => ({ type: 'button', id, label: trim(label, 128), text: trim(text, 200), action: { command: `omd_git:${command}`, ...(args ? { args } : {}) } });
   const sidebar = (state: Saved): TerminalComponent[] => {
-    if (state.error) return [line('omd_git_error', 'Git status', trim(state.error), 'failure'), ...(state.backup ? [button('omd_git_restore', `Restore ${state.backup.path} from its backup`, 'Restore backup', 'restore')] : [])];
+    if (state.error) return [line('omd_git_error', 'Git status', trim(state.error.replace(/_/g, ' ')), 'failure'), ...(state.backup ? [button('omd_git_restore', `Restore ${state.backup.path} from its backup`, 'Restore backup', 'restore')] : [])];
     const groups: [string, TerminalTone, (entry: Entry) => boolean][] = [
       ['Conflicted', 'failure', entry => entry.conflicted],
       ['Staged', 'success', entry => !entry.conflicted && entry.index !== ' ' && entry.index !== '?'],
@@ -193,32 +193,32 @@ export default function activate(api: ModAPI) {
     const options = state.entries.filter(entry => bytes(entry.path) <= 128).slice(0, 16);
     const selected = options.find(entry => entry.path === state.selected) ?? options[0];
     if (selected) {
-      components.push({ type: 'select', id: 'omd_git_file', label: 'Selected file', value: selected.path, options: options.map(entry => ({ value: entry.path, label: trim(describe(entry), 128) })), action: { command: 'omd_git:file' } });
-      components.push(button('omd_git_diff', `Show diff of ${selected.path}`, 'Diff', 'diff'));
-      if (!selected.conflicted && (selected.worktree !== ' ' || selected.index === '?')) components.push(button('omd_git_stage', `Stage ${selected.path}`, 'Stage', 'stage'));
-      if (!selected.conflicted && selected.index !== ' ' && selected.index !== '?') components.push(button('omd_git_unstage', `Unstage ${selected.path}`, 'Unstage', 'unstage'));
-      if (!selected.conflicted && (selected.worktree !== ' ' || selected.index === '?')) components.push(button('omd_git_discard', `Back up and discard ${selected.path}`, `Discard${glyph.more}`, 'discard'));
+      components.push({ type: 'select', id: 'omd_git_file', label: 'Selected file', value: selected.path, options: options.map(entry => ({ value: entry.path, label: trim(describe(entry), 128) })), action: { command: 'omd_git:choose' } });
+      components.push(button('omd_git_diff', `Show diff of ${selected.path}`, 'Diff', 'show'));
+      if (!selected.conflicted && (selected.worktree !== ' ' || selected.index === '?')) components.push(button('omd_git_stage', `Stage ${selected.path}`, 'Stage', 'act', 'stage'));
+      if (!selected.conflicted && selected.index !== ' ' && selected.index !== '?') components.push(button('omd_git_unstage', `Unstage ${selected.path}`, 'Unstage', 'act', 'unstage'));
+      if (!selected.conflicted && (selected.worktree !== ' ' || selected.index === '?')) components.push(button('omd_git_discard', `Back up and discard ${selected.path}`, `Discard${glyph.more}`, 'act', 'discard'));
     }
     components.push({ type: 'input', id: 'omd_git_message', label: 'Commit message', value: state.message, placeholder: 'type a commit message', action: { command: 'omd_git:message' } });
     if (state.entries.some(entry => !entry.conflicted && entry.index !== ' ' && entry.index !== '?')) components.push(button('omd_git_commit', 'Preview staged commit', `Preview commit${glyph.more}`, 'commit'));
     const targets = state.branches.filter(branch => branch !== state.head?.branch).slice(0, 16);
     if (targets.length) {
       components.push({ type: 'select', id: 'omd_git_branch', label: 'Branch to preview', value: state.branch && targets.includes(state.branch) ? state.branch : targets[0], options: targets.map(value => ({ value, label: trim(value, 128) })), action: { command: 'omd_git:branch' } });
-      components.push(button('omd_git_switch', 'Preview the selected branch', `Preview switch${glyph.more}`, 'switch'));
+      components.push(button('omd_git_switch', 'Preview the selected branch', `Preview switch${glyph.more}`, 'checkout'));
     }
     if (state.notice) components.push(line('omd_git_notice', 'Git notice', trim(state.notice, width * 2), 'muted'));
     if (state.backup) components.push(button('omd_git_restore', `Restore ${state.backup.path} from its backup`, 'Restore backup', 'restore'));
     return components;
   };
-  const dialog = (preview: Preview): TerminalRenderSite => ({ mode: 'replace', components: [{ type: 'dialog', id: 'omd_git_dialog', label: 'Git preview', title: trim(preview.kind === 'switch' ? `Switch to ${preview.target}?` : preview.kind === 'commit' ? 'Commit staged files?' : `Discard ${preview.target}?`, 128), children: [{ type: 'pane', id: 'omd_git_preview_pane', label: 'Scrollable exact preview', title: 'Preview · up/down to inspect all paths', collapsed: false, scroll: 0, children: [line('omd_git_preview', 'Preview', preview.lines.join('\n'))] }, ...(preview.kind === 'discard' || preview.kind === 'commit' || preview.kind === 'switch' && preview.expected ? [button('omd_git_confirm', 'Confirm guarded Git action', 'Confirm', 'confirm')] : [line('omd_git_read_only', 'Git write status', WRITE_UNAVAILABLE, 'attention')]), ...(preview.kind === 'commit' ? [button('omd_git_staged_diff', 'Show staged diff', 'Staged diff', 'staged_diff')] : []), button('omd_git_cancel', 'Close preview', 'Close', 'cancel')] }] });
+  const dialog = (preview: Preview): TerminalRenderSite => ({ mode: 'replace', components: [{ type: 'dialog', id: 'omd_git_dialog', label: 'Git preview', title: trim(preview.kind === 'switch' ? `Switch to ${preview.target}?` : preview.kind === 'commit' ? 'Commit staged files?' : `Discard ${preview.target}?`, 128), children: [{ type: 'pane', id: 'omd_git_preview_pane', label: 'Scrollable exact preview', title: 'Preview · up/down to inspect all paths', collapsed: false, scroll: 0, children: [line('omd_git_preview', 'Preview', preview.lines.join('\n'))] }, ...(preview.kind === 'discard' || preview.kind === 'commit' || preview.kind === 'switch' && preview.expected ? [button('omd_git_confirm', 'Confirm guarded Git action', 'Confirm', 'confirm')] : [line('omd_git_read_only', 'Git write status', WRITE_UNAVAILABLE, 'attention')]), ...(preview.kind === 'commit' ? [button('omd_git_staged_diff', 'Show staged diff', 'Staged diff', 'show', 'staged')] : []), button('omd_git_cancel', 'Close preview', 'Close', 'dismiss')] }] });
   const view = (): TerminalPatch => {
     const state = saved();
     return { sidebar_side: api.settings.side === 'right' ? 'right' : 'left', sidebar_width: width, sites: { sidebar: { mode: 'wrap', components: [...sidebar(state), { type: 'slot' }] }, ...(state.preview ? { dialog: dialog(state.preview) } : {}) }, status: state.error ? [] : [trim(`git: ${state.head?.branch ?? 'detached'}${state.total ? ` ${ascii ? '*' : '✱'}${state.total}` : ''}`, 40)], keybindings: { 'Alt+g': { command: 'omd_git:refresh' } } };
   };
   api.command('refresh', () => { const state = refresh({ ...saved(), notice: null }); return { display: state.error ? `Git: ${state.error}` : `Git: ${headline(state.head)}, ${state.total} changed` }; }, { description: 'Refresh the Git sidebar' });
-  api.command('status', () => { const state = refresh(); return { display: state.error ? `Git: ${state.error}` : [trim(headline(state.head), 200), ...state.entries.map(entry => trim(describe(entry), 200)), ...(state.more ? [`${glyph.more} ${state.total - state.entries.length} more`] : [])].join('\n') }; }, { description: 'Show the current branch and changed files' });
+  api.command('changes', () => { const state = refresh(); return { display: state.error ? `Git: ${state.error}` : [trim(headline(state.head), 200), ...state.entries.map(entry => trim(describe(entry), 200)), ...(state.more ? [`${glyph.more} ${state.total - state.entries.length} more`] : [])].join('\n') }; }, { description: 'Show the current branch and changed files' });
   api.command('log', () => { const result = commits(50); return { display: result.ok ? graph(result.value).map(row => trim(row, 200)).join('\n') || 'no commits yet' : result.error }; }, { description: 'Show recent commits' });
-  api.command('file', value => { const state = saved(); const path = typeof value === 'string' ? value : ''; if (!state.entries.some(entry => entry.path === path)) return { display: 'select a changed file first' }; save({ ...state, selected: path, notice: null }); return null; }, { description: 'Select a changed file' });
+  api.command('choose', value => { const state = saved(); const path = typeof value === 'string' ? value : ''; if (!state.entries.some(entry => entry.path === path)) return { display: 'select a changed file first' }; save({ ...state, selected: path, notice: null }); return null; }, { description: 'Select a changed file' });
   api.command('branch', value => { const state = saved(); const branch = typeof value === 'string' ? value : ''; if (!state.branches.includes(branch)) return { display: 'unknown local branch' }; save({ ...state, branch, notice: null }); return null; }, { description: 'Select a local branch' });
   api.command('message', value => { const state = saved(); const message = typeof value === 'string' ? value.slice(0, 1000) : ''; save({ ...state, message, preview: null, notice: null }); return { display: message.trim() ? 'commit message saved' : 'commit message cleared' }; }, { description: 'Set the commit message' });
   const changeIndex = (kind: 'stage' | 'unstage') => {
@@ -257,9 +257,14 @@ export default function activate(api: ModAPI) {
     save({ ...next, notice });
     return { display: notice };
   };
-  api.command('stage', () => changeIndex('stage'), { description: 'Stage the selected exact file after guarded preconditions' });
-  api.command('unstage', () => changeIndex('unstage'), { description: 'Unstage the selected exact file after guarded preconditions' });
-  api.command('diff', value => {
+  const stagedDiff = () => {
+    const preview = saved().preview;
+    if (preview?.kind !== 'commit') return { display: 'open a commit preview first' };
+    const result = run(['diff', '--cached', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all'], 65_536);
+    return { display: result.ok ? `${result.value.slice(0, 12_000)}${result.value.length > 12_000 ? `\n${glyph.more} truncated` : ''}` : result.error };
+  };
+  api.command('show', value => {
+    if (value === 'staged') return stagedDiff();
     const state = refresh();
     if (state.error) return { display: `Git: ${state.error}` };
     const path = typeof value === 'string' && value ? value : state.selected;
@@ -269,7 +274,7 @@ export default function activate(api: ModAPI) {
     const staged = entry.worktree === ' ' && entry.index !== ' ';
     const result = diff(entry.path, staged);
     return { display: result.ok ? `${staged ? 'staged' : 'unstaged'} diff · ${trim(entry.path, 200)}\n${result.value.slice(0, 12_000)}${result.value.length > 12_000 ? `\n${glyph.more} truncated` : ''}` : result.error };
-  }, { description: 'Show a changed file diff' });
+  }, { description: 'Show a changed file diff, or `staged` for the commit preview' });
   const discard = () => {
     const state = refresh();
     if (state.error) return { display: `Git: ${state.error}` };
@@ -293,15 +298,17 @@ export default function activate(api: ModAPI) {
     save({ ...state, preview: { kind: 'discard', tracked, target: entry.path, from: state.head?.oid ?? null, destination: null, status: state.status, lines, guards: tracked && index?.ok && content?.ok ? [...state.guards, index.value, content.value.guard] : state.guards, paths: [entry.path], expected: { [entry.path]: file.sha256 } } });
     return null;
   };
-  api.command('discard', discard, { description: 'Preview backing up and discarding an untracked file' });
   api.command('act', value => {
     const [action, ...rest] = String(value ?? '').trim().split(' ');
     const path = rest.join(' ');
-    const state = refresh({ ...saved(), selected: path, notice: null });
-    if (!state.entries.some(entry => entry.path === path)) return { display: `${trim(path, 80)} has no Git change` };
-    return action === 'stage' || action === 'unstage' ? changeIndex(action) : action === 'discard' ? discard() : { display: 'usage: /act stage|unstage|discard PATH' };
+    if (!['stage', 'unstage', 'discard'].includes(action)) return { display: 'usage: /omd_git:act stage|unstage|discard [PATH]' };
+    if (path) {
+      const state = refresh({ ...saved(), selected: path, notice: null });
+      if (!state.entries.some(entry => entry.path === path)) return { display: `${trim(path, 80)} has no Git change` };
+    }
+    return action === 'discard' ? discard() : changeIndex(action as 'stage' | 'unstage');
   }, { description: 'Select a changed file and stage, unstage or preview discarding it' });
-  api.command('switch', () => {
+  api.command('checkout', () => {
     const state = refresh();
     if (state.error) return { display: `Git: ${state.error}` };
     const target = state.branch ?? state.branches.find(branch => branch !== state.head?.branch);
@@ -365,12 +372,6 @@ export default function activate(api: ModAPI) {
     save({ ...state, preview: { kind: 'commit', tracked: false, target: '', from: state.head?.oid ?? null, destination: null, status: state.status, lines, guards: [...current.value.guards, index.value.guard], paths, expected: null } });
     return null;
   }, { description: 'Preview a staged commit with an index fingerprint' });
-  api.command('staged_diff', () => {
-    const preview = saved().preview;
-    if (preview?.kind !== 'commit') return { display: 'open a commit preview first' };
-    const result = run(['diff', '--cached', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all'], 65_536);
-    return { display: result.ok ? `${result.value.slice(0, 12_000)}${result.value.length > 12_000 ? `\n${glyph.more} truncated` : ''}` : result.error };
-  }, { description: 'Show the staged diff for the commit preview' });
   api.command('confirm', () => {
     const previous = saved();
     const preview = previous.preview;
@@ -448,7 +449,7 @@ export default function activate(api: ModAPI) {
     save({ ...next, notice });
     return { display: notice };
   }, { description: 'Restore the last discarded file if its path is still absent' });
-  api.command('cancel', () => { save({ ...saved(), preview: null }); return null; }, { description: 'Close the Git preview' });
+  api.command('dismiss', () => { save({ ...saved(), preview: null }); return null; }, { description: 'Close the Git preview' });
   for (const event of ['start', 'resume', 'turn_start', 'turn_end', 'idle'] as const) api.on(event, () => { refresh(); });
   api.on('terminal', () => view());
 }

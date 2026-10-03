@@ -1,7 +1,8 @@
 import type { CommandResult, Json, ModAPI, TerminalComponent } from '../../api.d.ts';
 
 const DIR = '.omd/preview';
-const INLINE_CHARACTERS = 40_000;
+const TEXT_BYTES = 4_000;
+const DIFF_BYTES = 48_000;
 const MAX_WATCHES = 8;
 const POLL_MS = 2_000;
 const USAGE = 'usage: /preview [N | list | PATH] [--inline] [--watch] | /preview server [PORT] | /preview unwatch | /preview close';
@@ -11,6 +12,19 @@ type State = { inline: Inline | null; revision: number; watch: string[]; hashes:
 type Turn = { items?: { type?: string; text?: string }[] };
 type Rendered = { path: string } | { error: string };
 
+// Inline views reject control characters, so line endings, tabs and terminal escapes are normalized first.
+const clean = (text: string) => text.replace(/\r\n?/g, '\n').replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/\t/g, '    ').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
+const clamp = (text: string, limit: number) => {
+  let out = '';
+  let bytes = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    if (bytes > limit) return { text: out, cut: true };
+    out += char;
+  }
+  return { text: out, cut: false };
+};
 const outputFor = (source: string) => `${DIR}/${source.replace(/[/\\]/g, '__')}.html`;
 const inlineKind = (path: string) => {
   const extension = path.split('.').pop()?.toLowerCase() ?? '';
@@ -44,13 +58,15 @@ export default function activate(api: ModAPI) {
   };
 
   const show = (title: string, kind: string, text: string): CommandResult => {
-    save({ inline: { title, kind, text: text.slice(0, INLINE_CHARACTERS) }, revision: load().revision + 1 });
-    return text.length > INLINE_CHARACTERS ? { display: `Showing the first ${INLINE_CHARACTERS} characters; open it in the browser for the rest` } : null;
+    const limit = kind === 'diff' ? DIFF_BYTES : TEXT_BYTES;
+    const shown = clamp(clean(text), limit);
+    save({ inline: { title: clamp(clean(title), 120).text, kind, text: shown.text }, revision: load().revision + 1 });
+    return shown.cut ? { display: `Showing the first ${limit / 1000} KB inline; /preview without --inline opens all of it in the browser` } : null;
   };
 
   const currentThread = () => {
     const before = api.host.call('store.get', { key: 'thread' });
-    api.host.call('store.put', { key: 'thread', value: null, expected_revision: before?.revision ?? null });
+    api.host.call('store.put', { key: 'thread', value: true, expected_revision: before?.revision ?? null });
     return api.host.call('store.get', { key: 'thread' })?.provenance.thread_id ?? null;
   };
 
@@ -72,7 +88,9 @@ export default function activate(api: ModAPI) {
       return { display: 'Stopped watching preview files' };
     }
     if (words[0] === 'server') {
-      const { ports } = api.host.call('sessions.ports', null);
+      const listed = api.host.tryCall('sessions.ports', null);
+      if (!listed.ok) return { display: `Server ports are unavailable here: ${listed.error}` };
+      const { ports } = listed.value;
       const port = words[1] ? ports.find(item => String(item.port) === words[1]) : ports.length === 1 ? ports[0] : undefined;
       if (!port) return { display: ports.length ? `Listening: ${ports.map(item => item.port).join(', ')}; use /preview server PORT` : 'No server started by this session is listening' };
       const opened = api.host.tryCall('terminal.open', { url: `http://localhost:${port.port}` });
@@ -91,7 +109,7 @@ export default function activate(api: ModAPI) {
     const file = api.host.call('workspace.stat', { paths: [target] }).files[target];
     if (file?.kind !== 'file') return { display: `No file ${target} in the workspace` };
     if (inline) {
-      if (file.size > INLINE_CHARACTERS) return { display: `${target} is too large to show inline; use /preview ${target}` };
+      if (file.size > 1_000_000) return { display: `${target} is too large to show inline; use /preview ${target}` };
       return show(target, inlineKind(target), api.host.call('workspace.read', { paths: [target] }).files[target]?.text ?? '');
     }
     if (words.includes('--watch')) {

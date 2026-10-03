@@ -7,7 +7,8 @@
   "description": "/inspect shows the session mode, install profile, active mods, workflow contract, limits and ledger",
   "license": "Apache-2.0",
   "provenance": { "maintainer": "Oh My Diff", "source": "mods/first-party" },
-  "capabilities": ["agents", "commands", "contracts", "store", "terminal"],
-  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1"] },
+  "capabilities": ["agents", "commands", "contracts", "store", "terminal", "events"],
+  "subscriptions": { "channels": ["omd_inspector/refresh"] },
+  "compatibility": { "required_features": ["terminal_lists_v1", "store_v1", "events_v1"] },
   "settings_schema": { "type": "object", "properties": {}, "additionalProperties": false }
 }

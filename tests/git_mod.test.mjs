@@ -79,11 +79,11 @@ test('Git mod stages, unstages and commits through real git argument lists', () 
       return reply.value;
     };
     run('refresh');
-    assert.deepEqual(run('stage'), { display: 'staged a.txt' });
+    assert.deepEqual(run('act', 'stage'), { display: 'staged a.txt' });
     assert.equal(git('diff', '--cached', '--name-only'), 'a.txt\n');
-    assert.deepEqual(run('unstage'), { display: 'unstaged a.txt' });
+    assert.deepEqual(run('act', 'unstage'), { display: 'unstaged a.txt' });
     assert.equal(git('diff', '--cached', '--name-only'), '');
-    run('stage');
+    run('act', 'stage');
     run('message', 'Change a');
     assert.equal(run('commit'), null);
     assert.match(run('confirm').display, /^committed [0-9a-f]{7}$/);

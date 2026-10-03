@@ -4,6 +4,7 @@
   "version": "0.2.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "description": "Keeps the current task, acceptance work and evidence through compaction and reminds the agent to recheck them",
   "license": "Apache-2.0",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_session_anchor"},
   "capabilities": ["compaction", "context", "lifecycle", "store"]

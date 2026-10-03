@@ -24,7 +24,10 @@ function invoke(name, payload, host, extra = {}) {
     assert.ifError(child.error);
     const reply = JSON.parse(child.stdout);
     if (reply.error) throw new Error(reply.error);
-    if (!reply.host_call) return reply;
+    if (!reply.host_call) {
+      if (reply.value?.status === 'refused' && typeof reply.value.reason === 'string' && !extra.refusals) throw new Error(reply.value.reason);
+      return reply;
+    }
     assert.ok(receipts.length < 32, 'native callback host-call limit');
     try { receipts.push({ call: reply.host_call, value: host(reply.host_call) }); }
     catch (error) { receipts.push({ call: reply.host_call, error: error.message }); }
@@ -92,7 +95,7 @@ function adversarialFixture(change = value => value, resultChange = value => val
   const findingLedger = {};
   const run = fixture({ 'agents.wait': agent, 'agents.result': agent }, 'reviewed_omd', findingLedger);
   begin(run.host);
-  const acceptance = run.state.get('task.thread-1').value.acceptance.sha256;
+  const acceptance = run.state.get('task').value.acceptance.sha256;
   setup(findingLedger, acceptance);
   response = change({ ...structuredClone(verdict), candidate_sha256: candidate, acceptance_sha256: acceptance,
     challenges: challengeKinds.map(kind => ({ kind, verdict: 'passed', summary: `${kind} inspected`, paths: ['source.ts'] })) });
@@ -104,8 +107,9 @@ test('workflow registers its contracts without running work and rejects missing 
   const reply = invoke('', null, () => assert.fail('activation called host'), { event: 'inspect' });
   assert.deepEqual(reply.registrations.contracts.map(contract => [contract.id, contract.assurance]), [['reviewed_omd', 'independently-verified'], ['solo_evidence', 'self-reviewed']]);
   const denied = fixture({ 'contract.status': () => ({ status: 'none', active: null }) });
+  assert.deepEqual(invoke('begin', { objective: 'x', acceptance_criteria: [criterion] }, denied.host, { refusals: true }).value, { status: 'refused', reason: 'select_workflow_contract_first' });
   assert.throws(() => begin(denied.host), /select_workflow_contract_first/);
-  assert.equal(denied.calls.length, 1);
+  assert.equal(denied.calls.length, 2);
   const oldHost = fixture({ 'contract.status': () => ({ status: 'active', active: { id: 'reviewed_omd' } }) });
   assert.throws(() => begin(oldHost.host), /finding_ledger_required/);
 });
@@ -117,7 +121,7 @@ test('task-entry lead chooses a distinct same-billing opposite route for review 
     settings: { check: { program: 'check', argv: [] }, review_route: 'opposite_lead', fallback_route: 'opposite_lead' } };
   const started = invoke('delegate', { brief: 'Make the change', outage_action: 'opposite_lead' }, run.host, options);
   assert.equal(started.value.status, 'running');
-  const selected = run.state.get('task.thread-1').value.pending.delegation;
+  const selected = run.state.get('task').value.pending.delegation;
   assert.equal(selected.reviewer.name, 'opposite');
   assert.equal(selected.fallback.name, 'opposite');
   assert.equal(selected.original_lead.name, 'lead');
@@ -129,7 +133,7 @@ test('checkpoint survives a new invocation, is compare-and-set, and cannot rewri
   invoke('checkpoint', { remaining_work: ['Run the check'], failed_hypotheses: ['Earlier approach failed'] }, run.host);
   assert.throws(() => begin(run.host), /task_already_initialized/);
   assert.throws(() => invoke('checkpoint', { acceptance_criteria: ['weaker'] }, run.host), /checkpoint_fields_invalid/);
-  const saved = run.state.get('task.thread-1').value;
+  const saved = run.state.get('task').value;
   assert.deepEqual(saved.acceptance, initial.acceptance);
   assert.deepEqual(saved.remaining_work, ['Run the check']);
   const context = invoke('', { thread_id: 'thread-1' }, run.host, { event: 'context' });
@@ -152,20 +156,20 @@ test('no-progress policy pauses repeated complete results and resumes only after
   };
   event('tool_result', result);
   event('tool_result', result);
-  assert.equal(run.state.get('task.thread-1').value.status, 'active');
+  assert.equal(run.state.get('task').value.status, 'active');
   event('tool_result', { ...result, result_complete: false });
   event('tool_result', { ...result, tool: 'wait_agent' });
   event('tool_result', result);
-  assert.equal(run.state.get('task.thread-1').value.status, 'paused');
+  assert.equal(run.state.get('task').value.status, 'paused');
   assert.deepEqual(event('tool_before', { tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'next' }),
     { deny: 'workflow_paused_no_progress' });
   assert.equal(event('tool_before', { tool: 'mod_omd_workflow_checkpoint', thread_id: 'thread-1', arguments: {}, call_id: 'repair' }), null);
   modState = invoke('checkpoint', { remaining_work: ['Try a different approach'] }, run.host,
     { settings, surface: policySurface, state: modState }).state;
-  assert.equal(run.state.get('task.thread-1').value.status, 'active');
+  assert.equal(run.state.get('task').value.status, 'active');
   assert.equal(event('tool_before', { tool: 'exec_command', thread_id: 'thread-1', arguments: {}, call_id: 'retry' }), null);
   event('tool_result', result);
-  assert.equal(run.state.get('task.thread-1').value.calls[result.call_sha256].unchanged_calls, 1);
+  assert.equal(run.state.get('task').value.calls[result.call_sha256].unchanged_calls, 1);
 });
 
 test('no-progress detection keeps pausing after many distinct calls by evicting the oldest observations', () => {
@@ -173,14 +177,14 @@ test('no-progress detection keeps pausing after many distinct calls by evicting 
   const settings = { check: { program: 'check', argv: [] }, max_no_progress_calls: 1 };
   const options = { settings, surface: { ...surface, replacements: ['tool_before'] } };
   let modState = invoke('begin', { objective: 'Make the requested change', acceptance_criteria: [criterion] }, run.host, options).state;
-  const entry = run.state.get('task.thread-1');
+  const entry = run.state.get('task');
   const seeded = Object.fromEntries(Array.from({ length: 128 }, (_, index) =>
     [digest(`call-${index}`), { result_sha256: digest('output'), progress_revision: 1, unchanged_calls: 1 }]));
-  run.state.set('task.thread-1', { ...entry, value: { ...entry.value, calls: seeded } });
+  run.state.set('task', { ...entry, value: { ...entry.value, calls: seeded } });
   const result = { thread_id: 'thread-1', agent_id: null, tool: 'exec_command', outcome: 'succeeded',
     call_sha256: digest('repeated-call'), result_sha256: digest('same-output'), result_complete: true };
   for (let index = 0; index < 2; index++) modState = invoke('', result, run.host, { ...options, event: 'tool_result', state: modState }).state;
-  const task = run.state.get('task.thread-1').value;
+  const task = run.state.get('task').value;
   assert.equal(task.status, 'paused');
   assert.equal(Object.keys(task.calls).length, 128);
   assert.equal(task.calls[digest('call-0')], undefined);
@@ -192,7 +196,7 @@ test('checks bind execution to unchanged input and refuse stale or failed result
   begin(run.host);
   assert.equal(invoke('check', {}, run.host).value.outcome, 'pass');
   assert.equal(run.receipts[0].candidate_sha256, candidate);
-  assert.equal(run.receipts[0].acceptance_sha256, run.state.get('task.thread-1').value.acceptance.sha256);
+  assert.equal(run.receipts[0].acceptance_sha256, run.state.get('task').value.acceptance.sha256);
   const changed = fixture({ 'exec.run': () => { throw new Error('snapshot_execution_changed_source'); } });
   begin(changed.host);
   assert.throws(() => invoke('check', {}, changed.host), /snapshot_execution_changed_source/);
@@ -232,7 +236,7 @@ test('denial, outage, malformed review and integration conflict never complete t
     }, expected);
     assert.ok(!run.calls.some(call => call.operation === 'task.complete'));
     if (operation !== 'agents.spawn') assert.ok(run.calls.some(call => call.operation === 'agents.cancel'));
-    assert.notEqual(run.state.get('task.thread-1').value.status, 'completed');
+    assert.notEqual(run.state.get('task').value.status, 'completed');
   }
 });
 
@@ -245,7 +249,7 @@ test('adversarial verification requires three exact categories and binds agent e
   assert.equal(run.receipts[0].candidate_sha256, candidate);
   assert.equal(run.receipts[0].acceptance_sha256, acceptance);
   assert.equal(run.receipts[0].agent, 'worker-1');
-  assert.deepEqual(run.state.get('task.thread-1').value.decisions.at(-1).challenges.map(challenge => challenge.kind), challengeKinds);
+  assert.deepEqual(run.state.get('task').value.decisions.at(-1).challenges.map(challenge => challenge.kind), challengeKinds);
   const prompt = run.calls.find(call => call.operation === 'agents.spawn').arguments.prompt;
   assert.ok(prompt.includes(candidate) && prompt.includes(acceptance));
   assert.ok(challengeKinds.every(kind => prompt.includes(kind)));
@@ -263,7 +267,7 @@ test('adversarial verification rejects missing, duplicate, unknown and invalid c
     const { run, advance } = adversarialFixture(change);
     assert.throws(advance, /adversarial_categories_required_exactly_once|adversarial_challenge_invalid/);
     assert.equal(run.receipts.length, 0);
-    assert.equal(run.state.get('task.thread-1').value.status, 'interrupted');
+    assert.equal(run.state.get('task').value.status, 'interrupted');
     assert.ok(!run.calls.some(call => call.operation === 'task.complete'));
   }
 });
@@ -289,7 +293,7 @@ test('adversarial findings, blocked checks and unavailable evidence yield failed
     assert.equal(response.status, status);
     assert.equal(response.receipt.outcome, 'fail');
     assert.equal(run.receipts[0].outcome, 'fail');
-    assert.equal(run.state.get('task.thread-1').value.status, status);
+    assert.equal(run.state.get('task').value.status, status);
     assert.equal(response.challenges[0].verdict, verdict);
   }
 });
@@ -375,7 +379,7 @@ test('host refusal preserves remaining work and solo verification cannot claim i
   assert.throws(() => invoke('complete', {}, run.host), /record_current_acceptance_assessments_first/);
   invoke('acceptance', { candidate_sha256: candidate, review: verdict }, run.host);
   assert.equal(invoke('complete', {}, run.host).value.status, 'refused');
-  assert.deepEqual(run.state.get('task.thread-1').value.remaining_work, [criterion]);
+  assert.deepEqual(run.state.get('task').value.remaining_work, [criterion]);
 });
 
 test('parent history is explicitly delivered by the host, never reconstructed from the public session projection', () => {
@@ -396,8 +400,8 @@ test('equivalent transport outages allow one fresh retry and one configured fall
   invoke('advance', {}, run.host, recoveryOptions);
   assert.equal(invoke('advance', {}, run.host, recoveryOptions).value.status, 'integrated');
   assert.deepEqual(run.calls.filter(call => call.operation === 'agents.spawn').map(call => call.arguments.route), ['contributor', 'contributor', 'opposite', 'lead']);
-  assert.equal(run.state.get('task.thread-1').value.outage_retries, 1);
-  assert.equal(run.state.get('task.thread-1').value.outage_fallbacks, 1);
+  assert.equal(run.state.get('task').value.outage_retries, 1);
+  assert.equal(run.state.get('task').value.outage_fallbacks, 1);
 });
 
 test('outage recovery pauses for nontransport errors, different failures, exhausted attempts and billing changes', () => {
@@ -438,7 +442,7 @@ test('changed route or workspace stops a retry and persisted interruption never 
   begin(missing.host);
   invoke('delegate', { brief: 'Make the change' }, missing.host);
   assert.throws(() => invoke('advance', {}, missing.host), /agent_missing/);
-  assert.equal(missing.state.get('task.thread-1').value.status, 'interrupted');
+  assert.equal(missing.state.get('task').value.status, 'interrupted');
   assert.equal(invoke('advance', {}, missing.host).value.status, 'idle');
 });
 
@@ -450,7 +454,7 @@ const typedSettings = { max_fan_out: 4, check: { program: 'check', argv: [] }, r
   edit: { role: 'editor', route: 'contributor', tools: 'workspace_edit', result_schema: resultSchema },
 } };
 const typedResult = { status: 'completed', text: JSON.stringify({ result: { answer: 'observed' }, sources: [{ ref: 'source.ts:1', why: 'inspected' }] }), candidate_sha256: candidate, evidence: { reference: 'native-thread:typed', sha256: digest('typed') } };
-const typed = (name, payload, run) => invoke(name, payload, call => call.operation === 'mods.service' ? run.state.get('task.thread-1').value : run.host(call),
+const typed = (name, payload, run) => invoke(name, payload, call => call.operation === 'mods.service' ? run.state.get('task').value : run.host(call),
   { source: typedSource, capabilities: typedManifest.capabilities, settings: typedSettings });
 
 test('typed tasks validate all results before checks and independently review edits before host integration', () => {
@@ -461,7 +465,7 @@ test('typed tasks validate all results before checks and independently review ed
   typed('advance', {}, run);
   assert.ok(!run.calls.some(call => call.operation === 'exec.run'));
   for (let step = 0; step < 5; step++) typed('advance', {}, run);
-  assert.equal(run.state.get('batch.thread-1').value.status, 'completed');
+  assert.equal(run.state.get('batch').value.status, 'completed');
   assert.deepEqual(run.receipts.map(receipt => receipt.kind), ['contribution_checks', 'contribution_review']);
   assert.equal(run.calls.filter(call => call.operation === 'workspace.integrate').length, 1);
   const edits = run.calls.filter(call => call.operation === 'agents.spawn');
@@ -490,7 +494,7 @@ test('typed malformed output, host refusal and vanished handles stay interrupted
     begin(run.host);
     typed('run', { tasks: [{ id: 'edit', type: 'edit', prompt: 'Edit' }] }, run);
     assert.throws(() => { for (let step = 0; step < 5; step++) typed('advance', {}, run); }, /worker_result_schema_mismatch|unknown_or_foreign_agent|typed_integration_refused/);
-    assert.equal(run.state.get('batch.thread-1').value.status, 'interrupted');
+    assert.equal(run.state.get('batch').value.status, 'interrupted');
     const spawns = run.calls.filter(call => call.operation === 'agents.spawn').length;
     assert.equal(typed('advance', {}, run).value.status, 'interrupted');
     assert.equal(run.calls.filter(call => call.operation === 'agents.spawn').length, spawns);
@@ -500,13 +504,13 @@ test('typed malformed output, host refusal and vanished handles stay interrupted
 test('explicit workflow cancellation releases pending reviewer and writer without integration or resetting acceptance', () => {
   const run = fixture();
   begin(run.host);
-  const acceptance = structuredClone(run.state.get('task.thread-1').value.acceptance);
+  const acceptance = structuredClone(run.state.get('task').value.acceptance);
   invoke('delegate', { brief: 'Implement the requested change' }, run.host);
   invoke('advance', {}, run.host);
   const start = run.calls.length;
   assert.equal(invoke('cancel', {}, run.host).value.status, 'cancelled');
   assert.deepEqual(run.calls.slice(start).filter(call => call.operation.startsWith('agents.')).map(call => call.operation), ['agents.cancel', 'agents.cancel']);
   assert.equal(run.calls.some(call => call.operation === 'workspace.integrate'), false);
-  assert.deepEqual(run.state.get('task.thread-1').value.acceptance, acceptance);
+  assert.deepEqual(run.state.get('task').value.acceptance, acceptance);
   assert.equal(invoke('advance', {}, run.host).value.status, 'idle');
 });

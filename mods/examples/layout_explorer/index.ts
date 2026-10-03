@@ -1,33 +1,34 @@
-import type { ModAPI, TerminalView } from '@oh-my-diff/mod-api';
+import type { ModAPI, TerminalPatch } from '@oh-my-diff/mod-api';
 
-type Notes = { lines: string[]; row: number; col: number; tab?: number };
+type Notes = { lines: string[]; row: number; col: number; tab?: number; ratio?: number[] };
 
 export default function activate(api: ModAPI) {
   const notes = (): Notes => (api.state.get() as Notes | null) ?? { lines: [''], row: 0, col: 0 };
-  api.replace('terminal', (): TerminalView => {
-    const { lines, row, col, tab = 0 } = notes();
+  api.on('terminal', (): TerminalPatch => {
+    const { lines, row, col, tab = 0, ratio = [1, 3] } = notes();
     return {
-      layout: { split: 'horizontal', ratio: [1, 3], children: [
+      layout: { split: 'horizontal', ratio, children: [
         { tabs: [{ title: 'Diff', node: { content: 'site:layout_explorer/diff' } }, { title: 'Notes', node: { content: 'site:layout_explorer/notes' } }], active: tab },
         { split: 'vertical', ratio: [5, 1], children: [{ content: 'transcript' }, { content: 'composer' }] },
       ] },
       backdrop: { ascii: { text: '·  ', dim: 0.6 } },
       sites: {
-        'layout_explorer/diff': { components: [{ type: 'diff', id: 'explorer-diff', label: 'Working diff', unified: '+++ b/README.md\n@@ -1 +1 @@\n-old\n+new', action: { command: 'layout_explorer:open' } }] },
-        'layout_explorer/notes': { components: [
-          { type: 'document', id: 'explorer-notes', label: 'Notes', keys: true, selected: { start: row, end: row },
+        'layout_explorer/diff': { mode: 'replace', components: [{ type: 'diff', id: 'explorer_diff', label: 'Working diff', unified: '+++ b/README.md\n@@ -1 +1 @@\n-old\n+new' }] },
+        'layout_explorer/notes': { mode: 'replace', components: [
+          { type: 'document', id: 'explorer_notes', label: 'Notes', keys: true, selected: { start: row, end: row },
             lines: lines.map((line, index) => index === row
               ? [{ text: line.slice(0, col) }, { text: line[col] ?? ' ', bg: '#7aa2f7' }, { text: line.slice(col + 1) }]
               : [{ text: line }]) },
-          { type: 'line', id: 'explorer-hint', label: 'Hint', spans: [{ text: 'Focus Notes with Tab, type or paste; Ctrl+] leaves, Ctrl+C cancels', fg: '#7aa2f7', italic: true }] },
+          { type: 'line', id: 'explorer_hint', label: 'Hint', spans: [{ text: 'Focus Notes with Tab, type or paste; Ctrl+] leaves, Ctrl+C cancels', fg: '#7aa2f7', italic: true }] },
         ] },
       },
-      keybindings: { 'Ctrl+Shift+p': { command: 'layout_explorer:open', args: 'palette' } },
+      keybindings: { 'Ctrl+Alt+n': { command: 'layout_explorer:open', args: 'palette' } },
     };
   });
   api.on('component_event', event => {
+    if (event.kind === 'resize' && event.ratio?.length === 2) api.state.set({ ...notes(), ratio: event.ratio });
     if (event.kind === 'select' && event.component === 'r.0') api.state.set({ ...notes(), tab: event.index ?? 0 });
-    if (event.component !== 'explorer-notes' || !event.events) return;
+    if (event.component !== 'explorer_notes' || !event.events) return;
     let { lines, row, col } = notes();
     const insert = (text: string) => {
       const [first, ...rest] = (lines[row].slice(0, col) + text).split('\n');

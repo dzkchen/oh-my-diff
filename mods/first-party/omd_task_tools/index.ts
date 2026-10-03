@@ -27,13 +27,27 @@ function cache(value: Json): Cache {
 }
 
 function command(value: Json | undefined, fallback: string[]): string[] {
-  if (value === undefined) return fallback;
+  if (value === undefined || Array.isArray(value) && !value.length) return fallback;
   if (!Array.isArray(value) || value.length === 0 || value.length > 8
       || !value.every(part => typeof part === 'string' && part.length > 0 && part.length <= 256 && !part.includes('\0'))) throw new Error('check_command_invalid');
   return value as string[];
 }
 
 export default function activate(api: ModAPI) {
+  // Expected refusals return as values; a non-Error throw is the host suspending the callback.
+  const refuse = <T>(run: () => T | Promise<T>, value: (reason: string) => T): T | Promise<T> => {
+    const refused = (error: unknown) => {
+      if (!(error instanceof Error)) throw error;
+      return value(error.message);
+    };
+    try {
+      const result = run();
+      return result instanceof Promise ? result.catch(refused) : result;
+    } catch (error) {
+      return refused(error);
+    }
+  };
+  const tool: ModAPI['tool'] = (spec, handler) => api.tool(spec, input => refuse(() => handler(input), reason => ({ status: 'refused', reason })));
   const current = () => {
     const thread = api.host.call('task.status', null).ledger.thread_id;
     if (typeof thread !== 'string' || thread.length === 0 || thread.length > 256) throw new Error('task_thread_unavailable');
@@ -56,7 +70,7 @@ export default function activate(api: ModAPI) {
   const parameters = { type: 'object' as const, properties: {}, additionalProperties: false };
   for (const kind of ORDER) {
     const check = CHECKS[kind];
-    api.tool({ name: check.name, description: check.description, parameters, task_scoped: true }, () => {
+    tool({ name: check.name, description: check.description, parameters, task_scoped: true }, () => {
       if (!current().names.includes(kind)) throw new Error('check_not_selected_for_current_workflow');
       const argv = command(api.settings[`${kind}_command`], check.command);
       return api.host.call('exec.run', { program: argv[0], argv: argv.slice(1), write: true, timeout_ms: 120000, max_output_bytes: 65_536 });

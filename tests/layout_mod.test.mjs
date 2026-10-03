@@ -111,7 +111,7 @@ test('session list groups projects with status, unread, worktree, context, ports
     event('app_notification', { method: 'turn/completed', params: { threadId: 't2', turn: { status: 'completed' } }, thread_id: 't2', coalesced: 1, dropped: 0 });
     assert.deepEqual(rows()[2], '•✓ Write docs omd/docs #7  omd-docs · gpt-6 · turn completed');
     assert.deepEqual(view().status, ['2 working · 1 unread']);
-    assert.equal(view().keybindings['Ctrl+Shift+p'].command, 'omd_layout:palette');
+    assert.equal(view().keybindings['Ctrl+Alt+p'].command, 'omd_layout:palette');
     assert.equal(command('sessions', 'list').display.split('\n')[0], '● Fix login  app/main  t1');
   } finally {
     rmSync(repository, { recursive: true, force: true });
@@ -158,7 +158,7 @@ test('palettes search nested pages, keep the composer draft, jump to sessions an
     event('resume', { thread_id: 't1', last_turn: null, restarted: false });
     assert.equal(calls.some(call => call.operation === 'composer.write'), false);
 
-    command('open', 'login');
+    command('quick_open', 'login');
     assert.deepEqual(rows(), ['file:src/login.ts', 'file:build/login.js']);
     assert.equal(view().sites.dialog.components[0].children[1].rows[1].spans[1].text, '  ignored');
     command('pick', 'run file:src/login.ts');

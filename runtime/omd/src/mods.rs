@@ -311,6 +311,7 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "receipts.submit",
     "contract.status",
     "contract.restrict",
+    "contract.select",
     "agents.spawn",
     "agents.message",
     "agents.cancel",
@@ -797,6 +798,16 @@ fn source_use(
                 && declared("unix_sockets")
             {
                 used.push("unix_sockets".to_owned());
+            }
+            if (!used.is_empty() || operation == "workspace.check_access")
+                && matches!(
+                    operation.as_str(),
+                    "exec.run" | "terminal.pty" | "workspace.check_access"
+                )
+                && visible.contains("write:")
+                && declared("fs.write")
+            {
+                used.push("fs.write".to_owned());
             }
             used
         };

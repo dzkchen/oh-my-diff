@@ -28,11 +28,17 @@ export function profileEntry(options, credentials) {
   if (!/^https?:\/\//.test(url ?? '') || !model) throw new Error('profile_url_and_upstream_model_required');
   const found = credentials.find(item => item.label === credential || item.id === credential);
   if (!found || found.kind === 'secret') throw new Error(`credential_not_enrolled: run /profile add in an OMD+ session first (${credential})`);
-  const paid = options.paid ? options.paid.split(':').map(Number) : null;
-  if (paid && (paid.length !== 2 || paid.some(value => !Number.isFinite(value) || value < 0))) throw new Error('profile_paid_invalid: INPUT_USD:OUTPUT_USD per million tokens');
+  const paid = options.paid ? String(options.paid).split(':').map(Number) : null;
+  if (paid && (paid.length !== 2 || paid.some(value => !Number.isFinite(value) || value <= 0))) throw new Error('profile_paid_invalid: INPUT_USD:OUTPUT_USD per million tokens, both above zero');
   if (found.kind !== 'chatgpt' && !paid) throw new Error('profile_paid_required: API-key profiles bill per request');
-  return { name, protocol, url, model, credential: found.id, kind: found.kind, window: options.window ? Number(options.window) : null,
-    reasoning: options.reasoning === true, max_output: 32000, paid };
+  const count = (value, label, fallback) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    const number = Number(value);
+    if (!Number.isInteger(number) || number <= 0) throw new Error(`profile_${label}_invalid: a whole number of tokens above zero`);
+    return number;
+  };
+  return { name, protocol, url, model, credential: found.id, kind: found.kind, window: count(options.window, 'window', null),
+    reasoning: options.reasoning === true, max_output: count(options.max_output, 'max_output', 32000), paid };
 }
 
 export function routeFor(slug, profile, template, url) {
@@ -57,6 +63,8 @@ export function catalogEntry(slug, profile, bundled, index) {
 
 async function setup(recordPath, optionText) {
   const options = JSON.parse(optionText || '{}');
+  const allowance = options.allowance === undefined || options.allowance === null ? null : Number(options.allowance);
+  if (allowance !== null && !(Number.isFinite(allowance) && allowance > 0)) throw new Error('profile_allowance_invalid: USD above zero');
   const record = JSON.parse(await readFile(recordPath, 'utf8'));
   if (record.profile !== 'full' || !record.packages?.omd_profiles) throw new Error('omd_plus_profiles_mod_required');
   const mod = await realpath(join(record.store, 'sources', 'omd_profiles'));
@@ -86,8 +94,6 @@ async function setup(recordPath, optionText) {
   const slugs = Object.keys(profiles);
   const models = slugs.map((slug, index) => catalogEntry(slug, profiles[slug], bundled, index));
   const fallback = slugs.includes(previous.default) ? previous.default : slugs[0];
-  await writeFile(routePath, `${JSON.stringify({ port, default: fallback, models: slugs.map(slug => ({ slug, family: profiles[slug].name })), profiles }, null, 2)}\n`);
-  await writeFile(catalogPath, `${JSON.stringify({ models }, null, 2)}\n`);
   const node = await realpath(record.author.node);
   const readPaths = [];
   for (const path of [mod, directory, resolve(dirname(node), '..'), '/System', '/usr/lib', '/private/etc/ssl', '/etc/ssl']) {
@@ -98,8 +104,7 @@ async function setup(recordPath, optionText) {
   const routes = slugs.map((slug, index) => routeFor(slug, profiles[slug], models[index], url));
   host.schema = 1;
   host.max_request_bytes = Math.max(host.max_request_bytes ?? 0, 16 * 1024 * 1024);
-  host.worker_limits = { requests: 60, exposure_microusd: 0, ...host.worker_limits, seconds: Math.max(host.worker_limits?.seconds ?? 0, 86400) };
-  if (options.allowance) host.limits = { ...host.limits, exposure_microusd: Math.round(Number(options.allowance) * 1_000_000) };
+  if (allowance !== null) host.limits = { ...host.limits, exposure_microusd: Math.round(allowance * 1_000_000) };
   if (routes.some(route => !route.rates.included_subscription) && !(host.limits?.exposure_microusd > 0)) throw new Error('profile_allowance_required: pass --allowance USD for paid API profiles');
   host.secret_refs = { ...host.secret_refs, omd_profiles_local_token: tokenPath };
   host.routes = [...(host.routes ?? []).filter(route => route.provider !== 'omd_profiles'), ...routes];
@@ -107,6 +112,8 @@ async function setup(recordPath, optionText) {
     id: 'omd_profiles', mod_id: 'omd_profiles', program: node, program_sha256: sha(await readFile(node)),
     arguments: [join(mod, 'router.mjs'), 'serve', routePath], secrets: { OMD_PROFILES_LOCAL_TOKEN: 'omd_profiles_local_token' },
     network: true, read_paths: readPaths, route: routes[slugs.indexOf(fallback)] }];
+  await writeFile(routePath, `${JSON.stringify({ port, default: fallback, models: slugs.map(slug => ({ slug, family: profiles[slug].name })), profiles }, null, 2)}\n`);
+  await writeFile(catalogPath, `${JSON.stringify({ models }, null, 2)}\n`);
   await writeFile(hostPath, `${JSON.stringify(host, null, 2)}\n`, { mode: 0o600 });
   return { provider: { id: 'omd_profiles', name: 'OMD profiles', base_url: url, env_key: 'OMD_PROFILES_LOCAL_TOKEN',
     token: tokenPath, catalog: catalogPath, route: routePath },

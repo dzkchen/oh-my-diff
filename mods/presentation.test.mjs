@@ -45,8 +45,7 @@ test('model and reasoning lists use bounded generic components', () => {
   assert.equal(run('omd_model_picker', { capabilities, event: 'list', payload: { ...payload, view_id: 'unknown' } }).value, null);
   const profiles = { profiles: [{ name: 'work', model: 'work/gpt', billing: 'included_subscription', available: true }, { name: 'router', model: 'router/claude', billing: 'explicit_paid_api_grant', available: true }], current: 'work' };
   const listed = run('omd_model_picker', { capabilities, event: 'list', payload, state: profiles }).value;
-  assert.deepEqual(listed.at(-2).action, { command: 'omd_profiles:profile', args: 'use' });
-  assert.deepEqual(listed.at(-2).rows.map(row => row.spans[0].text), ['work · work/gpt · current', 'router · router/claude · paid']);
+  assert.deepEqual(listed.slice(-3, -1).map(row => row.text), ['● work · work/gpt', '○ router · router/claude · paid']);
 });
 
 test('logo follows host acceptance and installed identity without persistent task state', () => {
@@ -82,26 +81,32 @@ test('logo follows host acceptance and installed identity without persistent tas
 
 test('workspace uses the current ledger', () => {
   const workspace = run('omd_workspace', { capabilities: ['terminal', 'commands', 'lifecycle', 'store'], event: 'terminal', payload: { event: 'idle', ledger: { thread_id: '1234567890abcdef', cost: null } } });
-  assert.equal(workspace.value.sites.sidebar.components[0].title, 'Session');
+  assert.equal(workspace.value.sites.sidebar.components[0].title, 'Activity');
+  assert.doesNotMatch(JSON.stringify(workspace.value), /1234567890|"schema"/);
   assert.equal(JSON.stringify(workspace.value).includes('No live workers'), false);
 });
 
 test('inspector opens from live host status and fails visibly when status is unavailable', () => {
-  const capabilities = ['agents', 'commands', 'contracts', 'store', 'terminal'];
+  const capabilities = ['agents', 'commands', 'contracts', 'store', 'terminal', 'events'];
   const receipts = [
-    { call: { operation: 'task.status', arguments: null }, value: { ledger: { thread_id: 'thread-1', cost: { observed: 2 } }, limits: { turns: 4 }, worker_limits: { active: 1 } } },
+    { call: { operation: 'task.status', arguments: null }, value: { ledger: { thread_id: 'thread-1', cost: { settled_task_charge_microusd: 2_000_000 } }, limits: { turns: 4 }, worker_limits: { active: 1 } } },
     { call: { operation: 'contract.status', arguments: null }, value: { status: 'active', active: { id: 'review', version: 2, assurance: 'local' } } },
   ];
-  const opened = run('omd_inspector', { capabilities, event: 'command', name: 'inspect', payload: '', receipts });
+  const published = [{ call: { operation: 'events.publish', arguments: { channel: 'refresh', data: null } }, value: { delivered: 1, dropped: 0 } }];
+  const opened = run('omd_inspector', { capabilities, event: 'command', name: 'inspect', payload: '', receipts: published });
   assert.equal(opened.state.open, true);
+  const refresh = { publisher: 'omd_inspector', channel: 'omd_inspector/refresh', data: null, correlation: null, sequence: 1, dropped: 0 };
+  const refreshed = run('omd_inspector', { capabilities, event: 'channel', state: opened.state, payload: refresh, receipts });
   const identity = { codex_version: '0.157.0', install_profile: 'full', mode: 'omd', mods: { installed: 7, enabled: 6, active: 5 } };
-  const view = run('omd_inspector', { capabilities, event: 'terminal', state: opened.state, payload: { event: 'idle', identity, ledger: null } });
+  const view = run('omd_inspector', { capabilities, event: 'terminal', state: refreshed.state, payload: { event: 'idle', identity, ledger: null } });
   const children = view.value.sites.dialog.components[0].children;
   assert.match(JSON.stringify(children), /review@2/);
   assert.match(JSON.stringify(children), /5 active/);
-  const closed = run('omd_inspector', { capabilities, event: 'command', name: 'close', payload: '', state: opened.state });
+  assert.match(JSON.stringify(children), /\$2\.00 paid API/);
+  assert.ok(children.every(child => !String(child.text ?? '').includes('{')));
+  const closed = run('omd_inspector', { capabilities, event: 'command', name: 'inspect', payload: 'close', state: refreshed.state });
   assert.equal(run('omd_inspector', { capabilities, event: 'terminal', state: closed.state, payload: { event: 'idle', identity, ledger: null } }).value, null);
-  const failed = run('omd_inspector', { capabilities, event: 'command', name: 'open', payload: '', receipts: [
+  const failed = run('omd_inspector', { capabilities, event: 'channel', state: opened.state, payload: refresh, receipts: [
     { call: receipts[0].call, error: 'unavailable' },
     { call: receipts[1].call, error: 'unavailable' },
   ] });
@@ -124,7 +129,7 @@ test('Git sidebar bounds a 700-file status view and rejects oversized or truncat
   const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
   const many = `## main\0${Array.from({ length: 700 }, (_, index) => `?? file-${String(index).padStart(4, '0')}.txt\0`).join('')}`;
   const statusCall = gitReceipts[0].call;
-  const accepted = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: [
+  const accepted = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: [
     { call: statusCall, value: reply(many) }, ...gitReceipts.slice(1),
   ] });
   assert.equal(accepted.state.total, 700);
@@ -132,15 +137,15 @@ test('Git sidebar bounds a 700-file status view and rejects oversized or truncat
   assert.match(accepted.value.display, /660 more/);
   assert.equal(accepted.calls[0].arguments.max_output_bytes, 65_536);
   const tooMany = `## main\0${Array.from({ length: 1_001 }, (_, index) => `?? file-${String(index).padStart(4, '0')}.txt\0`).join('')}`;
-  const rejected = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: [
+  const rejected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: [
     { call: statusCall, value: reply(tooMany) }, gitReceipts[1],
   ] });
   assert.match(rejected.value.display, /too many changes to preview safely/);
-  const truncated = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: [
+  const truncated = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: [
     { call: statusCall, value: { ...reply(many), stdout_truncated: true } },
   ] });
   assert.match(truncated.value.display, /safe preview limit/);
-  const oversized = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: [
+  const oversized = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: [
     { call: statusCall, value: reply(`## main\0?? ${'a'.repeat(65_536)}\0`) },
   ] });
   assert.match(oversized.value.display, /too many changes to preview safely/);
@@ -148,7 +153,7 @@ test('Git sidebar bounds a 700-file status view and rejects oversized or truncat
 
 test('Git status and branch preview use sandboxed reads while protected index writes are denied', () => {
   const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
-  const inspected = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: gitReceipts });
+  const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
   assert.match(inspected.value.display, /important\.txt/);
   const rendered = run('omd_git', { capabilities, event: 'terminal', state: inspected.state, payload: { event: 'idle' } });
   const components = rendered.value.sites.sidebar.components;
@@ -160,27 +165,27 @@ test('Git status and branch preview use sandboxed reads while protected index wr
   assert.ok(ids.includes('omd_git_unstaged') && ids.includes('omd_git_untracked'));
   assert.equal(inspected.calls.every(call => call.operation === 'exec.run' && call.arguments.write === false && call.arguments.network === 'none'), true);
   const scope = { call: gitArgs(['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'important.txt']), value: reply('important.txt\0') };
-  const blocked = run('omd_git', { capabilities, event: 'command', name: 'stage', payload: '', state: inspected.state, receipts: [
+  const blocked = run('omd_git', { capabilities, event: 'command', name: 'act', payload: 'stage', state: inspected.state, receipts: [
     gitReceipts[0], gitReceipts[1], scope,
     { call: { operation: 'workspace.check_access', arguments: { paths: ['important.txt'], write: true } }, error: 'workspace_write_permission_denied' },
   ] });
   assert.match(blocked.value.display, /permission_denied/);
   assert.equal(blocked.calls.some(call => call.operation === 'exec.run' && call.arguments.write === true), false);
-  const trackedDiscard = run('omd_git', { capabilities, event: 'command', name: 'discard', payload: '', state: inspected.state, receipts: [
+  const trackedDiscard = run('omd_git', { capabilities, event: 'command', name: 'act', payload: 'discard', state: inspected.state, receipts: [
     ...gitReceipts,
     { call: { operation: 'workspace.stat', arguments: { paths: ['important.txt'], hash: true } }, value: { files: { 'important.txt': { kind: 'file', size: 12, mtime_ms: 1, sha256: 'e'.repeat(64) } } } },
     { call: { operation: 'workspace.check_access', arguments: { paths: ['important.txt'], write: true } }, error: 'workspace_write_permission_denied' },
   ] });
   assert.match(trackedDiscard.value.display, /permission_denied/);
   assert.equal(trackedDiscard.calls.some(call => call.operation === 'workspace.transaction'), false);
-  const preview = run('omd_git', { capabilities, event: 'command', name: 'switch', payload: '', state: inspected.state, receipts: [
+  const preview = run('omd_git', { capabilities, event: 'command', name: 'checkout', payload: '', state: inspected.state, receipts: [
     ...gitReceipts,
     { call: gitArgs(['show-ref', '--verify', '--hash', 'refs/heads/feature'], 256), value: reply(`${other}\n`) },
     { call: gitArgs(['diff', '--name-status', '-z', '--no-ext-diff', '--no-textconv', oid, other], 16384), value: reply('M\0important.txt\0') },
   ] });
   assert.equal(preview.state.preview.destination, other);
   assert.equal(preview.calls.filter(call => call.operation === 'exec.run').every(call => call.arguments.write === false), true);
-  const moved = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', state: preview.state, receipts: [
+  const moved = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', state: preview.state, receipts: [
     ...gitReceipts,
     { call: gitArgs(['show-ref', '--verify', '--hash', 'refs/heads/feature'], 256), value: reply(`${'c'.repeat(40)}\n`) },
   ] });
@@ -189,7 +194,7 @@ test('Git status and branch preview use sandboxed reads while protected index wr
 
 test('stage binds exact path access, status, HEAD, index, and file content to one write', () => {
   const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
-  const inspected = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: gitReceipts });
+  const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
   const fileHash = 'e'.repeat(64);
   const scope = { call: gitArgs(['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', 'important.txt']), value: reply('important.txt\0') };
   const index = { call: gitArgs(['ls-files', '-s', '-z']), value: reply(`100644 ${'f'.repeat(40)} 0\timportant.txt\0`) };
@@ -197,7 +202,7 @@ test('stage binds exact path access, status, HEAD, index, and file content to on
   const content = { call: gitArgs(['hash-object', '--no-filters', '--', 'important.txt'], 256), value: reply(`${'c'.repeat(40)}\n`) };
   const guards = [gitReceipts[0], gitReceipts[1], index, content].map(item => ({ program: 'git', sha256: 'd'.repeat(64), argv: item.call.arguments.argv, env: { GIT_OPTIONAL_LOCKS: '0' }, stdout_sha256: item.value.stdout_sha256 }));
   const write = { operation: 'exec.run', arguments: { program: 'git', sha256: 'd'.repeat(64), argv: ['--no-pager', '--literal-pathspecs', '-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', 'core.fsmonitor=false', 'add', '-A', '--', 'important.txt'], timeout_ms: 30000, max_output_bytes: 65536, write: true, network: 'none', guards, required_access: { write: ['important.txt'] } } };
-  const staged = run('omd_git', { capabilities, event: 'command', name: 'stage', payload: '', state: inspected.state, receipts: [
+  const staged = run('omd_git', { capabilities, event: 'command', name: 'act', payload: 'stage', state: inspected.state, receipts: [
     gitReceipts[0], gitReceipts[1], scope,
     { call: { operation: 'workspace.check_access', arguments: { paths: ['important.txt'], write: true } }, value: { paths: ['important.txt'], write: true } },
     index, file, content,
@@ -206,7 +211,7 @@ test('stage binds exact path access, status, HEAD, index, and file content to on
   ] });
   assert.match(staged.value.display, /staged important\.txt/);
   assert.equal(staged.calls.find(call => call.arguments.write === true && call.operation === 'exec.run').arguments.guards.length, 4);
-  const stale = run('omd_git', { capabilities, event: 'command', name: 'stage', payload: '', state: inspected.state, receipts: [
+  const stale = run('omd_git', { capabilities, event: 'command', name: 'act', payload: 'stage', state: inspected.state, receipts: [
     { call: gitReceipts[0].call, value: reply(`## main\0 M important.txt\0`) }, gitReceipts[1],
   ] });
   assert.match(stale.value.display, /Changed since/);
@@ -216,7 +221,7 @@ test('stage binds exact path access, status, HEAD, index, and file content to on
 test('commit preview fingerprints the full index and rejects stale index views', () => {
   const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
   const stagedReceipts = [{ call: gitReceipts[0].call, value: reply(`## main\0M  important.txt\0?? new.txt\0`) }, ...gitReceipts.slice(1)];
-  const inspected = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: stagedReceipts });
+  const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: stagedReceipts });
   const message = run('omd_git', { capabilities, event: 'command', name: 'message', payload: 'Reviewable commit', state: inspected.state });
   const indexCall = gitArgs(['ls-files', '-s', '-z']);
   const index = `100644 ${'e'.repeat(40)} 0\timportant.txt\0`;
@@ -267,7 +272,7 @@ test('commit preview fingerprints the full index and rejects stale index views',
   ] });
   assert.match(changedByHook.value.display, /committed tree could not be matched/);
   assert.equal(changedByHook.state.head.oid, other);
-  const stale = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', state: preview.state, receipts: [
+  const stale = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', state: preview.state, receipts: [
     ...stagedReceipts,
     { call: indexCall, value: reply(`100644 ${'f'.repeat(40)} 0\timportant.txt\0`) },
   ] });
@@ -279,7 +284,7 @@ test('commit confirmation lists every staged path and refuses an oversized exact
   const paths = Array.from({ length: 12 }, (_, index) => `staged-${String(index).padStart(2, '0')}.txt`);
   const stagedStatus = `## main\0${paths.map(path => `M  ${path}\0`).join('')}`;
   const statusReceipts = [{ call: gitReceipts[0].call, value: reply(stagedStatus) }, ...gitReceipts.slice(1)];
-  const inspected = run('omd_git', { capabilities, event: 'command', name: 'status', receipts: statusReceipts });
+  const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', receipts: statusReceipts });
   const message = run('omd_git', { capabilities, event: 'command', name: 'message', payload: 'Exact preview', state: inspected.state });
   const check = { call: { operation: 'workspace.check_access', arguments: { paths, write: true } }, value: { paths, write: true } };
   const index = { call: gitArgs(['ls-files', '-s', '-z']), value: reply(paths.map(path => `100644 ${'e'.repeat(40)} 0\t${path}\0`).join('')) };
@@ -295,7 +300,7 @@ test('commit confirmation lists every staged path and refuses an oversized exact
   assert.match(commitPane.children[0].text, /staged-11\.txt/);
   const huge = `${'x'.repeat(4_100)}.txt`;
   const hugeStatus = [{ call: gitReceipts[0].call, value: reply(`## main\0M  ${huge}\0`) }, ...gitReceipts.slice(1)];
-  const hugeInspected = run('omd_git', { capabilities, event: 'command', name: 'status', receipts: hugeStatus });
+  const hugeInspected = run('omd_git', { capabilities, event: 'command', name: 'changes', receipts: hugeStatus });
   const hugeMessage = run('omd_git', { capabilities, event: 'command', name: 'message', payload: 'Exact preview', state: hugeInspected.state });
   const denied = run('omd_git', { capabilities, event: 'command', name: 'commit', state: hugeMessage.state, receipts: [
     ...hugeStatus, hugeStatus[0], hugeStatus[1],
@@ -309,10 +314,10 @@ test('commit confirmation lists every staged path and refuses an oversized exact
 
 test('untracked discard requires exact status and an atomic outside-repository backup', () => {
   const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
-  const inspected = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: gitReceipts });
-  const selected = run('omd_git', { capabilities, event: 'command', name: 'file', payload: 'new.txt', state: inspected.state });
+  const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
+  const selected = run('omd_git', { capabilities, event: 'command', name: 'choose', payload: 'new.txt', state: inspected.state });
   const fileHash = 'e'.repeat(64);
-  const candidate = run('omd_git', { capabilities, event: 'command', name: 'discard', payload: '', state: selected.state, receipts: [
+  const candidate = run('omd_git', { capabilities, event: 'command', name: 'act', payload: 'discard', state: selected.state, receipts: [
     ...gitReceipts,
     { call: { operation: 'workspace.stat', arguments: { paths: ['new.txt'], hash: true } }, value: { files: { 'new.txt': { kind: 'file', size: 7, mtime_ms: 1, sha256: fileHash } } } },
   ] });
@@ -349,11 +354,11 @@ test('untracked discard requires exact status and an atomic outside-repository b
 
 test('tracked discard keeps a scoped backup and rejects a changed precondition', () => {
   const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
-  const inspected = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: gitReceipts });
+  const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: gitReceipts });
   const beforeHash = 'e'.repeat(64);
   const before = { call: { operation: 'workspace.stat', arguments: { paths: ['important.txt'], hash: true } }, value: { files: { 'important.txt': { kind: 'file', size: 12, mtime_ms: 1, sha256: beforeHash } } } };
   const access = { call: { operation: 'workspace.check_access', arguments: { paths: ['important.txt'], write: true } }, value: { paths: ['important.txt'], write: true } };
-  const preview = run('omd_git', { capabilities, event: 'command', name: 'discard', payload: '', state: inspected.state, receipts: [
+  const preview = run('omd_git', { capabilities, event: 'command', name: 'act', payload: 'discard', state: inspected.state, receipts: [
     ...gitReceipts, before, access,
     { call: gitArgs(['diff', '--binary', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', '--', 'important.txt']), value: reply('diff --git a/important.txt b/important.txt\n') },
     { call: gitArgs(['ls-files', '-s', '-z']), value: reply(`100644 ${'f'.repeat(40)} 0\timportant.txt\0`) },
@@ -386,11 +391,11 @@ test('clean branch switch binds destination and affected paths and preserves ign
     { call: gitReceipts[0].call, value: reply('## main\0') },
     gitReceipts[1], gitReceipts[2], gitReceipts[3],
   ];
-  const inspected = run('omd_git', { capabilities, event: 'command', name: 'status', payload: '', receipts: clean });
+  const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', payload: '', receipts: clean });
   const target = { call: gitArgs(['show-ref', '--verify', '--hash', 'refs/heads/feature'], 256), value: reply(`${other}\n`) };
   const delta = { call: gitArgs(['diff', '--name-status', '-z', '--no-ext-diff', '--no-textconv', oid, other], 16384), value: reply('M\0important.txt\0') };
   const version = { 'important.txt': 'a'.repeat(64) };
-  const preview = run('omd_git', { capabilities, event: 'command', name: 'switch', payload: '', state: inspected.state, receipts: [
+  const preview = run('omd_git', { capabilities, event: 'command', name: 'checkout', payload: '', state: inspected.state, receipts: [
     ...clean, target, delta,
     { call: { operation: 'workspace.check_access', arguments: { paths: ['important.txt'], write: true } }, value: { paths: ['important.txt'], write: true } },
     { call: { operation: 'workspace.stat', arguments: { paths: ['important.txt'], hash: true } }, value: { files: { 'important.txt': { kind: 'file', size: 10, mtime_ms: 1, sha256: version['important.txt'] } } } },
@@ -420,11 +425,11 @@ test('clean branch switch binds destination and affected paths and preserves ign
 test('switch confirmation lists every affected path and refuses an oversized exact preview', () => {
   const capabilities = ['commands', 'exec', 'fs.read', 'fs.write', 'store', 'lifecycle', 'terminal'];
   const clean = [{ call: gitReceipts[0].call, value: reply('## main\0') }, ...gitReceipts.slice(1)];
-  const inspected = run('omd_git', { capabilities, event: 'command', name: 'status', receipts: clean });
+  const inspected = run('omd_git', { capabilities, event: 'command', name: 'changes', receipts: clean });
   const target = { call: gitArgs(['show-ref', '--verify', '--hash', 'refs/heads/feature'], 256), value: reply(`${other}\n`) };
   const paths = Array.from({ length: 12 }, (_, index) => `changed-${String(index).padStart(2, '0')}.txt`);
   const diffCall = gitArgs(['diff', '--name-status', '-z', '--no-ext-diff', '--no-textconv', oid, other], 16384);
-  const preview = run('omd_git', { capabilities, event: 'command', name: 'switch', state: inspected.state, receipts: [
+  const preview = run('omd_git', { capabilities, event: 'command', name: 'checkout', state: inspected.state, receipts: [
     ...clean, target, { call: diffCall, value: reply(paths.map(path => `M\0${path}\0`).join('')) },
     { call: { operation: 'workspace.check_access', arguments: { paths, write: true } }, value: { paths, write: true } },
     { call: { operation: 'workspace.stat', arguments: { paths, hash: true } }, value: { files: Object.fromEntries(paths.map(path => [path, { kind: 'file', sha256: 'a'.repeat(64) }])) } },
@@ -437,7 +442,7 @@ test('switch confirmation lists every affected path and refuses an oversized exa
   assert.equal(switchPane.type, 'pane');
   assert.match(switchPane.children[0].text, /changed-11\.txt/);
   const huge = `${'x'.repeat(4_100)}.txt`;
-  const denied = run('omd_git', { capabilities, event: 'command', name: 'switch', state: inspected.state, receipts: [
+  const denied = run('omd_git', { capabilities, event: 'command', name: 'checkout', state: inspected.state, receipts: [
     ...clean, target, { call: diffCall, value: reply(`M\0${huge}\0`) },
     { call: { operation: 'workspace.check_access', arguments: { paths: [huge], write: true } }, value: { paths: [huge], write: true } },
     { call: { operation: 'workspace.stat', arguments: { paths: [huge], hash: true } }, value: { files: { [huge]: { kind: 'file', sha256: 'a'.repeat(64) } } } },
@@ -445,47 +450,6 @@ test('switch confirmation lists every affected path and refuses an oversized exa
   assert.match(denied.value.display, /exact switch preview limit/);
   assert.equal(denied.state.preview, null);
   assert.equal(denied.calls.some(call => call.operation === 'exec.run' && call.arguments.write === true), false);
-});
-
-test('graph navigator uses live source service and rejects stale or mismatched evidence', () => {
-  const capabilities = ['commands', 'services', 'store', 'terminal'];
-  const digest = '9'.repeat(64);
-  const node = 'module:src/lib.rs';
-  const provenance = { workspace_snapshot: false, validation: 'double_list_and_hash' };
-  const search = { schema: 1, generator: 'omd-repository-analysis-five-language-v3', repository_identity: 'fixture/repo', revision: 'live-source', source_digest: digest,
-    rows: [{ id: node, label: 'src/lib.rs', detail: 'module · 1 extracted' }], count: 1, page: 0, page_size: 32, provenance };
-  const packet = { schema: 1, graph_generator: search.generator, repository_identity: search.repository_identity, revision: search.revision, source_digest: digest,
-    nodes: [{ id: node }], relationships: [], coverage: [], guidance: 'Verify relationships against source.', provenance };
-  const call = (method, input) => ({ operation: 'mods.service', arguments: { name: 'omd.repository_analysis', method, input } });
-  const openReceipt = { call: call('search', { query: '', page: 0, root: '' }), value: search };
-  const opened = run('omd_graph_navigator', { capabilities, event: 'command', name: 'open', payload: '', receipts: [openReceipt] });
-  const alias = run('omd_graph_navigator', { capabilities, event: 'command', name: 'graph', payload: '', receipts: [openReceipt] });
-  assert.equal(alias.state.count, opened.state.count);
-  assert.ok(alias.registrations.commands.some(command => command.name === 'graph'));
-  const view = run('omd_graph_navigator', { capabilities, event: 'terminal', state: opened.state, payload: { event: 'idle' } });
-  const row = view.value.sites.dialog.components[0].children.find(item => item.id === 'omd_graph_nodes').rows[0];
-  assert.match(row.value, /^graph-row:[0-9a-f]{64}:\d+:\d+:\d+$/);
-  assert.ok(Buffer.byteLength(row.value) < 128);
-  assert.notEqual(row.value, node);
-  const selected = run('omd_graph_navigator', { capabilities, event: 'command', name: 'select', payload: row.value, state: opened.state, receipts: [
-    { call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: packet },
-  ] });
-  assert.match(selected.value.insert, /live source code-graph evidence/);
-  assert.equal(selected.state.open, false);
-  assert.deepEqual(selected.calls.map(item => item.operation), ['mods.service']);
-  const stale = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source: source('omd_graph_navigator'), filename: 'index.ts', api: '0.2.0-experimental.4', surface, capabilities,
-      settings: {}, state: opened.state, event: 'command', name: 'search', payload: 'entry', receipts: [
-        { call: call('search', { query: 'entry', page: 0, root: '', expected_source_digest: digest }), error: 'analysis_source_digest_stale' },
-      ] }), encoding: 'utf8', timeout: 5000,
-  });
-  assert.equal(stale.status, 1);
-  assert.match(JSON.parse(stale.stdout).error, /source_digest_stale/);
-  const mismatched = run('omd_graph_navigator', { capabilities, event: 'command', name: 'select', payload: row.value, state: opened.state, receipts: [
-    { call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: { ...packet, source_digest: 'e'.repeat(64) } },
-  ] });
-  assert.match(mismatched.value.display, /does not match/);
-  assert.equal(mismatched.state.open, true);
 });
 
 test('Git hooks run on commit; rejection preserves HEAD and mutation changes the committed tree', () => {

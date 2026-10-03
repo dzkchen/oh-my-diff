@@ -5,7 +5,7 @@
   "source": "plugins/bundled/oh-my-diff",
   "guide": {
     "path": "plugins/README.md",
-    "sha256": "cce8c97b6b061103071a1a83f1349bf36eed569fa531121456021c16d5f7c045"
+    "sha256": "5842a6bedd053bdb4311872d8322e5598dfd64965a9e6284815f6dbd265de193"
   },
   "plugins": {
     "omd-guidance-hooks": {
@@ -58,7 +58,7 @@
     "plugins/omd-application-bridges/.mcp.json": "e0ed5aa1abd9dd1e78d3f6797a5730bf7e5a36de370e18e162c4a73cc7551701",
     "plugins/omd-application-bridges/hooks/hooks.json": "705c7166e08a13e189d4caf332408a3ce0b760b04ffc42d183062da2d143b993",
     "plugins/omd-application-bridges/hooks/omd_bridge_lifecycle.py": "539b6345795423658a84f8296de958011677f7640a871f5528b49ab80fda6e49",
-    "plugins/omd-application-bridges/scripts/omd_application_bridge.py": "c4a03297b8a75b1acb84db84c1370b10c0ac53a2d96746aab599b787b6434a82",
+    "plugins/omd-application-bridges/scripts/omd_application_bridge.py": "2351aff368316899153c753b0330f26c85e6ec60e720802459c8c4ea0942ac16",
     "plugins/omd-artifact-reading/.codex-plugin/omd.json": "38e358e9488c196911257135004be50b144974936892848ad4d0cd4885bf3a1b",
     "plugins/omd-artifact-reading/.codex-plugin/plugin.json": "9324e098d303dbc68db25f2774dc624f60d04423b5f4c209a1566209f97f99a8",
     "plugins/omd-artifact-reading/README.md": "b8cd094cc8039aa3686e559f68b53bb4ee6252d8b53b641eb482762fb3948ffd",

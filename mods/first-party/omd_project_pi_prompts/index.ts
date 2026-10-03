@@ -217,12 +217,13 @@ async function discoverSkills(api: ModAPI): Promise<{ resources: Skill[]; diagno
   return { resources, diagnostics };
 }
 
-async function discoverPrompts(api: ModAPI): Promise<{ resources: Prompt[]; diagnostics: Json[]; candidate_sha256: string }> {
-  const before = api.host.call('workspace.fingerprint', {});
-  if (!SHA.test(before.candidate_sha256)) throw new Error('pi_candidate_invalid');
+// Slash commands can't fingerprint the workspace or locate programs; they rely on the read-then-stat hash checks alone.
+async function discoverPrompts(api: ModAPI, slash = false): Promise<{ resources: Prompt[]; diagnostics: Json[]; candidate_sha256: string }> {
+  const before = slash ? { candidate_sha256: '' } : api.host.call('workspace.fingerprint', {});
+  if (!slash && !SHA.test(before.candidate_sha256)) throw new Error('pi_candidate_invalid');
   const stat = api.host.call('workspace.stat', { paths: [ROOT] }).files[ROOT];
   if (stat === null) {
-    api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
+    if (!slash) api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
     return { resources: [], diagnostics: [], candidate_sha256: before.candidate_sha256 };
   }
   if (stat?.kind !== 'dir') throw new Error('pi_prompt_root_unavailable');
@@ -260,17 +261,17 @@ async function discoverPrompts(api: ModAPI): Promise<{ resources: Prompt[]; diag
       || final[item.path]?.sha256 !== files[item.path]?.sha256) throw new Error('pi_source_stale');
   }
   resources.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-  api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
+  if (!slash) api.host.call('workspace.fingerprint', { expected: before.candidate_sha256 });
   const result = { resources, diagnostics, candidate_sha256: before.candidate_sha256 };
   if (utf8(JSON.stringify(result)).length > MAX_RESULT_BYTES) throw new Error('pi_resource_aggregate_limit');
   return result;
 }
 
-async function discover(api: ModAPI): Promise<{ resources: Resource[]; diagnostics: Json[]; candidate_sha256: string }> {
-  const prompts = await discoverPrompts(api);
+async function discover(api: ModAPI, slash = false): Promise<{ resources: Resource[]; diagnostics: Json[]; candidate_sha256: string }> {
+  const prompts = await discoverPrompts(api, slash);
   const skills = await discoverSkills(api);
-  const user = await userResources(api, 'discover', {});
-  api.host.call('workspace.fingerprint', { expected: prompts.candidate_sha256 });
+  const user = await userResources(api, 'discover', {}, slash);
+  if (!slash) api.host.call('workspace.fingerprint', { expected: prompts.candidate_sha256 });
   const selected = new Map<string, Resource>();
   for (const resource of user?.resources || []) selected.set(`${resource.kind}/${resource.name}`, resource);
   for (const resource of [...prompts.resources, ...skills.resources]) selected.set(`${resource.kind}/${resource.name}`, resource);
@@ -281,17 +282,17 @@ async function discover(api: ModAPI): Promise<{ resources: Resource[]; diagnosti
   return result;
 }
 
-async function userResources(api: ModAPI, tool: 'discover' | 'expand', input: Json): Promise<UserResult | null> {
+async function userResources(api: ModAPI, tool: 'discover' | 'expand', input: Json, slash = false): Promise<UserResult | null> {
   const directory = api.settings.user_agent_dir;
-  if (directory === undefined) return null;
+  if (directory === undefined || directory === '') return null;
   if (typeof directory !== 'string' || !directory.startsWith('/') || directory.length > 4096 || directory.split('/').includes('..')) throw new Error('pi_user_root_invalid');
   const source = api.assets.read('index.ts');
   const bootstrap = api.assets.read('pi_user_cli.mjs');
   if (!SHA.test(source.sha256) || utf8(source.text).length > 64 * 1024 || !SHA.test(bootstrap.sha256)
     || utf8(bootstrap.text).length > 16 * 1024) throw new Error('pi_package_source_invalid');
-  const node = api.host.call('process.which', { names: ['node'] }).found.find(item => item.name === 'node');
+  const node = slash ? { path: 'node', sha256: undefined } : api.host.call('process.which', { names: ['node'] }).found.find(item => item.name === 'node');
   if (!node) throw new Error('pi_user_node_unavailable');
-  const result = api.host.call('exec.run', { program: node.path, sha256: node.sha256,
+  const result = api.host.call('exec.run', { program: node.path, ...(node.sha256 ? { sha256: node.sha256 } : {}),
     argv: ['--no-warnings', '--input-type=module', '--eval', bootstrap.text, JSON.stringify({ tool, input, user_agent_dir: directory })],
     stdin: source.text, timeout_ms: 30_000, max_output_bytes: MAX_RESULT_BYTES, output_artifact: true });
   if (result.exit_code !== 0 || result.timed_out || result.stdout_truncated || result.stderr_truncated || !result.output_artifact)
@@ -363,17 +364,17 @@ function substitute(content: string, arguments_: string[]): string {
   return replaceAll(replaceAll(sliced, '$ARGUMENTS', all), '$@', all);
 }
 
-async function expand(api: ModAPI, input: Json): Promise<Json> {
+async function expand(api: ModAPI, input: Json, slash = false): Promise<Json> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('pi_input_invalid');
   const name = input.name;
   const args = input.args;
   if (typeof name !== 'string' || !NAME.test(name) || typeof args !== 'string' || args.length > 4096) throw new Error('pi_input_invalid');
-  const catalog = await discoverPrompts(api);
+  const catalog = await discoverPrompts(api, slash);
   const prompt = catalog.resources.find(item => item.name === name);
   if (!prompt) {
-    const user = await userResources(api, 'expand', input);
+    const user = await userResources(api, 'expand', input, slash);
     if (!user || user.error === 'pi_prompt_not_found') throw new Error('pi_prompt_not_found');
-    api.host.call('workspace.fingerprint', { expected: catalog.candidate_sha256 });
+    if (!slash) api.host.call('workspace.fingerprint', { expected: catalog.candidate_sha256 });
     return { ...user, candidate_sha256: catalog.candidate_sha256 };
   }
   const text = substitute(prompt.content, parseArgs(args));
@@ -382,16 +383,16 @@ async function expand(api: ModAPI, input: Json): Promise<Json> {
 }
 
 async function command(api: ModAPI, input: Json): Promise<Json> {
-  if (typeof input !== 'string' || input.length > 4096) throw new Error('pi_command_invalid');
+  if (typeof input !== 'string' || input.length > 4096) return { display: 'usage: /pi [NAME [ARGS]]' };
   const trimmed = input.trim();
   if (!trimmed) {
-    const catalog = await discover(api);
+    const catalog = await discover(api, true);
     const prompts = catalog.resources.filter(item => item.kind === 'prompts');
     return { display: prompts.length ? prompts.map(item => `${item.name} (${item.scope}): ${item.description}`).join('\n') : 'No Pi prompts found.' };
   }
   const match = /^([^\s]+)(?:\s+([\s\S]*))?$/.exec(trimmed);
-  if (!match || !NAME.test(match[1])) throw new Error('pi_command_invalid');
-  const result = await expand(api, { name: match[1], args: match[2] || '' });
+  if (!match || !NAME.test(match[1])) return { display: 'usage: /pi [NAME [ARGS]]' };
+  const result = await expand(api, { name: match[1], args: match[2] || '' }, true);
   const content = result && typeof result === 'object' && !Array.isArray(result) ? result.text : null;
   if (typeof content !== 'string' || !content.trim() || utf8(content).length > 16_384) throw new Error('pi_command_expansion_invalid');
   return { submit: content };
@@ -403,5 +404,8 @@ export default function activate(api: ModAPI) {
   api.tool({ name: 'expand', description: 'Expand an exact project-local Pi prompt using Pi positional argument rules.',
     parameters: { type: 'object', properties: { name: { type: 'string' }, args: { type: 'string' } },
       required: ['name', 'args'], additionalProperties: false } }, input => expand(api, input));
-  api.command('pi', input => command(api, input), { description: 'List Pi prompts or submit a named prompt with arguments' });
+  api.command('pi', input => command(api, input).catch(error => {
+    if (!(error instanceof Error)) throw error;
+    return { display: `/pi: ${error.message}` };
+  }), { description: 'List Pi prompts or submit a named prompt with arguments' });
 }

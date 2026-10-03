@@ -26,7 +26,26 @@
     "properties": {
       "task_types": {
         "type": "object",
-        "default": {}
+        "default": {
+          "research": {
+            "role": "research",
+            "route": "contributor",
+            "tools": "read_search",
+            "result_schema": {
+              "type": "object",
+              "properties": {
+                "answer": {
+                  "type": "string",
+                  "maxLength": 8000
+                }
+              },
+              "required": [
+                "answer"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
       },
       "max_fan_out": {
         "type": "number",

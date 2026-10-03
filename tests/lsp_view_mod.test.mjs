@@ -45,7 +45,7 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     assert.deepEqual(view[0].children[1].rows, [{ value: 'box.py:2', label: 'box.py:2:7', spans: [{ text: 'box.py:2:7' }] }]);
     assert.deepEqual(view[0].children[1].action, { command: 'omd_lsp_view:lsp', args: 'open' });
     state = invoke(state, 'command', 'open box.py:2', 'lsp').state;
-    assert.deepEqual(state.view.excerpt, { path: 'box.py', line: 2, start: 1, lines: ['value = 1', 'class Box:', '    size = 2'] });
+    assert.deepEqual(state.view.excerpt, { path: 'box.py', line: 2, start: 1, lines: ['value = 1', 'class Box:', '    size = 2'], errors: [] });
     assert.deepEqual(calls.at(-1).args, { channel: 'request', data: { op: 'diagnostics', path: 'box.py' } });
     answer = { status: 'ready', message: '', items: [{ label: 'box.py:3:5 bad size', value: 'box.py:3' }, { label: 'other.py:1:1 broken', value: 'other.py:1' }], text: null, action: 'open' };
     state = invoke(state, 'channel', { publisher: 'omd_lsp_view', channel: 'omd_lsp_view/request', data: calls.at(-1).args.data, correlation: null, sequence: 2, dropped: 0 }).state;
@@ -58,7 +58,8 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     assert.deepEqual(view[2].action, { command: 'omd_panes:open', args: 'box.py:2' });
     assert.deepEqual(view[4].action, { command: 'omd_editor:edit', args: 'box.py:2' });
     assert.deepEqual(view[6].rows.map(row => row.value), ['box.py:3']);
-    assert.deepEqual(sites.sidebar.components[0].children.map(item => item.text), ['python pylsp · 2 open · 1 errors', '  box.py:3:5 bad size', 'rust fallback: rust_server_absent']);
+    assert.deepEqual(sites.sidebar.components[0].children.map(item => item.text), ['python pylsp · 2 open · 1 errors', '  box.py:3:5 bad size', 'rust: rust server absent']);
+    assert.deepEqual(invoke(state, 'command', 'back', 'lsp').state.view.items.map(item => item.value), ['box.py:2']);
     answer = 'service_provider_missing: omd.lsp';
     state = invoke(state, 'channel', { publisher: 'omd_lsp_view', channel: 'omd_lsp_view/request', data: request.data, correlation: null, sequence: 3, dropped: 0 }).state;
     assert.equal(state.view.message, 'enable omd_lsp_sync, which runs the language servers');

@@ -70,37 +70,61 @@ export default function activate(api: ModAPI) {
     const children: TerminalComponent[] = [
       line('omd_graph_repository', 'Repository', state.error ?? `${state.identity} · ${state.revision}`, state.error ? 'failure' : 'accent'),
       ...(state.error ? [] : [line('omd_graph_counts', 'Graph', `${state.count} matches · source ${state.digest.slice(0, 12)} · live source revalidated on selection`)]),
-      { type: 'input', id: 'omd_graph_query', label: 'Search graph', value: state.query, placeholder: 'symbol, module, test, path', action: { command: 'omd_graph_navigator:search' } },
-      ...(state.rows.length ? [{ type: 'list' as const, id: 'omd_graph_nodes', label: 'Graph nodes', rows: state.rows.map((row, index) => ({ value: rowToken(state, index), label: row.label, spans: [{ text: bounded(`${row.label}  ${row.detail}`, 256, 256) }] })), selected: rowToken(state, 0), height: 12, action: { command: 'omd_graph_navigator:select' } }] : [line('omd_graph_empty', 'Nodes', state.error ? 'Graph unavailable' : 'No matching nodes', 'muted')]),
-      ...(state.page > 0 ? [{ type: 'button' as const, id: 'omd_graph_previous', label: 'Previous graph page', text: 'Previous', action: { command: 'omd_graph_navigator:previous' } }] : []),
-      ...((state.page + 1) * state.pageSize < state.count ? [{ type: 'button' as const, id: 'omd_graph_next', label: 'Next graph page', text: 'Next', action: { command: 'omd_graph_navigator:next' } }] : []),
-      { type: 'button', id: 'omd_graph_refresh', label: 'Refresh live source graph', text: 'Refresh', action: { command: 'omd_graph_navigator:refresh' } },
-      { type: 'button', id: 'omd_graph_close', label: 'Close graph navigator', text: 'Close', action: { command: 'omd_graph_navigator:close' } },
+      { type: 'input', id: 'omd_graph_query', label: 'Search graph', value: state.query, placeholder: 'symbol, module, test, path', action: { command: 'omd_graph_navigator:graph', args: 'search' } },
+      ...(state.rows.length ? [{ type: 'list' as const, id: 'omd_graph_nodes', label: 'Graph nodes', rows: state.rows.map((row, index) => ({ value: rowToken(state, index), label: row.label, spans: [{ text: bounded(`${row.label}  ${row.detail}`, 256, 256) }] })), selected: rowToken(state, 0), height: 12, action: { command: 'omd_graph_navigator:graph', args: 'select' } }] : [line('omd_graph_empty', 'Nodes', state.error ? 'Graph unavailable' : 'No matching nodes', 'muted')]),
+      ...(state.page > 0 ? [{ type: 'button' as const, id: 'omd_graph_previous', label: 'Previous graph page', text: 'Previous', action: { command: 'omd_graph_navigator:graph', args: 'previous' } }] : []),
+      ...((state.page + 1) * state.pageSize < state.count ? [{ type: 'button' as const, id: 'omd_graph_next', label: 'Next graph page', text: 'Next', action: { command: 'omd_graph_navigator:graph', args: 'next' } }] : []),
+      { type: 'button', id: 'omd_graph_refresh', label: 'Refresh live source graph', text: 'Refresh', action: { command: 'omd_graph_navigator:graph', args: 'refresh' } },
+      { type: 'button', id: 'omd_graph_close', label: 'Close graph navigator', text: 'Close', action: { command: 'omd_graph_navigator:graph', args: 'close' } },
     ];
     return { sites: { dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_graph_dialog', label: 'Oh My Diff code graph', title: 'Oh My Diff code/impact graph', children }] } } };
   };
-  const open = () => { load({ ...saved(), open: true, page: 0 }); return null; };
-  api.command('open', open, { description: 'Open the live source repository graph' });
-  api.command('graph', open, { description: 'Open the live source repository graph' });
-  api.command('refresh', () => { load(saved()); return null; }, { description: 'Revalidate and refresh the live source graph' });
-  api.command('search', value => { const state = saved(); load({ ...state, query: typeof value === 'string' ? value.slice(0, 100) : '', page: 0 }, state.digest || undefined); return null; }, { description: 'Filter graph nodes' });
-  api.command('next', () => { const state = saved(); load({ ...state, page: state.page + 1 }, state.digest || undefined); return null; }, { description: 'Show the next graph page' });
-  api.command('previous', () => { const state = saved(); load({ ...state, page: Math.max(0, state.page - 1) }, state.digest || undefined); return null; }, { description: 'Show the previous graph page' });
-  api.command('close', () => { save({ ...saved(), open: false }); return null; }, { description: 'Close graph navigator' });
-  api.command('select', value => {
-    const state = saved();
-    const node = typeof value === 'string' ? state.rows.find((_, index) => rowToken(state, index) === value) : undefined;
-    if (!state.open || !node || !SHA.test(state.digest) || !validRoot) return { display: 'select a visible graph node first' };
+  const select = (state: Saved, token: string) => {
+    const node = state.rows.find((_, index) => rowToken(state, index) === token);
+    if (!state.open || !node || !SHA.test(state.digest) || !validRoot) return 'select a visible graph node first';
     const packet = api.services.call('omd.repository_analysis', 'select', { node_id: node.id, expected_source_digest: state.digest, root }) as unknown as SelectionPacket;
     if (!packet || packet.schema !== 1 || packet.graph_generator !== GENERATOR || packet.repository_identity !== state.identity || packet.revision !== state.revision
       || packet.source_digest !== state.digest || !provenance(packet.provenance) || !Array.isArray(packet.nodes) || !packet.nodes.some(item => item && item.id === node.id)
-      || !Array.isArray(packet.relationships) || !Array.isArray(packet.coverage) || typeof packet.guidance !== 'string') return { display: 'graph selection does not match the preview' };
+      || !Array.isArray(packet.relationships) || !Array.isArray(packet.coverage) || typeof packet.guidance !== 'string') return 'graph selection does not match the preview';
     const content = JSON.stringify(packet);
-    if (content.length > 32 * 1024) return { display: 'graph selection exceeds the bounded evidence limit' };
+    if (content.length > 32 * 1024) return 'graph selection exceeds the bounded evidence limit';
     const insert = `Use this live source code-graph evidence. Verify inferred and unknown relationships against source before relying on them.\n\`\`\`json\n${content}\n\`\`\`\n`;
-    if (utf8Bytes(insert) > INSERT_BYTES_LIMIT) return { display: 'graph selection exceeds the composer insertion limit' };
+    if (utf8Bytes(insert) > INSERT_BYTES_LIMIT) return 'graph selection exceeds the composer insertion limit';
+    const written = api.host.tryCall('composer.write', { insert });
+    if (!written.ok) return written.error;
     save({ ...state, open: false });
-    return { insert };
-  }, { description: 'Insert fresh bounded graph evidence into the composer' });
+    return null;
+  };
+  // Slash commands can't call services, so the command hops to this mod's own native channel handler.
+  api.command('graph', value => {
+    const [op = '', ...rest] = String(value ?? '').trim().split(' ');
+    const argument = rest.join(' ');
+    if (op === 'close') {
+      save({ ...saved(), open: false });
+      return null;
+    }
+    if (!['', 'open', 'refresh', 'search', 'next', 'previous', 'select'].includes(op)) return { display: 'usage: /omd_graph_navigator:graph [search QUERY | next | previous | refresh | close]' };
+    save({ ...saved(), open: true });
+    const asked = api.host.tryCall('events.publish', { channel: 'request', data: { op, argument: argument.slice(0, NODE_ID_LIMIT) } });
+    return asked.ok ? null : { display: asked.error };
+  }, { description: 'Open, search and page the live source code graph; selecting a node inserts its evidence' });
+  api.on('channel', ({ channel, data }) => {
+    const request = data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+    if (channel !== 'omd_graph_navigator/request' || !request) return;
+    const state = { ...saved(), open: true };
+    const op = String(request.op ?? '');
+    const argument = typeof request.argument === 'string' ? request.argument : '';
+    try {
+      if (op === 'select') {
+        const refused = select(state, argument);
+        if (refused) save({ ...state, error: visible(refused, 240) });
+      } else if (op === 'search') load({ ...state, query: argument.slice(0, 100), page: 0 }, state.digest || undefined);
+      else if (op === 'next' || op === 'previous') load({ ...state, page: Math.max(0, state.page + (op === 'next' ? 1 : -1)) }, state.digest || undefined);
+      else load({ ...state, page: op === 'refresh' ? state.page : 0 });
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      fail(state, error.message);
+    }
+  });
   api.on('terminal', () => view());
 }

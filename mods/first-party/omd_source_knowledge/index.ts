@@ -378,28 +378,43 @@ async function session(api: ModAPI, input: Json, inspect: boolean): Promise<Json
 }
 
 export default function activate(api: ModAPI) {
+  // Expected refusals return as values; a non-Error throw is the host suspending the callback.
+  const refuse = <T>(run: () => T | Promise<T>, value: (reason: string) => T): T | Promise<T> => {
+    const refused = (error: unknown) => {
+      if (!(error instanceof Error)) throw error;
+      return value(error.message);
+    };
+    try {
+      const result = run();
+      return result instanceof Promise ? result.catch(refused) : result;
+    } catch (error) {
+      return refused(error);
+    }
+  };
+  const tool: ModAPI['tool'] = (spec, handler) => api.tool(spec, input => refuse(() => handler(input), reason => ({ status: 'refused', reason })));
+  const command: ModAPI['command'] = (name, handler, options) => api.command(name, input => refuse(() => handler(input), reason => ({ display: `Refused: ${reason}` })), options);
   const common = { repository_identity: { type: 'string' } };
-  api.tool({ name: 'retain_source', description: 'Retain a bounded source-backed fact with an exact file and line range.',
+  tool({ name: 'retain_source', description: 'Retain a bounded source-backed fact with an exact file and line range.',
     parameters: { type: 'object', properties: { ...common, expected_revision: { type: 'integer' }, id: { type: 'string' }, task_id: { type: 'string' },
       label: { type: 'string' }, source: { type: 'object' } }, required: ['repository_identity', 'expected_revision', 'id', 'task_id', 'label', 'source'], additionalProperties: false } },
   input => retain(api, input));
-  api.tool({ name: 'retain_evidence', description: 'Retain a bounded copy of current-thread evidence for repository reuse.',
+  tool({ name: 'retain_evidence', description: 'Retain a bounded copy of current-thread evidence for repository reuse.',
     parameters: { type: 'object', properties: { ...common, expected_revision: { type: 'integer' }, id: { type: 'string' }, task_id: { type: 'string' },
       summary: { type: 'string' }, kind: { type: 'string' }, reference: { type: 'object' } },
       required: ['repository_identity', 'expected_revision', 'id', 'task_id', 'summary', 'kind', 'reference'], additionalProperties: false } },
   input => retainEvidence(api, input));
-  api.tool({ name: 'propose_lesson', description: 'Propose an inert lesson backed by retained evidence.',
+  tool({ name: 'propose_lesson', description: 'Propose an inert lesson backed by retained evidence.',
     parameters: { type: 'object', properties: { ...common, expected_revision: { type: 'integer' }, id: { type: 'string' }, task_id: { type: 'string' },
       text: { type: 'string' }, evidence_ids: { type: 'array', items: { type: 'string' } } },
       required: ['repository_identity', 'expected_revision', 'id', 'task_id', 'text', 'evidence_ids'], additionalProperties: false } },
   input => proposeLesson(api, input));
-  api.tool({ name: 'session', description: 'Return cold or refreshed reusable source facts; invalidated facts never enter reuse context.',
+  tool({ name: 'session', description: 'Return cold or refreshed reusable source facts; invalidated facts never enter reuse context.',
     parameters: { type: 'object', properties: { ...common, mode: { type: 'string', enum: ['cold', 'reuse'] }, max_context_bytes: { type: 'integer' } },
       required: ['repository_identity', 'mode'], additionalProperties: false } }, input => session(api, input, false));
-  api.tool({ name: 'inspect', description: 'Inspect current source facts, including invalidation status and provenance.',
+  tool({ name: 'inspect', description: 'Inspect current source facts, including invalidation status and provenance.',
     parameters: { type: 'object', properties: { ...common, max_context_bytes: { type: 'integer' } }, required: ['repository_identity'], additionalProperties: false } },
   input => session(api, input, true));
-  api.command('approve_lesson', input => approveLesson(api, input), { description: 'Approve an exact retained lesson with an explicit action and revision' });
-  api.command('remove', input => remove(api, input), { description: 'Remove an exact retained record with an explicit action and revision' });
-  api.command('reset', input => reset(api, input), { description: 'Reset retained knowledge with an explicit action and revision' });
+  command('approve_lesson', input => approveLesson(api, input), { description: 'Approve an exact retained lesson with an explicit action and revision' });
+  command('forget', input => remove(api, input), { description: 'Remove an exact retained record with an explicit action and revision' });
+  command('discard', input => reset(api, input), { description: 'Reset retained knowledge with an explicit action and revision' });
 }

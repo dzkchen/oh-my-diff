@@ -26,7 +26,7 @@ export default function activate(api: ModAPI) {
     });
     return api.host.call('task.complete', { candidate_sha256: candidate });
   });
-  api.command('routes', () => ({ display: api.host.call('routes.list', null).map(route => route.name).join(', ') }));
+  api.command('picked', value => ({ display: `Picked row ${String(value)}` }));
   api.middleware('response_stream', event =>
     event.boundary && /\bTODO\b/.test(event.text ?? '')
       ? { stop: { reason: 'unfinished marker' }, retry: { inject: 'Remove TODO markers before finishing.' } }
@@ -38,7 +38,7 @@ export default function activate(api: ModAPI) {
     }));
     const list: TerminalComponent = {
       type: 'list', id: 'rows', label: event.title, rows,
-      selected: event.selected === null ? undefined : String(event.selected), action: { command: 'release_check:routes' },
+      selected: event.selected === null ? undefined : String(event.selected), action: { command: 'release_check:picked' },
     };
     return [list];
   });

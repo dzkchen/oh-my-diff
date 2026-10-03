@@ -18,8 +18,9 @@ patch. They are not a public release or a qualified default. Build the patched
 `codex`, `omd-mod`, `omd`, and `omd-contract` executables from
 `upstream.lock.json` and `runtime/patches/manifest.json`. Pack the typed author
 SDK with `mise exec -- pnpm --dir mods pack --pack-destination /path/to/release`
-and copy that archive to `/path/to/release/mod-api.tgz`. Use Node `24.18.0` from
-`mise which node`. The OMD Core profile installs the host, mod manager, author
+and copy that archive to `/path/to/release/mod-api.tgz`. Use Node 24.18 or a
+later 24.x (`mise which node`); any upstream Codex `0.159.x` serves as the
+fallback. The OMD Core profile installs the host, mod manager, author
 SDK/CLI, a local package-control command, the `omd_logo` presentation mod and the `omd_mods`
 control screen. It does not change
 `CODEX_HOME`, `CODEX_SQLITE_HOME`, the selected Codex account, or project files.
@@ -85,9 +86,10 @@ activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
 selections and adds newly bundled first-party packages disabled. Ten curated plugin source packages are available in
 `/path/to/omd-candidate/bundles/oh-my-diff`; none is installed into Codex or
-started. The deferred code-execution plugin, browser,
-bridge service, external language servers, code-mode host, and sidecars are
-absent from the installed base profile.
+started. The upstream `codex-code-mode-host`, built from the same pinned tree,
+is installed beside `codex`, because current models run shell commands through
+it. The deferred code-execution plugin, browser, bridge service, external
+language servers and sidecars are absent from the installed base profile.
 
 The staged plugins are guidance hooks, review policy, application bridges,
 artifact reading, anchored edit, session review, curated memory, debugger, procedures and browser. Their nested
@@ -207,15 +209,27 @@ only the managed launcher and installation prefix:
 ```
 
 The mod store and Codex state remain. The installer refuses removal if its
-launcher or pinned upstream fallback changed or the prefix contains a user file.
+launcher changed, no upstream Codex `0.159.x` remains on `PATH`, or the prefix
+contains a user file; an upgraded upstream (for example `brew upgrade codex`) is
+fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept
+`--upstream /path/to/codex`. A `codex`, `omd`, `omd-contract`, `omd-mod`,
+`omd-package` or `omd-mod-author` already in the launcher directory and not
+managed by the installer is moved to `NAME.before-omd` and restored on
+uninstall. Rolling back restores the previous generation's binaries and
+launchers but keeps the current mod store; Phase 11 makes no promise that an
+older generation reads newer store data.
 If you explicitly added the
 staged plugin marketplace to Codex, remove its plugins and run
 `codex plugin marketplace remove oh-my-diff` before uninstall; the installer
 refuses to leave a marketplace pointing at a removed directory. Local candidate qualification
 and package limits are recorded in `.docs/ROADMAP.md`.
 
-Both profiles include the generic `omd` extension-command dispatcher and the
-`omd-contract` selection tool. Their launchers select the installation's mod
+Both profiles include the generic `omd` extension-command dispatcher, the
+`omd-contract` selection tool and `omd-mod`, all on `PATH` next to `codex`.
+`omd-package contract list|status|plan|select|clear` runs `omd-contract` against
+the installation's store and the current repository. The `codex` launcher runs
+Codex in embedded mode (`features.daemon_auto_start=false`) and exports
+`OMD_NODE`. Their launchers select the installation's mod
 store; only explicitly trusted and enabled command exports are available. For
 example, `omd COMMAND --repo /absolute/project` routes to the selected
 extension. No session-review or memory behavior is built into this binary.

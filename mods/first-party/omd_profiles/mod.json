@@ -4,14 +4,14 @@
   "version": "0.1.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "state_scope": "thread",
   "description": "Switch between ChatGPT accounts, API keys and OpenAI- or Anthropic-compatible providers at the next request",
   "license": "Apache-2.0",
   "provenance": {
     "maintainer": "Oh My Diff",
     "source": "mods/first-party"
   },
-  "capabilities": ["commands", "lifecycle", "model", "exec", "config", "credentials", "events", "terminal", "store"],
-  "subscriptions": {"channels": ["omd_profiles/select"]},
+  "capabilities": ["commands", "lifecycle", "model", "exec", "credentials", "events", "terminal", "store"],
   "compatibility": {"required_features": ["credentials_v1", "events_v1", "route_reload_v1"]},
   "assets": ["router.mjs", "setup.mjs"]
 }

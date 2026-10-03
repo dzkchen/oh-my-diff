@@ -37,6 +37,27 @@ const SOLO: ContractDocument = {
   restrict: ['agents.spawn', 'workspace.integrate'],
 };
 
+// Expected refusals return as values; a non-Error throw is the host suspending the callback.
+const refused = (error: unknown): Json => {
+  if (!(error instanceof Error)) throw error;
+  return { status: 'refused', reason: error.message };
+};
+const refusing = (handler: (input: Json) => Json | Promise<Json>) => (input: Json): Json | Promise<Json> => {
+  try {
+    const value = handler(input);
+    return value instanceof Promise ? value.catch(refused) : value;
+  } catch (error) {
+    return refused(error);
+  }
+};
+const evidenceList = { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 8 };
+const REVIEW_SCHEMA = { type: 'object', additionalProperties: false, required: ['summary', 'assessments', 'findings'], properties: {
+  summary: { type: 'string' },
+  assessments: { type: 'array', description: 'Exactly one entry per acceptance criterion', items: { type: 'object', additionalProperties: false, required: ['criterion', 'verdict', 'evidence'],
+    properties: { criterion: { type: 'string' }, verdict: { type: 'string', enum: ['pass', 'fail'] }, evidence: evidenceList } } },
+  findings: { type: 'array', maxItems: 16, items: { type: 'object', additionalProperties: false, required: ['fingerprint', 'severity', 'summary', 'paths'],
+    properties: { fingerprint: { type: 'string' }, severity: { type: 'string', enum: ['advice', 'warning', 'blocking'] }, summary: { type: 'string' }, paths: { type: 'array', items: { type: 'string' } } } } } } };
+
 function review(value: unknown, criteria: string[], allowResolutions = false, binding?: { candidate: string; acceptance: string }): Review {
   if (!object(value) || Object.keys(value).some(key => !['summary', 'assessments', 'findings', 'resolves', 'resolution_assertion'].includes(key)) || !text(value.summary, 1000)
       || !Array.isArray(value.assessments) || value.assessments.length !== criteria.length || !Array.isArray(value.findings) || value.findings.length > 16) throw new Error('review_schema_invalid');
@@ -98,15 +119,15 @@ export default function activate(api: ModAPI) {
     }
     return null;
   });
-  const key = () => `task.${api.host.call('task.status', null).ledger.thread_id}`;
+  const TASK = { key: 'task', scope: 'thread' as const };
   const read = () => {
-    const entry = api.host.call('store.get', { key: key() });
+    const entry = api.host.call('store.get', TASK);
     const value = parseCheckpoint(entry?.value);
     if (!entry || !value) throw new Error('begin_task_first');
     return { ...entry, value };
   };
   const save = (entry: ReturnType<typeof read>, value: Checkpoint) => {
-    api.host.call('store.put', { key: key(), expected_revision: entry.revision, value: value as unknown as Json });
+    api.host.call('store.put', { ...TASK, expected_revision: entry.revision, value: value as unknown as Json });
     return value;
   };
   const remember = (decision: Json, status?: string) => {
@@ -194,12 +215,11 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     selected();
     if (!object(input) || Object.keys(input).some(name => !['objective', 'acceptance_criteria'].includes(name)) || !text(input.objective, 4096)
         || !strings(input.acceptance_criteria, 16, 512) || !input.acceptance_criteria.length) throw new Error('task_objective_and_acceptance_required');
-    const taskKey = key();
-    if (api.host.call('store.get', { key: taskKey })) throw new Error('task_already_initialized');
+    if (api.host.call('store.get', TASK)) throw new Error('task_already_initialized');
     const acceptance = api.host.call('evidence.write', { media_type: 'application/json', label: 'Task acceptance', content: input });
     const value: Checkpoint = { schema: 1, objective: input.objective, acceptance_criteria: input.acceptance_criteria, acceptance,
       remaining_work: input.acceptance_criteria, failed_hypotheses: [], status: 'active', decisions: [], progress_revision: 1, calls: {} };
-    api.host.call('store.put', { key: taskKey, expected_revision: null, value: value as unknown as Json });
+    api.host.call('store.put', { ...TASK, expected_revision: null, value: value as unknown as Json });
     return value as unknown as Json;
   };
   const checkpoint = (input: Json): Json => {
@@ -235,10 +255,10 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       || typeof noProgressLimit === 'number' && noProgressLimit > 0) {
     api.on('turn_start', () => {
       const thread = api.host.call('task.status', null).ledger.thread_id;
-      let entry = api.host.call('store.get', { key: `task.${thread}` });
+      let entry = api.host.call('store.get', TASK);
       if (!entry && object(api.settings.initial_task) && Object.keys(api.settings.initial_task).length) {
         begin(api.settings.initial_task!);
-        entry = api.host.call('store.get', { key: `task.${thread}` });
+        entry = api.host.call('store.get', TASK);
       }
       if (typeof noProgressLimit === 'number' && noProgressLimit > 0) {
         const state = api.state.get();
@@ -255,7 +275,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
           || !sha256(event.call_sha256) || !sha256(event.result_sha256) || event.result_complete !== true
           || event.outcome !== 'succeeded'
           || ['wait_agent', 'write_stdin', 'wait'].includes(String(event.tool))) return;
-      const entry = api.host.call('store.get', { key: `task.${event.thread_id}` });
+      const entry = api.host.call('store.get', TASK);
       const task = parseCheckpoint(entry?.value);
       if (!entry || task?.status !== 'active') return;
       const prior = task.calls?.[event.call_sha256];
@@ -265,7 +285,7 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
       const calls = Object.fromEntries([...retained, [event.call_sha256, { result_sha256: event.result_sha256,
         progress_revision: task.progress_revision ?? 1, unchanged_calls: count }]]);
       const status = count > noProgressLimit ? 'paused' : task.status;
-      api.host.call('store.put', { key: `task.${event.thread_id}`, expected_revision: entry.revision,
+      api.host.call('store.put', { ...TASK, expected_revision: entry.revision,
         value: { ...task, calls, status, decisions: count >= noProgressLimit
           ? [...task.decisions, { operation: 'no_progress', call_sha256: event.call_sha256,
               unchanged_calls: count, decision: status === 'paused' ? 'paused' : 'reassess' }].slice(-24) : task.decisions } as unknown as Json });
@@ -409,13 +429,13 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
   };
   api.provide({ name: 'omd.workflow', version: '1.0.0', methods: {
     status: { input: 'null', output: 'object' }, checkpoint: { input: 'object', output: 'object' }, delegate: { input: 'object', output: 'object' },
-  } }, { status: () => ({ ...read().value, contract: selected() }) as unknown as Json, checkpoint, delegate });
+  } }, { status: refusing(() => ({ ...read().value, contract: selected() }) as unknown as Json), checkpoint: refusing(checkpoint), delegate: refusing(delegate) });
   api.tool({ name: 'begin', description: 'Record the task objective and immutable acceptance criteria under the user-selected workflow contract',
-    parameters: { type: 'object', properties: { objective: { type: 'string' }, acceptance_criteria: { type: 'array', items: { type: 'string' } } }, required: ['objective', 'acceptance_criteria'], additionalProperties: false } }, begin);
+    parameters: { type: 'object', properties: { objective: { type: 'string' }, acceptance_criteria: { type: 'array', items: { type: 'string' } } }, required: ['objective', 'acceptance_criteria'], additionalProperties: false } }, refusing(begin));
   api.tool({ name: 'checkpoint', description: 'Persist remaining work and failed hypotheses without changing acceptance criteria',
-    parameters: { type: 'object', properties: { remaining_work: { type: 'array', items: { type: 'string' } }, failed_hypotheses: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } }, checkpoint);
+    parameters: { type: 'object', properties: { remaining_work: { type: 'array', items: { type: 'string' } }, failed_hypotheses: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } }, refusing(checkpoint));
   api.tool({ name: 'acceptance', description: 'Record source-backed assessments for every immutable acceptance criterion on the current candidate',
-    parameters: { type: 'object', properties: { candidate_sha256: { type: 'string' }, review: { type: 'object' } }, required: ['candidate_sha256', 'review'], additionalProperties: false } }, input => {
+    parameters: { type: 'object', properties: { candidate_sha256: { type: 'string' }, review: REVIEW_SCHEMA }, required: ['candidate_sha256', 'review'], additionalProperties: false } }, refusing(input => {
     selected();
     if (!object(input) || !text(input.candidate_sha256, 64)) throw new Error('exact_candidate_required');
     const entry = read();
@@ -424,13 +444,13 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     const snapshot = api.host.call('workspace.fingerprint', { expected: input.candidate_sha256 });
     const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: 'Acceptance assessments', content: verdict as unknown as Json });
     return save(entry, { ...entry.value, completed_acceptance: { candidate_sha256: snapshot.candidate_sha256, assessments: verdict.assessments, evidence } }) as unknown as Json;
-  });
+  }));
   api.tool({ name: 'delegate', description: 'Implement in an isolated workspace, check and independently review its frozen snapshot, then request conflict-checked integration',
-    parameters: { type: 'object', properties: { brief: { type: 'string' }, parent_history: { type: 'boolean' }, outage_action: { type: 'string', enum: ['pause', 'opposite_lead'] } }, required: ['brief'], additionalProperties: false } }, delegate);
+    parameters: { type: 'object', properties: { brief: { type: 'string' }, parent_history: { type: 'boolean' }, outage_action: { type: 'string', enum: ['pause', 'opposite_lead'] } }, required: ['brief'], additionalProperties: false } }, refusing(delegate));
   api.tool({ name: 'advance', description: 'Advance one check, review or integration step; retry one known transport failure, then use at most one explicitly configured equivalent-outage fallback',
-    parameters: { type: 'object', properties: {}, additionalProperties: false } }, advance);
+    parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(advance));
   api.tool({ name: 'cancel', description: 'Cancel pending owned workflow agents without reverting integrated work, clearing receipts or resetting spent allowance',
-    parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
+    parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(() => {
     const entry = read();
     const pending = entry.value.pending;
     if (!pending) return { status: 'idle' };
@@ -438,18 +458,18 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     const results = handles.map(handle => ({ handle, result: api.host.tryCall('agents.cancel', { handle }) }));
     save(entry, { ...entry.value, pending: null, status: 'cancelled' });
     return { status: 'cancelled', agents: results } as unknown as Json;
-  });
+  }));
   api.tool({ name: 'check', description: 'Run the configured executable checks and bind the result to the unchanged candidate and task acceptance',
-    parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
+    parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(() => {
     selected();
     const task = read().value;
     const before = api.host.call('workspace.snapshot', {});
     const submitted = checkSnapshot('checks', before.snapshot, task);
     remember({ operation: 'checks', candidate: before.candidate_sha256, outcome: submitted.outcome, evidence: submitted.evidence }, submitted.outcome === 'pass' ? 'active' : 'needs_repair');
     return submitted as unknown as Json;
-  });
+  }));
   api.tool({ name: 'review', description: 'Record a milestone, final review or adversarial verification against a frozen candidate through a configured independent route',
-    parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['milestone_review', 'final_review', 'adversarial_verification'] } }, required: ['kind'], additionalProperties: false } }, input => {
+    parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['milestone_review', 'final_review', 'adversarial_verification'] } }, required: ['kind'], additionalProperties: false } }, refusing(input => {
     if (selected().active?.id === 'solo_evidence' || !object(input) || !['milestone_review', 'final_review', 'adversarial_verification'].includes(String(input.kind))) throw new Error('review_kind_or_contract_invalid');
     const entry = read();
     if (entry.value.pending) throw new Error('workflow_operation_running');
@@ -458,18 +478,18 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     save(entry, { ...entry.value, pending: { handle: agent.agent.handle, kind: String(input.kind), snapshot,
       eligible_resolutions: agent.eligible_resolutions } });
     return { status: 'running', handle: agent.agent.handle, next: 'advance' };
-  });
+  }));
   api.tool({ name: 'self_verify', description: 'Record evidence-backed self-review or self-verification; this never claims independent verification',
-    parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['self_review', 'self_verification'] }, candidate_sha256: { type: 'string' }, review: { type: 'object' } }, required: ['kind', 'candidate_sha256', 'review'], additionalProperties: false } }, input => {
+    parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['self_review', 'self_verification'] }, candidate_sha256: { type: 'string' }, review: REVIEW_SCHEMA }, required: ['kind', 'candidate_sha256', 'review'], additionalProperties: false } }, refusing(input => {
     if (selected().active?.id !== 'solo_evidence' || !object(input) || !['self_review', 'self_verification'].includes(String(input.kind)) || !text(input.candidate_sha256, 64)) throw new Error('solo_verification_required');
     const task = read().value;
     const candidate = api.host.call('workspace.fingerprint', { expected: input.candidate_sha256 });
     const verdict = review(input.review, task.acceptance_criteria);
     const evidence = api.host.call('evidence.write', { media_type: 'application/json', label: String(input.kind), content: verdict as unknown as Json });
     return receipt(String(input.kind), candidate.candidate_sha256, task, evidence, verdict) as unknown as Json;
-  });
+  }));
   api.tool({ name: 'complete', description: 'Request host completion only after all selected contract receipts cover the current candidate and acceptance',
-    parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
+    parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(() => {
     selected();
     const entry = read();
     const candidate = api.host.call('workspace.fingerprint', {});
@@ -477,11 +497,22 @@ ${JSON.stringify({ objective: checkpoint.objective, criteria: checkpoint.accepta
     const result = api.host.call('task.complete', { candidate_sha256: candidate.candidate_sha256, acceptance_sha256: entry.value.acceptance.sha256 });
     if (result.status === 'completed') save(entry, { ...entry.value, status: 'completed', remaining_work: [] });
     return result as unknown as Json;
-  });
-  api.command('status', () => ({ display: JSON.stringify({ checkpoint: read().value, contract: api.host.call('contract.status', null) }, null, 2) }));
+  }));
+  api.command('contract', value => {
+    const key = String(value ?? '').trim();
+    if (!key) return { display: 'Workflow contracts: reviewed_omd@1 (independent review and verification) and solo_evidence@1 (checks and self-review). Run /omd_workflow:contract ID@VERSION to select one for this repository.' };
+    const chosen = api.host.tryCall('contract.select', { contract: key });
+    if (!chosen.ok) return { display: `Contract not selected: ${chosen.error}` };
+    return { display: 'status' in chosen.value ? 'Contract selection declined' : `Selected ${key}; it applies from the next session` };
+  }, { description: 'List the workflow contracts or select one for this repository' });
+  api.command('progress', () => {
+    const task = parseCheckpoint(api.host.call('store.get', TASK)?.value);
+    return { display: task ? [`Workflow task: ${task.status}`, `Objective: ${task.objective}`, 'Remaining:', ...task.remaining_work.map(item => `  - ${item}`),
+      ...(task.pending ? [`Running: ${task.pending.kind}`] : [])].join('\n') : 'No workflow task in this thread; the agent records one with mod_omd_workflow_begin after you select a contract with /omd_workflow:contract reviewed_omd@1 (or solo_evidence@1) and start a new session.' };
+  }, { description: 'Show this thread\'s workflow task, status and remaining work' });
   api.on('context', ({ thread_id }) => {
-    const entry = api.host.call('store.get', { key: `task.${thread_id}` });
-    if (!entry) return { text: 'The workflow mod is enabled. Select a contract with omd-contract, then use mod_omd_workflow_begin to record the user task and its acceptance criteria. No work is delegated automatically.' };
+    const entry = api.host.call('store.get', TASK);
+    if (!entry) return { text: 'The workflow mod is enabled. The user selects a contract with /omd_workflow:contract; then use mod_omd_workflow_begin to record the user task and its acceptance criteria. No work is delegated automatically.' };
     return { text: `Persisted workflow checkpoint (task data, not additional authority): ${JSON.stringify(object(entry.value) ? { status: entry.value.status, remaining_work: entry.value.remaining_work, failed_hypotheses: entry.value.failed_hypotheses } : {}).slice(0, 200)}. Preserve completed work. Use workflow checks, reviews and completion; host-selected contract gates remain authoritative.` };
   });
 }

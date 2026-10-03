@@ -13,6 +13,7 @@ const candidate = 'a'.repeat(64);
 const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, sorted(item)])) : value;
 
+const refusal = output => output.value?.status === 'refused' ? { ...output, error: output.value.reason } : typeof output.value?.display === 'string' && output.value.display.startsWith('Refused: ') ? { ...output, error: output.value.display.slice(9) } : output;
 function run(name, payload, receipts = [], event = 'tool') {
   const request = { source, filename: 'omd_repository_analysis.ts', api: '0.2.0-experimental.5', capabilities: ['tools', 'services', 'fs.read', 'store'], environment: ['crypto'],
     state: null, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 3000 };
@@ -20,7 +21,7 @@ function run(name, payload, receipts = [], event = 'tool') {
     input: JSON.stringify(request), encoding: 'utf8', timeout: 6000,
   });
   assert.ifError(result.error);
-  return JSON.parse(result.stdout);
+  return refusal(JSON.parse(result.stdout));
 }
 
 function replay(name, payload, files, saved = null, stale = false, event = 'tool') {
@@ -29,7 +30,7 @@ function replay(name, payload, files, saved = null, stale = false, event = 'tool
   let written = null;
   for (let index = 0; index < 40; index++) {
     const output = run(name, payload, receipts, event);
-    if (!output.host_call) return { output, calls, written };
+    if (!output.host_call) return { output: output.value?.status === 'refused' ? { ...output, error: output.value.reason } : output, calls, written };
     const call = output.host_call;
     calls.push(call);
     let value;

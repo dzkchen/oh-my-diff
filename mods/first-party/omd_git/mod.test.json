@@ -5,8 +5,8 @@
       "type": "invoke",
       "mod": "omd_git",
       "event": "command",
-      "name": "stage",
-      "payload": "",
+      "name": "act",
+      "payload": "stage",
       "expect": {
         "display": "select a changed file first"
       }

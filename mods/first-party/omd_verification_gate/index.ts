@@ -5,11 +5,26 @@ const required = (receipt: string, producer: ContractRequirement['producer']): C
 const object = (value: Json): Record<string, Json> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
 
 export default function activate(api: ModAPI) {
+  // Expected refusals return as values; a non-Error throw is the host suspending the callback.
+  const refuse = <T>(run: () => T | Promise<T>, value: (reason: string) => T): T | Promise<T> => {
+    const refused = (error: unknown) => {
+      if (!(error instanceof Error)) throw error;
+      return value(error.message);
+    };
+    try {
+      const result = run();
+      return result instanceof Promise ? result.catch(refused) : result;
+    } catch (error) {
+      return refused(error);
+    }
+  };
+  const tool: ModAPI['tool'] = (spec, handler) => api.tool(spec, input => refuse(() => handler(input), reason => ({ status: 'refused', reason })));
+  const command: ModAPI['command'] = (name, handler, options) => api.command(name, input => refuse(() => handler(input), reason => ({ display: `Refused: ${reason}` })), options);
   api.contract({ schema: 2, id: CONTRACT, version: 1, description: 'Reviewed workflow with explicit candidate sealing', assurance: 'independently-verified', gates: {
     complete: [required('checks', 'host'), required('final_review', 'separate_agent'), required('adversarial_verification', 'separate_agent')],
     integrate: [required('contribution_checks', 'host'), required('contribution_review', 'separate_agent')],
   } });
-  api.tool({ name: 'seal_candidate', description: 'Close writable delegation and integration after all acceptance assessments cover the exact candidate; read-only reviewers remain available',
+  tool({ name: 'seal_candidate', description: 'Close writable delegation and integration after all acceptance assessments cover the exact candidate; read-only reviewers remain available',
     parameters: { type: 'object', properties: { candidate_sha256: { type: 'string' } }, required: ['candidate_sha256'], additionalProperties: false },
   }, input => {
     const candidate = object(input).candidate_sha256;
@@ -26,5 +41,5 @@ export default function activate(api: ModAPI) {
     return api.host.call('contract.restrict', { operations: ['workspace.integrate'], scoped: [{ operation: 'agents.spawn', when: { '/workspace': 'isolated_worktree' } }],
       reason: `Candidate ${candidate} entered final verification` });
   });
-  api.command('policy', () => api.host.call('contract.status', null) as unknown as Json, { description: 'Show the selected contract and verification restrictions' });
+  command('gate', () => ({ display: 'omd_verification_gate requires checks, a final review and adversarial verification by a separate agent on the exact candidate, plus checked and reviewed contributions before integration. seal_candidate closes writable delegation and integration once acceptance covers the candidate. Select it with /omd_workflow:contract omd_verification_gate@1; /inspect shows the active contract.' }), { description: 'Explain the verification gate contract' });
 }

@@ -482,10 +482,12 @@ pub(super) async fn dispatch(
                 .map(|route| route_info(host, route))
                 .collect::<Vec<_>>()
         )),
-        "task.status" => Ok(
-            json!({"ledger": lead.ledger(), "limits": host.config.limits,
-            "worker_limits": host.config.worker_limits}),
-        ),
+        "task.status" => {
+            host.refresh_session(&lead.session)?;
+            let config = host.route_config().0;
+            Ok(json!({"ledger": lead.ledger(), "limits": config.limits,
+            "worker_limits": config.worker_limits}))
+        }
         "receipts.submit" => submit_receipt(core, lead, &caller, request.arguments).await,
         "task.complete" => complete(core, lead, request.arguments).await,
         "contract.status" => Ok(lead

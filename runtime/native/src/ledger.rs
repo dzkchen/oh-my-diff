@@ -92,9 +92,16 @@ mod tests {
         assert_eq!(task.uncertain_requests().unwrap(), vec![1]);
         assert_eq!(task.cost_capture().unwrap().observed.len(), 1);
         drop(task);
-        let mut changed = limits();
-        changed.requests += 1;
-        assert!(open(&root, "repository", thread, changed, true).is_err());
+        let mut raised = limits();
+        raised.exposure_microusd = 200;
+        let task = open(&root, "repository", thread, raised, true).unwrap();
+        assert_eq!(task.remaining().unwrap().2, 170);
+        task.set_limits(limits()).unwrap();
+        assert_eq!(task.remaining().unwrap().2, 70);
+        drop(task);
+        let task = open(&root, "repository", thread, limits(), true).unwrap();
+        assert_eq!(task.remaining().unwrap().2, 70);
+        drop(task);
         let path = root
             .join(format!("ledger-repository-{thread}"))
             .join("identity.json");

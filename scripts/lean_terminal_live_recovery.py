@@ -92,7 +92,7 @@ def run(artifacts, upstream, output, greeting_source):
                     and not any(visible(phrase[:24]) for phrase in greetings))
 
             def boundary(label, theme=True, greeting="THEME GREETING PROBE", broken=False,
-                         invocation="omd_inspector:close"):
+                         invocation="omd_inspector:inspect close"):
                 assert process.pid == pid and process.poll() is None
                 status = call([manager, "status", store], env)
                 config = json.loads((store / "mods.json").read_text())

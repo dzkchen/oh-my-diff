@@ -127,7 +127,7 @@ export default function activate(api: ModAPI) {
   };
   const responses = (limit: number): string[] => {
     const before = api.host.call('store.get', { key: 'thread' });
-    api.host.call('store.put', { key: 'thread', value: null, expected_revision: before?.revision ?? null });
+    api.host.call('store.put', { key: 'thread', value: true, expected_revision: before?.revision ?? null });
     const threadId = api.host.call('store.get', { key: 'thread' })?.provenance.thread_id ?? null;
     const page = api.host.call('app.request', { method: 'thread/turns/list', params: { threadId, limit, itemsView: 'summary' } }) as { data?: { items?: { type?: string; text?: string }[] }[] };
     return (page.data ?? []).flatMap(turn => (turn.items ?? []).filter(item => item.type === 'agentMessage').slice(-1).map(item => item.text ?? ''));

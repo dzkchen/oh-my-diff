@@ -14,7 +14,8 @@ type State = {
   find: Search; transcript: string[]; open: boolean; revisions: Record<string, number>;
 };
 
-const KEYS = { palette: 'Ctrl+Shift+p', jump: 'Ctrl+Shift+j', open: 'Ctrl+Shift+o', find: 'Ctrl+Shift+s', sessions: 'Alt+u' };
+const KEYS = { palette: 'Ctrl+Alt+p', jump: 'Ctrl+Alt+g', quick_open: 'Ctrl+Alt+o', find: 'Ctrl+Alt+f', sessions: 'Ctrl+Alt+s' };
+const LIST_BYTES = { picker: 32_768, dialog: 12_288, sidebar: 6_144, site: 6_144 };
 const KEY = /^(Ctrl\+)?(Alt\+)?(Shift\+)?([a-z0-9]|F([2-9]|1[0-2])|Up|Down|Left|Right|Home|End|PageUp|PageDown|Delete|Insert|Enter|Backspace|Space)$/;
 const PAGES: Record<string, string> = { models: 'Models', sessions: 'Sessions', actions: 'Mod actions', commands: 'Commands', skills: 'Skills', templates: 'Templates' };
 const BUILTINS: [string, string, string][] = [['builtin:new', 'Session: New', 'Start a new session'], ['builtin:compact', 'Session: Compact', 'Summarize the conversation to free context'],
@@ -31,6 +32,14 @@ const fit = (text: string, limit: number, lines = false) => {
   }
   return out;
 };
+const bytes = (value: unknown) => [...JSON.stringify(value)].reduce((total, char) => {
+  const code = char.codePointAt(0) ?? 0;
+  return total + (code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4);
+}, 0);
+const within = <T>(rows: T[], limit: number) => {
+  let total = 0;
+  return rows.filter(row => (total += bytes(row)) <= limit);
+};
 const FRESH_MS = 15 * 60_000;
 const EXPIRED_MS = 7 * 24 * 60 * 60_000;
 
@@ -43,9 +52,9 @@ export default function activate(api: ModAPI) {
   const load = (): State => ({ ...empty(), ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
   const words = (value: Json) => String(value ?? '').trim();
-  const service = <T extends Json>(name: string, method: string, input: Json = null): T | null => {
+  const service = <T extends Json>(call: () => Json): T | null => {
     try {
-      return api.services.call<T>(name, method, input);
+      return call() as T;
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       return null;
@@ -75,6 +84,7 @@ export default function activate(api: ModAPI) {
     }).sort((a, b) => b[0] - a[0]).map(([, item]) => item);
   const statusOf = (status: { type?: string; activeFlags?: string[] } | undefined): Status => status?.type === 'active'
     ? status.activeFlags?.length ? 'waiting' : 'working' : status?.type === 'systemError' ? 'error' : 'done';
+  const keep = (next: Status, failed: boolean): Status => failed && next === 'done' ? 'error' : next;
 
   // Sessions in other OMD processes read each other's live status, ports and notes from the shared user-scope store.
   const share = (state: State) => {
@@ -86,17 +96,18 @@ export default function activate(api: ModAPI) {
     if (put.ok) state.revisions[thread.id] = put.value.revision;
     if (thread.status === 'working' || thread.status === 'waiting') api.host.tryCall('events.schedule', { key: 'share', delay_ms: FRESH_MS / 3 });
   };
-  const refresh = (state: State) => {
+  const refresh = (state: State, full = true) => {
     const listed = app<{ data?: { id: string; name?: string | null; preview?: string; cwd: string; model?: string | null; status?: { type?: string; activeFlags?: string[] }; updatedAt?: number; gitInfo?: { branch?: string | null; originUrl?: string | null } | null }[] }>(
-      'thread/list', { limit: 50, sortKey: 'updated_at', ...(state.search ? { searchTerm: state.search } : {}) });
+      'thread/list', { limit: 30, sortKey: 'updated_at', ...(state.search ? { searchTerm: state.search } : {}) });
     state.error = listed ? null : 'sessions are unavailable';
-    state.worktrees = (service<{ worktrees: Worktree[] }>('omd.worktrees', 'list')?.worktrees ?? []).map(({ path, branch, task, issue }) => ({ path, branch, task, issue }));
+    if (full) state.worktrees = (service<{ worktrees: Worktree[] }>(() => api.services.call('omd.worktrees', 'list', null))?.worktrees ?? []).map(({ path, branch, task, issue }) => ({ path, branch, task, issue }));
+    const failed = new Set(state.threads.filter(thread => thread.status === 'error').map(thread => `${thread.id}:${thread.updated}`));
     if (listed) state.threads = (listed.data ?? []).map(thread => ({ id: thread.id, name: fit((thread.name || thread.preview || 'untitled').replace(/\s+/g, ' '), 100), cwd: thread.cwd,
       branch: state.worktrees.find(tree => tree.path === thread.cwd)?.branch ?? thread.gitInfo?.branch ?? null,
-      project: base(thread.gitInfo?.originUrl || thread.cwd), model: thread.model ?? null, status: statusOf(thread.status), updated: thread.updatedAt ?? 0, loaded: thread.status?.type !== 'notLoaded' }));
+      project: base(thread.gitInfo?.originUrl || thread.cwd), model: thread.model ?? null, status: keep(statusOf(thread.status), failed.has(`${thread.id}:${thread.updatedAt ?? 0}`)), updated: thread.updatedAt ?? 0, loaded: thread.status?.type !== 'notLoaded' }));
     for (const thread of state.threads) state.seen[thread.id] ??= thread.updated;
-    if (state.current) {
-      state.seen[state.current] = Math.max(state.seen[state.current] ?? 0, state.threads.find(thread => thread.id === state.current)?.updated ?? 0);
+    if (state.current) state.seen[state.current] = Math.max(state.seen[state.current] ?? 0, state.threads.find(thread => thread.id === state.current)?.updated ?? 0);
+    if (state.current && full) {
       const ports = api.host.tryCall('sessions.ports', null);
       (state.activity[state.current] ??= {}).ports = ports.ok ? ports.value.ports.map(item => item.port) : [];
     }
@@ -138,7 +149,7 @@ export default function activate(api: ModAPI) {
   const resume = (state: State, id: string): string | null => {
     if (id === state.current) return 'Already in this session';
     const draft = composerText();
-    if (state.current && draft.trim()) state.drafts[state.current] = draft.slice(0, 4_000);
+    if (state.current && draft.trim()) state.drafts[state.current] = fit(draft, 4_000, true);
     const keys = Object.keys(state.drafts);
     for (const key of keys.slice(0, Math.max(0, keys.length - 16))) delete state.drafts[key];
     const invoked = api.host.tryCall('builtins.invoke', { command: 'resume', args: id });
@@ -154,7 +165,7 @@ export default function activate(api: ModAPI) {
   };
 
   const paletteRows = (state: State): Row[] => {
-    const rows: Row[] = [...(state.restore ? [{ value: 'restore', label: 'Restore: Previous composer text', detail: state.restore.replace(/\n/g, '⏎').slice(0, 40), page: 'root' }] : []),
+    const rows: Row[] = [...(state.restore ? [{ value: 'restore', label: 'Restore: Previous composer text', detail: fit(state.restore.replace(/\n/g, '⏎'), 40), page: 'root' }] : []),
       ...Object.entries(PAGES).map(([page, label]) => ({ value: `page:${page}`, label, detail: 'open', page: 'root' })),
       ...BUILTINS.map(([value, label, detail]) => ({ value, label, detail, page: 'root' }))];
     const inventory = api.host.tryCall('terminal.commands', null);
@@ -172,7 +183,7 @@ export default function activate(api: ModAPI) {
     return rows;
   };
   const jumpRows = (state: State): Row[] => {
-    const tabs = service<{ titles: string[]; active: number | null }>('omd.panes', 'tabs');
+    const tabs = service<{ titles: string[]; active: number | null }>(() => api.services.call('omd.panes', 'tabs', null));
     return [...state.threads.map(thread => ({ value: `session:${thread.id}`, label: thread.name, detail: `session · ${thread.project}${thread.branch ? ` · ${thread.branch}` : ''}`, page: 'root' })),
       ...state.worktrees.map(tree => ({ value: `worktree:${tree.path}`, label: tree.task ?? tree.branch ?? base(tree.path), detail: `worktree · ${tree.path}`, page: 'root' })),
       ...(tabs?.titles ?? []).map((title, index) => ({ value: `tab:${index}`, label: title, detail: `tab ${index + 1}${index === tabs?.active ? ' · active' : ''}`, page: 'root' }))];
@@ -186,7 +197,7 @@ export default function activate(api: ModAPI) {
       return [...new Set(paths.slice(0, run.value.stdout_preview_truncated ? -1 : undefined).filter(Boolean))].slice(0, 2_000);
     };
     const tracked = list(false);
-    const ranked = service<{ paths: string[] }>('omd.frecency', 'rank', { query, paths: tracked.slice(0, 500) })?.paths ?? rank(tracked, query, path => `${base(path)} ${path}`);
+    const ranked = service<{ paths: string[] }>(() => api.services.call('omd.frecency', 'rank', { query, paths: tracked.slice(0, 500) }))?.paths ?? rank(tracked, query, path => `${base(path)} ${path}`);
     const short = (path: string) => fit(path, 240) === path;
     return [...ranked.filter(short).slice(0, 150).map(path => ({ value: `file:${path}`, label: path, detail: '', page: 'root' })),
       ...rank(list(true).filter(short), query, path => `${base(path)} ${path}`).slice(0, 50).map(path => ({ value: `file:${path}`, label: path, detail: 'ignored', page: 'root' }))];
@@ -200,7 +211,7 @@ export default function activate(api: ModAPI) {
       return text ? text.split('\n') : [];
     })).map(line => fit(line, 300)).slice(-2_000);
     let bytes = 0;
-    state.transcript = state.transcript.reverse().filter(line => (bytes += line.length * 3) <= 45_000).reverse();
+    state.transcript = state.transcript.reverse().filter(line => (bytes += line.length * 3) <= 40_000).reverse();
   };
   const count = (lines: string[], search: Search): number | string => {
     try {
@@ -212,7 +223,7 @@ export default function activate(api: ModAPI) {
     }
   };
   const findNote = (state: State) => {
-    const panes = service<{ views: { path: string; matches: number | string }[] }>('omd.panes', 'find', state.find as unknown as Json);
+    const panes = service<{ views: { path: string; matches: number | string }[] }>(() => api.services.call('omd.panes', 'find', state.find as unknown as Json));
     return state.find.query ? `transcript ${count(state.transcript, state.find)}${(panes?.views ?? []).map(view => ` · ${view.path} ${view.matches}`).join('')}` : null;
   };
 
@@ -229,26 +240,26 @@ export default function activate(api: ModAPI) {
     save(state);
     return null;
   };
-  api.command('palette', () => open('palette'), { description: 'Command palette: commands, mod actions, skills, templates, models and sessions (Ctrl+Shift+P)' });
-  api.command('jump', () => open('jump'), { description: 'Jump to a session, worktree or tab (Ctrl+Shift+J)' });
-  api.command('open', value => {
+  api.command('palette', () => open('palette'), { description: 'Command palette: commands, mod actions, skills, templates, models and sessions (Ctrl+Alt+P)' });
+  api.command('jump', () => open('jump'), { description: 'Jump to a session, worktree or tab (Ctrl+Alt+G)' });
+  api.command('quick_open', value => {
     const query = words(value);
     if (!query) return open('open');
     const state = load();
-    state.picker = { kind: 'open', page: 'root', query, rows: fileRows(query), note: null };
+    state.picker = { kind: 'open', page: 'root', query: fit(query, 256), rows: fileRows(query), note: null };
     save(state);
     return null;
-  }, { description: 'Quick open a file: tracked first, ignored second (Ctrl+Shift+O)' });
+  }, { description: 'Quick open a file: tracked first, ignored second (Ctrl+Alt+O)' });
   api.command('find', value => {
     const query = words(value);
     if (!query) return open('find');
     const state = load();
     state.find = { ...state.find, query: fit(query, 256) };
     transcript(state);
-    state.picker = { kind: 'find', page: 'root', query, rows: [], note: findNote(state) };
+    state.picker = { kind: 'find', page: 'root', query: state.find.query, rows: [], note: findNote(state) };
     save(state);
     return null;
-  }, { description: 'Find in the transcript and open panes, with case and regex options (Ctrl+Shift+S)' });
+  }, { description: 'Find in the transcript and open panes, with case and regex options (Ctrl+Alt+F)' });
 
   const visible = (picker: Picker): Row[] => {
     if (picker.kind === 'open') return picker.rows;
@@ -282,9 +293,9 @@ export default function activate(api: ModAPI) {
       fill(state, '');
       return null;
     }
-    if (value === 'cockpit') return service('omd.panes', 'cockpit') ? null : 'Enable omd_panes for the cockpit layout';
+    if (value === 'cockpit') return service(() => api.services.call('omd.panes', 'cockpit', null)) ? null : 'Enable omd_panes for the cockpit layout';
     if (value === 'newtask') {
-      fill(state, '/omd_worktree:new ');
+      fill(state, '/omd_worktree:task ');
       return null;
     }
     if (kind === 'builtin' || kind === 'cmd') {
@@ -305,9 +316,9 @@ export default function activate(api: ModAPI) {
     }
     if (kind === 'session') return resume(state, target);
     if (kind === 'worktree') return enter(state, target);
-    if (kind === 'tab') return (service<{ display: string | null }>('omd.panes', 'show_tab', { index: Number(target) }))?.display ?? null;
+    if (kind === 'tab') return (service<{ display: string | null }>(() => api.services.call('omd.panes', 'show_tab', { index: Number(target) })))?.display ?? null;
     if (kind === 'file') {
-      const shown = service<{ display: string | null }>('omd.panes', 'open', { path: target });
+      const shown = service<{ display: string | null }>(() => api.services.call('omd.panes', 'open', { path: target }));
       if (!shown) api.host.tryCall('composer.write', { insert: `@${target} ` });
       return shown?.display ?? null;
     }
@@ -331,11 +342,11 @@ export default function activate(api: ModAPI) {
         state.find.query = fit(argument, 256);
         picker.query = state.find.query;
         picker.note = findNote(state);
-      } else if (argument === picker.query && rows.length && argument) message = run(state, rows[0].value);
+      } else if (argument === picker.query && argument && rows.some(row => row.value !== 'back')) message = run(state, rows.find(row => row.value !== 'back')!.value);
       else if (picker.kind === 'open') {
-        picker.query = argument;
+        picker.query = fit(argument, 256);
         picker.rows = argument ? fileRows(argument) : [];
-      } else picker.query = argument;
+      } else picker.query = fit(argument, 256);
     } else if (op === 'run') message = run(state, argument);
     else if (op === 'mode' || op === 'case') {
       state.find = { ...state.find, ...(op === 'mode' ? { regex: argument === 'regex' } : { case: argument === 'match' }) };
@@ -366,7 +377,7 @@ export default function activate(api: ModAPI) {
     save(state);
     if (op === 'list') return { display: state.threads.map(thread => `${glyph[thread.status]} ${thread.name}  ${thread.project}${thread.branch ? `/${thread.branch}` : ''}  ${thread.id}`).join('\n') || state.error || 'no sessions' };
     return message ? { display: message } : null;
-  }, { description: 'Toggle the session list, or search|select|act|list|refresh it (Alt+U)' });
+  }, { description: 'Toggle the session list, or search|select|act|list|refresh it (Ctrl+Alt+S)' });
 
   const unread = (state: State, thread: Thread) => thread.id !== state.current && thread.updated > (state.seen[thread.id] ?? 0);
   const sessionRows = (state: State): TerminalListRow[] => {
@@ -385,13 +396,13 @@ export default function activate(api: ModAPI) {
           { text: fit(`  ${detail}`, 120), tone: 'muted' as const }] };
       })]);
   };
-  const sessionList = (state: State, height: number): TerminalComponent[] => {
+  const sessionList = (state: State, height: number, site: keyof typeof LIST_BYTES): TerminalComponent[] => {
     const selected = state.threads.find(thread => thread.id === state.selected);
     return [
-      { type: 'input', id: 'omd_layout_session_search', label: 'Search sessions', value: state.search, placeholder: 'search titles; Enter applies', action: { command: 'omd_layout:sessions', args: 'search' } },
-      state.error ? { type: 'text', id: 'omd_layout_sessions_error', label: 'Sessions unavailable', text: state.error, tone: 'muted' }
-        : { type: 'list', id: 'omd_layout_sessions', label: 'Sessions', rows: sessionRows(state).slice(0, 200), ...(height ? { height } : {}), ...(selected ? { selected: selected.id } : {}), action: { command: 'omd_layout:sessions', args: 'select' } },
-      ...(selected ? [{ type: 'select' as const, id: 'omd_layout_session_actions', label: fit(selected.name, 128), value: `act switch ${selected.id}`,
+      { type: 'input', id: `omd_layout_${site}_session_search`, label: 'Search sessions', value: state.search, placeholder: 'search titles; Enter applies', action: { command: 'omd_layout:sessions', args: 'search' } },
+      state.error ? { type: 'text', id: `omd_layout_${site}_sessions_error`, label: 'Sessions unavailable', text: state.error, tone: 'muted' }
+        : { type: 'list', id: `omd_layout_${site}_sessions`, label: 'Sessions', rows: within(sessionRows(state).slice(0, 200), LIST_BYTES[site]), ...(height ? { height } : {}), ...(selected ? { selected: selected.id } : {}), action: { command: 'omd_layout:sessions', args: 'select' } },
+      ...(selected ? [{ type: 'select' as const, id: `omd_layout_${site}_session_actions`, label: fit(selected.name, 128), value: `act switch ${selected.id}`,
         options: [['switch', 'switch to it'], ...(selected.id === state.current ? [['fork', 'fork it']] : []), ['here', 'new session in its folder'], ['new', 'new session']].map(([action, label]) => ({ value: `act ${action} ${selected.id}`, label })),
         action: { command: 'omd_layout:sessions' } }] : []),
     ];
@@ -400,6 +411,7 @@ export default function activate(api: ModAPI) {
     const titles = { palette: 'Command palette', jump: 'Jump', open: 'Quick open', find: 'Find' };
     const title = [titles[picker.kind], ...(picker.page === 'root' ? [] : [PAGES[picker.page]])].join(' › ');
     const rows = visible(picker).slice(0, 200);
+    const listed = within(rows.map(row => ({ value: row.value, label: fit(`${row.label} ${row.detail}`, 256), spans: [{ text: fit(row.label, 120), bold: row.value.startsWith('page:') }, ...(row.detail ? [{ text: fit(`  ${row.detail}`, 120), tone: 'muted' as const }] : [])] })), LIST_BYTES.picker);
     const children: TerminalComponent[] = picker.kind === 'find' ? [
       { type: 'input', id: 'omd_layout_query', label: 'Find', value: picker.query, placeholder: 'text or pattern; Enter searches', action: { command: 'omd_layout:pick', args: 'query' } },
       { type: 'select', id: 'omd_layout_find_mode', label: 'Match', value: `mode ${state.find.regex ? 'regex' : 'plain'}`, options: [{ value: 'mode plain', label: 'plain text' }, { value: 'mode regex', label: 'regular expression' }], action: { command: 'omd_layout:pick' } },
@@ -409,7 +421,7 @@ export default function activate(api: ModAPI) {
         ...(state.find.query ? { find: state.find } : {}) },
     ] : [
       { type: 'input', id: 'omd_layout_query', label: 'Search', value: picker.query, placeholder: 'type and Enter to filter; Enter again runs the first match; Tab reaches the list', action: { command: 'omd_layout:pick', args: 'query' } },
-      { type: 'list', id: 'omd_layout_rows', label: title, height: 14, rows: rows.map(row => ({ value: row.value, label: fit(`${row.label} ${row.detail}`, 256), spans: [{ text: fit(row.label, 120), bold: row.value.startsWith('page:') }, ...(row.detail ? [{ text: fit(`  ${row.detail}`, 120), tone: 'muted' as const }] : [])] })),
+      { type: 'list', id: 'omd_layout_rows', label: title, height: 14, rows: listed,
         action: { command: 'omd_layout:pick', args: 'run' } },
       ...(picker.note ? [{ type: 'text' as const, id: 'omd_layout_note', label: 'Note', text: picker.note, tone: 'muted' as const }] : []),
     ];
@@ -434,16 +446,16 @@ export default function activate(api: ModAPI) {
       state.seen[state.current] = Math.max(state.seen[state.current] ?? 0, state.threads.find(thread => thread.id === state.current)?.updated ?? 0);
       save(state);
     }
-    const sites: Record<string, TerminalRenderSite> = { 'omd_layout/sessions': { mode: 'replace', components: sessionList(state, 0) } };
-    if (api.settings.sidebar !== false) sites.sidebar = { mode: 'wrap', components: [{ type: 'pane', id: 'omd_layout_sidebar', label: 'Sessions panel', title: 'Sessions', children: sessionList(state, 10) }, { type: 'slot' }] };
+    const sites: Record<string, TerminalRenderSite> = { 'omd_layout/sessions': { mode: 'replace', components: sessionList(state, 0, 'site') } };
+    if (api.settings.sidebar !== false) sites.sidebar = { mode: 'wrap', components: [{ type: 'pane', id: 'omd_layout_sidebar', label: 'Sessions panel', title: 'Sessions', children: sessionList(state, 10, 'sidebar') }, { type: 'slot' }] };
     if (state.picker) sites.dialog = pickerSite(state, state.picker);
-    else if (state.open) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_layout_sessions_dialog', label: 'Sessions', title: 'Sessions', children: [...sessionList(state, 16),
+    else if (state.open) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_layout_sessions_dialog', label: 'Sessions', title: 'Sessions', children: [...sessionList(state, 16, 'dialog'),
       { type: 'button', id: 'omd_layout_sessions_close', label: 'Close the session list', text: 'Close', action: { command: 'omd_layout:sessions', args: 'toggle' } }] }] };
     const working = state.threads.filter(thread => thread.status === 'working').length;
     const waiting = state.threads.filter(thread => thread.status === 'waiting').length;
     const fresh = state.threads.filter(thread => unread(state, thread)).length;
     const status = [working ? `${working} working` : '', waiting ? `${waiting} waiting` : '', fresh ? `${fresh} unread` : ''].filter(Boolean).join(' · ');
-    return { sites, keybindings: keys(), ...(status ? { status: [status.slice(0, 40)] } : {}) };
+    return { sites, keybindings: keys(), ...(status ? { status: [fit(status, 40)] } : {}) };
   });
 
   api.on('start', () => save(refresh(load())));
@@ -458,7 +470,7 @@ export default function activate(api: ModAPI) {
     }
     save(state);
   });
-  api.on('idle', () => save(refresh(load())));
+  api.on('idle', () => save(refresh(load(), false)));
   api.on('turn_start', () => {
     const state = load();
     const thread = state.threads.find(item => item.id === state.current);
@@ -480,7 +492,7 @@ export default function activate(api: ModAPI) {
     const activity = state.activity[id] ??= {};
     const thread = state.threads.find(item => item.id === id);
     if (method === 'thread/status/changed' && thread) {
-      thread.status = statusOf(data.status);
+      thread.status = keep(statusOf(data.status), thread.status === 'error');
       if (thread.status === 'waiting') activity.note = data.status?.activeFlags?.includes('waitingOnApproval') ? 'needs approval' : 'needs input';
     }
     if (method === 'turn/completed') {
@@ -490,8 +502,8 @@ export default function activate(api: ModAPI) {
         thread.updated = Math.max(thread.updated, (state.seen[id] ?? 0) + 1);
       }
     }
-    if (method === 'thread/name/updated' && thread && data.name) thread.name = data.name.slice(0, 80);
-    if (method === 'error') activity.note = (data.error?.message ?? 'error').slice(0, 80);
+    if (method === 'thread/name/updated' && thread && data.name) thread.name = fit(data.name, 80);
+    if (method === 'error') activity.note = fit(data.error?.message ?? 'error', 80);
     if (method === 'thread/tokenUsage/updated' && data.tokenUsage?.modelContextWindow) activity.context = Math.round(100 * (data.tokenUsage.last?.totalTokens ?? 0) / data.tokenUsage.modelContextWindow);
     if (id === state.current && thread) {
       state.seen[id] = thread.updated;

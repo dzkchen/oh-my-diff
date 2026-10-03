@@ -10,6 +10,9 @@ run = "python3 scripts/check_native_ownership.py"
 [tasks."mods:test"]
 run = "pnpm --dir mods test"
 
+[tasks."mods:host-check"]
+run = "python3 scripts/mod_host_check.py"
+
 [tasks."mods:package"]
 run = "pnpm --dir mods package"
 

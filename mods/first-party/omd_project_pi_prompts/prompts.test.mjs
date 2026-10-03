@@ -96,7 +96,8 @@ test('Pi slash command lists scoped prompts and submits exact expanded text', ()
   const expanded = f.run('pi', 'review "src/main.rs" fast', 'command');
   assert.equal(expanded.error, undefined, expanded.error);
   assert.deepEqual(expanded.value, { submit: 'Review src/main.rs carefully\nsrc/main.rs fast' });
-  assert.match(f.run('pi', '../outside', 'command').error, /pi_command_invalid/);
+  assert.match(f.run('pi', '../outside', 'command').value.display, /^usage: \/pi/);
+  assert.ok(!f.calls.some(call => call.operation === 'workspace.fingerprint' || call.operation === 'process.which'));
 });
 
 test('argument substitution matches representative Pi 0.74 oracle cases', () => {

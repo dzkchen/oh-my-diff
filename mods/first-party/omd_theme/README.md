@@ -1,6 +1,6 @@
 # Theme
 
-`omd_theme` (`0.4.0-candidate.1`) is installed inactive in OMD+ and can be installed explicitly in OMD Core. Enable it through the ordinary mod manager, then use `/theme`. It uses the public API; it does not require the workspace or logo mod.
+`omd_theme` (`0.4.0-candidate.1`) is installed inactive in OMD+ and can be installed explicitly in OMD Core. Enable it through the ordinary mod manager, then use `/omd_theme:style`. It uses the public API; it does not require the workspace or logo mod.
 
 Choose Midnight, Paper, High contrast, Frost, Graphite or Amber, or import a palette. Code highlighting follows the palette background: Catppuccin Latte on light backgrounds and Catppuccin Mocha on dark ones, replacing the configured syntax theme while the mod is active. Changes preview immediately. **Save** retains them, **Discard preview** restores the saved selection, and **Reset** returns to configured defaults and clears the backdrop selection. Settings survive reload and disable/enable. Startup greetings are hidden by default; the Greeting page enables a custom message. The logo mod supplies the same hidden default while the theme is inactive.
 
@@ -12,9 +12,9 @@ All actions also work through namespaced commands, including in terminals too sm
 /omd_theme:set palette paper
 /omd_theme:set composer_gloss true
 /omd_theme:set background_color #182030
-/omd_theme:import ghostty /path/to/theme
-/omd_theme:import iterm2 /path/to/colors.itermcolors
-/omd_theme:import warp /path/to/theme.yaml
+/omd_theme:load ghostty /path/to/theme
+/omd_theme:load iterm2 /path/to/colors.itermcolors
+/omd_theme:load warp /path/to/theme.yaml
 /omd_theme:ascii /path/to/art.txt
 /omd_theme:image /path/to/backdrop.png
 /omd_theme:save

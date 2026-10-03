@@ -34,12 +34,13 @@ timer, so edits by the agent, commands or other programs re-render it, also in
 gitignored directories such as `.omd/notes`; the open page reloads every two
 seconds, keeping its scroll position. `[[Note]]`, `[[Note|label]]` and
 `[[Note#heading]]` wiki links render as links to `Note.md` beside the file. `--inline` shows Markdown, code and diffs
-with the terminal's own components in a scrollable dialog (up to 40,000
-characters); images, math and diagrams render only in the browser. A declined
+with the terminal's own components in a scrollable dialog (the first 4 KB of
+Markdown or code and 48 KB of a diff, with CRLF, tabs and terminal escapes
+normalized); images, math and diagrams render only in the browser. A declined
 or unavailable browser leaves the written path in the message.
 
 Capabilities: `commands`, `terminal`, `store`, `sessions` (reads responses
-through `thread/turns/list` and listening ports through `sessions.ports`), `exec` and `fs.write` (the renderer writes under
+through `thread/turns/list` and listening ports through `sessions.ports`), `exec` (the renderer runs as a writing command under
 `.omd/preview`), `fs.read`, `events` and `lifecycle` (the watch timer). There is
 no pandoc, puppeteer, LaTeX or PDF export, and the terminal does not show
 rendered page images.

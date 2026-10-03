@@ -2,8 +2,8 @@ import type { Json, ModAPI, TerminalComponent } from '../../api.d.ts';
 
 type Item = { label: string; value: string };
 type View = { title: string; status: 'working' | 'ready' | 'error'; message: string; items: Item[]; action: 'open' | 'apply'; text: string | null;
-  excerpt: { path: string; line: number; start: number; lines: string[] } | null; pane: boolean; revision: number };
-type Server = { adapter: string; server: string | null; status: string; reason: string; documents: number; errors: string[] };
+  excerpt: { path: string; line: number; start: number; lines: string[]; errors?: Item[] } | null; pane: boolean; revision: number };
+type Server = { adapter: string; server: string | null; status: string; reason: string; documents: number; count?: number; errors: string[] };
 type Saved = { view: View | null; servers: Server[] };
 
 const object = (value: Json | undefined): Record<string, Json> | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
@@ -44,7 +44,7 @@ export default function activate(api: ModAPI) {
       const start = Math.max(1, line - 12);
       const read = api.host.tryCall('exec.run', { program: 'awk', argv: ['-v', `s=${start}`, '-v', `e=${line + 12}`, 'NR>=s && NR<=e { print substr($0, 1, 400) }', `./${path}`], timeout_ms: 5_000 });
       if (!read.ok || read.value.exit_code !== 0) return { display: `Cannot read ${path}` };
-      show({ excerpt: { path, line, start, lines: read.value.stdout.split('\n').slice(0, -1) }, status: 'working', message: '', items: [], action: 'open' });
+      show({ excerpt: { path, line, start, lines: read.value.stdout.split('\n').slice(0, -1), errors: [] }, status: 'working', message: '' });
       const asked = api.host.tryCall('events.publish', { channel: 'request', data: { op: 'diagnostics', path } });
       if (!asked.ok) show({ status: 'error', message: asked.error });
       return null;
@@ -65,7 +65,10 @@ export default function activate(api: ModAPI) {
     const data = object(event.data);
     if (!event.channel.endsWith('/request') || !data) return;
     try {
-      show(api.services.call('omd.lsp', 'query', data) as unknown as Partial<View>);
+      const result = api.services.call('omd.lsp', 'query', data) as unknown as Partial<View>;
+      const excerpt = view()?.excerpt;
+      // A diagnostics answer for an open excerpt fills its error list and keeps the earlier results for Back.
+      show(data.op === 'diagnostics' && excerpt && data.path === excerpt.path ? { status: result.status, message: result.message, excerpt: { ...excerpt, errors: (result.items ?? []).filter(item => item.value.startsWith(`${excerpt.path}:`)) } } : result);
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       show({ status: 'error', message: /service_provider_missing/.test(error.message) ? 'enable omd_lsp_sync, which runs the language servers' : error.message });
@@ -74,14 +77,14 @@ export default function activate(api: ModAPI) {
   api.on('terminal', () => {
     const { view: current, servers } = saved();
     const sidebar = servers.length ? { sidebar: { mode: 'wrap' as const, components: [{ type: 'pane' as const, id: 'omd_lsp_view_servers', label: 'Language servers', title: 'Language servers', children: servers.flatMap((entry, index): TerminalComponent[] => [
-      { type: 'text', id: `omd_lsp_view_server_${index}`, label: `${entry.adapter} language server`, text: entry.server ? `${entry.adapter} ${entry.server} · ${entry.documents} open · ${entry.errors.length} errors` : `${entry.adapter} ${entry.status}: ${entry.reason}`,
+      { type: 'text', id: `omd_lsp_view_server_${index}`, label: `${entry.adapter} language server`, text: entry.server ? `${entry.adapter} ${entry.server} · ${entry.documents} open · ${entry.count ?? entry.errors.length} errors` : `${entry.adapter}: ${entry.reason.replace(/_/g, ' ') || entry.status}`,
         tone: entry.errors.length ? 'failure' : entry.status === 'stale' ? 'attention' : entry.server ? 'success' : 'muted' },
       ...entry.errors.map((error, line): TerminalComponent => ({ type: 'text', id: `omd_lsp_view_server_${index}_${line}`, label: 'Diagnostic', text: `  ${error}`, tone: 'failure' })),
     ]) }, { type: 'slot' as const }] } } : {};
     if (!current) return servers.length ? { sites: sidebar } : null;
     const id = (name: string) => `omd_lsp_view_${name}_${current.revision}`;
     const excerpt = current.excerpt;
-    const own = excerpt ? current.items.filter(item => item.value.startsWith(`${excerpt.path}:`)) : [];
+    const own = excerpt?.errors ?? [];
     const where = excerpt && `${excerpt.path}:${excerpt.line} · ${current.status === 'working' ? 'checking diagnostics' : current.status === 'error' ? current.message : `${own.length} errors`}`;
     const components: TerminalComponent[] = [
       { type: 'text', id: id('status'), label: 'Status', text: where || current.message || `${current.items.length} results`, tone: current.status === 'error' ? 'failure' : current.status === 'working' ? 'muted' : 'normal' },

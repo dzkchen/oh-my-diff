@@ -124,8 +124,8 @@ def install_archive(args):
     archive_path = Path(args.archive).resolve()
     upstream = support.binary_identity(args.upstream)
     expected_version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
-    if upstream["version"] != f"codex-cli {expected_version}":
-        raise ValueError("upstream fallback does not match package pin")
+    if not support.compatible_upstream(upstream["version"], expected_version):
+        raise ValueError("upstream fallback does not match the package's Codex minor version")
     with tempfile.TemporaryDirectory(prefix="omd-package-install-", dir="/private/tmp") as temporary:
         payload = checked_extract(archive_path, args.sha256, Path(temporary))
         run(sys.executable, "-m", "scripts.lean_release_lock", "--artifact-dir", payload / "artifacts",
@@ -157,7 +157,7 @@ def source_build(args):
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(target)
         run("cargo", f"+{upstream['rust_toolchain']}", "build", "--locked", "--release",
-            "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-omd",
+            "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
             "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", cwd=checkout / "codex-rs", env=environment)
         artifacts = Path(temporary) / "artifacts"
         artifacts.mkdir()

@@ -5,6 +5,21 @@ const object = (value: Json): Record<string, Json> => value !== null && typeof v
 const text = (value: Json | undefined, limit: number): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= limit;
 
 export default function activate(api: ModAPI) {
+  // Expected refusals return as values; a non-Error throw is the host suspending the callback.
+  const refuse = <T>(run: () => T | Promise<T>, value: (reason: string) => T): T | Promise<T> => {
+    const refused = (error: unknown) => {
+      if (!(error instanceof Error)) throw error;
+      return value(error.message);
+    };
+    try {
+      const result = run();
+      return result instanceof Promise ? result.catch(refused) : result;
+    } catch (error) {
+      return refused(error);
+    }
+  };
+  const tool: ModAPI['tool'] = (spec, handler) => api.tool(spec, input => refuse(() => handler(input), reason => ({ status: 'refused', reason })));
+  const command: ModAPI['command'] = (name, handler, options) => api.command(name, input => refuse(() => handler(input), reason => ({ display: `Refused: ${reason}` })), options);
   const key = () => `recovery.${api.host.call('task.status', null).ledger.thread_id}`;
   const remember = (entry: Json) => {
     const previous = api.state.get();
@@ -16,7 +31,7 @@ export default function activate(api: ModAPI) {
     }
     return null;
   });
-  api.tool({ name: 'recover', label: 'Recovery policy', description: 'Bind one read-only advisory escalation to exact preserved tool calls and outputs; the lead retains every edit decision',
+  tool({ name: 'recover', label: 'Recovery policy', description: 'Bind one read-only advisory escalation to exact preserved tool calls and outputs; the lead retains every edit decision',
     parameters: { type: 'object', properties: { failure_class: { type: 'string', enum: CLASSES }, summary: { type: 'string' }, call_ids: { type: 'array', items: { type: 'string' } } }, required: ['failure_class', 'summary', 'call_ids'], additionalProperties: false },
   }, input => {
     const request = object(input);
@@ -54,7 +69,7 @@ export default function activate(api: ModAPI) {
     remember({ operation: 'advisory', value });
     return value;
   });
-  api.tool({ name: 'advice', description: 'Observe the one admitted advisory call without restarting it', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
+  tool({ name: 'advice', description: 'Observe the one admitted advisory call without restarting it', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
     const taskKey = key();
     const saved = api.host.call('store.get', { key: taskKey });
     const current = object(saved?.value ?? null);
@@ -66,7 +81,7 @@ export default function activate(api: ModAPI) {
     api.host.tryCall('agents.cancel', { handle: current.handle });
     return value;
   });
-  api.tool({ name: 'delegate', label: 'Recovery-aware delegation', description: 'Apply coordination context and the explicitly selected bounded outage policy',
+  tool({ name: 'delegate', label: 'Recovery-aware delegation', description: 'Apply coordination context and the explicitly selected bounded outage policy',
     parameters: { type: 'object', properties: { brief: { type: 'string' }, selected_evidence: { type: 'array', items: { type: 'string' } } }, required: ['brief'], additionalProperties: false },
   }, input => {
     const prepared = object(api.services.call('omd.coordination', 'prepare_delegation', input));
@@ -77,5 +92,8 @@ export default function activate(api: ModAPI) {
   api.replace('tool_before', ({ tool, arguments: input }) => tool === 'omd_escalate' ? { tool: 'mod_omd_recovery_recover', arguments: input }
     : tool === 'omd_contribute' ? { tool: 'mod_omd_recovery_delegate', arguments: input } : null);
   api.on('tool_result', event => remember({ operation: 'tool_result', event }));
-  api.command('policy', () => ({ display: JSON.stringify({ outage_action: api.settings.outage_action ?? 'opposite_lead', decisions: api.state.get() }) }));
+  command('outage', () => {
+    const decisions = api.state.get();
+    return { display: `On a provider outage: ${String(api.settings.outage_action ?? 'opposite_lead').replace(/_/g, ' ')}. Recorded decisions: ${Array.isArray(decisions) ? decisions.length : 0}.` };
+  }, { description: 'Show what happens on a provider outage and how many decisions were recorded' });
 }

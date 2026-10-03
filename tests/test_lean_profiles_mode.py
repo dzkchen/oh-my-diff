@@ -28,8 +28,10 @@ class LeanProfileModeTests(unittest.TestCase):
         provider = {"id": "omd_claude_cli", "name": "OMD Claude CLI", "base_url": "http://127.0.0.1:5/v1",
                     "env_key": "OMD_CLAUDE_LOCAL_TOKEN", "token": "/opt/omd/claude/local token"}
         record = {"binary": {"installed_path": "/opt/omd/codex"}, "store": "/opt/omd/store", "profile": "full",
-                  "activation": {"selection": "full"}, "providers": {"omd_claude_cli": provider}}
+                  "activation": {"selection": "full"}, "providers": {"omd_claude_cli": provider}, "author": {"node": "/opt/omd/node"}}
         text = lean_profiles.selected_text(record)
+        self.assertIn("export OMD_NODE=/opt/omd/node", text)
+        self.assertIn("-c features.daemon_auto_start=false", text)
         self.assertIn("OMD_CLAUDE_LOCAL_TOKEN=\"$(cat '/opt/omd/claude/local token' 2>/dev/null)\"", text)
         self.assertIn("-c 'model_providers.omd_claude_cli.base_url=\"http://127.0.0.1:5/v1\"'", text)
         record["activation"]["selection"] = "direct"

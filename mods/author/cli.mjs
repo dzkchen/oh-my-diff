@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, watch } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, watch } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -8,6 +8,12 @@ import { spawnSync } from 'node:child_process';
 import { stripTypeScriptTypes } from 'node:module';
 
 const sdkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// Installed generations are pruned after updates, so projects depend on the SDK through the installer's current link.
+const stableSdkRoot = (() => {
+  const match = /^(.*)\/releases\/[0-9a-f]{32}(\/prefix\/author\/package)$/.exec(sdkRoot);
+  const current = match ? `${match[1]}/current${match[2]}` : null;
+  return current && existsSync(current) && realpathSync(current) === realpathSync(sdkRoot) ? current : sdkRoot;
+})();
 const apiVersion = JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf8')).version;
 const engine = process.env.OMD_MOD_BIN || 'omd-mod';
 const node = process.env.OMD_MOD_NODE || process.execPath;
@@ -19,6 +25,7 @@ function fail(message) {
 
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, { cwd: options.cwd, encoding: 'utf8', stdio: options.capture ? 'pipe' : 'inherit' });
+  if (result.error?.code === 'ENOENT') fail(`${program} was not found on PATH; ${program === engine ? 'reinstall Oh My Diff or set OMD_MOD_BIN to the omd-mod binary' : 'install it first'}`);
   if (result.error) throw result.error;
   if (result.status !== 0) fail((result.stderr || result.stdout || `${program} failed`).trim());
   return options.capture ? result.stdout.trim() : '';
@@ -43,8 +50,8 @@ function packageJson(name) {
       watch: 'omd-mod-author watch .',
     },
     devDependencies: {
-      '@oh-my-diff/mod-api': process.env.OMD_MOD_SDK_SPEC || apiVersion,
-      typescript: process.env.OMD_MOD_TYPESCRIPT_SPEC || '5.9.3',
+      '@oh-my-diff/mod-api': process.env.OMD_MOD_SDK_SPEC || `file:${stableSdkRoot}`,
+      ...(process.env.OMD_MOD_TYPESCRIPT_SPEC ? { typescript: process.env.OMD_MOD_TYPESCRIPT_SPEC } : {}),
     },
   };
 }
@@ -123,9 +130,8 @@ function scenarioFor(name) {
     terminal: {
       schema: 1,
       steps: [
-        { type: 'terminal_mount', mod: 'terminal', payload: { event: 'draw', checkpoint: null } },
-        { type: 'terminal_interact', mod: 'terminal', key: 'Alt+r', payload: { event: 'draw', checkpoint: null }, expect: { action: { submit: 'Review the current changes and list remaining risks.' } } },
-        { type: 'terminal_interact', mod: 'terminal', component: 'copy_shortcuts', payload: { event: 'draw', checkpoint: null }, expect: { action: { copy: 'F6 draft · Alt+r review · F8 settings', label: 'terminal example shortcuts' } } },
+        { type: 'event', event: 'terminal', payload: { event: 'draw', ledger: null } },
+        { type: 'invoke', mod: 'terminal', event: 'command', name: 'layout', payload: 'review', expect: { display: 'Layout request: review' } },
       ],
     },
     workflow: {
@@ -135,8 +141,8 @@ function scenarioFor(name) {
         'contract.restrict': [{ result: { restricted: true } }],
       },
       steps: [
-        { type: 'invoke', mod: 'workflow', event: 'command', name: 'workflow', payload: null, expect: { id: 'paired_review', version: 1, assurance: 'independent-review-candidate' } },
-        { type: 'invoke', mod: 'workflow', event: 'command', name: 'no_delegation', payload: null, expect: { restricted: true } },
+        { type: 'invoke', mod: 'workflow', event: 'tool', name: 'workflow', payload: {}, expect: { id: 'paired_review', version: 1, assurance: 'independent-review-candidate' } },
+        { type: 'invoke', mod: 'workflow', event: 'tool', name: 'no_delegation', payload: {}, expect: { restricted: true } },
       ],
     },
     'service-consumer': {
@@ -176,6 +182,12 @@ async function writeProjectFiles(directory, name) {
   await writeJson(join(directory, 'debug.test.json'), debugScenario(name));
 }
 
+// The SDK is a local file dependency, so the scaffold and its lockfile install without the network.
+function lock(directory) {
+  const result = spawnSync('pnpm', ['install', '--offline', '--silent'], { cwd: directory, encoding: 'utf8' });
+  if (result.status !== 0) process.stderr.write('pnpm install --offline did not complete; run pnpm install in the project to link the SDK\n');
+}
+
 async function createProject(directory, name) {
   if (!/^[a-z0-9_]{1,24}$/.test(name)) fail(`invalid_mod_id: ${name}`);
   if (existsSync(directory)) fail(`target_exists: ${directory}`);
@@ -184,6 +196,7 @@ async function createProject(directory, name) {
     license: 'UNLICENSED', provenance: { maintainer: 'CHANGE ME', source: 'CHANGE ME' }, capabilities: ['commands'] });
   await writeFile(join(directory, 'index.ts'), minimalSource());
   await writeProjectFiles(directory, name);
+  lock(directory);
 }
 
 async function copyExample(directory, name) {
@@ -206,8 +219,9 @@ async function copyExamples(directory) {
 }
 
 function checkProject(directory) {
-  command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
   stripTypeScriptTypes(readFileSync(join(directory, 'index.ts'), 'utf8'));
+  if (existsSync(join(directory, 'node_modules/.bin/tsc'))) command('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json'], { cwd: directory });
+  else process.stderr.write('Syntax checked; add TypeScript for type checking: pnpm add -D typescript@5.9.3\n');
 }
 
 function trustPackage(store, directory) {

@@ -1,10 +1,10 @@
 {
   "mcpServers": {
     "omd_browser": {
-      "command": "node",
-      "args": ["./scripts/server.mjs"],
+      "command": "./scripts/server.sh",
+      "args": [],
       "cwd": ".",
-      "env_vars": ["OMD_MOD_STORE", "OMD_BROWSER_CONFIG"],
+      "env_vars": ["OMD_MOD_STORE", "OMD_BROWSER_CONFIG", "OMD_NODE"],
       "default_tools_approval_mode": "prompt",
       "startup_timeout_sec": 10,
       "tool_timeout_sec": 600

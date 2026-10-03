@@ -23,14 +23,16 @@ active pane (marked `●` in its menu row).
 | Key | Action |
 | --- | --- |
 | Alt+h/j/k/l | focus the pane to the left, below, above, right |
-| Alt+v / Alt+o | split the active pane right / down with a new shell |
-| Alt+x | close the active pane (the conversation pane stays) |
-| Alt+Shift+arrows | shrink or grow the active pane |
-| Ctrl+Alt+arrows | swap the active pane with its neighbour |
+| Alt+s / Alt+o | split the active pane right / down with a new shell |
+| Alt+w | close the active pane (the conversation pane stays) |
 | Alt+e | toggle the file tree |
 | Alt+t | move keyboard focus into the active pane (Ctrl+] leaves a shell) |
 | Alt+y | copy the selected tree path |
-| Alt+c / Alt+1–6 | open a new tab / show tab N |
+| Alt+c | open a new tab |
+
+Resizing, moving and switching tabs use `/pane grow|shrink`, `/pane move` and
+`/pane tab next|prev|N`; the host allows 12 keys per mod and keeps Alt+v and Alt+x for
+its own keymap.
 
 The mouse works too: each pane's first row is a menu (click to run the shown
 action, scroll to pick another), dragging a split border resizes it, and

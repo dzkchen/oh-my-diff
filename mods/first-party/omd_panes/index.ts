@@ -509,7 +509,7 @@ export default function activate(api: ModAPI) {
       default:
         return { display: 'usage: /pane [split right|down KIND | focus left|right|up|down|ID | move DIR | grow|shrink width|height | close | restart | reset | tab new|close|rename|next|prev|N | cockpit] [@ID]' };
     }
-  }), { description: 'Split, focus, move, resize and close panes (Alt+h/j/k/l focus, Alt+v/Alt+o split, Alt+x close, Alt+e files)' });
+  }), { description: 'Split, focus, move, resize and close panes (Alt+h/j/k/l focus, Alt+s/Alt+o split, Alt+w close, Alt+e files)' });
 
   api.command('tree', value => guard(() => {
     const text = String(value ?? '').trim();
@@ -911,10 +911,8 @@ export default function activate(api: ModAPI) {
     const keybindings: Partial<Record<KeyName, KeyAction>> = {
       'Alt+e': { command: 'omd_panes:tree' },
       'Alt+h': pane('focus left'), 'Alt+j': pane('focus down'), 'Alt+k': pane('focus up'), 'Alt+l': pane('focus right'),
-      'Alt+v': pane('split right'), 'Alt+o': pane('split down'), 'Alt+x': pane('close'),
-      'Alt+Shift+Left': pane('shrink width'), 'Alt+Shift+Right': pane('grow width'), 'Alt+Shift+Up': pane('shrink height'), 'Alt+Shift+Down': pane('grow height'),
-      'Ctrl+Alt+Left': pane('move left'), 'Ctrl+Alt+Right': pane('move right'), 'Ctrl+Alt+Up': pane('move up'), 'Ctrl+Alt+Down': pane('move down'),
-      'Alt+c': pane('tab new'), 'Alt+1': pane('tab 1'), 'Alt+2': pane('tab 2'), 'Alt+3': pane('tab 3'), 'Alt+4': pane('tab 4'), 'Alt+5': pane('tab 5'), 'Alt+6': pane('tab 6'),
+      'Alt+s': pane('split right'), 'Alt+o': pane('split down'), 'Alt+w': pane('close'),
+      'Alt+c': pane('tab new'),
       ...(focus ? { 'Alt+t': { focus } } : {}),
       ...(state.selected ? { 'Alt+y': { copy: state.selected, label: 'path' } } : {}),
     };

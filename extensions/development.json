@@ -10,13 +10,6 @@
       "review": ".docs/audits/code-execution-workers-20260925.md"
     },
     {
-      "id": "omd_theme",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_theme",
-      "reason": "Selected Batch 3aa first-party theme, extended in Batch 3h with a powerline status line and prompt stash, installed inactive in OMD+ and installable explicitly in OMD Core; earlier responsiveness rejection remains historical evidence.",
-      "review": "extensions/REVIEWS.md"
-    },
-    {
       "id": "omd_focus_flow",
       "extension_type": "mod",
       "source": "mods/optional/omd_focus_flow",
@@ -36,13 +29,6 @@
       "source": "mods/exercise/session_anchor",
       "reason": "Internal author exercise; standalone long-session value remains unverified",
       "review": "extensions/REVIEWS.md"
-    },
-    {
-      "id": "omd_task_tools",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_task_tools",
-      "reason": "First-party candidate; two-language offline selection passed, but usefulness versus configured Codex and package qualification remain unverified",
-      "review": ".docs/audits/additional-first-party-live-mods-20260922.md"
     },
     {
       "id": "omd_session_anchor",
@@ -73,13 +59,6 @@
       "review": "extensions/REVIEWS.md"
     },
     {
-      "id": "omd_lsp_sync",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_lsp_sync",
-      "reason": "Opt-in implementation qualified locally; public release and support remain separate gates.",
-      "review": ".docs/ROADMAP.md"
-    },
-    {
       "id": "omd-anchored-edit",
       "extension_type": "plugin",
       "source": "plugins/optional/plugins/omd-anchored-edit",
@@ -94,81 +73,11 @@
       "review": ".docs/audits/batch2-packages-20260926.md"
     },
     {
-      "id": "omd_advisor",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_advisor",
-      "reason": "Batch 2 local acceptance complete; opt-in and inactive. Real-model access and review quality remain unverified, outside the maintainer-approved completion scope.",
-      "review": ".docs/audits/batch2-packages-20260926.md"
-    },
-    {
-      "id": "omd_research",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_research",
-      "reason": "Batch 2 local acceptance complete; opt-in and inactive. Live access and representative savings remain unverified, outside the maintainer-approved completion scope; no model-use allowance granted.",
-      "review": ".docs/audits/batch2-packages-20260926.md"
-    },
-    {
       "id": "omd-curated-memory",
       "extension_type": "plugin",
       "source": "plugins/optional/plugins/omd-curated-memory",
       "reason": "Local-only opt-in memory; third-party connections deferred by maintainer. Native fixture qualification, no public support or task-value claim. OMD+ stages the source inactive; parent plugin and mod-component trust and activation remain separate.",
       "review": ".docs/audits/batch2-packages-20260926.md"
-    },
-    {
-      "id": "omd_checks",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_checks",
-      "reason": "Offline intermediate-check selection passes; installed profile, task value and native parity remain open",
-      "review": ".docs/audits/batch255-migration-20260927.md"
-    },
-    {
-      "id": "omd_graph_navigator",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_graph_navigator",
-      "reason": "Compiled terminal navigation uses the analysis service and live source; full historical terminal parity and cross-session TUI result binding remain open",
-      "review": ".docs/audits/batch255-migration-20260927.md"
-    },
-    {
-      "id": "omd_guideline_governance",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_guideline_governance",
-      "reason": "Offline inert proposals and revision-checked promote/rollback commands pass; maintainer identity and validator independence are not host-attested",
-      "review": ".docs/audits/batch255-migration-20260927.md"
-    },
-    {
-      "id": "omd_inspector",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_inspector",
-      "reason": "API 0.2 offline inspector passes; missing public permission and rejected-mod fields block native parity",
-      "review": ".docs/audits/batch255-migration-20260927.md"
-    },
-    {
-      "id": "omd_repository_analysis",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_repository_analysis",
-      "reason": "Bounded five-language graph and health checks and compiled service composition pass offline; full native graph/health parity and task value remain open",
-      "review": ".docs/audits/batch255-migration-20260927.md"
-    },
-    {
-      "id": "omd_source_knowledge",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_source_knowledge",
-      "reason": "Bounded source evidence and inert lesson lifecycle pass offline; host-bound provenance, frozen delivery and native knowledge parity remain open",
-      "review": ".docs/audits/batch255-migration-20260927.md"
-    },
-    {
-      "id": "omd_project_pi_prompts",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_project_pi_prompts",
-      "reason": "Bounded project prompt and skill discovery pass offline; user scope and full native Pi parity remain open",
-      "review": ".docs/audits/batch255-migration-20260927.md"
-    },
-    {
-      "id": "omd_workflow",
-      "extension_type": "mod",
-      "source": "mods/first-party/omd_workflow",
-      "reason": "Reviewed and solo schema-2 contracts pass local mock-provider fixtures; controlled workflow and native-retirement parity remain open",
-      "review": ".docs/audits/batch255-migration-20260927.md"
     },
     {
       "id": "omd-debugger",

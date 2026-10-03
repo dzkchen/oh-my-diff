@@ -1,4 +1,4 @@
-import type { ContractDocument, ModAPI } from '@oh-my-diff/mod-api';
+import type { ContractDocument, Json, ModAPI } from '@oh-my-diff/mod-api';
 
 const contract: ContractDocument = {
   schema: 2,
@@ -20,11 +20,9 @@ const contract: ContractDocument = {
 
 export default function activate(api: ModAPI) {
   api.contract(contract);
-  api.command('workflow', () => api.host.call('contract.status', null), {
-    description: 'Show the active workflow contract, its assurance label, and its provenance',
-  });
-  api.command('no_delegation', () => api.host.call('contract.restrict', {
-    operations: ['agents.spawn'],
-    reason: 'this repository reviews every change in a pair instead of delegating',
-  }), { description: 'Remove delegation authority for the rest of this task' });
+  const parameters = { type: 'object' as const, properties: {}, additionalProperties: false };
+  api.tool({ name: 'workflow', description: 'Show the active workflow contract, its assurance label, and its provenance', parameters },
+    () => api.host.call('contract.status', null) as unknown as Json);
+  api.tool({ name: 'no_delegation', description: 'Remove delegation authority for the rest of this task', parameters },
+    () => api.host.call('contract.restrict', { operations: ['agents.spawn'], reason: 'this repository reviews every change in a pair instead of delegating' }) as unknown as Json);
 }

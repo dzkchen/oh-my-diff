@@ -15,7 +15,7 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/lean-release.lock.json"
-BINARIES = ("codex", "omd-mod", "omd", "omd-contract")
+BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract")
 AUTHOR_ARCHIVE = "mod-api.tgz"
 SOURCES = (
     "scripts/lean_profiles.py", "scripts/lean_release_lock.py",

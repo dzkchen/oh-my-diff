@@ -52,7 +52,9 @@ test('notes vaults link, search, track tasks and write only through checked, con
         confirms.push(args);
         return args.kind === 'text' ? { status: 'accepted', value: answers.shift() } : { status: 'accepted' };
       case 'store.get': return calls.some(call => call.operation === 'store.put') ? { value: null, revision: 1, provenance: { thread_id: 'thread-1' } } : null;
-      case 'store.put': return { revision: 1 };
+      case 'store.put':
+        if (args.value === null) throw new Error('store_value_required');
+        return { revision: 1 };
       case 'app.request': return { data: [{ items: [{ type: 'agentMessage', text: 'The fix is in **app.ts**.' }] }] };
       default: return { delivered: 1, dropped: 0 };
     }

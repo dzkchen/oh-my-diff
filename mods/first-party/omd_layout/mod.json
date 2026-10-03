@@ -4,6 +4,7 @@
   "version": "0.1.0-preview.1",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "state_scope": "thread",
   "description": "Workspace layout: project-grouped session list, find, quick open, jump and command palettes over panes, Git and worktrees",
   "license": "Apache-2.0",
   "provenance": {"maintainer": "Oh My Diff", "source": "mods/first-party/omd_layout"},

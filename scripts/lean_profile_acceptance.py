@@ -74,7 +74,7 @@ def run(artifact_dir, upstream, output):
         assert platform["host_mode"] == "omd"
         assert platform["profile_label"] == "OMD Core"
         assert [item["id"] for item in platform["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_mods"]
-        assert platform["installed_tools"] == ["omd", "omd-contract"] and platform["plugin_bundle"] is None
+        assert platform["installed_tools"] == ["omd", "omd-contract", "omd-mod"] and platform["plugin_bundle"] is None
         assert call([base / "platform-bin/omd-package", "status", "--json"], env)["profile"] == "platform"
         assert "omd COMMAND" in call([base / "platform-bin/omd", "--help"], env)["usage"]
         assert "export OMD_INSTALL_PROFILE=platform_only" in (base / "platform-bin/codex").read_text()
@@ -92,7 +92,7 @@ def run(artifact_dir, upstream, output):
         call([manager, "trust", platform_store, package, inspected["sha256"],
               ",".join(declared["capabilities"])], env)
         call([manager, "enable", platform_store, package], env)
-        author = command("platform", "status")
+        author = command("platform", "status", "--json")
         assert [item["id"] for item in author["other_active_mods"]] == ["counter"]
         scenario = base / "author-scenario.json"
         scenario.write_text(json.dumps({"schema": 1, "steps": [
@@ -101,7 +101,7 @@ def run(artifact_dir, upstream, output):
         offline = call([manager, "test", platform_store, scenario], env)
         assert offline["steps"][0]["value"] == {"count": 1}
         call([manager, "disable", platform_store, package], env)
-        assert command("platform", "status")["other_active_mods"] == []
+        assert command("platform", "status", "--json")["other_active_mods"] == []
         broken = base / "broken-counter"
         broken.mkdir()
         failed_manifest = {**declared, "id": "broken_counter"}
@@ -111,13 +111,13 @@ def run(artifact_dir, upstream, output):
         call([manager, "trust", platform_store, broken, failed_digest,
               ",".join(failed_manifest["capabilities"])], env)
         call([manager, "enable", platform_store, broken], env)
-        failed = command("platform", "status")["other_active_mods"]
+        failed = command("platform", "status", "--json")["other_active_mods"]
         assert len(failed) == 1 and failed[0]["id"] == "broken_counter" and failed[0]["error"]
         call([manager, "disable", platform_store, broken], env)
         call([manager, "reload", platform_store], env)
-        assert command("platform", "status")["other_active_mods"] == []
+        assert command("platform", "status", "--json")["other_active_mods"] == []
         command("platform", "activate", "direct")
-        assert command("platform", "status")["host_mode"] == "upstream_direct"
+        assert command("platform", "status", "--json")["host_mode"] == "upstream_direct"
         command("platform", "activate", "platform")
         assert call([base / "platform-bin/omd-package", "uninstall"], env)["upstream"] == str(upstream)
         assert platform_store.is_dir()
@@ -137,14 +137,15 @@ def run(artifact_dir, upstream, output):
         assert all(item["installed"] and item["pinned_source_current"] and not item["error"]
                    for item in full["packages"])
         assert not next(item for item in full["packages"] if item["id"] == "omd_theme")["active"]
-        assert set(full["installed_tools"]) == {"omd", "omd-contract"}
+        assert set(full["installed_tools"]) == {"omd", "omd-contract", "omd-mod"}
         assert "export OMD_INSTALL_PROFILE=full" in (base / "full-bin/codex").read_text()
         bundle = Path(full["plugin_bundle"]["marketplace"])
         assert len(full["plugin_bundle"]["plugins"]) == 10
         assert {"omd-anchored-edit", "omd-session-review", "omd-curated-memory"} <= set(full["plugin_bundle"]["plugins"])
         assert not (bundle / "plugins/omd-code-execution").exists()
         assert not (base / "full-prefix/browser").exists()
-        assert not (base / "full-prefix/artifacts/codex-code-mode-host").exists()
+        host = base / "full-prefix/artifacts/codex-code-mode-host"
+        assert host.is_file() and private.digest(host) == private.digest(artifact_dir / "codex-code-mode-host")
         assert not (base / "full-prefix/artifacts/omd-browser").exists()
         staged_skills = {}
         inert_hooks = []
@@ -172,7 +173,9 @@ def run(artifact_dir, upstream, output):
                     inert_hooks.append(f"{identifier}/{script}")
         plugin_list = call([base / "full-bin/codex", "plugin", "list", "--json"], env)
         assert plugin_list["installed"] == []
-        call([base / "full-bin/codex", "plugin", "marketplace", "add", bundle, "--json"], env)
+        registered = command("full", "plugins")
+        assert registered["marketplace"] == "oh-my-diff" and registered["source"] == str(bundle)
+        assert command("full", "plugins") == registered
         for identifier in full["plugin_bundle"]["plugins"]:
             plugin = call([base / "full-bin/codex", "plugin", "add", f"{identifier}@oh-my-diff", "--json"], env)
             assert plugin["name"] == identifier
@@ -186,7 +189,7 @@ def run(artifact_dir, upstream, output):
         assert not next(item for item in side_by_side["packages"] if item["id"] == "omd_workspace")["enabled_in_store"]
         command("full-upgrade", "uninstall")
         assert (base / "full-bin/codex").is_file()
-        assert not next(item for item in command("full", "status")["packages"]
+        assert not next(item for item in command("full", "status", "--json")["packages"]
                         if item["id"] == "omd_workspace")["enabled_in_store"]
         activated = command("full", "activate", "full")
         assert activated["host_mode"] == "omd"

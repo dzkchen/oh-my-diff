@@ -38,17 +38,19 @@ install or enable it in Codex.
 The current OMD+ candidate stages all ten selected plugins at
 `$OMD_PREFIX/bundles/oh-my-diff` without editing shared Codex state. After
 inspecting the staged sources, installation into Codex is a separate operator
-action:
+action. `omd-package plugins` adds the marketplace through the installer's
+`current` link, which survives updates (`codex plugin marketplace add` would
+record the release-specific path, which a later update removes):
 
 ```sh
-codex plugin marketplace add "$OMD_PREFIX/bundles/oh-my-diff"
+omd-package plugins
 codex plugin add omd-guidance-hooks@oh-my-diff
 codex plugin add omd-review-policy@oh-my-diff
 codex plugin add omd-application-bridges@oh-my-diff
 codex plugin add omd-artifact-reading@oh-my-diff
 ```
 
-The five local packages retain their source homes under `plugins/optional/plugins`
+The six local packages retain their source homes under `plugins/optional/plugins`
 and are available from the staged `oh-my-diff` marketplace too. Install one only
 when selected, for example `codex plugin add omd-session-review@oh-my-diff`.
 Their `mod/` components require a separate exact inspection, capability grant,
@@ -57,8 +59,11 @@ Follow the staged package's README. The curation hook also requires its explicit
 configuration. OMD Core users can add the source marketplace or packages by the
 same native plugin and mod paths.
 
-The frozen private `0.155.1` installer has a different marketplace path and
-does not establish activation behavior for the current `OMD_MODE=omd` host.
+The application-bridges and browser MCP servers start without configuration
+and offer no tools until their configuration file exists
+(`$OMD_MOD_STORE/plugin-config/omd-application-bridges.json`, or
+`omd-browser.json`); the browser server runs the Node the installer selected
+(`OMD_NODE`).
 
 Review and trust the plugin hook hashes when Codex prompts. Do not bypass hook
 trust. In `OMD_MODE=omd`, these hooks read their own explicitly selected

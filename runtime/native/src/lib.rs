@@ -275,6 +275,58 @@ impl Host {
         (table.config.clone(), table.error.clone())
     }
 
+    /// Applies an edited host.json to a running session's ledger limits and captured routes.
+    fn refresh_session(&self, session: &Session) -> Result<(), String> {
+        let config = self.route_config().0;
+        let limits = session
+            .task
+            .set_limits(config.limits.clone())
+            .map_err(|error| format!("host_limits_not_applied: {error}"));
+        let mut accounts = self
+            .accounts
+            .0
+            .lock()
+            .map_err(|_| "account lock poisoned")?;
+        for account in accounts
+            .values_mut()
+            .filter(|account| Arc::ptr_eq(&account.task, &session.task))
+        {
+            let find = |name: &str, provider: &str| {
+                config
+                    .routes
+                    .iter()
+                    .find(|route| route.name == name && route.provider == provider)
+            };
+            if let Some(route) = account
+                .route
+                .as_deref()
+                .and_then(|name| find(name, &account.provider))
+                .filter(|route| route.model == account.model)
+            {
+                account.rates = Some(route.rates.clone());
+                account.credential = route.credential.clone();
+            }
+            let lead = account.owner == "lead";
+            let task = account.task.clone();
+            let provider = account.provider.clone();
+            account.lead_routes.retain_mut(|candidate| {
+                let Some(route) = find(&candidate.name, &provider)
+                    .filter(|route| route.roles.contains(&config::RouteRole::Lead))
+                else {
+                    return false;
+                };
+                *candidate = request_route(route);
+                !lead || task.authorize_route(&route.provider, &route.model).is_ok()
+            });
+        }
+        limits
+    }
+
+    fn worker_limits(&self, session: &Session) -> Result<codex_omd::WorkerLimits, String> {
+        self.refresh_session(session)?;
+        Ok(self.route_config().0.worker_limits.clone())
+    }
+
     fn persist_json(&self, name: &str, value: &impl Serialize) -> Result<(), String> {
         let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
         persist_view(&self.root, name, &bytes)

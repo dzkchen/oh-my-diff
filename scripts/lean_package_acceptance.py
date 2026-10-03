@@ -69,14 +69,14 @@ def run(archive, sha256, upstream, output):
             assert not any((prefix / name).exists() for name in
                            ("browser", "bridge", "mcp", "sidecar", "code-mode"))
             if profile == "platform":
-                assert set(status["installed_tools"]) == {"omd", "omd-contract"} and status["plugin_bundle"] is None
+                assert set(status["installed_tools"]) == {"omd", "omd-contract", "omd-mod"} and status["plugin_bundle"] is None
                 assert [item["id"] for item in status["packages"] if item["installed"]] == ["omd_logo", "omd_mods"]
                 assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_logo", "omd_mods"]
             else:
-                assert set(status["installed_tools"]) == {"omd", "omd-contract"}
+                assert set(status["installed_tools"]) == {"omd", "omd-contract", "omd-mod"}
                 assert [item["id"] for item in status["packages"] if item["loaded_by_profile"]] == ["omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_workspace"]
                 assert {item["id"] for item in status["packages"] if item["active"]} == set(lean_profiles.DEFAULT_ACTIVE)
-                assert len(status["plugin_bundle"]["plugins"]) == 7
+                assert len(status["plugin_bundle"]["plugins"]) == 10
                 disabled = call([bin_dir / "omd-package", "mod", "disable", "omd_workspace"], environment)
                 assert not next(item for item in disabled["packages"]
                                 if item["id"] == "omd_workspace")["enabled_in_store"]

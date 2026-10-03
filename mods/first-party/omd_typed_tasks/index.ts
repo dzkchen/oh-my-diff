@@ -50,6 +50,16 @@ function parseResult(value: AgentResult, schema: Shape): Result {
   return parsed as Result;
 }
 
+// Expected refusals return as values; a non-Error throw is the host suspending the callback.
+const refusing = (handler: (input: Json) => Json) => (input: Json): Json => {
+  try {
+    return handler(input);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return { status: 'refused', reason: error.message };
+  }
+};
+
 export default function activate(api: ModAPI) {
   const types = api.settings.task_types ?? {};
   if (!object(types) || Object.keys(types).length > 16) throw new Error('task_types_invalid');
@@ -61,15 +71,14 @@ export default function activate(api: ModAPI) {
 
   type Entry = { task: Task; type: TaskType; handle: string; value?: Result; evidence?: ResourceRef; candidate?: ResourceRef; reviewer?: string; checked?: boolean; reviewed?: boolean; integration?: Json };
   type Batch = { status: string; acceptance: ResourceRef; criteria: string[]; entries: Entry[] };
-  const key = () => `batch.${api.host.call('task.status', null).ledger.thread_id}`;
+  const BATCH = { key: 'batch', scope: 'thread' as const };
   const load = () => {
-    const taskKey = key();
-    const record = api.host.call('store.get', { key: taskKey });
+    const record = api.host.call('store.get', BATCH);
     if (!record || !object(record.value) || !Array.isArray(record.value.entries)) throw new Error('no_typed_batch');
-    return { key: taskKey, revision: record.revision, value: record.value as unknown as Batch };
+    return { revision: record.revision, value: record.value as unknown as Batch };
   };
   const save = (record: ReturnType<typeof load>, value: Batch) => {
-    api.host.call('store.put', { key: record.key, expected_revision: record.revision, value: value as unknown as Json });
+    api.host.call('store.put', { ...BATCH, expected_revision: record.revision, value: value as unknown as Json });
     return value as unknown as Json;
   };
   const cancel = (entries: Entry[]) => {
@@ -79,7 +88,7 @@ export default function activate(api: ModAPI) {
     }
   };
   api.tool({ name: 'run', label: 'Typed subagent tasks', description: 'Start a bounded typed batch. Use advance to validate every result, check and review edits, then request host-gated integration.',
-    parameters: { type: 'object', properties: { tasks: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'object', properties: { id: { type: 'string' }, type: { type: 'string' }, prompt: { type: 'string' } }, required: ['id', 'type', 'prompt'], additionalProperties: false } } }, required: ['tasks'], additionalProperties: false } }, argument => {
+    parameters: { type: 'object', properties: { tasks: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'object', properties: { id: { type: 'string' }, type: { type: 'string' }, prompt: { type: 'string' } }, required: ['id', 'type', 'prompt'], additionalProperties: false } } }, required: ['tasks'], additionalProperties: false } }, refusing(argument => {
     if (!object(argument) || Object.keys(argument).some(key => key !== 'tasks') || !Array.isArray(argument.tasks) || argument.tasks.length < 1 || argument.tasks.length > limit) throw new Error('task_batch_invalid');
     const tasks: Task[] = [];
     const names = new Set<string>();
@@ -88,11 +97,10 @@ export default function activate(api: ModAPI) {
       names.add(item.id);
       tasks.push(item as Task);
     }
-    const taskKey = key();
-    const previous = api.host.call('store.get', { key: taskKey });
+    const previous = api.host.call('store.get', BATCH);
     if (previous && object(previous.value) && !['completed', 'cancelled'].includes(String(previous.value.status))) throw new Error('finish_or_cancel_existing_batch');
     const checkpoint = api.services.call('omd.workflow', 'status', null);
-    if (!object(checkpoint) || !bounded(checkpoint.objective, 4096) || !Array.isArray(checkpoint.acceptance_criteria) || !checkpoint.acceptance_criteria.every(item => bounded(item, 512)) || !object(checkpoint.acceptance)) throw new Error('task_checkpoint_unavailable');
+    if (!object(checkpoint) || !bounded(checkpoint.objective, 4096) || !Array.isArray(checkpoint.acceptance_criteria) || !checkpoint.acceptance_criteria.every(item => bounded(item, 512)) || !object(checkpoint.acceptance)) throw new Error(object(checkpoint) && checkpoint.status === 'refused' ? `task_checkpoint_unavailable: ${String(checkpoint.reason)}` : 'task_checkpoint_unavailable');
     const acceptance = api.host.call('evidence.write', { media_type: 'application/json', content: { objective: checkpoint.objective, acceptance_criteria: checkpoint.acceptance_criteria as string[] } });
     if (acceptance.sha256 !== checkpoint.acceptance.sha256) throw new Error('acceptance_copy_mismatch');
     const prompts = tasks.map(task => {
@@ -115,26 +123,26 @@ export default function activate(api: ModAPI) {
     }
     const snapshot = api.host.call('workspace.snapshot', {}).snapshot;
     const value: Batch = { status: 'admitting', acceptance, criteria: checkpoint.acceptance_criteria as string[], entries: [] };
-    let revision = api.host.call('store.put', { key: taskKey, expected_revision: previous?.revision ?? null, value: value as unknown as Json }).revision;
+    let revision = api.host.call('store.put', { ...BATCH, expected_revision: previous?.revision ?? null, value: value as unknown as Json }).revision;
     try {
       for (const [index, task] of tasks.entries()) {
         const type = types[task.type] as TaskType;
         const agent = api.host.call('agents.spawn', { role: type.role, route: type.route, prompt: prompts[index], evidence: acceptance,
           workspace: type.tools === 'workspace_edit' ? 'isolated_worktree' : 'read_only', ...(type.tools === 'read_search' ? { snapshot } : {}) });
         value.entries.push({ task, type, handle: agent.handle });
-        revision = api.host.call('store.put', { key: taskKey, expected_revision: revision, value: value as unknown as Json }).revision;
+        revision = api.host.call('store.put', { ...BATCH, expected_revision: revision, value: value as unknown as Json }).revision;
       }
       value.status = 'running';
-      api.host.call('store.put', { key: taskKey, expected_revision: revision, value: value as unknown as Json });
+      api.host.call('store.put', { ...BATCH, expected_revision: revision, value: value as unknown as Json });
       return { status: 'running', tasks: value.entries.map(entry => ({ id: entry.task.id, handle: entry.handle })), next: 'advance' };
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       cancel(value.entries);
-      api.host.tryCall('store.put', { key: taskKey, expected_revision: revision, value: { ...value, status: 'interrupted' } as unknown as Json });
+      api.host.tryCall('store.put', { ...BATCH, expected_revision: revision, value: { ...value, status: 'interrupted' } as unknown as Json });
       throw error;
     }
-  });
-  api.tool({ name: 'advance', description: 'Advance one bounded validation, check, review or integration step without restarting missing workers', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
+  }));
+  api.tool({ name: 'advance', description: 'Advance one bounded validation, check, review or integration step without restarting missing workers', parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(() => {
     const record = load();
     const batch = record.value;
     if (batch.status !== 'running') return batch as unknown as Json;
@@ -203,10 +211,10 @@ export default function activate(api: ModAPI) {
       save(record, batch);
       throw error;
     }
-  });
-  api.tool({ name: 'cancel', description: 'Cancel remaining owned workers and preserve already integrated work and validated results', parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => {
+  }));
+  api.tool({ name: 'cancel', description: 'Cancel remaining owned workers and preserve already integrated work and validated results', parameters: { type: 'object', properties: {}, additionalProperties: false } }, refusing(() => {
     const record = load();
     cancel(record.value.entries);
     return save(record, { ...record.value, status: 'cancelled' });
-  });
+  }));
 }

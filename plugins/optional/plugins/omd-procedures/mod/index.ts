@@ -30,7 +30,7 @@ function render(name: string, version: string, draft: Draft): string {
     ...(draft.inputs.length ? draft.inputs.map(input => `- \`{{${input.name}}}\`: ${input.description} (source task: \`${input.example}\`)`) : ['None.']), '',
     'Ask the user for any missing input before starting.', '',
     '## Start or resume', '',
-    `If the workflow checkpoint (\`/omd_workflow:status\` or the workflow context) already holds a task whose objective starts with \`[procedure ${name}@\`, resume it: continue its remaining work under its recorded acceptance criteria, even when that version differs from ${version}. Otherwise call \`mod_omd_workflow_begin\` with these values after substituting the inputs:`, '',
+    `If the workflow checkpoint (\`/omd_workflow:progress\` or the workflow context) already holds a task whose objective starts with \`[procedure ${name}@\`, resume it: continue its remaining work under its recorded acceptance criteria, even when that version differs from ${version}. Otherwise call \`mod_omd_workflow_begin\` with these values after substituting the inputs:`, '',
     '```json', JSON.stringify({ objective: `[procedure ${name}@${version}] ${draft.objective}`, acceptance_criteria: draft.acceptance_criteria }, null, 2), '```', '',
     '## Checkpoints', '',
     ...draft.checkpoints.map((step, index) => `${index + 1}. ${step}`), '',

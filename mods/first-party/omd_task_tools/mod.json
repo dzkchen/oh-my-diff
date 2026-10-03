@@ -13,9 +13,9 @@
   "settings_schema": {
     "type": "object",
     "properties": {
-      "python_command": {"type": "array"},
-      "typescript_command": {"type": "array"},
-      "rust_command": {"type": "array"}
+      "python_command": {"type": "array", "default": []},
+      "typescript_command": {"type": "array", "default": []},
+      "rust_command": {"type": "array", "default": []}
     },
     "additionalProperties": false
   }

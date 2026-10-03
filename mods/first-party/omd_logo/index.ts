@@ -13,13 +13,14 @@ export default function activate(api: ModAPI) {
     const dot = ascii ? '-' : '·';
     const span = (text: string, tone: TerminalSpan['tone'] = 'normal', bold = false): TerminalSpan => ({ text, tone, bold });
     const side = [
-      [span('oh my diff', 'normal', true)],
-      [span(`${profile ?? 'Oh My Diff'} ${dot} OMD enabled`, 'muted')],
-      [span(`Codex ${identity ? `v${identity.codex_version}` : 'version unknown'} ${dot} ${identity?.mods.active ?? 0} of ${identity?.mods.installed ?? 0} mods active`, 'muted')],
+      [span('oh my diff', 'normal', true), ...(profile ? [span(` ${dot} ${profile}`, 'muted')] : [])],
+      [span(`Codex ${identity ? `v${identity.codex_version}` : 'version unknown'}`, 'muted')],
+      [span(identity ? `${identity.mods.active} of ${identity.mods.installed} mods on` : 'mods loading', 'muted')],
     ];
+    // The mark uses the terminal's own foreground so it stays readable on light and dark backgrounds.
     const rows = (id: string, wide: boolean): TerminalComponent[] => mark.map((text, index) => ({
       type: 'line', id: `${id}_${index + 1}`, label: index === 0 ? 'Oh My Diff' : text,
-      spans: [span('+ ', 'success'), span(text, 'success'), ...(wide ? [span('   '), ...side[index]] : [])],
+      spans: [span('+ ', 'accent'), span(text, 'normal', true), ...(wide ? [span('   '), ...side[index]] : [])],
     }));
     return {
       greeting: '',

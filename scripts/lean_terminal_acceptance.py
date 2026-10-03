@@ -231,7 +231,7 @@ def terminal(binary, repo, env, width, version, greetings, profile=None, *,
                         and sorted(item["id"] for item in mods) == sorted(live_mods)
                         and all(item["error"] is None for item in mods)
                         and not published.get("rejected") and published.get("reload_error") is None
-                        and visible(f"{len(live_mods)} active mod")
+                        and visible(f"{len(live_mods)} mod")
                         and not visible("mod status unavailable") and appearance())
             read_frame("live_publication", live_publication)
         if native_session:

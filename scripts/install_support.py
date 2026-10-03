@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -121,6 +122,17 @@ def plugin_sources(lock=None):
         if "mod" in plugin["extension_types"] or plugin.get("mod_required"):
             raise ValueError(f"bundled plugin is incorrectly classified as a mod: {identifier}")
     return lock
+
+
+def compatible_upstream(version, pinned):
+    major, minor, _ = pinned.split(".")
+    return re.fullmatch(rf"codex-cli {re.escape(major)}\.{re.escape(minor)}\.\d+", version) is not None
+
+
+def compatible_node(version, pinned):
+    found = re.fullmatch(r"v(\d+)\.(\d+)\.\d+", version)
+    major, minor, _ = pinned.split(".")
+    return found is not None and found[1] == major and int(found[2]) >= int(minor)
 
 
 def binary_identity(path):

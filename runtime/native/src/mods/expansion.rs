@@ -363,12 +363,7 @@ fn select_route(lead: &Lead, caller: &str, arguments: Value) -> Result<Value, St
         .get_mut(&lead.thread.to_string())
         .filter(|account| account.owner == "lead" && account.route.is_some())
         .ok_or_else(|| format!("route_unavailable_for_thread: {}", input.route))?;
-    if account.route.as_deref() != Some(route.name.as_str())
-        && !account
-            .lead_routes
-            .iter()
-            .any(|candidate| candidate.name == route.name)
-    {
+    if account.route.as_deref() != Some(route.name.as_str()) {
         if route.provider != account.provider {
             return Err(format!("route_unavailable_for_thread: {}", input.route));
         }
@@ -376,6 +371,9 @@ fn select_route(lead: &Lead, caller: &str, arguments: Value) -> Result<Value, St
             .task
             .authorize_route(&route.provider, &route.model)
             .map_err(|error| error.to_string())?;
+        account
+            .lead_routes
+            .retain(|candidate| candidate.name != route.name);
         account.lead_routes.push(crate::request_route(route));
     }
     drop(accounts);

@@ -352,7 +352,7 @@ test('advisor completion trigger reviews only completed turns that changed files
   assert.equal(invoke('advisor', completed, changed.host, options).state.status, 'reviewing');
 });
 
-const researchOptions = { event: 'tool', name: 'gather', api: '0.2.0-experimental.5', capabilities: ['tools', 'agents', 'model', 'fs.read'], settings: { enabled: true } };
+const researchOptions = { event: 'tool', name: 'gather', api: '0.2.0-experimental.5', capabilities: ['tools', 'agents', 'model', 'fs.read'], settings: {} };
 const researchQuestion = { question: 'Where are the read permissions enforced across these packages?', scope: ['runtime', 'mods', 'scripts'], brief: 'Trace the read permission boundary and return source evidence only.', expected_sources: 6, lead_read_minutes: 12, brief_and_handoff_minutes: 2, already_located: false };
 function researchHost(overrides = {}) {
   const calls = [];
@@ -362,8 +362,8 @@ function researchHost(overrides = {}) {
   return { calls, host(call) {
     calls.push(call);
     if (Object.hasOwn(overrides, call.operation)) return overrides[call.operation](call);
-    if (call.operation === 'routes.list') return [{ name: 'research_luna', roles: ['worker'], model: 'gpt-6-luna', provider: 'fixture', tools: ['exec_command', 'apply_patch', 'spawn_agent'], available: true, billing: 'explicit_paid_api_grant' }];
-    if (call.operation === 'agents.spawn') { assert.deepEqual(call.arguments.tools, ['exec_command']); assert.equal(call.arguments.workspace, 'read_only'); return { handle: 'worker', route: 'research_luna', permissions: 'read_only' }; }
+    if (call.operation === 'routes.list') return [{ name: 'research', roles: ['worker'], model: 'gpt-6-luna', provider: 'fixture', tools: ['exec_command', 'apply_patch', 'spawn_agent'], available: true, billing: 'explicit_paid_api_grant' }];
+    if (call.operation === 'agents.spawn') { assert.deepEqual(call.arguments.tools, ['exec_command']); assert.equal(call.arguments.workspace, 'read_only'); return { handle: 'worker', route: 'research', permissions: 'read_only' }; }
     if (call.operation === 'agents.wait' || call.operation === 'agents.result') return completed;
     if (call.operation === 'workspace.read') return { files: { 'runtime/example.rs': { text: source, sha256: digest(source) } } };
     if (call.operation === 'agents.cancel') return { cancelled: true };
@@ -378,8 +378,8 @@ test('research rejects small, located or uneconomic questions without a host cal
   }
 });
 
-test('research requires the separately granted exact model and never falls back', () => {
-  for (const presets of [[], [{ name: 'research_luna', roles: ['lead'], model: 'gpt-6-luna', available: true, billing: 'included_subscription' }], [{ name: 'research_luna', roles: ['worker'], model: 'other-model', available: true, billing: 'explicit_paid_api_grant' }], [{ name: 'research_luna', roles: ['worker'], model: 'gpt-6-luna', available: false, billing: 'explicit_paid_api_grant' }]]) {
+test('research requires the named worker route and never falls back', () => {
+  for (const presets of [[], [{ name: 'research', roles: ['lead'], model: 'gpt-6-luna', available: true, billing: 'included_subscription' }], [{ name: 'other', roles: ['worker'], model: 'gpt-6-luna', available: true, billing: 'explicit_paid_api_grant' }], [{ name: 'research', roles: ['worker'], model: 'gpt-6-luna', available: false, billing: 'explicit_paid_api_grant' }]]) {
     const host = researchHost({ 'routes.list': () => presets });
     assert.equal(invoke('research', researchQuestion, host.host, researchOptions).value.status, 'denied');
     assert.equal(host.calls.length, 1);
@@ -399,15 +399,15 @@ test('research narrows tools, validates source hashes and quotes, and returns de
 });
 
 test('research can use a separately authorized subscription preset without paid fallback', () => {
-  const host = researchHost({ 'routes.list': () => [{ name: 'research_luna', roles: ['worker'], model: 'gpt-6-luna', provider: 'openai', tools: ['exec_command'], available: true, billing: 'included_subscription' }] });
+  const host = researchHost({ 'routes.list': () => [{ name: 'research', roles: ['worker'], model: 'gpt-6-luna', provider: 'openai', tools: ['exec_command'], available: true, billing: 'included_subscription' }] });
   assert.equal(invoke('research', researchQuestion, host.host, researchOptions).value.status, 'sources_gathered');
   assert.equal(host.calls.filter(call => call.operation === 'agents.spawn').length, 1);
 });
 
-test('research disabled registers no work, and an unfinished request is cancelled', () => {
-  const disabled = invoke('research', null, () => assert.fail('disabled operation'), { ...researchOptions, event: 'inspect', settings: {} });
-  assert.deepEqual(disabled.registrations.tools, []);
-  assert.deepEqual(disabled.registrations.events, []);
+test('research registers only its tool at activation, and an unfinished request is cancelled', () => {
+  const inspected = invoke('research', null, () => assert.fail('activation operation'), { ...researchOptions, event: 'inspect' });
+  assert.deepEqual(inspected.registrations.tools.map(tool => tool.name), ['gather']);
+  assert.deepEqual(inspected.registrations.events, []);
   const host = researchHost({ 'agents.wait': () => ({ status: 'running' }) });
   assert.equal(invoke('research', researchQuestion, host.host, researchOptions).value.status, 'incomplete');
   assert.ok(host.calls.some(call => call.operation === 'agents.cancel'));

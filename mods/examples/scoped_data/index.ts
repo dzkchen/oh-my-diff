@@ -1,4 +1,4 @@
-import type { ModAPI, ResourceRef } from '@oh-my-diff/mod-api';
+import type { Json, ModAPI, ResourceRef } from '@oh-my-diff/mod-api';
 
 export default function activate(api: ModAPI) {
   const retain = () => {
@@ -22,7 +22,10 @@ export default function activate(api: ModAPI) {
     const worker = api.host.call('agents.spawn', { role: 'context_probe', route: route.name, prompt: 'Report the selected fixture fact.', tools: [], workspace: 'read_only', snapshot, evidence });
     return { route: route.name, worker: api.host.call('agents.wait', { handle: worker.handle, consume: true }) };
   });
-  api.command('sessions', () => api.host.call('sessions.list', { limit: 2 }), { cli: 'example-sessions' });
+  api.command('sessions', () => {
+    const listed = api.host.tryCall('sessions.list', { limit: 2 });
+    return listed.ok ? listed.value as unknown as Json : { display: 'Session listing runs from the CLI: omd example-sessions' };
+  }, { cli: 'example-sessions' });
   api.command('inspect', () => api.host.call('store.get', { key: 'fixture-fact' }), { cli: 'example-inspect' });
   api.command('retain', retain);
   api.command('freeze', freeze);

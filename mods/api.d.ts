@@ -85,7 +85,7 @@ export interface TerminalTheme {
   glyphs?: Record<string, string>;
 }
 export type TerminalListEvent = { view_id: string; title: string; subtitle: string | null; width: number; items: { label: string; description: string | null; current: boolean; disabled: boolean; order: number }[]; selected: number | null };
-export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number } };
+export type TerminalIdentity = { codex_version: string; install_profile: 'full' | 'platform_only' | 'private' | 'unknown' | 'unreported'; mode: 'omd'; mods: { installed: number; enabled: number; active: number; failed?: number } };
 export interface TerminalView {
   welcome?: TerminalWelcome; session_title_suffix?: string; greeting?: string;
   title?: string; foreground?: number; background?: number; sidebar_width?: number; sidebar_side?: 'left' | 'right'; panels?: Panel[]; header?: Panel; footer?: Panel;
@@ -164,6 +164,7 @@ export interface HostOperations {
   'receipts.submit': { arguments: { kind: string; candidate_sha256: string; acceptance_sha256?: string; outcome: 'pass' | 'fail'; evidence: ResourceRef; agent?: string; execution?: boolean; findings?: ReceiptFinding[]; resolves?: string[] }; result: Receipt };
   'contract.status': { arguments: null; result: ContractStatus };
   'contract.restrict': { arguments: { operations?: string[]; scoped?: ContractRestriction[]; reason: string }; result: { restrictions: string[]; scoped_restrictions: ContractRestriction[] } };
+  'contract.select': { arguments: { contract: string }; result: { selected: Json; applies: 'next_session' } | Declined };
   'agents.spawn': { arguments: { role: string; route: string; prompt: string; workspace?: 'read_only' | 'isolated_worktree'; tools?: string[]; evidence?: ResourceRef; snapshot?: ResourceRef; parent_history?: boolean; resolution_context?: { acceptance_sha256: string; findings: string[] } }; result: Agent };
   'agents.message': { arguments: { handle: string; message: string }; result: { delivered: boolean } };
   'agents.cancel': { arguments: { handle: string }; result: { cancelled: boolean } };

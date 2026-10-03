@@ -1,6 +1,7 @@
 use super::*;
 
 pub const MOD_KEY_LIMIT: usize = 12;
+pub const MOD_COMPOSED_KEY_LIMIT: usize = 64;
 pub const MOD_COMPONENT_LIMIT: usize = 64;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -1287,8 +1288,8 @@ fn valid_templates(message: &Option<String>, tool: &Option<String>) -> bool {
         .all(|template| visible(template, 1024) && template.matches("{text}").count() == 1)
 }
 
-fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>) -> bool {
-    bindings.len() <= MOD_KEY_LIMIT
+fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>, limit: usize) -> bool {
+    bindings.len() <= limit
         && bindings
             .iter()
             .all(|(key, action)| mod_key_name(key) && valid_action(action))
@@ -1488,7 +1489,10 @@ impl ModViewPatch {
                     .is_some_and(|title| !visible(title, 1024)),
             ),
             ("status", !valid_status(&patch.status)),
-            ("keybindings", !valid_bindings(&patch.keybindings)),
+            (
+                "keybindings",
+                !valid_bindings(&patch.keybindings, MOD_KEY_LIMIT),
+            ),
             (
                 "templates",
                 !valid_templates(&patch.message_template, &patch.tool_template),
@@ -1666,13 +1670,21 @@ impl ModViewPatch {
                 None => template,
             });
         }
-        ModView::parse(serde_json::to_value(target.clone())?)?;
+        ModView::parse_with(
+            serde_json::to_value(target.clone())?,
+            MOD_COMPOSED_KEY_LIMIT,
+        )?;
         Ok(())
     }
 }
 
 impl ModView {
     pub fn parse(value: Value) -> Result<Self> {
+        Self::parse_with(value, MOD_KEY_LIMIT)
+    }
+
+    /// Each mod's view or patch keeps 12 keys; the view composed from every mod may hold more.
+    fn parse_with(value: Value, key_limit: usize) -> Result<Self> {
         let view: Self = serde_json::from_value(value)?;
         let invalid = [
             (
@@ -1711,7 +1723,7 @@ impl ModView {
                 view.footer.as_ref().is_some_and(|panel| !panel.valid(3)),
             ),
             ("status", !valid_status(&view.status)),
-            ("keybindings", !valid_bindings(&view.keybindings)),
+            ("keybindings", !valid_bindings(&view.keybindings, key_limit)),
             (
                 "keybindings.focus",
                 !valid_focus_targets(&view.keybindings, &view.sites),
@@ -1771,13 +1783,15 @@ impl ModViewSnapshot {
     pub fn read(path: &Path) -> Result<Self> {
         let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
         let mut snapshot: Self = serde_json::from_value(value)?;
-        snapshot.view = ModView::parse(serde_json::to_value(&snapshot.view)?)?;
+        snapshot.view = ModView::parse_with(
+            serde_json::to_value(&snapshot.view)?,
+            MOD_COMPOSED_KEY_LIMIT,
+        )?;
         if snapshot
             .progress
             .as_ref()
             .is_some_and(|panel| !panel.valid(8))
             || snapshot.activity.len() > 32
-            || snapshot.contributors.len() > 16
             || snapshot
                 .contributors
                 .iter()

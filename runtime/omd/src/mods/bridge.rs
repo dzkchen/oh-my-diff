@@ -35,9 +35,8 @@ impl ModHostCall {
             }
             "routes.list" | "providers.register" | "providers.unregister" => Ok("model"),
             "task.status" | "workspace.integrate" => Ok("agents"),
-            "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict" => {
-                Ok("contracts")
-            }
+            "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict"
+            | "contract.select" => Ok("contracts"),
             "mods.service" => Ok("services"),
             "app.request" => self.arguments["method"]
                 .as_str()

@@ -190,9 +190,9 @@ const MAX_LIVE_WORKERS: usize = 128;
 const MAX_TOTAL_WORKERS: usize = 1_024;
 
 pub struct Task {
-    limits: Limits,
+    limits: Mutex<Limits>,
     started: Instant,
-    deadline_unix_millis: u128,
+    created_unix_millis: u128,
     evidence: PathBuf,
     state: Mutex<State>,
     external_routes: Mutex<BTreeSet<(String, String)>>,
@@ -235,10 +235,8 @@ impl Task {
         fs::create_dir(&evidence)?;
         let evidence = evidence.canonicalize()?;
         let task = Self {
-            deadline_unix_millis: unix_millis()?
-                .checked_add(u128::from(limits.seconds) * 1000)
-                .ok_or_else(|| denied("task deadline overflow"))?,
-            limits,
+            created_unix_millis: unix_millis()?,
+            limits: Mutex::new(limits.clone()),
             started: Instant::now(),
             evidence,
             state: Mutex::new(State {
@@ -260,7 +258,7 @@ impl Task {
             .map_err(|_| denied("task lock poisoned"))?;
         task.record(
             &mut state,
-            &serde_json::json!({"event": "created", "limits": task.limits}),
+            &serde_json::json!({"event": "created", "limits": limits}),
         )?;
         drop(state);
         Ok(task)
@@ -320,6 +318,7 @@ impl Task {
             observed: Vec::new(),
         };
         let mut created_unix_millis = None;
+        let mut recorded_limits = None;
         for entry in records {
             let metadata = entry.metadata()?;
             if entry.file_type()?.is_symlink()
@@ -346,11 +345,12 @@ impl Task {
                 return Err(denied("resume evidence must begin with task creation"));
             }
             match record["event"].as_str() {
-                Some("created") => {
+                Some("created") | Some("limits_changed") => {
                     let recorded: Limits = serde_json::from_value(record["limits"].clone())?;
-                    if state.sequence != 1 || recorded != limits {
-                        return Err(denied("resume limits differ from original task"));
+                    if (state.sequence == 1) != (record["event"] == "created") {
+                        return Err(denied("resume evidence must begin with task creation"));
                     }
+                    recorded_limits = Some(recorded);
                 }
                 Some("worker_started") => {
                     let id = record["worker"]
@@ -546,17 +546,17 @@ impl Task {
         if state.status == TaskStatus::Stopped {
             return Err(denied("stopped task cannot resume"));
         }
-        let deadline_unix_millis = created_unix_millis
-            .ok_or_else(|| denied("created timestamp missing"))?
-            .checked_add(u128::from(limits.seconds) * 1000)
-            .ok_or_else(|| denied("task deadline overflow"))?;
-        if unix_millis()? >= deadline_unix_millis {
+        let created_unix_millis =
+            created_unix_millis.ok_or_else(|| denied("created timestamp missing"))?;
+        let recorded_limits = recorded_limits
+            .ok_or_else(|| denied("resume evidence must begin with task creation"))?;
+        if unix_millis()? >= created_unix_millis.saturating_add(u128::from(limits.seconds) * 1000) {
             return Err(denied("task expired before resume"));
         }
         let task = Self {
-            limits,
+            limits: Mutex::new(recorded_limits),
             started: Instant::now(),
-            deadline_unix_millis,
+            created_unix_millis,
             evidence,
             state: Mutex::new(state),
             external_routes: Mutex::new(BTreeSet::new()),
@@ -571,12 +571,45 @@ impl Task {
         if active {
             task.pause("abrupt_client_loss", task.uncertain_requests()?)?;
         }
+        task.set_limits(limits)?;
         task.resume(reference)?;
         Ok(task)
     }
 
+    fn limits(&self) -> Limits {
+        self.limits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn deadline_unix_millis(&self) -> u128 {
+        self.created_unix_millis
+            .saturating_add(u128::from(self.limits().seconds) * 1000)
+    }
+
     fn expired(&self) -> bool {
-        unix_millis().map_or(true, |now| now >= self.deadline_unix_millis)
+        unix_millis().map_or(true, |now| now >= self.deadline_unix_millis())
+    }
+
+    pub fn set_limits(&self, limits: Limits) -> io::Result<()> {
+        Self::validate_limits(&limits)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| denied("task lock poisoned"))?;
+        if self.limits() == limits {
+            return Ok(());
+        }
+        self.record(
+            &mut state,
+            &serde_json::json!({"event": "limits_changed", "limits": limits}),
+        )?;
+        *self
+            .limits
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = limits;
+        Ok(())
     }
 
     fn record(&self, state: &mut State, event: &Value) -> io::Result<()> {
@@ -660,20 +693,21 @@ impl Task {
                 worker.status == WorkerStatus::Active && worker.depth.checked_add(1) == Some(depth)
             })
         };
+        let ceiling = self.limits();
         if limits.requests == 0
             || limits.seconds == 0
             || depth == 0
-            || depth > self.limits.max_depth
+            || depth > ceiling.max_depth
             || !valid_parent
-            || limits.requests > self.limits.requests
-            || limits.seconds > self.limits.seconds
-            || limits.exposure_microusd > self.limits.exposure_microusd
+            || limits.requests > ceiling.requests
+            || limits.seconds > ceiling.seconds
+            || limits.exposure_microusd > ceiling.exposure_microusd
             || state
                 .workers
                 .values()
                 .filter(|worker| worker.status == WorkerStatus::Active)
                 .count()
-                >= self.limits.concurrent_workers as usize
+                >= ceiling.concurrent_workers as usize
         {
             return Err(denied("worker limits exceed task ceiling or capacity"));
         }
@@ -952,7 +986,8 @@ impl Task {
             .exposure
             .checked_add(exposure_microusd)
             .ok_or_else(|| denied("exposure overflow"))?;
-        if state.requests >= self.limits.requests || next_exposure > self.limits.exposure_microusd {
+        let ceiling = self.limits();
+        if state.requests >= ceiling.requests || next_exposure > ceiling.exposure_microusd {
             return Err(denied("shared request or exposure limit"));
         }
         if owner != "lead" {
@@ -1238,8 +1273,9 @@ impl Task {
         if state.status != TaskStatus::Paused || self.expired() {
             return Err(denied("task is not resumable"));
         }
-        let remaining_requests = self.limits.requests.saturating_sub(state.requests);
-        let remaining_exposure = self.limits.exposure_microusd.saturating_sub(state.exposure);
+        let ceiling = self.limits();
+        let remaining_requests = ceiling.requests.saturating_sub(state.requests);
+        let remaining_exposure = ceiling.exposure_microusd.saturating_sub(state.exposure);
         self.record(
             &mut state,
             &serde_json::json!({"event": "task_resumed", "reference": reference, "remaining": {"requests": remaining_requests, "exposure_microusd": remaining_exposure}}),
@@ -1313,12 +1349,14 @@ impl Task {
             .map_err(|_| denied("task lock poisoned"))?;
         Ok((
             Duration::from_millis(
-                self.deadline_unix_millis
+                self.deadline_unix_millis()
                     .saturating_sub(unix_millis().unwrap_or(u128::MAX))
                     .min(u128::from(u64::MAX)) as u64,
             ),
-            self.limits.requests - state.requests,
-            self.limits.exposure_microusd.saturating_sub(state.exposure),
+            self.limits().requests.saturating_sub(state.requests),
+            self.limits()
+                .exposure_microusd
+                .saturating_sub(state.exposure),
         ))
     }
 

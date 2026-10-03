@@ -21,7 +21,7 @@ export default function activate(api: ModAPI) {
     const image = api.state.get() as ResourceRef | null;
     if (!image) return null;
     return { sites: { 'image_preview/preview': { components: [
-      { type: 'image', id: 'preview-image', label: 'Preview', image, alt: 'imported image', height: 12 },
+      { type: 'image', id: 'preview_image', label: 'Preview', image, alt: 'imported image', height: 12 },
     ] } } };
   });
 }

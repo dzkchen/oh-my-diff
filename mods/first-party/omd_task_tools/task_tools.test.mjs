@@ -23,7 +23,7 @@ function replay(event, payload, state, work, settings = {}, name = '', failure =
   const calls = [];
   for (let index = 0; index < 8; index++) {
     const output = run(event, payload, state, receipts, settings, name);
-    if (!output.host_call) return { output, calls };
+    if (!output.host_call) return { output: output.value?.status === 'refused' ? { ...output, error: output.value.reason } : output, calls };
     const call = output.host_call;
     calls.push(call);
     if (call.operation === 'task.status') receipts.push({ call, value: { ledger: { thread_id: 'one', cost: null }, limits: {}, worker_limits: {} } });

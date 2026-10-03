@@ -9,12 +9,19 @@
     "store",
     "exec",
     "composer",
-    "commands"
+    "commands",
+    "events"
   ],
   "compatibility": {
     "required_features": [
       "binary_evidence_v1",
-      "terminal_surface_v1"
+      "terminal_surface_v1",
+      "events_v1"
+    ]
+  },
+  "subscriptions": {
+    "channels": [
+      "screenshot_attach/attach"
     ]
   }
 }

@@ -1685,3 +1685,52 @@ fn writable_pty_panes_also_need_workspace_write_authority() {
         ["pty", "network"]
     );
 }
+
+#[test]
+fn contract_select_writes_the_user_selection_and_needs_the_plan_confirmation_to_lower_assurance() {
+    let document = |id: &str, producer: &str| {
+        ContractDocument::parse(&json!({"schema":2,"id":id,"version":1,"description":"d",
+            "assurance":"a","gates":{"complete":[{"receipt":"review","producer":producer}]}}))
+        .unwrap()
+    };
+    let documents = vec![
+        (document("strict", "separate_agent"), owner()),
+        (document("solo", "lead"), owner()),
+    ];
+    let store = tempfile::tempdir().unwrap();
+    let repository = tempfile::tempdir().unwrap();
+    let selected = codex_omd::contract_cli::select(
+        &documents,
+        store.path(),
+        repository.path(),
+        "strict@1",
+        None,
+    )
+    .unwrap();
+    assert_eq!(selected["selected"]["key"], "strict@1");
+    let refused = codex_omd::contract_cli::select(
+        &documents,
+        store.path(),
+        repository.path(),
+        "solo@1",
+        None,
+    );
+    assert!(
+        refused
+            .unwrap_err()
+            .to_string()
+            .contains("reduces assurance")
+    );
+    let plan = codex_omd::contract_cli::plan(&documents, store.path(), repository.path(), "solo@1")
+        .unwrap();
+    assert_eq!(plan["weakens"], true);
+    let confirmation = plan["confirmation"].as_str().map(str::to_owned);
+    codex_omd::contract_cli::select(
+        &documents,
+        store.path(),
+        repository.path(),
+        "solo@1",
+        confirmation,
+    )
+    .unwrap();
+}

@@ -7,7 +7,10 @@ export default function activate(api: ModAPI) {
   const saved = (): Snapshot => ({ ...EMPTY, ...(api.state.get() as Partial<Snapshot> | null ?? {}) });
   const save = (state: Snapshot) => api.state.set(state);
   const visible = (value: string, limit = 160) => value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').slice(0, limit);
-  const summary = (value: Json): string => typeof value === 'string' ? visible(value) : value === null ? 'unavailable' : visible(JSON.stringify(value), 200);
+  const summary = (value: Json): string => value && typeof value === 'object' && !Array.isArray(value)
+    ? visible(Object.entries(value).map(([key, item]) => `${key.replace(/_/g, ' ')} ${typeof item === 'object' ? '…' : String(item)}`).join(' · '), 200)
+    : value === null ? 'unavailable' : visible(String(value));
+  const paid = (cost: Record<string, Json> | null) => typeof cost?.settled_task_charge_microusd === 'number' ? `$${(cost.settled_task_charge_microusd / 1e6).toFixed(2)} paid API` : 'no paid API use recorded';
   const line = (id: string, label: string, text: string): TerminalComponent => ({ type: 'text', id, label, text: visible(text, 400) });
   const capture = (state: Snapshot): Snapshot => {
     const task = api.host.tryCall('task.status', null);
@@ -35,17 +38,25 @@ export default function activate(api: ModAPI) {
       line('omd_inspector_contract', 'Contract', state.contract),
       line('omd_inspector_limits', 'Task limits', state.limits),
       line('omd_inspector_worker_limits', 'Worker limits', state.workerLimits),
-      line('omd_inspector_cost', 'Ledger', cost ? summary(cost) : 'unavailable'),
+      line('omd_inspector_cost', 'Cost', paid(cost)),
       ...(state.error ? [line('omd_inspector_error', 'Status', state.error)] : []),
-      { type: 'button', id: 'omd_inspector_refresh', label: 'Refresh inspector', text: 'Refresh', action: { command: 'omd_inspector:refresh' } },
-      { type: 'button', id: 'omd_inspector_close', label: 'Close inspector', text: 'Close', action: { command: 'omd_inspector:close' } },
+      { type: 'button', id: 'omd_inspector_refresh', label: 'Refresh inspector', text: 'Refresh', action: { command: 'omd_inspector:inspect', args: 'refresh' } },
+      { type: 'button', id: 'omd_inspector_close', label: 'Close inspector', text: 'Close', action: { command: 'omd_inspector:inspect', args: 'close' } },
     ];
-    return { sites: { dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_inspector_dialog', label: 'Oh My Diff inspector', title: 'Oh My Diff inspector', children }] } }, keybindings: { 'Alt+i': { command: 'omd_inspector:close' } } };
+    return { sites: { dialog: { mode: 'replace', components: [{ type: 'dialog', id: 'omd_inspector_dialog', label: 'Oh My Diff inspector', title: 'Oh My Diff inspector', children }] } }, keybindings: { 'Alt+i': { command: 'omd_inspector:inspect', args: 'close' } } };
   };
-  const open = () => { save(capture({ ...saved(), open: true })); return null; };
-  api.command('open', open, { description: 'Open the Oh My Diff inspector' });
-  api.command('inspect', open, { description: 'Open the Oh My Diff inspector' });
-  api.command('refresh', () => { save(capture({ ...saved(), open: true })); return null; }, { description: 'Refresh the Oh My Diff inspector' });
-  api.command('close', () => { save({ ...saved(), open: false }); return null; }, { description: 'Close the Oh My Diff inspector' });
+  // Slash commands can't read task or contract status, so they hop to this mod's own native channel handler.
+  api.command('inspect', value => {
+    if (String(value ?? '').trim() === 'close') {
+      save({ ...saved(), open: false });
+      return null;
+    }
+    save({ ...saved(), open: true });
+    const asked = api.host.tryCall('events.publish', { channel: 'refresh', data: null });
+    return asked.ok ? null : { display: `Inspector refresh unavailable: ${asked.error}` };
+  }, { description: 'Open or refresh the Oh My Diff inspector (Alt+i closes it)' });
+  api.on('channel', ({ channel }) => {
+    if (channel === 'omd_inspector/refresh') save(capture(saved()));
+  });
   api.on('terminal', input => view(input.identity, input.ledger));
 }

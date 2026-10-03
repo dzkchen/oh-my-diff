@@ -165,3 +165,32 @@ fn appearance_styles_and_backdrop_transforms_are_bounded_and_merge_by_surface() 
         Some(ModColor::Rgb(0x65, 0x43, 0x21))
     );
 }
+
+#[test]
+fn each_patch_keeps_twelve_keys_while_the_composed_view_holds_more() {
+    let keys = |letters: &str| {
+        Value::Object(
+            letters
+                .chars()
+                .map(|letter| (format!("Alt+{letter}"), json!("draft")))
+                .collect(),
+        )
+    };
+    assert!(ModViewPatch::parse(json!({"keybindings": keys("abcdefghijklm")})).is_err());
+    let mut target = ModView::default();
+    let mut replaced = BTreeSet::new();
+    let mut completed = false;
+    for letters in ["abcdefghijkl", "nopqrstuvwyz"] {
+        ModViewPatch::parse(json!({"keybindings": keys(letters)}))
+            .unwrap()
+            .apply(&mut target, &mut replaced, &mut completed)
+            .unwrap();
+    }
+    assert_eq!(target.keybindings.len(), 24);
+    assert!(
+        ModViewPatch::parse(json!({"keybindings": keys("a")}))
+            .unwrap()
+            .apply(&mut target, &mut replaced, &mut completed)
+            .is_err()
+    );
+}

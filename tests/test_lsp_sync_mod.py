@@ -111,7 +111,7 @@ class Host:
             if self.start_error:
                 raise HostFailure(self.start_error)
             if self.child is not None:
-                raise AssertionError("server started twice")
+                raise HostFailure("process_session_limit_or_duplicate: python")
             self.child = subprocess.Popen([sys.executable, self.server] if self.server.endswith(".py") else [self.server], cwd=self.repository, stdin=subprocess.PIPE,
                                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             return {"session": "python", "running": True}
@@ -496,7 +496,7 @@ class LspSyncModTest(unittest.TestCase):
                 self.assertIsNone(host.child)
                 self.assertEqual(run(node, "tool_output", read, cancelled["state"], host)["value"]["append"], reported)
                 self.assertEqual(run(node, "tool_output", read, cancelled["state"], host)["value"]["append"], reported)
-                self.assertEqual(host.operations.count("process.start"), 3)
+                self.assertEqual(host.operations.count("process.start"), 4)
             finally:
                 host.close()
 

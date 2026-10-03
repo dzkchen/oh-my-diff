@@ -780,19 +780,33 @@ async function largeSelect(api: ModAPI, input: Json): Promise<Json> {
 }
 
 export default function activate(api: ModAPI) {
+  // Expected refusals return as values; a non-Error throw is the host suspending the callback.
+  const refuse = <T>(run: () => T | Promise<T>, value: (reason: string) => T): T | Promise<T> => {
+    const refused = (error: unknown) => {
+      if (!(error instanceof Error)) throw error;
+      return value(error.message);
+    };
+    try {
+      const result = run();
+      return result instanceof Promise ? result.catch(refused) : result;
+    } catch (error) {
+      return refused(error);
+    }
+  };
+  const tool: ModAPI['tool'] = (spec, handler) => api.tool(spec, input => refuse(() => handler(input), reason => ({ status: 'refused', reason })));
   api.provide(SERVICE, { search: input => serviceSearch(api, input), select: input => serviceSelect(api, input) });
   const parameters = { type: 'object' as const, properties: { repository_identity: { type: 'string' }, revision: { type: 'string' }, root: { type: 'string' },
     constraints: { type: 'object' }, expected_source_digest: { type: 'string' }, node_ids: { type: 'array', items: { type: 'string' } } }, required: ['repository_identity', 'revision'], additionalProperties: false };
-  api.tool({ name: 'graph', description: 'Build a bounded five-language source graph with extracted, inferred, and unknown relationships.', parameters }, async input => {
+  tool({ name: 'graph', description: 'Build a bounded five-language source graph with extracted, inferred, and unknown relationships.', parameters }, async input => {
     const result = await build(api, input);
     api.host.call('workspace.fingerprint', { expected: result.candidate_sha256 });
     return result as Json;
   });
-  api.tool({ name: 'graph_artifact', description: 'Build a large source graph with a hash-bound paged output artifact.', parameters }, input => artifactReport(api, input, 'graph'));
-  api.tool({ name: 'html_artifact', description: 'Render a standalone interactive HTML artifact from the current source.', parameters }, input => artifactReport(api, input, 'html'));
-  api.tool({ name: 'select_large', description: 'Select checked source evidence from a large current graph.', parameters }, input => largeSelect(api, input));
-  api.tool({ name: 'baseline', description: 'Record an immutable approved repository-health baseline for the current source.', parameters }, input => baseline(api, input));
-  api.tool({ name: 'check', description: 'Compare current boundary, duplication, and verification observations with an approved baseline.', parameters }, input => check(api, input));
-  api.tool({ name: 'select', description: 'Return bounded source-bound graph evidence for selected nodes.', parameters }, input => select(api, input));
-  api.tool({ name: 'html', description: 'Render a bounded static HTML view of the current source graph.', parameters }, input => html(api, input));
+  tool({ name: 'graph_artifact', description: 'Build a large source graph with a hash-bound paged output artifact.', parameters }, input => artifactReport(api, input, 'graph'));
+  tool({ name: 'html_artifact', description: 'Render a standalone interactive HTML artifact from the current source.', parameters }, input => artifactReport(api, input, 'html'));
+  tool({ name: 'select_large', description: 'Select checked source evidence from a large current graph.', parameters }, input => largeSelect(api, input));
+  tool({ name: 'baseline', description: 'Record an immutable approved repository-health baseline for the current source.', parameters }, input => baseline(api, input));
+  tool({ name: 'check', description: 'Compare current boundary, duplication, and verification observations with an approved baseline.', parameters }, input => check(api, input));
+  tool({ name: 'select', description: 'Return bounded source-bound graph evidence for selected nodes.', parameters }, input => select(api, input));
+  tool({ name: 'html', description: 'Render a bounded static HTML view of the current source graph.', parameters }, input => html(api, input));
 }

@@ -184,7 +184,6 @@
         "lifecycle",
         "model",
         "services",
-        "sessions",
         "store",
         "tools"
       ],
@@ -647,13 +646,11 @@
         "contracts",
         "exec",
         "fs.read",
-        "fs.write",
         "interception",
         "lifecycle",
         "middleware",
         "model",
         "services",
-        "sessions",
         "store",
         "tools"
       ],

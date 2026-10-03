@@ -35,7 +35,7 @@ ROUTES = {"claude": "omd_claude_cli", "muse": "omd_muse", "profiles": "omd_profi
 MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
                     "scripts/preview_lock.py",
-                    "runtime/preview-v1.lock.json", "LEAN_PROFILES.md")
+                    "runtime/preview-v1.lock.json", "upstream.lock.json", "LEAN_PROFILES.md")
 
 
 def invoke(*arguments):
@@ -71,8 +71,8 @@ def identity(binary):
     binary = support.resolved(binary)
     result = support.binary_identity(binary)
     version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
-    if result["version"] != f"codex-cli {version}":
-        raise ValueError(f"candidate requires the pinned Codex {version} host")
+    if not support.compatible_upstream(result["version"], version):
+        raise ValueError(f"candidate requires a Codex {version.rsplit('.', 1)[0]}.x host")
     return result
 
 
@@ -168,8 +168,10 @@ def selected_text(record):
     if selection == "direct":
         lines.append("export OMD_MODE=upstream_direct")
     else:
-        lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}"])
-    flags = []
+        lines.extend(["export OMD_MODE=omd", f"export OMD_MOD_STORE={shlex.quote(store)}",
+                      f"export OMD_NODE={shlex.quote(record['author']['node'])}"])
+    # Oh My Diff runs Codex in embedded mode, so the launcher keeps the shared background server from starting.
+    flags = ["-c", "features.daemon_auto_start=false"] if selection != "direct" else []
     for provider in record.get("providers", {}).values() if selection != "direct" else ():
         key = provider["env_key"]
         lines.append(f'{key}="$(cat {shlex.quote(provider["token"])} 2>/dev/null)"; export {key}')
@@ -181,10 +183,20 @@ def selected_text(record):
     return "\n".join(lines) + "\n"
 
 
+def contract(prefix, action, key):
+    record = load(prefix)
+    tool = record["tools"]["omd-contract"]["installed_path"]
+    if action in ("plan", "select") and not key:
+        raise ValueError(f"contract {action} needs ID@VERSION; contract list shows them")
+    arguments = [record["store"]] if action == "list" else [record["store"], str(Path.cwd()), *([key] if key else ["user"] if action == "clear" else [])]
+    return json.loads(support.output([tool, action, *arguments]))
+
+
 def check(record, bin_dir):
     binary = Path(record["binary"]["installed_path"])
     manager = Path(record["manager"]["installed_path"])
     for path, expected in ((binary, record["binary"]["sha256"]),
+                           (Path(record["code_mode_host"]["installed_path"]), record["code_mode_host"]["sha256"]),
                            (manager, record["manager"]["sha256"])):
         if not path.is_file() or support.digest(path) != expected:
             raise ValueError(f"managed artifact changed: {path}")
@@ -342,7 +354,7 @@ def route(prefix, bin_dir, name, args):
         raise ValueError(f"the {name} route is available only in OMD+")
     if args.setup:
         setup = Path(record["store"]) / "sources" / identifier / "setup.mjs"
-        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
+        extra = json.dumps({"add": {key: getattr(args, key) for key in ("credential", "protocol", "url", "window", "paid", "reasoning", "max_output")} | {"name": args.add, "model": args.upstream_model} if args.add else None,
                             "remove": args.remove, "allowance": args.allowance}) if name == "profiles" else str(args.path or "")
         result = subprocess.run([record["author"]["node"], str(setup), "setup", str(prefix / "install.json"), extra],
                                 capture_output=True, text=True)
@@ -406,6 +418,10 @@ def install(args):
     binary = identity(args.binary)
     if binary["sha256"] != candidate["artifacts"]["codex"]["sha256"]:
         raise ValueError("Codex binary differs from frozen lean candidate")
+    code_mode_host = Path(binary["path"]).parent / "codex-code-mode-host"
+    if (not code_mode_host.is_file()
+            or support.digest(code_mode_host) != candidate["artifacts"]["codex-code-mode-host"]["sha256"]):
+        raise ValueError("code-mode host beside the Codex binary differs from frozen lean candidate")
     manager = support.resolved(args.manager)
     node = support.resolved(args.node)
     if not manager.is_file() or not os.access(manager, os.X_OK):
@@ -416,14 +432,12 @@ def install(args):
     if (not author_archive.is_file()
             or support.digest(author_archive) != candidate["artifacts"]["mod-api.tgz"]["sha256"]):
         raise ValueError("mod author archive differs from pinned lean package")
-    if support.output([str(node), "--version"]) != f"v{locked['node']}":
-        raise ValueError(f"Node {locked['node']} is required")
+    if not support.compatible_node(support.output([str(node), "--version"]), locked["node"]):
+        raise ValueError(f"Node {locked['node']} or a later {locked['node'].split('.')[0]}.x is required")
     fallback = shutil.which("codex", path=support.path_without(bin_dir))
     if not fallback:
         raise ValueError("no upstream Codex fallback resolves on PATH")
-    fallback_id = support.binary_identity(fallback)
-    if fallback_id["version"] != binary["version"]:
-        raise ValueError("upstream fallback version does not match the candidate")
+    fallback_id = identity(fallback)
     if args.attach_store:
         for identifier in profile_packages(args.profile):
             target = store / "sources" / identifier
@@ -440,7 +454,8 @@ def install(args):
     try:
         artifacts = prefix / "artifacts"
         artifacts.mkdir()
-        for source, name in ((Path(binary["path"]), "codex"), (manager, "omd-mod")):
+        for source, name in ((Path(binary["path"]), "codex"), (code_mode_host, "codex-code-mode-host"),
+                             (manager, "omd-mod")):
             shutil.copy2(source, artifacts / name)
         author_root = prefix / "author"
         author_root.mkdir()
@@ -478,6 +493,7 @@ def install(args):
             target = artifacts / name
             shutil.copy2(source, target)
             tools[name] = {"installed_path": str(target), "sha256": support.digest(target)}
+        tools["omd-mod"] = {"installed_path": str(installed_manager), "sha256": support.digest(installed_manager)}
         if args.profile == "full":
             plugin_bundle = copy_curated_plugins(prefix / "bundles/oh-my-diff")
         sources = store / "sources"
@@ -509,6 +525,8 @@ def install(args):
                   "plugin_bundle": plugin_bundle,
                   "binary": {**binary, "installed_path": str(artifacts / "codex"),
                              "sha256": support.digest(artifacts / "codex")},
+                  "code_mode_host": {"installed_path": str(artifacts / "codex-code-mode-host"),
+                                     "sha256": support.digest(artifacts / "codex-code-mode-host")},
                   "manager": {"installed_path": str(installed_manager),
                               "sha256": support.digest(installed_manager)},
                   "author": {"archive_sha256": support.digest(author_archive),
@@ -564,11 +582,46 @@ def install(args):
         raise
 
 
+def register_plugins(prefix, bin_dir):
+    record = load(prefix)
+    binary, _ = check(record, bin_dir)
+    bundle = record.get("plugin_bundle")
+    if not bundle:
+        raise ValueError("OMD Core stages no plugins; install --profile full first")
+    root = Path(bundle["marketplace"])
+    link = prefix.parents[2] / "current"
+    # Codex records the resolved path, which a later update prunes; the current link survives updates.
+    source = link / prefix.name / root.relative_to(prefix) if support.resolved(link) == prefix.parent else root
+    name = json.loads((root / ".agents/plugins/marketplace.json").read_text())["name"]
+    home = Path(record["shared_state"]["codex_home"])
+    config = home / "config.toml"
+    env = {**os.environ, "CODEX_HOME": str(home)}
+
+    def configured():
+        entry = tomllib.loads(config.read_text()).get("marketplaces", {}).get(name) if config.is_file() else None
+        return entry.get("source") if isinstance(entry, dict) else None
+
+    if configured() != str(source):
+        if configured() is not None:
+            subprocess.run([binary, "plugin", "marketplace", "remove", name], check=True, capture_output=True, env=env)
+        subprocess.run([binary, "plugin", "marketplace", "add", source], check=True, capture_output=True, env=env)
+        text = config.read_text()
+        written = f"source = {json.dumps(str(support.resolved(source)))}"
+        if text.count(written) != 1:
+            raise ValueError(f"Codex did not record marketplace {name} as expected")
+        support.atomic_text(config, text.replace(written, f"source = {json.dumps(str(source))}"),
+                            config.stat().st_mode & 0o777)
+        if configured() != str(source):
+            raise ValueError(f"Codex marketplace {name} source was not recorded")
+    return {"marketplace": name, "source": str(source), "plugins": bundle["plugins"],
+            "next": f"codex plugin add PLUGIN@{name}"}
+
+
 def uninstall(prefix, bin_dir):
     record = load(prefix)
     check(record, bin_dir)
     managed = {prefix / "install.json", Path(record["binary"]["installed_path"]),
-               Path(record["manager"]["installed_path"])}
+               Path(record["code_mode_host"]["installed_path"]), Path(record["manager"]["installed_path"])}
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
     managed.update(prefix / "management" / name for name in record["management"]["files"])
@@ -587,19 +640,17 @@ def uninstall(prefix, bin_dir):
             source = details.get("source") if isinstance(details, dict) else None
             if isinstance(source, str) and support.within(support.resolved(source), prefix):
                 raise ValueError(f"Codex marketplace {name} still references the installation; remove or relocate it before uninstall")
-    fallback = record["upstream_fallback"]
-    current = support.binary_identity(fallback["path"])
-    if current["sha256"] != fallback["sha256"]:
-        raise ValueError("upstream fallback changed; refusing to remove launcher")
-    if support.resolved(shutil.which("codex", path=support.path_without(bin_dir))) != support.resolved(fallback["path"]):
-        raise ValueError("upstream fallback no longer resolves on PATH")
+    found = shutil.which("codex", path=support.path_without(bin_dir))
+    if not found:
+        raise ValueError("no upstream codex remains on PATH; refusing to remove the launcher")
+    support.binary_identity(found)
     for name in record.get("tools", {}):
         (bin_dir / name).unlink()
     (bin_dir / "omd-package").unlink()
     (bin_dir / "omd-mod-author").unlink()
     (bin_dir / "codex").unlink()
     shutil.rmtree(prefix)
-    return {"uninstalled": True, "upstream": fallback["path"],
+    return {"uninstalled": True, "upstream": str(support.resolved(found)),
             "preserved_mod_store": record["store"], "shared_state": record["shared_state"]}
 
 
@@ -633,10 +684,14 @@ def main():
         route_parser.add_argument(f"--{name}", dest="path", type=Path, help=f"{name} CLI path for --setup")
         route_parser.add_argument("--model", help="model slug or family shortcut")
         if name == "profiles":
-            for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "paid", "allowance"):
+            for flag in ("add", "remove", "credential", "protocol", "url", "upstream-model", "window", "max-output", "paid", "allowance"):
                 route_parser.add_argument(f"--{flag}")
             route_parser.add_argument("--reasoning", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
+    contract_parser = commands.add_parser("contract", help="list, show or select the workflow contract for this repository")
+    contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))
+    contract_parser.add_argument("contract", nargs="?", help="ID@VERSION for plan and select")
+    commands.add_parser("plugins", help="add the OMD+ plugin marketplace to Codex at a path that survives updates")
     commands.add_parser("uninstall", help="remove this installation and its launchers")
     args = parser.parse_args()
     prefix, bin_dir = support.validate_locations(args.prefix, args.bin_dir)
@@ -653,6 +708,10 @@ def main():
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
     elif args.command in ROUTES:
         result = route(prefix, bin_dir, args.command, args)
+    elif args.command == "contract":
+        result = contract(prefix, args.action, args.contract)
+    elif args.command == "plugins":
+        result = register_plugins(prefix, bin_dir)
     else:
         result = uninstall(prefix, bin_dir)
     print(json.dumps(result, indent=2, sort_keys=True))

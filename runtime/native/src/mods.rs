@@ -1104,8 +1104,10 @@ impl TurnLifecycleContributor for Mods {
                 .presentation(&lead.thread.to_string(), Some("started"));
             let runtime = self.runtime.clone();
             let session = lead.session.clone();
+            let host = lead.host.clone();
             let session_repository = lead.host.repository.clone();
             let _ = tokio::task::spawn_blocking(move || {
+                let _ = host.refresh_session(&session);
                 if let Ok(mut runtime) = runtime.lock() {
                     runtime.turn_boundary();
                     refresh_contract(&runtime, &session);

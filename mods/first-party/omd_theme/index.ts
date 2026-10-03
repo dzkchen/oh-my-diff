@@ -158,8 +158,8 @@ export default function activate(api: ModAPI) {
   api.command('reset', () => { const state = readState(); writeState({ ...restored(state), saved: null, preview: null, asset: null, preview_asset: null, notice: 'Theme reset to configured defaults' }); restatus(); return { display: 'Theme reset to configured defaults' }; }, { description: 'Reset theme settings and backdrop selection' });
   api.command('page', value => { const state = readState(); const page = String(value); writeState({ ...state, open: true, page: ['palette', 'backdrop', 'position', 'glass', 'greeting', 'status'].includes(page) ? page : 'palette' }); return null; });
   api.command('close', () => { writeState({ ...readState(), open: false }); return null; });
-  api.command('import', arguments_ => guard(() => {
-    const match = /^(ghostty|iterm2|warp)\s+(.+)$/.exec(String(arguments_ ?? '').trim()); if (!match) throw new Error('Use /omd_theme:import ghostty|iterm2|warp PATH');
+  api.command('load', arguments_ => guard(() => {
+    const match = /^(ghostty|iterm2|warp)\s+(.+)$/.exec(String(arguments_ ?? '').trim()); if (!match) throw new Error('Use /omd_theme:load ghostty|iterm2|warp PATH');
     const resource = api.host.call('terminal.import_file', { path: match[2], max_bytes: 65536 }); if ('status' in resource) return { display: 'Theme import declined; current theme kept' };
     const state = readState(); if (Object.keys(state.imports).length >= 20) throw new Error('Import library is full (20 themes)');
     const id = `import_${Object.keys(state.imports).length + 1}`; const imported = importTheme(match[1], importedText(resource), match[2].split('/').at(-1) ?? id);
@@ -174,9 +174,9 @@ export default function activate(api: ModAPI) {
     const state = readState(); state.preview_asset = { resource, label: visible(String(path), 128), ascii: rows.join('\n') || ' ' };
     return update(restored(state), { ...current(state), backdrop_mode: 'image' }, 'Image imported with ASCII fallback; Save to keep it');
   }), { description: 'Import a PNG/JPEG backdrop with an image-derived ASCII fallback' });
-  api.command('theme', arguments_ => {
+  api.command('style', arguments_ => {
     const text = String(arguments_ ?? '').trim(); const state = readState();
-    if (text) return guard(() => { if (!palette(state, text)) throw new Error('Unknown palette; use /theme to open the library'); return update(state, { ...current(state), palette: text }); });
+    if (text) return guard(() => { if (!palette(state, text)) throw new Error('Unknown palette; use /omd_theme:style to open the library'); return update(state, { ...current(state), palette: text }); });
     writeState({ ...state, open: true }); return null;
   }, { description: 'Open theme settings and live preview, or choose a palette' });
   const restatus = () => api.host.tryCall('events.publish', { channel: 'statusline', data: null });
@@ -317,7 +317,7 @@ export default function activate(api: ModAPI) {
     if (state.page === 'palette') children.push(
       { type: 'select', id: `omd_theme_palette_${state.revision}`, label: 'Palette library', value: config.palette, options: Object.entries({ ...PALETTES, ...state.imports }).map(([value, palette]) => ({ value, label: palette.name })), action: { command: 'omd_theme:set', args: 'palette' } },
       select('symbols', 'Symbols', ['ascii', 'unicode']), input('background_color', 'Background RGB (empty = palette)'), input('foreground_color', 'Text RGB (empty = palette)'),
-      { type: 'input', id: 'omd_theme_import', label: 'Import theme', placeholder: 'ghostty|iterm2|warp /absolute/path', action: { command: 'omd_theme:import' } },
+      { type: 'input', id: 'omd_theme_import', label: 'Import theme', placeholder: 'ghostty|iterm2|warp /absolute/path', action: { command: 'omd_theme:load' } },
     );
     else if (state.page === 'backdrop') children.push(
       select('backdrop_mode', 'Backdrop', ['none', 'ascii', 'image']), input('dim', 'Dimming (0–1; contrast floor)'), input('opacity', 'Image opacity (0–1)'), input('tint', 'Tint RGB (empty = palette)'),

@@ -78,11 +78,11 @@
       "group": "coordination",
       "decision": "Completion and integration contract",
       "observe": "`contract.status` returns the selected document, provenance, receipts and restrictions",
-      "alter": "`contract.restrict` only narrows operations; `receipts.submit` adds host-attested receipts; scoped argument predicates can only tighten selected operations",
+      "alter": "`contract.restrict` only narrows operations; `receipts.submit` adds host-attested receipts; scoped argument predicates can only tighten selected operations; `contract.select` writes the user selection after a native confirmation",
       "replace": null,
       "timing": "selection at session start; gates at `task.complete` and `workspace.integrate`",
       "ownership": "mod: registers documents and submits receipts; user: selects the document; host: digest pinning, project floor, producer attestation and the gate",
-      "limits": "no selection means no gate; an unavailable or changed selection fails closed; a weaker selection needs an exact confirmation; mods cannot select or weaken a contract",
+      "limits": "no selection means no gate; an unavailable or changed selection fails closed; a weaker selection needs an exact confirmation; a mod can only ask the user through `contract.select`, whose native confirmation names any lowered assurance",
       "native": "native plugins and hooks have no completion gate",
       "covers": {
         "capabilities": [
@@ -96,11 +96,13 @@
           "receipts.submit",
           "task.complete",
           "contract.status",
-          "contract.restrict"
+          "contract.restrict",
+          "contract.select"
         ]
       },
       "evidence": [
         "rust:contract_documents_gate_on_bound_receipts_and_detect_weaker_selections",
+        "rust:contract_select_writes_the_user_selection_and_needs_the_plan_confirmation_to_lower_assurance",
         "rust:contract_selection_pins_digests_applies_the_project_floor_and_fails_closed",
         "patch:no_selection_means_no_gate_and_restrictions_are_enforced",
         "patch:active_contracts_require_bound_receipts_and_unavailable_contracts_fail_closed",

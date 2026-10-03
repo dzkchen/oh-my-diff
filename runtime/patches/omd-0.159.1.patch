@@ -4552,14 +4552,15 @@ index c57920741..9836705ad 100644
          if !self
              .transcript_cells
 diff --git a/codex-rs/tui/src/app/event_dispatch.rs b/codex-rs/tui/src/app/event_dispatch.rs
-index 4a97366d4..755fc8ddf 100644
+index 4a97366d4..e2bf52cb2 100644
 --- a/codex-rs/tui/src/app/event_dispatch.rs
 +++ b/codex-rs/tui/src/app/event_dispatch.rs
-@@ -382,6 +382,73 @@ impl App {
+@@ -382,6 +382,74 @@ impl App {
                  let result = tui.clipboard.copy(text, format, tui.frame_requester());
                  self.chat_widget.show_copy_result(&label, result);
              }
 +            AppEvent::OmdOpenPlugins => self.chat_widget.add_plugins_output(),
++            AppEvent::OmdOpenAllMods => self.chat_widget.open_omd_all_mods(),
 +            AppEvent::OmdRunModCommand(command) => {
 +                self.chat_widget.run_mod_command(command, String::new());
 +            }
@@ -4629,7 +4630,7 @@ index 4a97366d4..755fc8ddf 100644
              AppEvent::ClearUi { name } => {
                  if self.reject_pending_permission_root_switch() {
                      return Ok(AppRunControl::Continue);
-@@ -1574,8 +1641,27 @@ impl App {
+@@ -1574,8 +1642,27 @@ impl App {
                  }
              }
              AppEvent::FileSearchResult { query, matches } => {
@@ -6243,14 +6244,15 @@ index 17155eb72..6cee85992 100644
          }
          let expected_cwd = if override_cwd {
 diff --git a/codex-rs/tui/src/app_event.rs b/codex-rs/tui/src/app_event.rs
-index 982c3ecb5..6fbf4b90f 100644
+index 982c3ecb5..21e77c630 100644
 --- a/codex-rs/tui/src/app_event.rs
 +++ b/codex-rs/tui/src/app_event.rs
-@@ -454,6 +454,29 @@ pub(crate) enum AppEvent {
+@@ -454,6 +454,30 @@ pub(crate) enum AppEvent {
          label: String,
          format: crate::clipboard_copy::CopyFormat,
      },
 +    OmdOpenPlugins,
++    OmdOpenAllMods,
 +    OmdRunModCommand(crate::mod_runtime::ModSlashCommand),
 +    OmdModToggle {
 +        id: String,
@@ -6276,7 +6278,7 @@ index 982c3ecb5..6fbf4b90f 100644
 
      /// Persist a submitted prompt in the cross-session message history.
      AppendMessageHistoryEntry {
-@@ -651,6 +674,15 @@ pub(crate) enum AppEvent {
+@@ -651,6 +675,15 @@ pub(crate) enum AppEvent {
          query: String,
          matches: Vec<FileMatch>,
      },
@@ -7094,7 +7096,7 @@ index eb9c9cdfa..91ae68dc8 100644
 
      pub(crate) fn clear_token_usage(&mut self) {
 diff --git a/codex-rs/tui/src/chatwidget/constructor.rs b/codex-rs/tui/src/chatwidget/constructor.rs
-index fb4575ab0..b328d4490 100644
+index fb4575ab0..3c6b1111c 100644
 --- a/codex-rs/tui/src/chatwidget/constructor.rs
 +++ b/codex-rs/tui/src/chatwidget/constructor.rs
 @@ -39,7 +39,11 @@ impl ChatWidget {
@@ -7102,7 +7104,7 @@ index fb4575ab0..b328d4490 100644
          config.model = model.clone();
          let prevent_idle_sleep = config.features.enabled(Feature::PreventIdleSleep);
 -        let placeholder = PLACEHOLDER.to_string();
-+        let placeholder = if crate::omd::terminal_active() {
++        let placeholder = if crate::omd::is_active() {
 +            "Ask Oh My Diff to do anything".to_string()
 +        } else {
 +            PLACEHOLDER.to_string()
@@ -9653,7 +9655,7 @@ index b54764227..078af94a3 100644
 
  › 1. Update now (runs `npm install -g @openai/codex`)                           
 diff --git a/codex-rs/tui/src/startup_draft.rs b/codex-rs/tui/src/startup_draft.rs
-index 96ffcecd7..100a31c96 100644
+index 96ffcecd7..0e5e5fe6d 100644
 --- a/codex-rs/tui/src/startup_draft.rs
 +++ b/codex-rs/tui/src/startup_draft.rs
 @@ -56,6 +56,7 @@ use input::handle_startup_draft_key;
@@ -9726,6 +9728,20 @@ index 96ffcecd7..100a31c96 100644
          if matches!(session_selection, SessionSelection::StartFresh)
              && !self.blossom.borrow().is_eligible()
          {
+@@ -524,7 +545,12 @@ fn startup_draft_bottom_pane(
+             frame_requester,
+             has_input_focus: true,
+             enhanced_keys_supported,
+-            placeholder_text: "Ask Codex to do anything".to_string(),
++            placeholder_text: if crate::omd::is_active() {
++                "Ask Oh My Diff to do anything"
++            } else {
++                "Ask Codex to do anything"
++            }
++            .to_string(),
+             disable_paste_burst: false,
+             animations_enabled: crate::system_motion::mode() == crate::motion::MotionMode::Animated,
+             effects: Default::default(),
 diff --git a/codex-rs/tui/src/startup_draft_layout.rs b/codex-rs/tui/src/startup_draft_layout.rs
 index da417ce52..6fe1da13c 100644
 --- a/codex-rs/tui/src/startup_draft_layout.rs
@@ -16534,10 +16550,10 @@ index 000000000..1f1f75856
 +}
 diff --git a/codex-rs/ext/omd/src/ledger.rs b/codex-rs/ext/omd/src/ledger.rs
 new file mode 100644
-index 000000000..e69c3124f
+index 000000000..0ba17ecc0
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/ledger.rs
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,131 @@
 +use super::*;
 +use std::path::Path;
 +
@@ -16632,9 +16648,16 @@ index 000000000..e69c3124f
 +        assert_eq!(task.uncertain_requests().unwrap(), vec![1]);
 +        assert_eq!(task.cost_capture().unwrap().observed.len(), 1);
 +        drop(task);
-+        let mut changed = limits();
-+        changed.requests += 1;
-+        assert!(open(&root, "repository", thread, changed, true).is_err());
++        let mut raised = limits();
++        raised.exposure_microusd = 200;
++        let task = open(&root, "repository", thread, raised, true).unwrap();
++        assert_eq!(task.remaining().unwrap().2, 170);
++        task.set_limits(limits()).unwrap();
++        assert_eq!(task.remaining().unwrap().2, 70);
++        drop(task);
++        let task = open(&root, "repository", thread, limits(), true).unwrap();
++        assert_eq!(task.remaining().unwrap().2, 70);
++        drop(task);
 +        let path = root
 +            .join(format!("ledger-repository-{thread}"))
 +            .join("identity.json");
@@ -16664,10 +16687,10 @@ index 000000000..e69c3124f
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..777bb084a
+index 000000000..720b63013
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,584 @@
+@@ -0,0 +1,636 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -16943,6 +16966,58 @@ index 000000000..777bb084a
 +            table.stamp = stamp;
 +        }
 +        (table.config.clone(), table.error.clone())
++    }
++
++    /// Applies an edited host.json to a running session's ledger limits and captured routes.
++    fn refresh_session(&self, session: &Session) -> Result<(), String> {
++        let config = self.route_config().0;
++        let limits = session
++            .task
++            .set_limits(config.limits.clone())
++            .map_err(|error| format!("host_limits_not_applied: {error}"));
++        let mut accounts = self
++            .accounts
++            .0
++            .lock()
++            .map_err(|_| "account lock poisoned")?;
++        for account in accounts
++            .values_mut()
++            .filter(|account| Arc::ptr_eq(&account.task, &session.task))
++        {
++            let find = |name: &str, provider: &str| {
++                config
++                    .routes
++                    .iter()
++                    .find(|route| route.name == name && route.provider == provider)
++            };
++            if let Some(route) = account
++                .route
++                .as_deref()
++                .and_then(|name| find(name, &account.provider))
++                .filter(|route| route.model == account.model)
++            {
++                account.rates = Some(route.rates.clone());
++                account.credential = route.credential.clone();
++            }
++            let lead = account.owner == "lead";
++            let task = account.task.clone();
++            let provider = account.provider.clone();
++            account.lead_routes.retain_mut(|candidate| {
++                let Some(route) = find(&candidate.name, &provider)
++                    .filter(|route| route.roles.contains(&config::RouteRole::Lead))
++                else {
++                    return false;
++                };
++                *candidate = request_route(route);
++                !lead || task.authorize_route(&route.provider, &route.model).is_ok()
++            });
++        }
++        limits
++    }
++
++    fn worker_limits(&self, session: &Session) -> Result<codex_omd::WorkerLimits, String> {
++        self.refresh_session(session)?;
++        Ok(self.route_config().0.worker_limits.clone())
 +    }
 +
 +    fn persist_json(&self, name: &str, value: &impl Serialize) -> Result<(), String> {
@@ -18107,10 +18182,10 @@ index 000000000..c1851f83a
 +}
 diff --git a/codex-rs/ext/omd/src/mods.rs b/codex-rs/ext/omd/src/mods.rs
 new file mode 100644
-index 000000000..28719754d
+index 000000000..955338113
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods.rs
-@@ -0,0 +1,1597 @@
+@@ -0,0 +1,1599 @@
 +mod agents;
 +mod evidence;
 +mod expansion;
@@ -19217,8 +19292,10 @@ index 000000000..28719754d
 +                .presentation(&lead.thread.to_string(), Some("started"));
 +            let runtime = self.runtime.clone();
 +            let session = lead.session.clone();
++            let host = lead.host.clone();
 +            let session_repository = lead.host.repository.clone();
 +            let _ = tokio::task::spawn_blocking(move || {
++                let _ = host.refresh_session(&session);
 +                if let Ok(mut runtime) = runtime.lock() {
 +                    runtime.turn_boundary();
 +                    refresh_contract(&runtime, &session);
@@ -19710,7 +19787,7 @@ index 000000000..28719754d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/agents.rs b/codex-rs/ext/omd/src/mods/agents.rs
 new file mode 100644
-index 000000000..a4f1a6d85
+index 000000000..0bbfaad29
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/agents.rs
 @@ -0,0 +1,2174 @@
@@ -21696,7 +21773,7 @@ index 000000000..a4f1a6d85
 +                id.clone(),
 +                lead.owner.clone(),
 +                lead.depth.saturating_add(1),
-+                host.config.worker_limits.clone(),
++                host.worker_limits(session)?,
 +            )
 +            .map_err(|e| e.to_string())?;
 +        let mut admission = Admission {
@@ -21753,7 +21830,7 @@ index 000000000..a4f1a6d85
 +        let output = result.clone();
 +        let task = session.task.clone();
 +        let accounts = host.accounts.clone();
-+        let worker_seconds = host.config.worker_limits.seconds;
++        let worker_seconds = host.route_config().0.worker_limits.seconds;
 +        let worker = id.clone();
 +        let notifier = self.notifier.clone();
 +        let start_role = request.role.clone();
@@ -22140,10 +22217,10 @@ index 000000000..82e034bef
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion.rs b/codex-rs/ext/omd/src/mods/expansion.rs
 new file mode 100644
-index 000000000..f7548344e
+index 000000000..673978f30
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion.rs
-@@ -0,0 +1,462 @@
+@@ -0,0 +1,460 @@
 +mod activity;
 +mod approvals;
 +mod delivery;
@@ -22509,12 +22586,7 @@ index 000000000..f7548344e
 +        .get_mut(&lead.thread.to_string())
 +        .filter(|account| account.owner == "lead" && account.route.is_some())
 +        .ok_or_else(|| format!("route_unavailable_for_thread: {}", input.route))?;
-+    if account.route.as_deref() != Some(route.name.as_str())
-+        && !account
-+            .lead_routes
-+            .iter()
-+            .any(|candidate| candidate.name == route.name)
-+    {
++    if account.route.as_deref() != Some(route.name.as_str()) {
 +        if route.provider != account.provider {
 +            return Err(format!("route_unavailable_for_thread: {}", input.route));
 +        }
@@ -22522,6 +22594,9 @@ index 000000000..f7548344e
 +            .task
 +            .authorize_route(&route.provider, &route.model)
 +            .map_err(|error| error.to_string())?;
++        account
++            .lead_routes
++            .retain(|candidate| candidate.name != route.name);
 +        account.lead_routes.push(crate::request_route(route));
 +    }
 +    drop(accounts);
@@ -24179,10 +24254,10 @@ index 000000000..13341482d
 +}
 diff --git a/codex-rs/ext/omd/src/mods/expansion_tests.rs b/codex-rs/ext/omd/src/mods/expansion_tests.rs
 new file mode 100644
-index 000000000..a5584cab1
+index 000000000..c3064fff8
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/expansion_tests.rs
-@@ -0,0 +1,1044 @@
+@@ -0,0 +1,1060 @@
 +use super::*;
 +use codex_extension_api::ToolOutputContributor;
 +use codex_omd::ModStore;
@@ -24365,6 +24440,22 @@ index 000000000..a5584cab1
 +        Err("route_unavailable_for_thread: other".into())
 +    );
 +    assert_eq!(select("first").unwrap()["route"]["name"], "first");
++    let mut edited = route("added", "local");
++    edited["model"] = "added-v2".into();
++    write(
++        &json!({"limits": {"requests": 400, "exposure_microusd": 5000, "seconds": 86400,
++        "concurrent_workers": 4, "max_depth": 2}, "routes": [route("first", "local"), edited]}),
++    );
++    lead.host.refresh_session(&lead.session).unwrap();
++    assert_eq!(lead.session.task.remaining().unwrap().2, 5000);
++    assert_eq!(
++        lead.host.accounts.0.lock().unwrap()[&lead.thread.to_string()]
++            .lead_routes
++            .iter()
++            .map(|route| route.model.as_str())
++            .collect::<Vec<_>>(),
++        ["first-model", "added-v2"]
++    );
 +    write(&json!({"routes": "invalid"}));
 +    assert!(select("added").is_ok());
 +    let error = select("later").unwrap_err();
@@ -25229,10 +25320,10 @@ index 000000000..a5584cab1
 +}
 diff --git a/codex-rs/ext/omd/src/mods/operations.rs b/codex-rs/ext/omd/src/mods/operations.rs
 new file mode 100644
-index 000000000..cd89db781
+index 000000000..a4fe7015b
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/operations.rs
-@@ -0,0 +1,558 @@
+@@ -0,0 +1,560 @@
 +use super::*;
 +use crate::workspace_operations::WorkspaceAuthority;
 +use codex_omd::data_store::Origin;
@@ -25717,10 +25808,12 @@ index 000000000..cd89db781
 +                .map(|route| route_info(host, route))
 +                .collect::<Vec<_>>()
 +        )),
-+        "task.status" => Ok(
-+            json!({"ledger": lead.ledger(), "limits": host.config.limits,
-+            "worker_limits": host.config.worker_limits}),
-+        ),
++        "task.status" => {
++            host.refresh_session(&lead.session)?;
++            let config = host.route_config().0;
++            Ok(json!({"ledger": lead.ledger(), "limits": config.limits,
++            "worker_limits": config.worker_limits}))
++        }
 +        "receipts.submit" => submit_receipt(core, lead, &caller, request.arguments).await,
 +        "task.complete" => complete(core, lead, request.arguments).await,
 +        "contract.status" => Ok(lead
@@ -25793,10 +25886,10 @@ index 000000000..cd89db781
 +}
 diff --git a/codex-rs/ext/omd/src/mods/services.rs b/codex-rs/ext/omd/src/mods/services.rs
 new file mode 100644
-index 000000000..e7aea33a1
+index 000000000..d6c6015eb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/mods/services.rs
-@@ -0,0 +1,683 @@
+@@ -0,0 +1,685 @@
 +use super::*;
 +use codex_protocol::models::PermissionProfile;
 +use codex_protocol::models::PermissionProfileSnapshot;
@@ -26220,7 +26313,7 @@ index 000000000..e7aea33a1
 +                    worker.clone(),
 +                    lead.owner.clone(),
 +                    lead.depth.saturating_add(1),
-+                    host.config.worker_limits.clone(),
++                    host.worker_limits(&lead.session)?,
 +                )
 +                .map_err(|e| e.to_string())?;
 +            struct RequestGuard {
@@ -26315,7 +26408,7 @@ index 000000000..e7aea33a1
 +                worker.clone(),
 +                lead.owner.clone(),
 +                lead.depth.saturating_add(1),
-+                host.config.worker_limits.clone(),
++                host.worker_limits(&lead.session)?,
 +            )
 +            .map_err(|e| e.to_string())?;
 +        let mut argv = vec![grant.program.to_string_lossy().into_owned()];
@@ -26332,7 +26425,9 @@ index 000000000..e7aea33a1
 +            .remaining()
 +            .map_err(|e| e.to_string())?
 +            .0
-+            .min(Duration::from_secs(host.config.worker_limits.seconds));
++            .min(Duration::from_secs(
++                host.route_config().0.worker_limits.seconds,
++            ));
 +        let mut supervised = vec![
 +            supervisor.to_string_lossy().into_owned(),
 +            "--omd-managed-service-v1".into(),
@@ -28672,10 +28767,10 @@ index 000000000..82e68d714
 +event, capability or host configuration field names a feature.
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 000000000..a68a257f0
+index 000000000..591ca1a21
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1379 @@
+@@ -0,0 +1,1417 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -28868,9 +28963,9 @@ index 000000000..a68a257f0
 +const MAX_TOTAL_WORKERS: usize = 1_024;
 +
 +pub struct Task {
-+    limits: Limits,
++    limits: Mutex<Limits>,
 +    started: Instant,
-+    deadline_unix_millis: u128,
++    created_unix_millis: u128,
 +    evidence: PathBuf,
 +    state: Mutex<State>,
 +    external_routes: Mutex<BTreeSet<(String, String)>>,
@@ -28913,10 +29008,8 @@ index 000000000..a68a257f0
 +        fs::create_dir(&evidence)?;
 +        let evidence = evidence.canonicalize()?;
 +        let task = Self {
-+            deadline_unix_millis: unix_millis()?
-+                .checked_add(u128::from(limits.seconds) * 1000)
-+                .ok_or_else(|| denied("task deadline overflow"))?,
-+            limits,
++            created_unix_millis: unix_millis()?,
++            limits: Mutex::new(limits.clone()),
 +            started: Instant::now(),
 +            evidence,
 +            state: Mutex::new(State {
@@ -28938,7 +29031,7 @@ index 000000000..a68a257f0
 +            .map_err(|_| denied("task lock poisoned"))?;
 +        task.record(
 +            &mut state,
-+            &serde_json::json!({"event": "created", "limits": task.limits}),
++            &serde_json::json!({"event": "created", "limits": limits}),
 +        )?;
 +        drop(state);
 +        Ok(task)
@@ -28998,6 +29091,7 @@ index 000000000..a68a257f0
 +            observed: Vec::new(),
 +        };
 +        let mut created_unix_millis = None;
++        let mut recorded_limits = None;
 +        for entry in records {
 +            let metadata = entry.metadata()?;
 +            if entry.file_type()?.is_symlink()
@@ -29024,11 +29118,12 @@ index 000000000..a68a257f0
 +                return Err(denied("resume evidence must begin with task creation"));
 +            }
 +            match record["event"].as_str() {
-+                Some("created") => {
++                Some("created") | Some("limits_changed") => {
 +                    let recorded: Limits = serde_json::from_value(record["limits"].clone())?;
-+                    if state.sequence != 1 || recorded != limits {
-+                        return Err(denied("resume limits differ from original task"));
++                    if (state.sequence == 1) != (record["event"] == "created") {
++                        return Err(denied("resume evidence must begin with task creation"));
 +                    }
++                    recorded_limits = Some(recorded);
 +                }
 +                Some("worker_started") => {
 +                    let id = record["worker"]
@@ -29224,17 +29319,17 @@ index 000000000..a68a257f0
 +        if state.status == TaskStatus::Stopped {
 +            return Err(denied("stopped task cannot resume"));
 +        }
-+        let deadline_unix_millis = created_unix_millis
-+            .ok_or_else(|| denied("created timestamp missing"))?
-+            .checked_add(u128::from(limits.seconds) * 1000)
-+            .ok_or_else(|| denied("task deadline overflow"))?;
-+        if unix_millis()? >= deadline_unix_millis {
++        let created_unix_millis =
++            created_unix_millis.ok_or_else(|| denied("created timestamp missing"))?;
++        let recorded_limits = recorded_limits
++            .ok_or_else(|| denied("resume evidence must begin with task creation"))?;
++        if unix_millis()? >= created_unix_millis.saturating_add(u128::from(limits.seconds) * 1000) {
 +            return Err(denied("task expired before resume"));
 +        }
 +        let task = Self {
-+            limits,
++            limits: Mutex::new(recorded_limits),
 +            started: Instant::now(),
-+            deadline_unix_millis,
++            created_unix_millis,
 +            evidence,
 +            state: Mutex::new(state),
 +            external_routes: Mutex::new(BTreeSet::new()),
@@ -29249,12 +29344,45 @@ index 000000000..a68a257f0
 +        if active {
 +            task.pause("abrupt_client_loss", task.uncertain_requests()?)?;
 +        }
++        task.set_limits(limits)?;
 +        task.resume(reference)?;
 +        Ok(task)
 +    }
 +
++    fn limits(&self) -> Limits {
++        self.limits
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .clone()
++    }
++
++    fn deadline_unix_millis(&self) -> u128 {
++        self.created_unix_millis
++            .saturating_add(u128::from(self.limits().seconds) * 1000)
++    }
++
 +    fn expired(&self) -> bool {
-+        unix_millis().map_or(true, |now| now >= self.deadline_unix_millis)
++        unix_millis().map_or(true, |now| now >= self.deadline_unix_millis())
++    }
++
++    pub fn set_limits(&self, limits: Limits) -> io::Result<()> {
++        Self::validate_limits(&limits)?;
++        let mut state = self
++            .state
++            .lock()
++            .map_err(|_| denied("task lock poisoned"))?;
++        if self.limits() == limits {
++            return Ok(());
++        }
++        self.record(
++            &mut state,
++            &serde_json::json!({"event": "limits_changed", "limits": limits}),
++        )?;
++        *self
++            .limits
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner) = limits;
++        Ok(())
 +    }
 +
 +    fn record(&self, state: &mut State, event: &Value) -> io::Result<()> {
@@ -29338,20 +29466,21 @@ index 000000000..a68a257f0
 +                worker.status == WorkerStatus::Active && worker.depth.checked_add(1) == Some(depth)
 +            })
 +        };
++        let ceiling = self.limits();
 +        if limits.requests == 0
 +            || limits.seconds == 0
 +            || depth == 0
-+            || depth > self.limits.max_depth
++            || depth > ceiling.max_depth
 +            || !valid_parent
-+            || limits.requests > self.limits.requests
-+            || limits.seconds > self.limits.seconds
-+            || limits.exposure_microusd > self.limits.exposure_microusd
++            || limits.requests > ceiling.requests
++            || limits.seconds > ceiling.seconds
++            || limits.exposure_microusd > ceiling.exposure_microusd
 +            || state
 +                .workers
 +                .values()
 +                .filter(|worker| worker.status == WorkerStatus::Active)
 +                .count()
-+                >= self.limits.concurrent_workers as usize
++                >= ceiling.concurrent_workers as usize
 +        {
 +            return Err(denied("worker limits exceed task ceiling or capacity"));
 +        }
@@ -29630,7 +29759,8 @@ index 000000000..a68a257f0
 +            .exposure
 +            .checked_add(exposure_microusd)
 +            .ok_or_else(|| denied("exposure overflow"))?;
-+        if state.requests >= self.limits.requests || next_exposure > self.limits.exposure_microusd {
++        let ceiling = self.limits();
++        if state.requests >= ceiling.requests || next_exposure > ceiling.exposure_microusd {
 +            return Err(denied("shared request or exposure limit"));
 +        }
 +        if owner != "lead" {
@@ -29916,8 +30046,9 @@ index 000000000..a68a257f0
 +        if state.status != TaskStatus::Paused || self.expired() {
 +            return Err(denied("task is not resumable"));
 +        }
-+        let remaining_requests = self.limits.requests.saturating_sub(state.requests);
-+        let remaining_exposure = self.limits.exposure_microusd.saturating_sub(state.exposure);
++        let ceiling = self.limits();
++        let remaining_requests = ceiling.requests.saturating_sub(state.requests);
++        let remaining_exposure = ceiling.exposure_microusd.saturating_sub(state.exposure);
 +        self.record(
 +            &mut state,
 +            &serde_json::json!({"event": "task_resumed", "reference": reference, "remaining": {"requests": remaining_requests, "exposure_microusd": remaining_exposure}}),
@@ -29991,12 +30122,14 @@ index 000000000..a68a257f0
 +            .map_err(|_| denied("task lock poisoned"))?;
 +        Ok((
 +            Duration::from_millis(
-+                self.deadline_unix_millis
++                self.deadline_unix_millis()
 +                    .saturating_sub(unix_millis().unwrap_or(u128::MAX))
 +                    .min(u128::from(u64::MAX)) as u64,
 +            ),
-+            self.limits.requests - state.requests,
-+            self.limits.exposure_microusd.saturating_sub(state.exposure),
++            self.limits().requests.saturating_sub(state.requests),
++            self.limits()
++                .exposure_microusd
++                .saturating_sub(state.exposure),
 +        ))
 +    }
 +
@@ -32789,121 +32922,28 @@ index 000000000..b587df167
 +}
 diff --git a/codex-rs/omd/src/bin/omd-contract.rs b/codex-rs/omd/src/bin/omd-contract.rs
 new file mode 100644
-index 000000000..0ec327579
+index 000000000..b6b05710f
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-contract.rs
-@@ -0,0 +1,211 @@
-+use codex_omd::ContractDocument;
-+use codex_omd::ContractResolution;
+@@ -0,0 +1,100 @@
 +use codex_omd::ContractSelection;
-+use codex_omd::ModHost;
-+use codex_omd::PolicyOwner;
++use codex_omd::contract_cli::describe;
++use codex_omd::contract_cli::documents;
++use codex_omd::contract_cli::effective;
++use codex_omd::contract_cli::find;
++use codex_omd::contract_cli::plan;
++use codex_omd::contract_cli::project_path;
++use codex_omd::contract_cli::read;
++use codex_omd::contract_cli::summary;
++use codex_omd::contract_cli::user_path;
 +use serde_json::Value;
 +use serde_json::json;
 +use std::io;
 +use std::path::Path;
-+use std::path::PathBuf;
 +
 +fn usage() -> io::Error {
 +    io::Error::other(
 +        "usage: omd-contract list STORE | status STORE REPOSITORY | plan STORE REPOSITORY ID@VERSION | select STORE REPOSITORY ID@VERSION [CONFIRMATION] | require STORE REPOSITORY ID@VERSION | clear STORE REPOSITORY user|project",
-+    )
-+}
-+
-+fn documents(store: &Path) -> io::Result<Vec<(ContractDocument, PolicyOwner)>> {
-+    let root = store.canonicalize()?;
-+    Ok(ModHost::open(root)?.contract_documents())
-+}
-+
-+fn user_path(store: &Path) -> io::Result<PathBuf> {
-+    let config = store.join("host.json");
-+    let configured = match std::fs::read(&config) {
-+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)?["contract"]["user"]
-+            .as_str()
-+            .map(PathBuf::from),
-+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-+        Err(error) => return Err(error),
-+    };
-+    Ok(configured.unwrap_or_else(|| store.join(codex_omd::USER_CONTRACT_SELECTION)))
-+}
-+
-+fn project_path(repository: &Path) -> PathBuf {
-+    repository.join(codex_omd::PROJECT_CONTRACT_SELECTION)
-+}
-+
-+fn read(path: &Path) -> io::Result<Option<ContractSelection>> {
-+    ContractSelection::read(path).map_err(io::Error::other)
-+}
-+
-+fn summary(document: &ContractDocument, owner: &PolicyOwner) -> Value {
-+    json!({"key": document.key(), "description": document.description, "assurance": document.assurance,
-+        "gates": document.gates, "restrict": document.restrict, "digest": document.digest(), "owner": owner})
-+}
-+
-+fn effective(
-+    documents: &[(ContractDocument, PolicyOwner)],
-+    store: &Path,
-+    repository: &Path,
-+) -> io::Result<ContractResolution> {
-+    let user = read(&user_path(store)?)?;
-+    let project = read(&project_path(repository))?;
-+    Ok(codex_omd::resolve_contract(
-+        documents,
-+        user.as_ref(),
-+        project.as_ref(),
-+    ))
-+}
-+
-+fn describe(resolution: &ContractResolution) -> Value {
-+    match resolution {
-+        ContractResolution::None => {
-+            json!({"status": "none", "note": "no contract is selected; completion and integration are not gated"})
-+        }
-+        ContractResolution::Active {
-+            document,
-+            owner,
-+            source,
-+            overrode,
-+        } => json!({"status": "active", "contract": summary(document, owner), "source": source,
-+            "overrode": overrode}),
-+        ContractResolution::Unavailable(error) => json!({"status": "unavailable", "error": error,
-+            "note": "completion and integration fail closed until the selection is fixed"}),
-+    }
-+}
-+
-+fn find(
-+    documents: &[(ContractDocument, PolicyOwner)],
-+    key: &str,
-+) -> io::Result<(ContractDocument, PolicyOwner)> {
-+    documents
-+        .iter()
-+        .find(|(document, _)| document.key() == key)
-+        .cloned()
-+        .ok_or_else(|| io::Error::other(format!("no active mod registers contract {key}")))
-+}
-+
-+fn current(resolution: &ContractResolution) -> Option<&ContractDocument> {
-+    match resolution {
-+        ContractResolution::Active { document, .. } => Some(document),
-+        _ => None,
-+    }
-+}
-+
-+fn plan(store: &Path, repository: &Path, key: &str) -> io::Result<Value> {
-+    let documents = documents(store)?;
-+    let (next, owner) = find(&documents, key)?;
-+    let resolution = effective(&documents, store, repository)?;
-+    let before = current(&resolution);
-+    let weakens = before.is_some_and(|before| next.weaker_than(before));
-+    Ok(
-+        json!({"schema": 2, "before": describe(&resolution), "after": summary(&next, &owner),
-+        "weakens": weakens,
-+        "confirmation": weakens.then(|| codex_omd::contract_confirmation(before, &next)),
-+        "note": if weakens {
-+            "this selection reduces assurance; pass the confirmation to omd-contract select"
-+        } else {
-+            "this selection does not reduce assurance"
-+        }}),
 +    )
 +}
 +
@@ -32926,37 +32966,19 @@ index 000000000..0ec327579
 +            Ok(value)
 +        }
 +        [command, store, repository, key] if command == "plan" => {
-+            plan(Path::new(store), Path::new(repository), key)
++            let store = Path::new(store);
++            plan(&documents(store)?, store, Path::new(repository), key)
 +        }
 +        [command, store, repository, key] | [command, store, repository, key, _]
 +            if command == "select" =>
 +        {
-+            let confirmation = args.get(4).cloned();
-+            let (store, repository) = (Path::new(store), Path::new(repository));
-+            let documents = documents(store)?;
-+            let (next, owner) = find(&documents, key)?;
-+            let resolution = effective(&documents, store, repository)?;
-+            let before = current(&resolution);
-+            if before.is_some_and(|before| next.weaker_than(before))
-+                && confirmation.as_deref()
-+                    != Some(codex_omd::contract_confirmation(before, &next).as_str())
-+            {
-+                return Err(io::Error::other(
-+                    "this selection reduces assurance; run omd-contract plan and pass its confirmation",
-+                ));
-+            }
-+            let path = user_path(store)?;
-+            ContractSelection {
-+                schema: 2,
-+                contract: Some(next.key()),
-+                contract_digest: Some(next.digest()),
-+                confirmation,
-+                ..ContractSelection::default()
-+            }
-+            .write(&path)?;
-+            Ok(
-+                json!({"schema": 2, "selected": summary(&next, &owner), "path": path,
-+                "note": "the selection applies to the next session"}),
++            let store = Path::new(store);
++            codex_omd::contract_cli::select(
++                &documents(store)?,
++                store,
++                Path::new(repository),
++                key,
++                args.get(4).cloned(),
 +            )
 +        }
 +        [command, store, repository, key] if command == "require" => {
@@ -33006,10 +33028,10 @@ index 000000000..0ec327579
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..93066c014
+index 000000000..146399b4c
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,352 @@
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
@@ -33273,7 +33295,19 @@ index 000000000..93066c014
 +            ))
 +        }
 +        [command, root] if command == "status" => {
-+            Ok(ModHost::open(PathBuf::from(root).canonicalize()?)?.status())
++            let mut host = ModHost::open_in(
++                PathBuf::from(root).canonicalize()?,
++                |_| Ok(()),
++                &std::env::current_dir()?,
++            )?;
++            let terminal = host.terminal_view(
++                serde_json::json!({"event": "status", "ledger": null}),
++                || true,
++            );
++            let mut status = host.status();
++            status["terminal"] = serde_json::json!({"owner": terminal.owner,
++                "contributors": terminal.contributors, "diagnostics": terminal.diagnostics});
++            Ok(status)
 +        }
 +        [command, root] if command == "selection-status" => {
 +            ModStore::open(PathBuf::from(root).canonicalize()?)?.selection_status()
@@ -34470,10 +34504,10 @@ index 000000000..320c013e6
 +}
 diff --git a/codex-rs/omd/src/client_surface.rs b/codex-rs/omd/src/client_surface.rs
 new file mode 100644
-index 000000000..c4ee98025
+index 000000000..da25bfebc
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface.rs
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,373 @@
 +use crate::app_routes::InvocationContext;
 +use serde_json::Value;
 +use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
@@ -34493,6 +34527,7 @@ index 000000000..c4ee98025
 +    "composer.write",
 +    "builtins.invoke",
 +    "packages.apply",
++    "contract.select",
 +    "terminal.open",
 +    "terminal.prompt",
 +    "terminal.pty",
@@ -34503,6 +34538,7 @@ index 000000000..c4ee98025
 +    "terminal.import_file",
 +    "builtins.invoke",
 +    "packages.apply",
++    "contract.select",
 +];
 +
 +pub fn awaits_user(operation: &str, arguments: &Value) -> bool {
@@ -35026,6 +35062,155 @@ index 000000000..363c60a3c
 +        "http://127.0.0.1:3920/<redacted>"
 +    );
 +    assert_eq!(config["mcp_servers"]["plain"], json!({"command": "plain"}));
++}
+diff --git a/codex-rs/omd/src/contract_cli.rs b/codex-rs/omd/src/contract_cli.rs
+new file mode 100644
+index 000000000..948462abe
+--- /dev/null
++++ b/codex-rs/omd/src/contract_cli.rs
+@@ -0,0 +1,143 @@
++use crate::ContractDocument;
++use crate::ContractResolution;
++use crate::ContractSelection;
++use crate::ModHost;
++use crate::PolicyOwner;
++use serde_json::Value;
++use serde_json::json;
++use std::io;
++use std::path::Path;
++use std::path::PathBuf;
++
++pub fn documents(store: &Path) -> io::Result<Vec<(ContractDocument, PolicyOwner)>> {
++    let root = store.canonicalize()?;
++    Ok(ModHost::open(root)?.contract_documents())
++}
++
++pub fn user_path(store: &Path) -> io::Result<PathBuf> {
++    let config = store.join("host.json");
++    let configured = match std::fs::read(&config) {
++        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)?["contract"]["user"]
++            .as_str()
++            .map(PathBuf::from),
++        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
++        Err(error) => return Err(error),
++    };
++    Ok(configured.unwrap_or_else(|| store.join(crate::USER_CONTRACT_SELECTION)))
++}
++
++pub fn project_path(repository: &Path) -> PathBuf {
++    repository.join(crate::PROJECT_CONTRACT_SELECTION)
++}
++
++pub fn read(path: &Path) -> io::Result<Option<ContractSelection>> {
++    ContractSelection::read(path).map_err(io::Error::other)
++}
++
++pub fn summary(document: &ContractDocument, owner: &PolicyOwner) -> Value {
++    json!({"key": document.key(), "description": document.description, "assurance": document.assurance,
++        "gates": document.gates, "restrict": document.restrict, "digest": document.digest(), "owner": owner})
++}
++
++pub fn effective(
++    documents: &[(ContractDocument, PolicyOwner)],
++    store: &Path,
++    repository: &Path,
++) -> io::Result<ContractResolution> {
++    let user = read(&user_path(store)?)?;
++    let project = read(&project_path(repository))?;
++    Ok(crate::resolve_contract(
++        documents,
++        user.as_ref(),
++        project.as_ref(),
++    ))
++}
++
++pub fn describe(resolution: &ContractResolution) -> Value {
++    match resolution {
++        ContractResolution::None => {
++            json!({"status": "none", "note": "no contract is selected; completion and integration are not gated"})
++        }
++        ContractResolution::Active {
++            document,
++            owner,
++            source,
++            overrode,
++        } => json!({"status": "active", "contract": summary(document, owner), "source": source,
++            "overrode": overrode}),
++        ContractResolution::Unavailable(error) => json!({"status": "unavailable", "error": error,
++            "note": "completion and integration fail closed until the selection is fixed"}),
++    }
++}
++
++pub fn find(
++    documents: &[(ContractDocument, PolicyOwner)],
++    key: &str,
++) -> io::Result<(ContractDocument, PolicyOwner)> {
++    documents
++        .iter()
++        .find(|(document, _)| document.key() == key)
++        .cloned()
++        .ok_or_else(|| io::Error::other(format!("no active mod registers contract {key}")))
++}
++
++pub fn current(resolution: &ContractResolution) -> Option<&ContractDocument> {
++    match resolution {
++        ContractResolution::Active { document, .. } => Some(document),
++        _ => None,
++    }
++}
++
++pub fn plan(
++    documents: &[(ContractDocument, PolicyOwner)],
++    store: &Path,
++    repository: &Path,
++    key: &str,
++) -> io::Result<Value> {
++    let (next, owner) = find(documents, key)?;
++    let resolution = effective(documents, store, repository)?;
++    let before = current(&resolution);
++    let weakens = before.is_some_and(|before| next.weaker_than(before));
++    Ok(
++        json!({"schema": 2, "before": describe(&resolution), "after": summary(&next, &owner),
++        "weakens": weakens,
++        "confirmation": weakens.then(|| crate::contract_confirmation(before, &next)),
++        "note": if weakens {
++            "this selection reduces assurance; pass the confirmation to omd-contract select"
++        } else {
++            "this selection does not reduce assurance"
++        }}),
++    )
++}
++
++pub fn select(
++    documents: &[(ContractDocument, PolicyOwner)],
++    store: &Path,
++    repository: &Path,
++    key: &str,
++    confirmation: Option<String>,
++) -> io::Result<Value> {
++    let (next, owner) = find(documents, key)?;
++    let resolution = effective(documents, store, repository)?;
++    let before = current(&resolution);
++    if before.is_some_and(|before| next.weaker_than(before))
++        && confirmation.as_deref() != Some(crate::contract_confirmation(before, &next).as_str())
++    {
++        return Err(io::Error::other(
++            "this selection reduces assurance; run omd-contract plan and pass its confirmation",
++        ));
++    }
++    let path = user_path(store)?;
++    ContractSelection {
++        schema: 2,
++        contract: Some(next.key()),
++        contract_digest: Some(next.digest()),
++        confirmation,
++        ..ContractSelection::default()
++    }
++    .write(&path)?;
++    Ok(
++        json!({"schema": 2, "selected": summary(&next, &owner), "path": path,
++        "note": "the selection applies to the next session"}),
++    )
 +}
 diff --git a/codex-rs/omd/src/contract_document.rs b/codex-rs/omd/src/contract_document.rs
 new file mode 100644
@@ -38576,15 +38761,16 @@ index 000000000..8988abc7d
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..ccdfdf7ef
+index 000000000..ab0944de4
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,177 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
 +mod builtins;
 +pub mod client_surface;
++pub mod contract_cli;
 +mod contract_document;
 +pub mod credentials;
 +pub mod data_store;
@@ -38939,10 +39125,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..56ad46a60
+index 000000000..8df08e87d
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4086 @@
+@@ -0,0 +1,4097 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -39256,6 +39442,7 @@ index 000000000..56ad46a60
 +    "receipts.submit",
 +    "contract.status",
 +    "contract.restrict",
++    "contract.select",
 +    "agents.spawn",
 +    "agents.message",
 +    "agents.cancel",
@@ -39742,6 +39929,16 @@ index 000000000..56ad46a60
 +                && declared("unix_sockets")
 +            {
 +                used.push("unix_sockets".to_owned());
++            }
++            if (!used.is_empty() || operation == "workspace.check_access")
++                && matches!(
++                    operation.as_str(),
++                    "exec.run" | "terminal.pty" | "workspace.check_access"
++                )
++                && visible.contains("write:")
++                && declared("fs.write")
++            {
++                used.push("fs.write".to_owned());
 +            }
 +            used
 +        };
@@ -43539,10 +43736,10 @@ index 000000000..7202d28aa
 +}
 diff --git a/codex-rs/omd/src/mods/bridge.rs b/codex-rs/omd/src/mods/bridge.rs
 new file mode 100644
-index 000000000..4a0d281a3
+index 000000000..a45ba096c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/bridge.rs
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,247 @@
 +use super::*;
 +use std::time::Duration;
 +use std::time::Instant;
@@ -43580,9 +43777,8 @@ index 000000000..4a0d281a3
 +            }
 +            "routes.list" | "providers.register" | "providers.unregister" => Ok("model"),
 +            "task.status" | "workspace.integrate" => Ok("agents"),
-+            "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict" => {
-+                Ok("contracts")
-+            }
++            "task.complete" | "receipts.submit" | "contract.status" | "contract.restrict"
++            | "contract.select" => Ok("contracts"),
 +            "mods.service" => Ok("services"),
 +            "app.request" => self.arguments["method"]
 +                .as_str()
@@ -46857,13 +47053,14 @@ index 000000000..d2e18e736
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..7b63a2f34
+index 000000000..ddca6fd78
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,1806 @@
+@@ -0,0 +1,1820 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
++pub const MOD_COMPOSED_KEY_LIMIT: usize = 64;
 +pub const MOD_COMPONENT_LIMIT: usize = 64;
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -48150,8 +48347,8 @@ index 000000000..7b63a2f34
 +        .all(|template| visible(template, 1024) && template.matches("{text}").count() == 1)
 +}
 +
-+fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>) -> bool {
-+    bindings.len() <= MOD_KEY_LIMIT
++fn valid_bindings(bindings: &BTreeMap<String, ModKeyAction>, limit: usize) -> bool {
++    bindings.len() <= limit
 +        && bindings
 +            .iter()
 +            .all(|(key, action)| mod_key_name(key) && valid_action(action))
@@ -48351,7 +48548,10 @@ index 000000000..7b63a2f34
 +                    .is_some_and(|title| !visible(title, 1024)),
 +            ),
 +            ("status", !valid_status(&patch.status)),
-+            ("keybindings", !valid_bindings(&patch.keybindings)),
++            (
++                "keybindings",
++                !valid_bindings(&patch.keybindings, MOD_KEY_LIMIT),
++            ),
 +            (
 +                "templates",
 +                !valid_templates(&patch.message_template, &patch.tool_template),
@@ -48529,13 +48729,21 @@ index 000000000..7b63a2f34
 +                None => template,
 +            });
 +        }
-+        ModView::parse(serde_json::to_value(target.clone())?)?;
++        ModView::parse_with(
++            serde_json::to_value(target.clone())?,
++            MOD_COMPOSED_KEY_LIMIT,
++        )?;
 +        Ok(())
 +    }
 +}
 +
 +impl ModView {
 +    pub fn parse(value: Value) -> Result<Self> {
++        Self::parse_with(value, MOD_KEY_LIMIT)
++    }
++
++    /// Each mod's view or patch keeps 12 keys; the view composed from every mod may hold more.
++    fn parse_with(value: Value, key_limit: usize) -> Result<Self> {
 +        let view: Self = serde_json::from_value(value)?;
 +        let invalid = [
 +            (
@@ -48574,7 +48782,7 @@ index 000000000..7b63a2f34
 +                view.footer.as_ref().is_some_and(|panel| !panel.valid(3)),
 +            ),
 +            ("status", !valid_status(&view.status)),
-+            ("keybindings", !valid_bindings(&view.keybindings)),
++            ("keybindings", !valid_bindings(&view.keybindings, key_limit)),
 +            (
 +                "keybindings.focus",
 +                !valid_focus_targets(&view.keybindings, &view.sites),
@@ -48634,13 +48842,15 @@ index 000000000..7b63a2f34
 +    pub fn read(path: &Path) -> Result<Self> {
 +        let value: Value = serde_json::from_slice(&store::read(path, 524_288)?)?;
 +        let mut snapshot: Self = serde_json::from_value(value)?;
-+        snapshot.view = ModView::parse(serde_json::to_value(&snapshot.view)?)?;
++        snapshot.view = ModView::parse_with(
++            serde_json::to_value(&snapshot.view)?,
++            MOD_COMPOSED_KEY_LIMIT,
++        )?;
 +        if snapshot
 +            .progress
 +            .as_ref()
 +            .is_some_and(|panel| !panel.valid(8))
 +            || snapshot.activity.len() > 32
-+            || snapshot.contributors.len() > 16
 +            || snapshot
 +                .contributors
 +                .iter()
@@ -48669,10 +48879,10 @@ index 000000000..7b63a2f34
 +mod surface_tests;
 diff --git a/codex-rs/omd/src/mods/view_surface_tests.rs b/codex-rs/omd/src/mods/view_surface_tests.rs
 new file mode 100644
-index 000000000..47f39a60f
+index 000000000..55f5f168c
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view_surface_tests.rs
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,196 @@
 +use super::*;
 +use serde_json::json;
 +
@@ -48838,6 +49048,35 @@ index 000000000..47f39a60f
 +    assert_eq!(
 +        target.surface_styles["composer"].top,
 +        Some(ModColor::Rgb(0x65, 0x43, 0x21))
++    );
++}
++
++#[test]
++fn each_patch_keeps_twelve_keys_while_the_composed_view_holds_more() {
++    let keys = |letters: &str| {
++        Value::Object(
++            letters
++                .chars()
++                .map(|letter| (format!("Alt+{letter}"), json!("draft")))
++                .collect(),
++        )
++    };
++    assert!(ModViewPatch::parse(json!({"keybindings": keys("abcdefghijklm")})).is_err());
++    let mut target = ModView::default();
++    let mut replaced = BTreeSet::new();
++    let mut completed = false;
++    for letters in ["abcdefghijkl", "nopqrstuvwyz"] {
++        ModViewPatch::parse(json!({"keybindings": keys(letters)}))
++            .unwrap()
++            .apply(&mut target, &mut replaced, &mut completed)
++            .unwrap();
++    }
++    assert_eq!(target.keybindings.len(), 24);
++    assert!(
++        ModViewPatch::parse(json!({"keybindings": keys("a")}))
++            .unwrap()
++            .apply(&mut target, &mut replaced, &mut completed)
++            .is_err()
 +    );
 +}
 diff --git a/codex-rs/omd/src/owner.rs b/codex-rs/omd/src/owner.rs
@@ -53422,10 +53661,10 @@ index 000000000..26dad48ab
 +}
 diff --git a/codex-rs/omd/tests/generic_host.rs b/codex-rs/omd/tests/generic_host.rs
 new file mode 100644
-index 000000000..a28a9656f
+index 000000000..2043105ab
 --- /dev/null
 +++ b/codex-rs/omd/tests/generic_host.rs
-@@ -0,0 +1,1687 @@
+@@ -0,0 +1,1736 @@
 +use codex_omd::BuiltinControls;
 +use codex_omd::ContractDocument;
 +use codex_omd::ContractResolution;
@@ -55113,6 +55352,55 @@ index 000000000..a28a9656f
 +        ["pty", "network"]
 +    );
 +}
++
++#[test]
++fn contract_select_writes_the_user_selection_and_needs_the_plan_confirmation_to_lower_assurance() {
++    let document = |id: &str, producer: &str| {
++        ContractDocument::parse(&json!({"schema":2,"id":id,"version":1,"description":"d",
++            "assurance":"a","gates":{"complete":[{"receipt":"review","producer":producer}]}}))
++        .unwrap()
++    };
++    let documents = vec![
++        (document("strict", "separate_agent"), owner()),
++        (document("solo", "lead"), owner()),
++    ];
++    let store = tempfile::tempdir().unwrap();
++    let repository = tempfile::tempdir().unwrap();
++    let selected = codex_omd::contract_cli::select(
++        &documents,
++        store.path(),
++        repository.path(),
++        "strict@1",
++        None,
++    )
++    .unwrap();
++    assert_eq!(selected["selected"]["key"], "strict@1");
++    let refused = codex_omd::contract_cli::select(
++        &documents,
++        store.path(),
++        repository.path(),
++        "solo@1",
++        None,
++    );
++    assert!(
++        refused
++            .unwrap_err()
++            .to_string()
++            .contains("reduces assurance")
++    );
++    let plan = codex_omd::contract_cli::plan(&documents, store.path(), repository.path(), "solo@1")
++        .unwrap();
++    assert_eq!(plan["weakens"], true);
++    let confirmation = plan["confirmation"].as_str().map(str::to_owned);
++    codex_omd::contract_cli::select(
++        &documents,
++        store.path(),
++        repository.path(),
++        "solo@1",
++        confirmation,
++    )
++    .unwrap();
++}
 diff --git a/codex-rs/omd/tests/integration.rs b/codex-rs/omd/tests/integration.rs
 new file mode 100644
 index 000000000..16a69c759
@@ -55688,10 +55976,10 @@ index 000000000..16a69c759
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..24ee02d51
+index 000000000..6053a9e30
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2843 @@
+@@ -0,0 +1,2849 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -56810,6 +57098,7 @@ index 000000000..24ee02d51
 +            status: "completed".into(),
 +        }],
 +        diagnostics: vec!["keybinding dropped".into()],
++        contributors: (0..40).map(|index| format!("mod_{index}")).collect(),
 +        ..Default::default()
 +    };
 +    std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
@@ -57460,6 +57749,11 @@ index 000000000..24ee02d51
 +        host(&temp).status()["mods"][0]["unused_grants"],
 +        json!(["network"])
 +    );
++    let (temp, _, _) = fixture(
++        "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',write:true}))",
++        &["commands", "exec", "fs.write"],
++    );
++    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
 +    let policies = &status["field_policies"];
 +    assert_eq!(policies["response_stream"]["raw_usage"], "observe_only");
 +    assert_eq!(policies["model_request"]["effective"], "alterable");
@@ -61289,10 +61583,10 @@ index 000000000..c6e7242a7
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..ed84c5155
+index 000000000..45b9ce116
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,890 @@
+@@ -0,0 +1,1018 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -61371,17 +61665,64 @@ index 000000000..ed84c5155
 +
 +type PackageControl = codex_omd::package_controls::PackageControl;
 +
-+static PACKAGE_CONTROLS: std::sync::Mutex<std::collections::BTreeMap<u64, PackageControl>> =
++enum Confirmed {
++    Package(PackageControl),
++    Contract(Option<String>),
++}
++
++static CONFIRMED: std::sync::Mutex<std::collections::BTreeMap<u64, Confirmed>> =
 +    std::sync::Mutex::new(std::collections::BTreeMap::new());
 +
-+fn package_controls()
-+-> std::sync::MutexGuard<'static, std::collections::BTreeMap<u64, PackageControl>> {
-+    PACKAGE_CONTROLS
++fn confirmed() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<u64, Confirmed>> {
++    CONFIRMED
 +        .lock()
 +        .unwrap_or_else(std::sync::PoisonError::into_inner)
 +}
 +
-+fn confirmation(call: &SurfaceCall) -> Result<Option<(String, Option<PackageControl>)>, String> {
++type Confirmation = (Option<String>, String, Option<Confirmed>);
++
++fn capability_phrase(capability: &str) -> &str {
++    match capability {
++        "context" => "add text to the agent's context",
++        "tools" => "give the agent new tools",
++        "commands" => "add slash commands",
++        "lifecycle" => "react to session and turn events",
++        "input" => "rewrite what you type before it is sent",
++        "interception" => "allow or block tool calls",
++        "compaction" => "decide how the conversation is compacted",
++        "middleware" => "inspect and change model requests",
++        "services" => "offer or use services from other mods",
++        "virtual_reads" => "serve virtual files",
++        "terminal" => "draw in the terminal",
++        "exec" => "run programs in this repository",
++        "fs.read" => "read files in this repository",
++        "fs.write" => "change files in this repository",
++        "network" => "use the network",
++        "unix_sockets" => "connect to local sockets",
++        "model" => "choose model routes",
++        "agents" => "start helper agents",
++        "store" => "keep its own saved data",
++        "sessions" => "read session history",
++        "contracts" => "set task completion rules",
++        "builtins" => "run and hide built-in commands",
++        "threads" => "start and manage threads",
++        "config" => "read Codex settings",
++        "config.write" => "change Codex settings",
++        "inventory" => "list skills, plugins and commands",
++        "account" => "read account details",
++        "packages" => "install and manage mods",
++        "approvals" => "answer approval prompts",
++        "events" => "send and receive mod events",
++        "credentials" => "use stored account credentials",
++        "composer" => "read and write the message you are typing",
++        "pty" => "run interactive terminal programs",
++        "history" => "edit the conversation history",
++        "outputs" => "change tool output",
++        other => other,
++    }
++}
++
++fn confirmation(call: &SurfaceCall) -> Result<Option<Confirmation>, String> {
 +    let prompt = match call.operation.as_str() {
 +        "terminal.import_file" => Some(format!(
 +            "Mod {} wants to import {}.",
@@ -61398,14 +61739,59 @@ index 000000000..ed84c5155
 +            if !call.arguments["expected_generation"].is_u64() {
 +                return Err("expected_generation_required".into());
 +            }
-+            let prompt = format!(
-+                "Mod {} wants to {} {}. New grants: {}.",
++            let title = format!(
++                "Allow {} to {} {}?",
 +                call.caller,
 +                call.arguments["action"].as_str().unwrap_or("change"),
-+                call.arguments["id"].as_str().unwrap_or("a package"),
-+                preview.public["grants_added"],
++                preview.public["id"]
++                    .as_str()
++                    .or_else(|| call.arguments["id"].as_str())
++                    .unwrap_or("a mod"),
 +            );
-+            return Ok(Some((prompt, Some(preview.control))));
++            let grants = preview.public["grants_added"]
++                .as_array()
++                .into_iter()
++                .flatten()
++                .filter_map(Value::as_str)
++                .map(|capability| format!("• {}", capability_phrase(capability)))
++                .collect::<Vec<_>>();
++            let prompt = if grants.is_empty() {
++                "It gets no new permissions.".to_owned()
++            } else {
++                format!("It would be allowed to:\n{}", grants.join("\n"))
++            };
++            return Ok(Some((
++                Some(title),
++                prompt,
++                Some(Confirmed::Package(preview.control)),
++            )));
++        }
++        "contract.select" => {
++            let (documents, store, repository, key) = contract_inputs(&call.arguments)?;
++            let plan = codex_omd::contract_cli::plan(&documents, &store, &repository, &key)
++                .map_err(|error| error.to_string())?;
++            let mut prompt = format!(
++                "{}\nIt applies from the next session.",
++                plan["after"]["description"].as_str().unwrap_or(&key)
++            );
++            if plan["weakens"] == true {
++                prompt.push_str(&format!(
++                    "\nThis lowers assurance from {} to {}.",
++                    plan["before"]["contract"]["assurance"]
++                        .as_str()
++                        .unwrap_or("the current contract"),
++                    plan["after"]["assurance"].as_str().unwrap_or(&key)
++                ));
++            }
++            return Ok(Some((
++                Some(format!(
++                    "Select workflow contract {key} for this repository?"
++                )),
++                prompt,
++                Some(Confirmed::Contract(
++                    plan["confirmation"].as_str().map(str::to_owned),
++                )),
++            )));
 +        }
 +        "credentials.request" => Some(super::mod_credentials::prompt(call)?),
 +        "terminal.open" => Some(format!(
@@ -61423,7 +61809,7 @@ index 000000000..ed84c5155
 +        )),
 +        _ => call.confirm.clone(),
 +    };
-+    Ok(prompt.map(|prompt| (prompt, None)))
++    Ok(prompt.map(|prompt| (None, prompt, None)))
 +}
 +
 +fn prompt_text(value: &Value, limit: usize) -> Result<String, String> {
@@ -61649,8 +62035,40 @@ index 000000000..ed84c5155
 +    Ok(json!({"width":columns, "height":rows, "rgba":rgba}))
 +}
 +
-+fn apply_package(control: Option<PackageControl>) -> Result<Value, String> {
-+    let control = control.ok_or("package_confirmation_missing")?;
++type ContractInputs = (
++    Vec<(codex_omd::ContractDocument, codex_omd::PolicyOwner)>,
++    std::path::PathBuf,
++    std::path::PathBuf,
++    String,
++);
++
++fn contract_inputs(arguments: &Value) -> Result<ContractInputs, String> {
++    let key = arguments["contract"]
++        .as_str()
++        .filter(|key| !key.is_empty() && key.len() <= 128)
++        .ok_or("contract_key_required")?
++        .to_owned();
++    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
++    let store = paths.store.ok_or("mod store is not configured")?;
++    let documents = crate::mod_runtime::contract_documents().ok_or("mod runtime unavailable")?;
++    Ok((documents, store, paths.repository, key))
++}
++
++// The confirmation comes from the plan the user saw, so a selection that changed since then is refused.
++fn select_contract(arguments: &Value, confirmed: Option<Confirmed>) -> Result<Value, String> {
++    let Some(Confirmed::Contract(confirmation)) = confirmed else {
++        return Err("contract_confirmation_missing".into());
++    };
++    let (documents, store, repository, key) = contract_inputs(arguments)?;
++    codex_omd::contract_cli::select(&documents, &store, &repository, &key, confirmation)
++        .map(|selected| json!({"selected": selected["selected"], "applies": "next_session"}))
++        .map_err(|error| error.to_string())
++}
++
++fn apply_package(confirmed: Option<Confirmed>) -> Result<Value, String> {
++    let Some(Confirmed::Package(control)) = confirmed else {
++        return Err("package_confirmation_missing".into());
++    };
 +    let paths = crate::omd::mod_paths().ok_or("mod store is not configured")?;
 +    let store = codex_omd::ModStore::open(paths.store.ok_or("mod store is not configured")?)
 +        .map_err(|error| error.to_string())?;
@@ -61753,7 +62171,9 @@ index 000000000..ed84c5155
 +        call: SurfaceCall,
 +    ) {
 +        match confirmation(&call) {
-+            Ok(Some((prompt, package))) => self.confirm_mod_surface_call(call, prompt, package),
++            Ok(Some((title, prompt, held))) => {
++                self.confirm_mod_surface_call(call, title, prompt, held)
++            }
 +            Ok(None) => self.run_mod_surface_call(tui, app_server, call, None).await,
 +            Err(error) => {
 +                let _ = call.reply.send(Err(error));
@@ -61764,13 +62184,14 @@ index 000000000..ed84c5155
 +    fn confirm_mod_surface_call(
 +        &mut self,
 +        call: SurfaceCall,
++        title: Option<String>,
 +        prompt: String,
-+        package: Option<PackageControl>,
++        held: Option<Confirmed>,
 +    ) {
 +        let caller = call.caller.clone();
 +        let id = crate::mod_surface::hold(call);
-+        if let Some(package) = package {
-+            package_controls().insert(id, package);
++        if let Some(held) = held {
++            confirmed().insert(id, held);
 +        }
 +        let item = |name: &str, approved: bool| SelectionItem {
 +            name: name.to_owned(),
@@ -61783,7 +62204,7 @@ index 000000000..ed84c5155
 +            ..Default::default()
 +        };
 +        self.chat_widget.show_selection_view(SelectionViewParams {
-+            title: Some(format!("Confirm request from mod {caller}")),
++            title: Some(title.unwrap_or_else(|| format!("Confirm request from mod {caller}"))),
 +            subtitle: Some(prompt),
 +            items: vec![item("Allow once", true), item("Decline", false)],
 +            view_id: Some(crate::mod_ui::APPROVAL_VIEW_ID),
@@ -61806,7 +62227,7 @@ index 000000000..ed84c5155
 +        id: u64,
 +        approved: bool,
 +    ) {
-+        let package = package_controls().remove(&id);
++        let held = confirmed().remove(&id);
 +        let Some(call) = crate::mod_surface::release(id) else {
 +            return;
 +        };
@@ -61814,7 +62235,7 @@ index 000000000..ed84c5155
 +            let _ = call.reply.send(Ok(json!({"status": "declined"})));
 +            return;
 +        }
-+        self.run_mod_surface_call(tui, app_server, call, package)
++        self.run_mod_surface_call(tui, app_server, call, held)
 +            .await;
 +    }
 +
@@ -61823,7 +62244,7 @@ index 000000000..ed84c5155
 +        tui: &mut tui::Tui,
 +        app_server: &mut AppServerSession,
 +        call: SurfaceCall,
-+        package: Option<PackageControl>,
++        held: Option<Confirmed>,
 +    ) {
 +        let result = match call.operation.as_str() {
 +            "app.request" => {
@@ -61925,7 +62346,8 @@ index 000000000..ed84c5155
 +                self.chat_widget.show_mod_secret_prompt(view);
 +                return;
 +            }
-+            "packages.apply" => apply_package(package),
++            "packages.apply" => apply_package(held),
++            "contract.select" => select_contract(&call.arguments, held),
 +            "composer.read" => Ok(self.chat_widget.mod_composer_read()),
 +            "terminal.commands" => Ok(self.chat_widget.mod_command_inventory()),
 +            "sessions.ports" => {
@@ -62509,7 +62931,7 @@ index 000000000..bd0ab3622
 +}
 diff --git a/codex-rs/tui/src/chatwidget/mod_commands.rs b/codex-rs/tui/src/chatwidget/mod_commands.rs
 new file mode 100644
-index 000000000..00e925575
+index 000000000..495b00f03
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/mod_commands.rs
 @@ -0,0 +1,251 @@
@@ -62740,7 +63162,7 @@ index 000000000..00e925575
 +
 +    pub(crate) fn apply_mod_placeholder(&mut self, placeholder: Option<String>) {
 +        self.normal_placeholder_text = placeholder.unwrap_or_else(|| {
-+            if crate::omd::terminal_active() {
++            if crate::omd::is_active() {
 +                "Ask Oh My Diff to do anything".to_string()
 +            } else {
 +                super::PLACEHOLDER.to_string()
@@ -62766,10 +63188,10 @@ index 000000000..00e925575
 +}
 diff --git a/codex-rs/tui/src/chatwidget/omd_extensions.rs b/codex-rs/tui/src/chatwidget/omd_extensions.rs
 new file mode 100644
-index 000000000..654423267
+index 000000000..733d3a139
 --- /dev/null
 +++ b/codex-rs/tui/src/chatwidget/omd_extensions.rs
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,234 @@
 +use super::*;
 +use crate::app_event::AppEvent;
 +use crate::bottom_pane::SelectionItem;
@@ -62779,21 +63201,109 @@ index 000000000..654423267
 +use ratatui::text::Line;
 +use ratatui::widgets::Paragraph;
 +
++struct ModEntry {
++    id: String,
++    path: PathBuf,
++    scope: String,
++    enabled: bool,
++    managed: bool,
++    blocked: Option<String>,
++    failure: Option<String>,
++}
++
++fn first_line(text: &str) -> String {
++    text.lines()
++        .next()
++        .unwrap_or_default()
++        .chars()
++        .take(120)
++        .collect()
++}
++
++fn mod_entries(root: PathBuf) -> Result<Vec<ModEntry>, String> {
++    let runtime = crate::omd::mod_status();
++    let status = ModStore::open(root)
++        .and_then(|store| store.selection_status())
++        .map_err(|error| error.to_string())?;
++    Ok(status["selections"]
++        .as_array()
++        .into_iter()
++        .flatten()
++        .filter_map(|selection| {
++            let path = PathBuf::from(selection["path"].as_str()?);
++            let failure = runtime.as_ref().and_then(|runtime| {
++                runtime["rejected"]
++                    .as_array()
++                    .into_iter()
++                    .flatten()
++                    .find(|item| item["path"] == selection["path"])
++                    .and_then(|item| item["reason"].as_str())
++                    .or_else(|| {
++                        runtime["mods"]
++                            .as_array()
++                            .into_iter()
++                            .flatten()
++                            .find(|item| item["id"] == selection["id"])
++                            .and_then(|item| item["error"].as_str())
++                    })
++                    .map(first_line)
++            });
++            Some(ModEntry {
++                id: selection["id"]
++                    .as_str()
++                    .unwrap_or("unreadable_mod")
++                    .to_owned(),
++                path,
++                scope: selection["scope"].as_str().unwrap_or("user").to_owned(),
++                enabled: selection["selected"] == true,
++                managed: selection["managed"] == true,
++                blocked: selection["error"].as_str().map(first_line),
++                failure,
++            })
++        })
++        .collect())
++}
++
++fn toggle_item(entry: ModEntry) -> SelectionItem {
++    let state = if entry.enabled { "on" } else { "off" };
++    let mut description = format!("{state} · {} scope", entry.scope);
++    if let Some(reason) = entry.failure.as_ref().or(entry.blocked.as_ref()) {
++        description.push_str(&format!(" · {reason}"));
++    }
++    let blocked = !entry.enabled && entry.blocked.is_some();
++    SelectionItem {
++        name: format!(
++            "{} {}",
++            if entry.enabled { "Turn off" } else { "Turn on" },
++            entry.id
++        ),
++        description: Some(description),
++        is_disabled: blocked,
++        disabled_reason: blocked.then(|| entry.blocked.clone().unwrap_or_default()),
++        require_explicit_confirmation: true,
++        actions: vec![Box::new(move |tx| {
++            tx.send(AppEvent::OmdModToggle {
++                id: entry.id.clone(),
++                path: entry.path.clone(),
++                managed: entry.managed,
++                enabled: !entry.enabled,
++            });
++        })],
++        dismiss_on_select: true,
++        ..Default::default()
++    }
++}
++
 +impl ChatWidget {
 +    pub(crate) fn open_omd_extensions(&mut self) {
-+        let mut lines = vec![
-+            Line::from("Extensions".bold()),
-+            Line::from("Project mod selection takes precedence over the same user mod."),
-+            Line::from("Changes to mods take effect at the next turn boundary."),
-+        ];
++        let mut lines = vec![Line::from(
++            "Mods, plugins, skills and hooks. If a mod breaks Codex, turn it off below.",
++        )];
 +        let mut items = Vec::new();
 +        if let Some(command) = crate::mod_runtime::find("mods") {
 +            items.push(SelectionItem {
 +                name: "Mods".to_string(),
-+                description: Some(
-+                    "Installed, active, pending and failed mods with their actions in /mods"
-+                        .to_string(),
-+                ),
++                description: Some("See what each mod adds and turn mods on or off".to_string()),
 +                actions: vec![Box::new(move |tx| {
 +                    tx.send(AppEvent::OmdRunModCommand(command.clone()));
 +                })],
@@ -62801,14 +63311,37 @@ index 000000000..654423267
 +                ..Default::default()
 +            });
 +        }
++        items.push(SelectionItem {
++            name: "Plugins".to_string(),
++            description: Some("Installed plugins and their toggles".to_string()),
++            actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenPlugins))],
++            dismiss_on_select: true,
++            ..Default::default()
++        });
++        items.push(SelectionItem {
++            name: "Skills".to_string(),
++            description: Some("Turn skills on or off".to_string()),
++            actions: vec![Box::new(|tx| tx.send(AppEvent::OpenManageSkillsPopup))],
++            dismiss_on_select: true,
++            ..Default::default()
++        });
++        let cwd = self.config.cwd.to_path_buf();
++        items.push(SelectionItem {
++            name: "Hooks".to_string(),
++            description: Some("Lifecycle hooks, their trust and toggles".to_string()),
++            actions: vec![Box::new(move |tx| {
++                tx.send(AppEvent::FetchHooksList { cwd: cwd.clone() });
++            })],
++            dismiss_on_select: true,
++            ..Default::default()
++        });
 +        let runtime = crate::omd::mod_status();
 +        if let Some(root) = crate::omd::mod_paths().and_then(|paths| paths.store) {
-+            lines.push(Line::from(format!("Mod store {}", root.display())));
 +            if let Some(error) = runtime
 +                .as_ref()
 +                .and_then(|runtime| runtime["activation_error"].as_str())
 +            {
-+                lines.push(Line::from(format!("Mods are inactive: {error}")));
++                lines.push(Line::from(format!("Mods are off: {}", first_line(error))));
 +                for name in ["host.json", "mods.json"] {
 +                    if !error.contains(&root.join(name).display().to_string()) {
 +                        continue;
@@ -62837,113 +63370,54 @@ index 000000000..654423267
 +                    });
 +                }
 +            }
-+            lines.push(Line::from(
-+                "Update preview: omd-mod package-plan STORE REQUEST_JSON",
-+            ));
-+            lines.push(Line::from(
-+                "Broken mod recovery: disable it here or use omd-mod package-disable STORE ID.",
-+            ));
-+            match ModStore::open(root).and_then(|store| store.selection_status()) {
-+                Ok(status) => {
-+                    for selection in status["selections"].as_array().into_iter().flatten() {
-+                        let path = selection["path"].as_str().map(PathBuf::from);
-+                        let id = selection["id"].as_str().unwrap_or("unreadable_mod");
-+                        let scope = selection["scope"].as_str().unwrap_or("unknown");
-+                        let enabled = selection["selected"] == true;
-+                        let managed = selection["managed"] == true;
-+                        let reason = selection["error"]
-+                            .as_str()
-+                            .or_else(|| selection["reason"].as_str())
-+                            .unwrap_or("unknown");
-+                        let prior_failure = runtime.as_ref().and_then(|runtime| {
-+                            runtime["rejected"]
-+                                .as_array()
-+                                .into_iter()
-+                                .flatten()
-+                                .find(|item| item["path"] == selection["path"])
-+                                .and_then(|item| item["reason"].as_str())
-+                                .or_else(|| {
-+                                    runtime["mods"]
-+                                        .as_array()
-+                                        .into_iter()
-+                                        .flatten()
-+                                        .find(|item| item["id"] == selection["id"])
-+                                        .and_then(|item| item["error"].as_str())
-+                                })
-+                        });
-+                        let Some(path) = path else {
-+                            continue;
-+                        };
-+                        let label = format!(
-+                            "{} {id} ({scope})",
-+                            if enabled { "Disable" } else { "Enable" }
-+                        );
-+                        let mut description = format!(
-+                            "{} · {} · {reason} · {}",
-+                            if enabled { "selected" } else { "disabled" },
-+                            if managed { "managed" } else { "local" },
-+                            path.display()
-+                        );
-+                        if let Some(failure) = prior_failure {
-+                            description.push_str(&format!(" · last runtime: {failure}"));
-+                        }
-+                        let id = id.to_owned();
-+                        items.push(SelectionItem {
-+                            name: label,
-+                            description: Some(description),
-+                            is_disabled: !enabled && !selection["error"].is_null(),
-+                            disabled_reason: (!enabled && !selection["error"].is_null())
-+                                .then(|| reason.to_owned()),
-+                            require_explicit_confirmation: true,
-+                            actions: vec![Box::new(move |tx| {
-+                                tx.send(AppEvent::OmdModToggle {
-+                                    id: id.clone(),
-+                                    path: path.clone(),
-+                                    managed,
-+                                    enabled: !enabled,
-+                                });
-+                            })],
-+                            dismiss_on_select: true,
-+                            ..Default::default()
-+                        });
-+                    }
++            match mod_entries(root) {
++                Ok(entries) => {
++                    items.extend(
++                        entries
++                            .into_iter()
++                            .filter(|entry| entry.enabled && entry.failure.is_some())
++                            .map(toggle_item),
++                    );
++                    items.push(SelectionItem {
++                        name: "All mods…".to_string(),
++                        description: Some(
++                            "Turn any installed mod on or off without /mods".to_string(),
++                        ),
++                        actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenAllMods))],
++                        dismiss_on_select: true,
++                        ..Default::default()
++                    });
 +                }
-+                Err(error) => lines.push(Line::from(format!("Mod status unavailable: {error}"))),
++                Err(error) => lines.push(Line::from(format!("Mods are unavailable: {error}"))),
 +            }
-+        } else {
-+            lines.push(Line::from("Mod store is not configured in this session."));
 +        }
-+        items.push(SelectionItem {
-+            name: "Plugins".to_string(),
-+            description: Some(
-+                "Installed and active state, details and toggles in /plugins".to_string(),
-+            ),
-+            actions: vec![Box::new(|tx| tx.send(AppEvent::OmdOpenPlugins))],
-+            dismiss_on_select: true,
-+            ..Default::default()
-+        });
-+        items.push(SelectionItem {
-+            name: "Skills".to_string(),
-+            description: Some("Enabled state and toggles in /skills".to_string()),
-+            actions: vec![Box::new(|tx| tx.send(AppEvent::OpenManageSkillsPopup))],
-+            dismiss_on_select: true,
-+            ..Default::default()
-+        });
-+        let cwd = self.config.cwd.to_path_buf();
-+        items.push(SelectionItem {
-+            name: "Hooks".to_string(),
-+            description: Some("Effective lifecycle hooks, trust and toggles in /hooks".to_string()),
-+            actions: vec![Box::new(move |tx| {
-+                tx.send(AppEvent::FetchHooksList { cwd: cwd.clone() });
-+            })],
-+            dismiss_on_select: true,
-+            ..Default::default()
-+        });
 +        self.bottom_pane.show_selection_view(SelectionViewParams {
 +            view_id: Some("omd-extensions"),
-+            title: Some("Oh My Diff extensions".to_string()),
-+            subtitle: Some("On-demand controls; refresh by reopening".to_string()),
++            title: Some("Oh My Diff".to_string()),
 +            header: Box::new(Paragraph::new(lines)),
++            header_gap: 1,
++            footer_hint: Some(standard_popup_hint_line()),
++            items,
++            ..Default::default()
++        });
++        self.request_redraw();
++    }
++
++    pub(crate) fn open_omd_all_mods(&mut self) {
++        let Some(root) = crate::omd::mod_paths().and_then(|paths| paths.store) else {
++            return;
++        };
++        let (items, header) = match mod_entries(root) {
++            Ok(entries) => (
++                entries.into_iter().map(toggle_item).collect(),
++                "Changes apply at the next turn.".to_string(),
++            ),
++            Err(error) => (Vec::new(), format!("Mods are unavailable: {error}")),
++        };
++        self.bottom_pane.show_selection_view(SelectionViewParams {
++            view_id: Some("omd-all-mods"),
++            title: Some("All mods".to_string()),
++            header: Box::new(Paragraph::new(vec![Line::from(header)])),
 +            header_gap: 1,
 +            footer_hint: Some(standard_popup_hint_line()),
 +            items,
@@ -65475,10 +65949,10 @@ index 000000000..d3e30397b
 +}
 diff --git a/codex-rs/tui/src/mod_runtime.rs b/codex-rs/tui/src/mod_runtime.rs
 new file mode 100644
-index 000000000..79d0e4efe
+index 000000000..2227fa327
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_runtime.rs
-@@ -0,0 +1,829 @@
+@@ -0,0 +1,842 @@
 +use crate::slash_command::SlashCommand;
 +use codex_omd::ModCommandOutcome;
 +use codex_omd::ModHost;
@@ -65691,9 +66165,17 @@ index 000000000..79d0e4efe
 +        return Vec::new();
 +    };
 +    let mut entries = Vec::new();
-+    if paths.store.is_some()
-+        && let Some(status) = crate::omd::mod_status()
-+    {
++    // The terminal host reloads a changed mods.json at once, so enabled mods' commands appear before the next turn.
++    let status = paths
++        .store
++        .and_then(|store| {
++            let runtime = shared_host(store).ok()?;
++            let mut runtime = lock_within(&runtime)?;
++            reload(&mut runtime);
++            Some(runtime.status())
++        })
++        .or_else(crate::omd::mod_status);
++    if let Some(status) = status {
 +        for item in status["mods"].as_array().into_iter().flatten() {
 +            let Some(id) = item["id"].as_str() else {
 +                continue;
@@ -66055,6 +66537,11 @@ index 000000000..79d0e4efe
 +    }
 +    host.clone()
 +        .ok_or_else(|| "mod runtime unavailable".to_owned())
++}
++
++pub(crate) fn contract_documents()
++-> Option<Vec<(codex_omd::ContractDocument, codex_omd::PolicyOwner)>> {
++    with_host(|runtime, _| Some(runtime.contract_documents()))
 +}
 +
 +fn reload(runtime: &mut ModHost) {
@@ -67486,10 +67973,10 @@ index 000000000..911dd26c9
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..f4874a35e
+index 000000000..916f10abc
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,2498 @@
+@@ -0,0 +1,2501 @@
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModColor;
@@ -69703,7 +70190,10 @@ index 000000000..f4874a35e
 +                interaction.focused = interaction.order.get(index).cloned();
 +                return Some(ModInput::Consumed);
 +            }
-+            (KeyCode::Enter, KeyModifiers::NONE) => {
++            (KeyCode::Enter, KeyModifiers::NONE) | (KeyCode::Char(' '), KeyModifiers::NONE)
++                if key.code == KeyCode::Enter
++                    || matches!(target, ComponentTarget::ListRow { .. }) =>
++            {
 +                let label = interaction
 +                    .hitboxes
 +                    .iter()
@@ -69990,10 +70480,10 @@ index 000000000..f4874a35e
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..78fb57d84
+index 000000000..d2d35077e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1057 @@
+@@ -0,0 +1,1088 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -71051,6 +71541,37 @@ index 000000000..78fb57d84
 +        assert_ne!(cell.fg, cell.bg);
 +    });
 +}
++
++#[test]
++#[serial_test::serial]
++fn space_activates_a_focused_list_row_like_enter() {
++    let snapshot = snapshot(
++        serde_json::json!({"sites":{"dialog":{"components":[{"type":"dialog","id":"mods","label":"Mods","title":"Mods","children":[
++        {"type":"list","id":"rows","label":"Rows","action":{"command":"fixture:pick","args":"toggle"},
++         "rows":[{"value":"a","label":"alpha"},{"value":"b","label":"beta"}]},
++        {"type":"button","id":"close","label":"Close","text":"Close","action":{"command":"fixture:close"}}]}]}}}),
++    );
++    sync_interaction(&snapshot.view);
++    let area = Rect::new(0, 0, 60, 20);
++    let mut buffer = Buffer::empty(area);
++    render(area, area, &mut buffer, &snapshot);
++    assert!(focus("rows"));
++    match input(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)) {
++        Some(ModInput::Interaction(_, ModKeyAction::Command { command, args })) => {
++            assert_eq!(
++                (command.as_str(), args.as_str()),
++                ("fixture:pick", "toggle a")
++            );
++        }
++        _ => panic!("space did not activate the list row"),
++    }
++    assert!(focus("close"));
++    assert!(!matches!(
++        input(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
++        Some(ModInput::Interaction(..))
++    ));
++    preview(ModViewSnapshot::default());
++}
 diff --git a/codex-rs/tui/src/notifications/titled.rs b/codex-rs/tui/src/notifications/titled.rs
 new file mode 100644
 index 000000000..cbcb26fb3
@@ -71204,10 +71725,10 @@ index 000000000..cbcb26fb3
 +}
 diff --git a/codex-rs/tui/src/omd.rs b/codex-rs/tui/src/omd.rs
 new file mode 100644
-index 000000000..f3b9d2224
+index 000000000..080f21af1
 --- /dev/null
 +++ b/codex-rs/tui/src/omd.rs
-@@ -0,0 +1,618 @@
+@@ -0,0 +1,622 @@
 +use serde_json::Value;
 +use std::borrow::Cow;
 +use std::path::Path;
@@ -71598,7 +72119,7 @@ index 000000000..f3b9d2224
 +                "Oh My Diff · mods inactive · see /omd".to_string()
 +            }
 +            Ok(snapshot) if mod_status().is_some() => format!(
-+                "Oh My Diff · {} active mod{}{} · contract {}",
++                "Oh My Diff · {} mod{} on{}{}",
 +                snapshot.active_mods,
 +                if snapshot.active_mods == 1 { "" } else { "s" },
 +                if snapshot.failed_mods == 0 {
@@ -71606,7 +72127,11 @@ index 000000000..f3b9d2224
 +                } else {
 +                    format!(" · {} failed", snapshot.failed_mods)
 +                },
-+                snapshot.contract
++                if snapshot.contract == "none" {
++                    String::new()
++                } else {
++                    format!(" · contract {}", snapshot.contract)
++                }
 +            ),
 +            _ => "Oh My Diff · mod status unavailable".to_string(),
 +        },
@@ -71764,7 +72289,7 @@ index 000000000..f3b9d2224
 +        assert_eq!(snapshot.contract, "reviewed@1 (separately_reviewed)");
 +        assert_eq!(
 +            compact_status(),
-+            "Oh My Diff · 1 active mod · contract reviewed@1 (separately_reviewed)"
++            "Oh My Diff · 1 mod on · contract reviewed@1 (separately_reviewed)"
 +        );
 +        assert!(terminal_active());
 +        assert_eq!(mod_paths().unwrap().store, Some(store));

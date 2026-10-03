@@ -22,6 +22,21 @@ const COORDINATION_SERVICE: ServiceContract = {
 };
 
 export default function activate(api: ModAPI) {
+  // Expected refusals return as values; a non-Error throw is the host suspending the callback.
+  const refuse = <T>(run: () => T | Promise<T>, value: (reason: string) => T): T | Promise<T> => {
+    const refused = (error: unknown) => {
+      if (!(error instanceof Error)) throw error;
+      return value(error.message);
+    };
+    try {
+      const result = run();
+      return result instanceof Promise ? result.catch(refused) : result;
+    } catch (error) {
+      return refused(error);
+    }
+  };
+  const tool: ModAPI['tool'] = (spec, handler) => api.tool(spec, input => refuse(() => handler(input), reason => ({ status: 'refused', reason })));
+  const command: ModAPI['command'] = (name, handler, options) => api.command(name, input => refuse(() => handler(input), reason => ({ display: `Refused: ${reason}` })), options);
   const strings = (value: Json | undefined): string[] =>
     Array.isArray(value) ? value.filter(item => typeof item === 'string') : [];
 
@@ -68,6 +83,7 @@ export default function activate(api: ModAPI) {
       context = selected.length ? api.host.call('workspace.read', { paths: selected }) : { files: {} };
     } else if (policy === 'shared_task_packet') {
       context = api.services.call('omd.workflow', 'status', null);
+      if (context && typeof context === 'object' && !Array.isArray(context) && context.status === 'refused') throw new Error(`task_packet_unavailable: ${String(context.reason)}`);
     } else {
       context = { delivery: 'host-frozen parent history, including tool records' };
     }
@@ -81,14 +97,9 @@ export default function activate(api: ModAPI) {
 
   api.provide(COORDINATION_SERVICE, { prepare_delegation: prepareDelegation });
 
-  api.replace('routing', ({ routes, model, provider, reasoning }) => {
-    const policy = leadPolicy();
-    const selected =
-      policy === 'task_entry'
-        ? routes.find(
-            route => route.roles.includes('lead') && route.available && route.model === model && route.provider === provider && route.reasoning === reasoning,
-          )
-        : routes.find(route => route.name === policy && route.roles.includes('lead') && route.available);
+  // Routing is an exclusive replacement, so only a named lead route claims it; task_entry keeps the thread's own route.
+  if (leadPolicy() !== 'task_entry') api.replace('routing', ({ routes }) => {
+    const selected = routes.find(route => route.name === leadPolicy() && route.roles.includes('lead') && route.available);
     return selected ? { route: selected.name } : null;
   });
 
@@ -105,7 +116,7 @@ export default function activate(api: ModAPI) {
     };
   });
 
-  api.tool(
+  tool(
     {
       name: 'delegate',
       label: 'Coordination policy',
@@ -128,7 +139,7 @@ export default function activate(api: ModAPI) {
     },
   );
 
-  api.tool(
+  tool(
     {
       name: 'investigate',
       label: 'Bounded investigation',
@@ -170,7 +181,7 @@ export default function activate(api: ModAPI) {
     },
   );
 
-  api.tool({ name: 'investigation_result', description: 'Observe an owned investigation and release it after completion; never restart a missing worker',
+  tool({ name: 'investigation_result', description: 'Observe an owned investigation and release it after completion; never restart a missing worker',
     parameters: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'], additionalProperties: false },
   }, input => {
     const request = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
@@ -180,8 +191,8 @@ export default function activate(api: ModAPI) {
     return result as unknown as Json;
   });
 
-  api.command(
-    'policy',
+  command(
+    'delegation',
     () => ({
       display: [
         provenance(),

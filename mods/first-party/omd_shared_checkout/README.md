@@ -34,7 +34,7 @@ redirections (`>`, `>>`) and the operands of `rm`, `rmdir`, `unlink`, `shred`,
 `install`, and the files of `sed -i`, including inside `sh -c` scripts.
 Reserving paths another writer holds asks first; declining suggests a worktree
 or a handoff. `/share worktree` starts upstream `/worktree`; with
-[`omd_worktree`](../omd_worktree/README.md) enabled, `/omd_worktree:new TASK`
+[`omd_worktree`](../omd_worktree/README.md) enabled, `/omd_worktree:task TASK`
 makes a named task branch checkout instead. Overlapping reservations stay
 visible as warnings to both sessions.
 

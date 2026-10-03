@@ -317,14 +317,29 @@ async function active(api: ModAPI): Promise<Json> {
 }
 
 export default function activate(api: ModAPI) {
-  api.tool({ name: 'propose', description: 'Record a bounded guideline candidate from development evidence without activating it.',
+  // Expected refusals return as values; a non-Error throw is the host suspending the callback.
+  const refuse = <T>(run: () => T | Promise<T>, value: (reason: string) => T): T | Promise<T> => {
+    const refused = (error: unknown) => {
+      if (!(error instanceof Error)) throw error;
+      return value(error.message);
+    };
+    try {
+      const result = run();
+      return result instanceof Promise ? result.catch(refused) : result;
+    } catch (error) {
+      return refused(error);
+    }
+  };
+  const tool: ModAPI['tool'] = (spec, handler) => api.tool(spec, input => refuse(() => handler(input), reason => ({ status: 'refused', reason })));
+  const command: ModAPI['command'] = (name, handler, options) => api.command(name, input => refuse(() => handler(input), reason => ({ display: `Refused: ${reason}` })), options);
+  tool({ name: 'propose', description: 'Record a bounded guideline candidate from development evidence without activating it.',
     parameters: { type: 'object', properties: { expected_revision: { type: 'integer' }, proposal: { type: 'object' } },
       required: ['expected_revision', 'proposal'], additionalProperties: false } }, input => propose(api, input));
-  api.tool({ name: 'validate', description: 'Record a separate-task validation result bound to the exact proposal hash.',
+  tool({ name: 'validate', description: 'Record a separate-task validation result bound to the exact proposal hash.',
     parameters: { type: 'object', properties: { expected_revision: { type: 'integer' }, validation: { type: 'object' } },
       required: ['expected_revision', 'validation'], additionalProperties: false } }, input => validate(api, input));
-  api.tool({ name: 'active', description: 'Inspect the current explicitly selected guideline and transition history.',
+  tool({ name: 'active', description: 'Inspect the current explicitly selected guideline and transition history.',
     parameters: { type: 'object', properties: {}, additionalProperties: false } }, () => active(api));
-  api.command('promote', input => promote(api, input), { description: 'Explicitly promote an exact passed guideline validation with an expected active selection' });
-  api.command('rollback', input => rollback(api, input), { description: 'Explicitly restore the prior guideline selection with an expected active selection' });
+  command('promote', input => promote(api, input), { description: 'Explicitly promote an exact passed guideline validation with an expected active selection' });
+  command('rollback', input => rollback(api, input), { description: 'Explicitly restore the prior guideline selection with an expected active selection' });
 }

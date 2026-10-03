@@ -214,9 +214,6 @@ test('LSP mod reports an absent server and leaves the write event recoverable', 
   const marker = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
   receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const leftover = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
-  assert.deepEqual(leftover.host_call, { operation: 'process.stop', arguments: { session: 'python' } });
-  receipts.push({ call: leftover.host_call, value: { stopped: false } });
   const discovery = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, receipts });
   assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['pyright-langserver', 'pylsp', 'jedi-language-server'] } });
   receipts.push({ call: discovery.host_call, value: { found: [] } });
@@ -240,9 +237,6 @@ test('LSP mod retains pre-0.2 Python state when another adapter is first to upda
   const marker = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   assert.deepEqual(marker.host_call, { operation: 'store.put', arguments: { key: 'lsp.observed_repository', scope: 'repository', expected_revision: null, value: { repository: payload.repository } } });
   receipts.push({ call: marker.host_call, value: { revision: 1 } });
-  const leftover = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
-  assert.deepEqual(leftover.host_call, { operation: 'process.stop', arguments: { session: 'typescript' } });
-  receipts.push({ call: leftover.host_call, value: { stopped: false } });
   const discovery = run(source, { api: '0.2.0-experimental.5', surface: currentSurface, capabilities, event: 'workspace_change', payload, state, receipts });
   assert.deepEqual(discovery.host_call, { operation: 'process.which', arguments: { names: ['typescript-language-server', 'vtsls'] } });
   receipts.push({ call: discovery.host_call, value: { found: [] } });
@@ -476,14 +470,14 @@ test('optional API 0.2 debugger: setup, cancellation, turn end and resume', () =
   assert.equal(lifecycle('idle', { cause: 'Interrupted' }, 'stopped').reason, 'cancelled');
   assert.equal(lifecycle('resume', { thread_id: 't', last_turn: null, restarted: true }, 'stopped').reason, 'session_resumed');
 });
-test('workspace layout accepts bare toggles and dialog select values', () => {
+test('workspace layout writes bare toggles and dialog select values as settings', () => {
   const source = readFileSync(new URL('./first-party/omd_workspace/index.ts', import.meta.url), 'utf8');
-  const layout = (payload, state = null) => run(source, { capabilities: ['terminal', 'commands', 'lifecycle', 'store'], event: 'command', name: 'layout', payload, state });
+  const layout = (payload, settings = {}) => run(source, { capabilities: ['terminal', 'commands', 'lifecycle', 'store'], event: 'command', name: 'layout', payload, settings });
   for (const [payload, key, value] of [['density compact', 'density', 'compact'], ['density full', 'density', 'full'], ['side right', 'side', 'right'], ['side left', 'side', 'left'], ['compact', 'density', 'compact'], ['right', 'side', 'right']]) {
-    assert.equal(layout(payload).state[key], value, payload);
+    assert.deepEqual(layout(payload).host_call, { operation: 'settings.write', arguments: { values: { [key]: value } } }, payload);
   }
-  assert.equal(layout('density', { density: 'compact' }).state.density, 'full');
-  assert.equal(layout('side', { side: 'right' }).state.side, 'left');
+  assert.deepEqual(layout('density', { density: 'compact' }).host_call.arguments, { values: { density: 'full' } });
+  assert.deepEqual(layout('side', { side: 'right' }).host_call.arguments, { values: { side: 'left' } });
   for (const payload of ['density wide', 'side up', 'compact extra']) {
     assert.match(layout(payload).value.display, /^usage:/, payload);
   }

@@ -261,7 +261,19 @@ fn run(args: &[String]) -> io::Result<Value> {
             ))
         }
         [command, root] if command == "status" => {
-            Ok(ModHost::open(PathBuf::from(root).canonicalize()?)?.status())
+            let mut host = ModHost::open_in(
+                PathBuf::from(root).canonicalize()?,
+                |_| Ok(()),
+                &std::env::current_dir()?,
+            )?;
+            let terminal = host.terminal_view(
+                serde_json::json!({"event": "status", "ledger": null}),
+                || true,
+            );
+            let mut status = host.status();
+            status["terminal"] = serde_json::json!({"owner": terminal.owner,
+                "contributors": terminal.contributors, "diagnostics": terminal.diagnostics});
+            Ok(status)
         }
         [command, root] if command == "selection-status" => {
             ModStore::open(PathBuf::from(root).canonicalize()?)?.selection_status()

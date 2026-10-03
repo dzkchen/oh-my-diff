@@ -1980,7 +1980,7 @@ impl Agents {
                 id.clone(),
                 lead.owner.clone(),
                 lead.depth.saturating_add(1),
-                host.config.worker_limits.clone(),
+                host.worker_limits(session)?,
             )
             .map_err(|e| e.to_string())?;
         let mut admission = Admission {
@@ -2037,7 +2037,7 @@ impl Agents {
         let output = result.clone();
         let task = session.task.clone();
         let accounts = host.accounts.clone();
-        let worker_seconds = host.config.worker_limits.seconds;
+        let worker_seconds = host.route_config().0.worker_limits.seconds;
         let worker = id.clone();
         let notifier = self.notifier.clone();
         let start_role = request.role.clone();

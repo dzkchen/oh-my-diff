@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', import.meta.url), 'utf8');
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 const manifest = JSON.parse(readFileSync(new URL('./mod.json', import.meta.url), 'utf8'));
-const surface = { events: { terminal: 'terminal' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
+const surface = { events: { terminal: 'terminal', channel: 'events' }, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 const digest = 'a'.repeat(64);
 const node = 'module:src/main.ts';
 const provenance = { workspace_snapshot: false, validation: 'double_list_and_hash' };
@@ -17,7 +17,7 @@ const packet = { schema: 1, graph_generator: search.generator, repository_identi
 const call = (method, input) => ({ operation: 'mods.service', arguments: { name: 'omd.repository_analysis', method, input } });
 function execute(input) {
   const result = spawnSync(process.execPath, ['--no-warnings', '--experimental-vm-modules', '--input-type=module', '--eval', runner], {
-    input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: ['commands', 'services', 'store', 'terminal'], settings: {}, state: null, event: 'inspect', ...input }),
+    input: JSON.stringify({ source, filename: 'index.ts', api: '0.2.0-experimental.5', surface, capabilities: manifest.capabilities, settings: {}, state: null, event: 'inspect', ...input }),
     encoding: 'utf8', timeout: 5000,
   });
   assert.ifError(result.error);
@@ -30,96 +30,82 @@ function run(input) {
   assert.equal(output.error, undefined, output.error);
   return output;
 }
-function runFailure(input) {
-  const { result, output } = execute(input);
-  assert.notEqual(result.status, 0);
-  return output;
-}
+const ask = (op, argument = '', state = null, receipts = []) => run({ event: 'channel', state, receipts,
+  payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op, argument }, correlation: null, sequence: 1, dropped: 0 } });
+const write = insert => ({ call: { operation: 'composer.write', arguments: { insert } }, value: { written: true } });
+const open = (response = search) => ask('', '', null, [{ call: call('search', { query: '', page: 0, root: '' }), value: response }]);
 function rowFor(state) {
   const view = run({ event: 'terminal', state, payload: { event: 'idle' } });
   return view.value.sites.dialog.components[0].children.find(item => item.type === 'list').rows[0];
 }
 
-test('live graph navigator imports a service and inserts only revalidated bounded evidence', () => {
-  assert.deepEqual(manifest.capabilities, ['commands', 'services', 'store', 'terminal']);
+test('the graph command hops to the native handler, which inserts only revalidated bounded evidence', () => {
   assert.deepEqual(manifest.services.imports, [{ name: 'omd.repository_analysis', version: '1.0.0' }]);
-  const opened = run({ event: 'command', name: 'open', payload: '', receipts: [{ call: call('search', { query: '', page: 0, root: '' }), value: search }] });
+  const requested = run({ event: 'command', name: 'graph', payload: 'search main', receipts: [{ call: { operation: 'events.publish', arguments: { channel: 'request', data: { op: 'search', argument: 'main' } } }, value: { delivered: 1, dropped: 0 } }] });
+  assert.equal(requested.state.open, true);
+  assert.equal(run({ event: 'command', name: 'graph', payload: 'close', state: requested.state }).state.open, false);
+  const opened = open();
   assert.equal(opened.state.digest, digest);
   const row = rowFor(opened.state);
   assert.match(row.value, /^graph-row:/);
   assert.notEqual(row.value, node);
   const mounted = run({ event: 'terminal', state: opened.state, payload: { event: 'idle' } });
   assert.equal(mounted.value.sites.dialog.components[0].children.find(item => item.type === 'list').selected, row.value);
-  const selected = run({ event: 'command', name: 'select', payload: row.value, state: opened.state,
-    receipts: [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: packet }] });
-  assert.match(selected.value.insert, /live source code-graph evidence/);
-  assert.match(selected.value.insert, /"workspace_snapshot":false/);
+  const packetCall = { call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: packet };
+  const insert = execute({ event: 'channel', state: opened.state, receipts: [packetCall], payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op: 'select', argument: row.value }, correlation: null, sequence: 1, dropped: 0 } }).output.host_call.arguments.insert;
+  assert.match(insert, /live source code-graph evidence/);
+  assert.match(insert, /"workspace_snapshot":false/);
+  const selected = ask('select', row.value, opened.state, [packetCall, write(insert)]);
   assert.equal(selected.state.open, false);
-  assert.deepEqual(selected.calls.map(item => item.operation), ['mods.service']);
 });
 
 test('changed or malformed service evidence cannot be inserted', () => {
-  const opened = run({ event: 'command', name: 'open', payload: '', receipts: [{ call: call('search', { query: '', page: 0, root: '' }), value: search }] });
+  const opened = open();
   const token = rowFor(opened.state).value;
-  const stale = runFailure({ event: 'command', name: 'search', payload: 'main', state: opened.state,
-    receipts: [{ call: call('search', { query: 'main', page: 0, root: '', expected_source_digest: digest }), error: 'analysis_source_digest_stale' }] });
-  assert.match(stale.error, /source_digest_stale/);
-  const blocked = runFailure({ event: 'command', name: 'select', payload: token, state: opened.state,
-    receipts: [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), error: 'analysis_source_digest_stale' }] });
-  assert.match(blocked.error, /source_digest_stale/);
-  const forged = run({ event: 'command', name: 'select', payload: token, state: opened.state,
-    receipts: [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: { ...packet, provenance: { workspace_snapshot: true, validation: 'double_list_and_hash' } } }] });
-  assert.match(forged.value.display, /does not match/);
+  const stale = ask('search', 'main', opened.state, [{ call: call('search', { query: 'main', page: 0, root: '', expected_source_digest: digest }), error: 'analysis_source_digest_stale' }]);
+  assert.match(stale.state.error, /source_digest_stale/);
+  const blocked = ask('select', token, opened.state, [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), error: 'analysis_source_digest_stale' }]);
+  assert.match(blocked.state.error, /source_digest_stale/);
+  const forged = ask('select', token, opened.state, [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: { ...packet, provenance: { workspace_snapshot: true, validation: 'double_list_and_hash' } } }]);
+  assert.match(forged.state.error, /does not match/);
   assert.equal(forged.state.open, true);
-  for (const malformed of [node, 'graph-row:unknown', `${token}x`]) {
-    const rejected = run({ event: 'command', name: 'select', payload: malformed, state: opened.state });
-    assert.match(rejected.value.display, /select a visible graph node first/);
-    assert.deepEqual(rejected.calls, []);
-  }
-  const refreshed = run({ event: 'command', name: 'refresh', state: opened.state,
-    receipts: [{ call: call('search', { query: '', page: 0, root: '' }), value: search }] });
+  for (const malformed of [node, 'graph-row:unknown', `${token}x`]) assert.match(ask('select', malformed, opened.state).state.error, /select a visible graph node first/);
+  const refreshed = ask('refresh', '', opened.state, [{ call: call('search', { query: '', page: 0, root: '' }), value: search }]);
   assert.notEqual(rowFor(refreshed.state).value, token);
-  const expired = run({ event: 'command', name: 'select', payload: token, state: refreshed.state });
-  assert.match(expired.value.display, /select a visible graph node first/);
-  assert.deepEqual(expired.calls, []);
+  assert.match(ask('select', token, refreshed.state).state.error, /select a visible graph node first/);
 });
 
 test('provider-valid long node IDs survive state, terminal selection, and service dispatch', () => {
   const long = `module:${'x'.repeat(768 - 'module:'.length)}`;
   const response = { ...search, rows: [{ id: long, label: 'deep source', detail: 'module' }] };
-  const opened = run({ event: 'command', name: 'open', payload: '', receipts: [{ call: call('search', { query: '', page: 0, root: '' }), value: response }] });
+  const opened = open(response);
   assert.equal(opened.state.rows[0].id, long);
   const row = rowFor(opened.state);
   assert.notEqual(row.value, long);
   assert.ok(Buffer.byteLength(row.value, 'utf8') <= 256);
-  const selected = run({ event: 'command', name: 'select', payload: row.value, state: opened.state,
-    receipts: [{ call: call('select', { node_id: long, expected_source_digest: digest, root: '' }), value: { ...packet, nodes: [{ id: long }] } }] });
-  assert.match(selected.value.insert, /live source code-graph evidence/);
-  const tooLong = run({ event: 'command', name: 'open', payload: '', receipts: [{ call: call('search', { query: '', page: 0, root: '' }), value: { ...response, rows: [{ ...response.rows[0], id: `${long}x` }] } }] });
-  assert.match(tooLong.state.error, /service response is invalid/);
+  const selected = execute({ event: 'channel', state: opened.state, receipts: [{ call: call('select', { node_id: long, expected_source_digest: digest, root: '' }), value: { ...packet, nodes: [{ id: long }] } }],
+    payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op: 'select', argument: row.value }, correlation: null, sequence: 1, dropped: 0 } }).output;
+  assert.match(selected.host_call.arguments.insert, /live source code-graph evidence/);
+  assert.match(open({ ...response, rows: [{ ...response.rows[0], id: `${long}x` }] }).state.error, /service response is invalid/);
 });
 
 test('UTF-8 insert limit refuses oversized evidence before closing the dialog', () => {
-  const opened = run({ event: 'command', name: 'open', payload: '', receipts: [{ call: call('search', { query: '', page: 0, root: '' }), value: search }] });
+  const opened = open();
   const token = rowFor(opened.state).value;
-  const select = evidence => run({ event: 'command', name: 'select', payload: token, state: opened.state,
-    receipts: [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: evidence }] });
-  const baseline = select({ ...packet, guidance: '' });
-  const padding = 16_384 - Buffer.byteLength(baseline.value.insert, 'utf8');
+  const attempt = evidence => execute({ event: 'channel', state: opened.state, receipts: [{ call: call('select', { node_id: node, expected_source_digest: digest, root: '' }), value: evidence }],
+    payload: { publisher: 'omd_graph_navigator', channel: 'omd_graph_navigator/request', data: { op: 'select', argument: token }, correlation: null, sequence: 1, dropped: 0 } }).output;
+  const baseline = attempt({ ...packet, guidance: '' }).host_call.arguments.insert;
+  const padding = 16_384 - Buffer.byteLength(baseline, 'utf8');
   assert.ok(padding > 0);
-  const exact = select({ ...packet, guidance: 'x'.repeat(padding) });
-  assert.equal(Buffer.byteLength(exact.value.insert, 'utf8'), 16_384);
-  assert.equal(exact.state.open, false);
-  const oneByteOver = select({ ...packet, guidance: 'x'.repeat(padding + 1) });
-  assert.match(oneByteOver.value.display, /composer insertion limit/);
-  assert.equal(oneByteOver.state.open, true);
+  assert.equal(Buffer.byteLength(attempt({ ...packet, guidance: 'x'.repeat(padding) }).host_call.arguments.insert, 'utf8'), 16_384);
+  const over = attempt({ ...packet, guidance: 'x'.repeat(padding + 1) });
+  assert.match(over.state.error, /composer insertion limit/);
+  assert.equal(over.state.open, true);
   const oversized = { ...packet, guidance: 'é'.repeat(8100) };
   assert.ok(Buffer.byteLength(JSON.stringify(oversized), 'utf8') < 32 * 1024);
-  const selected = select(oversized);
-  assert.match(selected.value.display, /composer insertion limit/);
-  assert.equal(selected.value.insert, undefined);
-  assert.equal(selected.state.open, true);
-  assert.equal(selected.state.digest, digest);
+  const refused = attempt(oversized);
+  assert.match(refused.state.error, /composer insertion limit/);
+  assert.equal(refused.state.digest, digest);
 });
 
 test('terminal row labels and spans meet exact byte and character bounds', () => {
@@ -127,9 +113,7 @@ test('terminal row labels and spans meet exact byte and character bounds', () =>
     ['A'.repeat(96), 'B'.repeat(180)],
     ['界'.repeat(96), 'é'.repeat(180)],
   ]) {
-    const response = { ...search, rows: [{ id: node, label, detail }] };
-    const opened = run({ event: 'command', name: 'open', payload: '', receipts: [{ call: call('search', { query: '', page: 0, root: '' }), value: response }] });
-    const row = rowFor(opened.state);
+    const row = rowFor(open({ ...search, rows: [{ id: node, label, detail }] }).state);
     assert.ok(Buffer.byteLength(row.value, 'utf8') <= 256);
     assert.ok(Buffer.byteLength(row.label, 'utf8') <= 256);
     assert.ok([...row.label].length <= 256);

@@ -34,10 +34,10 @@ export default function activate(api: ModAPI) {
     if (!narrow && event.subtitle) components.splice(1, 0, { type: 'text', id: 'omd_picker_subtitle', label: 'Picker help', text: shorten(event.subtitle, width - 2), tone: 'muted' });
     const { profiles = [], current = null } = (api.state.get() ?? {}) as Profiles;
     if (event.view_id === 'model' && profiles.length) components.splice(-1, 0,
-      { type: 'text', id: 'omd_picker_profiles_title', label: 'Profiles', text: 'profiles · switch at the next request', tone: 'muted' },
-      { type: 'list', id: 'omd_picker_profiles', label: 'Account and provider profiles', height: Math.min(4, profiles.length), action: { command: 'omd_profiles:profile', args: 'use' },
-        rows: profiles.map(profile => ({ value: profile.name, label: profile.name, spans: [{ text: shorten(`${profile.name} · ${profile.model}${profile.billing === 'included_subscription' ? '' : ' · paid'}${profile.name === current ? ' · current' : ''}`, Math.max(8, width - 4)),
-          tone: profile.name === current ? 'accent' : profile.available ? 'normal' : 'muted' }] })) });
+      { type: 'text', id: 'omd_picker_profiles_title', label: 'Profiles', text: 'profiles · /profile use NAME switches this thread at its next turn', tone: 'muted' },
+      ...profiles.slice(0, 4).map((profile, index): TerminalComponent => ({ type: 'text', id: `omd_picker_profile_${index}`, label: `Profile ${profile.name}`,
+        text: shorten(`${profile.name === current ? '●' : '○'} ${profile.name} · ${profile.model}${profile.billing === 'included_subscription' ? '' : ' · paid'}`, Math.max(8, width - 4)),
+        tone: profile.name === current ? 'accent' : profile.available ? 'normal' : 'muted' })));
     return components;
   });
 }

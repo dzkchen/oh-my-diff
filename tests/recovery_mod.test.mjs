@@ -28,7 +28,7 @@ function recover(settings = {}, changes = {}, failure_class = 'edit') {
       { input: JSON.stringify(request), encoding: 'utf8', timeout: 5000 });
     assert.ifError(child.error);
     const reply = JSON.parse(child.stdout);
-    if (!reply.host_call) return { reply, calls };
+    if (!reply.host_call) return { reply: reply.value?.status === 'refused' ? { ...reply, error: reply.value.reason } : reply, calls };
     calls.push(reply.host_call);
     const { operation, arguments: args } = reply.host_call;
     const defaults = {

@@ -4,6 +4,7 @@
   "version": "0.2.0-preview.2",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
+  "state_scope": "thread",
   "description": "Claude models through your official Claude CLI subscription as a Codex provider, plus an ask_claude delegation tool",
   "license": "Apache-2.0",
   "provenance": {
@@ -17,8 +18,8 @@
     "exec",
     "tools",
     "agents",
-    "sessions",
-    "config"
+    "config",
+    "store"
   ],
   "assets": [
     "models.json",

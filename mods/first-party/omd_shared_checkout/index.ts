@@ -352,7 +352,7 @@ export default function activate(api: ModAPI) {
         const wanted = paths as string[];
         const conflicts = Object.entries(state.sessions).filter(([id, other]) => id !== thread && other.write && overlap(wanted, other.paths).length);
         if (conflicts.length && !confirm('Overlapping reservation', `${conflicts.map(([id, other]) => `${overlap(wanted, other.paths).join(', ')} is reserved by ${label(id, other)}${live(other) ? `, active ${ago(other.at)}` : `, stale since ${ago(other.at)}`}`).join('\n')}\n\n`
-          + 'Reserve anyway? Both sessions are asked before editing the overlap. A worktree (/share worktree) avoids it.')) return done('Not reserved. Run the task in a worktree with /share worktree (or /omd_worktree:new TASK with omd_worktree), or ask the other session for a handoff.');
+          + 'Reserve anyway? Both sessions are asked before editing the overlap. A worktree (/share worktree) avoids it.')) return done('Not reserved. Run the task in a worktree with /share worktree (or /omd_worktree:task TASK with omd_worktree), or ask the other session for a handoff.');
         for (const [, other] of conflicts) warn(other, `${label(thread, { ...entry, task: note || entry.task })} also reserved ${overlap(wanted, other.paths).join(', ')}`);
         Object.assign(entry, { write: true, paths: [...new Set([...entry.paths, ...wanted])].slice(0, PATHS), task: note || entry.task || wanted.join(' ').slice(0, 80) });
         rewatch();

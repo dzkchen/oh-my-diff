@@ -1116,6 +1116,7 @@ fn terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_vie
             status: "completed".into(),
         }],
         diagnostics: vec!["keybinding dropped".into()],
+        contributors: (0..40).map(|index| format!("mod_{index}")).collect(),
         ..Default::default()
     };
     std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
@@ -1766,6 +1767,11 @@ fn source_use_rejects_undeclared_authority_and_reports_unused_grants() {
         host(&temp).status()["mods"][0]["unused_grants"],
         json!(["network"])
     );
+    let (temp, _, _) = fixture(
+        "export default api => api.command('ping',()=>api.host.call('exec.run',{program:'env',write:true}))",
+        &["commands", "exec", "fs.write"],
+    );
+    assert_eq!(host(&temp).status()["mods"][0]["unused_grants"], json!([]));
     let policies = &status["field_policies"];
     assert_eq!(policies["response_stream"]["raw_usage"], "observe_only");
     assert_eq!(policies["model_request"]["effective"], "alterable");

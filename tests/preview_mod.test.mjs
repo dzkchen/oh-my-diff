@@ -29,7 +29,10 @@ function invoke(repository, state, event, payload, name) {
     calls.push(output.host_call);
     let value;
     if (operation === 'store.get') value = calls.some(call => call.operation === 'store.put') ? { value: null, revision: 1, provenance: { thread_id: 'thread-1' } } : null;
-    else if (operation === 'store.put') value = { revision: 1 };
+    else if (operation === 'store.put') {
+      assert.notEqual(args.value, null, 'store_value_required');
+      value = { revision: 1 };
+    }
     else if (operation === 'app.request') {
       assert.deepEqual(args, { method: 'thread/turns/list', params: { threadId: 'thread-1', limit: args.params.limit, itemsView: 'summary' } });
       value = { data: responses.slice(0, args.params.limit).map(text => ({ items: [{ type: 'userMessage' }, { type: 'agentMessage', text }] })) };

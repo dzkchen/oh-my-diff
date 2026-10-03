@@ -14,6 +14,7 @@ const evidenceText = JSON.stringify({ media_type: 'text/plain', label: 'fixture'
 const sorted = value => Array.isArray(value) ? value.map(sorted) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, sorted(item)])) : value;
 
+const refusal = output => output.value?.status === 'refused' ? { ...output, error: output.value.reason } : typeof output.value?.display === 'string' && output.value.display.startsWith('Refused: ') ? { ...output, error: output.value.display.slice(9) } : output;
 function invoke(event, name, payload, receipts = []) {
   const request = { source, filename: 'omd_source_knowledge.ts', api: '0.2.0-experimental.5', capabilities: ['tools', 'commands', 'fs.read', 'store'],
     environment: ['crypto'], state: null, settings: {}, event, name, payload, receipts, surface, hook_budget_ms: 3000 };
@@ -22,7 +23,7 @@ function invoke(event, name, payload, receipts = []) {
   });
   assert.ifError(result.error);
   assert.ok(result.stdout, result.stderr);
-  return JSON.parse(result.stdout);
+  return refusal(JSON.parse(result.stdout));
 }
 
 function fixture(files = {}) {
@@ -45,7 +46,7 @@ function fixture(files = {}) {
       const receipts = [];
       for (let index = 0; index < 80; index++) {
         const output = invoke(event, name, payload, receipts);
-        if (!output.host_call) return output;
+        if (!output.host_call) return output.value?.status === 'refused' ? { ...output, error: output.value.reason } : output;
         const call = output.host_call;
         if (event === 'command' && !['store.get', 'store.put'].includes(call.operation)) assert.fail(`TUI command host cannot serve ${call.operation}`);
         calls.push(call);
@@ -184,10 +185,10 @@ test('retained evidence supports inert lessons, exact approval, and dependency i
   assert.deepEqual(Object.keys(approved.value), ['display']);
   assert.deepEqual(f.run('session', { ...common, mode: 'reuse' }).value.approved_lessons.map(item => item.id), ['lesson-1']);
   assert.deepEqual(f.run('session', { ...common, mode: 'cold' }).value.approved_lessons, []);
-  assert.equal(command(f, 'remove', { ...common, expected_revision: 3, kind: 'evidence', id: 'check-1', action }).error, undefined);
+  assert.equal(command(f, 'forget', { ...common, expected_revision: 3, kind: 'evidence', id: 'check-1', action }).error, undefined);
   assert.deepEqual(f.run('session', { ...common, mode: 'reuse' }).value.approved_lessons, []);
   assert.equal(f.run('inspect', common).value.lessons[0].state, 'approved');
-  assert.equal(command(f, 'reset', { ...common, expected_revision: 4, action }).error, undefined);
+  assert.equal(command(f, 'discard', { ...common, expected_revision: 4, action }).error, undefined);
   assert.equal(f.run('inspect', common).value.generation, 1);
   assert.deepEqual(f.run('inspect', common).value.lessons, []);
 });

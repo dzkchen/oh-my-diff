@@ -180,6 +180,22 @@ fn routes_reload_from_host_config_and_select_routes_added_after_enrollment() {
         Err("route_unavailable_for_thread: other".into())
     );
     assert_eq!(select("first").unwrap()["route"]["name"], "first");
+    let mut edited = route("added", "local");
+    edited["model"] = "added-v2".into();
+    write(
+        &json!({"limits": {"requests": 400, "exposure_microusd": 5000, "seconds": 86400,
+        "concurrent_workers": 4, "max_depth": 2}, "routes": [route("first", "local"), edited]}),
+    );
+    lead.host.refresh_session(&lead.session).unwrap();
+    assert_eq!(lead.session.task.remaining().unwrap().2, 5000);
+    assert_eq!(
+        lead.host.accounts.0.lock().unwrap()[&lead.thread.to_string()]
+            .lead_routes
+            .iter()
+            .map(|route| route.model.as_str())
+            .collect::<Vec<_>>(),
+        ["first-model", "added-v2"]
+    );
     write(&json!({"routes": "invalid"}));
     assert!(select("added").is_ok());
     let error = select("later").unwrap_err();

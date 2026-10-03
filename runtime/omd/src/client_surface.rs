@@ -17,6 +17,7 @@ pub const SURFACE_OPERATIONS: &[&str] = &[
     "composer.write",
     "builtins.invoke",
     "packages.apply",
+    "contract.select",
     "terminal.open",
     "terminal.prompt",
     "terminal.pty",
@@ -27,6 +28,7 @@ pub const USER_ONLY_OPERATIONS: &[&str] = &[
     "terminal.import_file",
     "builtins.invoke",
     "packages.apply",
+    "contract.select",
 ];
 
 pub fn awaits_user(operation: &str, arguments: &Value) -> bool {

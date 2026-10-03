@@ -4,7 +4,8 @@
   "version": "0.2.0-preview.3",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
-  "description": "Task, worker and allowance panels in a live terminal workspace",
+  "state_scope": "thread",
+  "description": "Session activity sidebar, review draft key and sidebar settings",
   "capabilities": [
     "terminal",
     "commands",

@@ -25,10 +25,14 @@ test('router adapts Responses requests to each protocol and keeps credentials an
       { choices: [], usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16, prompt_tokens_details: { cached_tokens: 2 } } }, '[DONE]']));
     else if (request.url === '/anthropic') response.end(sse([
       { type: 'message_start', message: { usage: { input_tokens: 10, cache_read_input_tokens: 3, output_tokens: 1 } } },
-      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Done' } },
-      { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 't1', name: 'apply_patch', input: {} } },
-      { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"input":"*** Begin Patch"}' } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'plan' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Done' } },
+      { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 't1', name: 'apply_patch', input: {} } },
+      { type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"input":"*** Begin Patch"}' } },
       { type: 'message_delta', usage: { output_tokens: 5 } }, { type: 'message_stop' }]));
     else response.end(sse([{ type: 'response.completed', response: { id: 'r', usage: {} } }]));
   });
@@ -56,9 +60,9 @@ test('router adapts Responses requests to each protocol and keeps credentials an
       { type: 'function_call_output', call_id: 'old', output: '/repo' },
     ];
     const tools = [{ type: 'function', name: 'exec_command', description: 'run', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }, { type: 'custom', name: 'apply_patch', description: 'patch' }];
-    const ask = async (model, authorization = 'Bearer sk-test') => {
+    const ask = async (model, authorization = 'Bearer sk-test', history = input) => {
       const reply = await fetch(`http://127.0.0.1:${free}/v1/responses`, { method: 'POST', headers: { authorization, 'content-type': 'application/json' },
-        body: JSON.stringify({ model, instructions: 'sys', input, tools, reasoning: { effort: 'high' }, stream: true, prompt_cache_key: 'conversation' }) });
+        body: JSON.stringify({ model, instructions: 'sys', input: history, tools, reasoning: { effort: 'high' }, stream: true, prompt_cache_key: 'conversation' }) });
       const text = await reply.text();
       return { status: reply.status, events: text.split('\n\n').filter(Boolean).map(frame => JSON.parse(frame.replace(/^data: /, ''))) };
     };
@@ -68,6 +72,8 @@ test('router adapts Responses requests to each protocol and keeps credentials an
     assert.equal(seen['/responses'].body.model, 'up-model');
     assert.equal(seen['/responses'].headers.authorization, 'Bearer sk-test');
     assert.ok(seen['/responses'].body.input.some(item => item.type === 'reasoning'));
+    await ask('b/up');
+    assert.ok(!seen['/responses'].body.input.some(item => item.type === 'reasoning'));
     await ask('b/up');
     assert.ok(!seen['/responses'].body.input.some(item => item.type === 'reasoning'));
 
@@ -94,6 +100,10 @@ test('router adapts Responses requests to each protocol and keeps credentials an
     assert.deepEqual(calls.at(-1), { type: 'custom_tool_call', id: 't1', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' });
     assert.equal(anthropic.events.at(-1).response.usage.input_tokens, 13);
     assert.equal(anthropic.events.at(-1).response.usage.output_tokens, 5);
+    const thought = calls.find(item => item.type === 'reasoning');
+    assert.match(thought.encrypted_content, /^omd-thinking:d:/);
+    await ask('d/up', 'Bearer sk-test', [input[1], thought, { type: 'custom_tool_call', call_id: 't1', name: 'apply_patch', input: '*** Begin Patch' }, { type: 'custom_tool_call_output', call_id: 't1', output: 'ok' }]);
+    assert.deepEqual(seen['/anthropic'].body.messages[1].content.slice(0, 2), [{ type: 'thinking', thinking: 'plan', signature: 'sig' }, { type: 'tool_use', id: 't1', name: 'apply_patch', input: { input: '*** Begin Patch' } }]);
   } finally {
     child.kill();
     upstream.close();

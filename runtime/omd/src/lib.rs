@@ -3,6 +3,7 @@ pub mod app_routes;
 mod blob_store;
 mod builtins;
 pub mod client_surface;
+pub mod contract_cli;
 mod contract_document;
 pub mod credentials;
 pub mod data_store;

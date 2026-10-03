@@ -5,12 +5,12 @@ parallel agent tasks in Git worktrees. It extends upstream Codex `/worktree`,
 which keeps its managed checkouts, rather than replacing it.
 
 ```text
-/omd_worktree:new TASK [--base REF] [--branch NAME] [--issue ID] [--reuse]
+/omd_worktree:task TASK [--base REF] [--branch NAME] [--issue ID] [--reuse]
 /omd_worktree:list                 searchable roster (also the omd_worktree/roster site)
-/omd_worktree:switch PATH|BRANCH   resume the latest session there, or start one
-/omd_worktree:import PATH [TASK]   adopt a worktree created outside OMD
+/omd_worktree:enter PATH|BRANCH    resume the latest session there, or start one
+/omd_worktree:adopt PATH [TASK]    adopt a worktree created outside OMD
 /omd_worktree:integrate PATH|BRANCH   review and merge into this checkout
-/omd_worktree:archive PATH|BRANCH  remove a clean checkout, keep its branch
+/omd_worktree:park PATH|BRANCH     remove a clean checkout, keep its branch
 /omd_worktree:remove PATH|BRANCH   remove it, then optionally delete a merged branch
 /omd_worktree:prune                forget worktrees deleted outside OMD
 ```
@@ -32,16 +32,20 @@ A failed setup step is reported and the worktree is kept.
 
 **Integrate** runs from the destination checkout, which must have no
 uncommitted tracked changes. It shows the task branch's commits, changed files
-and diff, plus any uncommitted work in the task worktree (untracked files by
-name); that work is committed there under the task name when you choose
-**Commit and merge**, only if the worktree still matches the preview. The merge
-runs only after rechecking that this checkout's HEAD and clean status (and,
-without a commit step, the branch tip) still match. A conflict aborts the merge
-and restores the checkout.
+and diff, plus any uncommitted work in the task worktree, including the full
+content of up to eight new files (more must be committed there first; shared
+setup paths are never committed). That work is committed there under the task
+name when you choose **Commit and merge**, only if the worktree, its new files
+and the branch tip still match the preview; the merge then runs only after
+rechecking this checkout's HEAD and clean status and that the branch moved by
+exactly that commit. A conflict aborts the merge and restores the checkout.
+Task names are kept in the mod's user-scope store, so every session sees them;
+the roster, selection and preview belong to the session thread.
 Merge commits use the repository's Git identity or exported `GIT_AUTHOR_*` and
 `GIT_COMMITTER_*` variables.
 
-**Cleanup** never forces: it refuses dirty, locked, current or busy checkouts,
+**Cleanup** refuses dirty, locked, current or busy checkouts (shared setup
+paths alone don't count as dirty and are removed with the checkout),
 keeps session history, keeps unmerged branches and deletes a merged branch only
 after its own confirmation. The mod never stashes, resets or deletes
 another session's work, and commits it only through **Commit and merge**.

@@ -6,8 +6,7 @@
   "state_version": 1,
   "license": "Apache-2.0",
   "capabilities": [
-    "outputs",
-    "store"
+    "outputs"
   ],
   "compatibility": {
     "required_features": [

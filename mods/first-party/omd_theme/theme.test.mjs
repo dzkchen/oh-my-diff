@@ -68,7 +68,7 @@ test('representative Ghostty, iTerm2 XML and Warp YAML imports retain RGB and AN
   };
   for (const [format, text] of Object.entries(formats)) {
     const path = `/tmp/${format} theme`;
-    const output = run('command', 'import', `${format} ${path}`, { receipts: [importReceipt(path), textReceipt(text)] });
+    const output = run('command', 'load', `${format} ${path}`, { receipts: [importReceipt(path), textReceipt(text)] });
     assert.equal(output.state.imports.import_1.background, '#102030');
     assert.equal(output.state.imports.import_1.foreground, '#ffffff');
     assert.equal(output.calls.length, 2);
@@ -81,16 +81,16 @@ test('representative Ghostty, iTerm2 XML and Warp YAML imports retain RGB and AN
 test('denied, declined, malformed and unsupported imports preserve the selected appearance', () => {
   const prior = run('command', 'set', 'palette paper').state;
   for (const receipt of [importReceipt('/tmp/denied', 65536, {}, { status: 'declined' }), { call: importReceipt('/tmp/denied').call, error: 'permission_denied' }]) {
-    const output = run('command', 'import', 'ghostty /tmp/denied', { state: prior, receipts: [receipt] });
+    const output = run('command', 'load', 'ghostty /tmp/denied', { state: prior, receipts: [receipt] });
     assert.equal(output.state.preview.palette, 'paper');
     assert.equal(output.calls.length, 1);
   }
   for (const [format, text] of [['ghostty', 'background = red\nforeground = #ffffff'], ['iterm2', 'bplist00'], ['warp', "foreground: '#ffffff'\nbackground: !!secret '/tmp/private'"]]) {
-    const output = run('command', 'import', `${format} /tmp/bad`, { state: prior, receipts: [importReceipt('/tmp/bad'), textReceipt(text)] });
+    const output = run('command', 'load', `${format} /tmp/bad`, { state: prior, receipts: [importReceipt('/tmp/bad'), textReceipt(text)] });
     assert.equal(output.state.preview.palette, 'paper');
     assert.deepEqual(output.state.imports, {});
   }
-  for (const [command, value] of [['set', 'palette constructor'], ['set', 'palette __proto__'], ['theme', '__proto__']]) assert.equal(run('command', command, value, { state: prior }).state.preview.palette, 'paper');
+  for (const [command, value] of [['set', 'palette constructor'], ['set', 'palette __proto__'], ['style', '__proto__']]) assert.equal(run('command', command, value, { state: prior }).state.preview.palette, 'paper');
   assert.equal(run('terminal', '', '', { state: { preview: { palette: 'constructor' } } }).value.background, 235);
   const invalid = run('command', 'set', 'scale 99', { state: prior });
   assert.equal(invalid.state.preview.palette, 'paper');
@@ -119,7 +119,7 @@ test('ASCII import rejects control sequences; settings pages expose keyboard act
   assert.equal(output.state.preview.backdrop_mode, 'ascii');
   const rejected = run('command', 'ascii', '/tmp/art.txt', { state: output.state, receipts: [importReceipt('/tmp/art.txt', 8192), textReceipt('\u001b[2J')] });
   assert.equal(rejected.state.preview.ascii_text, output.state.preview.ascii_text);
-  const open = run('command', 'theme').state;
+  const open = run('command', 'style').state;
   const components = run('terminal', '', '', { state: open }).value.sites.dialog.components[0].children;
   assert.ok(components.every(item => item.id.startsWith('omd_theme_')));
   assert.ok(components.some(item => item.action?.command === 'omd_theme:save'));

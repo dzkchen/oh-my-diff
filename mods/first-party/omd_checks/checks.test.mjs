@@ -8,6 +8,7 @@ const runner = readFileSync(new URL('../../../runtime/omd/src/mods/runner.mjs', 
 const surface = { events: {}, replacements: [], middleware: [], state: 'store', contracts: 'contracts' };
 const hash = character => character.repeat(64);
 
+const refusal = output => output.value?.status === 'refused' ? { ...output, error: output.value.reason } : typeof output.value?.display === 'string' && output.value.display.startsWith('Refused: ') ? { ...output, error: output.value.display.slice(9) } : output;
 function run(payload, receipts = []) {
   const request = { source, filename: 'omd_checks.ts', api: '0.2.0-experimental.5', capabilities: ['tools', 'fs.read', 'exec'], environment: ['crypto'],
     state: null, settings: {}, event: 'tool', name: 'select', payload, receipts, surface, hook_budget_ms: 2000 };
@@ -15,7 +16,7 @@ function run(payload, receipts = []) {
     input: JSON.stringify(request), encoding: 'utf8', timeout: 5000,
   });
   assert.ifError(result.error);
-  return JSON.parse(result.stdout);
+  return refusal(JSON.parse(result.stdout));
 }
 
 function replay(payload, entries, programs, stale = false, truncated = false) {
@@ -23,7 +24,7 @@ function replay(payload, entries, programs, stale = false, truncated = false) {
   const calls = [];
   for (let index = 0; index < 40; index++) {
     const output = run(payload, receipts);
-    if (!output.host_call) return { output, calls };
+    if (!output.host_call) return { output: output.value?.status === 'refused' ? { ...output, error: output.value.reason } : output, calls };
     const call = output.host_call;
     calls.push(call);
     let value;

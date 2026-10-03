@@ -2,36 +2,38 @@ import type { Json, Ledger, ModAPI, TerminalComponent, TerminalRenderSite, Termi
 
 type Density = 'full' | 'compact';
 type Side = 'left' | 'right';
-type Saved = { activity: string[]; density: Density | null; side: Side | null; dialog: boolean; review: string | null };
+type Saved = { activity: string[]; dialog: boolean; turns: number; open: boolean };
 
 const DENSITIES: Density[] = ['full', 'compact'];
 const SIDES: Side[] = ['left', 'right'];
+const DEFAULT_REVIEW = 'Review the current candidate and list the remaining risks.';
+const KEYS = 'F6 review draft · F7 workspace settings';
 
 export default function activate(api: ModAPI) {
   const record = (object: Json | undefined, key: string): Json | undefined =>
     object && typeof object === 'object' && !Array.isArray(object) ? object[key] : undefined;
 
-  const trim = (text: string, width: number) =>
-    text.length > width ? `${text.slice(0, width - 1)}…` : text;
+  const trim = (text: string, width: number) => {
+    const chars = [...text];
+    return chars.length > width ? `${chars.slice(0, width - 1).join('')}…` : text;
+  };
 
   const saved = (): Saved => {
     const stored = api.state.get();
     return {
       activity: Array.isArray(record(stored, 'activity')) ? (record(stored, 'activity') as Json[]).filter((item): item is string => typeof item === 'string') : [],
-      density: DENSITIES.find(value => value === record(stored, 'density')) ?? null,
-      side: SIDES.find(value => value === record(stored, 'side')) ?? null,
       dialog: record(stored, 'dialog') === true,
-      review: typeof record(stored, 'review') === 'string' ? String(record(stored, 'review')) : null,
+      turns: typeof record(stored, 'turns') === 'number' ? record(stored, 'turns') as number : 0,
+      open: record(stored, 'open') === true,
     };
   };
+  const save = (state: Saved) => api.state.set(state as unknown as Json);
 
-  const setting = <T extends string>(key: string, allowed: T[]): T | null =>
-    allowed.find(value => value === api.settings[key]) ?? null;
+  const setting = <T extends string>(key: string, allowed: T[], fallback: T): T =>
+    allowed.find(value => value === api.settings[key]) ?? fallback;
+  const review = () => typeof api.settings.review_prompt === 'string' && api.settings.review_prompt.trim() ? api.settings.review_prompt : DEFAULT_REVIEW;
 
-  const note = (entry: string) => {
-    const state = saved();
-    api.state.set({ ...state, activity: [...state.activity, trim(entry, 60)].slice(-24) });
-  };
+  const note = (state: Saved, entry: string) => ({ ...state, activity: [...state.activity, trim(entry, 60)].slice(-24) });
 
   const line = (id: string, label: string, text: string, tone: 'normal' | 'accent' | 'success' | 'attention' | 'failure' | 'muted' = 'normal'): TerminalComponent =>
     ({ type: 'text', id, label, text, tone });
@@ -39,64 +41,55 @@ export default function activate(api: ModAPI) {
   const pane = (id: string, title: string, children: TerminalComponent[], collapsed = false): TerminalComponent =>
     ({ type: 'pane', id, label: `${title} panel`, title, collapsed, children });
 
-  const taskPane = (ledger: Ledger | null): TerminalComponent => pane('workspace_task', 'Session', [
-    line('workspace_task_thread', 'Session thread', `thread  ${ledger?.thread_id?.slice(0, 12) ?? 'unavailable'}`, 'accent'),
-    line('workspace_task_cost', 'Session cost', `cost    ${ledger?.cost === null || ledger?.cost === undefined ? 'unavailable' : trim(JSON.stringify(ledger.cost), 52)}`, 'muted'),
-  ]);
+  const cost = (ledger: Ledger | null): string | null => {
+    const paid = record(ledger?.cost ?? undefined, 'settled_task_charge_microusd');
+    const subscription = record(ledger?.cost ?? undefined, 'subscription_list_equivalent_microusd');
+    if (typeof paid === 'number' && paid > 0) return `Paid API $${(paid / 1e6).toFixed(2)}`;
+    if (typeof subscription === 'number' && subscription > 0) return `Subscription use ≈ $${(subscription / 1e6).toFixed(2)}`;
+    return null;
+  };
 
-  const dialogSite = (density: Density, side: Side, review: string): TerminalRenderSite => ({
+  const dialogSite = (density: Density, side: Side): TerminalRenderSite => ({
     mode: 'replace',
     components: [{
       type: 'dialog',
       id: 'workspace_settings_dialog',
       label: 'Workspace settings',
       title: 'Workspace settings',
-      children: [{
-        type: 'box',
-        id: 'workspace_settings_box',
-        label: 'Workspace layout controls',
-        title: 'Layout',
-        children: [
-          { type: 'select', id: 'workspace_density', label: 'Workspace density', value: density, options: DENSITIES.map(value => ({ value, label: value })), action: { command: 'omd_workspace:layout', args: 'density' } },
-          { type: 'select', id: 'workspace_side', label: 'Sidebar side', value: side, options: SIDES.map(value => ({ value, label: value })), action: { command: 'omd_workspace:layout', args: 'side' } },
-          { type: 'input', id: 'workspace_review', label: 'Review prompt', value: review, placeholder: 'Review the current candidate', action: { command: 'omd_workspace:layout', args: 'review' } },
-          { type: 'button', id: 'workspace_copy_keys', label: 'Copy workspace shortcuts', text: 'Copy shortcuts', action: { copy: 'F6 draft · Alt+r send · Alt+w density · Alt+s side · F8 settings', label: 'workspace shortcuts' } },
-          { type: 'button', id: 'workspace_close', label: 'Close workspace settings', text: 'Close', action: { command: 'omd_workspace:layout', args: 'close' } },
-        ],
-      },
-      { type: 'markdown', id: 'workspace_settings_help', label: 'Workspace settings help', text: '**Keyboard:** Tab moves focus, arrows change a selector, Enter activates, and native cancellation keys remain reserved.' },
-      { type: 'code', id: 'workspace_settings_example', label: 'Workspace settings example', language: 'json', text: `{"density":"${density}","side":"${side}"}` },
+      children: [
+        { type: 'select', id: 'workspace_density', label: 'Sidebar size', value: density, options: [{ value: 'full', label: 'full' }, { value: 'compact', label: 'compact' }], action: { command: 'omd_workspace:layout', args: 'density' } },
+        { type: 'select', id: 'workspace_side', label: 'Sidebar side', value: side, options: SIDES.map(value => ({ value, label: value })), action: { command: 'omd_workspace:layout', args: 'side' } },
+        { type: 'input', id: 'workspace_review', label: 'Review prompt (F6)', value: review(), placeholder: DEFAULT_REVIEW, action: { command: 'omd_workspace:layout', args: 'review' } },
+        { type: 'text', id: 'workspace_keys', label: 'Workspace keys', text: KEYS, tone: 'muted' },
+        { type: 'button', id: 'workspace_close', label: 'Close workspace settings', text: 'Close', action: { command: 'omd_workspace:layout', args: 'close' } },
       ],
     }],
   });
 
   const view = (event: string, ledger: Ledger | null): TerminalView => {
     const state = saved();
-    const density = state.density ?? setting('density', DENSITIES) ?? 'full';
-    const side = state.side ?? setting('side', SIDES) ?? 'left';
-    const activity = state.activity.length ? state.activity : ['· waiting for the first turn'];
-    const review = state.review ?? (typeof api.settings.review_prompt === 'string'
-      ? api.settings.review_prompt
-      : 'Review the current candidate and list the remaining risks.');
-    const sidebar = [taskPane(ledger), pane('workspace_activity', 'Activity', activity.slice(-(density === 'compact' ? 6 : 10)).map((entry, index) => line(`workspace_activity_${index}`, `Activity ${index + 1}`, entry, 'muted')), density === 'compact')];
-    const sites: Partial<Record<'sidebar' | 'header' | 'above_composer' | 'dialog', TerminalRenderSite>> = {
+    const density = setting('density', DENSITIES, 'full');
+    const side = setting('side', SIDES, 'left');
+    const activity = state.activity.length ? state.activity : ['Waiting for the first turn'];
+    const spent = cost(ledger);
+    const sidebar = [
+      ...(spent ? [pane('workspace_task', 'Session', [line('workspace_task_cost', 'Session cost', spent, 'muted')])] : []),
+      pane('workspace_activity', 'Activity', activity.slice(-(density === 'compact' ? 6 : 10)).map((entry, index) => line(`workspace_activity_${index}`, `Activity ${index + 1}`, entry, 'muted')), density === 'compact'),
+    ];
+    const working = state.open || event === 'turn_start';
+    const sites: Partial<Record<'sidebar' | 'header' | 'dialog', TerminalRenderSite>> = {
       sidebar: { mode: 'replace', components: sidebar },
-      header: { mode: 'replace', components: [line('workspace_header', 'Workspace state', `${density} · ${side} sidebar · ${trim(event, 24)}`, 'accent')] },
-      above_composer: { mode: 'replace', components: [line('workspace_shortcuts', 'Workspace shortcuts', 'F6 draft · Alt+r send · Alt+w density · Alt+s side · F8 settings', 'muted')] },
+      header: { mode: 'replace', components: [line('workspace_header', 'Session state', working ? 'Working' : 'Ready', working ? 'accent' : 'muted')] },
     };
-    if (state.dialog) sites.dialog = dialogSite(density, side, review);
+    if (state.dialog) sites.dialog = dialogSite(density, side);
     return {
-      title: 'Oh My Diff workspace',
+      title: 'Oh My Diff',
       sidebar_side: side,
       sidebar_width: density === 'compact' ? 28 : 40,
       sites,
-      status: [`omd:${density}`],
       keybindings: {
-        F6: review,
-        F8: { command: 'omd_workspace:layout', args: 'dialog' },
-        'Alt+r': { submit: review },
-        'Alt+w': { command: 'omd_workspace:layout', args: 'density' },
-        'Alt+s': { command: 'omd_workspace:layout', args: 'side' },
+        F6: { insert: review() },
+        F7: { command: 'omd_workspace:layout', args: 'dialog' },
       },
       message_template: '│ {text}',
       tool_template: '› {text}',
@@ -105,62 +98,67 @@ export default function activate(api: ModAPI) {
 
   api.replace('terminal', ({ event, ledger }) => view(event, ledger));
 
+  const write = (values: { [key: string]: Json }, done: string) => {
+    const written = api.host.tryCall('settings.write', { values });
+    return { display: written.ok ? done : `Workspace settings unchanged: ${written.error}` };
+  };
+
   api.command(
     'layout',
     argument => {
       const requested = typeof argument === 'string' ? argument.trim() : '';
       const state = saved();
-      const density = state.density ?? setting('density', DENSITIES) ?? 'full';
-      const side = state.side ?? setting('side', SIDES) ?? 'left';
+      const density = setting('density', DENSITIES, 'full');
+      const side = setting('side', SIDES, 'left');
       if (requested === 'dialog') {
-        api.state.set({ ...state, dialog: !state.dialog });
-        return { display: `workspace settings ${state.dialog ? 'closed' : 'opened'}` };
+        save({ ...state, dialog: !state.dialog });
+        return null;
       }
       if (requested === 'close') {
-        api.state.set({ ...state, dialog: false });
-        return { display: 'workspace settings closed' };
+        save({ ...state, dialog: false });
+        return null;
       }
       if (requested.startsWith('review ')) {
-        const review = requested.slice('review '.length).trim();
-        if (!review) return { display: 'review prompt cannot be empty' };
-        api.state.set({ ...state, review });
-        return { display: 'workspace review prompt updated' };
+        const text = requested.slice('review '.length).trim();
+        return text ? write({ review_prompt: text }, 'Review prompt saved') : { display: 'The review prompt cannot be empty' };
       }
-      // Keybindings send a bare `density`/`side` to toggle; dialog selects send `density VALUE`/`side VALUE`.
+      // Dialog selects send `density VALUE`/`side VALUE`; a bare `density`/`side` toggles.
       const [head, choice] = requested.split(/\s+/, 2);
       const pick = <T extends string>(key: string, allowed: T[], current: T): T | undefined =>
         head === key
           ? allowed.find(value => choice === undefined ? value !== current : value === choice)
           : choice === undefined ? allowed.find(value => value === head) : undefined;
       const nextDensity = pick('density', DENSITIES, density);
-      if (nextDensity) {
-        api.state.set({ ...state, density: nextDensity });
-        return { display: `workspace density is now ${nextDensity}` };
-      }
+      if (nextDensity) return write({ density: nextDensity }, `Sidebar size: ${nextDensity}`);
       const nextSide = pick('side', SIDES, side);
-      if (nextSide) {
-        api.state.set({ ...state, side: nextSide });
-        return { display: `workspace sidebar is now on the ${nextSide}` };
-      }
-      return { display: `usage: /omd_workspace:layout full|compact|left|right|density [full|compact]|side [left|right]|dialog|close|review TEXT (now ${density}, ${side})` };
+      if (nextSide) return write({ side: nextSide }, `Sidebar on the ${nextSide}`);
+      return { display: `usage: /omd_workspace:layout full|compact|left|right|dialog|close|review TEXT (now ${density}, ${side})` };
     },
-    { description: 'Switch the workspace layout or open its settings' },
+    { description: 'Change the workspace sidebar or open its settings (F7)' },
   );
 
   api.command(
     'activity',
-    () => ({ display: saved().activity.slice(-12).join('\n') || 'no activity recorded yet' }),
-    { description: 'Show the workspace activity this mod recorded' },
+    () => ({ display: saved().activity.slice(-12).join('\n') || 'No activity in this session yet' }),
+    { description: 'Show this session\'s workspace activity' },
   );
 
-  api.on('start', () => note('· session started'));
-  api.on('resume', () => note('· session resumed'));
-  api.on('turn_start', ({ turn_id }) => note(`▸ turn ${turn_id.slice(0, 8)}`));
-  api.on('turn_end', ({ turn_id, outcome }) => note(`◂ turn ${turn_id.slice(0, 8)} ${outcome}`));
+  api.on('start', () => save(note(saved(), 'Session started')));
+  api.on('resume', () => save(note(saved(), 'Session resumed')));
+  api.on('turn_start', () => {
+    const state = saved();
+    const interrupted = state.open ? note(state, `◂ Turn ${state.turns} interrupted`) : state;
+    save({ ...note(interrupted, `▸ Turn ${state.turns + 1} started`), turns: state.turns + 1, open: true });
+  });
+  api.on('turn_end', ({ outcome }) => {
+    const state = saved();
+    const word = outcome === 'aborted' ? 'interrupted' : outcome === 'error' ? 'failed' : 'completed';
+    save({ ...note(state, `◂ Turn ${state.turns} ${word}`), open: false });
+  });
   api.on('tool_result', event => {
     const tool = record(event, 'tool');
-    note(`  ran ${typeof tool === 'string' ? tool : 'tool'}`);
+    save(note(saved(), `  ran ${typeof tool === 'string' ? tool : 'a tool'}`));
   });
-  api.on('agent_end', ({ role, status }) => note(`  agent ${role} ${status}`));
-  api.on('compaction_end', ({ trigger }) => note(`  compacted (${trigger})`));
+  api.on('agent_end', ({ role, status }) => save(note(saved(), `  ${role} agent ${status}`)));
+  api.on('compaction_end', () => save(note(saved(), '  conversation compacted')));
 }

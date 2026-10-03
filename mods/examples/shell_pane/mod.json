@@ -5,8 +5,17 @@
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "license": "Apache-2.0",
-  "capabilities": ["commands", "terminal", "pty"],
+  "capabilities": [
+    "commands",
+    "terminal",
+    "pty",
+    "store"
+  ],
   "compatibility": {
-    "required_features": ["terminal_pty_v1", "terminal_surface_v1", "pty_programs_v1"]
+    "required_features": [
+      "terminal_pty_v1",
+      "terminal_surface_v1",
+      "pty_programs_v1"
+    ]
   }
 }

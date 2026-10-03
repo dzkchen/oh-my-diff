@@ -22,13 +22,14 @@ function fixture(settings = {}) {
   git('config', 'user.email', 'fixture@example.com');
   git('config', 'user.name', 'Fixture');
   writeFileSync(join(repository, 'a.txt'), 'one\n');
-  writeFileSync(join(repository, '.gitignore'), '.env\nnode_modules\n');
+  writeFileSync(join(repository, '.gitignore'), '.env\nnode_modules/\n');
   git('add', '.');
   git('commit', '--quiet', '-m', 'initial');
   writeFileSync(join(repository, '.env'), 'SECRET=1\n');
   execFileSync('mkdir', ['-p', join(repository, 'node_modules/dep')]);
   const answers = [];
   const calls = [];
+  const store = {};
   const host = call => {
     const args = call.arguments;
     calls.push(call);
@@ -41,6 +42,12 @@ function fixture(settings = {}) {
       case 'terminal.prompt': {
         const answer = answers.shift();
         return answer === false ? { status: 'declined' } : { status: 'accepted', ...(typeof answer === 'string' ? { value: answer } : {}) };
+      }
+      case 'store.get': return store[args.key] ?? null;
+      case 'store.put': {
+        if ((store[args.key]?.revision ?? null) !== args.expected_revision) throw new Error('store_conflict');
+        store[args.key] = { value: args.value, revision: (store[args.key]?.revision ?? 0) + 1 };
+        return { revision: store[args.key].revision };
       }
       case 'app.request':
         if (args.method === 'thread/start') return { thread: { id: `thread-${args.params.cwd.split('/').at(-1)}` } };
@@ -74,15 +81,15 @@ test('task worktrees are created from a base with opt-in setup, launched, reused
   try {
     const path = `${repository}.worktrees/omd-42-fix-login`;
     answers.push(true, false);
-    assert.match(command('new', 'Fix login --issue 42 --base main').display, /^Created .*omd-42-fix-login on omd\/42-fix-login$/);
+    assert.match(command('task', 'Fix login --issue 42 --base main').display, /^Created .*omd-42-fix-login on omd\/42-fix-login$/);
     assert.equal(git('rev-parse', 'omd/42-fix-login'), git('rev-parse', 'main'));
     assert.ok(lstatSync(join(path, 'node_modules')).isSymbolicLink());
     assert.equal(existsSync(join(path, '.env')), false);
     assert.match(calls.find(call => call.arguments?.kind === 'confirm').arguments.message, /symlink node_modules from the main checkout[\s\S]*copy \.env \(asked separately\)/);
     assert.deepEqual(calls.filter(call => call.operation === 'app.request').map(call => call.arguments.method), ['thread/start', 'thread/name/set']);
     assert.equal(calls.find(call => call.operation === 'terminal.show_thread').arguments.thread_id, 'thread-omd-42-fix-login');
-    assert.match(command('new', 'Fix login --issue 42').display, /already checked out .*add --reuse/);
-    assert.equal(command('new', 'Other --base nope').display, 'Unknown base nope; use a branch, remote branch or commit');
+    assert.match(command('task', 'Fix login --issue 42').display, /already checked out .*add --reuse/);
+    assert.equal(command('task', 'Other --base nope').display, 'Unknown base nope; use a branch, remote branch or commit');
     assert.deepEqual(invoke('service', 'omd.worktrees.list', null).worktrees.map(tree => [tree.branch, tree.task, tree.main]), [['main', null, true], ['omd/42-fix-login', 'Fix login', false]]);
 
     writeFileSync(join(path, 'a.txt'), 'two\n');
@@ -91,22 +98,23 @@ test('task worktrees are created from a base with opt-in setup, launched, reused
     assert.match(command('integrate', 'omd/42-fix-login').display, /destination checkout has uncommitted changes/);
     git('checkout', '--quiet', 'a.txt');
     assert.equal(command('integrate', 'omd/42-fix-login'), null);
-    assert.match(state().preview.summary, /\(2 paths\) are committed as "Fix login" first/);
-    assert.match(state().preview.diff, /-one\n\+two[\s\S]*New untracked files:\nnew\.txt/);
+    assert.match(state().preview.summary, /\(2 paths, 1 new\) are committed as "Fix login" first/);
+    assert.match(state().preview.diff, /-one\n\+two[\s\S]*\+\+\+ b\/new\.txt\n@@ -0,0 \+1 @@\n\+new/);
     writeFileSync(join(path, 'a.txt'), 'three\n');
-    assert.match(command('confirm').display, /task worktree changed since the preview/);
+    assert.match(command('merge').display, /task worktree changed since the preview/);
     writeFileSync(join(path, 'a.txt'), 'two\n');
     command('integrate', 'omd/42-fix-login');
     writeFileSync(join(repository, 'b.txt'), 'later\n');
     git('add', 'b.txt');
     git('commit', '--quiet', '-m', 'moved on');
-    assert.match(command('confirm').display, /changed since the preview/);
+    assert.match(command('merge').display, /changed since the preview/);
     assert.equal(git('show', 'HEAD:a.txt'), 'one\n');
     assert.equal(execFileSync('git', ['-C', path, 'log', '-1', '--format=%s'], { encoding: 'utf8' }), 'Fix login\n');
     command('integrate', 'omd/42-fix-login');
     assert.equal(state().preview.commit, null);
-    assert.equal(command('confirm').display, 'Integrated omd/42-fix-login');
+    assert.equal(command('merge').display, 'Integrated omd/42-fix-login');
     assert.equal(readFileSync(join(repository, 'new.txt'), 'utf8'), 'new\n');
+    assert.equal(git('ls-tree', 'HEAD', '--name-only').includes('node_modules'), false);
 
     answers.push(true, true);
     assert.match(command('remove', 'omd/42-fix-login').display, /^Removed .*; deleted omd\/42-fix-login$/);
@@ -121,14 +129,14 @@ test('worktree cleanup keeps dirty and unmerged work, and failed integrations re
   const { parent, repository, git, answers, command } = fixture();
   try {
     answers.push(true);
-    command('new', 'conflict --branch task/conflict');
+    command('task', 'conflict --branch task/conflict');
     const path = `${repository}.worktrees/task-conflict`;
     writeFileSync(join(path, 'a.txt'), 'theirs\n');
     execFileSync('git', ['-C', path, 'commit', '--quiet', '-am', 'theirs']);
     writeFileSync(join(repository, 'a.txt'), 'ours\n');
     git('commit', '--quiet', '-am', 'ours');
     command('integrate', 'task/conflict');
-    assert.match(command('confirm').display, /^Integration failed and the checkout was restored/);
+    assert.match(command('merge').display, /^Integration failed and the checkout was restored/);
     assert.equal(git('status', '--porcelain'), '');
     assert.equal(readFileSync(join(repository, 'a.txt'), 'utf8'), 'ours\n');
 
@@ -140,7 +148,7 @@ test('worktree cleanup keeps dirty and unmerged work, and failed integrations re
     assert.match(git('branch', '--list', 'task/conflict'), /task\/conflict/);
 
     answers.push(true);
-    command('new', 'gone --branch task/gone');
+    command('task', 'gone --branch task/gone');
     rmSync(`${repository}.worktrees/task-gone`, { recursive: true, force: true });
     answers.push(true);
     assert.equal(command('prune').display, 'Pruned 1 records');

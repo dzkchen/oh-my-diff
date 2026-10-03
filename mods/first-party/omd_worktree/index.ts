@@ -2,8 +2,8 @@ import type { CommandResult, ExecGuard, Json, ModAPI, TerminalComponent, Termina
 
 type Tree = { path: string; head: string | null; branch: string | null; locked: string | null; prunable: string | null; main: boolean; current: boolean };
 type Meta = { task: string; issue: string | null; base: string };
-type Integration = { path: string; branch: string; summary: string; diff: string; guards: ExecGuard[]; commit: { message: string; guards: ExecGuard[] } | null };
-type State = { trees: Tree[]; error: string | null; meta: Record<string, Meta>; open: boolean; query: string; selected: string | null; preview: Integration | null; notice: string | null };
+type Integration = { path: string; branch: string; tip: string; summary: string; diff: string; guards: ExecGuard[]; commit: { message: string; guards: ExecGuard[]; paths: string[] } | null };
+type State = { trees: Tree[]; tasks: Record<string, Meta>; error: string | null; open: boolean; query: string; selected: string | null; preview: Integration | null; notice: string | null };
 type Git = { ok: boolean; out: string; err: string; sha: string; truncated: boolean };
 type Setup = { path: string; mode: 'symlink' | 'clone' };
 
@@ -19,18 +19,38 @@ const fit = (text: string, limit: number, lines = false) => {
   return out;
 };
 const GIT = ['--no-pager', '-c', 'core.fsmonitor=false', '-c', 'core.quotepath=false'];
+const NEW_FILES = 8;
+const ROWS_BYTES = 8_192;
+const bytes = (value: unknown) => [...JSON.stringify(value)].reduce((total, char) => {
+  const code = char.codePointAt(0) ?? 0;
+  return total + (code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4);
+}, 0);
 const SAFE = /^(?!\/)(?!.*(^|\/)\.\.?(\/|$))(?!\.git(\/|$))[^\u0000-\u001f]{1,200}$/;
 
 export default function activate(api: ModAPI) {
-  const empty = (): State => ({ trees: [], error: null, meta: {}, open: false, query: '', selected: null, preview: null, notice: null });
+  const empty = (): State => ({ trees: [], tasks: {}, error: null, open: false, query: '', selected: null, preview: null, notice: null });
   const load = (): State => ({ ...empty(), ...(api.state.get() as Partial<State> | null) });
   const save = (state: State) => api.state.set(state as unknown as Json);
   const words = (value: Json) => String(value ?? '').trim();
-  const git = (argv: string[], options: { write?: boolean; timeout?: number; guards?: ExecGuard[] } = {}): Git => {
+  const git = (argv: string[], options: { write?: boolean; timeout?: number; guards?: ExecGuard[]; limit?: number } = {}): Git => {
     const run = api.host.tryCall('exec.run', { program: 'git', argv: [...GIT, ...argv], timeout_ms: options.timeout ?? 10_000, network: 'none',
-      ...(options.write ? { write: true } : {}), ...(options.guards ? { guards: options.guards } : {}) });
+      ...(options.write ? { write: true } : {}), ...(options.guards ? { guards: options.guards } : {}), ...(options.limit ? { max_output_bytes: options.limit } : {}) });
     if (!run.ok) return { ok: false, out: '', err: run.error, sha: '', truncated: false };
-    return { ok: run.value.exit_code === 0, out: run.value.stdout, err: run.value.stderr.trim(), sha: run.value.stdout_sha256, truncated: run.value.stdout_preview_truncated };
+    return { ok: run.value.exit_code === 0, out: run.value.stdout, err: run.value.stderr.trim(), sha: run.value.stdout_sha256, truncated: run.value.stdout_preview_truncated || run.value.stdout_truncated };
+  };
+  // Task names live in the user-scope store so every session and checkout sees them.
+  const tasks = (): { value: Record<string, Meta>; revision: number | null } => {
+    const read = api.host.tryCall('store.get', { scope: 'user', key: 'tasks' });
+    return read.ok && read.value ? { value: read.value.value as unknown as Record<string, Meta>, revision: read.value.revision } : { value: {}, revision: null };
+  };
+  const updateTasks = (change: (value: Record<string, Meta>) => void) => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const current = tasks();
+      change(current.value);
+      const keys = Object.keys(current.value);
+      for (const key of keys.slice(0, Math.max(0, keys.length - 100))) delete current.value[key];
+      if (api.host.tryCall('store.put', { scope: 'user', key: 'tasks', value: current.value as unknown as Json, expected_revision: current.revision }).ok) return;
+    }
   };
   const guardOf = (argv: string[], run: Git): ExecGuard => ({ program: 'git', argv: [...GIT, ...argv], stdout_sha256: run.sha });
   const ask = (title: string, message: string) => {
@@ -55,6 +75,7 @@ export default function activate(api: ModAPI) {
     const top = git(['rev-parse', '--show-toplevel']);
     state.error = listed.ok && top.ok ? null : listed.err || top.err || 'not a Git repository';
     state.trees = [];
+    state.tasks = tasks().value;
     if (state.error) return state;
     for (const field of listed.out.split('\0')) {
       const [key, ...rest] = field.split(' ');
@@ -69,8 +90,8 @@ export default function activate(api: ModAPI) {
     }
     return state;
   };
-  const find = (state: State, target: string) => state.trees.find(tree => tree.path === target || tree.branch === target)
-    ?? (state.selected ? state.trees.find(tree => tree.path === state.selected) : undefined);
+  const find = (state: State, target: string) => target ? state.trees.find(tree => tree.path === target || tree.branch === target)
+    : state.selected ? state.trees.find(tree => tree.path === state.selected) : undefined;
   const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'task';
   const option = (text: string, name: string) => new RegExp(`(?:^|\\s)--${name}\\s+(\\S+)`).exec(text)?.[1] ?? null;
   const strip = (text: string) => text.replace(/(?:^|\s)--(?:base|branch|issue)\s+\S+/g, '').replace(/(?:^|\s)--reuse\b/g, '').trim();
@@ -96,7 +117,7 @@ export default function activate(api: ModAPI) {
   const prepare = (main: string, path: string, shared: Setup[], copy: string[]) => [...shared.map(item => {
     const parent = item.path.includes('/') ? item.path.slice(0, item.path.lastIndexOf('/')) : '';
     return (parent ? run('mkdir', ['-p', `${path}/${parent}`]) : null)
-      ?? (item.mode === 'symlink' ? run('ln', ['-s', `${main}/${item.path}`, `${path}/${item.path}`]) : run('cp', ['-cR', `${main}/${item.path}`, `${path}/${item.path}`]) && run('cp', ['-R', `${main}/${item.path}`, `${path}/${item.path}`]));
+      ?? (item.mode === 'symlink' ? run('ln', ['-s', `${main}/${item.path}`, `${path}/${item.path}`]) : run('cp', ['-cR', `${main}/${item.path}`, `${path}/${parent}`]) && run('cp', ['-R', `${main}/${item.path}`, `${path}/${parent}`]));
   }), ...copy.map(file => {
     const parent = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
     return (parent ? run('mkdir', ['-p', `${path}/${parent}`]) : null) ?? run('cp', ['-p', `${main}/${file}`, `${path}/${file}`]);
@@ -118,11 +139,11 @@ export default function activate(api: ModAPI) {
       api.host.tryCall('builtins.invoke', { command: 'resume', args: thread });
       return null;
     }
-    const failed = launch(tree.path, state.meta[tree.path]?.task ?? tree.branch ?? tree.path);
+    const failed = launch(tree.path, tasks().value[tree.path]?.task ?? tree.branch ?? tree.path);
     return failed ? { display: failed } : null;
   };
 
-  api.command('new', value => guard(() => {
+  api.command('task', value => guard(() => {
     const text = words(value);
     const state = refresh(load());
     if (state.error) return { display: state.error };
@@ -148,7 +169,7 @@ export default function activate(api: ModAPI) {
     const copied = copy.length && confirm('Copy files into the worktree', `Copy ${copy.join(', ')} from ${main} into ${path}? These files may hold secrets.`) ? copy : [];
     const added = git(['worktree', 'add', ...(known ? [path, branch] : ['-b', branch, path, commit.out.trim()])], { write: true, timeout: 120_000 });
     if (!added.ok) return { display: denied(added.err, root) };
-    state.meta[path] = { task: task.slice(0, 200), issue, base };
+    updateTasks(value => { value[path] = { task: fit(task, 200), issue, base }; });
     const failures = prepare(main, path, shared, copied);
     refresh(state);
     state.selected = path;
@@ -156,23 +177,23 @@ export default function activate(api: ModAPI) {
     const failed = launch(path, task);
     return { display: [`Created ${path} on ${branch}`, ...failures.map(failure => `setup failed: ${failure}`), ...(failures.length ? ['The worktree was kept; fix the setup there or remove it with /omd_worktree:remove.'] : []),
       ...(failed ? [`session: ${failed}`] : [])].join('\n') };
-  }), { description: 'Create a task worktree: /omd_worktree:new TASK [--base REF] [--branch NAME] [--issue ID] [--reuse]' });
+  }), { description: 'Create a task worktree: /omd_worktree:task TASK [--base REF] [--branch NAME] [--issue ID] [--reuse]' });
 
   const jump = (target: string): CommandResult => guard(() => {
     const state = refresh(load());
     const tree = find(state, target);
     save(state);
-    return tree ? switchTo(state, tree) : { display: 'usage: /omd_worktree:switch PATH|BRANCH' };
+    return tree ? switchTo(state, tree) : { display: 'usage: /omd_worktree:enter PATH|BRANCH' };
   });
-  api.command('switch', value => jump(words(value)), { description: 'Resume the latest session in a worktree, or start one' });
+  api.command('enter', value => jump(words(value)), { description: 'Resume the latest session in a worktree, or start one' });
 
-  api.command('import', value => guard(() => {
+  api.command('adopt', value => guard(() => {
     const state = refresh(load());
     const [target, ...task] = words(value).split(/\s+/);
     const tree = state.trees.find(item => item.path === target || item.branch === target);
-    if (!tree || tree.main) return { display: 'usage: /omd_worktree:import PATH|BRANCH [TASK] for an existing linked worktree' };
-    state.meta[tree.path] = { task: task.join(' ') || tree.branch || tree.path, issue: null, base: tree.head ?? '' };
-    save(state);
+    if (!tree || tree.main) return { display: 'usage: /omd_worktree:adopt PATH|BRANCH [TASK] for an existing linked worktree' };
+    updateTasks(value => { value[tree.path] = { task: fit(task.join(' ') || tree.branch || tree.path, 200), issue: null, base: tree.head ?? '' }; });
+    save(refresh(state));
     return { display: `Imported ${tree.path}` };
   }), { description: 'Adopt an externally created worktree into the task roster' });
 
@@ -184,48 +205,66 @@ export default function activate(api: ModAPI) {
     const status = ['status', '--porcelain=v1', '-z', '--untracked-files=no'];
     const destination = git(status);
     if (!destination.ok || destination.out) return { display: destination.ok ? 'The destination checkout has uncommitted changes; commit or stash them yourself first' : destination.err };
-    const pending = ['-C', tree.path, 'status', '--porcelain=v1', '-z'];
+    const excluded = setups().shared.map(item => `:(exclude)${item.path}`);
+    const pending = ['-C', tree.path, 'status', '--porcelain=v1', '-z', '--', '.', ...excluded];
     const source = git(pending);
     if (!source.ok) return { display: source.err };
-    if (!source.out && git(['merge-base', '--is-ancestor', `refs/heads/${tree.branch}`, 'HEAD']).ok) return { display: `${tree.branch} is already integrated` };
+    const dirty = source.out.split('\0').filter(Boolean).length;
+    if (!dirty && git(['merge-base', '--is-ancestor', `refs/heads/${tree.branch}`, 'HEAD']).ok) return { display: `${tree.branch} is already integrated` };
     const range = `HEAD...refs/heads/${tree.branch}`;
     const log = git(['log', '--oneline', '--max-count=50', `HEAD..refs/heads/${tree.branch}`]);
     const stat = git(['diff', '--no-ext-diff', '--stat', range]);
-    const diff = git(['diff', '--no-ext-diff', '--no-color', range]);
-    const message = state.meta[tree.path]?.task ?? `Task ${tree.branch}`;
+    const diff = git(['diff', '--no-ext-diff', '--no-color', range], { limit: 32_768 });
+    const message = tasks().value[tree.path]?.task ?? `Task ${tree.branch}`;
     const content = ['-C', tree.path, 'diff', '--no-ext-diff', '--no-color', '--binary', 'HEAD'];
-    const local = source.out ? git(content) : null;
-    const untracked = source.out ? git(['-C', tree.path, 'ls-files', '--others', '--exclude-standard']).out.trim() : '';
-    const full = `${diff.out}${local?.out ?? ''}${untracked ? `\nNew untracked files:\n${untracked}\n` : ''}`;
-    const shown = fit(full, 48_000, true);
+    const local = dirty ? git(content) : null;
+    if (local && (!local.ok || local.truncated)) return { display: local.ok ? 'The uncommitted changes in the task worktree are too large to review here; commit them there first' : local.err };
+    const fresh = ['-C', tree.path, 'ls-files', '-z', '--others', '--exclude-standard', '--', '.', ...excluded];
+    const listed = dirty ? git(fresh) : null;
+    const added = listed?.out.split('\0').filter(Boolean) ?? [];
+    if (added.length > NEW_FILES) return { display: `The task worktree has ${added.length} new files; commit them there (or keep at most ${NEW_FILES}) before integrating` };
+    const hashes = ['-C', tree.path, 'hash-object', '--no-filters', '--', ...added];
+    const hashed = added.length ? git(hashes) : null;
+    const created = added.map(file => git(['-C', tree.path, 'diff', '--no-index', '--no-ext-diff', '--no-color', '--', '/dev/null', file], { limit: 8_192 }).out).join('');
+    const full = `${diff.out}${local?.out ?? ''}${created}`;
+    const shown = fit(full, 40_000, true);
     const head = ['rev-parse', 'HEAD'];
     const tip = ['rev-parse', `refs/heads/${tree.branch}`];
-    state.preview = { path: tree.path, branch: tree.branch,
-      summary: fit(`${source.out ? `Uncommitted changes in the task worktree (${source.out.split('\0').filter(Boolean).length} paths) are committed as "${message}" first.\n` : ''}${log.out}${stat.out}`, 4_000, true),
-      diff: diff.truncated || shown !== full ? `${fit(shown, 47_900, true)}\n… diff truncated; review the full change in the worktree` : shown,
-      guards: [guardOf(head, git(head)), ...(source.out ? [] : [guardOf(tip, git(tip))]), guardOf(status, destination)],
-      commit: local ? { message, guards: [guardOf(pending, source), guardOf(content, local)] } : null };
+    const tipped = git(tip);
+    state.preview = { path: tree.path, branch: tree.branch, tip: tipped.out.trim(),
+      summary: fit(`${dirty ? `Uncommitted changes in the task worktree (${dirty} paths${added.length ? `, ${added.length} new` : ''}) are committed as "${message}" first.\n` : ''}${log.out}${stat.out}`, 4_000, true),
+      diff: diff.truncated || shown !== full ? `${fit(shown, 39_900, true)}\n… diff truncated; review the full change in the worktree` : shown,
+      guards: [guardOf(head, git(head)), guardOf(tip, tipped), guardOf(status, destination)],
+      commit: local ? { message, paths: excluded, guards: [guardOf(pending, source), guardOf(content, local), guardOf(fresh, listed!), ...(hashed ? [guardOf(hashes, hashed)] : []), guardOf(tip, tipped)] } : null };
     state.open = true;
     save(state);
     return null;
   });
   api.command('integrate', value => integrate(words(value)), { description: 'Preview merging a task branch into this checkout' });
 
-  api.command('confirm', () => guard(() => {
+  api.command('merge', () => guard(() => {
     const state = load();
     const preview = state.preview;
     if (!preview) return { display: 'Open an integration preview first' };
     state.preview = null;
     if (preview.commit) {
-      const added = git(['-C', preview.path, 'add', '-A'], { write: true, guards: preview.commit.guards });
+      const added = git(['-C', preview.path, 'add', '-A', '--', '.', ...preview.commit.paths], { write: true, guards: preview.commit.guards });
       const committed = added.ok ? git(['-C', preview.path, 'commit', '--quiet', '-m', preview.commit.message], { write: true, timeout: 120_000 }) : added;
       if (!committed.ok) {
         state.notice = /exec_guard/.test(committed.err) ? 'The task worktree changed since the preview; integrate again to review the current state' : `Committing the task worktree failed: ${committed.err.split('\n').slice(0, 4).join(' ')}`;
         save(refresh(state));
         return { display: state.notice };
       }
+      const parent = git(['rev-parse', `refs/heads/${preview.branch}^`]);
+      if (parent.out.trim() !== preview.tip) {
+        state.notice = 'The task branch moved while committing; integrate again to review the current state';
+        save(refresh(state));
+        return { display: state.notice };
+      }
     }
-    const merged = git(['merge', '--no-edit', `refs/heads/${preview.branch}`], { write: true, timeout: 120_000, guards: preview.guards });
+    const tip = ['rev-parse', `refs/heads/${preview.branch}`];
+    const guards = preview.commit ? [...preview.guards.filter(item => item.argv?.join(' ') !== [...GIT, ...tip].join(' ')), guardOf(tip, git(tip))] : preview.guards;
+    const merged = git(['merge', '--no-edit', `refs/heads/${preview.branch}`], { write: true, timeout: 120_000, guards });
     if (!merged.ok && git(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).ok) git(['merge', '--abort'], { write: true });
     state.notice = merged.ok ? `Integrated ${preview.branch}` : /exec_guard/.test(merged.err) ? 'The checkout or branch changed since the preview; integrate again to review the current state'
       : `Integration failed and the checkout was restored: ${merged.err.split('\n').slice(0, 4).join(' ')}`;
@@ -233,7 +272,7 @@ export default function activate(api: ModAPI) {
     return { display: state.notice };
   }), { description: 'Merge the previewed task branch after rechecking it' });
 
-  api.command('cancel', () => {
+  api.command('hide', () => {
     save({ ...load(), preview: null, open: false });
     return null;
   }, { description: 'Close the worktree dialog' });
@@ -248,14 +287,16 @@ export default function activate(api: ModAPI) {
     const listed = api.host.tryCall('app.request', { method: 'thread/list', params: { cwd: tree.path, limit: 20 } });
     const busy = listed.ok && ((listed.value as { data?: { status?: { type?: string } }[] }).data ?? []).some(thread => thread.status?.type === 'active');
     if (busy) return { display: `A session is working in ${tree.path}; wait for it to finish` };
-    const status = git(['-C', tree.path, 'status', '--porcelain=v1', '-z']);
+    const listing = ['-C', tree.path, 'status', '--porcelain=v1', '-z', '--', '.', ...setups().shared.map(item => `:(exclude)${item.path}`)];
+    const status = git(listing);
     if (!status.ok || status.out) return { display: status.ok ? `${tree.path} has uncommitted or untracked changes; they are kept` : status.err };
     const merged = tree.branch ? git(['merge-base', '--is-ancestor', `refs/heads/${tree.branch}`, `${state.trees[0].head}`]).ok : false;
     const preview = [`Remove the checkout ${tree.path}.`, tree.branch ? `Branch ${tree.branch} is ${merged ? 'merged into the main checkout' : 'NOT merged'} and is kept unless you confirm its deletion next.` : '', 'Session history is kept.'].join('\n');
     if (!confirm(branch ? 'Delete task worktree' : 'Archive task worktree', preview)) return null;
-    const removed = git(['worktree', 'remove', tree.path], { write: true, timeout: 60_000 });
+    // The status excludes shared setup links and copies, so force removes just those.
+    const removed = git(['worktree', 'remove', '--force', tree.path], { write: true, timeout: 60_000, guards: [guardOf(listing, status)] });
     if (!removed.ok) return { display: denied(removed.err, rootFor(state.trees[0].path)) };
-    delete state.meta[tree.path];
+    updateTasks(value => { delete value[tree.path]; });
     let note = `Removed ${tree.path}`;
     if (branch && tree.branch) {
       if (!merged) note += `; ${tree.branch} has unmerged commits and was kept`;
@@ -268,7 +309,7 @@ export default function activate(api: ModAPI) {
     save(refresh(state));
     return { display: note };
   });
-  api.command('archive', value => remove(value, false), { description: 'Remove a clean task checkout and keep its branch' });
+  api.command('park', value => remove(value, false), { description: 'Remove a clean task checkout and keep its branch' });
   api.command('remove', value => remove(value, true), { description: 'Remove a clean task checkout, then optionally delete its merged branch' });
 
   api.command('prune', () => guard(() => {
@@ -277,7 +318,7 @@ export default function activate(api: ModAPI) {
     if (!gone.length) return { display: 'No deleted worktrees to prune' };
     if (!confirm('Prune worktree records', gone.map(tree => `${tree.path}: ${tree.prunable}`).join('\n'))) return null;
     const pruned = git(['worktree', 'prune'], { write: true });
-    for (const tree of gone) delete state.meta[tree.path];
+    updateTasks(value => { for (const tree of gone) delete value[tree.path]; });
     save(refresh(state));
     return { display: pruned.ok ? `Pruned ${gone.length} records` : pruned.err };
   }), { description: 'Remove Git records of worktrees deleted outside OMD' });
@@ -292,55 +333,57 @@ export default function activate(api: ModAPI) {
     return state.error ? { display: state.error } : null;
   }), { description: 'Toggle the searchable task worktree roster' });
 
-  api.command('act', value => {
+  api.command('action', value => {
     const action = words(value);
     const path = load().selected ?? '';
-    return action === 'new' ? { insert: '/omd_worktree:new ' } : action === 'switch' ? jump(path) : action === 'integrate' ? integrate(path)
-      : action === 'archive' || action === 'remove' ? remove(path, action === 'remove') : null;
+    return action === 'new' ? { insert: '/omd_worktree:task ' } : action === 'switch' ? jump(path) : action === 'integrate' ? integrate(path)
+      : action === 'park' || action === 'remove' ? remove(path, action === 'remove') : null;
   }, { description: 'Run a roster action' });
 
   api.provide({ name: 'omd.worktrees', version: '1.0.0', methods: { list: { input: 'null', output: 'object' } } }, {
     list: () => {
       const state = refresh(load());
       save(state);
-      return { worktrees: state.trees.map(tree => ({ ...tree, task: state.meta[tree.path]?.task ?? null, issue: state.meta[tree.path]?.issue ?? null })) };
+      const meta = tasks().value;
+      return { worktrees: state.trees.map(tree => ({ ...tree, task: meta[tree.path]?.task ?? null, issue: meta[tree.path]?.issue ?? null })) };
     },
   });
 
   for (const event of ['start', 'resume', 'idle'] as const) api.on(event, () => { save(refresh(load())); });
 
-  const label = (state: State, tree: Tree) => {
-    const meta = state.meta[tree.path];
+  const label = (meta: Meta | undefined, tree: Tree) => {
     const flags = [tree.main ? 'main' : '', tree.current ? 'here' : '', tree.locked ? 'locked' : '', tree.prunable ? 'deleted' : ''].filter(Boolean).join(', ');
     return `${tree.branch ?? `detached ${tree.head?.slice(0, 8) ?? ''}`}${meta ? ` · ${meta.task}` : ''}${meta?.issue ? ` (#${meta.issue})` : ''}${flags ? ` [${flags}]` : ''}`;
   };
-  const roster = (state: State): TerminalComponent[] => {
+  const roster = (state: State, meta: Record<string, Meta>, site: string): TerminalComponent[] => {
     const needle = state.query.toLowerCase();
-    const trees = state.trees.filter(tree => !needle || `${tree.path} ${label(state, tree)}`.toLowerCase().includes(needle));
+    const trees = state.trees.filter(tree => !needle || `${tree.path} ${label(meta[tree.path], tree)}`.toLowerCase().includes(needle));
+    let total = 0;
     const selected = trees.find(tree => tree.path === state.selected);
     return [
-      { type: 'input', id: 'omd_worktree_search', label: 'Search worktrees', value: state.query, placeholder: 'branch, task or path; Enter filters', action: { command: 'omd_worktree:list', args: 'search' } },
-      { type: 'list', id: 'omd_worktree_roster', label: 'Task worktrees', rows: trees.filter(tree => fit(tree.path, 256) === tree.path).slice(0, 200).map(tree => ({ value: tree.path, label: fit(label(state, tree), 256),
-        spans: [{ text: fit(label(state, tree), 140), tone: tree.prunable ? 'failure' : tree.current ? 'accent' : 'normal' }, { text: fit(`  ${tree.path}`, 110), tone: 'muted' }] })),
+      { type: 'input', id: `omd_worktree_${site}_search`, label: 'Search worktrees', value: state.query, placeholder: 'branch, task or path; Enter filters', action: { command: 'omd_worktree:list', args: 'search' } },
+      { type: 'list', id: `omd_worktree_${site}_roster`, label: 'Task worktrees', rows: trees.filter(tree => fit(tree.path, 256) === tree.path).slice(0, 200).map(tree => ({ value: tree.path, label: fit(label(meta[tree.path], tree), 256),
+        spans: [{ text: fit(label(meta[tree.path], tree), 140), tone: tree.prunable ? 'failure' as const : tree.current ? 'accent' as const : 'normal' as const }, { text: fit(`  ${tree.path}`, 110), tone: 'muted' as const }] })).filter(row => (total += bytes(row)) <= ROWS_BYTES),
         ...(selected ? { selected: selected.path } : {}), action: { command: 'omd_worktree:list', args: 'select' } },
-      ...(selected && !selected.main ? [{ type: 'select' as const, id: 'omd_worktree_actions', label: fit(`Act on ${selected.branch ?? selected.path}`, 128), value: 'switch',
-        options: ['switch', 'integrate', 'archive', 'remove'].map(action => ({ value: action, label: action })), action: { command: 'omd_worktree:act' } }] : []),
-      { type: 'button', id: 'omd_worktree_new', label: 'Create a task worktree', text: 'New task…', action: { command: 'omd_worktree:act', args: 'new' } },
+      ...(selected && !selected.main ? [{ type: 'select' as const, id: `omd_worktree_${site}_actions`, label: fit(`Act on ${selected.branch ?? selected.path}`, 128), value: 'switch',
+        options: [['switch', 'switch'], ['integrate', 'integrate'], ['park', 'remove checkout, keep branch'], ['remove', 'remove']].map(([value, label]) => ({ value, label })), action: { command: 'omd_worktree:action' } }] : []),
+      { type: 'button', id: `omd_worktree_${site}_new`, label: 'Create a task worktree', text: 'New task…', action: { command: 'omd_worktree:action', args: 'new' } },
     ];
   };
   api.on('terminal', () => {
     const state = load();
-    const sites: Record<string, TerminalRenderSite> = { 'omd_worktree/roster': { mode: 'replace', components: state.error ? [{ type: 'text', id: 'omd_worktree_error', label: 'Worktrees unavailable', text: state.error, tone: 'muted' }] : roster(state) } };
+    const meta = state.tasks;
+    const sites: Record<string, TerminalRenderSite> = { 'omd_worktree/roster': { mode: 'replace', components: state.error ? [{ type: 'text', id: 'omd_worktree_error', label: 'Worktrees unavailable', text: state.error, tone: 'muted' }] : roster(state, meta, 'site') } };
     const preview = state.preview;
     if (preview) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_worktree_dialog', label: 'Integrate task branch', title: fit(`Merge ${preview.branch} into this checkout?`, 128), children: [
       { type: 'code', id: 'omd_worktree_summary', label: 'Commits and changed files', text: preview.summary || 'no commits' },
       { type: 'diff', id: 'omd_worktree_diff', label: `Diff of ${preview.branch}`, unified: preview.diff, height: 16 },
-      { type: 'button', id: 'omd_worktree_confirm', label: 'Merge after rechecking HEAD, the branch and a clean checkout', text: preview.commit ? 'Commit and merge' : 'Merge', action: { command: 'omd_worktree:confirm' } },
-      { type: 'button', id: 'omd_worktree_cancel', label: 'Close without merging', text: 'Cancel', action: { command: 'omd_worktree:cancel' } },
+      { type: 'button', id: 'omd_worktree_confirm', label: 'Merge after rechecking HEAD, the branch and a clean checkout', text: preview.commit ? 'Commit and merge' : 'Merge', action: { command: 'omd_worktree:merge' } },
+      { type: 'button', id: 'omd_worktree_cancel', label: 'Close without merging', text: 'Cancel', action: { command: 'omd_worktree:hide' } },
     ] }] };
-    else if (state.open) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_worktree_dialog', label: 'Task worktrees', title: 'Task worktrees', children: [...roster(state),
+    else if (state.open) sites.dialog = { mode: 'replace', components: [{ type: 'dialog', id: 'omd_worktree_dialog', label: 'Task worktrees', title: 'Task worktrees', children: [...roster(state, meta, 'dialog'),
       ...(state.notice ? [{ type: 'text' as const, id: 'omd_worktree_notice', label: 'Last result', text: state.notice, tone: 'muted' as const }] : []),
-      { type: 'button', id: 'omd_worktree_close', label: 'Close the roster', text: 'Close', action: { command: 'omd_worktree:cancel' } }] }] };
+      { type: 'button', id: 'omd_worktree_close', label: 'Close the roster', text: 'Close', action: { command: 'omd_worktree:hide' } }] }] };
     return { sites };
   });
 }

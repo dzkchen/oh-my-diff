@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 
 
 MAX_BYTES = 262_144
@@ -40,12 +41,34 @@ def canonical_file(raw, label):
     return path
 
 
+def configuration(environment):
+    return environment.get("OMD_BRIDGE_CONFIG") or (str(Path(environment["OMD_MOD_STORE"]) / "plugin-config/omd-application-bridges.json") if environment.get("OMD_MOD_STORE") else None)
+
+
+def idle(reason):
+    sys.stderr.write(f"omd-application-bridges: {reason}; no tools are offered\n")
+    for line in sys.stdin:
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(request, dict) or "id" not in request:
+            continue
+        method = request.get("method")
+        params = request.get("params") if isinstance(request.get("params"), dict) else {}
+        result = ({"protocolVersion": params.get("protocolVersion", "2025-06-18"), "capabilities": {"tools": {}},
+                   "serverInfo": {"name": "omd_application_bridges", "version": "0.1.0"}} if method == "initialize"
+                  else {"tools": []} if method == "tools/list" else None)
+        reply = {"jsonrpc": "2.0", "id": request["id"]}
+        reply.update({"result": result} if result is not None else {"error": {"code": -32601, "message": reason}})
+        sys.stdout.write(json.dumps(reply) + "\n")
+        sys.stdout.flush()
+
+
 def selection(environment):
     if environment.get("OMD_MODE") != "omd":
         raise Invalid("application bridge requires OMD mode")
-    manifest_path = canonical_file(
-        environment.get("OMD_BRIDGE_CONFIG") or (str(Path(environment["OMD_MOD_STORE"]) / "plugin-config/omd-application-bridges.json") if environment.get("OMD_MOD_STORE") else None), "plugin configuration"
-    )
+    manifest_path = canonical_file(configuration(environment), "plugin configuration")
     manifest, _ = read_json(manifest_path, "plugin configuration")
     capabilities = manifest.get("capabilities", {})
     if (
@@ -97,6 +120,10 @@ def locate_launcher(plugin_root):
 
 
 def main():
+    configured = configuration(os.environ)
+    if not configured or not Path(configured).expanduser().exists():
+        idle(f"not configured; create {configured or '$OMD_MOD_STORE/plugin-config/omd-application-bridges.json'}")
+        return
     try:
         policy, expected = selection(os.environ)
         plugin_root = Path(__file__).resolve().parents[1]

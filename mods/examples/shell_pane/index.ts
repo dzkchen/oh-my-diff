@@ -19,6 +19,6 @@ export default function activate(api: ModAPI) {
     return { display: 'Shell stopped' };
   });
   api.on('terminal', () => api.state.get() === 'shell'
-    ? { sites: { 'shell_pane/shell': { components: [{ type: 'terminal', id: 'shell-pane', label: 'Shell', session: 'shell', height: 16 }] } } }
+    ? { sites: { 'shell_pane/shell': { components: [{ type: 'terminal', id: 'shell_pane', label: 'Shell', session: 'shell', height: 16 }] } } }
     : null);
 }

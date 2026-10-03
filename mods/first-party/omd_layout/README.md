@@ -8,20 +8,20 @@ optional services and adds no Git engine of its own.
 
 | Key (setting `keys`) | Command | Opens |
 | --- | --- | --- |
-| Ctrl+Shift+P (`palette`) | `/omd_layout:palette` | command palette |
-| Ctrl+Shift+J (`jump`) | `/omd_layout:jump` | sessions, worktrees and tabs |
-| Ctrl+Shift+O (`open`) | `/omd_layout:open [QUERY]` | quick open |
-| Ctrl+Shift+S (`find`) | `/omd_layout:find [QUERY]` | find in the transcript and panes |
-| Alt+U (`sessions`) | `/omd_layout:sessions` | session list dialog |
+| Ctrl+Alt+P (`palette`) | `/omd_layout:palette` | command palette |
+| Ctrl+Alt+G (`jump`) | `/omd_layout:jump` | sessions, worktrees and tabs |
+| Ctrl+Alt+O (`quick_open`) | `/omd_layout:quick_open [QUERY]` | quick open |
+| Ctrl+Alt+F (`find`) | `/omd_layout:find [QUERY]` | find in the transcript and panes |
+| Ctrl+Alt+S (`sessions`) | `/omd_layout:sessions` | session list dialog |
 
-Remap keys with the `keys` setting, for example `{"palette": "F2"}`; terminals
-without the kitty keyboard protocol send Ctrl+Shift+letter as Ctrl+letter, so
-pick an F-key or Alt key there. Invalid names are skipped. The same key closes
-an open picker.
+Ctrl+Alt+letter reaches the mod in terminals without the kitty keyboard
+protocol. Remap keys with the `keys` setting, for example `{"palette": "F2"}`;
+invalid names are skipped. The same key closes an open picker. Picker and list
+state belongs to the session thread, so two terminals keep their own.
 
 **Session list.** The sidebar (setting `sidebar`, default on), the dialog and
 the `omd_layout/sessions` site (shown by `/pane cockpit` or `/pane split right
-site omd_layout/sessions`) list the 50 most recent sessions grouped by project,
+site omd_layout/sessions`) list the 30 most recent sessions grouped by project,
 with status (working, waiting for approval or input, done, error), unread
 activity since you last viewed a session, branch, the linked issue or PR from
 `omd_worktree`, folder, model, context use and the latest notification. Search

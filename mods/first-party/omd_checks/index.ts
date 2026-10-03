@@ -80,6 +80,20 @@ function command(kind: Language, root: string, scope: string[], present: (path: 
 }
 
 export default function activate(api: ModAPI) {
+  // Expected refusals return as values; a non-Error throw is the host suspending the callback.
+  const refuse = <T>(run: () => T | Promise<T>, value: (reason: string) => T): T | Promise<T> => {
+    const refused = (error: unknown) => {
+      if (!(error instanceof Error)) throw error;
+      return value(error.message);
+    };
+    try {
+      const result = run();
+      return result instanceof Promise ? result.catch(refused) : result;
+    } catch (error) {
+      return refused(error);
+    }
+  };
+  const tool: ModAPI['tool'] = (spec, handler) => api.tool(spec, input => refuse(() => handler(input), reason => ({ status: 'refused', reason })));
   const stat = (paths: string[], hash: boolean): Map<string, FileStat | null> => {
     const found = new Map<string, FileStat | null>();
     const unique = [...new Set(paths)];
@@ -100,7 +114,7 @@ export default function activate(api: ModAPI) {
     return [...found, ...configs];
   };
 
-  api.tool({ name: 'select', description: 'Select bounded, source-bound intermediate checks for changed repository files without running them.',
+  tool({ name: 'select', description: 'Select bounded, source-bound intermediate checks for changed repository files without running them.',
     parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'], additionalProperties: false } }, async input => {
     const raw = input !== null && typeof input === 'object' && !Array.isArray(input) ? input.paths : null;
     if (!Array.isArray(raw) || raw.length === 0 || raw.length > 128 || !raw.every(validPath)) throw new Error('changed_paths_invalid');

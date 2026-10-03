@@ -88,9 +88,9 @@ convenience, not a required service. See [mod commands](../mods/REFERENCE.md)
 and [compatibility](../mods/COMPATIBILITY.md).
 
 The bundled Codex plugins use the local, pinned
-`plugins/bundled/oh-my-diff` marketplace. After the private installer places
-it under `$OMD_PREFIX/plugins/oh-my-diff`, add it with
-`codex plugin marketplace add "$OMD_PREFIX/plugins/oh-my-diff"`, then select
+`plugins/bundled/oh-my-diff` marketplace. After the installer stages it, add it
+with `omd-package plugins` (it records the installer's `current` link, so the
+marketplace survives updates), then select
 one plugin with `codex plugin add NAME@oh-my-diff`. Review hook hashes at the
 Codex trust prompt. A plugin's skills are invoked explicitly; its hooks run
 only at their declared lifecycle events and matching controlled settings.

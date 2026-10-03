@@ -32,7 +32,8 @@ import uuid
 
 RELEASE_URL = ""
 RELEASE_SHA256 = "dd4af10730de910ba2b2f71e834e616f369a14eb1f82c2e52477bdf6df24f939"
-LINKS = ("codex", "omd-package", "omd-mod-author")
+LINKS = ("codex", "omd-package", "omd-mod-author", "omd", "omd-contract", "omd-mod")
+UPSTREAM_MINOR = "0.159"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
@@ -93,26 +94,28 @@ def environment(upstream, bin_dir):
     return values
 
 
-def upstream_binary(args, current):
+# An upstream upgrade (for example brew upgrade codex) keeps status, rollback and uninstall working: a
+# recorded path that moved falls back to the codex on PATH, and --upstream overrides both.
+def upstream_binary(args, current, pinned=False):
+    recorded = Path(receipt(current)["upstream"]["path"]) if current else None
     if args.upstream:
         path = args.upstream.expanduser().resolve()
-    elif current:
-        path = Path(receipt(current)["upstream"]["path"])
+    elif recorded and recorded.is_file():
+        path = recorded
     else:
         filtered = environment(Path("/nonexistent/codex"), args.bin_dir)["PATH"]
         found = shutil.which("codex", path=filtered)
         if not found:
-            fail("A pinned upstream Codex 0.159.1 executable is required; pass --upstream /path/to/codex")
+            fail(f"An upstream Codex {UPSTREAM_MINOR}.x executable is required; pass --upstream /path/to/codex")
         path = Path(found).resolve()
     if path.name != "codex" or not path.is_file() or not os.access(path, os.X_OK):
         fail("--upstream must name an executable called codex")
+    if path == args.bin_dir / "codex":
+        fail(f"{path} is replaced by the OMD launcher; move the upstream codex out of {args.bin_dir} and pass its new path with --upstream")
     version = run([path, "--version"]).strip()
-    if version != "codex-cli 0.159.1":
-        fail(f"upstream Codex 0.159.1 is required; found {version}")
-    identity = {"path": str(path), "sha256": digest(path), "version": version}
-    if current and receipt(current)["upstream"] != identity:
-        fail("upstream fallback changed; the current installation remains active")
-    return identity
+    if pinned and not re.fullmatch(rf"codex-cli {re.escape(UPSTREAM_MINOR)}\.\d+", version):
+        fail(f"upstream Codex {UPSTREAM_MINOR}.x is required; found {version}")
+    return {"path": str(path), "sha256": digest(path), "version": version}
 
 
 def node_binary(args):
@@ -120,10 +123,11 @@ def node_binary(args):
         path = args.node.expanduser().resolve()
     else:
         if not shutil.which("mise"):
-            fail("Node 24.18.0 is required; install it with mise or pass --node /path/to/node")
+            fail("Node 24.18 or a later 24.x is required; install it with mise or pass --node /path/to/node")
         path = Path(run(["mise", "which", "node"]).strip()).resolve()
-    if run([path, "--version"]).strip() != "v24.18.0":
-        fail("Node 24.18.0 is required; pass --node with the matching executable")
+    found = re.fullmatch(r"v24\.(\d+)\.\d+", run([path, "--version"]).strip())
+    if not found or int(found[1]) < 18:
+        fail("Node 24.18 or a later 24.x is required; pass --node with a matching executable")
     return path
 
 
@@ -132,7 +136,7 @@ def profile_choice(args):
         return args.profile
     try:
         with open("/dev/tty", "r+") as terminal:
-            terminal.write("Oh My Diff 0.159.1 candidate\n"
+            terminal.write("Oh My Diff candidate\n"
                            "1) OMD Core: patched Codex, mod manager, typed author tools; the OMD logo is installed and active.\n"
                            "2) OMD+: the selected first-party collection and staged plugin sources.\n"
                            "   The inspector, logo, model picker and workspace mods are active on a fresh install. Other mods require your explicit activation.\n"
@@ -187,21 +191,37 @@ def link_target(root, name):
     return root / "current" / "bin" / name
 
 
+def managed(root, path, name):
+    return path.is_symlink() and os.readlink(path) == str(link_target(root, name))
+
+
 def check_links(root, bin_dir):
     for name in LINKS:
         path = bin_dir / name
-        if path.exists() or path.is_symlink():
-            if not path.is_symlink() or os.readlink(path) != str(link_target(root, name)):
-                fail(f"existing launcher is not managed by this installer: {path}")
+        aside = path.with_name(f"{name}.before-omd")
+        if (path.exists() or path.is_symlink()) and not managed(root, path, name) and (aside.exists() or aside.is_symlink()):
+            fail(f"{path} is not managed by this installer and {aside} already exists; move one of them")
 
 
 def set_links(root, bin_dir):
     bin_dir.mkdir(parents=True, exist_ok=True)
     check_links(root, bin_dir)
+    displaced = []
     for name in LINKS:
         path = bin_dir / name
+        if (path.exists() or path.is_symlink()) and not managed(root, path, name):
+            os.rename(path, path.with_name(f"{name}.before-omd"))
+            displaced.append(str(path))
         if not path.is_symlink():
             atomic_symlink(path, link_target(root, name))
+    return displaced
+
+
+def restore_displaced(bin_dir):
+    for name in LINKS:
+        aside = bin_dir / f"{name}.before-omd"
+        if (aside.exists() or aside.is_symlink()) and not (bin_dir / name).exists() and not (bin_dir / name).is_symlink():
+            os.rename(aside, bin_dir / name)
 
 
 def status(generation, upstream, bin_dir):
@@ -216,12 +236,12 @@ def status(generation, upstream, bin_dir):
 def install(args, root, current):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         fail("This release candidate supports Apple Silicon macOS only.")
-    profile = profile_choice(args)
     url = args.asset_url or RELEASE_URL
     expected = args.asset_sha256 or RELEASE_SHA256
     if not url:
-        fail("No supported HTTPS release asset is published yet; the current local package remains a candidate.")
-    upstream = upstream_binary(args, current)
+        fail("No Oh My Diff release is published yet; nothing was installed. Pass --asset-url and --asset-sha256 for a local package.")
+    profile = profile_choice(args)
+    upstream = upstream_binary(args, current, pinned=True)
     node = node_binary(args)
     check_links(root, args.bin_dir)
     if current:
@@ -253,7 +273,7 @@ def install(args, root, current):
             atomic_symlink(root / "previous", current)
         atomic_symlink(root / "current", generation)
         try:
-            set_links(root, args.bin_dir)
+            displaced = set_links(root, args.bin_dir)
         except BaseException:
             if current:
                 atomic_symlink(root / "current", current)
@@ -263,6 +283,10 @@ def install(args, root, current):
         kept = {generation, current} - {None}
         pruned, failures = [], []
         for old in sorted((root / "releases").iterdir()):
+            if old.name.startswith("failed-"):
+                shutil.rmtree(old, ignore_errors=True)
+                pruned.append(old.name)
+                continue
             if old in kept or not (old / "receipt.json").is_file():
                 continue
             try:
@@ -273,6 +297,7 @@ def install(args, root, current):
         print(json.dumps({"installed": profile, "profile_label": PROFILE_LABELS[profile], "active": str(generation),
                           "previous": str(current) if current else None,
                           "upstream": upstream["path"], "bin_dir": str(args.bin_dir),
+                          "moved_aside": [f"{path} -> {path}.before-omd" for path in displaced],
                           "pruned": pruned, "prune_failures": failures}, indent=2))
 
 
@@ -296,7 +321,7 @@ def discard(generation, upstream, bin_dir):
         shutil.rmtree(generation)
 
 
-def rollback(root, bin_dir, current):
+def rollback(args, root, bin_dir, current):
     previous = pointer(root, "previous")
     if previous == current and current:
         prior_name = receipt(current).get("previous")
@@ -306,7 +331,7 @@ def rollback(root, bin_dir, current):
                 previous = prior
     if not current or not previous:
         fail("No previous installation is available for rollback.")
-    upstream = Path(upstream_binary(argparse.Namespace(upstream=None, bin_dir=bin_dir), current)["path"])
+    upstream = Path(upstream_binary(args, current)["path"])
     status(current, upstream, bin_dir)
     target = status(previous, upstream, bin_dir)
     check_links(root, bin_dir)
@@ -321,17 +346,19 @@ def rollback(root, bin_dir, current):
                       "profile_label": PROFILE_LABELS[target["profile"]]}, indent=2))
 
 
-def uninstall(root, bin_dir, current):
+def uninstall(args, root, bin_dir, current):
     if not current:
         fail("No managed OMD installation is active.")
-    upstream = Path(upstream_binary(argparse.Namespace(upstream=None, bin_dir=bin_dir), current)["path"])
+    upstream = Path(upstream_binary(args, current)["path"])
     check_links(root, bin_dir)
     generations = sorted((root / "releases").iterdir())
     generations = [item for item in generations if (item / "receipt.json").is_file()]
     for generation in generations:
         status(generation, upstream, bin_dir)
     for name in LINKS:
-        (bin_dir / name).unlink(missing_ok=True)
+        if managed(root, bin_dir / name, name):
+            (bin_dir / name).unlink()
+    restore_displaced(bin_dir)
     try:
         run([current / "bin/omd-package", "uninstall"], env=environment(upstream, bin_dir))
     except BaseException:
@@ -385,9 +412,9 @@ def main():
             print(json.dumps({"active": str(current), "previous": str(pointer(root, "previous")),
                               "profile": status(current, upstream, args.bin_dir)}, indent=2))
         elif args.command == "rollback":
-            rollback(root, args.bin_dir, current)
+            rollback(args, root, args.bin_dir, current)
         else:
-            uninstall(root, args.bin_dir, current)
+            uninstall(args, root, args.bin_dir, current)
 
 
 if __name__ == "__main__":

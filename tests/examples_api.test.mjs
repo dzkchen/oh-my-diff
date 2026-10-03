@@ -119,7 +119,7 @@ test('terminal and workflow examples expose current presentation and completion 
   const workflow = run('workflow', 'inspect');
   assert.equal(workflow.registrations.contracts[0].schema, 2);
   assert.ok(workflow.registrations.contracts[0].gates.complete.some(requirement => requirement.receipt === 'final_review'));
-  assert.deepEqual(run('workflow', 'command', null, { name: 'no_delegation' }).host_call,
+  assert.deepEqual(run('workflow', 'tool', {}, { name: 'no_delegation' }).host_call,
     { operation: 'contract.restrict', arguments: { operations: ['agents.spawn'],
       reason: 'this repository reviews every change in a pair instead of delegating' } });
 });

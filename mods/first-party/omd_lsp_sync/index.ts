@@ -20,6 +20,8 @@ type Message = Record<string, Json>;
 type Item = { label: string; value: string };
 type Answer = { status: 'ready' | 'error'; message: string; items: Item[]; text: string | null; action: 'open' | 'apply' };
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+const fail = (error: string) => ({ ok: false as const, error });
+const ok = <T>(value: T) => ({ ok: true as const, value });
 
 const ADAPTERS: Record<Adapter, { candidates: { name: string; arguments: string[] }[] }> = {
   python: { candidates: [{ name: 'pyright-langserver', arguments: ['--stdio'] }, { name: 'pylsp', arguments: [] }, { name: 'jedi-language-server', arguments: [] }] },
@@ -45,6 +47,7 @@ const linesOf = (text: string): number[] => {
 };
 const fileUri = (path: string) => `file://${path.split('/').map(encodeURIComponent).join('/')}`;
 const uri = (repository: string, path: string) => fileUri(`${repository}/${path}`);
+const doc = (s: { repository: string }, path: string) => ({ textDocument: { uri: uri(s.repository, path) } });
 const pathFromUri = (repository: string, value: string): string | null => {
   if (!value.startsWith('file://')) return null;
   let decoded: string;
@@ -103,43 +106,43 @@ function checkedRange(text: string, value: Json): { start: { line: number; chara
 }
 
 function renameEdit(repository: string, old: string, next: string, response: Json): Result<Record<string, { version: number | null; edits: Json[] }>> {
-  if (response === null) return { ok: true, value: {} };
+  if (response === null) return ok({});
   const edit = object(response);
-  if (!edit || (edit.changeAnnotations !== undefined && Object.keys(object(edit.changeAnnotations) ?? {}).length)) return { ok: false, error: 'server_rename_edit_unsupported' };
+  if (!edit || (edit.changeAnnotations !== undefined && Object.keys(object(edit.changeAnnotations) ?? {}).length)) return fail('server_rename_edit_unsupported');
   const grouped: Record<string, { version: number | null; edits: Json[] }> = {};
   if (edit.changes !== undefined) {
     const changes = object(edit.changes);
-    if (!changes) return { ok: false, error: 'server_rename_changes_invalid' };
+    if (!changes) return fail('server_rename_changes_invalid');
     for (const [name, edits] of Object.entries(changes)) {
       const path = pathFromUri(repository, name);
-      if (!path || !Array.isArray(edits) || grouped[path]) return { ok: false, error: 'server_rename_scope_invalid' };
+      if (!path || !Array.isArray(edits) || grouped[path]) return fail('server_rename_scope_invalid');
       grouped[path] = { version: null, edits };
     }
   }
   if (edit.documentChanges !== undefined) {
-    if (!Array.isArray(edit.documentChanges) || edit.changes !== undefined) return { ok: false, error: 'server_rename_changes_conflict' };
+    if (!Array.isArray(edit.documentChanges) || edit.changes !== undefined) return fail('server_rename_changes_conflict');
     for (const entry of edit.documentChanges) {
       const change = object(entry);
-      if (!change) return { ok: false, error: 'server_rename_change_invalid' };
+      if (!change) return fail('server_rename_change_invalid');
       if (change.kind === 'rename') {
-        if (change.oldUri !== uri(repository, old) || change.newUri !== uri(repository, next)) return { ok: false, error: 'server_rename_extra_file_operation' };
+        if (change.oldUri !== uri(repository, old) || change.newUri !== uri(repository, next)) return fail('server_rename_extra_file_operation');
         continue;
       }
-      if (change.kind !== undefined) return { ok: false, error: 'server_rename_extra_file_operation' };
+      if (change.kind !== undefined) return fail('server_rename_extra_file_operation');
       const target = object(change.textDocument ?? null);
       const path = target && string(target.uri) ? pathFromUri(repository, String(target.uri)) : null;
       const version = number(target?.version ?? null);
-      if (!path || !Array.isArray(change.edits) || grouped[path] || (target?.version !== null && target?.version !== undefined && version === null)) return { ok: false, error: 'server_rename_document_invalid' };
+      if (!path || !Array.isArray(change.edits) || grouped[path] || (target?.version !== null && target?.version !== undefined && version === null)) return fail('server_rename_document_invalid');
       grouped[path] = { version, edits: change.edits };
     }
   }
-  if (edit.changes === undefined && edit.documentChanges === undefined) return { ok: false, error: 'server_rename_edit_missing' };
-  return { ok: true, value: grouped };
+  if (edit.changes === undefined && edit.documentChanges === undefined) return fail('server_rename_edit_missing');
+  return ok(grouped);
 }
 
 function textWorkspaceEdit(repository: string, response: Json): Result<Record<string, { version: number | null; edits: Json[] }>> {
   const edit = object(response);
-  if (!edit || edit.changeAnnotations !== undefined || (edit.changes !== undefined && edit.documentChanges !== undefined)) return { ok: false, error: 'server_edit_unsupported' };
+  if (!edit || edit.changeAnnotations !== undefined || (edit.changes !== undefined && edit.documentChanges !== undefined)) return fail('server_edit_unsupported');
   const grouped: Record<string, { version: number | null; edits: Json[] }> = {};
   const add = (name: Json, version: Json, edits: Json): boolean => {
     const path = string(name);
@@ -152,18 +155,18 @@ function textWorkspaceEdit(repository: string, response: Json): Result<Record<st
   };
   if (edit.changes !== undefined) {
     const changes = object(edit.changes);
-    if (!changes) return { ok: false, error: 'server_edit_invalid' };
-    for (const [name, edits] of Object.entries(changes)) if (!add(name, null, edits)) return { ok: false, error: 'server_edit_invalid' };
+    if (!changes) return fail('server_edit_invalid');
+    for (const [name, edits] of Object.entries(changes)) if (!add(name, null, edits)) return fail('server_edit_invalid');
   } else if (edit.documentChanges !== undefined) {
-    if (!Array.isArray(edit.documentChanges)) return { ok: false, error: 'server_edit_invalid' };
+    if (!Array.isArray(edit.documentChanges)) return fail('server_edit_invalid');
     for (const entry of edit.documentChanges) {
       const change = object(entry);
       const targetDocument = object(change?.textDocument ?? null);
-      if (!change || change.kind !== undefined || !targetDocument || !add(targetDocument.uri ?? null, targetDocument.version ?? null, change.edits ?? null)) return { ok: false, error: 'server_edit_invalid' };
+      if (!change || change.kind !== undefined || !targetDocument || !add(targetDocument.uri ?? null, targetDocument.version ?? null, change.edits ?? null)) return fail('server_edit_invalid');
     }
-  } else return { ok: false, error: 'server_edit_missing' };
-  if (!Object.keys(grouped).length || Object.values(grouped).reduce((count, target) => count + target.edits.length, 0) > 1024) return { ok: false, error: 'server_edit_empty_or_large' };
-  return { ok: true, value: grouped };
+  } else return fail('server_edit_missing');
+  if (!Object.keys(grouped).length || Object.values(grouped).reduce((count, target) => count + target.edits.length, 0) > 1024) return fail('server_edit_empty_or_large');
+  return ok(grouped);
 }
 
 function state(value: Json, adapter: Adapter): State {
@@ -250,7 +253,7 @@ export default function activate(api: ModAPI) {
   let spent = 0;
   const budget = <A, T>(argument: A, call: (argument: A) => Result<T>): Result<T> => {
     const cost = size(argument);
-    if (calls >= CALL_BUDGET || spent + cost > BYTE_BUDGET) return { ok: false, error: 'callback_budget' };
+    if (calls >= CALL_BUDGET || spent + cost > BYTE_BUDGET) return fail('callback_budget');
     calls++;
     const result = call(argument);
     spent += cost + size(result);
@@ -270,7 +273,7 @@ export default function activate(api: ModAPI) {
     if (!dirty) return value;
     dirty = false;
     const data = ORDER.map(adapter => state(api.state.get(), adapter)).filter(s => s.status !== 'idle' || s.running).map(s => ({ adapter: s.adapter, server: s.running ? s.server : null, status: s.status, reason: s.reason, documents: Object.keys(s.documents).length,
-      errors: Object.entries(s.diagnostics).flatMap(([path, entry]) => entry.errors.slice(0, 3).map(error => `${path}:${error}`)).slice(0, 6) }));
+      count: Object.values(s.diagnostics).reduce((total, entry) => total + entry.count, 0), errors: Object.entries(s.diagnostics).flatMap(([path, entry]) => entry.errors.slice(0, 3).map(error => `${path}:${error}`)).slice(0, 6) }));
     budget({ channel: 'status', data }, argument => api.host.tryCall('events.publish', argument));
     return value;
   };
@@ -278,7 +281,7 @@ export default function activate(api: ModAPI) {
     const result = budget({ session: s.adapter, send: outgoing, wait_ms }, argument => api.host.tryCall('process.exchange', argument));
     if (!result.ok) return result;
     const messages = result.value.messages.map(message);
-    return messages.every(Boolean) ? { ok: true, value: messages as Message[] } : { ok: false, error: 'invalid_server_message' };
+    return messages.every(Boolean) ? ok(messages as Message[]) : fail('invalid_server_message');
   };
   const replies = (messages: Message[]): Message[] => messages.flatMap(item => {
     if (!('id' in item) || typeof item.method !== 'string') return [];
@@ -298,13 +301,15 @@ export default function activate(api: ModAPI) {
       const entries = params?.diagnostics;
       if (!Array.isArray(entries)) continue;
       const errors = new Set<string>();
+      let count = 0;
       for (const entry of entries) {
         const item = object(entry);
         const start = object(object(item?.range ?? null)?.start ?? null);
         const text = string(item?.message ?? null);
+        if ((item?.severity ?? 1) === 1) count++;
         if (text && (item?.severity ?? 1) === 1 && errors.size < 50) errors.add(`${Number(start?.line ?? 0) + 1}:${Number(start?.character ?? 0) + 1} ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
       }
-      s.diagnostics[path] = { count: entries.length, version, errors: [...errors] };
+      s.diagnostics[path] = { count, version, errors: [...errors] };
     }
   };
   const handle = (s: State, messages: Message[]): Message[] => {
@@ -318,7 +323,7 @@ export default function activate(api: ModAPI) {
       if (!answered.ok) return answered;
       outgoing = handle(s, answered.value);
     }
-    return { ok: true, value: true };
+    return ok(true);
   };
   const request = (s: State, method: string, params: Json): Result<Json> => {
     const id = s.next_id++;
@@ -332,17 +337,17 @@ export default function activate(api: ModAPI) {
       if (found) {
         const settled = settle(s, outgoing);
         if (!settled.ok) return settled;
-        return 'error' in found ? { ok: false, error: `server_error:${JSON.stringify(found.error).slice(0, 160)}` } : { ok: true, value: found.result ?? null };
+        return 'error' in found ? fail(`server_error:${JSON.stringify(found.error).slice(0, 160)}`) : ok(found.result ?? null);
       }
     }
-    return { ok: false, error: 'server_request_timeout' };
+    return fail('server_request_timeout');
   };
   const initialize = (s: State, repository: string): Result<boolean> => {
     if (s.running && s.repository === repository) {
       const status = budget({ session: s.adapter }, argument => api.host.tryCall('process.status', argument));
-      if (status.ok && status.value.running) return { ok: true, value: false };
+      if (status.ok && status.value.running) return ok(false);
     }
-    stopServer(s);
+    if (s.running) stopServer(s);
     s.running = false;
     s.server = null;
     s.repository = repository;
@@ -355,11 +360,16 @@ export default function activate(api: ModAPI) {
     if (!found.ok) return found;
     const chosen = candidates.find(candidate => found.value.found.some(server => server.name === candidate.name));
     const server = chosen && found.value.found.find(server => server.name === chosen.name);
-    if (!chosen || !server) return { ok: false, error: `${s.adapter}_server_absent` };
+    if (!chosen || !server) return fail(`${s.adapter}_server_absent`);
     const cargo = found.value.found.find(item => item.name === 'cargo');
     const rustup = s.adapter === 'rust' && cargo ? /^(.*)\/\.cargo\/bin\/rustup$/.exec(cargo.path) : null;
     const environment: Record<string, string> = rustup ? { RUSTUP_HOME: `${rustup[1]}/.rustup` } : {};
-    const started = budget({ session: s.adapter, name: server.name, path: server.path, sha256: server.sha256, arguments: chosen.arguments, environment }, argument => api.host.tryCall('process.start', argument));
+    const launch = { session: s.adapter, name: server.name, path: server.path, sha256: server.sha256, arguments: chosen.arguments, environment };
+    let started = budget(launch, argument => api.host.tryCall('process.start', argument));
+    if (!started.ok && started.error.startsWith('process_session_limit_or_duplicate')) {
+      stopServer(s);
+      started = budget(launch, argument => api.host.tryCall('process.start', argument));
+    }
     if (!started.ok) return started;
     s.running = true;
     s.server = server.name;
@@ -392,16 +402,16 @@ export default function activate(api: ModAPI) {
       s.running = false;
       return settled;
     }
-    return { ok: true, value: true };
+    return ok(true);
   };
   const synchronize = (s: State, paths: string[]): Result<boolean> => {
     const selected = [...new Set(paths)].filter(path => adapterFor(path) === s.adapter);
-    if (!selected.length) return { ok: true, value: false };
-    if (selected.length > 128) return { ok: false, error: 'document_batch_limit' };
+    if (!selected.length) return ok(false);
+    if (selected.length > 128) return fail('document_batch_limit');
     let changed = false;
     for (let index = 0; index < selected.length; index += 16) {
       const chunk = selected.slice(index, index + 16);
-      if (spent > BYTE_BUDGET / 2) return { ok: false, error: 'callback_budget' };
+      if (spent > BYTE_BUDGET / 2) return fail('callback_budget');
       const read = readFiles(chunk);
       if (!read.ok) return read;
       const tracked = new Set(Object.keys(s.documents));
@@ -409,15 +419,22 @@ export default function activate(api: ModAPI) {
         if (read.value.files[path]) tracked.add(path);
         else tracked.delete(path);
       }
-      if (tracked.size > 128) return { ok: false, error: 'document_limit' };
       const priorDocuments = { ...s.documents };
       const priorDiagnostics = { ...s.diagnostics };
       const outbound: Json[] = [];
+      for (const path of Object.keys(s.documents)) {
+        if (tracked.size <= 96) break;
+        if (chunk.includes(path)) continue;
+        tracked.delete(path);
+        outbound.push({ jsonrpc: '2.0', method: 'textDocument/didClose', params: doc(s, path) });
+        delete s.documents[path];
+        delete s.diagnostics[path];
+      }
       for (const path of chunk) {
         const file = read.value.files[path];
         const previous = s.documents[path];
         if (!file) {
-          if (previous) outbound.push({ jsonrpc: '2.0', method: 'textDocument/didClose', params: { textDocument: { uri: uri(s.repository, path) } } });
+          if (previous) outbound.push({ jsonrpc: '2.0', method: 'textDocument/didClose', params: doc(s, path) });
           delete s.documents[path];
           delete s.diagnostics[path];
         } else if (!previous) {
@@ -444,16 +461,16 @@ export default function activate(api: ModAPI) {
       }
       changed = true;
     }
-    return { ok: true, value: changed };
+    return ok(changed);
   };
   const observedRepository = (repository: string, record: boolean): Result<boolean> => {
     const current = budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const }, argument => api.host.tryCall('store.get', argument));
     if (!current.ok) return current;
     const value = object(current.value?.value ?? null);
-    if (current.value) return { ok: true, value: value?.repository === repository };
-    if (!record) return { ok: true, value: false };
+    if (current.value) return ok(value?.repository === repository);
+    if (!record) return ok(false);
     const saved = budget({ key: OBSERVED_REPOSITORY_KEY, scope: 'repository' as const, expected_revision: null, value: { repository } }, argument => api.host.tryCall('store.put', argument));
-    return saved.ok ? { ok: true, value: true } : saved;
+    return saved.ok ? ok(true) : saved;
   };
   const currentThread = (): Result<string> => {
     const key = 'lsp.thread_probe';
@@ -464,7 +481,7 @@ export default function activate(api: ModAPI) {
     const after = budget({ key, scope: 'repository' as const }, argument => api.host.tryCall('store.get', argument));
     if (!after.ok) return after;
     const thread = after.value?.provenance.thread_id;
-    return after.value?.revision === put.value.revision && thread ? { ok: true, value: thread } : { ok: false, error: 'thread_identity_unavailable' };
+    return after.value?.revision === put.value.revision && thread ? ok(thread) : fail('thread_identity_unavailable');
   };
   api.on('workspace_change', event => {
     const observed = event.status === 'observed' ? observedRepository(event.repository, true) : { ok: true as const, value: true };
@@ -642,11 +659,12 @@ export default function activate(api: ModAPI) {
       if (s.running) stopServer(s);
     }
   });
+  const fallbackFor = (s: State) => (reason: string, stale = false): Json => {
+    failure(s, reason, stale); save(s);
+    return { status: 'fallback', reason, adapter: s.adapter };
+  };
   const applyTextEdit = (s: State, scope: string[], expected: Record<string, string>, response: Json): Json => {
-    const fallback = (reason: string, stale = false): Json => {
-      failure(s, reason, stale); save(s);
-      return { status: 'fallback', reason, adapter: s.adapter };
-    };
+    const fallback = fallbackFor(s);
     const parsed = textWorkspaceEdit(s.repository, response);
     if (!parsed.ok) return fallback(parsed.error);
     const paths = Object.keys(parsed.value);
@@ -669,19 +687,14 @@ export default function activate(api: ModAPI) {
     const applied = budget({ expected, writes }, argument => api.host.tryCall('workspace.transaction', argument));
     if (!applied.ok) return fallback(applied.error, true);
     const after = applied.value.files;
-    if (Object.keys(after).length !== scope.length || scope.some(path => !after[path])) {
+    const rollback = (reason: string) => {
       const restored = api.host.tryCall('workspace.restore', { backup: backup.value.backup, expected: after });
       api.host.tryCall('process.stop', { session: s.adapter });
       s.running = false; s.documents = {}; s.diagnostics = {};
-      return fallback(restored.ok ? 'transaction_result_invalid_rolled_back' : `rollback_failed:${restored.error}`, true);
-    }
-    const synced = synchronize(s, scope);
-    if (!synced.ok) {
-      const restored = api.host.tryCall('workspace.restore', { backup: backup.value.backup, expected: after });
-      api.host.tryCall('process.stop', { session: s.adapter });
-      s.running = false; s.documents = {}; s.diagnostics = {};
-      return fallback(restored.ok ? 'sync_failed_rolled_back' : `rollback_failed:${restored.error}`, true);
-    }
+      return fallback(restored.ok ? `${reason}_rolled_back` : `rollback_failed:${restored.error}`, true);
+    };
+    if (Object.keys(after).length !== scope.length || scope.some(path => !after[path])) return rollback('transaction_result_invalid');
+    if (!synchronize(s, scope).ok) return rollback('sync_failed');
     s.preview = null;
     s.status = 'synced'; s.reason = '';
     save(s);
@@ -693,10 +706,7 @@ export default function activate(api: ModAPI) {
     const adapter = path && adapterFor(path);
     if (!path || !adapter || !pathFromUri('/repository', uri('/repository', path))) return { status: 'fallback', reason: 'unsupported_or_invalid_path' };
     const s = state(api.state.get(), adapter);
-    const fallback = (reason: string, stale = false): Json => {
-      failure(s, reason, stale); save(s);
-      return { status: 'fallback', reason, adapter };
-    };
+    const fallback = fallbackFor(s);
     const rawScope = input?.scope;
     const declared = object(input?.expected ?? null);
     if (!Array.isArray(rawScope) || !rawScope.length || rawScope.length > 16 || !rawScope.every(item => typeof item === 'string') || !declared) return fallback('edit_scope_invalid');
@@ -720,7 +730,7 @@ export default function activate(api: ModAPI) {
       if (!name || name.length > 512 || offset(file.text, linesOf(file.text), position as Json) === null) return fallback('rename_input_invalid');
       const capability = object(s.capabilities)?.renameProvider;
       if (capability !== true && !object(capability ?? null)) return fallback('server_rename_symbol_unsupported');
-      const params = { textDocument: { uri: uri(s.repository, path) }, position };
+      const params = { ...doc(s, path), position };
       if (object(capability ?? null)?.prepareProvider === true) {
         const prepared = request(s, 'textDocument/prepareRename', params);
         if (!prepared.ok) return fallback(prepared.error, true);
@@ -740,7 +750,7 @@ export default function activate(api: ModAPI) {
     const thread = currentThread();
     if (!thread.ok) return fallback(thread.error, true);
     if (thread.value !== preview.thread_id) return fallback('code_action_preview_thread_mismatch');
-    const actions = request(s, 'textDocument/codeAction', { textDocument: { uri: uri(s.repository, path) }, range, context: { diagnostics: [] } });
+    const actions = request(s, 'textDocument/codeAction', { ...doc(s, path), range, context: { diagnostics: [] } });
     if (!actions.ok) return fallback(actions.error, true);
     if (!Array.isArray(actions.value) || actions.value.length > 32 || index >= actions.value.length) return fallback('server_code_actions_invalid');
     if (preview.actions[index] !== JSON.stringify(actions.value[index])) return fallback('code_action_preview_stale');
@@ -755,11 +765,7 @@ export default function activate(api: ModAPI) {
     const adapter = path && adapterFor(path);
     if (!path || !adapter || !pathFromUri('/repository', uri('/repository', path))) return { status: 'fallback', reason: 'unsupported_or_invalid_path' };
     const s = state(api.state.get(), adapter);
-    const fallback = (reason: string, stale = false): Json => {
-      failure(s, reason, stale);
-      save(s);
-      return { status: 'fallback', reason, adapter };
-    };
+    const fallback = fallbackFor(s);
     if (!s.repository) return fallback('repository_unobserved');
     const observed = observedRepository(s.repository, false);
     if (!observed.ok || !observed.value) return fallback(observed.ok ? 'repository_binding_mismatch' : observed.error, true);
@@ -781,10 +787,10 @@ export default function activate(api: ModAPI) {
       if (!range) return fallback('invalid_range');
     } else if (offset(source.text, lines, position as Json) === null) return fallback('invalid_position');
     const params: Json = kind === 'code_actions'
-      ? { textDocument: { uri: uri(s.repository, path) }, range, context: { diagnostics: [] } }
+      ? { ...doc(s, path), range, context: { diagnostics: [] } }
       : kind === 'references'
-        ? { textDocument: { uri: uri(s.repository, path) }, position, context: { includeDeclaration: input?.include_declaration === true } }
-        : { textDocument: { uri: uri(s.repository, path) }, position };
+        ? { ...doc(s, path), position, context: { includeDeclaration: input?.include_declaration === true } }
+        : { ...doc(s, path), position };
     const method = kind === 'code_actions' ? 'textDocument/codeAction' : kind === 'references' ? 'textDocument/references' : 'textDocument/definition';
     const response = request(s, method, params);
     if (!response.ok) return fallback(response.error, true);
@@ -850,11 +856,11 @@ export default function activate(api: ModAPI) {
     const synced = synchronize(s, [path]);
     if (!synced.ok) return synced;
     const capability = provider && object(s.capabilities)?.[provider];
-    if (provider && capability !== true && !object(capability ?? null)) return { ok: false, error: `server_${provider}_unsupported` };
+    if (provider && capability !== true && !object(capability ?? null)) return fail(`server_${provider}_unsupported`);
     const read = readFiles([path]);
     if (!read.ok) return read;
     const source = read.value.files[path];
-    return source && source.sha256 === s.documents[path]?.sha256 ? { ok: true, value: source } : { ok: false, error: 'source_stale' };
+    return source && source.sha256 === s.documents[path]?.sha256 ? ok(source) : fail('source_stale');
   };
   const confirm = (title: string, message: string) => {
     const answer = api.host.tryCall('terminal.prompt', { kind: 'confirm', title, message });
@@ -918,7 +924,7 @@ export default function activate(api: ModAPI) {
       save(s);
       return failed(source.error);
     }
-    const document = { textDocument: { uri: uri(s.repository, path) } };
+    const document = doc(s, path);
     if (op === 'hover') {
       const hover = request(s, 'textDocument/hover', { ...document, position });
       save(s);

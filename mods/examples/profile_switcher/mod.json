@@ -8,11 +8,18 @@
   "capabilities": [
     "credentials",
     "model",
-    "commands"
+    "commands",
+    "events"
   ],
   "compatibility": {
     "required_features": [
-      "credentials_v1"
+      "credentials_v1",
+      "events_v1"
+    ]
+  },
+  "subscriptions": {
+    "channels": [
+      "profile_switcher/use_route"
     ]
   }
 }

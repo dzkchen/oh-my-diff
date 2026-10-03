@@ -82,7 +82,7 @@ function rules(value: Json | undefined): Rule[] {
 }
 
 export default function activate(api: ModAPI) {
-  const configured = rules(api.settings.rules);
+  const configured = rules(api.settings.rules ?? []);
   if (!configured.length) return;
   const fresh = (thread: string | null = null): State => ({ thread, counts: {}, stops: 0, tools: false, active: {} });
   const load = () => (api.state.get() as State | null) ?? fresh();

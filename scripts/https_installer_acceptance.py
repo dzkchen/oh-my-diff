@@ -9,6 +9,7 @@ import shutil
 import ssl
 import subprocess
 import tempfile
+import tomllib
 from threading import Thread
 
 
@@ -99,7 +100,7 @@ def run(archive, upstream, output):
             assert platform["installed"] == "platform"
             first = command("status", *fixed)
             assert first["profile"]["profile"] == "platform"
-            assert first["profile"]["installed_tools"] == ["omd", "omd-contract"]
+            assert first["profile"]["installed_tools"] == ["omd", "omd-contract", "omd-mod"]
             assert [item["id"] for item in first["profile"]["packages"] if item["installed"]] == ["omd_logo", "omd_mods"]
             assert (bin_dir / "codex").is_symlink()
             version = json.loads((ROOT / "upstream.lock.json").read_text())["tag"].removeprefix("rust-v")
@@ -118,7 +119,10 @@ def run(archive, upstream, output):
             assert full_status["profile"] == "full"
             assert {item["id"] for item in full_status["packages"] if item["loaded_by_profile"]} == {"omd_inspector", "omd_logo", "omd_model_picker", "omd_mods", "omd_workspace"}
             assert not full_status["plugin_bundle"]["installed_by_candidate"]
-            assert len(full_status["plugin_bundle"]["plugins"]) == 7
+            assert len(full_status["plugin_bundle"]["plugins"]) == 10
+            registered = json.loads(subprocess.check_output([bin_dir / "omd-package", "plugins"], env=env, text=True))
+            assert registered["source"] == str(install_root.resolve() / "current/prefix/bundles/oh-my-diff")
+            registered_generation = Path(registered["source"]).resolve()
             previous_link = install_root / "previous"
             previous_link.unlink()
             previous_link.symlink_to((install_root / "current").resolve())
@@ -132,21 +136,30 @@ def run(archive, upstream, output):
                            check=True, capture_output=True, env=env)
             command(*fixed, "--profile", "full", *asset)
             repeated = command("status", *fixed)["profile"]
+            assert Path(registered["source"]).resolve() != registered_generation
+            available = subprocess.check_output([bin_dir / "codex", "plugin", "list"], env=env, text=True)
+            assert all(f"{name}@oh-my-diff" in available for name in registered["plugins"])
             assert not next(item for item in repeated["packages"] if item["id"] == "omd_workspace")["enabled_in_store"]
             restored = command("rollback", *fixed)
             assert restored["profile"] == "full"
             assert command("status", *fixed)["profile"]["profile"] == "full"
+            subprocess.run([bin_dir / "codex", "plugin", "marketplace", "remove", "oh-my-diff"],
+                           check=True, capture_output=True, env=env)
             removed = command("uninstall", *fixed)
             assert removed["uninstalled"] and (install_root / "stores/platform").is_dir()
             assert (install_root / "stores/full").is_dir()
             assert not (bin_dir / "codex").exists() and not (bin_dir / "codex").is_symlink()
             assert shutil.which("codex", path=env["PATH"]) == str(upstream)
-            assert initial == {str(path): digest(path) for path in sentinels}
+            config = tomllib.loads((home / "config.toml").read_text())
+            assert config["model"] == "preserve-user-choice" and not config.get("marketplaces")
+            assert {name: value for name, value in initial.items() if not name.endswith("config.toml")} == {
+                str(path): digest(path) for path in sentinels if path.name != "config.toml"}
             report = {"status": "pass", "archive_sha256": digest(archive),
                       "checks": ["HTTPS curl pipe", "no-TTY choice", "bad hash", "OMD Core",
                                  "failed and interrupted download", "OMD+", "interrupted pointer recovery",
                                  "profile switch rollback",
                                  "reinstall with selection retention", "rollback",
+                                 "plugin marketplace survives updates",
                                  "uninstall with upstream restoration", "shared state"]}
         finally:
             server.shutdown()

@@ -421,7 +421,7 @@ impl Services {
                     worker.clone(),
                     lead.owner.clone(),
                     lead.depth.saturating_add(1),
-                    host.config.worker_limits.clone(),
+                    host.worker_limits(&lead.session)?,
                 )
                 .map_err(|e| e.to_string())?;
             struct RequestGuard {
@@ -516,7 +516,7 @@ impl Services {
                 worker.clone(),
                 lead.owner.clone(),
                 lead.depth.saturating_add(1),
-                host.config.worker_limits.clone(),
+                host.worker_limits(&lead.session)?,
             )
             .map_err(|e| e.to_string())?;
         let mut argv = vec![grant.program.to_string_lossy().into_owned()];
@@ -533,7 +533,9 @@ impl Services {
             .remaining()
             .map_err(|e| e.to_string())?
             .0
-            .min(Duration::from_secs(host.config.worker_limits.seconds));
+            .min(Duration::from_secs(
+                host.route_config().0.worker_limits.seconds,
+            ));
         let mut supervised = vec![
             supervisor.to_string_lossy().into_owned(),
             "--omd-managed-service-v1".into(),

@@ -41,7 +41,7 @@ export default function activate(api: ModAPI): void {
     return answer.ok && answer.value.status === 'accepted';
   };
   const route = (): Row | null => {
-    if (typeof api.settings.route !== 'string') return null;
+    if (typeof api.settings.route !== 'string' || !api.settings.route) return null;
     const read = api.host.tryCall('exec.run', { program: '/bin/cat', argv: [api.settings.route] });
     try { return read.ok && read.value.exit_code === 0 ? JSON.parse(read.value.stdout) : null; } catch { return null; }
   };
@@ -56,9 +56,17 @@ export default function activate(api: ModAPI): void {
     return { error: run.value.stderr.trim().split('\n').at(-1) ?? '', results };
   };
 
-  api.on('turn_start', () => {
+  // The provider is read once per thread at start or resume; each turn only restarts a stopped sidecar.
+  const detect = () => {
     const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
-    if (config.ok && (config.value as Row).config?.model_provider === 'omd_muse') ensure();
+    const ours = config.ok && (config.value as Row).config?.model_provider === 'omd_muse';
+    api.state.set(ours);
+    if (ours) ensure();
+  };
+  api.on('start', detect);
+  api.on('resume', detect);
+  api.on('turn_start', () => {
+    if (api.state.get() === true) ensure();
   });
   api.tool({ name: 'approval', description: 'Internal relay for approval requests raised by a Muse lead. Never call this tool yourself.',
     parameters: { type: 'object', properties: { key: { type: 'string' }, tool: { type: 'string' }, summary: { type: 'string' } },
