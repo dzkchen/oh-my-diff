@@ -27,9 +27,18 @@ def author_examples():
     return re.findall(r"'([^']+)'", match.group(1)) if match else []
 
 
+def identified(registry):
+    packages = []
+    for package in registry.get("packages", []):
+        manifest = ROOT / package["path"] / "mod.json"
+        identity = json.loads(manifest.read_text()) if manifest.is_file() else {}
+        packages.append({**package, "id": identity.get("id"), "version": identity.get("version")})
+    return packages
+
+
 def check(registry):
     problems = []
-    packages = registry.get("packages", [])
+    packages = identified(registry)
     paths = [package.get("path") for package in packages]
     if len(paths) != len(set(paths)):
         problems.append("duplicate classified package path")
@@ -37,12 +46,11 @@ def check(registry):
     if set(paths) != actual:
         problems.append(f"classified package paths differ: missing={sorted(actual - set(paths))}, extra={sorted(set(paths) - actual)}")
 
+    for raw in registry.get("packages", []):
+        if {"id", "version"} & set(raw):
+            problems.append(f"{raw['path']}: id and version come from mod.json; remove them from the registry")
     for package in packages:
-        path = ROOT / package["path"]
-        manifest = json.loads((path / "mod.json").read_text()) if (path / "mod.json").is_file() else {}
         label = package["path"]
-        if package.get("id") != manifest.get("id") or package.get("version") != manifest.get("version"):
-            problems.append(f"{label}: identity or version differs from mod.json")
         if package.get("extension_type") not in EXTENSION_TYPES:
             problems.append(f"{label}: unknown extension type {package.get('extension_type')!r}")
         if package.get("role") not in ROLES:
@@ -88,7 +96,7 @@ def table(rows, headers):
 
 
 def render(registry):
-    packages = registry["packages"]
+    packages = identified(registry)
     out = [
         "# Extension types",
         "",

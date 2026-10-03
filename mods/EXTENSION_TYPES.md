@@ -13,8 +13,8 @@ contains only the packages labeled `bundled` below.
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
 | `omd_coordination@0.2.0-preview.1` | `mod` | `mods/first-party/omd_coordination` | Replaces live task-entry routing and context assembly, and exports bounded delegation preparation to the recovery policy. |
-| `omd_recovery@0.2.0-preview.1` | `mod` | `mods/first-party/omd_recovery` | Replaces live escalation and delegation dispatch with failure classification, eligible-tool, advisory-route, and Contributor-outage choices. |
-| `omd_workflow@0.2.0-preview.1` | `mod` | `mods/first-party/omd_workflow` | Owns live workflow selection, contract gates, candidate checks, and task decisions through generic host services and bounded receipts. |
+| `omd_recovery@0.2.0-preview.2` | `mod` | `mods/first-party/omd_recovery` | Replaces live escalation and delegation dispatch with failure classification, eligible-tool, advisory-route, and Contributor-outage choices. |
+| `omd_workflow@0.2.0-preview.2` | `mod` | `mods/first-party/omd_workflow` | Owns live workflow selection, contract gates, candidate checks, and task decisions through generic host services and bounded receipts. |
 | `omd_workspace@0.2.0-preview.4` | `mod` | `mods/first-party/omd_workspace` | Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation. |
 
 ## Unqualified first-party candidates
@@ -55,7 +55,7 @@ contains only the packages labeled `bundled` below.
 | `omd_shared_checkout@0.1.0-preview.1` | `mod` | `mods/first-party/omd_shared_checkout` | Owns the shared-checkout registry, path reservations, handoffs and Git lease in mod state and enforces them for agent patches, Git commands and recognizable shell writes through approval middleware; installed inactive in OMD+. |
 | `omd_mini@0.1.0-preview.1` | `mod` | `mods/first-party/omd_mini` | Owns the mini presentation of omd mini sessions: hidden inline sites, compact tool summaries, a short prompt, one status segment and the switch request read by the launcher; installed inactive in OMD+. |
 | `omd_lsp_view@0.2.0-preview.1` | `mod` | `mods/first-party/omd_lsp_view` | Owns the user-invoked code-intelligence view, its request hop, result navigation over the omd.lsp service, file-view diagnostics and the language-server sidebar pane; installed inactive in OMD+. |
-| `omd_frecency@0.1.0-preview.1` | `mod` | `mods/first-party/omd_frecency` | Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage and serves the omd.frecency ranking service; installed inactive in OMD+. |
+| `omd_frecency@0.1.0-preview.2` | `mod` | `mods/first-party/omd_frecency` | Owns @ mention ranking through the exclusive completion replacement, queues paths from submitted input and learns them at turn start into repository storage and serves the omd.frecency ranking service; installed inactive in OMD+. |
 | `omd_plan_panel@0.1.0-preview.1` | `mod` | `mods/first-party/omd_plan_panel` | Pins Codex's update_plan steps above the composer from turn/plan/updated notifications in a wrapped above_composer site with a collapse key; installed inactive in OMD+. |
 | `omd_profiles@0.1.0-preview.1` | `mod` | `mods/first-party/omd_profiles` | Owns profile selection, setup guidance, paid-route consent and status over host credential flows and routes.select, plus the loopback router that adapts Chat Completions and Anthropic Messages providers; installed inactive in OMD+. |
 | `omd_herdr@0.1.0-preview.1` | `mod` | `mods/first-party/omd_herdr` | Maps native thread status notifications to Herdr pane reports with the session resume command and releases the pane on exit, through declared environment metadata, exec.run and a granted Unix socket; installed inactive in OMD+. |

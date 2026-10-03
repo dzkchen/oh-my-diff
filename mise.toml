@@ -27,3 +27,9 @@ run = "python3 scripts/integration_matrix.py"
 
 [tasks."upstream:candidate"]
 run = "python3 scripts/upstream_candidate.py run"
+
+[tasks."batch"]
+run = "python3 scripts/batch_tree.py"
+
+[tasks."batch:brief"]
+run = "python3 scripts/batch_brief.py"

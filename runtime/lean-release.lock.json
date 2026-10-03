@@ -9,8 +9,8 @@
       "sha256": "00011e81621fb3b181c2ee21c74c25a38ad158a1a59c39ed1df4a447eeb2d1e6"
     },
     "mod-api.tgz": {
-      "bytes": 70381,
-      "sha256": "419f4dc2df3e84dac5b1bdd5ada914702f28060cb3283773286834e023868e10"
+      "bytes": 69799,
+      "sha256": "693a38ecd5a7c9f33e900736aadda88a8b3a7f1d43b215c98884c8531967d787"
     },
     "omd": {
       "bytes": 8648768,
@@ -123,7 +123,7 @@
   "source_sha256": {
     "LEAN_PROFILES.md": "4c083c05b009ef1492b4bc169002ccb5f67d699b53d8f292af99370ee98d3140",
     "extensions/index.json": "dfc364233b4425fc70d5ed73cc75442979e267ac2967520dd73890264deeb17e",
-    "mods/EXTENSION_TYPES.md": "3dfec62abab1a8bc041dd274fc7fe37a154c4285c4ebe48764651053aa974e7e",
+    "mods/EXTENSION_TYPES.md": "3a7545abb8e0e3eb3d4031ab0dc3282b2974de9ce8fbfe832d8b35bccd54c62b",
     "mods/README.md": "52e12474dacd707db12ce68f6402f9aa956ea1e2f26cbcd3bc8783dd39b90ae5",
     "mods/REFERENCE.md": "46660950c98352e422e75c0eb874bbbb40983a51bcfc515783be50cb8d8a42bc",
     "mods/api.d.ts": "a2847ed7d15b2222993c2d3be48360763ff5b51a941719a050bd2680c67573d5",
@@ -160,7 +160,7 @@
     "mods/examples/workspace/index.ts": "644332b9cc3cb71dc3d8faa4f9d728d91b83def82b2cebdcf7623a6ff0a825f7",
     "mods/examples/workspace/mod.json": "a42f84bcbf10f0a0e4cab82731ee9248f95d70d473b045063af4ee68bc4cff73",
     "mods/examples/workspace/mod.test.json": "ec53fd7bb191621b388ba5b8e27dc0038aa44476b518d81462006d74b2cd6cfa",
-    "mods/extension-types.json": "9fdc2a5f13696c85cf55cd662fbdfbf2f3cb0b6355d6e9ff15479f7bf03950b8",
+    "mods/extension-types.json": "9f6774711a45e07a58008721b6883d733c3772542637ef4702b1994d4a8d996e",
     "mods/first-party/omd_advisor/index.ts": "660bcb83894ba07a973cc305169dcd592eb600b0a6055ab4ca5aacf4a56bfd34",
     "mods/first-party/omd_advisor/mod.json": "9d32ea5730b631865ad98055ce50db9f98e1ceaa670a71c6cbe60a5df05857f5",
     "mods/first-party/omd_checks/index.ts": "1ba722ddd9bbc8a6d94e98851b723682de249070e22730d6e61cfe6ccaa600f8",
@@ -297,7 +297,7 @@
     "runtime/full-mods.lock.json": "6b949603cd90176db94fee20a7822165a3873bdfffa179139e5fad969ca3e64c",
     "runtime/hardened-entitlements.plist": "958648f799e436860b51eaf55ec8f92d2c62da17001e23d96bc05ffc748f2a2a",
     "runtime/patches/manifest.json": "af7bac8943136c96f1e76d3a13306352b2e4564e5d903f198e387006f9edd06a",
-    "runtime/plugin-v1.lock.json": "96c761202f2daf303d67bc70b4a18d477d7c1ffaf7096a495591106ce3162cb8",
+    "runtime/plugin-v1.lock.json": "18a24ce8739b20bf07802922e8b2ded818aeb691a0c20cc208e9a131b1e6c6a3",
     "runtime/preview-v1.lock.json": "708ca9c69c9e3e3381d67c0f5aea1a88d56130f1d15e87a549a28036fe5075ca",
     "scripts/authority_broker.py": "7178e9b86feafaf0665e154af71ae603a09d11c001c576f8708d66c19df01e11",
     "scripts/full_mods_lock.py": "7464dd5abedc7d513dacabc10be0a955cc50c78e0b459459aea3c6d9d0ac9fcf",
