@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_panes",
-  "version": "0.1.0-preview.2",
+  "version": "0.1.0-preview.3",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Recursive split panes with a Git-aware file tree, file viewer, shell, diff, mod-panel and browser panes",

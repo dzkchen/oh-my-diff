@@ -171,7 +171,7 @@ test('tabs hold pane layouts beside the conversation and follow keys, clicks and
     assert.equal(view().layout, undefined);
     service('omd.panes.cockpit', null);
     assert.deepEqual(view().layout.children.map(child => child.content ?? child.tabs?.map(tab => `${tab.title}:${tab.node.content}`) ?? 'chat'),
-      ['site:omd_layout/sessions', 'chat', ['Changes:site:sidebar', 'Files:site:omd_panes/p3-tree', 'Diff:site:omd_panes/p4-diff']]);
+      ['site:omd_layout/sessions', 'chat', ['Status:site:sidebar', 'Files:site:omd_panes/p3-tree', 'Diff:site:omd_panes/p4-diff']]);
     command('tree', 'select src/app.ts');
     assert.deepEqual(service('omd.panes.find', { query: 'VALUE', regex: false, case: false }).views, [{ path: 'src/app.ts', matches: 1 }]);
     const viewer = Object.entries(view().sites).find(([name]) => name.endsWith('-viewer'))[1].components;

@@ -92,6 +92,7 @@ export interface TerminalView {
   sites?: Partial<Record<TerminalSiteName, TerminalRenderSite>>; status?: string[]; keybindings?: Partial<Record<KeyName, KeyAction>>; theme?: TerminalTheme;
   completed_tools?: 'normal' | 'compact'; message_template?: string; tool_template?: string; placeholder?: string;
   layout?: LayoutNode; backdrop?: TerminalBackdrop; surface_styles?: { composer?: TerminalSurfacePaint; backdrop?: TerminalSurfacePaint; approval?: TerminalSurfacePaint };
+  inline_sites?: 'hidden';
 }
 export type TerminalPatch = Omit<TerminalView, 'panels' | 'header' | 'footer'>;
 export type CommandResult = Json | { display?: string; insert?: string; submit?: string };

@@ -46,7 +46,8 @@ right of the conversation) and adds a tab with a new pane of the given kind;
 splits inside a tab stay in that tab. Up to six tabs share the 12-cell limit.
 Closing a tab's last pane removes the tab. `/pane cockpit` replaces the panes
 with the Herdr/Crush-style cockpit: the `omd_layout` session list, the
-conversation, and Changes (the sidebar with `omd_git` and `omd_workspace`),
+conversation, and Status (the composed sidebar: `omd_workspace` session status
+and activity, `omd_git` changes, language servers and MCP servers),
 Files and Diff tabs.
 
 **Services.** `omd.panes` 1.0.0 lets other mods list and show tabs, open a file

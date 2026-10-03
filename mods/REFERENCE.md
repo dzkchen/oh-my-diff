@@ -1052,8 +1052,13 @@ the mod or install Python or debugpy. OMD+ stages the plugin inactive.
 ## Terminal identity, rich lines and picker
 
 Terminal views are drawn on Codex's alternate screen, including its default
-fullscreen transcript; inline `--no-alt-screen` sessions keep only status
-segments and commands. The `terminal` input carries a read-only `identity`
+fullscreen transcript. Inline `--no-alt-screen` sessions draw the sidebar,
+header and dialogs inside the current viewport, and message/tool templates,
+`completed_tools` and status segments apply to scrollback. When any mod's view
+sets `inline_sites: 'hidden'` (`terminal_inline_sites_v1`), the inline viewport
+omits the sidebar, header and named sites; dialogs, status segments, mod
+progress and diagnostics, the composer, approvals and scrollback remain, and
+the owned fullscreen viewport is unchanged. The `terminal` input carries a read-only `identity`
 (`terminal_identity_v1`): `codex_version` from the installed build,
 `install_profile` (`full`, `platform_only`, `private`, `unknown` or
 `unreported`), effective `mode` (`omd`), and installed,

@@ -29,7 +29,7 @@
     {
       "path": "mods/first-party/omd_workspace",
       "id": "omd_workspace",
-      "version": "0.2.0-preview.3",
+      "version": "0.2.0-preview.4",
       "extension_type": "mod",
       "role": "bundled",
       "why_mod": "Replaces the live terminal workspace, render sites, key actions, and streamed activity presentation."
@@ -293,7 +293,7 @@
     {
       "path": "mods/first-party/omd_git",
       "id": "omd_git",
-      "version": "0.2.0-preview.2",
+      "version": "0.2.0-preview.3",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Adds a live Git sidebar with previews and confirmations over host-owned, fingerprint-checked Git operations."
@@ -459,6 +459,14 @@
       "why_mod": "Keeps one state per Git checkout that every OMD session working there shares."
     },
     {
+      "path": "mods/examples/quiet_inline",
+      "id": "quiet_inline",
+      "version": "1.0.0",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Keeps inline scrollback free of every mod sidebar and header for screen readers and plain terminals."
+    },
+    {
       "path": "mods/examples/image_preview",
       "id": "image_preview",
       "version": "1.0.0",
@@ -589,7 +597,7 @@
     {
       "path": "mods/first-party/omd_theme",
       "id": "omd_theme",
-      "version": "0.4.0-candidate.1",
+      "version": "0.4.0-candidate.2",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Composes live terminal palettes, backgrounds, composer appearance, greeting settings, a powerline status line from thread notifications and a composer-draft stash through public presentation, composer and app primitives; installed inactive in OMD+."
@@ -653,7 +661,7 @@
     {
       "path": "mods/first-party/omd_panes",
       "id": "omd_panes",
-      "version": "0.1.0-preview.2",
+      "version": "0.1.0-preview.3",
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the pane layout, file tree, viewer and shell panes through public layout, terminal, PTY, workspace-transaction and thread-store primitives, ranking tree find through the optional omd.frecency service; installed inactive in OMD+."
@@ -697,6 +705,14 @@
       "extension_type": "mod",
       "role": "candidate",
       "why_mod": "Owns the shared-checkout registry, path reservations, handoffs and Git lease in mod state and enforces them for agent patches, Git commands and recognizable shell writes through approval middleware; installed inactive in OMD+."
+    },
+    {
+      "path": "mods/first-party/omd_mini",
+      "id": "omd_mini",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "role": "candidate",
+      "why_mod": "Owns the mini presentation of omd mini sessions: hidden inline sites, compact tool summaries, a short prompt, one status segment and the switch request read by the launcher; installed inactive in OMD+."
     },
     {
       "path": "mods/first-party/omd_lsp_view",

@@ -126,6 +126,38 @@ class LeanProfileModeTests(unittest.TestCase):
                 self.assertTrue(result["packages"][0]["enabled_in_store"])
                 self.assertIsNone(result["packages"][0]["error"])
 
+    def test_mini_relaunches_only_on_a_request_from_the_run_that_exited(self):
+        record = {"store": "/opt/omd/store", "activation": {"selection": "full"},
+                  "tools": {"omd": {"installed_path": "/opt/omd/bin/omd"}}}
+        enabled = [{"id": "omd_mini", "effective": True, "error": None}]
+        runs, requests = [], [{"run": 0, "target": "full", "thread": "019a-1"}, {"run": 0, "target": "mini", "thread": "019a-1"}]
+
+        def run(argv, **options):
+            if argv[0] == "/opt/omd/bin/omd":
+                request = requests.pop(0) if requests else None
+                entries = {f"switch_{runs[-1][1]['OH_MY_DIFF_LAUNCH'].split('.')[0]}": {"value": request}} if request else {}
+                return subprocess.CompletedProcess(argv, 0, json.dumps({"entries": entries}), "")
+            runs.append(([str(item) for item in argv], options["env"]))
+            return subprocess.CompletedProcess(argv, 3)
+
+        handlers = {name: lean_profiles.signal.getsignal(name) for name in (lean_profiles.signal.SIGINT, lean_profiles.signal.SIGQUIT)}
+        try:
+            with patch.object(lean_profiles, "load", return_value=record), \
+                    patch.object(lean_profiles, "check", return_value=(None, "/opt/omd/manager")), \
+                    patch.object(lean_profiles, "invoke", return_value={"selections": enabled}), \
+                    patch.object(lean_profiles.sys.stdin, "isatty", return_value=True), \
+                    patch.object(lean_profiles.sys.stdout, "isatty", return_value=True), \
+                    patch.object(lean_profiles.subprocess, "run", side_effect=run):
+                self.assertEqual(lean_profiles.mini(Path("/opt/omd"), Path("/opt/bin"), ["-m", "gpt"]), 3)
+                self.assertEqual([argv for argv, _ in runs], [["/opt/bin/codex", "--no-alt-screen", "-m", "gpt"], ["/opt/bin/codex", "resume", "019a-1"]])
+                self.assertEqual([(env["OH_MY_DIFF_PRESENTATION"], env["OH_MY_DIFF_LAUNCH"][-2:]) for _, env in runs], [("mini", ".0"), ("full", ".1")])
+                enabled[0]["effective"] = False
+                with self.assertRaisesRegex(ValueError, "omd-package mod enable omd_mini"):
+                    lean_profiles.mini(Path("/opt/omd"), Path("/opt/bin"), [])
+        finally:
+            for name, handler in handlers.items():
+                lean_profiles.signal.signal(name, handler)
+
 
 if __name__ == "__main__":
     unittest.main()

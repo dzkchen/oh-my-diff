@@ -1,19 +1,22 @@
 {
   "schema": 1,
   "id": "omd_workspace",
-  "version": "0.2.0-preview.3",
+  "version": "0.2.0-preview.4",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "state_scope": "thread",
-  "description": "Session activity sidebar, review draft key and sidebar settings",
+  "description": "Session status and activity sidebar, state and shortcut header, review draft key and sidebar settings",
   "capabilities": [
     "terminal",
     "commands",
     "lifecycle",
-    "store"
+    "store",
+    "threads",
+    "config"
   ],
+  "subscriptions": {"app": ["thread/settings/updated", "thread/tokenUsage/updated"]},
   "compatibility": {
-    "required_features": ["terminal_lists_v1", "store_v1"]
+    "required_features": ["terminal_lists_v1", "terminal_rich_line_v1", "store_v1", "app_v1"]
   },
   "settings_schema": {
     "type": "object",

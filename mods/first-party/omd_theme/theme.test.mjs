@@ -23,13 +23,14 @@ const textReceipt = text => ({ call: { operation: 'evidence.read', arguments: { 
 test('default greeting is hidden; palettes retain semantic colors and width-preserving symbols', () => {
   const defaults = run('terminal').value;
   assert.equal(defaults.greeting, '');
-  assert.equal(defaults.background, 235);
-  assert.equal(defaults.foreground, 255);
+  assert.equal(defaults.background, 234);
+  assert.notEqual(defaults.theme.user_message_background, '#17191d');
+  assert.equal(defaults.foreground, 254);
   assert.deepEqual(defaults.theme.glyphs, {});
   assert.equal(defaults.backdrop, undefined);
   const unicode = run('terminal', '', '', { settings: { symbols: 'unicode' } }).value;
   assert.deepEqual(unicode.theme.glyphs, { '===': '≡  ', '->': '→ ', '<=': '≤ ' });
-  for (const palette of ['midnight', 'paper', 'contrast', 'frost', 'graphite', 'amber']) {
+  for (const palette of ['night', 'midnight', 'paper', 'contrast', 'frost', 'graphite', 'amber']) {
     const value = run('terminal', '', '', { settings: { palette, composer_gloss: true } }).value;
     assert.match(value.theme.failure, /^#[\da-f]{6}$/);
     assert.equal(value.theme.syntax, palette === 'paper' ? 'catppuccin-latte' : 'catppuccin-mocha');
@@ -55,9 +56,9 @@ test('preview, save, reload, discard and reset keep user-selected greeting and p
   const shown = paletteSelect(state);
   state = run('command', 'reset', '', { state }).state;
   assert.notEqual(paletteSelect(state).id, shown.id);
-  assert.equal(paletteSelect(state).value, 'midnight');
+  assert.equal(paletteSelect(state).value, 'night');
   assert.equal(run('terminal', '', '', { state }).value.greeting, '');
-  assert.equal(run('terminal', '', '', { state }).value.background, 235);
+  assert.equal(run('terminal', '', '', { state }).value.background, 234);
 });
 
 test('representative Ghostty, iTerm2 XML and Warp YAML imports retain RGB and ANSI intent', () => {
@@ -91,7 +92,7 @@ test('denied, declined, malformed and unsupported imports preserve the selected 
     assert.deepEqual(output.state.imports, {});
   }
   for (const [command, value] of [['set', 'palette constructor'], ['set', 'palette __proto__'], ['style', '__proto__']]) assert.equal(run('command', command, value, { state: prior }).state.preview.palette, 'paper');
-  assert.equal(run('terminal', '', '', { state: { preview: { palette: 'constructor' } } }).value.background, 235);
+  assert.equal(run('terminal', '', '', { state: { preview: { palette: 'constructor' } } }).value.background, 234);
   const invalid = run('command', 'set', 'scale 99', { state: prior });
   assert.equal(invalid.state.preview.palette, 'paper');
   assert.match(invalid.value.display, /0.1/);

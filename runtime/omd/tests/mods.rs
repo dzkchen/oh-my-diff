@@ -1244,6 +1244,15 @@ fn terminal_components_compose_in_dependency_order_and_observers_contribute_stat
     );
     assert!(terminal.contributors.contains(&"observer".to_owned()));
     assert!(terminal.view.status.contains(&"observer".to_owned()));
+
+    let cancelled =
+        runtime.terminal_view(json!({"event":"interrupted","checkpoint":null}), || false);
+    assert!(
+        cancelled.diagnostics.is_empty(),
+        "{:?}",
+        cancelled.diagnostics
+    );
+    assert_eq!(cancelled.view.status, terminal.view.status);
 }
 
 #[test]

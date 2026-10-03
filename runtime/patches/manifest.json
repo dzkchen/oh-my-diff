@@ -4,7 +4,7 @@
   "baseline": "Run scripts/normalize_upstream_lock.py before applying; no external dependency changes.",
   "patch": {
     "path": "runtime/patches/omd-0.159.1.patch",
-    "sha256": "24ea6c27d3d7cf61e266587f32cffccc77ac9947900103a98a1ef35182764a75"
+    "sha256": "c4fffef1984d80065876c8212c0ef48026d74a9ac6ef81d3add47186133c0ff4"
   },
   "files": {
     "codex-rs/Cargo.lock": {
@@ -573,7 +573,7 @@
     },
     "codex-rs/omd/src/mods.rs": {
       "before": null,
-      "after": "33bad47b3c5342b654820592b1ba325454f79dcc774969002134468ea382d999"
+      "after": "b3d2700d12198a7b30a1cca59cf166d707b409a6ac87f77110069bc1bcb1bc8c"
     },
     "codex-rs/omd/src/mods/author.rs": {
       "before": null,
@@ -617,7 +617,7 @@
     },
     "codex-rs/omd/src/mods/view.rs": {
       "before": null,
-      "after": "05a0fdd108d6084af3cbe4e3f3deb55a04282fd8312294492e4b8eec4282012a"
+      "after": "e7059fe1d25e87ed621b819ee31caa2b308183ae6a15e863185f772b35624126"
     },
     "codex-rs/omd/src/mods/view_surface_tests.rs": {
       "before": null,
@@ -681,7 +681,7 @@
     },
     "codex-rs/omd/tests/examples.rs": {
       "before": null,
-      "after": "e60b5872151dc15ab3ebc23906f9bc4f01898ad3c094e37bac636358f57f8870"
+      "after": "37333d9184acc109f7d4e2865b86c15e4b16fb31e46481f125fa50400bf52b26"
     },
     "codex-rs/omd/tests/generic_host.rs": {
       "before": null,
@@ -693,7 +693,7 @@
     },
     "codex-rs/omd/tests/mods.rs": {
       "before": null,
-      "after": "07912ba5e06547684fa73952cbced5de6509f73ed1c0f97ab3be2dfca04d7b5c"
+      "after": "e75fe567343fe2cbf9012af5a08cef71f595ce306a1221640dd9cb6ac72275c0"
     },
     "codex-rs/omd/tests/packages.rs": {
       "before": null,
@@ -745,7 +745,7 @@
     },
     "codex-rs/tui/src/app.rs": {
       "before": "e4eb9545d4c80c227adfbdab3238c434078b52d10b606799729df1f65fff0d67",
-      "after": "b7ad2edc9e11abedc3657cf3e400041c0099f92106cad94bb38c2e9dbbb03682"
+      "after": "ff9bbf70c0e3d1ecf01af59eb1ebb64a1090736bf6e7ff9f3028344aecd87107"
     },
     "codex-rs/tui/src/app/app_server_events.rs": {
       "before": "3e5d1fce8584e19ed1403804c82ac203d50d551557a18d90e71cf199f606927e",
@@ -1473,11 +1473,11 @@
     },
     "codex-rs/tui/src/mod_ui.rs": {
       "before": null,
-      "after": "7b40bcad8dcee290dcd1254bf3c7d0fbdd330532b32f63f4d20a0d7229a7d056"
+      "after": "50eb7a773907548110ddea4469f3bca3926cc4fc289f7d6528fd2565be733277"
     },
     "codex-rs/tui/src/mod_ui_tests.rs": {
       "before": null,
-      "after": "742cead95b32dbda445f2d13f4c02955d7ab98ae11948072c02a05b967c8d3f5"
+      "after": "05a6287fc80f9e3e53a65ae6816ff4f6bcaaf846f46f1025e8d88805186a3110"
     },
     "codex-rs/tui/src/notifications/mod.rs": {
       "before": "dd368133d86e072dad4fa3e48ae60c84d38da53871c019fc1078ee88826a9bff",

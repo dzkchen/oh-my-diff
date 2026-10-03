@@ -887,7 +887,7 @@
       "group": "terminal",
       "decision": "Assistant, tool and completed-activity presentation",
       "observe": "not applicable",
-      "alter": "a template that retains `{text}` exactly once, plus compact presentation for successful completed agent tool output",
+      "alter": "a template that retains `{text}` exactly once, compact presentation for successful completed agent tool output, and `inline_sites: 'hidden'` to keep the sidebar, header and named sites out of the inline viewport",
       "replace": "terminal",
       "timing": "rich streamed and finalized assistant cells and exec cells as they render, including inline scrollback",
       "ownership": "host: the raw transcript, stored messages and durable evidence",
@@ -902,7 +902,8 @@
       "evidence": [
         "rust:terminal_validation_rejects_control_sequences_reserved_keys_and_unbounded_views",
         "patch:focus_flow_compacts_only_successful_agent_output",
-        "patch:message_template_covers_streamed_and_finalized_agent_text"
+        "patch:message_template_covers_streamed_and_finalized_agent_text",
+        "patch:hidden_inline_sites_leave_dialogs_and_diagnostics_in_the_inline_viewport"
       ],
       "replace_note": null
     },

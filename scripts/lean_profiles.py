@@ -7,6 +7,7 @@ from pathlib import Path
 import platform
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -392,6 +393,36 @@ def route(prefix, bin_dir, name, args):
                         "-c", f"model_catalog_json={json.dumps(provider['catalog'])}", *args.codex])
 
 
+def mini(prefix, bin_dir, codex):
+    record = load(prefix)
+    _, manager = check(record, bin_dir)
+    if record["activation"]["selection"] == "direct":
+        raise ValueError("activate OMD Core or OMD+ before using omd mini")
+    selections = invoke(manager, "selection-status", record["store"])["selections"]
+    if not any(item.get("id") == "omd_mini" and item.get("effective") and not item.get("error") for item in selections):
+        raise ValueError("omd mini needs its mod enabled: omd-package mod enable omd_mini")
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise ValueError("omd mini needs a terminal; use `codex exec` for piped or scripted runs")
+    launch, run, mode = os.urandom(8).hex(), 0, "mini"
+    for name in (signal.SIGINT, signal.SIGQUIT):
+        signal.signal(name, signal.SIG_IGN)
+    while True:
+        env = {**os.environ, "OH_MY_DIFF_PRESENTATION": mode, "OH_MY_DIFF_LAUNCH": f"{launch}.{run}"}
+        code = subprocess.run([bin_dir / "codex", *(["--no-alt-screen"] if mode == "mini" else []), *codex], env=env,
+                              preexec_fn=lambda: [signal.signal(name, signal.SIG_DFL) for name in (signal.SIGINT, signal.SIGQUIT)]).returncode
+        exported = subprocess.run([record["tools"]["omd"]["installed_path"], "store", "export", "--mod", "omd_mini",
+                                   "--store", record["store"], "--scope", "user"], capture_output=True, text=True)
+        try:
+            entry = json.loads(exported.stdout)["entries"].get(f"switch_{launch}") if exported.returncode == 0 else None
+        except (ValueError, KeyError, AttributeError):
+            entry = None
+        request = entry.get("value") if isinstance(entry, dict) else None
+        if not (isinstance(request, dict) and request.get("run") == run and request.get("target") in ("mini", "full")
+                and isinstance(request.get("thread"), str) and request["thread"].replace("-", "").isalnum()):
+            return code
+        mode, codex, run = request["target"], ["resume", request["thread"]], run + 1
+
+
 def install(args):
     prefix, bin_dir, store = paths(args.prefix, args.bin_dir, args.store)
     if platform.system() != "Darwin" or platform.machine() != "arm64":
@@ -551,7 +582,7 @@ def install(args):
         record["author"]["launcher_sha256"] = support.digest(author_launcher)
         control_launcher = bin_dir / "omd-package"
         support.atomic_text(control_launcher,
-                            f"#!/bin/sh\nexport PYTHONDONTWRITEBYTECODE=1\n"
+                            f"#!/bin/sh\nexport PYTHONDONTWRITEBYTECODE=1 OMD_PACKAGE_CWD=\"$PWD\"\n"
                             f"cd {shlex.quote(str(management_root))} || exit 1\n"
                             f"exec {shlex.quote(sys.executable)} -m scripts.lean_profiles "
                             f"--prefix {shlex.quote(str(prefix))} --bin-dir {shlex.quote(str(bin_dir))} \"$@\"\n",
@@ -562,7 +593,8 @@ def install(args):
             tool_launcher = bin_dir / name
             launcher_text = f"#!/bin/sh\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
             if name == "omd":
-                launcher_text = f"#!/bin/sh\nexport OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n"
+                launcher_text = (f"#!/bin/sh\nif [ \"$1\" = mini ]; then shift; exec {shlex.quote(str(control_launcher))} mini -- \"$@\"; fi\n"
+                                 f"export OMD_MOD_STORE={shlex.quote(str(store))}\nexec {shlex.quote(details['installed_path'])} \"$@\"\n")
             support.atomic_text(tool_launcher, launcher_text, 0o755)
             made_launchers.append(tool_launcher)
             details["launcher_sha256"] = support.digest(tool_launcher)
@@ -688,12 +720,16 @@ def main():
                 route_parser.add_argument(f"--{flag}")
             route_parser.add_argument("--reasoning", action="store_true")
         route_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
+    mini_parser = commands.add_parser("mini", help="launch the scrollback-first mini interface (omd mini)")
+    mini_parser.add_argument("codex", nargs=argparse.REMAINDER, help="arguments passed to codex")
     contract_parser = commands.add_parser("contract", help="list, show or select the workflow contract for this repository")
     contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))
     contract_parser.add_argument("contract", nargs="?", help="ID@VERSION for plan and select")
     commands.add_parser("plugins", help="add the OMD+ plugin marketplace to Codex at a path that survives updates")
     commands.add_parser("uninstall", help="remove this installation and its launchers")
     args = parser.parse_args()
+    # The launcher runs from its management directory; commands act on the caller's directory.
+    os.chdir(os.environ.pop("OMD_PACKAGE_CWD", "."))
     prefix, bin_dir = support.validate_locations(args.prefix, args.bin_dir)
     if args.command == "install":
         result = install(args)
@@ -708,6 +744,8 @@ def main():
         result = select_mod(prefix, bin_dir, args.identifier, args.action == "enable")
     elif args.command in ROUTES:
         result = route(prefix, bin_dir, args.command, args)
+    elif args.command == "mini":
+        raise SystemExit(mini(prefix, bin_dir, args.codex[1:] if args.codex[:1] == ["--"] else args.codex))
     elif args.command == "contract":
         result = contract(prefix, args.action, args.contract)
     elif args.command == "plugins":

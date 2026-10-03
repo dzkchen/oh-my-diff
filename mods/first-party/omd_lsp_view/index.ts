@@ -76,11 +76,11 @@ export default function activate(api: ModAPI) {
   });
   api.on('terminal', () => {
     const { view: current, servers } = saved();
-    const sidebar = servers.length ? { sidebar: { mode: 'wrap' as const, components: [{ type: 'pane' as const, id: 'omd_lsp_view_servers', label: 'Language servers', title: 'Language servers', children: servers.flatMap((entry, index): TerminalComponent[] => [
+    const sidebar = servers.length ? { sidebar: { mode: 'wrap' as const, components: [{ type: 'slot' as const }, { type: 'pane' as const, id: 'omd_lsp_view_servers', label: 'Language servers', title: 'Language servers', children: servers.flatMap((entry, index): TerminalComponent[] => [
       { type: 'text', id: `omd_lsp_view_server_${index}`, label: `${entry.adapter} language server`, text: entry.server ? `${entry.adapter} ${entry.server} · ${entry.documents} open · ${entry.count ?? entry.errors.length} errors` : `${entry.adapter}: ${entry.reason.replace(/_/g, ' ') || entry.status}`,
         tone: entry.errors.length ? 'failure' : entry.status === 'stale' ? 'attention' : entry.server ? 'success' : 'muted' },
       ...entry.errors.map((error, line): TerminalComponent => ({ type: 'text', id: `omd_lsp_view_server_${index}_${line}`, label: 'Diagnostic', text: `  ${error}`, tone: 'failure' })),
-    ]) }, { type: 'slot' as const }] } } : {};
+    ]) }] } } : {};
     if (!current) return servers.length ? { sites: sidebar } : null;
     const id = (name: string) => `omd_lsp_view_${name}_${current.revision}`;
     const excerpt = current.excerpt;

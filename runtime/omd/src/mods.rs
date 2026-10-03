@@ -277,6 +277,7 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "route_reload_v1",
     "terminal_commands_v1",
     "terminal_tabs_v1",
+    "terminal_inline_sites_v1",
     "session_ports_v1",
     "builtins_mod_commands_v1",
 ];
@@ -3639,7 +3640,10 @@ impl ModHost {
                 Err(error) => Err(error),
             };
             let parsed = parsed.or_else(|error| {
-                diagnostics.push(format!("{id}: {error}"));
+                // An interrupted turn cancels in-flight renders; the last view stands without a fault.
+                if !error.to_string().contains("callback_cancelled") {
+                    diagnostics.push(format!("{id}: {error}"));
+                }
                 let last = self.valid_views.get(&id).cloned().ok_or(error)?;
                 parse(last)
             });

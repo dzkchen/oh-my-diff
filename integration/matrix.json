@@ -99,6 +99,7 @@
         "route_reload_v1",
         "terminal_commands_v1",
         "terminal_tabs_v1",
+        "terminal_inline_sites_v1",
         "session_ports_v1",
         "builtins_mod_commands_v1"
       ],
@@ -227,12 +228,14 @@
       "name": "omd_workspace",
       "extension_type": "mod",
       "owner": "OMD first-party bundle (mods/first-party/omd_workspace)",
-      "version": "0.2.0-preview.3",
+      "version": "0.2.0-preview.4",
       "capabilities": [
         "commands",
+        "config",
         "lifecycle",
         "store",
-        "terminal"
+        "terminal",
+        "threads"
       ],
       "status": "supported",
       "fixtures": [
@@ -646,6 +649,7 @@
         "contracts",
         "exec",
         "fs.read",
+        "fs.write",
         "interception",
         "lifecycle",
         "middleware",
@@ -1149,6 +1153,7 @@
         "omd_lsp_sync",
         "omd_lsp_view",
         "omd_mcp",
+        "omd_mini",
         "omd_model_picker",
         "omd_mods",
         "omd_muse",
@@ -1224,7 +1229,7 @@
       "source": "mods/first-party/omd_frecency"
     },
     "omd_git": {
-      "version": "0.2.0-preview.2",
+      "version": "0.2.0-preview.3",
       "source": "mods/first-party/omd_git"
     },
     "omd_graph_navigator": {
@@ -1263,6 +1268,10 @@
       "version": "0.1.0-preview.1",
       "source": "mods/first-party/omd_mcp"
     },
+    "omd_mini": {
+      "version": "0.1.0-preview.1",
+      "source": "mods/first-party/omd_mini"
+    },
     "omd_model_picker": {
       "version": "0.3.0-preview.1",
       "source": "mods/first-party/omd_model_picker"
@@ -1280,7 +1289,7 @@
       "source": "mods/first-party/omd_notes"
     },
     "omd_panes": {
-      "version": "0.1.0-preview.2",
+      "version": "0.1.0-preview.3",
       "source": "mods/first-party/omd_panes"
     },
     "omd_plan_panel": {
@@ -1336,7 +1345,7 @@
       "source": "mods/first-party/omd_task_tools"
     },
     "omd_theme": {
-      "version": "0.4.0-candidate.1",
+      "version": "0.4.0-candidate.2",
       "source": "mods/first-party/omd_theme"
     },
     "omd_typed_tasks": {
@@ -1348,7 +1357,7 @@
       "source": "mods/first-party/omd_workflow"
     },
     "omd_workspace": {
-      "version": "0.2.0-preview.3",
+      "version": "0.2.0-preview.4",
       "source": "mods/first-party/omd_workspace"
     },
     "omd_worktree": {

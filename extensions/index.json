@@ -28,6 +28,24 @@
       "review": "extensions/REVIEWS.md"
     },
     {
+      "id": "omd_mini",
+      "version": "0.1.0-preview.1",
+      "extension_type": "mod",
+      "capability": "Opt-in mini interface launched by `omd mini`: scrollback-first conversation over the same Codex session with compact tool summaries, a simple prompt, one status line and switching to the full UI through the launcher",
+      "source": "mods/first-party/omd_mini",
+      "license": "Apache-2.0",
+      "maintainer": "Oh My Diff",
+      "compatibility": "Codex 0.159.1; OMD 0.1.0; mod API 0.2.0-experimental.5; app_v1, exec_v1, store_v1, store_thread_v1, state_scopes_v1, terminal_lists_v1, terminal_inline_sites_v1; Node 24.18.0",
+      "tested_versions": [
+        "Codex 0.159.1",
+        "OMD 0.1.0",
+        "mod API 0.2.0-experimental.5",
+        "Node 24.18.0"
+      ],
+      "support_status": "reviewed_candidate",
+      "review": "extensions/REVIEWS.md"
+    },
+    {
       "id": "omd_muse",
       "version": "0.1.0-preview.1",
       "extension_type": "mod",
@@ -83,7 +101,7 @@
     },
     {
       "id": "omd_workspace",
-      "version": "0.2.0-preview.3",
+      "version": "0.2.0-preview.4",
       "extension_type": "mod",
       "capability": "Live terminal task and worker workspace",
       "source": "mods/first-party/omd_workspace",
@@ -155,7 +173,7 @@
     },
     {
       "id": "omd_git",
-      "version": "0.2.0-preview.2",
+      "version": "0.2.0-preview.3",
       "extension_type": "mod",
       "capability": "Opt-in left Git sidebar with commit graph, changed files and confirmed actions",
       "source": "mods/first-party/omd_git",
@@ -263,7 +281,7 @@
     },
     {
       "id": "omd_panes",
-      "version": "0.1.0-preview.2",
+      "version": "0.1.0-preview.3",
       "extension_type": "mod",
       "capability": "Opt-in recursive split panes with a Git-aware file tree, viewer, shell, diff, mod-panel and browser panes, persisted per session",
       "source": "mods/first-party/omd_panes",
@@ -617,7 +635,7 @@
     },
     {
       "id": "omd_theme",
-      "version": "0.4.0-candidate.1",
+      "version": "0.4.0-candidate.2",
       "extension_type": "mod",
       "capability": "/theme: color themes, backgrounds, glyphs, the startup greeting, a powerline status line and a prompt stash",
       "source": "mods/first-party/omd_theme",

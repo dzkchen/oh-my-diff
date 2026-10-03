@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "id": "omd_git",
-  "version": "0.2.0-preview.2",
+  "version": "0.2.0-preview.3",
   "api": "0.2.0-experimental.5",
   "state_version": 1,
   "description": "Git sidebar with commit graph, changed files and confirmed Git actions inside the terminal",

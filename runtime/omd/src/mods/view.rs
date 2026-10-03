@@ -58,6 +58,8 @@ pub struct ModView {
     pub backdrop: Option<ModBackdrop>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_sites: Option<ModInlineSites>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -101,6 +103,14 @@ pub struct ModViewPatch {
     pub backdrop: Option<ModBackdrop>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub surface_styles: BTreeMap<String, ModSurfacePaint>,
+    #[serde(default)]
+    pub inline_sites: Option<ModInlineSites>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModInlineSites {
+    Hidden,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -1590,6 +1600,9 @@ impl ModViewPatch {
             target.backdrop = Some(backdrop);
         }
         target.surface_styles.extend(self.surface_styles);
+        if self.inline_sites.is_some() {
+            target.inline_sites = self.inline_sites;
+        }
         if let Some(foreground) = self.foreground {
             target.foreground = Some(foreground);
         }

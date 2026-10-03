@@ -58,7 +58,7 @@ test('code-intelligence view asks omd_lsp_sync through a channel hop, jumps to r
     assert.deepEqual(view[2].action, { command: 'omd_panes:open', args: 'box.py:2' });
     assert.deepEqual(view[4].action, { command: 'omd_editor:edit', args: 'box.py:2' });
     assert.deepEqual(view[6].rows.map(row => row.value), ['box.py:3']);
-    assert.deepEqual(sites.sidebar.components[0].children.map(item => item.text), ['python pylsp · 2 open · 1 errors', '  box.py:3:5 bad size', 'rust: rust server absent']);
+    assert.deepEqual(sites.sidebar.components[1].children.map(item => item.text), ['python pylsp · 2 open · 1 errors', '  box.py:3:5 bad size', 'rust: rust server absent']);
     assert.deepEqual(invoke(state, 'command', 'back', 'lsp').state.view.items.map(item => item.value), ['box.py:2']);
     answer = 'service_provider_missing: omd.lsp';
     state = invoke(state, 'channel', { publisher: 'omd_lsp_view', channel: 'omd_lsp_view/request', data: request.data, correlation: null, sequence: 3, dropped: 0 }).state;

@@ -2,12 +2,14 @@ import type { Json, Ledger, ModAPI, TerminalComponent, TerminalRenderSite, Termi
 
 type Density = 'full' | 'compact';
 type Side = 'left' | 'right';
-type Saved = { activity: string[]; dialog: boolean; turns: number; open: boolean };
+type Usage = { seq: number; model?: string; effort?: string | null; context?: number; window?: number | null };
+type Saved = { activity: string[]; dialog: boolean; turns: number; open: boolean; model: string | null; effort: string | null; usage: Record<string, Usage>; seq: number };
 
 const DENSITIES: Density[] = ['full', 'compact'];
 const SIDES: Side[] = ['left', 'right'];
 const DEFAULT_REVIEW = 'Review the current candidate and list the remaining risks.';
 const KEYS = 'F6 review draft · F7 workspace settings';
+const HINTS = 'Tab panels · Enter folds · F6 review · F7 layout';
 
 export default function activate(api: ModAPI) {
   const record = (object: Json | undefined, key: string): Json | undefined =>
@@ -25,6 +27,10 @@ export default function activate(api: ModAPI) {
       dialog: record(stored, 'dialog') === true,
       turns: typeof record(stored, 'turns') === 'number' ? record(stored, 'turns') as number : 0,
       open: record(stored, 'open') === true,
+      model: typeof record(stored, 'model') === 'string' ? record(stored, 'model') as string : null,
+      effort: typeof record(stored, 'effort') === 'string' ? record(stored, 'effort') as string : null,
+      usage: (record(stored, 'usage') ?? {}) as Record<string, Usage>,
+      seq: typeof record(stored, 'seq') === 'number' ? record(stored, 'seq') as number : 0,
     };
   };
   const save = (state: Saved) => api.state.set(state as unknown as Json);
@@ -66,20 +72,33 @@ export default function activate(api: ModAPI) {
     }],
   });
 
+  const tokens = (count: number) => count >= 1000 ? `${Math.round(count / 1000)}k` : String(count);
+
   const view = (event: string, ledger: Ledger | null): TerminalView => {
     const state = saved();
     const density = setting('density', DENSITIES, 'full');
     const side = setting('side', SIDES, 'left');
+    const width = density === 'compact' ? 24 : 36;
     const activity = state.activity.length ? state.activity : ['Waiting for the first turn'];
     const spent = cost(ledger);
+    const usage = ledger ? state.usage[ledger.thread_id] : undefined;
+    const model = usage?.model ?? state.model;
+    const effort = usage?.model ? usage.effort : state.effort;
+    const percent = usage?.context && usage.window ? Math.round(usage.context / usage.window * 100) : null;
+    const session = [
+      ...(model ? [line('workspace_model', 'Model and reasoning', trim(`${model}${effort ? ` · ${effort}` : ''}`, width))] : []),
+      ...(percent === null ? [] : [line('workspace_context', 'Context used', `Context ${percent}% of ${tokens(usage?.window ?? 0)}`, percent >= 90 ? 'failure' : percent >= 70 ? 'attention' : 'muted')]),
+      ...(spent ? [line('workspace_task_cost', 'Session cost', spent, 'muted')] : []),
+    ];
     const sidebar = [
-      ...(spent ? [pane('workspace_task', 'Session', [line('workspace_task_cost', 'Session cost', spent, 'muted')])] : []),
+      ...(session.length ? [pane('workspace_task', 'Session', session)] : []),
       pane('workspace_activity', 'Activity', activity.slice(-(density === 'compact' ? 6 : 10)).map((entry, index) => line(`workspace_activity_${index}`, `Activity ${index + 1}`, entry, 'muted')), density === 'compact'),
     ];
     const working = state.open || event === 'turn_start';
     const sites: Partial<Record<'sidebar' | 'header' | 'dialog', TerminalRenderSite>> = {
       sidebar: { mode: 'replace', components: sidebar },
-      header: { mode: 'replace', components: [line('workspace_header', 'Session state', working ? 'Working' : 'Ready', working ? 'accent' : 'muted')] },
+      header: { mode: 'replace', components: [{ type: 'line', id: 'workspace_header', label: 'Session state and shortcuts', spans: [
+        { text: working ? 'Working' : 'Ready', tone: working ? 'accent' : 'muted', bold: true }, { text: `  ${HINTS}`, tone: 'muted' }] }] },
     };
     if (state.dialog) sites.dialog = dialogSite(density, side);
     return {
@@ -91,8 +110,6 @@ export default function activate(api: ModAPI) {
         F6: { insert: review() },
         F7: { command: 'omd_workspace:layout', args: 'dialog' },
       },
-      message_template: '│ {text}',
-      tool_template: '› {text}',
     };
   };
 
@@ -143,8 +160,25 @@ export default function activate(api: ModAPI) {
     { description: 'Show this session\'s workspace activity' },
   );
 
-  api.on('start', () => save(note(saved(), 'Session started')));
-  api.on('resume', () => save(note(saved(), 'Session resumed')));
+  const configured = (state: Saved): Saved => {
+    const config = api.host.tryCall('app.request', { method: 'config/read', params: {} });
+    const values = config.ok ? (config.value as { config?: { model?: string; model_reasoning_effort?: string } }).config : undefined;
+    return { ...state, model: values?.model ?? null, effort: values?.model_reasoning_effort ?? null };
+  };
+  api.on('start', () => save(note(configured(saved()), 'Session started')));
+  api.on('resume', () => save(note(configured(saved()), 'Session resumed')));
+  api.on('app_notification', ({ method, params, thread_id }) => {
+    const update = params as { threadId?: string; threadSettings?: { model?: string; effort?: string | null }; tokenUsage?: { last?: { totalTokens?: number }; modelContextWindow?: number | null } };
+    const thread = thread_id ?? update.threadId;
+    if (!thread || !update.threadSettings && !update.tokenUsage) return;
+    const state = saved();
+    const usage = { ...state.usage };
+    const entry = usage[thread] = { ...usage[thread], seq: state.seq + 1 };
+    if (method === 'thread/settings/updated' && update.threadSettings) Object.assign(entry, { model: update.threadSettings.model, effort: update.threadSettings.effort ?? null });
+    if (method === 'thread/tokenUsage/updated' && update.tokenUsage) Object.assign(entry, { context: update.tokenUsage.last?.totalTokens, window: update.tokenUsage.modelContextWindow ?? null });
+    for (const old of Object.keys(usage).sort((a, b) => usage[b].seq - usage[a].seq).slice(8)) delete usage[old];
+    save({ ...state, usage, seq: state.seq + 1 });
+  });
   api.on('turn_start', () => {
     const state = saved();
     const interrupted = state.open ? note(state, `◂ Turn ${state.turns} interrupted`) : state;

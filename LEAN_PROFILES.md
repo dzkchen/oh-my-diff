@@ -75,12 +75,12 @@ python3 -m scripts.lean_profiles --prefix /path/to/omd-candidate --bin-dir /path
 mod and the `omd_mods` control screen, both enabled, and launches patched Codex
 with `OMD_MODE=omd`. Neither adds task behavior.
 User-selected, trusted mods can run without selecting a task workflow contract.
-`--profile full` installs thirty-eight first-party candidate mods. A fresh OMD+ store enables
+`--profile full` installs thirty-nine first-party candidate mods. A fresh OMD+ store enables
 `omd_inspector`, `omd_workspace`, `omd_logo`, `omd_mods` and `omd_model_picker`; Codex's
 `tui.copy_on_select` setting controls copy on mouse release. Claude, coordination, Git sidebar, LSP synchronization and code intelligence, recovery,
 typed tasks, workflow, advisor review, lead-requested research, checks, graph
 navigation, guideline governance, Pi prompts, repository analysis, source
-knowledge, task tools, theme, reactive rules, programmable context, `/continue`, `/preview`, the Muse route, panes and file tree, the notes vault, frecency file ranking, the plan panel, plan-mode removal, account and provider profiles, the workspace layout with its palettes and task worktrees, the built-in editor and shared-checkout coordination are installed but disabled. Advisor every-turn selection and the separate research preset
+knowledge, task tools, theme, reactive rules, programmable context, `/continue`, `/preview`, the Muse route, panes and file tree, the notes vault, frecency file ranking, the plan panel, plan-mode removal, account and provider profiles, the workspace layout with its palettes and task worktrees, the built-in editor, shared-checkout coordination and the mini interface are installed but disabled. Advisor every-turn selection and the separate research preset
 require their own explicit host policy and allowance; installation does not
 activate either. Attaching an
 existing store (`--attach-store`, used by installer updates) keeps its
@@ -136,6 +136,11 @@ mode has neither. To disable a broken first-party mod from a shell:
 Enable the Git sidebar with `/path/to/omd-bin/omd-package mod enable omd_git`;
 `mod disable omd_logo` removes the logo in either profile;
 the native `>_ OpenAI Codex (vVERSION)` session header remains.
+
+`omd mini [codex arguments]` launches the scrollback-first mini interface over
+the same session engine once `omd-package mod enable omd_mini` has run; it
+needs a terminal, and `/omd_mini:switch` reopens the session in the full
+interface at the next quit ([details](mods/first-party/omd_mini/README.md)).
 
 Git mutations also need an explicit permission-profile grant for the repository's
 Git metadata and affected files. Codex's default `.git` protection is respected;

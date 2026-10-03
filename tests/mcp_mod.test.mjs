@@ -36,7 +36,7 @@ function deliver(state, notification, list = () => ({})) {
   return { calls: observed.calls, state: invoke({ state, event: 'channel', payload: { publisher: 'omd_mcp', channel: `omd_mcp/${published.channel}`, data: published.data, correlation: null, sequence: 1, dropped: 0 } }).state };
 }
 const listed = (name, extra) => ({ data: [{ name, runtimeStatus: 'connected', pluginId: null, httpOrigin: null, tools: {}, toolsError: null, authStatus: 'unsupported', ...extra }] });
-const sidebar = (state, thread) => invoke({ state, event: 'terminal', payload: { event: 'idle', ledger: { thread_id: thread, cwd: '/repo', cost: null } } }).value?.sites.sidebar.components[0].children.map(child => child.text);
+const sidebar = (state, thread) => invoke({ state, event: 'terminal', payload: { event: 'idle', ledger: { thread_id: thread, cwd: '/repo', cost: null } } }).value?.sites.sidebar.components[1].children.map(child => child.text);
 
 test('startup updates build a per-thread inventory from the thread connection and surface actionable failures', () => {
   let state = deliver(null, startup('t1', 'docs', 'starting')).state;

@@ -4158,7 +4158,7 @@ index 9d61157c4..1d511f153 100644
  uuid = { workspace = true }
  wiremock = { workspace = true }
 diff --git a/codex-rs/tui/src/app.rs b/codex-rs/tui/src/app.rs
-index de47e41f7..6cf95954e 100644
+index de47e41f7..04058a720 100644
 --- a/codex-rs/tui/src/app.rs
 +++ b/codex-rs/tui/src/app.rs
 @@ -229,6 +229,8 @@ mod link_hover;
@@ -4303,7 +4303,7 @@ index de47e41f7..6cf95954e 100644
              self.schedule_immediate_resize_reflow(tui);
              self.maybe_run_resize_reflow(tui, screen_size)?;
          }
-+        let mod_snapshot = self.mod_render_snapshot();
++        let mod_snapshot = crate::mod_ui::inline_snapshot(self.mod_render_snapshot());
 +        let header_rows = crate::mod_ui::header_rows(
 +            Rect::new(0, 0, screen_size.width, screen_size.height),
 +            &mod_snapshot,
@@ -39125,10 +39125,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..8df08e87d
+index 000000000..798bb4c0a
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4097 @@
+@@ -0,0 +1,4101 @@
 +mod author;
 +mod bridge;
 +mod packages;
@@ -39408,6 +39408,7 @@ index 000000000..8df08e87d
 +    "route_reload_v1",
 +    "terminal_commands_v1",
 +    "terminal_tabs_v1",
++    "terminal_inline_sites_v1",
 +    "session_ports_v1",
 +    "builtins_mod_commands_v1",
 +];
@@ -42770,7 +42771,10 @@ index 000000000..8df08e87d
 +                Err(error) => Err(error),
 +            };
 +            let parsed = parsed.or_else(|error| {
-+                diagnostics.push(format!("{id}: {error}"));
++                // An interrupted turn cancels in-flight renders; the last view stands without a fault.
++                if !error.to_string().contains("callback_cancelled") {
++                    diagnostics.push(format!("{id}: {error}"));
++                }
 +                let last = self.valid_views.get(&id).cloned().ok_or(error)?;
 +                parse(last)
 +            });
@@ -47053,10 +47057,10 @@ index 000000000..d2e18e736
 +}
 diff --git a/codex-rs/omd/src/mods/view.rs b/codex-rs/omd/src/mods/view.rs
 new file mode 100644
-index 000000000..ddca6fd78
+index 000000000..9b169857f
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/view.rs
-@@ -0,0 +1,1820 @@
+@@ -0,0 +1,1833 @@
 +use super::*;
 +
 +pub const MOD_KEY_LIMIT: usize = 12;
@@ -47117,6 +47121,8 @@ index 000000000..ddca6fd78
 +    pub backdrop: Option<ModBackdrop>,
 +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
 +    pub surface_styles: BTreeMap<String, ModSurfacePaint>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub inline_sites: Option<ModInlineSites>,
 +}
 +
 +#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -47160,6 +47166,14 @@ index 000000000..ddca6fd78
 +    pub backdrop: Option<ModBackdrop>,
 +    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
 +    pub surface_styles: BTreeMap<String, ModSurfacePaint>,
++    #[serde(default)]
++    pub inline_sites: Option<ModInlineSites>,
++}
++
++#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ModInlineSites {
++    Hidden,
 +}
 +
 +#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -48649,6 +48663,9 @@ index 000000000..ddca6fd78
 +            target.backdrop = Some(backdrop);
 +        }
 +        target.surface_styles.extend(self.surface_styles);
++        if self.inline_sites.is_some() {
++            target.inline_sites = self.inline_sites;
++        }
 +        if let Some(foreground) = self.foreground {
 +            target.foreground = Some(foreground);
 +        }
@@ -53545,10 +53562,10 @@ index 000000000..330b7bc69
 +}
 diff --git a/codex-rs/omd/tests/examples.rs b/codex-rs/omd/tests/examples.rs
 new file mode 100644
-index 000000000..26dad48ab
+index 000000000..f797c1bdd
 --- /dev/null
 +++ b/codex-rs/omd/tests/examples.rs
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,111 @@
 +use codex_omd::{ModHost, ModStore};
 +use std::path::Path;
 +
@@ -53582,6 +53599,7 @@ index 000000000..26dad48ab
 +    "pty_programs_v1",
 +    "terminal_commands_v1",
 +    "terminal_tabs_v1",
++    "terminal_inline_sites_v1",
 +    "session_ports_v1",
 +    "builtins_mod_commands_v1",
 +    "state_scopes_v1",
@@ -55976,10 +55994,10 @@ index 000000000..16a69c759
 +}
 diff --git a/codex-rs/omd/tests/mods.rs b/codex-rs/omd/tests/mods.rs
 new file mode 100644
-index 000000000..6053a9e30
+index 000000000..a2727277d
 --- /dev/null
 +++ b/codex-rs/omd/tests/mods.rs
-@@ -0,0 +1,2849 @@
+@@ -0,0 +1,2858 @@
 +use codex_omd::MOD_API_VERSION;
 +const CURRENT_API: &str = MOD_API_VERSION;
 +use codex_omd::MOD_HOST_FEATURES;
@@ -57226,6 +57244,15 @@ index 000000000..6053a9e30
 +    );
 +    assert!(terminal.contributors.contains(&"observer".to_owned()));
 +    assert!(terminal.view.status.contains(&"observer".to_owned()));
++
++    let cancelled =
++        runtime.terminal_view(json!({"event":"interrupted","checkpoint":null}), || false);
++    assert!(
++        cancelled.diagnostics.is_empty(),
++        "{:?}",
++        cancelled.diagnostics
++    );
++    assert_eq!(cancelled.view.status, terminal.view.status);
 +}
 +
 +#[test]
@@ -67973,10 +68000,10 @@ index 000000000..911dd26c9
 +}
 diff --git a/codex-rs/tui/src/mod_ui.rs b/codex-rs/tui/src/mod_ui.rs
 new file mode 100644
-index 000000000..916f10abc
+index 000000000..295e9a20b
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui.rs
-@@ -0,0 +1,2501 @@
+@@ -0,0 +1,2514 @@
 +use codex_omd::ModActivity;
 +use codex_omd::ModBorder;
 +use codex_omd::ModColor;
@@ -68709,6 +68736,19 @@ index 000000000..916f10abc
 +            ModComponent::Slot => 0,
 +        })
 +        .sum()
++}
++
++/// Leaves only dialogs, progress and diagnostics in the inline viewport once a mod hides its sites.
++pub(crate) fn inline_snapshot(mut snapshot: ModViewSnapshot) -> ModViewSnapshot {
++    if snapshot.view.inline_sites.is_some() {
++        snapshot
++            .view
++            .sites
++            .retain(|name, _| name != "sidebar" && name != "header" && !name.contains('/'));
++        snapshot.view.panels.clear();
++        snapshot.view.header = None;
++    }
++    snapshot
 +}
 +
 +pub(crate) fn header_rows(screen: Rect, snapshot: &ModViewSnapshot) -> u16 {
@@ -70480,10 +70520,10 @@ index 000000000..916f10abc
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..d2d35077e
+index 000000000..07b6ec63e
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
-@@ -0,0 +1,1088 @@
+@@ -0,0 +1,1119 @@
 +use super::*;
 +use pretty_assertions::assert_eq;
 +
@@ -71170,6 +71210,37 @@ index 000000000..d2d35077e
 +        ));
 +    }
 +    insta::assert_snapshot!("ascii_inline_native_whitespace", frames.join("\n\n"));
++}
++
++#[test]
++#[serial_test::serial]
++fn hidden_inline_sites_leave_dialogs_and_diagnostics_in_the_inline_viewport() {
++    let area = Rect::new(0, 0, 100, 20);
++    let view = serde_json::json!({"sites":{
++        "sidebar":{"components":[{"type":"text","id":"panel","label":"Panel","text":"SIDEPANEL"}]},
++        "header":{"components":[{"type":"text","id":"head","label":"Head","text":"HEADLINE"}]},
++        "omd_layout/sessions":{"components":[{"type":"text","id":"named","label":"Named","text":"NAMEDSITE"}]},
++        "dialog":{"components":[{"type":"dialog","id":"ask","label":"Ask","title":"Ask","children":[{"type":"text","id":"body","label":"Body","text":"DIALOGTEXT"}]}]}
++    }});
++    let shown = snapshot(view.clone());
++    assert!(header_rows(area, &inline_snapshot(shown.clone())) > 0);
++    let mut hidden = view;
++    hidden["inline_sites"] = serde_json::json!("hidden");
++    let mut hidden = inline_snapshot(snapshot(hidden));
++    assert_eq!(header_rows(area, &hidden), 0);
++    assert_eq!(chat_area(area, &hidden, 0), area);
++    let mut buffer = Buffer::empty(area);
++    render_inline(area, area, &mut buffer, &hidden);
++    let text = rows(&buffer, area);
++    assert!(text.contains("DIALOGTEXT"));
++    assert!(
++        !text.contains("SIDEPANEL") && !text.contains("HEADLINE") && !text.contains("NAMEDSITE")
++    );
++    hidden.view.sites.clear();
++    hidden.diagnostics = vec!["boom".into()];
++    let mut buffer = Buffer::empty(area);
++    render_inline(area, area, &mut buffer, &hidden);
++    assert!(rows(&buffer, area).contains("boom"));
 +}
 +
 +#[test]

@@ -15,7 +15,7 @@ type Git = { branch: string; ahead: number; behind: number; staged: number; unst
 type Live = { threads: Record<string, Usage>; seq: number; model: string | null; effort: string | null; git: Git | null; nerd: boolean | null; plain: boolean; stashed: boolean };
 type State = { saved: Settings | null; preview: Settings | null; asset: Asset | null; preview_asset: Asset | null; imports: Record<string, Palette>; open: boolean; page: string; notice: string; revision: number; live: Live };
 const DEFAULTS: Settings = {
-  palette: 'midnight', symbols: 'ascii', background_color: '', foreground_color: '', backdrop_mode: 'none', ascii_text: '. :  ',
+  palette: 'night', symbols: 'ascii', background_color: '', foreground_color: '', backdrop_mode: 'none', ascii_text: '. :  ',
   position: 'fit', scale: 1, tint: '', dim: 0.65, opacity: 1, x: 0, y: 0,
   composer_gloss: false, backdrop_gloss: false, highlight: 0.12, shading: 0.08, gloss_opacity: 0.85, borders: true,
   greeting_enabled: false, greeting_text: 'What would you like to work on?', statusline: 'off', statusline_position: 'above',
@@ -38,6 +38,7 @@ const NERD_TERMINALS = /iterm|wezterm|kitty|ghostty|alacritty/i;
 const STASH_HISTORY = 12;
 const tokens = (n: number) => n < 1000 ? String(n) : n < 1e6 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k` : `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)}M`;
 const PALETTES: Record<string, Palette> = {
+  night: { name: 'OMD Night', foreground: '#e3e5e8', background: '#17191d', theme: { accent: '#8fb8c9', success: '#9bd4a9', attention: '#e3c88f', failure: '#ef9f9f', diff_added: '#9bd4a9', diff_removed: '#ef9f9f', muted: '#9ba2ac', user_message_background: '#22252b', border: 'rounded', density: 'compact' } },
   midnight: { name: 'Midnight', foreground: '#eeeeee', background: '#262626', theme: { accent: '#80d8ff', success: '#91e6aa', attention: '#ffe08a', failure: '#ff9b9b', diff_added: '#91e6aa', diff_removed: '#ff9b9b', muted: '#b4beca', user_message_background: '#303942', border: 'plain', density: 'comfortable' } },
   paper: { name: 'Paper', foreground: '#1c1c1c', background: '#ffffff', theme: { accent: '#005f9e', success: '#176b37', attention: '#805300', failure: '#a21d2b', diff_added: '#176b37', diff_removed: '#a21d2b', muted: '#555d66', user_message_background: '#e8edf1', border: 'plain', density: 'comfortable' } },
   contrast: { name: 'High contrast', foreground: '#ffffff', background: '#000000', theme: { accent: '#91dcff', success: '#a5f5a5', attention: '#fff39a', failure: '#ffabab', diff_added: '#a5f5a5', diff_removed: '#ffabab', muted: '#d6d6d6', user_message_background: '#202020', border: 'double', density: 'comfortable' } },
@@ -288,13 +289,13 @@ export default function activate(api: ModAPI) {
   }
 
   api.on('terminal', ({ ledger, identity }): TerminalPatch => {
-    const state = readState(); const config = current(state); const selected = palette(state, config.palette) ?? PALETTES.midnight;
+    const state = readState(); const config = current(state); const selected = palette(state, config.palette) ?? PALETTES.night;
     const background = config.background_color || selected.background;
     const foreground = readable(config.foreground_color || selected.foreground, [background]);
     const theme: TerminalTheme = { ...selected.theme, syntax: contrast('#000000', background) > contrast('#ffffff', background) ? 'catppuccin-latte' : 'catppuccin-mocha', icons: config.symbols, glyphs: config.symbols === 'unicode' ? { '===': '≡  ', '->': '→ ', '<=': '≤ ' } : {} };
     for (const key of ['accent', 'success', 'attention', 'failure', 'diff_added', 'diff_removed', 'muted'] as const) { const value = theme[key]; if (typeof value === 'string' && COLOR.test(value)) theme[key] = readable(value, [background]) as ThemeColor; }
-    theme.user_message_background = background as ThemeColor;
     const foregrounds = [foreground, ...(['accent', 'success', 'attention', 'failure', 'diff_added', 'diff_removed', 'muted'] as const).map(key => String(theme[key] ?? foreground))];
+    theme.user_message_background = readableBackground(blend(background, foreground, 0.07), foregrounds, background) as ThemeColor;
     const paint = (gloss: boolean) => ({ top: readableBackground(gloss ? blend(background, '#ffffff', config.highlight) : background, foregrounds, background) as ThemeColor, bottom: readableBackground(gloss ? blend(background, '#000000', config.shading) : background, foregrounds, background) as ThemeColor, foreground: foreground as ThemeColor, opacity: gloss ? config.gloss_opacity : 1, ...(gloss && config.borders ? { border: readable(blend(background, foreground, 0.6), [background]) as ThemeColor } : {}) });
     const view: TerminalPatch = { foreground: indexed(foreground), background: indexed(background), theme, greeting: config.greeting_enabled ? config.greeting_text : '', surface_styles: { composer: paint(config.composer_gloss), backdrop: paint(config.backdrop_gloss) },
       keybindings: { 'Alt+z': { command: 'omd_theme:stash' } }, ...statusline(state, config, { background, foreground, theme }, ledger, identity) };

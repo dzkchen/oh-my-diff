@@ -20,7 +20,7 @@ const KEY = /^(Ctrl\+)?(Alt\+)?(Shift\+)?([a-z0-9]|F([2-9]|1[0-2])|Up|Down|Left|
 const PAGES: Record<string, string> = { models: 'Models', sessions: 'Sessions', actions: 'Mod actions', commands: 'Commands', skills: 'Skills', templates: 'Templates' };
 const BUILTINS: [string, string, string][] = [['builtin:new', 'Session: New', 'Start a new session'], ['builtin:compact', 'Session: Compact', 'Summarize the conversation to free context'],
   ['builtin:fork', 'Session: Fork', 'Fork this session'], ['builtin:resume', 'Session: Resume…', 'Open the native session picker'], ['clear', 'Composer: Clear', 'Clear the composer; Restore brings it back'],
-  ['cockpit', 'Layout: Cockpit', 'Sessions, conversation and Changes/Files/Diff tabs (omd_panes)'], ['newtask', 'Worktree: New task…', 'Create a task worktree (omd_worktree)']];
+  ['cockpit', 'Layout: Cockpit', 'Sessions, conversation and Status/Files/Diff tabs (omd_panes)'], ['newtask', 'Worktree: New task…', 'Create a task worktree (omd_worktree)']];
 const fit = (text: string, limit: number, lines = false) => {
   let out = '';
   let bytes = 0;

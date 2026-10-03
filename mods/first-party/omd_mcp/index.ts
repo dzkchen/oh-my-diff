@@ -127,7 +127,7 @@ export default function activate(api: ModAPI) {
       if (expanded && server.tools.length) lines.push({ type: 'text', id: `omd_mcp_server_${index}_tools`, label: 'Tools', text: `  ${server.tools.join(', ')}${server.count > server.tools.length ? ` +${server.count - server.tools.length}` : ''}`, tone: 'muted' });
       return lines;
     });
-    return { sites: { sidebar: { mode: 'wrap', components: [{ type: 'pane', id: 'omd_mcp_servers', label: 'MCP servers', title: 'MCP servers', children }, { type: 'slot' }] } } };
+    return { sites: { sidebar: { mode: 'wrap', components: [{ type: 'slot' }, { type: 'pane', id: 'omd_mcp_servers', label: 'MCP servers', title: 'MCP servers', children }] } } };
   });
 
   api.command('mcps', value => {

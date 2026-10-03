@@ -428,7 +428,7 @@ export default function activate(api: ModAPI) {
   };
   const cockpit = (state: State) => {
     for (const pane of leaves(state.layout.root)) if (pane !== 'chat') remove(state, pane);
-    state.layout = { root: { split: 'horizontal', ratio: [22, 48, 30], children: ['p1', 'chat', { tabs: [{ title: 'Changes', node: 'p2' }, { title: 'Files', node: 'p3' }, { title: 'Diff', node: 'p4' }], active: 0 }] },
+    state.layout = { root: { split: 'horizontal', ratio: [22, 48, 30], children: ['p1', 'chat', { tabs: [{ title: 'Status', node: 'p2' }, { title: 'Files', node: 'p3' }, { title: 'Diff', node: 'p4' }], active: 0 }] },
       panes: { chat: { kind: 'chat' }, p1: { kind: 'site', site: 'omd_layout/sessions' }, p2: { kind: 'site', site: 'sidebar' }, p3: { kind: 'tree' }, p4: { kind: 'diff' } }, active: 'chat', next: 5 };
     refresh(state, null);
     readDiff(state, 'p4');

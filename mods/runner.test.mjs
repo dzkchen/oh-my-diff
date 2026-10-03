@@ -472,7 +472,7 @@ test('optional API 0.2 debugger: setup, cancellation, turn end and resume', () =
 });
 test('workspace layout writes bare toggles and dialog select values as settings', () => {
   const source = readFileSync(new URL('./first-party/omd_workspace/index.ts', import.meta.url), 'utf8');
-  const layout = (payload, settings = {}) => run(source, { capabilities: ['terminal', 'commands', 'lifecycle', 'store'], event: 'command', name: 'layout', payload, settings });
+  const layout = (payload, settings = {}) => run(source, { capabilities: ['terminal', 'commands', 'lifecycle', 'store', 'threads', 'config'], event: 'command', name: 'layout', payload, settings });
   for (const [payload, key, value] of [['density compact', 'density', 'compact'], ['density full', 'density', 'full'], ['side right', 'side', 'right'], ['side left', 'side', 'left'], ['compact', 'density', 'compact'], ['right', 'side', 'right']]) {
     assert.deepEqual(layout(payload).host_call, { operation: 'settings.write', arguments: { values: { [key]: value } } }, payload);
   }
