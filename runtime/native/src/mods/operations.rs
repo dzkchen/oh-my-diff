@@ -307,6 +307,9 @@ pub(super) async fn dispatch(
             {
                 return Err("exec_guards_require_live_workspace".into());
             }
+            if request.arguments.get("sandbox").is_some() {
+                return Err("exec_snapshot_requires_sandbox".into());
+            }
             let authority = authority(lead, call).await?;
             let scoped = Lead {
                 permission_profile: Arc::new(std::sync::Mutex::new(authority.context.permissions)),
@@ -392,6 +395,11 @@ pub(super) async fn dispatch(
         let processes = lead.session.processes.clone();
         let (id, generation) = (caller.id.to_owned(), caller.generation);
         let started = (operation == "process.start").then(|| request.arguments.clone());
+        let protected = host.protected_paths();
+        let os_access = caller
+            .grants
+            .as_ref()
+            .and_then(|grants| grants.os_access.clone());
         let result = tokio::task::spawn_blocking(move || {
             processes.call(
                 crate::managed_process::ProcessOwner {
@@ -399,6 +407,8 @@ pub(super) async fn dispatch(
                     generation,
                     repository: &authority.repository,
                     policy: &authority.policy,
+                    protected: &protected,
+                    os_access: os_access.as_ref(),
                 },
                 &request.operation,
                 request.arguments,

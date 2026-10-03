@@ -468,13 +468,13 @@
     {
       "id": "tool.interception",
       "group": "tool",
-      "decision": "Tool call continuation: transform, retarget, deny, answer or inspect the result",
+      "decision": "Tool call continuation: transform, retarget, deny, answer, hold, retry or invoke",
       "observe": "`intercept('tool')` with the tool, arguments, call, thread, agent, schema and batch position; `next` resolves to the executed result",
-      "alter": "pass a changed tool or arguments to `next`, return `{deny}`, transform the result, or answer without running the tool",
+      "alter": "pass a changed tool or arguments to `next`, return `{deny}`, transform the result, answer without running the tool, call `next` again to retry, or run and assess other tools with `tools.invoke` and `tools.check`",
       "replace": null,
       "timing": "before native hooks and permission checks; the result returns after the handler and before upstream truncation",
       "ownership": "host: permissions, the executor and completion evidence",
-      "limits": "the effective call re-enters native permissions; a synthetic answer is recorded as `answered_by` and cannot forge completion evidence; a tool runs once per dispatch",
+      "limits": "the effective call, each retry and each `tools.invoke` re-enter native permissions, approvals, sandbox and accounting under their own call id; `tools.check` asks each tool's runtime and the approval middleware (as an assessment) without running or prompting; a synthetic answer is recorded as `answered_by` and cannot forge completion evidence; a mod never intercepts its own invoked call",
       "native": "`pre_tool_use` blocks or rewrites input; the last-finishing hook silently wins a contested rewrite, no hook can retarget the call or answer it",
       "covers": {
         "capabilities": [
@@ -485,13 +485,18 @@
         "intercepts": [
           "tool"
         ],
-        "operations": []
+        "operations": [
+          "tools.invoke",
+          "tools.check"
+        ]
       },
       "evidence": [
         "rust:continuations_compose_transforms_inspect_results_and_short_circuit",
         "rust:continuation_failures_skip_keep_catch_or_fail_closed",
         "patch:tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_original",
-        "patch:mod_interception_denies_answers_or_routes_through_registered_native_handler"
+        "patch:mod_interception_denies_answers_or_routes_through_registered_native_handler",
+        "patch:tool_retries_and_mod_calls_redispatch_through_the_turn_invoker",
+        "patch:checks_assess_through_each_tool_runtime_and_the_approval_gate"
       ],
       "replace_note": "composed interceptors, no exclusive owner"
     },
@@ -674,6 +679,31 @@
       "evidence": [
         "patch:framed_process_is_owned_bounded_and_stopped",
         "patch:blocked_process_write_observes_cancellation"
+      ]
+    },
+    {
+      "id": "tool.unrestricted",
+      "group": "tool",
+      "decision": "Explicitly granted unsandboxed processes",
+      "observe": "`sandbox: \"none\"` on `exec.run`, `process.start` and PTY starts returns the same results as the sandboxed paths",
+      "alter": "run `os_access.programs` with the user's filesystem, outside-workspace working directories and, when `os_access.network` is true, external network",
+      "replace": null,
+      "timing": "any callback that may run the sandboxed operation, inside a current grant without a per-call prompt",
+      "ownership": "user: the hash-bound `os` grant, its expiry and `omd-mod revoke`; host: program scope, sanitized environment, limits, cancellation, process-group teardown on revoke, reload or disable",
+      "limits": "no host credentials, secret variables or secrets API; children run as the user and can read user-readable secret files and change mod stores; only the OS-separated broker protects grants, credentials and evidence anchors; guards, Unix sockets, loopback and snapshots need the sandbox",
+      "native": "no native equivalent",
+      "covers": {
+        "capabilities": [
+          "os"
+        ],
+        "events": [],
+        "replacements": [],
+        "operations": []
+      },
+      "evidence": [
+        "rust:unrestricted_exec_runs_granted_programs_outside_the_sandbox",
+        "patch:unrestricted_process_needs_a_current_grant_and_takes_its_tree_down",
+        "rust:os_and_approve_grants_are_declared_scoped_expiring_and_revocable"
       ]
     },
     {
@@ -875,7 +905,7 @@
       "replace": "terminal",
       "timing": "inline and fullscreen while the mod view is active",
       "ownership": "host: native keymap, modal input, focus, pointer dispatch, clipboard authorization and cancellation keys",
-      "limits": "Ctrl, Alt and Shift combinations of letters, digits, F2\u2013F12 and named keys; active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M, Shift+Tab and cancellation remain native",
+      "limits": "Ctrl, Alt and Shift combinations of letters, digits, F2–F12 and named keys; active native bindings and chords win with a visible notice; Escape, Ctrl+C/D/Z/H/I/J/M, Shift+Tab and cancellation remain native",
       "native": "no equivalent",
       "covers": {
         "capabilities": [],
@@ -1014,15 +1044,17 @@
       "group": "coordination",
       "decision": "Approval middleware and results",
       "observe": "`approval` for exec, patch, MCP, network and permission requests; `approval_result` with the deciding source",
-      "alter": "deny, or `ask` to force the native prompt; a mod can never approve",
+      "alter": "deny, `ask` to force the native prompt, or `approve` inside a user-delegated `approve` grant (kinds, tools, roots, hosts; `approve.override` for requests the user's own rules forbid)",
       "replace": null,
       "timing": "before hooks, automatic review and full-access shortcuts",
-      "ownership": "mod: tighten-only policy; host: the decision, the prompt and the record",
-      "limits": "a failing middleware falls back to `ask`; the first deny wins",
+      "ownership": "mod: policy and delegated approvals inside its grant; host: grant checks, managed-policy floors, the decision, the prompt and the record",
+      "limits": "any deny wins, then any ask, then a granted approve; errors, timeouts, invalid results, expired or out-of-scope grants ask; managed requirements and host denials stay final; a delegated approval shows a native notice",
       "native": "PermissionRequest hooks can approve but run after policy shortcuts and cannot force a prompt",
       "covers": {
         "capabilities": [
-          "approvals"
+          "approvals",
+          "approve",
+          "approve.override"
         ],
         "events": [
           "approval",
@@ -1034,7 +1066,10 @@
       "evidence": [
         "patch:approval_gates_tighten_before_automatic_review",
         "patch:approval_decisions_deny_first_and_fail_closed_to_ask",
-        "patch:approval_middleware_requires_the_approvals_capability"
+        "patch:approval_middleware_requires_the_approvals_capability",
+        "patch:delegated_approvals_stay_inside_the_current_grant",
+        "patch:only_user_rule_denials_are_overridable",
+        "rust:os_and_approve_grants_are_declared_scoped_expiring_and_revocable"
       ],
       "replace_note": null
     },
@@ -1121,28 +1156,28 @@
       "id": "tool.specs",
       "group": "tool",
       "decision": "Model-visible tool descriptions",
-      "observe": "`tool_specs` with the route and the model-visible tools",
-      "alter": "hide or re-describe tools; execution identity is unchanged",
-      "replace": "tool_specs (exclusive)",
+      "observe": "`intercept('tool_specs')` with the route and the model-visible tools",
+      "alter": "drop, defer behind tool search or re-describe tools; interceptors compose in continuation order; execution identity is unchanged",
+      "replace": null,
       "timing": "when the tool router is built for a turn",
       "ownership": "mod: descriptions and visibility; host: execution, schemas it accepts and admission",
-      "limits": "invalid schemas are ignored; calls still pass through the tool interceptors",
+      "limits": "a handler can only drop, defer or re-describe tools it was given and must call `next`; a model without tool search keeps deferred tools visible; calls still pass through the tool interceptors",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
-        "events": [
-          "tool_specs"
-        ],
-        "replacements": [
+        "events": [],
+        "replacements": [],
+        "intercepts": [
           "tool_specs"
         ],
         "operations": []
       },
       "evidence": [
         "patch:adjustments_hide_and_redescribe_by_model_visible_name",
-        "patch:tool_specs_owner_hides_and_redescribes_model_visible_tools"
+        "patch:tool_specs_interceptors_compose_hide_defer_and_redescribe",
+        "patch:spec_contributors_defer_direct_tools_behind_tool_search"
       ],
-      "replace_note": null
+      "replace_note": "composed interceptors, no exclusive owner"
     },
     {
       "id": "context.events",
@@ -1404,7 +1439,7 @@
       "replace": null,
       "timing": "event and tool callbacks during a task",
       "ownership": "mod: prompt and route; host: admission, ledger, allowance and cancellation",
-      "limits": "prompt \u2264 8 KiB; \u2264 300 s and ends with a cancelled callback; needs `agents`; counts against agent limits; unknown routes are refused",
+      "limits": "prompt ≤ 8 KiB; ≤ 300 s and ends with a cancelled callback; needs `agents`; counts against agent limits; unknown routes are refused",
       "native": "no native equivalent",
       "covers": {
         "capabilities": [],
@@ -1483,7 +1518,7 @@
     },
     {
       "id": "conflict_before_activation",
-      "rule": "Contested exclusive claims \u2014 a replacement point, a workflow contract ID or a namespaced tool name \u2014 are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.",
+      "rule": "Contested exclusive claims — a replacement point, a workflow contract ID or a namespaced tool name — are detected before activation and disable every claimant with an error naming all of them. No claimant silently wins, and unrelated mods keep running.",
       "evidence": [
         "rust:contested_exclusive_replacement_disables_every_claimant_and_keeps_the_rest"
       ]
@@ -1513,7 +1548,7 @@
     },
     {
       "id": "reload",
-      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional \u2014 if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
+      "rule": "Reload happens at a native turn boundary. The initial load isolates per selection; a later reload is transactional — if any enabled selection fails, the previous eligible set stays loaded and the reason is shown once. Stale generations are refused, in-flight work keeps the source it started with, and settings and state survive an edit.",
       "evidence": [
         "rust:mod_reload_is_transactional_and_stale_calls_are_rejected",
         "rust:disabling_during_native_work_preserves_inflight_source_and_revokes_next_generation"

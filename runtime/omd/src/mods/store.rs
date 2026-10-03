@@ -24,14 +24,17 @@ pub struct Trust {
     pub capabilities: Vec<String>,
     pub scope: String,
     pub secret_environment: Vec<String>,
+    pub expires_at: Option<u64>,
 }
 
 pub(super) fn grant(selection: &Value) -> String {
-    crate::broker::canonical(
-        &json!({"path": selection["path"], "sha256": selection["sha256"],
+    let mut grant = json!({"path": selection["path"], "sha256": selection["sha256"],
         "capabilities": selection["capabilities"], "scope": selection["scope"],
-        "secret_environment": selection.get("secret_environment").unwrap_or(&json!([]))}),
-    )
+        "secret_environment": selection.get("secret_environment").unwrap_or(&json!([]))});
+    if let Some(expires_at) = selection.get("expires_at").filter(|value| !value.is_null()) {
+        grant["expires_at"] = expires_at.clone();
+    }
+    crate::broker::canonical(&grant)
 }
 
 pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<String>)>> {
@@ -376,6 +379,8 @@ impl ModStore {
                 "capabilities": selection.capabilities,
                 "exec_environment": environment,
                 "secret_environment": selection.secret_environment,
+                "expires_at": selection.expires_at,
+                "authority_current": selection.authority_current(),
                 "settings_keys": selection.settings.keys().collect::<Vec<_>>(),
                 "settings_sha256": digest(&serde_json::to_vec(&selection.settings)?),
                 "error": error,
@@ -448,6 +453,7 @@ impl ModStore {
             capabilities,
             scope: scope.to_owned(),
             secret_environment,
+            expires_at: None,
         }])
     }
 
@@ -461,6 +467,7 @@ impl ModStore {
             capabilities,
             scope,
             secret_environment,
+            expires_at,
         } in packages
         {
             if !super::MOD_SCOPES.contains(&scope.as_str()) {
@@ -490,8 +497,31 @@ impl ModStore {
                 settings,
                 scope,
                 secret_environment: package.secret_environment(),
+                expires_at,
             });
         }
+        config.revision = config
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| failure("revision_overflow"))?;
+        self.write("mods.json", &serde_json::to_value(config)?)
+    }
+
+    pub fn revoke_authority(&self, path: &Path) -> Result<()> {
+        let _lock = self.lock()?;
+        self.recover_package_transaction()?;
+        let mut config = self.configuration()?;
+        let selection = config
+            .mods
+            .iter_mut()
+            .find(|m| m.path == path)
+            .ok_or_else(|| failure("package_not_trusted"))?;
+        selection.expires_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(failure)?
+                .as_secs(),
+        );
         config.revision = config
             .revision
             .checked_add(1)

@@ -234,6 +234,7 @@ pub(crate) fn call(
             source_sha256: &grants.source_sha256,
             capabilities: &grants.capabilities,
             exec_environment: &grants.exec_environment,
+            os_access: grants.os_access.as_ref(),
             origin,
             thread,
         },
@@ -254,6 +255,8 @@ mod tests {
             source_sha256: "a".repeat(64),
             capabilities: vec!["exec".into()],
             exec_environment: vec!["RUSTUP_HOME".into()],
+            os_access: None,
+            approves: None,
         };
         let start = |environment: Value| codex_omd::ModHostCall {
             operation: "process.start".into(),

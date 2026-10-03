@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "os_tools",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "exec",
+    "os",
+    "commands"
+  ],
+  "os_access": {
+    "programs": ["git"],
+    "network": true
+  },
+  "compatibility": {
+    "required_features": [
+      "unrestricted_process_v1"
+    ]
+  }
+}

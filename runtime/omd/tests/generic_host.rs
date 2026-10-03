@@ -90,6 +90,7 @@ fn caller<'a>(capabilities: &'a [String], environment: &'a [String], origin: Ori
         source_sha256: "0000000000000000000000000000000000000000000000000000000000000000",
         capabilities,
         exec_environment: environment,
+        os_access: None,
         origin,
         thread: Some("thread-1"),
     }
@@ -1408,6 +1409,7 @@ fn outside_author_uses_owned_asset_and_paged_exec_output() {
         source_sha256: &selected,
         capabilities: &capabilities,
         exec_environment: &[],
+        os_access: None,
         origin: Origin::UserCommand,
         thread: Some("thread-1"),
     };
@@ -1733,4 +1735,105 @@ fn contract_select_writes_the_user_selection_and_needs_the_plan_confirmation_to_
         confirmation,
     )
     .unwrap();
+}
+
+#[test]
+fn unrestricted_exec_runs_granted_programs_outside_the_sandbox() {
+    let _exec = exec_slot();
+    let (temp, repository, data, authority) = setup();
+    let outside = temp.path().canonicalize().unwrap().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("dummy-secret"), "isolated dummy secret\n").unwrap();
+    let active = || true;
+    let host = Host {
+        authority: &authority,
+        data_root: &data,
+        active: &active,
+        record_changes: false,
+    };
+    let capabilities = strings(&["exec", "os"]);
+    let access = codex_omd::ModOsAccess {
+        programs: strings(&["cat", "env"]),
+        network: true,
+    };
+    let granted = Caller {
+        os_access: Some(&access),
+        ..caller(&capabilities, &[], Origin::Tool)
+    };
+    let read = host
+        .call(
+            &granted,
+            "exec.run",
+            json!({"program": "cat", "argv": ["dummy-secret"], "cwd": outside, "sandbox": "none"}),
+        )
+        .unwrap();
+    assert_eq!(read["stdout"], "isolated dummy secret\n");
+    assert!(
+        authority.sandboxed.borrow().is_empty(),
+        "an unrestricted run bypasses the session sandbox"
+    );
+    let environment = host
+        .call(
+            &granted,
+            "exec.run",
+            json!({"program": "env", "sandbox": "none", "env": {}}),
+        )
+        .unwrap();
+    let environment = environment["stdout"].as_str().unwrap();
+    assert!(environment.contains(&format!("HOME={}", std::env::var("HOME").unwrap())));
+    assert!(!environment.contains("CODEX_HOME=") && !environment.contains("OPENAI_API_KEY="));
+    let refused = |caller: &Caller<'_>, arguments: Value| {
+        host.call(caller, "exec.run", arguments).unwrap_err()
+    };
+    assert_eq!(
+        refused(&granted, json!({"program": "ls", "sandbox": "none"})),
+        "os_access_denied: ls"
+    );
+    assert_eq!(
+        refused(
+            &caller(&capabilities, &[], Origin::Tool),
+            json!({"program": "cat", "sandbox": "none"})
+        ),
+        "capability_denied: os"
+    );
+    for invalid in [
+        json!({"program": "cat", "sandbox": "none", "network": "loopback"}),
+        json!({"program": "cat", "sandbox": "none", "unix_sockets": ["X"]}),
+    ] {
+        refused(&granted, invalid);
+    }
+    assert_eq!(
+        refused(&granted, json!({"program": "cat", "sandbox": "lenient"})),
+        "exec_sandbox_invalid"
+    );
+    let offline = codex_omd::ModOsAccess {
+        programs: strings(&["*"]),
+        network: false,
+    };
+    let offline = Caller {
+        os_access: Some(&offline),
+        ..caller(&capabilities, &[], Origin::Tool)
+    };
+    let fetched = host
+        .call(
+            &offline,
+            "exec.run",
+            json!({"program": "/usr/bin/nc", "argv": ["-z", "-w", "2", "1.1.1.1", "443"], "sandbox": "none"}),
+        )
+        .unwrap();
+    assert_ne!(
+        fetched["exit_code"], 0,
+        "os_access.network false denies IP networking"
+    );
+    assert_eq!(
+        host.call(
+            &offline,
+            "exec.run",
+            json!({"program": "cat", "argv": [outside.join("dummy-secret")], "sandbox": "none"})
+        )
+        .unwrap()["stdout"],
+        "isolated dummy secret\n",
+        "denying the network still leaves user-readable files exposed"
+    );
+    assert!(repository.exists());
 }

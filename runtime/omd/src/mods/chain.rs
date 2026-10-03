@@ -182,6 +182,7 @@ fn validate_input(surface: &str, original: &Value, input: &Value) -> Result<()> 
         "host_operation" => &["arguments"],
         "input" => &["text"],
         "model_request" => &["route"],
+        "tool_specs" => &["tools"],
         _ => &[],
     };
     let (Some(original), Some(object)) = (original.as_object(), input.as_object()) else {
@@ -196,7 +197,7 @@ fn validate_input(surface: &str, original: &Value, input: &Value) -> Result<()> 
             input["tool"]
                 .as_str()
                 .is_some_and(|tool| !tool.is_empty() && tool.len() <= 128)
-                && input["arguments"].is_object()
+                && (input["arguments"].is_object() || input["arguments"].is_string())
         }
         "input" => input["text"]
             .as_str()
@@ -206,6 +207,7 @@ fn validate_input(surface: &str, original: &Value, input: &Value) -> Result<()> 
                 .iter()
                 .any(|route| route["name"] == input["route"] && route["name"].is_string())
         }),
+        "tool_specs" => tool_specs(&input["tools"], &original["tools"]),
         _ => true,
     };
     if unchanged && typed {
@@ -213,6 +215,36 @@ fn validate_input(surface: &str, original: &Value, input: &Value) -> Result<()> 
     } else {
         Err(failure(format!("invalid_continuation_input: {surface}")))
     }
+}
+
+/// Tool specs may drop, defer or re-describe tools they were given, never add or rename one.
+fn tool_specs(tools: &Value, given: &Value) -> bool {
+    let given = given
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<BTreeSet<_>>();
+    let Some(tools) = tools.as_array() else {
+        return false;
+    };
+    let names = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<BTreeSet<_>>();
+    names.len() == tools.len()
+        && names.is_subset(&given)
+        && tools.iter().all(|tool| {
+            tool.as_object().is_some_and(|object| {
+                object.keys().all(|key| {
+                    ["name", "description", "parameters", "deferred"].contains(&key.as_str())
+                })
+            }) && tool["description"]
+                .as_str()
+                .is_some_and(|text| text.len() <= 4096)
+                && (tool["parameters"].is_object() || tool["parameters"].is_null())
+                && tool["deferred"].is_boolean()
+        })
 }
 
 fn validate_result(surface: &str, result: &Value, last: Option<&Value>) -> Result<()> {
@@ -233,15 +265,19 @@ fn validate_result(surface: &str, result: &Value, last: Option<&Value>) -> Resul
                     .as_str()
                     .is_some_and(|output| output.len() <= RESULT_BYTES)
                     && result["success"].is_boolean()
-                    && object
-                        .keys()
-                        .all(|key| ["output", "success", "truncated"].contains(&key.as_str()))
+                    && object.keys().all(|key| {
+                        ["output", "success", "truncated", "call_id"].contains(&key.as_str())
+                    })
             })
         }
         "host_operation" => {
             object.is_some_and(|object| object.len() == 1)
                 && (result.get("value").is_some() || text("error", 768))
                 && serde_json::to_vec(result)?.len() <= RESULT_BYTES
+        }
+        "tool_specs" => {
+            object.is_some_and(|object| object.len() == 1)
+                && last.is_some_and(|last| tool_specs(&result["tools"], &last["tools"]))
         }
         _ => deny,
     };
@@ -346,11 +382,6 @@ impl Chain {
                     if attempts.count > ATTEMPT_LIMIT {
                         return Err(failure("continuation_attempt_limit"));
                     }
-                    if self.surface == "tool" && attempts.count > 1 {
-                        return Err(failure(
-                            "continuation_retry_unavailable: a tool call runs once per dispatch",
-                        ));
-                    }
                     let (mark, started) = (self.trace.len(), Instant::now());
                     let result = self.link(access, host, core, active, scope, k + 1, input);
                     attempts.downstream += started.elapsed();
@@ -415,7 +446,7 @@ impl Chain {
             return result;
         };
         let mut attempts = Attempts::default();
-        if scope.contains(&link.id) {
+        if scope.contains(&link.id) || self.origin["caller"] == link.id.as_str() {
             self.entry(
                 k,
                 Some(&link),

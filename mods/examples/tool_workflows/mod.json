@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "tool_workflows",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "interception",
+    "terminal",
+    "store"
+  ],
+  "compatibility": {
+    "required_features": [
+      "tool_continuation_v2",
+      "terminal_prompt_v1"
+    ]
+  }
+}

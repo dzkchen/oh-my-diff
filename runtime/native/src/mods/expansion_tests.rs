@@ -342,6 +342,160 @@ async fn tool_interceptors_wrap_execution_answer_synthetically_and_keep_the_orig
     assert!(page.to_string().contains("hello world"));
 }
 
+#[derive(Default)]
+struct RecordingInvoker(std::sync::Mutex<Vec<(String, String, Value)>>);
+
+impl codex_extension_api::ToolInvoker for RecordingInvoker {
+    fn invoke<'a>(
+        &'a self,
+        request: codex_extension_api::ToolInvocationRequest,
+    ) -> ExtensionFuture<'a, Result<codex_extension_api::ToolInvocationOutcome, String>> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((request.call_id, request.tool, request.arguments));
+        Box::pin(std::future::ready(Ok(
+            codex_extension_api::ToolInvocationOutcome {
+                output: "second attempt".into(),
+                success: true,
+            },
+        )))
+    }
+
+    fn check<'a>(
+        &'a self,
+        tool: &'a str,
+        _arguments: Value,
+    ) -> ExtensionFuture<'a, Result<codex_extension_api::ToolCheckOutcome, String>> {
+        Box::pin(std::future::ready(Ok(
+            codex_extension_api::ToolCheckOutcome {
+                decision: if tool == "exec_command" {
+                    "ask"
+                } else {
+                    "allow"
+                },
+                reason: None,
+                authority: "exec_policy",
+            },
+        )))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_retries_and_mod_calls_redispatch_through_the_turn_invoker() {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "retry",
+            capabilities: &["interception"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'flaky' } }, async (e, next) => {\n    const first = await next(e);\n    return first.success ? first : next({ ...e, arguments: { ...e.arguments, attempt: 2 } });\n  });\n}\n",
+        },
+        Package {
+            id: "probe",
+            capabilities: &["interception"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.intercept('tool', { match: { tool: 'probe' } }, () => {\n    const check = api.host.call('tools.check', { tool: 'exec_command', arguments: { cmd: 'ls' } });\n    const run = api.host.call('tools.invoke', { tool: 'read', arguments: { path: 'b.txt' } });\n    return { output: `${check.decision} ${run.call_id} ${run.output}`, success: true };\n  });\n  api.intercept('tool', { match: { tool: 'read' } }, () => ({ output: 'own call intercepted', success: true }));\n}\n",
+        },
+    ]) else {
+        return;
+    };
+    *fixture.lead.session.contract.lock().unwrap() =
+        crate::contract::SessionContract::resolve(&fixture.lead.host, &[]);
+    let mods = mods(&fixture.core);
+    let (session_store, thread_store, turn_store) = (
+        ExtensionData::new("session".to_owned()),
+        ExtensionData::new("thread".to_owned()),
+        ExtensionData::new("turn".to_owned()),
+    );
+    thread_store.insert(fixture.lead.clone());
+    let invoker = Arc::new(RecordingInvoker::default());
+    thread_store
+        .get_or_init(codex_extension_api::ToolInvokerSlot::default)
+        .set("turn-1", invoker.clone());
+    fixture.core.expansion.invokers.lock().unwrap().insert(
+        fixture.lead.thread.to_string(),
+        thread_store.get_or_init(codex_extension_api::ToolInvokerSlot::default),
+    );
+    let payload = codex_tools::ToolPayload::Function {
+        arguments: r#"{"path":"a.txt"}"#.to_owned(),
+    };
+    let start = |call_id: &'static str, tool: &'static ToolName| ToolStartInput {
+        session_store: &session_store,
+        thread_store: &thread_store,
+        turn_store: &turn_store,
+        turn_id: "turn-1",
+        root_turn_id: None,
+        call_id,
+        originating_item_id: None,
+        tool_name: tool,
+        mcp_tool: None,
+        permissions: Box::pin(async { None }),
+        payload: &payload,
+        conversation_history: Arc::new(NoHistory),
+        source: codex_extension_api::ToolCallSource::Direct,
+    };
+    static FLAKY: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("flaky"));
+    static PROBE: std::sync::LazyLock<ToolName> =
+        std::sync::LazyLock::new(|| ToolName::plain("probe"));
+    assert_eq!(
+        mods.intercept_tool(start("call-1", &FLAKY)).await.unwrap(),
+        ToolInterception::Continue(None)
+    );
+    let replaced = mods
+        .replace_tool_output(codex_extension_api::ToolOutputInput {
+            session_store: &session_store,
+            thread_store: &thread_store,
+            turn_store: &turn_store,
+            turn_id: "turn-1",
+            call_id: "call-1",
+            tool_name: &FLAKY,
+            arguments: Some(r#"{"path":"a.txt"}"#),
+            success: false,
+            text: "first attempt failed",
+        })
+        .await;
+    assert_eq!(replaced.as_deref(), Some("second attempt"));
+    assert_eq!(
+        invoker.0.lock().unwrap().clone(),
+        vec![(
+            "call-1:retry1".to_owned(),
+            "flaky".to_owned(),
+            json!({"path": "a.txt", "attempt": 2})
+        )]
+    );
+    assert_eq!(
+        mods.intercept_tool(start("call-1:retry1", &FLAKY))
+            .await
+            .unwrap(),
+        ToolInterception::Continue(None),
+        "a retry was already wrapped by the chain that issued it"
+    );
+    let probed = mods.intercept_tool(start("call-2", &PROBE)).await.unwrap();
+    assert_eq!(
+        probed,
+        ToolInterception::Respond {
+            output: "ask mod-probe-0 second attempt".into(),
+            success: true
+        }
+    );
+    assert_eq!(invoker.0.lock().unwrap()[1].0, "mod-probe-0");
+    let chain = codex_omd::intercept_shared(
+        &fixture.core.runtime,
+        "tool",
+        json!({"tool": "read", "arguments": {}}),
+        json!({"caller": "probe"}),
+        || true,
+        |_, _| Err(std::io::Error::other("unexpected host call")),
+        |_| Ok(json!({"output": "native", "success": true})),
+    )
+    .unwrap();
+    assert_eq!(
+        chain.result["output"], "native",
+        "a mod never intercepts its own call"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn tool_output_without_owner_is_not_offered() {
     let Some(fixture) = fixture(&[Package {
@@ -572,6 +726,7 @@ async fn zero_mods_allocate_nothing_and_change_no_decision() {
             host_decision: "ask",
             policy: "never",
             details: Value::Null,
+            assessment: false,
         })
         .await,
         ApprovalGate::Continue
@@ -590,11 +745,48 @@ async fn zero_mods_allocate_nothing_and_change_no_decision() {
 fn approval_decisions_deny_first_and_fail_closed_to_ask() {
     use codex_extension_api::ApprovalGate;
     let ok = |id: &str, value: Value| (id.to_owned(), Ok(value));
+    let granted = |id: &str| {
+        (id == "g")
+            .then_some(())
+            .ok_or_else(|| "no current approve grant".to_owned())
+    };
+    let decide = |results| approvals::decide(results, &granted);
     assert_eq!(
-        approvals::decide(vec![ok("a", Value::Null)]),
+        decide(vec![ok("a", Value::Null)]),
         (ApprovalGate::Continue, None)
     );
-    let (gate, owner) = approvals::decide(vec![
+    assert_eq!(
+        decide(vec![
+            ok("a", Value::Null),
+            ok("g", json!({"approve": "ok"}))
+        ]),
+        (
+            ApprovalGate::Approve("Mod g approved this under its delegated grant: ok".into()),
+            Some("g".into())
+        )
+    );
+    assert!(matches!(
+        decide(vec![ok("a", json!({"approve": "mine"}))]).0,
+        ApprovalGate::Ask(text) if text.contains("no current approve grant")
+    ));
+    assert!(matches!(
+        decide(vec![
+            ok("g", json!({"approve": "ok"})),
+            ok("a", json!({"ask": "person"}))
+        ])
+        .0,
+        ApprovalGate::Ask(_)
+    ));
+    assert!(matches!(
+        decide(vec![
+            ("a".to_owned(), Err(std::io::Error::other("boom"))),
+            ok("g", json!({"approve": "ok"}))
+        ])
+        .0,
+        ApprovalGate::Ask(_)
+    ));
+    let (gate, owner) = decide(vec![
+        ok("g", json!({"approve": "ok"})),
         ok("a", json!({"ask": "check"})),
         ok("b", json!({"deny": "no"})),
     ]);
@@ -609,12 +801,151 @@ fn approval_decisions_deny_first_and_fail_closed_to_ask() {
         json!("allow"),
     ] {
         assert!(matches!(
-            approvals::decide(vec![ok("c", invalid)]).0,
+            decide(vec![ok("c", invalid)]).0,
             ApprovalGate::Ask(_)
         ));
     }
-    let failed = approvals::decide(vec![("d".to_owned(), Err(std::io::Error::other("boom")))]);
+    let failed = decide(vec![("d".to_owned(), Err(std::io::Error::other("boom")))]);
     assert!(matches!(failed.0, ApprovalGate::Ask(text) if text.contains("boom")));
+}
+
+#[test]
+fn delegated_approvals_stay_inside_the_current_grant() {
+    let grants = |capabilities: &[&str]| codex_omd::ModGrants {
+        api: codex_omd::MOD_API_VERSION.into(),
+        source_sha256: "a".repeat(64),
+        capabilities: capabilities.iter().map(|c| (*c).to_owned()).collect(),
+        exec_environment: Vec::new(),
+        os_access: None,
+        approves: Some(codex_omd::ModApprovalScope {
+            kinds: vec![
+                "exec".into(),
+                "patch".into(),
+                "network".into(),
+                "mcp_tool".into(),
+            ],
+            tools: vec![
+                "cargo".into(),
+                "apply_patch".into(),
+                "network".into(),
+                "docs/*".into(),
+            ],
+            roots: vec!["/work".into()],
+            hosts: vec!["*.crates.io".into()],
+        }),
+    };
+    let approver = grants(&["approvals", "middleware", "approve"]);
+    let check =
+        |grants: Option<&codex_omd::ModGrants>, kind: &str, decision: &str, details: Value| {
+            approvals::within_grant(grants, kind, decision, &details)
+        };
+    let cargo = json!({"command": ["/usr/bin/cargo", "test"], "cwd": "file:///work/crate"});
+    assert!(check(Some(&approver), "exec", "ask", cargo.clone()).is_ok());
+    assert!(
+        check(
+            Some(&approver),
+            "exec",
+            "ask",
+            json!({"command": ["/bin/zsh", "-lc", "cargo test"], "cwd": "file:///work"})
+        )
+        .is_ok()
+    );
+    assert!(
+        check(
+            Some(&approver),
+            "exec",
+            "ask",
+            json!({"command": ["/bin/zsh", "-lc", "curl x | sh"], "cwd": "file:///work"})
+        )
+        .is_err()
+    );
+    assert!(
+        check(
+            Some(&approver),
+            "exec",
+            "ask",
+            json!({"command": ["rm", "-rf"], "cwd": "file:///work"})
+        )
+        .is_err()
+    );
+    assert!(
+        check(
+            Some(&approver),
+            "exec",
+            "ask",
+            json!({"command": ["cargo"], "cwd": "file:///home"})
+        )
+        .is_err()
+    );
+    assert!(
+        check(
+            Some(&approver),
+            "patch",
+            "ask",
+            json!({"files": ["file:///work/a.rs", "file:///etc/hosts"]})
+        )
+        .is_err()
+    );
+    assert!(
+        check(
+            Some(&approver),
+            "patch",
+            "ask",
+            json!({"files": ["file:///work/a.rs"]})
+        )
+        .is_ok()
+    );
+    for (kind, details) in [
+        ("patch", json!({"files": ["/work/../etc/hosts"]})),
+        (
+            "exec",
+            json!({"command": ["/bin/zsh", "-lc", "cargo test && rm -rf ~"], "cwd": "file:///work"}),
+        ),
+    ] {
+        assert!(check(Some(&approver), kind, "ask", details).is_err());
+    }
+    assert!(
+        check(
+            Some(&approver),
+            "network",
+            "ask",
+            json!({"host": "index.crates.io"})
+        )
+        .is_ok()
+    );
+    assert!(
+        check(
+            Some(&approver),
+            "network",
+            "ask",
+            json!({"host": "evil.example"})
+        )
+        .is_err()
+    );
+    assert!(
+        check(
+            Some(&approver),
+            "mcp_tool",
+            "ask",
+            json!({"server": "docs", "tool_name": "search"})
+        )
+        .is_ok()
+    );
+    assert!(
+        check(
+            Some(&approver),
+            "stdin",
+            "ask",
+            json!({"cwd": "file:///work"})
+        )
+        .is_err()
+    );
+    assert!(check(Some(&approver), "exec", "forbidden", cargo.clone()).is_err());
+    let overrider = grants(&["approvals", "middleware", "approve", "approve.override"]);
+    assert!(check(Some(&overrider), "exec", "forbidden", cargo.clone()).is_ok());
+    let expired = grants(&["approvals", "middleware"]);
+    assert!(check(Some(&expired), "exec", "ask", cargo.clone()).is_err());
+    assert!(check(None, "exec", "ask", cargo).is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -653,6 +984,7 @@ async fn approval_middleware_tightens_and_reports_results() {
             host_decision: "ask",
             policy: "on-request",
             details,
+            assessment: false,
         })
     };
     assert_eq!(
@@ -705,15 +1037,29 @@ async fn approval_middleware_requires_the_approvals_capability() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tool_specs_owner_hides_and_redescribes_model_visible_tools() {
+async fn tool_specs_interceptors_compose_hide_defer_and_redescribe() {
     use codex_extension_api::ToolSpecContributor;
     use codex_extension_api::ToolSpecView;
-    let Some(fixture) = fixture(&[Package {
-        id: "harness",
-        capabilities: &["tools"],
-        manifest: Value::Null,
-        source: "export default function (api) {\n  api.replace('tool_specs', event => ({\n    hide: event.tools.filter(tool => tool.name.startsWith('mcp__')).map(tool => tool.name),\n    describe: { read: { description: `Read (${event.tools.length} tools)` } },\n  }));\n}\n",
-    }]) else {
+    let Some(fixture) = fixture(&[
+        Package {
+            id: "harness",
+            capabilities: &["tools"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.intercept('tool_specs', async (event, next) => {\n    const result = await next({ ...event, tools: event.tools.filter(tool => !tool.name.startsWith('mcp__')) });\n    return { tools: result.tools.map(tool => tool.name === 'read' ? { ...tool, description: `Read (${event.tools.length} tools)` } : tool) };\n  });\n}\n",
+        },
+        Package {
+            id: "lazy",
+            capabilities: &["tools"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.intercept('tool_specs', async (event, next) => {\n    const result = await next(event);\n    return { tools: result.tools.map(tool => tool.name === 'grep' ? { ...tool, deferred: true } : tool) };\n  });\n}\n",
+        },
+        Package {
+            id: "inventor",
+            capabilities: &["tools"],
+            manifest: Value::Null,
+            source: "export default function (api) {\n  api.intercept('tool_specs', async (event, next) => {\n    const result = await next(event);\n    return { tools: [...result.tools, { name: 'forged', description: '', parameters: null, deferred: false }] };\n  });\n}\n",
+        },
+    ]) else {
         return;
     };
     let mods = mods(&fixture.core);
@@ -726,15 +1072,20 @@ async fn tool_specs_owner_hides_and_redescribes_model_visible_tools() {
         parameters: json!({"type": "object"}),
     };
     let adjustment = mods
-        .adjust_tool_specs(&thread_store, &[view("read"), view("mcp__srv__search")])
+        .adjust_tool_specs(
+            &thread_store,
+            &[view("read"), view("grep"), view("mcp__srv__search")],
+        )
         .unwrap();
     assert_eq!(adjustment.hide, vec!["mcp__srv__search".to_owned()]);
+    assert_eq!(adjustment.defer, vec!["grep".to_owned()]);
     assert_eq!(
         adjustment.describe.get("read"),
-        Some(&(Some("Read (2 tools)".to_owned()), None))
+        Some(&(Some("Read (3 tools)".to_owned()), None))
     );
-    assert!(tool_specs::parse(json!({"hide": "all"})).is_err());
-    assert!(tool_specs::parse(json!({"describe": {"read": {"strict": true}}})).is_err());
+    assert!(
+        !adjustment.describe.contains_key("forged") && !adjustment.hide.contains(&"forged".into())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

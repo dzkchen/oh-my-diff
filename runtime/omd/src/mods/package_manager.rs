@@ -299,6 +299,7 @@ impl ModStore {
                 settings: package.settings.clone(),
                 scope: package.scope.clone(),
                 secret_environment: package.trust.secret_environment.clone(),
+                expires_at: None,
             };
             if let Some(selection) = selection {
                 config.mods[selection] = next;
@@ -545,6 +546,7 @@ impl ModStore {
             settings: previous.settings,
             scope: previous.scope,
             secret_environment: previous.trust.secret_environment,
+            expires_at: None,
         };
         config.revision = config
             .revision

@@ -59,6 +59,7 @@ impl ModHostCall {
             "terminal.pty" => Ok("pty"),
             "model.complete" => Ok("agents"),
             "tools.define" | "tools.undefine" => Ok("tools"),
+            "tools.invoke" | "tools.check" => Ok("interception"),
             "composer.read" | "composer.write" => Ok("composer"),
             "builtins.invoke" => Ok("builtins"),
             "packages.list" | "packages.preview" | "packages.apply" | "packages.reload" => {
@@ -90,6 +91,13 @@ impl ModHostCall {
             if self.arguments["network"] == "loopback" {
                 capabilities.push("network");
             }
+        }
+        if matches!(
+            self.operation.as_str(),
+            "exec.run" | "process.start" | "terminal.pty"
+        ) && self.arguments["sandbox"] == "none"
+        {
+            capabilities.push("os");
         }
         if self.operation == "exec.run"
             && self.arguments["unix_sockets"]
@@ -172,6 +180,11 @@ pub(super) fn run(
                 .find(|capability| !loaded.package.capabilities.iter().any(|c| c == *capability))
             {
                 return Err(failure(format!("capability_denied: {missing}")));
+            }
+            if let Some(expired) = capabilities.iter().find(|capability| {
+                AUTHORITY_CAPABILITIES.contains(capability) && !loaded.selection.authority_current()
+            }) {
+                return Err(failure(format!("grant_expired: {expired}")));
             }
             if !active() {
                 return Err(failure("callback_cancelled"));

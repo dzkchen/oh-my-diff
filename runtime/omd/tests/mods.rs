@@ -2916,7 +2916,7 @@ fn continuation_failures_skip_keep_catch_or_fail_closed() {
         ),
         (
             "late",
-            "export default api => api.intercept('tool', async (e, next) => { await next(e); await next(e); })",
+            "export default api => api.intercept('tool', async (e, next) => { await next(e); throw new Error('late'); })",
             &["interception"],
         ),
     ]);
@@ -2946,12 +2946,7 @@ fn continuation_failures_skip_keep_catch_or_fail_closed() {
         ]
         .map(|(id, outcome)| (id.to_owned(), outcome.to_owned()))
     );
-    assert!(
-        chain.trace[2]["reason"]
-            .as_str()
-            .unwrap()
-            .contains("continuation_retry_unavailable")
-    );
+    assert!(chain.trace[2]["reason"].as_str().unwrap().contains("late"));
     let (temp, runtime) = interceptors(&[(
         "policy",
         "export default api => api.intercept('tool', {required: true}, (e, next) => { if (e.tool !== next.original.tool) throw new Error('rewritten'); throw new Error('policy down'); })",
@@ -3186,4 +3181,129 @@ fn input_and_model_request_continuations_pass_downstream_results_or_deny() {
     )
     .unwrap();
     assert_eq!(request.result, json!({"route":"cheap"}));
+}
+
+#[test]
+fn os_and_approve_grants_are_declared_scoped_expiring_and_revocable() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let store = ModStore::create(root.join("store"), node()).unwrap();
+    let write = |id: &str, extra: Value, capabilities: &[&str]| {
+        let path = root.join(id);
+        std::fs::create_dir(&path).unwrap();
+        let mut manifest = json!({"schema":1,"id":id,"version":"1.0.0","api":CURRENT_API,
+            "state_version":1,"capabilities":capabilities});
+        manifest
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        std::fs::write(
+            path.join("mod.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            path.join("index.ts"),
+            "export default api => { api.middleware('approval', () => ({ approve: 'ok' })); api.command('run', () => api.host.call('exec.run', { program: 'git', sandbox: 'none' })); }",
+        )
+        .unwrap();
+        path
+    };
+    let invalid = [
+        ("bare_os", json!({}), &["exec", "os"][..]),
+        (
+            "os_without_exec",
+            json!({"os_access": {"programs": ["git"]}}),
+            &["os"][..],
+        ),
+        (
+            "relative_program",
+            json!({"os_access": {"programs": ["bin/git"]}}),
+            &["exec", "os"][..],
+        ),
+        (
+            "bare_approve",
+            json!({}),
+            &["approvals", "middleware", "approve"][..],
+        ),
+        (
+            "unknown_kind",
+            json!({"approves": {"kinds": ["permissions"]}}),
+            &["approvals", "middleware", "approve"][..],
+        ),
+        (
+            "override_alone",
+            json!({"approves": {"kinds": ["exec"]}}),
+            &["approvals", "middleware", "approve.override"][..],
+        ),
+    ];
+    for (id, extra, capabilities) in invalid {
+        assert!(
+            ModStore::inspect_package(&write(id, extra, capabilities)).is_err(),
+            "{id}"
+        );
+    }
+    let capabilities = [
+        "exec",
+        "os",
+        "approvals",
+        "middleware",
+        "approve",
+        "commands",
+    ];
+    let path = write(
+        "delegate",
+        json!({"os_access": {"programs": ["git"], "network": true},
+            "approves": {"kinds": ["exec"], "tools": ["cargo"], "roots": ["/work"]}}),
+        &capabilities,
+    );
+    let sha256 = ModStore::inspect_package(&path).unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    contended(|| {
+        store.trust_all(vec![codex_omd::Trust {
+            path: path.clone(),
+            sha256: sha256.clone(),
+            capabilities: capabilities.iter().map(|c| c.to_string()).collect(),
+            scope: "user".into(),
+            secret_environment: Vec::new(),
+            expires_at: Some(u64::MAX),
+        }])
+    });
+    contended(|| store.enable(&path, true));
+    let mut runtime = host(&temp);
+    let grants = runtime.grants("delegate").unwrap();
+    assert_eq!(grants.os_access.unwrap().programs, ["git"]);
+    assert_eq!(grants.approves.unwrap().roots, ["/work"]);
+    let status = runtime.status()["mods"][0]["authority"].clone();
+    assert_eq!(status["current"], true);
+    assert_eq!(status["exposure"].as_array().unwrap().len(), 2);
+    contended(|| store.revoke_authority(&path));
+    runtime.reload().unwrap();
+    let revoked = runtime.grants("delegate").unwrap();
+    assert!(revoked.os_access.is_none() && revoked.approves.is_none());
+    assert!(
+        !revoked
+            .capabilities
+            .iter()
+            .any(|c| c == "os" || c == "approve")
+    );
+    assert!(
+        runtime
+            .invoke(
+                "delegate",
+                runtime.generation(),
+                "command",
+                "run",
+                Value::Null
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("grant_expired: os")
+    );
+    assert_eq!(
+        store.selection_status().unwrap()["selections"][0]["authority_current"],
+        false
+    );
 }

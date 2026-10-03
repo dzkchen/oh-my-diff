@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "approval_delegate",
+  "version": "1.0.0",
+  "api": "0.2.0-experimental.5",
+  "state_version": 1,
+  "license": "Apache-2.0",
+  "capabilities": [
+    "approvals",
+    "middleware",
+    "approve"
+  ],
+  "approves": {
+    "kinds": ["exec"],
+    "tools": ["cargo", "pnpm"]
+  },
+  "compatibility": {
+    "required_features": [
+      "delegated_approval_v1"
+    ]
+  }
+}

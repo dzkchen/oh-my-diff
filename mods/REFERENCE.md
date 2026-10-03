@@ -54,17 +54,49 @@ native work.
 | `credentials` | `credentials.list`, `credentials.request` |
 | `composer` | `composer.read`, `composer.write`, the `completion` replacement |
 | `packages` | `packages.list`, `packages.preview`, `packages.apply`, `packages.reload`, `settings.write` for another mod |
-| `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, the `tool_specs` replacement |
-| `interception` | `tool` interceptors and the `tool_batch` replacement |
+| `tools` | `api.tool`, `api.dynamicTools`, `tools.define`, `tools.undefine`, `tool_specs` interceptors |
+| `interception` | `tool` interceptors, `tools.invoke`, `tools.check` and the `tool_batch` replacement |
 | `input` | `input` interceptors |
 | `middleware` | `host_operation` and `model_request` interceptors and the middleware events |
 | `context`, `commands`, `lifecycle`, `compaction`, `services`, `virtual_reads` | Their registrations and events, unchanged from 0.1 |
+| `os` | `sandbox: "none"` on `exec.run`, `process.start` and `terminal.pty` start (`unrestricted_process_v1`) |
+| `approve` | `{approve}` from the `approval` middleware inside the manifest's `approves` scope (`delegated_approval_v1`) |
+| `approve.override` | delegated approval of commands the user's own execpolicy rules forbid |
 
 `tool_result_fingerprints_v1` supplies observe-only `thread_id`, `call_sha256`,
 `result_sha256` and `result_complete` fields on `tool_result`. The result digest
 covers the accepted model-visible output with a fixed call ID; blocked, failed,
 aborted and unavailable lifecycle results have no result digest. `answered_by` names
 the mod that answered the call without running it.
+
+### Unrestricted processes and delegated approvals
+
+`os`, `approve` and `approve.override` are authority grants. The manifest
+declares their scope, which the trust digest binds, so changed content or a
+wider scope needs a new trust:
+
+- `os_access: {programs, network?}` lists up to 32 programs (`*`, a bare name
+  resolved on `PATH`, or an absolute path) and whether unsandboxed runs keep
+  external network (`network: false` runs them under a profile that denies IP
+  networking only). It needs `exec`.
+- `approves: {kinds, tools?, roots?, hosts?}` lists the request kinds a mod may
+  approve (`exec`, `stdin`, `execve`, `patch`, `mcp_tool`, `network`) and
+  optional scopes: `tools` matches the command's program (the first word inside
+  a `sh -c`/`-lc` wrapper), `apply_patch`, `write_stdin` or `server/tool` of an
+  MCP call (`*` and `prefix*` patterns); `roots` are absolute directories that
+  must contain the command's working directory or every patched file; `hosts`
+  match network hosts (`*.example.com`). Empty scopes are broad. It needs
+  `approvals` and `middleware`; `approve.override` needs `approve`.
+
+`omd-mod trust ... --expires SECONDS` ends the three grants at a time, project
+scope keeps them to one repository, and `omd-mod revoke STORE PACKAGE` ends
+them at once without uninstalling the mod. Trust output, the TUI trust dialog
+and status (`mods[].authority`: `os_access`, `approves`, `expires_at`,
+`current`, `exposure`) state what the grant exposes. An expired or revoked
+grant fails `os` calls with `grant_expired: os`, stops the mod's unsandboxed
+managed processes and panes at the next reload or call, and turns its
+approvals into `ask`. Install, rendering, services, dependencies and model
+text cannot issue or widen a grant.
 
 A manifest may list up to 16 `exec_environment` names that `exec.run` passes
 through from the host environment; `PATH`, `HOME`, `TMPDIR`, shell, loader and
@@ -98,6 +130,19 @@ whose host values are Unix sockets the command may connect to; it needs the
 repository to an existing socket owned by the current user, or the call fails
 with `exec_socket_unavailable`; the mod never supplies the path and no IP network
 is added. Cancellation kills the process group and returns `exec_cancelled`.
+With the `os` grant, `sandbox: "none"` runs a program listed in `os_access`
+without the session sandbox: `cwd` may be absolute, the environment is
+cleared and then holds `PATH`, the real `HOME`, `USER`, `LOGNAME`, `SHELL`,
+locale, a private `TMPDIR`, `TERM=dumb`, the declared `exec_environment` names
+and `env`; no host credential or Codex variable is passed and no secrets API
+exists. Limits, timeouts, cancellation and process-group teardown are
+unchanged; `network`, `unix_sockets`, `guards`, `required_access` and
+`snapshot` need the sandbox. The child runs as the user: it can read every
+user-readable file (including secret files such as `~/.ssh` or
+`~/.codex/auth.json`), change mod stores and control files and start processes
+the host does not supervise. The host cannot undo its effects; only the
+OS-separated broker (below) keeps grants, credentials and evidence anchors out
+of its reach.
 The result is `{exit_code, signal, stdout, stdout_sha256, stderr,
 stdout_truncated, stderr_truncated, timed_out, duration_ms, program: {path,
 sha256}, guards_verified}`. The digest covers the raw captured stdout bytes.
@@ -426,6 +471,12 @@ The host replaces `{process.home}` in process arguments with that session's
 private scratch directory, for tools that do not honor the `HOME` environment.
 `environment` supplies at most eight explicit, bounded variables to that
 process. The host rejects its own reserved variables and loader overrides.
+Sandboxed processes also cannot read or write protected and credential paths.
+With the `os` grant, `sandbox: "none"` starts a listed program (`path` and
+`sha256` still pinned) with the same environment rules as unsandboxed
+`exec.run`; `network` comes from `os_access`. The host keeps ownership,
+limits, cancellation and process-group teardown, and stops it when the grant
+expires or is revoked, the mod reloads or is disabled, or its source changes.
 
 ### Terminal lists, insert, placeholder and glyphs
 
@@ -496,16 +547,27 @@ coalesced, 256 events / 1 MiB per mod, oldest dropped with a count) and
 
 `approval` middleware sees exec, patch, MCP, network and permission requests
 before hooks, automatic review and full-access shortcuts. It returns `null`,
-`{deny}` or `{ask}`; any deny rejects and any `ask` forces the native prompt.
-A mod can never approve, and a failing middleware counts as `ask`.
-`approval_result` reports the decision and its source.
+`{deny}`, `{ask}` or `{approve}`. Any deny rejects, then any `ask` forces the
+native prompt (bypassing remembered session approvals), then an `{approve}`
+from a mod with a current `approve` grant whose `approves` scope covers the
+request (see Unrestricted processes and delegated approvals) runs it without a
+prompt; the host shows a native notice naming the mod and reports
+`approval_result` with source `mod`. An approve outside the grant, an expired
+grant, an error, a timeout or an invalid result counts as `ask`. A command
+that the user's own execpolicy rules forbid reaches the middleware with
+`host_decision: 'forbidden'`; only a mod holding `approve.override` can
+approve it, and anything else keeps it forbidden. Managed requirements and
+other host denials never reach the middleware. Permission-escalation requests
+are not delegable. `assessment: true` marks a `tools.check` assessment, which never
+runs or prompts. `approval_result` reports the decision and its source.
 
-### Continuation middleware (`continuation_middleware_v1`)
+### Continuation middleware (`continuation_middleware_v1`, `tool_continuation_v2`)
 
 `api.intercept(pattern, [options,] (e, next) => result)` wraps an operation.
 `pattern` is a surface name, `*`, a `*` glob or a `!` negation, and selects only
 surfaces the package's capabilities entitle: `tool` (`interception`), `input`
-(`input`), `model_request` and `host_operation` (`middleware`). Options are
+(`input`), `model_request` and `host_operation` (`middleware`), `tool_specs`
+(`tools`). Options are
 `match`, `required` and `before`/`after` (mod IDs). In `match`, a scalar matches
 by `===`, a RegExp tests a scalar as a string, an array is any-of and matches any
 element of an array value, and an object matches part of an object. A mod
@@ -521,10 +583,15 @@ of the chain and then the native executor. Only the listed fields may change:
 | `host_operation` | `arguments` | `{value}` | `{value}` or `{error}`, with or without calling `next` |
 | `input` | `text` | `{text}` | what `next` returned, or `{deny}` |
 | `model_request` | `route`, one of `routes` | `{route}` | what `next` returned, or `{deny}` |
+| `tool_specs` | `tools` (drop, re-describe or set `deferred`) | `{tools}` | `{tools}` derived from what `next` returned: drop, defer or re-describe entries, never add or rename one |
 
 Tool inputs also carry `call_id`, `thread_id`, `agent_id`, `schema`,
-`raw_arguments` and `batch`; output beyond 48 KiB arrives truncated with
-`truncated: true`. A tool or host-operation answer runs nothing: the host
+`raw_arguments` and `batch`; `arguments` is an object for function tools and
+the raw string for freeform tools such as `apply_patch`, and a rewrite keeps
+that shape. Native, MCP (retarget by the model-visible name, such as
+`mcp__server__tool`), mod, subagent, code-mode and batched calls all pass
+through the same chain with their own call IDs. Output beyond 48 KiB arrives
+truncated with `truncated: true`. A tool or host-operation answer runs nothing: the host
 records the answering mod as `answered_by` on `tool_result` and in turn
 evidence, and the answer cannot attest that a file changed or a process ran.
 Input and model-request handlers cannot answer for the engine, so an outer
@@ -533,7 +600,8 @@ output, the host keeps the original as readable evidence of the mod that
 settled the result.
 
 `next` also carries `event`, `origin` (set by the host: `caller` is `model`,
-`user`, `engine` or the calling mod, plus thread, agent and call IDs),
+`code_mode` (with `cell_id`), `user`, `engine` or the calling mod, plus
+thread, agent and call IDs),
 `signal.aborted`, `trace` (the entries beneath this handler on its latest call),
 `budget` (`ms`, `remainingMs`, `hostCalls`) and `is(pattern)`. Calling `next`
 suspends the callback: the host releases the runtime, runs the downstream chain,
@@ -541,15 +609,44 @@ then replays the handler from its recorded host results. Code before `next` runs
 again, but its host calls are not repeated, so keep their arguments
 deterministic. A handler may call `next` up to three times; each call is a
 separate attempt through the same executor and admission, so a retried write or
-request is a second effect. A tool call runs once per dispatch, and a second
-`next` fails with `continuation_retry_unavailable`.
+request is a second effect. A tool's first attempt is the model's call; each
+further `next` re-dispatches the effective call through the turn's tool
+executor under `<call_id>:retryN`, with native permissions, approvals,
+sandbox, accounting and its own `tool_result`, and resolves with that
+`call_id`. Interceptors beneath the retrying handler run again for it;
+interceptors above it see only the final result.
 
 Ordinary interceptors wrap required ones. Within each tier the order is
 explicit `before`/`after`, then consumers outside their dependencies, then mod
 ID, then registration order; a cycle disables the mods involved with
 `interceptor_order_conflict`. Required interceptors therefore see the final
 effective input. A mod never intercepts its own host calls, and host calls made
-inside an interceptor are not intercepted.
+inside an interceptor are not intercepted. A tool call a mod starts with
+`tools.invoke` passes through every other mod's interceptors with that mod as
+`origin.caller`.
+
+`tools.invoke {tool, arguments}` runs a model-visible tool through the current
+turn's executor under a new `mod-<id>-<n>` call ID, with interception,
+permissions, approvals, sandbox, accounting, cancellation and its own
+`tool_result`, and returns `{call_id, output, success, truncated}`; failures
+and denials come back as `success: false`. `tools.check {tool, arguments}`
+returns `{decision: 'allow' | 'ask' | 'deny', reason, authority}` without
+running anything. The tool's own runtime computes the host requirement the
+call would meet: the command policy for `exec_command`, patch safety for
+`apply_patch` (the patch is parsed and verified, nothing is written), the
+server's approval mode, annotations and remembered approvals for MCP tools,
+`ask` for tools that always ask a person (`request_permissions`,
+`request_user_input`, plugin installs), `allow` for tools without an approval
+step and `deny` for unknown tools (`authority: 'host'`). Approval middleware
+then sees the request with `assessment: true` and no prompt follows: a mod's
+deny or ask, or a granted `{approve}` of an `ask` (or an overridable user-rule
+denial), is reported with `authority: 'mod'`. Both operations need
+`interception` and a turn in progress in the thread (`tools_unavailable`
+otherwise); each model request publishes its dispatch, so they work from the
+turn's first model request until it ends: in interceptors, tool and output
+callbacks, timers and channel events that run meanwhile. A tool interceptor can hold a call
+for a person with `terminal.prompt`; the wait does not count against its
+budget; cancelling the call stops the wait, and a later answer is discarded.
 
 A handler that throws, times out or returns an invalid result before calling
 `next` is skipped and the chain continues with its input; after `next`, the
@@ -585,8 +682,11 @@ it without timings.
 - `replace('tool_batch')` (`tool_batch_v1`) may merge parallel-safe calls of
   one response into one call of a tool the mod registered; the merged call runs
   through ordinary admission and approvals, and results fan out by call id.
-- `replace('tool_specs')` (`tool_specs_v1`) hides or re-describes
-  model-visible tools per route; execution is unchanged.
+- `intercept('tool_specs')` (`tool_continuation_v2`, `tools`) composes
+  model-visible tool lists per route and request without host operations:
+  drop a tool, re-describe it, or set `deferred: true` to move it behind
+  `tool_search` (a model without tool search keeps deferred tools visible so
+  they stay callable). Execution is unchanged.
 
 ### Channels, processes and watches (`events_v1`)
 
@@ -782,7 +882,10 @@ interaction. Operations:
   lets the pane write the workspace and needs `fs.write`; `network:
   'loopback'` lets it reach services on this computer only and needs
   `network`. The confirmation names the program, write and network access and
-  that the mod can type into the pane.
+  that the mod can type into the pane. With the `os` grant, `sandbox: 'none'`
+  starts a listed program unsandboxed with the real `HOME` (no `write` or
+  `network` fields), skips the per-start confirmation and stops when the grant
+  ends.
   Sessions belong to the calling mod (four per mod, sixteen in all), render
   only in views that mod owns or contributes to, and stop when it unloads. A
   focused `terminal` component receives keys; Ctrl+] (or Ctrl+5) leaves it.

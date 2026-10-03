@@ -36,6 +36,7 @@ fn caller<'a>(capabilities: &'a [String], thread: Option<&'a str>) -> Caller<'a>
         source_sha256: "0000000000000000000000000000000000000000000000000000000000000000",
         capabilities,
         exec_environment: &[],
+        os_access: None,
         origin: Origin::Tool,
         thread,
     }

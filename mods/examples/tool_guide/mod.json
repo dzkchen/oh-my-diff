@@ -10,7 +10,7 @@
   ],
   "compatibility": {
     "required_features": [
-      "tool_specs_v1"
+      "tool_continuation_v2"
     ]
   }
 }

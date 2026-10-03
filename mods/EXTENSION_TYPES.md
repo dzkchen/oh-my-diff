@@ -83,6 +83,7 @@ contains only the packages labeled `bundled` below.
 
 | Package | Extension type | Source | Why a mod is required for this behavior |
 | --- | --- | --- | --- |
+| `os_tools@1.0.0` | `mod` | `mods/examples/os_tools` | Runs a granted program outside the session sandbox with host-supervised lifecycle and revocation. |
 | `context@2.0.0` | `mod` | `mods/examples/context` | Exercises the bounded context observer API only; user-facing guidance belongs in a skill or lifecycle hook. |
 | `counter@2.0.0` | `mod` | `mods/examples/counter` | Exercises tool, command, progress, and durable-state conformance only; a user-facing counter would be a plugin tool. |
 | `guard@2.0.0` | `mod` | `mods/examples/guard` | Exercises input and lifecycle replacement conformance only; a user-facing deterministic guard would be a hook. |
@@ -96,6 +97,7 @@ contains only the packages labeled `bundled` below.
 | `task_scope@1.0.0` | `mod` | `mods/exercise/task_scope` | Exercises task-scoped optional tool exposure at each native sampling step. |
 | `session_anchor@1.0.0` | `mod` | `mods/exercise/session_anchor` | Exercises bounded live compaction and checkpoint-derived context across reload. |
 | `approval_guard@1.0.0` | `mod` | `mods/examples/approval_guard` | Tightens live native approval decisions before hooks and automatic review, which hooks cannot force. |
+| `approval_delegate@1.0.0` | `mod` | `mods/examples/approval_delegate` | Approves routine check commands inside a user-delegated native approval grant, which hooks and skills cannot hold. |
 | `channel_pair@1.0.0` | `mod` | `mods/examples/channel_pair` | Publishes and receives namespaced in-process channel events between live mods. |
 | `confirm_note@1.0.0` | `mod` | `mods/examples/confirm_note` | Asks the user through native text and confirmation prompts from a live command. |
 | `context_fold@1.0.0` | `mod` | `mods/examples/context_fold` | Replaces the model-bound request history at each request without changing the transcript. |
@@ -118,7 +120,8 @@ contains only the packages labeled `bundled` below.
 | `status_tools@1.0.0` | `mod` | `mods/examples/status_tools` | Defines a model-visible tool at run time and refreshes its answer from a keyed timer. |
 | `site_vault@1.0.0` | `mod` | `mods/examples/site_vault` | Enrolls origin-bound secrets through native prompts and hands them only to its sidecars. |
 | `summarize_tool@1.0.0` | `mod` | `mods/examples/summarize_tool` | Runs one-shot completions on configured worker routes under live admission and the ledger. |
-| `tool_guide@1.0.0` | `mod` | `mods/examples/tool_guide` | Re-describes model-visible tool specs per route when the live tool router is built. |
+| `tool_guide@1.0.0` | `mod` | `mods/examples/tool_guide` | Defers and re-describes model-visible tool specs per route through the composable tool_specs chain. |
+| `tool_workflows@1.0.0` | `mod` | `mods/examples/tool_workflows` | Caches, confirms and retries live tool calls through the continuation chain and the turn's tool executor. |
 | `turn_recap@1.0.0` | `mod` | `mods/examples/turn_recap` | Reads the host turn-activity ledger for the live thread. |
 | `watch_notify@1.0.0` | `mod` | `mods/examples/watch_notify` | Watches workspace paths and reports external changes through live terminal notifications. |
 | `worktree_task@1.0.0` | `mod` | `mods/examples/worktree_task` | Starts a live thread bound to a permitted worktree root and shows it in the terminal. |

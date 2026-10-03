@@ -299,6 +299,8 @@ impl WorkspaceAuthority {
                             generation,
                             repository: &self.repository,
                             policy: &self.policy,
+                            protected: &[],
+                            os_access: None,
                         },
                         operation,
                         call.arguments,

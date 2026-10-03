@@ -4,8 +4,10 @@ use std::path::Path;
 const HOST_FEATURES: &[&str] = &[
     "app_v1",
     "approval_v1",
+    "unrestricted_process_v1",
+    "delegated_approval_v1",
     "tool_batch_v1",
-    "tool_specs_v1",
+    "tool_continuation_v2",
     "events_v1",
     "store_thread_v1",
     "turn_activity_v1",
@@ -93,13 +95,19 @@ fn host_feature_examples_load_and_register_together() {
         .status();
     for item in status["mods"].as_array().unwrap() {
         assert!(item["error"].is_null(), "{item}");
-        let registered = ["events", "commands", "tools", "replacements"]
-            .iter()
-            .any(|kind| {
-                item["registrations"][kind]
-                    .as_array()
-                    .is_some_and(|values| !values.is_empty())
-            });
+        let registered = [
+            "events",
+            "commands",
+            "tools",
+            "replacements",
+            "interceptors",
+        ]
+        .iter()
+        .any(|kind| {
+            item["registrations"][kind]
+                .as_array()
+                .is_some_and(|values| !values.is_empty())
+        });
         assert!(registered, "{item}");
     }
     assert!(

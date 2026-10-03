@@ -111,6 +111,12 @@
       "why_mod": "Alters admitted model requests and the live response stream, which hooks and plugins cannot replace."
     },
     {
+      "path": "mods/examples/os_tools",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Runs a granted program outside the session sandbox with host-supervised lifecycle and revocation."
+    },
+    {
       "path": "mods/examples/recovery",
       "extension_type": "mod",
       "role": "author_example",
@@ -291,6 +297,12 @@
       "why_mod": "Tightens live native approval decisions before hooks and automatic review, which hooks cannot force."
     },
     {
+      "path": "mods/examples/approval_delegate",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Approves routine check commands inside a user-delegated native approval grant, which hooks and skills cannot hold."
+    },
+    {
       "path": "mods/examples/channel_pair",
       "extension_type": "mod",
       "role": "conformance_fixture",
@@ -426,7 +438,13 @@
       "path": "mods/examples/tool_guide",
       "extension_type": "mod",
       "role": "conformance_fixture",
-      "why_mod": "Re-describes model-visible tool specs per route when the live tool router is built."
+      "why_mod": "Defers and re-describes model-visible tool specs per route through the composable tool_specs chain."
+    },
+    {
+      "path": "mods/examples/tool_workflows",
+      "extension_type": "mod",
+      "role": "conformance_fixture",
+      "why_mod": "Caches, confirms and retries live tool calls through the continuation chain and the turn's tool executor."
     },
     {
       "path": "mods/examples/turn_recap",

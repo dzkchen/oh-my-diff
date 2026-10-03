@@ -3,7 +3,7 @@ export type Capability =
   | 'context' | 'tools' | 'commands' | 'lifecycle' | 'input' | 'interception' | 'compaction' | 'middleware' | 'services' | 'virtual_reads' | 'terminal'
   | 'exec' | 'fs.read' | 'fs.write' | 'network' | 'unix_sockets' | 'model' | 'agents' | 'store' | 'sessions' | 'contracts' | 'builtins'
   | 'threads' | 'config' | 'config.write' | 'inventory' | 'account' | 'packages' | 'approvals' | 'events' | 'credentials' | 'composer'
-  | 'pty' | 'history' | 'outputs';
+  | 'pty' | 'history' | 'outputs' | 'os' | 'approve' | 'approve.override';
 export type FieldPolicy = 'observe_only' | 'alterable' | 'replaceable';
 export type JsonKind = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object' | 'json';
 export type Stability = 'stable' | 'deprecated' | 'experimental';
@@ -119,7 +119,7 @@ export type AppRoute = { method: string; class: Capability; contexts: Invocation
 export type CredentialProfile = { id: string; label: string; kind: 'chatgpt' | 'api_key' | 'provider' | 'secret'; provider: string | null; origin: string | null; status: 'ready' | 'not_enrolled'; default: boolean };
 export type HistoryItem = { index: number; type: string; role: string | null; call_id: string | null; editable: boolean; images: number; text: string | null; bytes: number };
 export type HistoryEdit = { drop?: number[]; replace?: { index: number; text: string }[]; insert?: { before: number; role: 'user' | 'developer'; text: string }[] };
-export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean; network?: 'loopback' } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
+export type PtyRequest = { action: 'start'; session: string; cwd?: string; program?: string; argv?: string[]; sha256?: string; write?: boolean; network?: 'loopback'; sandbox?: 'none' } | { action: 'write'; session: string; text: string } | { action: 'read'; session: string } | { action: 'stop'; session: string };
 export type TurnActivity = {
   turn_id: string; started_at: string | null; ended_at: string | null;
   outcome: 'completed' | 'aborted' | 'error' | 'interrupted' | 'running' | 'unknown'; reason: string | null; unrecorded_end: boolean;
@@ -134,7 +134,7 @@ export type PackageRequest = { action: 'install' | 'update' | 'remove' | 'rollba
 export type KeymapAction = `${string}.${string}`;
 export type Declined = { status: 'declined' };
 export interface HostOperations {
-  'exec.run': { arguments: { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeout_ms?: number; max_output_bytes?: number; output_artifact?: boolean; write?: boolean; network?: 'none' | 'loopback'; unix_sockets?: string[]; snapshot?: ResourceRef; guards?: ExecGuard[]; required_access?: { write: string[] } }; result: ExecResult & { candidate_sha256?: string; evidence?: ResourceRef } };
+  'exec.run': { arguments: { program: string; sha256?: string; argv?: string[]; cwd?: string; env?: Record<string, string>; stdin?: string; timeout_ms?: number; max_output_bytes?: number; output_artifact?: boolean; write?: boolean; network?: 'none' | 'loopback'; unix_sockets?: string[]; snapshot?: ResourceRef; guards?: ExecGuard[]; required_access?: { write: string[] }; sandbox?: 'none' }; result: ExecResult & { candidate_sha256?: string; evidence?: ResourceRef } };
   'exec.output_page': { arguments: { artifact: ResourceRef; cursor?: number; max_bytes?: number }; result: { text: string; cursor: number | null; bytes: number; sha256: string } };
   'workspace.read': { arguments: { paths: string[] }; result: { files: Record<string, { text: string; sha256: string } | null> } };
   'workspace.list': { arguments: { path?: string; recursive?: boolean; include_ignored?: boolean; max_entries?: number }; result: { entries: ({ path: string } & FileStat)[]; truncated: boolean } };
@@ -172,7 +172,7 @@ export interface HostOperations {
   'agents.wait': { arguments: { handle: string; consume?: boolean }; result: AgentResult };
   'agents.list': { arguments: null; result: { handle: string; finished: boolean; consumed: boolean }[] };
   'process.which': { arguments: { names: string[] }; result: { found: { name: string; path: string; sha256: string }[] } };
-  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[] }; result: { session: string; running: true } };
+  'process.start': { arguments: { session: string; name: string; path: string; sha256: string; arguments?: string[]; environment?: Record<string, string>; framing?: 'content-length' | 'ndjson'; network?: 'none' | 'loopback'; notify?: ('output' | 'exit')[]; sandbox?: 'none' }; result: { session: string; running: true } };
   'process.exchange': { arguments: { session: string; send?: Json[]; wait_ms?: number }; result: { session: string; messages: Json[]; running: true } };
   'process.status': { arguments: { session: string }; result: { session: string; running: true; idle_ms: number } };
   'process.stop': { arguments: { session: string }; result: { stopped: boolean } };
@@ -191,6 +191,8 @@ export interface HostOperations {
   'events.cancel': { arguments: { key: string }; result: { cancelled: boolean } };
   'tools.define': { arguments: { name: string; description: string; parameters: Json; label?: string }; result: { name: string; effective_at: 'next_request' } };
   'tools.undefine': { arguments: { name: string }; result: { removed: boolean } };
+  'tools.invoke': { arguments: { tool: string; arguments: Json }; result: { call_id: string; output: string; success: boolean; truncated: boolean } };
+  'tools.check': { arguments: { tool: string; arguments: Json }; result: { decision: 'allow' | 'ask' | 'deny'; reason: string | null; authority: 'host' | 'mod' } };
   'credentials.list': { arguments: null; result: CredentialProfile[] };
   'credentials.request': { arguments: { action: 'enroll'; kind: 'chatgpt' | 'api_key' | 'provider'; label: string; provider?: string } | { action: 'enroll'; kind: 'secret'; label: string; origin: string } | { action: 'remove' | 'refresh'; profile: string }; result: { status: 'completed' | 'declined'; profile: CredentialProfile | null } };
   'routes.select': { arguments: { route: string; scope: 'next_request' | 'thread' }; result: { route: RouteInfo; effective_at: 'next_request' } };
@@ -245,13 +247,12 @@ export interface Events {
   host_operation: { input: { phase: 'before' | 'after'; caller: string; operation: keyof HostOperations; arguments?: Json; result?: Json; error?: string }; output: void };
   app_notification: { input: { method: string; params: Json; thread_id: string | null; coalesced: number; dropped: number }; output: void };
   app_server_request: { input: { method: string; request_id: Json; phase: 'requested' | 'resolved'; params: Json; resolution: Json }; output: void };
-  approval: { input: { id: string; kind: 'exec' | 'stdin' | 'execve' | 'patch' | 'mcp_tool' | 'network' | 'permissions'; thread_id: string; turn_id: string | null; agent_id: string | null; host_decision: 'ask' | 'skip'; policy: string; details: Json }; output: null | { deny: string } | { ask: string } };
+  approval: { input: { id: string; kind: 'exec' | 'stdin' | 'execve' | 'patch' | 'mcp_tool' | 'network' | 'permissions'; thread_id: string; turn_id: string | null; agent_id: string | null; host_decision: 'ask' | 'skip' | 'forbidden'; policy: string; details: Json; assessment: boolean }; output: null | { deny: string } | { ask: string } | { approve: string } };
   approval_result: { input: { id: string; kind: string; decision: 'approved' | 'approved_for_session' | 'amended' | 'denied' | 'aborted' | 'timed_out'; source: 'user' | 'guardian' | 'hook' | 'mod' | 'policy'; mod?: string }; output: void };
   tool_output: { input: { call_id: string; tool: string; arguments: Json; success: boolean; text: string; tail: string | null; bytes: number }; output: null | { append: string } };
   completion: { input: { kind: 'mention'; query: string; candidates: { path: string; score: number }[] } | { kind: 'argument'; command: string; query: string; line: string }; output: null | { items: { path: string }[] } | { items: { insert: string }[] } };
   history: { input: { thread_id: string; agent_id: string | null; model: string | null; items: HistoryItem[] }; output: null | HistoryEdit };
   tool_batch: { input: { batch_id: string; thread_id: string; calls: { call_id: string; tool: string; arguments: Json; parallel_safe: boolean }[] }; output: null | { merge: { call_ids: string[]; tool: string; arguments: Json }[] } };
-  tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: { name: string; description: string; parameters: Json }[] }; output: null | { hide?: string[]; describe?: Record<string, { description?: string; parameters?: Json }> } };
   process_event: { input: { session: string; kind: 'output'; bytes: number } | { session: string; kind: 'exit' }; output: void };
   timer: { input: { key: string }; output: void };
   channel: { input: { publisher: string; channel: string; data: Json; correlation: string | null; sequence: number; dropped: number }; output: void };
@@ -259,9 +260,11 @@ export interface Events {
   view: { input: { phase: 'opened' | 'closed'; view: 'bottom_pane' | 'overlay'; view_id: string | null }; output: void };
   focus: { input: { focused: boolean }; output: void };
 }
+export type ToolSpecEntry = { name: string; description: string; parameters: Json; deferred: boolean };
 export type InterceptMatcher = string | number | boolean | null | RegExp | readonly InterceptMatcher[] | { readonly [key: string]: InterceptMatcher };
 export interface InterceptSurfaces {
-  tool: { input: { tool: string; arguments: Json; call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean }; answer: { output: string; success: boolean } | { deny: string } };
+  tool: { input: { tool: string; arguments: Json; call_id: string; thread_id: string | null; agent_id: string | null; schema: Json | null; raw_arguments: string; batch: { id: string; index: number; size: number } | null }; result: { output: string; success: boolean; truncated?: boolean; call_id?: string }; answer: { output: string; success: boolean } | { deny: string } };
+  tool_specs: { input: { thread_id: string; route: { name: string; model: string; provider: string } | null; tools: ToolSpecEntry[] }; result: { tools: ToolSpecEntry[] }; answer: never };
   host_operation: { input: { operation: keyof HostOperations; arguments: Json }; result: { value: Json }; answer: { value: Json } | { error: string } };
   input: { input: { thread_id: string | null; text: string; attachments: number }; result: { text: string }; answer: { deny: string } };
   model_request: { input: { request_id: string; scope: Json; routes: RouteInfo[]; original: RouteInfo; route: string }; result: { route: string }; answer: { deny: string } };
@@ -269,7 +272,7 @@ export interface InterceptSurfaces {
 export type InterceptTraceEntry = { index: number; mod: string; outcome: 'returned' | 'passed' | 'skipped' | 'kept' | 'caught' | 'rejected'; attempts: number; ms?: number; received: Json; returned?: Json; reason?: string; location?: string; required?: boolean };
 export type Next<S extends keyof InterceptSurfaces> = ((input: InterceptSurfaces[S]['input']) => Promise<InterceptSurfaces[S]['result']>) & {
   readonly event: S;
-  readonly origin: { readonly caller: string; readonly thread_id?: string | null; readonly agent_id?: string | null; readonly call_id?: string };
+  readonly origin: { readonly caller: string; readonly thread_id?: string | null; readonly agent_id?: string | null; readonly call_id?: string; readonly cell_id?: string };
   readonly signal: { readonly aborted: boolean };
   readonly trace: readonly InterceptTraceEntry[];
   readonly budget: { readonly ms: number; readonly remainingMs: number; readonly hostCalls: number };
@@ -298,7 +301,7 @@ export interface ModAPI {
   intercept<S extends keyof InterceptSurfaces>(pattern: S, options: InterceptOptions, handler: InterceptHandler<S>): InterceptRegistration<S>;
   intercept(pattern: string, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
   intercept(pattern: string, options: InterceptOptions, handler: InterceptHandler<keyof InterceptSurfaces>): InterceptRegistration<keyof InterceptSurfaces>;
-  replace<K extends 'context' | 'routing' | 'compaction' | 'terminal' | 'list' | 'tool_batch' | 'tool_specs' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
+  replace<K extends 'context' | 'routing' | 'compaction' | 'terminal' | 'list' | 'tool_batch' | 'completion' | 'history'>(point: K, handler: (event: Events[K]['input']) => Events[K]['output'] | Promise<Events[K]['output']>): void;
   contract(document: ContractDocument): void;
   builtins(controls: BuiltinControls): void;
   provide(contract: ServiceContract, handlers: Record<string, (input: Json) => Json | Promise<Json>>): void;

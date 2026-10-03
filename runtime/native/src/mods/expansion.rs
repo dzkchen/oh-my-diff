@@ -39,6 +39,8 @@ const CORE_OPERATIONS: &[&str] = &[
     "settings.write",
     "tools.define",
     "tools.undefine",
+    "tools.invoke",
+    "tools.check",
     "events.schedule",
     "events.cancel",
 ];
@@ -68,6 +70,9 @@ pub(super) struct State {
     dropped: AtomicU64,
     timers: Mutex<Timers>,
     core: std::sync::OnceLock<std::sync::Weak<Core>>,
+    pub(super) invokers: Mutex<BTreeMap<String, Arc<codex_extension_api::ToolInvokerSlot>>>,
+    pub(super) invoked: Mutex<BTreeMap<String, String>>,
+    pub(super) invocations: AtomicU64,
 }
 
 struct Delivery {
@@ -130,10 +135,8 @@ impl State {
             .store(runtime.has_event("tool_output"), Ordering::Release);
         self.approval
             .store(runtime.has_event("approval"), Ordering::Release);
-        self.tool_specs.store(
-            runtime.replacement_owner("tool_specs").is_some(),
-            Ordering::Release,
-        );
+        self.tool_specs
+            .store(runtime.intercepts("tool_specs"), Ordering::Release);
         self.tool_batch.store(
             runtime.replacement_owner("tool_batch").is_some(),
             Ordering::Release,
@@ -263,6 +266,79 @@ pub(super) async fn invoke_one(
     .await
 }
 
+pub(super) const TOOL_RESULT_BYTES: usize = 48 * 1024;
+
+pub(super) fn bounded_output(mut output: String) -> (String, bool) {
+    if output.len() <= TOOL_RESULT_BYTES {
+        return (output, false);
+    }
+    let mut end = TOOL_RESULT_BYTES;
+    while !output.is_char_boundary(end) {
+        end -= 1;
+    }
+    output.truncate(end);
+    (output, true)
+}
+
+/// Runs or assesses a tool through the current turn's dispatch under a mod-labelled call id.
+async fn tool_call(
+    core: &Core,
+    lead: &Lead,
+    caller: &Caller<'_>,
+    request: ModHostCall,
+) -> Result<Value, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        tool: String,
+        arguments: Value,
+    }
+    let input: Input = serde_json::from_value(request.arguments).map_err(|e| e.to_string())?;
+    if input.tool.is_empty()
+        || input.tool.len() > 128
+        || !(input.arguments.is_object() || input.arguments.is_string())
+        || input.arguments.to_string().len() > 64 * 1024
+    {
+        return Err("tool_arguments_invalid".into());
+    }
+    let invoker = core
+        .expansion
+        .invokers
+        .lock()
+        .map_err(|_| "tool_invokers_poisoned")?
+        .get(&lead.thread.to_string())
+        .and_then(|slot| slot.get())
+        .ok_or("tools_unavailable: this thread has not started a turn")?;
+    if request.operation == "tools.check" {
+        let check = invoker.check(&input.tool, input.arguments).await?;
+        return Ok(
+            json!({"decision": check.decision, "reason": check.reason, "authority": check.authority}),
+        );
+    }
+    let sequence = core.expansion.invocations.fetch_add(1, Ordering::AcqRel);
+    let call_id = format!("mod-{}-{sequence}", caller.id);
+    core.expansion
+        .invoked
+        .lock()
+        .map_err(|_| "tool_invocations_poisoned")?
+        .insert(call_id.clone(), caller.id.to_owned());
+    let outcome = invoker
+        .invoke(codex_extension_api::ToolInvocationRequest {
+            call_id: call_id.clone(),
+            tool: input.tool,
+            arguments: input.arguments,
+        })
+        .await;
+    if let Ok(mut invoked) = core.expansion.invoked.lock() {
+        invoked.remove(&call_id);
+    }
+    let outcome = outcome?;
+    let (output, truncated) = bounded_output(outcome.output);
+    Ok(
+        json!({"call_id": call_id, "output": output, "success": outcome.success, "truncated": truncated}),
+    )
+}
+
 pub(super) async fn dispatch(
     core: &Core,
     lead: &Lead,
@@ -285,6 +361,7 @@ pub(super) async fn dispatch(
         "events.cancel" => delivery::cancel(core, caller.id, &request.arguments),
         "turns.activity" => activity::read(core, lead, request.arguments).await,
         "routes.select" => select_route(lead, caller.id, request.arguments),
+        "tools.invoke" | "tools.check" => tool_call(core, lead, caller, request).await,
         "tools.define" | "tools.undefine" => {
             let mut runtime = core.runtime.lock().map_err(|_| "mod_runtime_poisoned")?;
             if request.operation == "tools.define" {

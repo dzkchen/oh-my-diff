@@ -256,8 +256,10 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "adapters_v1",
     "app_v1",
     "approval_v1",
+    "unrestricted_process_v1",
+    "delegated_approval_v1",
     "tool_batch_v1",
-    "tool_specs_v1",
+    "tool_continuation_v2",
     "events_v1",
     "store_thread_v1",
     "state_scopes_v1",
@@ -369,6 +371,8 @@ pub const MOD_HOST_OPERATIONS: &[&str] = &[
     "terminal.pty",
     "model.complete",
     "tools.define",
+    "tools.invoke",
+    "tools.check",
     "tools.undefine",
     "events.schedule",
     "events.cancel",
@@ -411,7 +415,27 @@ pub const MOD_CAPABILITIES: &[&str] = &[
     "pty",
     "history",
     "outputs",
+    "os",
+    "approve",
+    "approve.override",
 ];
+pub const AUTHORITY_CAPABILITIES: &[&str] = &["os", "approve", "approve.override"];
+
+/// What a user accepts by granting the authority capabilities, shown before trust and in status.
+pub fn authority_exposure(capabilities: &[String]) -> Vec<&'static str> {
+    let granted = |name: &str| capabilities.iter().any(|c| c == name);
+    let mut exposure = Vec::new();
+    if granted("os") {
+        exposure.push("os: listed programs run unsandboxed as your account; they can read every file your account can read (including secret files such as ~/.ssh, ~/.codex/auth.json and browser profiles), change mod stores and control files, use the network as os_access allows and start processes OMD does not supervise. OMD sanitizes their environment and supervises, cancels and limits the processes it starts, but cannot undo their side effects. Only the OS-separated broker protects grants, credentials and evidence anchors from them.");
+    }
+    if granted("approve") {
+        exposure.push("approve: this mod may approve exec, patch, MCP and network requests inside its approves scope without asking you; managed-policy and host denials still apply and any error asks you.");
+    }
+    if granted("approve.override") {
+        exposure.push("approve.override: this mod may also approve commands your own execpolicy rules forbid.");
+    }
+    exposure
+}
 pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("context", "context"),
     ("migrate", "store"),
@@ -446,7 +470,6 @@ pub const MOD_EVENTS: &[(&str, &str)] = &[
     ("approval_result", "approvals"),
     ("tool_output", "outputs"),
     ("tool_batch", "interception"),
-    ("tool_specs", "tools"),
     ("process_event", "exec"),
     ("channel", "events"),
     ("timer", "events"),
@@ -463,7 +486,6 @@ pub const MOD_REPLACEMENT_POINTS: &[&str] = &[
     "context",
     "list",
     "tool_batch",
-    "tool_specs",
     "completion",
     "history",
 ];
@@ -472,6 +494,7 @@ pub const MOD_INTERCEPT_SURFACES: &[(&str, &str)] = &[
     ("host_operation", "middleware"),
     ("model_request", "middleware"),
     ("input", "input"),
+    ("tool_specs", "tools"),
 ];
 pub const MOD_MIDDLEWARE_EVENTS: &[&str] = &[
     "model_request",
@@ -806,6 +829,16 @@ fn source_use(
                 used.push("network".to_owned());
             }
             if !used.is_empty()
+                && matches!(
+                    operation.as_str(),
+                    "exec.run" | "process.start" | "terminal.pty"
+                )
+                && visible.contains("sandbox:")
+                && declared("os")
+            {
+                used.push("os".to_owned());
+            }
+            if !used.is_empty()
                 && operation == "exec.run"
                 && visible.contains("unix_sockets")
                 && declared("unix_sockets")
@@ -849,6 +882,14 @@ fn source_use(
         } else if let Some((_, capability)) = MOD_EVENTS.iter().find(|(name, _)| name == event) {
             capabilities.insert((*capability).to_owned());
         }
+    }
+    if registrations.events.iter().any(|event| event == "approval") {
+        capabilities.extend(
+            ["approve", "approve.override"]
+                .into_iter()
+                .filter(|name| package.capabilities.iter().any(|cap| cap == name))
+                .map(str::to_owned),
+        );
     }
     if !registrations.tools.is_empty() {
         capabilities.insert("tools".to_owned());
@@ -960,6 +1001,10 @@ pub struct ModPackage {
     pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exec_environment: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_access: Option<ModOsAccess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approves: Option<ModApprovalScope>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -979,6 +1024,39 @@ pub struct ModPackage {
     #[serde(default, skip_serializing_if = "ModSubscriptions::is_empty")]
     pub subscriptions: ModSubscriptions,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModOsAccess {
+    pub programs: Vec<String>,
+    #[serde(default)]
+    pub network: bool,
+}
+
+impl ModOsAccess {
+    pub fn allows(&self, program: &str, resolved: &Path) -> bool {
+        self.programs.iter().any(|allowed| {
+            allowed == "*"
+                || allowed == program && !program.contains('/')
+                || Path::new(allowed) == resolved
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModApprovalScope {
+    pub kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
+}
+
+pub const DELEGABLE_APPROVAL_KINDS: &[&str] =
+    &["exec", "stdin", "execve", "patch", "mcp_tool", "network"];
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1187,6 +1265,53 @@ impl ModPackage {
             return Err(failure("unsupported_or_duplicate_capability"));
         }
         self.subscriptions.validate(&self.capabilities)?;
+        let declared = |name: &str| self.capabilities.iter().any(|c| c == name);
+        let entries = |values: &[String], valid: &dyn Fn(&str) -> bool| {
+            values.len() <= 32
+                && values.iter().collect::<BTreeSet<_>>().len() == values.len()
+                && values
+                    .iter()
+                    .all(|value| !value.is_empty() && value.len() <= 256 && valid(value))
+        };
+        let absolute = |value: &str| {
+            let path = Path::new(value);
+            path.is_absolute()
+                && path
+                    .components()
+                    .all(|part| !matches!(part, std::path::Component::ParentDir))
+        };
+        if declared("os") != self.os_access.is_some()
+            || declared("os") && !declared("exec")
+            || self.os_access.as_ref().is_some_and(|access| {
+                access.programs.is_empty()
+                    || !entries(&access.programs, &|program| {
+                        program == "*"
+                            || absolute(program)
+                            || !program.contains('/') && !program.contains('\0')
+                    })
+            })
+        {
+            return Err(failure(
+                "invalid_os_access: the os capability needs exec and os_access.programs (*, names or absolute paths)",
+            ));
+        }
+        if declared("approve") != self.approves.is_some()
+            || declared("approve") && !(declared("approvals") && declared("middleware"))
+            || declared("approve.override") && !declared("approve")
+            || self.approves.as_ref().is_some_and(|scope| {
+                scope.kinds.is_empty()
+                    || !entries(&scope.kinds, &|kind| {
+                        DELEGABLE_APPROVAL_KINDS.contains(&kind)
+                    })
+                    || !entries(&scope.tools, &|_| true)
+                    || !entries(&scope.roots, &|root| root == "*" || absolute(root))
+                    || !entries(&scope.hosts, &|host| !host.contains('/'))
+            })
+        {
+            return Err(failure(
+                "invalid_approves: the approve capability needs approvals, middleware and approves.kinds from exec, stdin, execve, patch, mcp_tool, network",
+            ));
+        }
         let requires: BTreeSet<_> = self.requires.iter().collect();
         if self.requires.len() > 4
             || requires.len() != self.requires.len()
@@ -1563,6 +1688,18 @@ pub struct ModSelection {
     pub scope: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secret_environment: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+}
+
+impl ModSelection {
+    pub fn authority_current(&self) -> bool {
+        self.expires_at.is_none_or(|expires| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .is_ok_and(|now| now.as_secs() < expires)
+        })
+    }
 }
 
 impl ModPackage {
@@ -1810,6 +1947,8 @@ pub struct ModGrants {
     pub source_sha256: String,
     pub capabilities: Vec<String>,
     pub exec_environment: Vec<String>,
+    pub os_access: Option<ModOsAccess>,
+    pub approves: Option<ModApprovalScope>,
 }
 
 pub struct ModHost {
@@ -3999,15 +4138,23 @@ impl ModHost {
     }
 
     pub fn grants(&self, id: &str) -> Option<ModGrants> {
-        self.loaded
-            .get(id)
-            .filter(|m| m.error.is_none())
-            .map(|m| ModGrants {
+        self.loaded.get(id).filter(|m| m.error.is_none()).map(|m| {
+            let current = m.selection.authority_current();
+            ModGrants {
                 api: m.package.api.clone(),
                 source_sha256: m.selection.sha256.clone(),
-                capabilities: m.package.capabilities.clone(),
+                capabilities: m
+                    .package
+                    .capabilities
+                    .iter()
+                    .filter(|c| current || !AUTHORITY_CAPABILITIES.contains(&c.as_str()))
+                    .cloned()
+                    .collect(),
                 exec_environment: m.package.exec_environment.clone(),
-            })
+                os_access: m.package.os_access.clone().filter(|_| current),
+                approves: m.package.approves.clone().filter(|_| current),
+            }
+        })
     }
 
     /// The mod holding the exclusive replacement slot for a decision point.
@@ -4164,7 +4311,7 @@ impl ModHost {
             "active_host_types": self.store.root.join("active-host.d.ts"),
             "service_calls": self.service_calls,
             "chains": self.chains,
-            "mods": self.loaded.iter().map(|(id, m)| json!({"id": id, "version": m.package.version,
+            "mods": self.loaded.iter().map(|(id, m)| { let mut status = json!({"id": id, "version": m.package.version,
                 "api":m.package.api,"api_stability":api_support(&m.package.api).map(|support|support.0),
                 "entrypoint":m.package.entrypoint,"license":m.package.license,
                 "provenance":m.package.provenance,"dependencies":m.package.dependencies,
@@ -4178,7 +4325,11 @@ impl ModHost {
                 "scope": m.selection.scope, "requires": m.package.requires, "services": m.package.services,
                 "source_use":m.source_use,"unused_grants":m.unused_grants,
                 "unused_environment":m.unused_environment,"hook_budget_ms":m.package.hook_budget_ms,
-                "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error})).collect::<Vec<_>>()})
+                "registrations": m.registrations, "telemetry":m.telemetry, "error": m.error});
+                status["authority"] = json!({"os_access": m.package.os_access, "approves": m.package.approves,
+                    "expires_at": m.selection.expires_at, "current": m.selection.authority_current(),
+                    "exposure": authority_exposure(&m.package.capabilities)});
+                status }).collect::<Vec<_>>()})
     }
 }
 

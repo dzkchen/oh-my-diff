@@ -2,6 +2,7 @@ use codex_omd::ModHost;
 use codex_omd::ModInstallRequest;
 use codex_omd::ModStore;
 use serde_json::Value;
+use serde_json::json;
 use sha2::Digest;
 use sha2::Sha256;
 use std::collections::BTreeMap;
@@ -129,7 +130,7 @@ fn plugin_preview(codex: &str, home: &str, id: &str, candidate: &str) -> io::Res
 fn run(args: &[String]) -> io::Result<Value> {
     let bad = || {
         io::Error::other(
-            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... [--expires SECONDS] | revoke STORE PACKAGE | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
         )
     };
     match args {
@@ -217,8 +218,9 @@ fn run(args: &[String]) -> io::Result<Value> {
             ModStore::inspect_package(&PathBuf::from(path).canonicalize()?)
         }
         [command, root, path, sha, capabilities, rest @ ..] if command == "trust" => {
-            let mut scope = "user";
+            let mut scope = "user".to_owned();
             let mut secrets = Vec::new();
+            let mut expires_at = None;
             let mut rest = rest.iter();
             while let Some(argument) = rest.next() {
                 if argument == "--allow-secret-env" {
@@ -227,24 +229,51 @@ fn run(args: &[String]) -> io::Result<Value> {
                             .ok_or_else(|| io::Error::other("--allow-secret-env needs a NAME"))?
                             .clone(),
                     );
+                } else if argument == "--expires" {
+                    let seconds: u64 = rest
+                        .next()
+                        .and_then(|value| value.parse().ok())
+                        .ok_or_else(|| io::Error::other("--expires needs SECONDS"))?;
+                    expires_at = Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_err(io::Error::other)?
+                            .as_secs()
+                            .checked_add(seconds)
+                            .ok_or_else(|| io::Error::other("--expires is too large"))?,
+                    );
                 } else {
-                    scope = argument;
+                    scope = argument.clone();
                 }
             }
-            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust_with_secrets(
-                PathBuf::from(path).canonicalize()?,
-                sha,
-                capabilities
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect(),
-                scope,
-                secrets,
-            )?;
-            Ok(Value::String(format!(
-                "trusted in the {scope} scope; disabled until explicitly enabled"
-            )))
+            let capabilities: Vec<String> = capabilities
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+            let exposure = codex_omd::authority_exposure(&capabilities);
+            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust_all(vec![
+                codex_omd::Trust {
+                    path: PathBuf::from(path).canonicalize()?,
+                    sha256: sha.clone(),
+                    capabilities,
+                    scope: scope.clone(),
+                    secret_environment: secrets,
+                    expires_at,
+                },
+            ])?;
+            Ok(json!({
+                "status": format!("trusted in the {scope} scope; disabled until explicitly enabled"),
+                "expires_at": expires_at,
+                "exposure": exposure,
+            }))
+        }
+        [command, root, path] if command == "revoke" => {
+            ModStore::open(PathBuf::from(root).canonicalize()?)?
+                .revoke_authority(&PathBuf::from(path).canonicalize()?)?;
+            Ok(Value::String(
+                "os and approve authority revoked; running processes stop at the next turn boundary; trust again to renew".into(),
+            ))
         }
         [command, root, packages] if command == "trust-all" => {
             let packages: Vec<Value> = serde_json::from_str(packages)?;
@@ -263,6 +292,7 @@ fn run(args: &[String]) -> io::Result<Value> {
                         capabilities: serde_json::from_value(package["capabilities"].clone())?,
                         scope: package["scope"].as_str().unwrap_or("user").to_owned(),
                         secret_environment: Vec::new(),
+                        expires_at: None,
                     })
                 })
                 .collect::<io::Result<Vec<_>>>()?;

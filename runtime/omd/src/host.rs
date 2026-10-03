@@ -88,6 +88,7 @@ pub struct Caller<'a> {
     pub source_sha256: &'a str,
     pub capabilities: &'a [String],
     pub exec_environment: &'a [String],
+    pub os_access: Option<&'a crate::ModOsAccess>,
     pub origin: Origin,
     pub thread: Option<&'a str>,
 }
@@ -266,6 +267,60 @@ pub fn resolve_program(name: &str, repository: &Path) -> Option<PathBuf> {
         let candidate = directory.join(name).canonicalize().ok()?;
         (candidate.is_file() && !candidate.starts_with(repository)).then_some(candidate)
     })
+}
+
+pub fn unrestricted_program(access: &crate::ModOsAccess, name: &str) -> Result<PathBuf, String> {
+    let path = Path::new(name);
+    let resolved = if path.is_absolute() {
+        path.canonicalize().ok()
+    } else if !name.is_empty() && !name.contains('/') && !name.contains('\0') {
+        std::env::var_os("PATH").and_then(|paths| {
+            std::env::split_paths(&paths)
+                .find_map(|directory| directory.join(name).canonicalize().ok())
+        })
+    } else {
+        None
+    }
+    .filter(|path| path.is_file())
+    .ok_or("exec_program_unavailable")?;
+    if !access.allows(name, &resolved) && !access.allows(name, path) {
+        return Err(format!("os_access_denied: {name}"));
+    }
+    Ok(resolved)
+}
+
+/// The command for an unsandboxed program: no Seatbelt, or one that only denies IP networking.
+pub fn unrestricted_command(
+    access: &crate::ModOsAccess,
+    program: &Path,
+    exec_environment: &[String],
+) -> Command {
+    let mut command = if access.network {
+        Command::new(program)
+    } else {
+        let mut command = Command::new("/usr/bin/sandbox-exec");
+        command
+            .args([
+                "-p",
+                "(version 1)(allow default)(deny network*)(allow network* (remote unix-socket))(allow network* (local unix-socket))",
+            ])
+            .arg(program);
+        command
+    };
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default());
+    for name in [
+        "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+    ]
+    .into_iter()
+    .chain(exec_environment.iter().map(String::as_str))
+    {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command
 }
 
 fn inherited_socket(name: &str, repository: &Path) -> Option<PathBuf> {
@@ -639,6 +694,8 @@ impl Host<'_> {
             guards: Vec<Guard>,
             #[serde(default)]
             required_access: Option<RequiredAccess>,
+            #[serde(default)]
+            sandbox: Option<String>,
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -676,6 +733,19 @@ impl Host<'_> {
         }
         if input.required_access.is_some() && !input.write {
             return Err("exec_access_requires_write".into());
+        }
+        let unrestricted = match input.sandbox.as_deref() {
+            None => None,
+            Some("none") => Some(caller.os_access.ok_or("capability_denied: os")?),
+            Some(_) => return Err("exec_sandbox_invalid".into()),
+        };
+        if unrestricted.is_some()
+            && (input.network.is_some()
+                || !input.unix_sockets.is_empty()
+                || !input.guards.is_empty()
+                || input.required_access.is_some())
+        {
+            return Err("exec_unrestricted_arguments_invalid: network comes from os_access; unix_sockets, guards and required_access need the sandbox".into());
         }
         if input.argv.len() > 128
             || input.argv.iter().map(String::len).sum::<usize>() > 8192
@@ -726,8 +796,12 @@ impl Host<'_> {
             .iter()
             .map(|name| inherited_socket(name, &repository).ok_or("exec_socket_unavailable"))
             .collect::<Result<Vec<_>, _>>()?;
-        let program =
-            resolve_program(&input.program, &repository).ok_or("exec_program_unavailable")?;
+        let program = match unrestricted {
+            Some(access) => unrestricted_program(access, &input.program)?,
+            None => {
+                resolve_program(&input.program, &repository).ok_or("exec_program_unavailable")?
+            }
+        };
         let digest = program_hash(&program)?;
         if input
             .sha256
@@ -736,16 +810,20 @@ impl Host<'_> {
         {
             return Err("exec_program_changed".into());
         }
-        let cwd = match input.cwd.as_deref() {
-            None | Some("") | Some(".") => repository.clone(),
-            Some(name) if relative(name) => {
+        let cwd = match (input.cwd.as_deref(), unrestricted) {
+            (None | Some("") | Some("."), _) => repository.clone(),
+            (Some(name), Some(_)) if Path::new(name).is_absolute() || relative(name) => repository
+                .join(name)
+                .canonicalize()
+                .map_err(|_| "exec_cwd_unavailable")?,
+            (Some(name), None) if relative(name) => {
                 self.checked_paths(&[name.to_owned()], false)?.remove(0)
             }
-            Some(_) => return Err("exec_cwd_invalid".into()),
+            _ => return Err("exec_cwd_invalid".into()),
         };
         if !cwd.is_dir()
-            || !self.authority.readable(&cwd)
-            || input.write && !self.authority.writable(&cwd)
+            || unrestricted.is_none()
+                && (!self.authority.readable(&cwd) || input.write && !self.authority.writable(&cwd))
         {
             return Err("exec_cwd_unavailable".into());
         }
@@ -817,26 +895,45 @@ impl Host<'_> {
             .create(&scratch)
             .map_err(|error| error.to_string())?;
         let scratch = Scratch(scratch.canonicalize().map_err(|error| error.to_string())?);
-        let mut argv = vec![program.to_string_lossy().into_owned()];
-        argv.extend(input.argv);
-        let mut command = self.authority.command(
-            argv,
-            &ExecAccess {
-                write: input.write,
-                loopback,
-                unix_sockets: &unix_sockets,
-                scratch: &scratch.0,
-            },
-        )?;
+        let mut command = match unrestricted {
+            Some(access) => {
+                let mut command = unrestricted_command(access, &program, caller.exec_environment);
+                command.args(input.argv);
+                command
+            }
+            None => {
+                let mut argv = vec![program.to_string_lossy().into_owned()];
+                argv.extend(input.argv);
+                let mut command = self.authority.command(
+                    argv,
+                    &ExecAccess {
+                        write: input.write,
+                        loopback,
+                        unix_sockets: &unix_sockets,
+                        scratch: &scratch.0,
+                    },
+                )?;
+                command
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                    .env("HOME", &scratch.0);
+                for name in ["LANG", "LC_ALL", "LC_CTYPE"]
+                    .into_iter()
+                    .chain(caller.exec_environment.iter().map(String::as_str))
+                {
+                    if let Some(value) = std::env::var_os(name) {
+                        command.env(name, value);
+                    }
+                }
+                command
+            }
+        };
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
         command
             .current_dir(&cwd)
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .env("HOME", &scratch.0)
             .env("TMPDIR", &scratch.0)
             .env("TERM", "dumb")
             .stdin(if input.stdin.is_some() {
@@ -846,16 +943,6 @@ impl Host<'_> {
             })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        for name in ["LANG", "LC_ALL", "LC_CTYPE"] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
-        for name in caller.exec_environment {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
         command.envs(&input.env);
         let started = Instant::now();
         let mut child = Child(

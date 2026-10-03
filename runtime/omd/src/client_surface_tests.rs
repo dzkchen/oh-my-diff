@@ -22,7 +22,9 @@ impl ClientSurface for Password {
             && call.operation == "terminal.prompt"
             && call.arguments["masked"] == true;
         call.reply
-            .send(Ok(json!({"status": "accepted", "value": if host_prompt { "pw" } else { "" }})))
+            .send(Ok(
+                json!({"status": "accepted", "value": if host_prompt { "pw" } else { "" }}),
+            ))
             .map_err(|error| error.to_string())
     }
 }

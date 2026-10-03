@@ -59,10 +59,13 @@ pub(super) struct ProcessOwner<'a> {
     pub generation: u64,
     pub repository: &'a Path,
     pub policy: &'a FileSystemSandboxPolicy,
+    pub protected: &'a [PathBuf],
+    pub os_access: Option<&'a codex_omd::ModOsAccess>,
 }
 
 struct ManagedProcess {
     child: Child,
+    unrestricted: bool,
     sender: mpsc::SyncSender<WriteRequest>,
     receiver: mpsc::Receiver<io::Result<Value>>,
     scratch: PathBuf,
@@ -281,6 +284,8 @@ impl ManagedProcesses {
             generation,
             repository,
             policy,
+            protected,
+            os_access,
         } = owner;
         if !active()
             || !repository.is_absolute()
@@ -336,9 +341,19 @@ impl ManagedProcesses {
                     network: Option<String>,
                     #[serde(default)]
                     notify: Vec<String>,
+                    #[serde(default)]
+                    sandbox: Option<String>,
                 }
                 let input: Input =
                     serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+                let unrestricted = match input.sandbox.as_deref() {
+                    None => None,
+                    Some("none") if input.network.is_some() => {
+                        return Err("process_unrestricted_network_comes_from_os_access".into());
+                    }
+                    Some("none") => Some(os_access.ok_or("capability_denied: os")?),
+                    Some(_) => return Err("process_sandbox_invalid".into()),
+                };
                 if input.notify.len() > 2
                     || input
                         .notify
@@ -382,7 +397,13 @@ impl ManagedProcesses {
                         input.network.as_deref(),
                         None | Some("none") | Some("loopback")
                     )
-                    || program(&input.name, repository).as_ref() != Some(&input.path)
+                    || match unrestricted {
+                        Some(access) => {
+                            codex_omd::host::unrestricted_program(access, &input.name)?
+                                != input.path
+                        }
+                        None => program(&input.name, repository).as_ref() != Some(&input.path),
+                    }
                     || input
                         .path
                         .canonicalize()
@@ -430,39 +451,57 @@ impl ManagedProcesses {
                     },
                 )?;
                 let launched = (|| {
-                    let scope = read_policy(policy, &scratch)?;
-                    let loopback_network = input.network.as_deref() == Some("loopback");
                     let framing = if input.framing.as_deref() == Some("ndjson") {
                         Framing::Ndjson
                     } else {
                         Framing::ContentLength
                     };
-                    let mut command = vec![input.path.to_string_lossy().into_owned()];
-                    command.extend(input.arguments.into_iter().map(|argument| {
+                    let arguments = input.arguments.into_iter().map(|argument| {
                         argument.replace("{process.home}", &scratch.to_string_lossy())
-                    }));
-                    let loopback = loopback_network.then(|| ManagedNetworkSandboxContext {
-                        allow_local_binding: true,
-                        ..Default::default()
                     });
-                    let argv = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
-                        command,
-                        file_system_sandbox_policy: &scope,
-                        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
-                        sandbox_policy_cwd: repository,
-                        enforce_managed_network: loopback_network,
-                        managed_network: loopback.as_ref(),
-                        environment_id: None,
-                        network: None,
-                        extra_allow_unix_sockets: &[],
-                    })?;
-                    let mut command = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE);
+                    let mut command = match unrestricted {
+                        Some(access) => {
+                            let mut command =
+                                codex_omd::host::unrestricted_command(access, &input.path, &[]);
+                            command.args(arguments);
+                            command
+                        }
+                        None => {
+                            let scope = read_policy(policy, &scratch)?;
+                            let loopback_network = input.network.as_deref() == Some("loopback");
+                            let mut command = vec![input.path.to_string_lossy().into_owned()];
+                            command.extend(arguments);
+                            let loopback = loopback_network.then(|| ManagedNetworkSandboxContext {
+                                allow_local_binding: true,
+                                ..Default::default()
+                            });
+                            let mut argv =
+                                create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+                                    command,
+                                    file_system_sandbox_policy: &scope,
+                                    network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+                                    sandbox_policy_cwd: repository,
+                                    enforce_managed_network: loopback_network,
+                                    managed_network: loopback.as_ref(),
+                                    environment_id: None,
+                                    network: None,
+                                    extra_allow_unix_sockets: &[],
+                                })?;
+                            if argv.first().map(String::as_str) != Some("-p") || argv.len() < 2 {
+                                return Err("managed_process_requires_native_sandbox".into());
+                            }
+                            codex_omd::host::deny_protected(&mut argv[1], protected)?;
+                            let mut command = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE);
+                            command
+                                .args(argv)
+                                .env_clear()
+                                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                                .env("HOME", &scratch);
+                            command
+                        }
+                    };
                     let mut child = command
-                        .args(argv)
                         .current_dir(repository)
-                        .env_clear()
-                        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-                        .env("HOME", &scratch)
                         .env("TMPDIR", &scratch)
                         .env("XDG_CACHE_HOME", &scratch)
                         .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -539,6 +578,7 @@ impl ManagedProcesses {
                     });
                     Ok::<_, String>(ManagedProcess {
                         child,
+                        unrestricted: unrestricted.is_some(),
                         sender: writer_sender,
                         receiver,
                         scratch: scratch.clone(),
@@ -586,6 +626,11 @@ impl ManagedProcesses {
                 }
                 let session = self.session(&key)?;
                 let mut process = session.lock().map_err(|_| "process_session_poisoned")?;
+                if process.unrestricted && os_access.is_none() {
+                    drop(process);
+                    self.remove(&key, &session);
+                    return Err("grant_expired: os".into());
+                }
                 if process
                     .child
                     .try_wait()
@@ -708,6 +753,8 @@ mod tests {
             generation: 1,
             repository: &repository,
             policy: &policy,
+            protected: &[],
+            os_access: None,
         };
         let found = processes
             .call(owner, "process.which", json!({"names":["cat"]}), || true)
@@ -760,6 +807,88 @@ mod tests {
     }
 
     #[test]
+    fn unrestricted_process_needs_a_current_grant_and_takes_its_tree_down() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = directory.path().canonicalize().unwrap();
+        let processes = ManagedProcesses::default();
+        let policy = FileSystemSandboxPolicy::read_only();
+        let access = codex_omd::ModOsAccess {
+            programs: vec!["sh".into()],
+            network: true,
+        };
+        let owner = ProcessOwner {
+            id: "fixture",
+            generation: 1,
+            repository: &repository,
+            policy: &policy,
+            protected: &[],
+            os_access: Some(&access),
+        };
+        let sh = codex_omd::host::unrestricted_program(&access, "sh").unwrap();
+        let sha256 = crate::execution::hash(&fs::read(&sh).unwrap());
+        let pidfile = repository.join("child.pid");
+        let start = |owner: ProcessOwner<'_>, session: &str| {
+            processes.call(
+                owner,
+                "process.start",
+                json!({"session": session, "name": "sh", "path": sh, "sha256": sha256, "sandbox": "none",
+                    "arguments": ["-c", format!("sleep 300 & echo $! > {}; exec cat", pidfile.display())]}),
+                || true,
+            )
+        };
+        assert_eq!(
+            start(
+                ProcessOwner {
+                    os_access: None,
+                    ..owner
+                },
+                "denied"
+            )
+            .unwrap_err(),
+            "capability_denied: os"
+        );
+        start(owner, "tree").unwrap();
+        let answer = processes
+            .call(
+                owner,
+                "process.exchange",
+                json!({"session":"tree","send":[{"id":1}],"wait_ms":2000}),
+                || true,
+            )
+            .unwrap();
+        assert_eq!(answer["messages"][0]["id"], 1);
+        let child = fs::read_to_string(&pidfile).unwrap().trim().to_owned();
+        let alive = || {
+            Command::new("kill")
+                .args(["-0", &child])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        assert!(alive());
+        assert_eq!(
+            processes
+                .call(
+                    ProcessOwner {
+                        os_access: None,
+                        ..owner
+                    },
+                    "process.status",
+                    json!({"session":"tree"}),
+                    || true
+                )
+                .unwrap_err(),
+            "grant_expired: os"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!alive(), "revoking the grant kills the whole process group");
+    }
+
+    #[test]
     fn blocked_process_write_observes_cancellation() {
         let directory = tempfile::tempdir().unwrap();
         let repository = directory.path().canonicalize().unwrap();
@@ -770,6 +899,8 @@ mod tests {
             generation: 1,
             repository: &repository,
             policy: &policy,
+            protected: &[],
+            os_access: None,
         };
         let found = processes
             .call(owner, "process.which", json!({"names":["sleep"]}), || true)
@@ -818,6 +949,8 @@ mod tests {
             generation: 1,
             repository: &repository,
             policy: &policy,
+            protected: &[],
+            os_access: None,
         };
         let found = processes
             .call(owner, "process.which", json!({"names":["cat"]}), || true)
