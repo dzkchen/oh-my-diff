@@ -16,10 +16,12 @@ from datetime import datetime, timezone
 
 try:
     from scripts import install_support as support
+    from scripts import authority_broker
     from scripts import full_mods_lock
     from scripts import preview_lock
 except ModuleNotFoundError:
     import install_support as support
+    import authority_broker
     import full_mods_lock
     import preview_lock
 
@@ -33,7 +35,7 @@ PACKAGES = tuple(sorted((*preview_lock.PACKAGES, *full_mods_lock.PACKAGES)))
 PLATFORM_PACKAGES = ("omd_logo", "omd_mods")
 HOST_TOOLS = ("omd", "omd-contract")
 ROUTES = {"claude": "omd_claude_cli", "muse": "omd_muse", "profiles": "omd_profiles"}
-MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py",
+MANAGEMENT_FILES = ("scripts/lean_profiles.py", "scripts/install_support.py", "scripts/authority_broker.py",
                     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
                     "scripts/preview_lock.py",
                     "runtime/preview-v1.lock.json", "upstream.lock.json", "LEAN_PROFILES.md")
@@ -453,6 +455,10 @@ def install(args):
     if (not code_mode_host.is_file()
             or support.digest(code_mode_host) != candidate["artifacts"]["codex-code-mode-host"]["sha256"]):
         raise ValueError("code-mode host beside the Codex binary differs from frozen lean candidate")
+    broker_helper = Path(binary["path"]).parent / "omd-broker"
+    if (not broker_helper.is_file()
+            or support.digest(broker_helper) != candidate["artifacts"]["omd-broker"]["sha256"]):
+        raise ValueError("authority broker beside the Codex binary differs from frozen lean candidate")
     manager = support.resolved(args.manager)
     node = support.resolved(args.node)
     if not manager.is_file() or not os.access(manager, os.X_OK):
@@ -486,7 +492,7 @@ def install(args):
         artifacts = prefix / "artifacts"
         artifacts.mkdir()
         for source, name in ((Path(binary["path"]), "codex"), (code_mode_host, "codex-code-mode-host"),
-                             (manager, "omd-mod")):
+                             (broker_helper, "omd-broker"), (manager, "omd-mod")):
             shutil.copy2(source, artifacts / name)
         author_root = prefix / "author"
         author_root.mkdir()
@@ -505,6 +511,10 @@ def install(args):
             shutil.copy2(ROOT / name, target)
             management_files[name] = support.digest(target)
         installed_manager = artifacts / "omd-mod"
+        if authority_broker.deployed():
+            authority_broker.main(["pin", "--add", *(f"--pin={path}" for path in (
+                artifacts / "codex", installed_manager,
+                *(support.resolved(getattr(args, name.replace("-", "_"))) for name in HOST_TOOLS)))])
         if not args.attach_store:
             store.parent.mkdir(parents=True, exist_ok=True)
             invoke(installed_manager, "init", store, node)
@@ -529,6 +539,7 @@ def install(args):
             plugin_bundle = copy_curated_plugins(prefix / "bundles/oh-my-diff")
         sources = store / "sources"
         sources.mkdir(exist_ok=True)
+        trusted, enabled = [], []
         for identifier in profile_packages(args.profile):
             package = packages[identifier]
             target = sources / identifier
@@ -542,11 +553,15 @@ def install(args):
             if inspected["sha256"] != package["package_sha256"]:
                 raise ValueError(f"package digest mismatch: {identifier}")
             if added:
-                invoke(installed_manager, "trust", store, target, inspected["sha256"],
-                       ",".join(package["capabilities"]))
+                trusted.append({"path": str(target), "sha256": inspected["sha256"],
+                                "capabilities": package["capabilities"]})
                 if identifier in DEFAULT_ACTIVE and not args.attach_store:
-                    invoke(installed_manager, "enable", store, target)
+                    enabled.append(target)
             installed[identifier] = {"version": package["version"], "sha256": inspected["sha256"]}
+        if trusted:
+            invoke(installed_manager, "trust-all", store, json.dumps(trusted))
+        for target in enabled:
+            invoke(installed_manager, "enable", store, target)
         home, sqlite = support.state_roots()
         record = {"schema": SCHEMA, "product": PRODUCT,
                   "installed_at": datetime.now(timezone.utc).isoformat(),
@@ -558,6 +573,8 @@ def install(args):
                              "sha256": support.digest(artifacts / "codex")},
                   "code_mode_host": {"installed_path": str(artifacts / "codex-code-mode-host"),
                                      "sha256": support.digest(artifacts / "codex-code-mode-host")},
+                  "broker": {"installed_path": str(artifacts / "omd-broker"),
+                             "sha256": support.digest(artifacts / "omd-broker")},
                   "manager": {"installed_path": str(installed_manager),
                               "sha256": support.digest(installed_manager)},
                   "author": {"archive_sha256": support.digest(author_archive),
@@ -649,11 +666,34 @@ def register_plugins(prefix, bin_dir):
             "next": f"codex plugin add PLUGIN@{name}"}
 
 
-def uninstall(prefix, bin_dir):
+def pinned_binaries(record):
+    return {record["binary"]["installed_path"], record["manager"]["installed_path"],
+            *(tool["installed_path"] for tool in record["tools"].values())}
+
+
+def broker(prefix, bin_dir, action, also=()):
+    record = load(prefix)
+    _, manager = check(record, bin_dir)
+    arguments = [action]
+    if action in ("install", "pin"):
+        pins = pinned_binaries(record).union(*(pinned_binaries(load(support.resolved(other))) for other in also))
+        arguments += [f"--pin={path}" for path in sorted(pins)]
+    if action == "install":
+        arguments += ["--helper", record["broker"]["installed_path"]]
+    result = authority_broker.main(arguments)
+    if action == "install":
+        invoke(manager, "reload", record["store"])
+    return result
+
+
+def uninstall(prefix, bin_dir, keep_broker=False):
     record = load(prefix)
     check(record, bin_dir)
+    if authority_broker.deployed() and not keep_broker:
+        raise ValueError("the authority broker is deployed; run omd-package broker uninstall first")
     managed = {prefix / "install.json", Path(record["binary"]["installed_path"]),
-               Path(record["code_mode_host"]["installed_path"]), Path(record["manager"]["installed_path"])}
+               Path(record["code_mode_host"]["installed_path"]), Path(record["broker"]["installed_path"]),
+               Path(record["manager"]["installed_path"])}
     managed.update(Path(details["installed_path"]) for details in record.get("tools", {}).values())
     managed.update(prefix / name for name in record["author"]["files"])
     managed.update(prefix / "management" / name for name in record["management"]["files"])
@@ -726,7 +766,13 @@ def main():
     contract_parser.add_argument("action", choices=("list", "status", "plan", "select", "clear"))
     contract_parser.add_argument("contract", nargs="?", help="ID@VERSION for plan and select")
     commands.add_parser("plugins", help="add the OMD+ plugin marketplace to Codex at a path that survives updates")
-    commands.add_parser("uninstall", help="remove this installation and its launchers")
+    broker_parser = commands.add_parser("broker", help="deploy or manage the OS-separated authority broker (sudo)")
+    broker_parser.add_argument("action", choices=("install", "pin", "status", "reset", "uninstall"))
+    broker_parser.add_argument("--also", type=Path, action="append", default=[],
+                               help="also pin the binaries of another installation prefix")
+    uninstall_parser = commands.add_parser("uninstall", help="remove this installation and its launchers")
+    uninstall_parser.add_argument("--keep-broker", action="store_true",
+                                  help="remove this installation while another one keeps using the authority broker")
     args = parser.parse_args()
     # The launcher runs from its management directory; commands act on the caller's directory.
     os.chdir(os.environ.pop("OMD_PACKAGE_CWD", "."))
@@ -750,8 +796,10 @@ def main():
         result = contract(prefix, args.action, args.contract)
     elif args.command == "plugins":
         result = register_plugins(prefix, bin_dir)
+    elif args.command == "broker":
+        result = broker(prefix, bin_dir, args.action, args.also)
     else:
-        result = uninstall(prefix, bin_dir)
+        result = uninstall(prefix, bin_dir, args.keep_broker)
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

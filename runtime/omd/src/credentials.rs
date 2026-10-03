@@ -32,6 +32,7 @@ struct Index {
 
 pub struct CredentialProfiles {
     root: PathBuf,
+    broker: Option<(PathBuf, PathBuf)>,
 }
 
 pub struct CredentialSecret {
@@ -90,6 +91,23 @@ pub fn origin(value: &str) -> bool {
 
 impl CredentialProfiles {
     pub fn open(store: &Path) -> io::Result<Self> {
+        if !crate::broker::deployed() {
+            return Self::local(store);
+        }
+        if store.canonicalize()? != store {
+            return Err(failure("credential_root_invalid"));
+        }
+        Ok(Self::brokered(store, Path::new(crate::broker::SOCKET)))
+    }
+
+    pub fn brokered(store: &Path, socket: &Path) -> Self {
+        Self {
+            root: store.join("credentials"),
+            broker: Some((store.to_path_buf(), socket.to_path_buf())),
+        }
+    }
+
+    pub fn local(store: &Path) -> io::Result<Self> {
         if store.canonicalize()? != store {
             return Err(failure("credential_root_invalid"));
         }
@@ -103,7 +121,25 @@ impl CredentialProfiles {
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Err(failure("credential_root_invalid"));
         }
-        Ok(Self { root })
+        Ok(Self { root, broker: None })
+    }
+
+    fn remote(
+        &self,
+        op: &str,
+        mut arguments: serde_json::Value,
+        authorized: bool,
+    ) -> Option<io::Result<serde_json::Value>> {
+        let (store, socket) = self.broker.as_ref()?;
+        arguments["store"] = serde_json::json!(store);
+        let op = format!("credentials.{op}");
+        Some(crate::broker::Client::at(socket).and_then(|mut client| {
+            if authorized {
+                client.authorized(&op, arguments)
+            } else {
+                client.call(&op, arguments)
+            }
+        }))
     }
 
     fn with_index<T>(
@@ -155,32 +191,46 @@ impl CredentialProfiles {
     }
 
     pub fn list(&self) -> io::Result<Vec<CredentialProfile>> {
+        if let Some(value) = self.remote("list", serde_json::json!({}), false) {
+            return Ok(serde_json::from_value(value?)?);
+        }
         self.with_index(false, |index| Ok(index.profiles.clone()))
     }
 
     pub fn visible(&self, caller: &str) -> io::Result<Vec<serde_json::Value>> {
-        Ok(self
-            .list()?
+        if let Some(value) = self.remote("visible", serde_json::json!({"caller": caller}), false) {
+            return Ok(serde_json::from_value(value?)?);
+        }
+        self.list()?
             .iter()
             .filter(|profile| profile.kind != "secret" || profile.owner.as_deref() == Some(caller))
             .map(|profile| self.public(profile))
-            .collect())
+            .collect()
     }
 
-    pub fn public(&self, profile: &CredentialProfile) -> serde_json::Value {
-        let file = if profile.kind == "secret" {
+    pub fn public(&self, profile: &CredentialProfile) -> io::Result<serde_json::Value> {
+        if let Some(value) = self.remote("public", serde_json::json!({"id": profile.id}), false) {
+            return value;
+        }
+        let ready = self.enrolled(&profile.id)?;
+        Ok(
+            serde_json::json!({"id": profile.id, "label": profile.label, "kind": profile.kind,
+            "provider": profile.provider, "origin": profile.origin,
+            "status": if ready { "ready" } else { "not_enrolled" }, "default": profile.default}),
+        )
+    }
+
+    pub(crate) fn enrolled(&self, id: &str) -> io::Result<bool> {
+        let file = if self.profile(id)?.kind == "secret" {
             "secret"
         } else {
             "auth.json"
         };
-        let ready = fs::symlink_metadata(self.root.join(&profile.id).join(file))
-            .is_ok_and(|metadata| metadata.is_file());
-        serde_json::json!({"id": profile.id, "label": profile.label, "kind": profile.kind,
-            "provider": profile.provider, "origin": profile.origin,
-            "status": if ready { "ready" } else { "not_enrolled" }, "default": profile.default})
+        Ok(fs::symlink_metadata(self.root.join(id).join(file))
+            .is_ok_and(|metadata| metadata.is_file()))
     }
 
-    pub fn home(&self, id: &str) -> io::Result<PathBuf> {
+    fn home(&self, id: &str) -> io::Result<PathBuf> {
         let known =
             self.with_index(false, |index| Ok(index.profiles.iter().any(|p| p.id == id)))?;
         if !known {
@@ -205,6 +255,13 @@ impl CredentialProfiles {
         kind: &str,
         provider: Option<&str>,
     ) -> io::Result<CredentialProfile> {
+        if let Some(value) = self.remote(
+            "create",
+            serde_json::json!({"label": label, "kind": kind, "provider": provider}),
+            false,
+        ) {
+            return Ok(serde_json::from_value(value?)?);
+        }
         if !text(label, 64) || !KINDS.contains(&kind) || provider.is_some_and(|p| !text(p, 64)) {
             return Err(failure("credential_profile_invalid"));
         }
@@ -217,6 +274,13 @@ impl CredentialProfiles {
         origin_url: &str,
         owner: &str,
     ) -> io::Result<CredentialProfile> {
+        if let Some(value) = self.remote(
+            "create_secret",
+            serde_json::json!({"label": label, "origin": origin_url, "owner": owner}),
+            false,
+        ) {
+            return Ok(serde_json::from_value(value?)?);
+        }
         if !text(label, 64) || !origin(origin_url) || !text(owner, 128) {
             return Err(failure("credential_profile_invalid"));
         }
@@ -255,7 +319,10 @@ impl CredentialProfiles {
         Ok(profile)
     }
 
-    pub fn remove(&self, id: &str) -> io::Result<Option<PathBuf>> {
+    pub fn remove(&self, id: &str) -> io::Result<bool> {
+        if let Some(value) = self.remote("remove", serde_json::json!({"id": id}), true) {
+            return Ok(value?.as_bool().unwrap_or_default());
+        }
         let removed = self.with_index(true, |index| {
             let before = index.profiles.len();
             let was_default = index.profiles.iter().any(|p| p.id == id && p.default);
@@ -267,10 +334,19 @@ impl CredentialProfiles {
             }
             Ok(index.profiles.len() != before)
         })?;
-        Ok(removed.then(|| self.root.join(id)))
+        if removed {
+            match fs::remove_dir_all(self.root.join(id)) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                _ => (),
+            }
+        }
+        Ok(removed)
     }
 
     pub fn profile(&self, id: &str) -> io::Result<CredentialProfile> {
+        if let Some(value) = self.remote("profile", serde_json::json!({"id": id}), false) {
+            return Ok(serde_json::from_value(value?)?);
+        }
         self.list()?
             .into_iter()
             .find(|profile| profile.id == id)
@@ -278,6 +354,13 @@ impl CredentialProfiles {
     }
 
     pub fn store_secret(&self, id: &str, value: &str) -> io::Result<()> {
+        if let Some(result) = self.remote(
+            "store_secret",
+            serde_json::json!({"id": id, "value": value}),
+            true,
+        ) {
+            return result.map(drop);
+        }
         if self.profile(id)?.kind != "secret" || value.is_empty() || value.len() > SECRET_BYTES {
             return Err(failure("credential_secret_invalid"));
         }
@@ -293,7 +376,39 @@ impl CredentialProfiles {
         file.sync_all()
     }
 
+    pub fn store_auth(&self, id: &str, auth: &str) -> io::Result<()> {
+        if let Some(result) = self.remote(
+            "store_auth",
+            serde_json::json!({"id": id, "auth": auth}),
+            true,
+        ) {
+            return result.map(drop);
+        }
+        if self.profile(id)?.kind == "secret"
+            || auth.len() > 65_536
+            || serde_json::from_str::<serde_json::Value>(auth).is_err()
+        {
+            return Err(failure("credential_auth_invalid"));
+        }
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(self.home(id)?.join("auth.json"))?;
+        file.write_all(auth.as_bytes())?;
+        file.sync_all()
+    }
+
     pub fn owned_secret(&self, id: &str, owner: &str) -> io::Result<serde_json::Value> {
+        if let Some(value) = self.remote(
+            "owned_secret",
+            serde_json::json!({"id": id, "owner": owner}),
+            false,
+        ) {
+            return value;
+        }
         let profile = self.profile(id)?;
         if profile.kind != "secret" || profile.owner.as_deref() != Some(owner) {
             return Err(failure(format!("credential_secret_not_owned: {id}")));
@@ -309,6 +424,17 @@ impl CredentialProfiles {
     }
 
     pub fn secret(&self, id: &str) -> io::Result<CredentialSecret> {
+        if let Some(value) = self.remote("secret", serde_json::json!({"id": id}), false) {
+            let value = value?;
+            return Ok(CredentialSecret {
+                token: value["token"]
+                    .as_str()
+                    .filter(|token| !token.is_empty())
+                    .ok_or_else(|| failure("credential_store_invalid"))?
+                    .to_owned(),
+                account_id: value["account_id"].as_str().map(str::to_owned),
+            });
+        }
         let profile = self.profile(id)?;
         let path = self.home(id)?.join("auth.json");
         let metadata = fs::symlink_metadata(&path)
@@ -347,6 +473,9 @@ impl CredentialProfiles {
     }
 
     pub fn set_default(&self, id: &str) -> io::Result<()> {
+        if let Some(result) = self.remote("set_default", serde_json::json!({"id": id}), true) {
+            return result.map(drop);
+        }
         self.with_index(true, |index| {
             if !index.profiles.iter().any(|p| p.id == id) {
                 return Err(failure(format!("credential_profile_unknown: {id}")));

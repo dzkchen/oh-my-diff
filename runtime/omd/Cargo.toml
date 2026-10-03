@@ -10,9 +10,15 @@ serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.149"
 base64 = "=0.22.1"
 sha2 = "=0.10.9"
-rustix = { version = "=1.1.4", features = ["fs", "process"] }
+rustix = { version = "=1.1.4", features = ["fs", "process", "termios"] }
 ignore = "=0.4.25"
 toml = "=0.9.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "=0.10.1"
+libc = "=0.2.186"
+security-framework = "=3.5.1"
+security-framework-sys = "=2.15.0"
 
 [dev-dependencies]
 tempfile = "=3.27.0"

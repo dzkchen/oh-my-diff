@@ -121,9 +121,17 @@ impl SessionContract {
     pub(crate) fn restore(&mut self, path: &std::path::Path) -> Result<(), String> {
         use std::io::Read;
         use std::os::unix::fs::MetadataExt;
+        let anchor = codex_omd::broker::anchored(path).map_err(|error| error.to_string())?;
         let metadata = match std::fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return match anchor {
+                    Some(anchor) if anchor.count > 0 => {
+                        Err("contract_state_anchor_mismatch".into())
+                    }
+                    _ => Ok(()),
+                };
+            }
             Err(error) => return Err(error.to_string()),
         };
         if !metadata.is_file() || metadata.nlink() != 1 || metadata.len() > STATE_BYTES as u64 {
@@ -140,6 +148,9 @@ impl SessionContract {
             .map_err(|error| error.to_string())?;
         if bytes.len() > STATE_BYTES {
             return Err("contract_state_byte_limit".into());
+        }
+        if anchor.is_some_and(|anchor| anchor.last != Some(codex_omd::broker::sha256(&bytes))) {
+            return Err("contract_state_anchor_mismatch".into());
         }
         self.restore_value(serde_json::from_slice(&bytes).map_err(|error| error.to_string())?)
     }

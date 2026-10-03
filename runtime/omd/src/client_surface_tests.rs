@@ -14,6 +14,19 @@ impl ClientSurface for Echo {
     }
 }
 
+struct Password;
+
+impl ClientSurface for Password {
+    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
+        let host_prompt = call.caller == crate::broker::HOST_CALLER
+            && call.operation == "terminal.prompt"
+            && call.arguments["masked"] == true;
+        call.reply
+            .send(Ok(json!({"status": "accepted", "value": if host_prompt { "pw" } else { "" }})))
+            .map_err(|error| error.to_string())
+    }
+}
+
 struct Silent;
 
 impl ClientSurface for Silent {
@@ -54,6 +67,9 @@ fn surface_routes_enforces_user_context_cancels_and_unregisters() {
     .unwrap();
     assert_eq!(value["operation"], "app.request");
     assert_eq!(value["confirm"], "Allow m to list threads?");
+    let password = register(Arc::new(Password));
+    assert_eq!(crate::broker::password().unwrap().as_deref(), Some("pw"));
+    drop(password);
     assert_eq!(
         call(
             "m",

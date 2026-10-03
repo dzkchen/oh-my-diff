@@ -37,6 +37,7 @@ UPSTREAM_MINOR = "0.159"
 PROFILE_LABELS = {"platform": "OMD Core", "full": "OMD+"}
 MAX_UNPACKED_BYTES = 1_200_000_000
 MAX_MEMBER_BYTES = 1_000_000_000
+BROKER_DAEMON = Path("/Library/LaunchDaemons/dev.ohmydiff.broker.plist")
 
 
 def fail(message):
@@ -57,6 +58,23 @@ def run(arguments, *, cwd=None, env=None):
     if result.returncode:
         fail((result.stderr or result.stdout or "command failed").strip())
     return result.stdout
+
+
+def broker_deployed():
+    return BROKER_DAEMON.is_file() and BROKER_DAEMON.stat().st_uid == 0
+
+
+def repin(active, other, upstream, bin_dir):
+    if not broker_deployed():
+        return None
+    command = [active / "bin/omd-package", "broker", "pin"]
+    if other:
+        command += ["--also", other / "prefix"]
+    try:
+        run(command, env=environment(upstream, bin_dir))
+    except ValueError as error:
+        return f"failed: {error}; run omd-package broker pin"
+    return "pinned the active and previous installations"
 
 
 def atomic_symlink(path, target):
@@ -294,15 +312,17 @@ def install(args, root, current):
                 pruned.append(old.name)
             except (OSError, ValueError) as error:
                 failures.append(f"{old.name}: {error}")
+        pinned = repin(generation, current, Path(upstream["path"]), args.bin_dir)
         print(json.dumps({"installed": profile, "profile_label": PROFILE_LABELS[profile], "active": str(generation),
                           "previous": str(current) if current else None,
                           "upstream": upstream["path"], "bin_dir": str(args.bin_dir),
                           "moved_aside": [f"{path} -> {path}.before-omd" for path in displaced],
-                          "pruned": pruned, "prune_failures": failures}, indent=2))
+                          "pruned": pruned, "prune_failures": failures,
+                          **({"authority_broker": pinned} if pinned else {})}, indent=2))
 
 
 def remove_generation(generation, upstream, bin_dir):
-    run([generation / "bin/omd-package", "uninstall"], env=environment(upstream, bin_dir))
+    run([generation / "bin/omd-package", "uninstall", "--keep-broker"], env=environment(upstream, bin_dir))
     (generation / "receipt.json").unlink()
     (generation / "bin").rmdir()
     generation.rmdir()
@@ -311,7 +331,8 @@ def remove_generation(generation, upstream, bin_dir):
 def discard(generation, upstream, bin_dir):
     if (generation / "bin/omd-package").is_file():
         try:
-            run([generation / "bin/omd-package", "uninstall"], env=environment(upstream, bin_dir))
+            run([generation / "bin/omd-package", "uninstall", "--keep-broker"],
+                env=environment(upstream, bin_dir))
         except (OSError, ValueError):
             pass
     (generation / "receipt.json").unlink(missing_ok=True)
@@ -342,13 +363,17 @@ def rollback(args, root, bin_dir, current):
     except BaseException:
         atomic_symlink(root / "current", current)
         raise
+    pinned = repin(previous, current, upstream, bin_dir)
     print(json.dumps({"restored": str(previous), "profile": target["profile"],
-                      "profile_label": PROFILE_LABELS[target["profile"]]}, indent=2))
+                      "profile_label": PROFILE_LABELS[target["profile"]],
+                      **({"authority_broker": pinned} if pinned else {})}, indent=2))
 
 
 def uninstall(args, root, bin_dir, current):
     if not current:
         fail("No managed OMD installation is active.")
+    if broker_deployed():
+        fail("The authority broker is deployed; run omd-package broker uninstall first (it removes protected credentials).")
     upstream = Path(upstream_binary(args, current)["path"])
     check_links(root, bin_dir)
     generations = sorted((root / "releases").iterdir())

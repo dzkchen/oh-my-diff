@@ -522,17 +522,21 @@ impl Session {
         let result = if bytes.len() > contract::STATE_BYTES {
             Err("contract_state_byte_limit".into())
         } else {
-            persist(
-                self.contract_state
-                    .parent()
-                    .ok_or("contract_state_parent_missing")?,
-                self.contract_state
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .ok_or("contract_state_name_invalid")?,
-                &bytes,
-                true,
-            )
+            codex_omd::broker::anchor(&self.contract_state, &codex_omd::broker::sha256(&bytes))
+                .map_err(|error| error.to_string())
+                .and_then(|()| {
+                    persist(
+                        self.contract_state
+                            .parent()
+                            .ok_or("contract_state_parent_missing")?,
+                        self.contract_state
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .ok_or("contract_state_name_invalid")?,
+                        &bytes,
+                        true,
+                    )
+                })
         };
         if let Err(error) = &result {
             self.contract

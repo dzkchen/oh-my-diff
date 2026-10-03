@@ -160,7 +160,7 @@ fn credential_routes_replace_auth_at_the_request_boundary_and_fail_closed() {
     std::fs::create_dir(&store).unwrap();
     let store = store.canonicalize().unwrap();
     set_credential_root(store.clone());
-    let profiles = codex_omd::credentials::CredentialProfiles::open(&store).unwrap();
+    let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
     let profile = profiles.create("work key", "api_key", None).unwrap();
     accounts
         .0
@@ -178,11 +178,9 @@ fn credential_routes_replace_auth_at_the_request_boundary_and_fail_closed() {
         .err()
         .unwrap();
     assert!(format!("{refused:?}").contains("credential_not_enrolled"));
-    std::fs::write(
-        profiles.home(&profile.id).unwrap().join("auth.json"),
-        br#"{"OPENAI_API_KEY":"sk-profile"}"#,
-    )
-    .unwrap();
+    profiles
+        .store_auth(&profile.id, r#"{"OPENAI_API_KEY":"sk-profile"}"#)
+        .unwrap();
     assert!(accounts.before_send(&mut request, Some(&body)).is_ok());
     assert_eq!(
         request.headers.get(http::header::AUTHORIZATION).unwrap(),

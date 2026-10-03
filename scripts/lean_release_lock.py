@@ -2,6 +2,7 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import subprocess
 import tarfile
 
@@ -15,12 +16,14 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "runtime/lean-release.lock.json"
-BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract")
+BINARIES = ("codex", "codex-code-mode-host", "omd-mod", "omd", "omd-contract", "omd-broker")
+HARDENED = ("codex", "omd-mod", "omd", "omd-contract", "omd-broker")
+ENTITLEMENTS = ROOT / "runtime/hardened-entitlements.plist"
 AUTHOR_ARCHIVE = "mod-api.tgz"
 SOURCES = (
     "scripts/lean_profiles.py", "scripts/lean_release_lock.py",
     "scripts/lean_package.py", "scripts/install_support.py",
-    "scripts/preview_lock.py",
+    "scripts/preview_lock.py", "scripts/authority_broker.py", "runtime/hardened-entitlements.plist",
     "upstream.lock.json", "runtime/patches/manifest.json",
     "runtime/preview-v1.lock.json", "runtime/plugin-v1.lock.json",
     "extensions/index.json", "mods/package.json", "mods/api.d.ts", "mods/compatibility.json",
@@ -28,6 +31,17 @@ SOURCES = (
     "LEAN_PROFILES.md",
     "scripts/full_mods_lock.py", "runtime/full-mods.lock.json",
 ) + full_mods_lock.sources() + support.optional_plugin_sources()
+
+
+def sign(path):
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "runtime",
+                    "--entitlements", str(ENTITLEMENTS), str(path)], check=True, capture_output=True)
+
+
+def hardened(path):
+    details = subprocess.run(["/usr/bin/codesign", "-d", "--verbose=4", str(path)],
+                             capture_output=True, text=True).stderr
+    return re.search(r"^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime", details, re.M) is not None
 
 
 def sdk_sources():
@@ -106,6 +120,8 @@ def build(artifact_dir, package_mode=False):
         if not path.is_file() or "arm64" not in subprocess.check_output(
                 ["file", "-b", str(path)], text=True):
             raise ValueError(f"missing Apple Silicon release artifact: {name}")
+        if name in HARDENED and not hardened(path):
+            raise ValueError(f"release artifact lacks the hardened runtime signature: {name}")
         artifacts[name] = {"sha256": support.digest(path), "bytes": path.stat().st_size}
     archive = artifact_dir / AUTHOR_ARCHIVE
     if not archive.is_file():

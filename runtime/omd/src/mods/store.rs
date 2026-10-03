@@ -8,6 +8,7 @@ use super::identifier;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -16,6 +17,39 @@ use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::path::PathBuf;
+
+pub struct Trust {
+    pub path: PathBuf,
+    pub sha256: String,
+    pub capabilities: Vec<String>,
+    pub scope: String,
+    pub secret_environment: Vec<String>,
+}
+
+pub(super) fn grant(selection: &Value) -> String {
+    crate::broker::canonical(
+        &json!({"path": selection["path"], "sha256": selection["sha256"],
+        "capabilities": selection["capabilities"], "scope": selection["scope"],
+        "secret_environment": selection.get("secret_environment").unwrap_or(&json!([]))}),
+    )
+}
+
+pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<String>)>> {
+    if !crate::broker::deployed() {
+        return Ok(None);
+    }
+    let current = crate::broker::call("grants.get", json!({"store": root}))?;
+    Ok(Some((
+        current["generation"].as_u64().unwrap_or_default(),
+        current["grants"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect(),
+    )))
+}
 
 pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let file = OpenOptions::new()
@@ -221,10 +255,37 @@ impl ModStore {
 
     pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(value)?;
-        self.write_bytes(name, &bytes)
+        self.write_staged(name, &bytes, || {
+            if name == "mods.json"
+                && let Some((generation, current)) = brokered_grants(&self.root)?
+            {
+                let wanted = value["mods"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(grant)
+                    .collect::<BTreeSet<_>>();
+                if wanted != current {
+                    crate::broker::authorized(
+                        "grants.put",
+                        json!({"store": self.root, "generation": generation, "grants": wanted}),
+                    )?;
+                }
+            }
+            Ok(())
+        })
     }
 
     pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.write_staged(name, bytes, || Ok(()))
+    }
+
+    fn write_staged(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        commit: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         if bytes.len() > 65_536 {
             return Err(failure("state_or_configuration_limit"));
         }
@@ -240,6 +301,7 @@ impl ModStore {
         let result = (|| {
             file.write_all(bytes)?;
             file.sync_all()?;
+            commit()?;
             std::fs::rename(&temporary, &path)?;
             File::open(&self.root)?.sync_all()
         })();
@@ -380,41 +442,60 @@ impl ModStore {
         scope: &str,
         secret_environment: Vec<String>,
     ) -> Result<()> {
+        self.trust_all(vec![Trust {
+            path,
+            sha256: sha256.to_owned(),
+            capabilities,
+            scope: scope.to_owned(),
+            secret_environment,
+        }])
+    }
+
+    pub fn trust_all(&self, packages: Vec<Trust>) -> Result<()> {
         let _lock = self.lock()?;
         self.recover_package_transaction()?;
-        if !super::MOD_SCOPES.contains(&scope) {
-            return Err(failure("unsupported_scope: user or project"));
-        }
-        let (package, _, actual) = package(&path)?;
-        if sha256 != actual {
-            return Err(failure("trust_digest_mismatch"));
-        }
-        if capabilities != package.capabilities {
-            return Err(failure("explicit_exact_capability_grant_required"));
-        }
-        super::check_secret_environment(&package, &secret_environment)?;
         let mut config = self.configuration()?;
-        let settings = config
-            .mods
-            .iter()
-            .find(|m| m.path == path)
-            .map(|m| m.settings.clone())
-            .unwrap_or_default();
-        super::validate_settings(&package, &settings)?;
-        config.mods.retain(|m| m.path != path);
+        for Trust {
+            path,
+            sha256,
+            capabilities,
+            scope,
+            secret_environment,
+        } in packages
+        {
+            if !super::MOD_SCOPES.contains(&scope.as_str()) {
+                return Err(failure("unsupported_scope: user or project"));
+            }
+            let (package, _, actual) = package(&path)?;
+            if sha256 != actual {
+                return Err(failure("trust_digest_mismatch"));
+            }
+            if capabilities != package.capabilities {
+                return Err(failure("explicit_exact_capability_grant_required"));
+            }
+            super::check_secret_environment(&package, &secret_environment)?;
+            let settings = config
+                .mods
+                .iter()
+                .find(|m| m.path == path)
+                .map(|m| m.settings.clone())
+                .unwrap_or_default();
+            super::validate_settings(&package, &settings)?;
+            config.mods.retain(|m| m.path != path);
+            config.mods.push(ModSelection {
+                path,
+                sha256: actual,
+                enabled: false,
+                capabilities,
+                settings,
+                scope,
+                secret_environment: package.secret_environment(),
+            });
+        }
         config.revision = config
             .revision
             .checked_add(1)
             .ok_or_else(|| failure("revision_overflow"))?;
-        config.mods.push(ModSelection {
-            path,
-            sha256: actual,
-            enabled: false,
-            capabilities,
-            settings,
-            scope: scope.to_owned(),
-            secret_environment: package.secret_environment(),
-        });
         self.write("mods.json", &serde_json::to_value(config)?)
     }
 

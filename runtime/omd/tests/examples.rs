@@ -4,7 +4,6 @@ use std::path::Path;
 const HOST_FEATURES: &[&str] = &[
     "app_v1",
     "approval_v1",
-    "tool_output_v1",
     "tool_batch_v1",
     "tool_specs_v1",
     "events_v1",

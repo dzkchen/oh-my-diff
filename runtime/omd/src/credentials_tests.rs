@@ -3,7 +3,7 @@ use super::*;
 fn profiles() -> (tempfile::TempDir, CredentialProfiles) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let profiles = CredentialProfiles::open(&root).unwrap();
+    let profiles = CredentialProfiles::local(&root).unwrap();
     (temp, profiles)
 }
 
@@ -39,15 +39,16 @@ fn profiles_get_private_homes_and_one_default() {
 }
 
 #[test]
-fn removing_the_default_promotes_another_and_returns_the_home_to_clear() {
+fn removing_the_default_promotes_another_and_clears_its_home() {
     let (_temp, profiles) = profiles();
     profiles.create("a", "chatgpt", None).unwrap();
     profiles
         .create_secret("site", "https://example.com", "vault")
         .unwrap();
     profiles.create("b", "chatgpt", None).unwrap();
-    let home = profiles.remove("p1").unwrap().unwrap();
-    assert!(home.ends_with("credentials/p1"));
+    let home = profiles.home("p1").unwrap();
+    assert!(profiles.remove("p1").unwrap());
+    assert!(!home.exists());
     let listed = profiles.list().unwrap();
     assert_eq!(
         listed
@@ -56,7 +57,7 @@ fn removing_the_default_promotes_another_and_returns_the_home_to_clear() {
             .collect::<Vec<_>>(),
         [("p2", false), ("p3", true)]
     );
-    assert_eq!(profiles.remove("p1").unwrap(), None);
+    assert!(!profiles.remove("p1").unwrap());
     assert!(profiles.home("p1").is_err());
 }
 
@@ -94,11 +95,9 @@ fn secrets_read_api_keys_and_refuse_expired_or_missing_tokens() {
             .to_string()
             .starts_with("credential_not_enrolled")
     );
-    fs::write(
-        profiles.home(&key.id).unwrap().join("auth.json"),
-        br#"{"OPENAI_API_KEY":"sk-test"}"#,
-    )
-    .unwrap();
+    profiles
+        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-test"}"#)
+        .unwrap();
     let secret = profiles.secret(&key.id).unwrap();
     assert_eq!(
         (secret.token.as_str(), secret.account_id),

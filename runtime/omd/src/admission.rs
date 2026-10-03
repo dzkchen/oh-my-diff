@@ -234,6 +234,9 @@ impl Task {
         Self::validate_limits(&limits)?;
         fs::create_dir(&evidence)?;
         let evidence = evidence.canonicalize()?;
+        if crate::broker::anchored(&evidence)?.is_some_and(|anchor| anchor.count > 0) {
+            return Err(denied("evidence_anchor_mismatch"));
+        }
         let task = Self {
             created_unix_millis: unix_millis()?,
             limits: Mutex::new(limits.clone()),
@@ -319,6 +322,7 @@ impl Task {
         };
         let mut created_unix_millis = None;
         let mut recorded_limits = None;
+        let mut head = String::new();
         for entry in records {
             let metadata = entry.metadata()?;
             if entry.file_type()?.is_symlink()
@@ -327,7 +331,9 @@ impl Task {
             {
                 return Err(denied("resume evidence must be a bounded regular file"));
             }
-            let value: Value = serde_json::from_slice(&fs::read(entry.path())?)?;
+            let bytes = fs::read(entry.path())?;
+            head = crate::broker::chain(&head, &crate::broker::sha256(&bytes));
+            let value: Value = serde_json::from_slice(&bytes)?;
             let sequence = value["sequence"]
                 .as_u64()
                 .ok_or_else(|| denied("resume evidence sequence missing"))?;
@@ -546,6 +552,11 @@ impl Task {
         if state.status == TaskStatus::Stopped {
             return Err(denied("stopped task cannot resume"));
         }
+        if crate::broker::anchored(&evidence)?
+            .is_some_and(|anchor| anchor.count != state.sequence || anchor.head != head)
+        {
+            return Err(denied("evidence_anchor_mismatch"));
+        }
         let created_unix_millis =
             created_unix_millis.ok_or_else(|| denied("created timestamp missing"))?;
         let recorded_limits = recorded_limits
@@ -627,6 +638,7 @@ impl Task {
             if bytes.len() > 1_048_576 {
                 return Err(denied("evidence event exceeds size limit"));
             }
+            crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes))?;
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)

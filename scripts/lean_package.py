@@ -158,11 +158,14 @@ def source_build(args):
         environment["CARGO_TARGET_DIR"] = str(target)
         run("cargo", f"+{upstream['rust_toolchain']}", "build", "--locked", "--release",
             "-j", "4", "-p", "codex-cli", "--bin", "codex", "-p", "codex-code-mode-host", "-p", "codex-omd",
-            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", cwd=checkout / "codex-rs", env=environment)
+            "--bin", "omd-mod", "--bin", "omd", "--bin", "omd-contract", "--bin", "omd-broker",
+            cwd=checkout / "codex-rs", env=environment)
         artifacts = Path(temporary) / "artifacts"
         artifacts.mkdir()
         for name in release.BINARIES:
             shutil.copy2(target / "release" / name, artifacts / name)
+            if name in release.HARDENED:
+                release.sign(artifacts / name)
         shutil.copy2(args.author_archive, artifacts / release.AUTHOR_ARCHIVE)
         archive = args.output_archive.resolve() if args.output_archive else Path(temporary) / "package.tar.xz"
         packed = archive_payload(artifacts, archive, source_rebuild=True)

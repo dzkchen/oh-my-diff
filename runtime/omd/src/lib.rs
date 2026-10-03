@@ -1,6 +1,7 @@
 mod admission;
 pub mod app_routes;
 mod blob_store;
+pub mod broker;
 mod builtins;
 pub mod client_surface;
 pub mod contract_cli;
@@ -146,6 +147,7 @@ pub use mods::ModSiteMode;
 pub use mods::ModSpan;
 pub use mods::ModSplit;
 pub use mods::ModStore;
+pub use mods::Trust;
 pub use mods::ModSubscriptions;
 pub use mods::ModSurfacePaint;
 pub use mods::ModTab;

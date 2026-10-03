@@ -80,6 +80,7 @@ pub use package_manager::ModPackagePlan;
 pub use package_manager::ModPackageSource;
 pub use package_manager::ModPackageTrust;
 pub use store::ModStore;
+pub use store::Trust;
 
 pub const CODEX_HOST_RELEASE: &str = "0.159.1";
 pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
@@ -255,7 +256,6 @@ pub const MOD_HOST_FEATURES: &[&str] = &[
     "adapters_v1",
     "app_v1",
     "approval_v1",
-    "tool_output_v1",
     "tool_batch_v1",
     "tool_specs_v1",
     "events_v1",
@@ -2245,7 +2245,12 @@ impl ModHost {
     pub fn reload(&mut self) -> Result<bool> {
         let path = self.store.root.join("mods.json");
         let bytes = store::read(&path, 65_536)?;
-        let hash = digest(&bytes);
+        let brokered = store::brokered_grants(&self.store.root)?;
+        let hash = format!(
+            "{}:{}",
+            digest(&bytes),
+            brokered.as_ref().map_or(0, |(generation, _)| *generation)
+        );
         if hash == self.configuration_sha256 {
             return Ok(false);
         }
@@ -2271,7 +2276,12 @@ impl ModHost {
             self.dynamic_tools.clear();
         }
         let mut rejected = Vec::new();
-        let selected = Self::select(&config, initial, &mut rejected)?;
+        let selected = Self::select(
+            &config,
+            initial,
+            brokered.as_ref().map(|(_, grants)| grants),
+            &mut rejected,
+        )?;
         let adapters = Self::adapters(&selected);
         let mut next = BTreeMap::new();
         for (id, (selection, package, source)) in selected {
@@ -2457,6 +2467,7 @@ impl ModHost {
     fn select(
         config: &ModConfiguration,
         initial: bool,
+        grants: Option<&BTreeSet<String>>,
         rejected: &mut Vec<ModRejection>,
     ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
         let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
@@ -2464,6 +2475,12 @@ impl ModHost {
             let loaded = (|| {
                 if !MOD_SCOPES.contains(&selection.scope.as_str()) {
                     return Err(failure(format!("unsupported_scope: {}", selection.scope)));
+                }
+                if grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection)))) {
+                    return Err(failure(format!(
+                        "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
+                        selection.path.display()
+                    )));
                 }
                 let (package, source, hash) = store::package(&selection.path)?;
                 if hash != selection.sha256 {
@@ -4142,7 +4159,7 @@ impl ModHost {
             "supported_apis":SUPPORTED_MOD_APIS.iter().map(|(version,stability,support_until)|
                 json!({"version":version,"stability":stability,"support_until":support_until})).collect::<Vec<_>>()},
             "generation": self.generation, "reload_error": self.reload_error,
-            "order": self.order, "rejected": self.rejected, "field_policies": Self::field_policies(),
+            "authority": crate::broker::status(), "order": self.order, "rejected": self.rejected, "field_policies": Self::field_policies(),
             "installed_contract_types": self.store.root.join("installed-contracts.d.ts"),
             "active_host_types": self.store.root.join("active-host.d.ts"),
             "service_calls": self.service_calls,

@@ -213,7 +213,19 @@ only the managed launcher and installation prefix:
 /path/to/omd-bin/omd-package uninstall
 ```
 
-The mod store and Codex state remain. The installer refuses removal if its
+The mod store and Codex state remain. To protect credentials, grants and evidence from same-user processes on macOS, deploy the OS-separated authority broker:
+
+```sh
+/path/to/omd-bin/omd-package broker install   # sudo; then one dialog to protect the current grants
+/path/to/omd-bin/omd-package broker pin       # sudo; re-pin by hand
+/path/to/omd-bin/omd-package broker status
+/path/to/omd-bin/omd-package broker reset     # sudo; clears grants and anchors, keeps credentials
+/path/to/omd-bin/omd-package broker uninstall # sudo; removes the broker and all its state
+```
+
+While the broker is deployed, installing a package adds its binaries to the pins, and `install.sh` upgrades and rollbacks re-pin exactly the active and previous installations; each asks for sudo once. `install.sh uninstall` and `omd-package uninstall` refuse while the broker is deployed; pruning an older installation uses `omd-package uninstall --keep-broker`. The protection boundary is described in [mods/REFERENCE.md](mods/REFERENCE.md#protected-authority-macos).
+
+The installer refuses removal if its
 launcher changed, no upstream Codex `0.159.x` remains on `PATH`, or the prefix
 contains a user file; an upgraded upstream (for example `brew upgrade codex`) is
 fine. With `install.sh`, `status`, `rollback` and `uninstall` also accept

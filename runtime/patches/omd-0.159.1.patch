@@ -1,5 +1,5 @@
 diff --git a/codex-rs/Cargo.lock b/codex-rs/Cargo.lock
-index 815f5b1d6..9ca208e1d 100644
+index 815f5b1d6..e9649c2cc 100644
 --- a/codex-rs/Cargo.lock
 +++ b/codex-rs/Cargo.lock
 @@ -2113,6 +2113,7 @@ dependencies = [
@@ -26,7 +26,7 @@ index 815f5b1d6..9ca208e1d 100644
   "codex-otel",
   "codex-protocol",
   "codex-rollout",
-@@ -4146,6 +4149,50 @@ dependencies = [
+@@ -4146,6 +4149,54 @@ dependencies = [
   "wiremock",
  ]
 
@@ -35,8 +35,12 @@ index 815f5b1d6..9ca208e1d 100644
 +version = "0.1.0"
 +dependencies = [
 + "base64 0.22.1",
++ "core-foundation 0.10.1",
 + "ignore",
++ "libc",
 + "rustix 1.1.4",
++ "security-framework 3.5.1",
++ "security-framework-sys",
 + "serde",
 + "serde_json",
 + "sha2 0.10.9",
@@ -77,7 +81,7 @@ index 815f5b1d6..9ca208e1d 100644
  [[package]]
  name = "codex-otel"
  version = "0.159.1"
-@@ -4764,6 +4811,8 @@ dependencies = [
+@@ -4764,6 +4815,8 @@ dependencies = [
   "codex-model-provider",
   "codex-model-provider-info",
   "codex-models-manager",
@@ -86,7 +90,7 @@ index 815f5b1d6..9ca208e1d 100644
   "codex-otel",
   "codex-plugin",
   "codex-protocol",
-@@ -4785,6 +4834,7 @@ dependencies = [
+@@ -4785,6 +4838,7 @@ dependencies = [
   "codex-utils-path",
   "codex-utils-path-uri",
   "codex-utils-plugins",
@@ -14047,10 +14051,10 @@ index 000000000..27e6f395f
 +mod tests;
 diff --git a/codex-rs/ext/omd/src/accounting_tests.rs b/codex-rs/ext/omd/src/accounting_tests.rs
 new file mode 100644
-index 000000000..27ee2328b
+index 000000000..7a2922b17
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/accounting_tests.rs
-@@ -0,0 +1,587 @@
+@@ -0,0 +1,585 @@
 +use super::*;
 +use codex_omd::Limits;
 +use codex_omd::MOD_API_VERSION;
@@ -14213,7 +14217,7 @@ index 000000000..27ee2328b
 +    std::fs::create_dir(&store).unwrap();
 +    let store = store.canonicalize().unwrap();
 +    set_credential_root(store.clone());
-+    let profiles = codex_omd::credentials::CredentialProfiles::open(&store).unwrap();
++    let profiles = codex_omd::credentials::CredentialProfiles::local(&store).unwrap();
 +    let profile = profiles.create("work key", "api_key", None).unwrap();
 +    accounts
 +        .0
@@ -14231,11 +14235,9 @@ index 000000000..27ee2328b
 +        .err()
 +        .unwrap();
 +    assert!(format!("{refused:?}").contains("credential_not_enrolled"));
-+    std::fs::write(
-+        profiles.home(&profile.id).unwrap().join("auth.json"),
-+        br#"{"OPENAI_API_KEY":"sk-profile"}"#,
-+    )
-+    .unwrap();
++    profiles
++        .store_auth(&profile.id, r#"{"OPENAI_API_KEY":"sk-profile"}"#)
++        .unwrap();
 +    assert!(accounts.before_send(&mut request, Some(&body)).is_ok());
 +    assert_eq!(
 +        request.headers.get(http::header::AUTHORIZATION).unwrap(),
@@ -14885,10 +14887,10 @@ index 000000000..7aa4300d3
 +}
 diff --git a/codex-rs/ext/omd/src/contract.rs b/codex-rs/ext/omd/src/contract.rs
 new file mode 100644
-index 000000000..a995c1a7c
+index 000000000..c4b18e175
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/contract.rs
-@@ -0,0 +1,927 @@
+@@ -0,0 +1,938 @@
 +use super::*;
 +use codex_omd::ContractDocument;
 +use codex_omd::Gate;
@@ -15012,9 +15014,17 @@ index 000000000..a995c1a7c
 +    pub(crate) fn restore(&mut self, path: &std::path::Path) -> Result<(), String> {
 +        use std::io::Read;
 +        use std::os::unix::fs::MetadataExt;
++        let anchor = codex_omd::broker::anchored(path).map_err(|error| error.to_string())?;
 +        let metadata = match std::fs::symlink_metadata(path) {
 +            Ok(metadata) => metadata,
-+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
++                return match anchor {
++                    Some(anchor) if anchor.count > 0 => {
++                        Err("contract_state_anchor_mismatch".into())
++                    }
++                    _ => Ok(()),
++                };
++            }
 +            Err(error) => return Err(error.to_string()),
 +        };
 +        if !metadata.is_file() || metadata.nlink() != 1 || metadata.len() > STATE_BYTES as u64 {
@@ -15031,6 +15041,9 @@ index 000000000..a995c1a7c
 +            .map_err(|error| error.to_string())?;
 +        if bytes.len() > STATE_BYTES {
 +            return Err("contract_state_byte_limit".into());
++        }
++        if anchor.is_some_and(|anchor| anchor.last != Some(codex_omd::broker::sha256(&bytes))) {
++            return Err("contract_state_anchor_mismatch".into());
 +        }
 +        self.restore_value(serde_json::from_slice(&bytes).map_err(|error| error.to_string())?)
 +    }
@@ -16830,10 +16843,10 @@ index 000000000..0ba17ecc0
 +}
 diff --git a/codex-rs/ext/omd/src/lib.rs b/codex-rs/ext/omd/src/lib.rs
 new file mode 100644
-index 000000000..e3beb9e98
+index 000000000..fabc4b4bb
 --- /dev/null
 +++ b/codex-rs/ext/omd/src/lib.rs
-@@ -0,0 +1,637 @@
+@@ -0,0 +1,641 @@
 +mod accounting;
 +mod config;
 +mod contract;
@@ -17358,17 +17371,21 @@ index 000000000..e3beb9e98
 +        let result = if bytes.len() > contract::STATE_BYTES {
 +            Err("contract_state_byte_limit".into())
 +        } else {
-+            persist(
-+                self.contract_state
-+                    .parent()
-+                    .ok_or("contract_state_parent_missing")?,
-+                self.contract_state
-+                    .file_name()
-+                    .and_then(|name| name.to_str())
-+                    .ok_or("contract_state_name_invalid")?,
-+                &bytes,
-+                true,
-+            )
++            codex_omd::broker::anchor(&self.contract_state, &codex_omd::broker::sha256(&bytes))
++                .map_err(|error| error.to_string())
++                .and_then(|()| {
++                    persist(
++                        self.contract_state
++                            .parent()
++                            .ok_or("contract_state_parent_missing")?,
++                        self.contract_state
++                            .file_name()
++                            .and_then(|name| name.to_str())
++                            .ok_or("contract_state_name_invalid")?,
++                        &bytes,
++                        true,
++                    )
++                })
 +        };
 +        if let Err(error) = &result {
 +            self.contract
@@ -29186,10 +29203,10 @@ index 000000000..718e22cef
 +)
 diff --git a/codex-rs/omd/Cargo.toml b/codex-rs/omd/Cargo.toml
 new file mode 100644
-index 000000000..dc0853e56
+index 000000000..62606d0b3
 --- /dev/null
 +++ b/codex-rs/omd/Cargo.toml
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,24 @@
 +[package]
 +name = "codex-omd"
 +version = "0.1.0"
@@ -29202,9 +29219,15 @@ index 000000000..dc0853e56
 +serde_json = "=1.0.149"
 +base64 = "=0.22.1"
 +sha2 = "=0.10.9"
-+rustix = { version = "=1.1.4", features = ["fs", "process"] }
++rustix = { version = "=1.1.4", features = ["fs", "process", "termios"] }
 +ignore = "=0.4.25"
 +toml = "=0.9.11"
++
++[target.'cfg(target_os = "macos")'.dependencies]
++core-foundation = "=0.10.1"
++libc = "=0.2.186"
++security-framework = "=3.5.1"
++security-framework-sys = "=2.15.0"
 +
 +[dev-dependencies]
 +tempfile = "=3.27.0"
@@ -29245,10 +29268,10 @@ index 000000000..82e68d714
 +event, capability or host configuration field names a feature.
 diff --git a/codex-rs/omd/src/admission.rs b/codex-rs/omd/src/admission.rs
 new file mode 100644
-index 000000000..591ca1a21
+index 000000000..65edce5f4
 --- /dev/null
 +++ b/codex-rs/omd/src/admission.rs
-@@ -0,0 +1,1417 @@
+@@ -0,0 +1,1429 @@
 +use serde::Deserialize;
 +use serde::Serialize;
 +use serde_json::Value;
@@ -29485,6 +29508,9 @@ index 000000000..591ca1a21
 +        Self::validate_limits(&limits)?;
 +        fs::create_dir(&evidence)?;
 +        let evidence = evidence.canonicalize()?;
++        if crate::broker::anchored(&evidence)?.is_some_and(|anchor| anchor.count > 0) {
++            return Err(denied("evidence_anchor_mismatch"));
++        }
 +        let task = Self {
 +            created_unix_millis: unix_millis()?,
 +            limits: Mutex::new(limits.clone()),
@@ -29570,6 +29596,7 @@ index 000000000..591ca1a21
 +        };
 +        let mut created_unix_millis = None;
 +        let mut recorded_limits = None;
++        let mut head = String::new();
 +        for entry in records {
 +            let metadata = entry.metadata()?;
 +            if entry.file_type()?.is_symlink()
@@ -29578,7 +29605,9 @@ index 000000000..591ca1a21
 +            {
 +                return Err(denied("resume evidence must be a bounded regular file"));
 +            }
-+            let value: Value = serde_json::from_slice(&fs::read(entry.path())?)?;
++            let bytes = fs::read(entry.path())?;
++            head = crate::broker::chain(&head, &crate::broker::sha256(&bytes));
++            let value: Value = serde_json::from_slice(&bytes)?;
 +            let sequence = value["sequence"]
 +                .as_u64()
 +                .ok_or_else(|| denied("resume evidence sequence missing"))?;
@@ -29797,6 +29826,11 @@ index 000000000..591ca1a21
 +        if state.status == TaskStatus::Stopped {
 +            return Err(denied("stopped task cannot resume"));
 +        }
++        if crate::broker::anchored(&evidence)?
++            .is_some_and(|anchor| anchor.count != state.sequence || anchor.head != head)
++        {
++            return Err(denied("evidence_anchor_mismatch"));
++        }
 +        let created_unix_millis =
 +            created_unix_millis.ok_or_else(|| denied("created timestamp missing"))?;
 +        let recorded_limits = recorded_limits
@@ -29878,6 +29912,7 @@ index 000000000..591ca1a21
 +            if bytes.len() > 1_048_576 {
 +                return Err(denied("evidence event exceeds size limit"));
 +            }
++            crate::broker::anchor(&self.evidence, &crate::broker::sha256(&bytes))?;
 +            let mut file = OpenOptions::new()
 +                .write(true)
 +                .create_new(true)
@@ -33398,6 +33433,30 @@ index 000000000..b587df167
 +    assert!(roots.contains(&base.join("linked")));
 +    assert_eq!(session_roots(&base), vec![base.clone()]);
 +}
+diff --git a/codex-rs/omd/src/bin/omd-broker.rs b/codex-rs/omd/src/bin/omd-broker.rs
+new file mode 100644
+index 000000000..88876e1b3
+--- /dev/null
++++ b/codex-rs/omd/src/bin/omd-broker.rs
+@@ -0,0 +1,18 @@
++use std::path::PathBuf;
++use std::sync::Arc;
++
++fn main() -> std::process::ExitCode {
++    let root = PathBuf::from(codex_omd::broker::ROOT);
++    let served = codex_omd::broker::listener().and_then(|listener| {
++        let broker = Arc::new(codex_omd::broker::Broker::open(root.clone())?);
++        broker.serve(listener, Arc::new(codex_omd::broker::Pinned::new(&root)));
++        Ok(())
++    });
++    match served {
++        Ok(()) => std::process::ExitCode::SUCCESS,
++        Err(error) => {
++            eprintln!("omd-broker: {error}");
++            std::process::ExitCode::FAILURE
++        }
++    }
++}
 diff --git a/codex-rs/omd/src/bin/omd-contract.rs b/codex-rs/omd/src/bin/omd-contract.rs
 new file mode 100644
 index 000000000..b6b05710f
@@ -33506,10 +33565,10 @@ index 000000000..b6b05710f
 +}
 diff --git a/codex-rs/omd/src/bin/omd-mod.rs b/codex-rs/omd/src/bin/omd-mod.rs
 new file mode 100644
-index 000000000..146399b4c
+index 000000000..7fab47aa5
 --- /dev/null
 +++ b/codex-rs/omd/src/bin/omd-mod.rs
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,378 @@
 +use codex_omd::ModHost;
 +use codex_omd::ModInstallRequest;
 +use codex_omd::ModStore;
@@ -33641,7 +33700,7 @@ index 000000000..146399b4c
 +fn run(args: &[String]) -> io::Result<Value> {
 +    let bad = || {
 +        io::Error::other(
-+            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
++            "usage: omd-mod init STORE NODE | plugin-component PLUGIN_ROOT | inspect PACKAGE | trust STORE PACKAGE SHA256 CAPABILITIES_CSV [user|project] [--allow-secret-env NAME]... | trust-all STORE PACKAGES_JSON ([{path, sha256, capabilities, scope?}]) | enable/disable STORE PACKAGE | package-plan STORE REQUEST_JSON (keys: action? install|update; source {kind: local, path} or {kind: repository, ...} or {kind: package, index, id, version}; scope?; activate?; trust.packages.ID {capabilities, lifecycle?, dependencies?, secret_environment?}) | package-apply STORE REQUEST_JSON CONFIRMATION | package-lock STORE | package-enable/package-disable STORE ID | package-rollback-plan/package-uninstall-plan STORE ID | package-rollback/package-uninstall STORE ID CONFIRMATION | plugin-preview CODEX_BIN CODEX_HOME NAME@MARKETPLACE CANDIDATE | status/selection-status/reload/report/events/declarations STORE | test STORE SCENARIO_JSON [THREAD] | diagnostics STORE OUTPUT_JSON | explain DENIAL | discover USER_DIR PROJECT_DIR | settings STORE PACKAGE JSON | migrate STORE PACKAGE | rollback STORE PACKAGE BACKUP | command STORE MOD NAME JSON [THREAD]",
 +        )
 +    };
 +    match args {
@@ -33756,6 +33815,32 @@ index 000000000..146399b4c
 +            )?;
 +            Ok(Value::String(format!(
 +                "trusted in the {scope} scope; disabled until explicitly enabled"
++            )))
++        }
++        [command, root, packages] if command == "trust-all" => {
++            let packages: Vec<Value> = serde_json::from_str(packages)?;
++            let packages = packages
++                .iter()
++                .map(|package| {
++                    let text = |key: &str| {
++                        package[key]
++                            .as_str()
++                            .map(str::to_owned)
++                            .ok_or_else(|| io::Error::other(format!("trust-all needs {key}")))
++                    };
++                    Ok(codex_omd::Trust {
++                        path: PathBuf::from(text("path")?).canonicalize()?,
++                        sha256: text("sha256")?,
++                        capabilities: serde_json::from_value(package["capabilities"].clone())?,
++                        scope: package["scope"].as_str().unwrap_or("user").to_owned(),
++                        secret_environment: Vec::new(),
++                    })
++                })
++                .collect::<io::Result<Vec<_>>>()?;
++            let count = packages.len();
++            ModStore::open(PathBuf::from(root).canonicalize()?)?.trust_all(packages)?;
++            Ok(Value::String(format!(
++                "trusted {count} packages; disabled until explicitly enabled"
 +            )))
 +        }
 +        [command, root, path] if command == "enable" || command == "disable" => {
@@ -34723,6 +34808,1050 @@ index 000000000..ba97c6052
 +        assert!(imported.blob(record["blob"].as_str().unwrap()).is_err());
 +    });
 +}
+diff --git a/codex-rs/omd/src/broker.rs b/codex-rs/omd/src/broker.rs
+new file mode 100644
+index 000000000..d73af0b90
+--- /dev/null
++++ b/codex-rs/omd/src/broker.rs
+@@ -0,0 +1,798 @@
++use serde::Deserialize;
++use serde_json::Value;
++use serde_json::json;
++use sha2::Digest;
++use sha2::Sha256;
++use std::fs;
++use std::io;
++use std::io::BufRead;
++use std::io::BufReader;
++use std::io::Read;
++use std::io::Write;
++use std::os::unix::fs::DirBuilderExt;
++use std::os::unix::fs::MetadataExt;
++use std::os::unix::fs::OpenOptionsExt;
++use std::os::unix::net::UnixListener;
++use std::os::unix::net::UnixStream;
++use std::path::Path;
++use std::path::PathBuf;
++use std::sync::Arc;
++use std::sync::Mutex;
++
++pub const DAEMON: &str = "/Library/LaunchDaemons/dev.ohmydiff.broker.plist";
++pub const SOCKET: &str = "/var/run/dev.ohmydiff.broker.sock";
++pub const ROOT: &str = "/Library/Application Support/OhMyDiff/broker";
++pub const GRANT_RIGHT: &str = "dev.ohmydiff.broker.grant";
++pub const POLICY_RIGHT: &str = "dev.ohmydiff.broker.policy";
++pub const HOST_CALLER: &str = "Oh My Diff";
++const PASSWORD_PROMPT: &str =
++    "Enter your macOS login password to change protected mod grants or credentials.";
++const LINE_BYTES: u64 = 1 << 20;
++const GRANTS_LIMIT: usize = 256;
++const POLICY_VALUE_BYTES: usize = 16_384;
++
++fn failure(code: &str) -> io::Error {
++    io::Error::other(code.to_owned())
++}
++
++pub fn sha256(bytes: &[u8]) -> String {
++    format!("{:x}", Sha256::digest(bytes))
++}
++
++pub fn deployed() -> bool {
++    fs::symlink_metadata(DAEMON).is_ok_and(|metadata| metadata.is_file() && metadata.uid() == 0)
++}
++
++pub fn status() -> &'static str {
++    if deployed() {
++        "protected (OS-separated broker)"
++    } else {
++        "unprotected (same-user)"
++    }
++}
++
++fn sorted(value: &Value) -> Value {
++    match value {
++        Value::Object(map) => {
++            let mut entries = map.iter().collect::<Vec<_>>();
++            entries.sort_by_key(|(key, _)| *key);
++            Value::Object(
++                entries
++                    .into_iter()
++                    .map(|(key, value)| (key.clone(), sorted(value)))
++                    .collect(),
++            )
++        }
++        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
++        _ => value.clone(),
++    }
++}
++
++// Key order otherwise follows serde_json's per-build preserve_order feature.
++pub fn canonical(value: &Value) -> String {
++    sorted(value).to_string()
++}
++
++fn request_digest(op: &str, arguments: &Value) -> io::Result<String> {
++    Ok(sha256(canonical(&json!([op, arguments])).as_bytes()))
++}
++
++pub struct Client {
++    stream: BufReader<UnixStream>,
++}
++
++impl Client {
++    pub fn connect() -> io::Result<Self> {
++        Self::at(Path::new(SOCKET))
++    }
++
++    pub fn at(path: &Path) -> io::Result<Self> {
++        let stream =
++            UnixStream::connect(path).map_err(|_| failure("authority_broker_unavailable"))?;
++        Ok(Self {
++            stream: BufReader::new(stream),
++        })
++    }
++
++    fn send(&mut self, request: &Value) -> io::Result<Value> {
++        let mut line = serde_json::to_vec(request)?;
++        line.push(b'\n');
++        let written = self.stream.get_mut().write_all(&line);
++        let mut response = String::new();
++        (&mut self.stream)
++            .take(LINE_BYTES)
++            .read_line(&mut response)?;
++        if !response.ends_with('\n') {
++            written?;
++            return Err(failure("authority_broker_unavailable"));
++        }
++        let mut value: Value = serde_json::from_str(&response)?;
++        match value["error"].as_str() {
++            Some(error) => Err(failure(error)),
++            None => Ok(value["ok"].take()),
++        }
++    }
++
++    pub fn call(&mut self, op: &str, arguments: Value) -> io::Result<Value> {
++        self.send(&json!({"op": op, "arguments": arguments}))
++    }
++
++    pub fn authorized(&mut self, op: &str, arguments: Value) -> io::Result<Value> {
++        let nonce = self.call(
++            "challenge",
++            json!({"sha256": request_digest(op, &arguments)?}),
++        )?;
++        let password = if platform::graphic_session() {
++            None
++        } else {
++            Some(password()?.ok_or_else(|| failure("authority_authorization_denied"))?)
++        };
++        let authorization = platform::Authorization::create()?;
++        self.send(&json!({"op": op, "arguments": arguments, "nonce": nonce,
++            "authorization": authorization.external()?, "password": password}))
++    }
++}
++
++// Without a GUI session the broker checks the password instead of showing a dialog.
++pub(crate) fn password() -> io::Result<Option<String>> {
++    if let Ok(receiver) = crate::client_surface::submit(
++        HOST_CALLER,
++        "terminal.prompt",
++        json!({"kind": "text", "masked": true, "title": "macOS password", "message": PASSWORD_PROMPT}),
++        crate::app_routes::InvocationContext::User,
++        None,
++        None,
++    ) {
++        let answer = crate::client_surface::wait(receiver, &|| true, None)
++            .map_err(|error| failure(&error))?;
++        return Ok(answer["value"].as_str().map(str::to_owned));
++    }
++    let mut tty = fs::OpenOptions::new()
++        .read(true)
++        .write(true)
++        .open("/dev/tty")
++        .map_err(|_| failure("authority_password_unavailable"))?;
++    let saved = rustix::termios::tcgetattr(&tty)?;
++    let mut quiet = saved.clone();
++    quiet.local_modes.remove(rustix::termios::LocalModes::ECHO);
++    rustix::termios::tcsetattr(&tty, rustix::termios::OptionalActions::Now, &quiet)?;
++    write!(tty, "{PASSWORD_PROMPT}\nPassword: ")?;
++    let mut line = String::new();
++    let read = BufReader::new(&tty).read_line(&mut line);
++    rustix::termios::tcsetattr(&tty, rustix::termios::OptionalActions::Now, &saved)?;
++    writeln!(tty)?;
++    read?;
++    let line = line.trim_end_matches(['\n', '\r']);
++    Ok((!line.is_empty()).then(|| line.to_owned()))
++}
++
++pub fn call(op: &str, arguments: Value) -> io::Result<Value> {
++    Client::connect()?.call(op, arguments)
++}
++
++pub fn authorized(op: &str, arguments: Value) -> io::Result<Value> {
++    Client::connect()?.authorized(op, arguments)
++}
++
++#[derive(Debug, Deserialize, PartialEq)]
++pub struct Anchor {
++    pub count: u64,
++    pub head: String,
++    pub last: Option<String>,
++}
++
++pub fn chain(head: &str, sha256: &str) -> String {
++    self::sha256(format!("{head}{sha256}").as_bytes())
++}
++
++pub fn anchor(stream: &Path, sha256: &str) -> io::Result<()> {
++    if deployed() {
++        call("anchor.append", json!({"stream": stream, "sha256": sha256}))?;
++    }
++    Ok(())
++}
++
++pub fn anchored(stream: &Path) -> io::Result<Option<Anchor>> {
++    if !deployed() {
++        return Ok(None);
++    }
++    Ok(Some(serde_json::from_value(call(
++        "anchor.get",
++        json!({"stream": stream}),
++    )?)?))
++}
++
++pub trait Gate: Send + Sync {
++    fn peer(&self, stream: &UnixStream) -> io::Result<()>;
++    fn authorize(
++        &self,
++        stream: &UnixStream,
++        right: &str,
++        authorization: &str,
++        password: Option<&str>,
++    ) -> bool;
++}
++
++pub struct Pinned {
++    pins: PathBuf,
++}
++
++impl Pinned {
++    pub fn new(root: &Path) -> Self {
++        Self {
++            pins: root.join("pins.json"),
++        }
++    }
++}
++
++impl Gate for Pinned {
++    fn peer(&self, stream: &UnixStream) -> io::Result<()> {
++        let pins: Value = serde_json::from_slice(&fs::read(&self.pins)?)?;
++        let pins = pins["cdhashes"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .filter_map(Value::as_str)
++            .filter(|pin| pin.len() == 40 && pin.bytes().all(|b| b.is_ascii_hexdigit()))
++            .collect::<Vec<_>>();
++        if pins.is_empty() {
++            return Err(failure("authority_pins_missing"));
++        }
++        platform::verify_peer(stream, &pins)
++    }
++
++    fn authorize(
++        &self,
++        stream: &UnixStream,
++        right: &str,
++        authorization: &str,
++        password: Option<&str>,
++    ) -> bool {
++        platform::authorize(stream, right, authorization, password)
++    }
++}
++
++pub fn listener() -> io::Result<UnixListener> {
++    platform::launchd_listener()
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Request {
++    op: String,
++    #[serde(default)]
++    arguments: Value,
++    #[serde(default)]
++    nonce: Option<String>,
++    #[serde(default)]
++    authorization: Option<String>,
++    #[serde(default)]
++    password: Option<String>,
++}
++
++pub struct Broker {
++    root: PathBuf,
++    state: Mutex<()>,
++}
++
++fn private_directory(path: &Path) -> io::Result<PathBuf> {
++    fs::DirBuilder::new()
++        .recursive(true)
++        .mode(0o700)
++        .create(path)?;
++    Ok(path.to_path_buf())
++}
++
++fn write_private(path: &Path, value: &Value) -> io::Result<()> {
++    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
++    let mut file = fs::OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .mode(0o600)
++        .open(&temporary)?;
++    let written = file
++        .write_all(&serde_json::to_vec(value)?)
++        .and_then(|()| file.sync_all())
++        .and_then(|()| fs::rename(&temporary, path));
++    if written.is_err() {
++        let _ = fs::remove_file(&temporary);
++    }
++    written
++}
++
++fn read_json(path: &Path, default: Value) -> io::Result<Value> {
++    match fs::read(path) {
++        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
++        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(default),
++        Err(error) => Err(error),
++    }
++}
++
++fn text<'a>(arguments: &'a Value, key: &str) -> io::Result<&'a str> {
++    arguments[key]
++        .as_str()
++        .filter(|value| !value.is_empty() && value.len() <= 4096)
++        .ok_or_else(|| failure("authority_request_invalid"))
++}
++
++fn digest_text(arguments: &Value, key: &str) -> io::Result<String> {
++    let value = text(arguments, key)?;
++    if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
++        return Err(failure("authority_request_invalid"));
++    }
++    Ok(value.to_owned())
++}
++
++fn nonce() -> io::Result<String> {
++    let mut bytes = [0u8; 16];
++    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
++    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
++}
++
++impl Broker {
++    pub fn open(root: PathBuf) -> io::Result<Self> {
++        if root.canonicalize()? != root {
++            return Err(failure("authority_root_invalid"));
++        }
++        Ok(Self {
++            root,
++            state: Mutex::new(()),
++        })
++    }
++
++    pub fn serve(self: Arc<Self>, listener: UnixListener, gate: Arc<dyn Gate>) {
++        for stream in listener.incoming().flatten() {
++            let (broker, gate) = (self.clone(), gate.clone());
++            std::thread::spawn(move || broker.connection(stream, &*gate));
++        }
++    }
++
++    fn connection(&self, stream: UnixStream, gate: &dyn Gate) -> io::Result<()> {
++        let mut writer = stream.try_clone()?;
++        if gate.peer(&stream).is_err() {
++            return writer.write_all(b"{\"error\":\"authority_peer_unverified\"}\n");
++        }
++        let peer = stream.try_clone()?;
++        let mut reader = BufReader::new(stream);
++        let mut challenge = None;
++        loop {
++            let mut line = String::new();
++            (&mut reader).take(LINE_BYTES).read_line(&mut line)?;
++            if !line.ends_with('\n') {
++                return Ok(());
++            }
++            let response = match self.request(&peer, &line, &mut challenge, gate) {
++                Ok(value) => json!({"ok": value}),
++                Err(error) => json!({"error": error.to_string()}),
++            };
++            let mut bytes = serde_json::to_vec(&response)?;
++            bytes.push(b'\n');
++            writer.write_all(&bytes)?;
++        }
++    }
++
++    fn request(
++        &self,
++        peer: &UnixStream,
++        line: &str,
++        challenge: &mut Option<(String, String)>,
++        gate: &dyn Gate,
++    ) -> io::Result<Value> {
++        let request: Request =
++            serde_json::from_str(line).map_err(|_| failure("authority_request_invalid"))?;
++        if request.op == "challenge" {
++            let nonce = nonce()?;
++            *challenge = Some((nonce.clone(), digest_text(&request.arguments, "sha256")?));
++            return Ok(Value::String(nonce));
++        }
++        let right = self.right(&request.op, &request.arguments)?;
++        if let Some(right) = right {
++            let digest = request_digest(&request.op, &request.arguments)?;
++            match (challenge.take(), &request.nonce) {
++                (Some((expected, sha256)), Some(nonce))
++                    if expected == *nonce && sha256 == digest => {}
++                _ => return Err(failure("authority_challenge_invalid")),
++            }
++            if !request.authorization.is_some_and(|authorization| {
++                gate.authorize(peer, right, &authorization, request.password.as_deref())
++            }) {
++                return Err(failure("authority_authorization_denied"));
++            }
++        }
++        let _state = self
++            .state
++            .lock()
++            .map_err(|_| failure("authority_state_poisoned"))?;
++        self.dispatch(&request.op, request.arguments, right.is_some())
++    }
++
++    fn store(&self, arguments: &Value) -> io::Result<PathBuf> {
++        let store = text(arguments, "store")?;
++        if !Path::new(store).is_absolute() {
++            return Err(failure("authority_request_invalid"));
++        }
++        private_directory(&self.root.join("stores").join(sha256(store.as_bytes())))
++    }
++
++    fn profiles(&self, arguments: &Value) -> io::Result<crate::credentials::CredentialProfiles> {
++        crate::credentials::CredentialProfiles::local(&self.store(arguments)?)
++    }
++
++    fn right(&self, op: &str, arguments: &Value) -> io::Result<Option<&'static str>> {
++        Ok(match op {
++            "grants.put"
++            | "credentials.store_secret"
++            | "credentials.store_auth"
++            | "credentials.set_default" => Some(GRANT_RIGHT),
++            "credentials.remove" => {
++                let _state = self
++                    .state
++                    .lock()
++                    .map_err(|_| failure("authority_state_poisoned"))?;
++                self.profiles(arguments)?
++                    .enrolled(text(arguments, "id")?)?
++                    .then_some(GRANT_RIGHT)
++            }
++            "policy.put" => Some(POLICY_RIGHT),
++            _ => None,
++        })
++    }
++
++    fn dispatch(&self, op: &str, arguments: Value, authorized: bool) -> io::Result<Value> {
++        let id = || text(&arguments, "id");
++        Ok(match op {
++            "credentials.list" => serde_json::to_value(self.profiles(&arguments)?.list()?)?,
++            "credentials.visible" => {
++                json!(
++                    self.profiles(&arguments)?
++                        .visible(text(&arguments, "caller")?)?
++                )
++            }
++            "credentials.public" => {
++                let profiles = self.profiles(&arguments)?;
++                profiles.public(&profiles.profile(id()?)?)?
++            }
++            "credentials.profile" => {
++                serde_json::to_value(self.profiles(&arguments)?.profile(id()?)?)?
++            }
++            "credentials.secret" => {
++                let secret = self.profiles(&arguments)?.secret(id()?)?;
++                json!({"token": secret.token, "account_id": secret.account_id})
++            }
++            "credentials.owned_secret" => self
++                .profiles(&arguments)?
++                .owned_secret(id()?, text(&arguments, "owner")?)?,
++            "credentials.create" => serde_json::to_value(self.profiles(&arguments)?.create(
++                text(&arguments, "label")?,
++                text(&arguments, "kind")?,
++                arguments["provider"].as_str(),
++            )?)?,
++            "credentials.create_secret" => {
++                serde_json::to_value(self.profiles(&arguments)?.create_secret(
++                    text(&arguments, "label")?,
++                    text(&arguments, "origin")?,
++                    text(&arguments, "owner")?,
++                )?)?
++            }
++            "credentials.remove" => {
++                let profiles = self.profiles(&arguments)?;
++                if !authorized && profiles.enrolled(id()?)? {
++                    return Err(failure("authority_authorization_denied"));
++                }
++                json!(profiles.remove(id()?)?)
++            }
++            "credentials.store_secret" => {
++                self.profiles(&arguments)?
++                    .store_secret(id()?, text(&arguments, "value")?)?;
++                Value::Null
++            }
++            "credentials.store_auth" => {
++                self.profiles(&arguments)?
++                    .store_auth(id()?, text(&arguments, "auth")?)?;
++                Value::Null
++            }
++            "credentials.set_default" => {
++                self.profiles(&arguments)?.set_default(id()?)?;
++                Value::Null
++            }
++            "grants.get" => read_json(
++                &self.store(&arguments)?.join("grants.json"),
++                json!({"generation": 0, "grants": []}),
++            )?,
++            "grants.put" => {
++                let path = self.store(&arguments)?.join("grants.json");
++                let current = read_json(&path, json!({"generation": 0, "grants": []}))?;
++                if arguments["generation"] != current["generation"] {
++                    return Err(failure("authority_grants_stale"));
++                }
++                let grants = arguments["grants"]
++                    .as_array()
++                    .filter(|grants| grants.len() <= GRANTS_LIMIT)
++                    .ok_or_else(|| failure("authority_request_invalid"))?;
++                let generation = current["generation"].as_u64().unwrap_or_default() + 1;
++                let next = json!({"generation": generation, "grants": grants});
++                write_private(&path, &next)?;
++                next
++            }
++            "policy.get" => read_json(&self.root.join("policy.json"), json!({}))?
++                [text(&arguments, "key")?]
++            .clone(),
++            "policy.put" => {
++                let key = text(&arguments, "key")?;
++                if key.len() > 128
++                    || serde_json::to_vec(&arguments["value"])?.len() > POLICY_VALUE_BYTES
++                {
++                    return Err(failure("authority_request_invalid"));
++                }
++                let path = self.root.join("policy.json");
++                let mut policy = read_json(&path, json!({}))?;
++                policy[key] = arguments["value"].clone();
++                write_private(&path, &policy)?;
++                Value::Null
++            }
++            "anchor.get" | "anchor.append" => {
++                let stream = text(&arguments, "stream")?;
++                let path = private_directory(&self.root.join("anchors"))?
++                    .join(format!("{}.json", sha256(stream.as_bytes())));
++                let mut anchor = read_json(
++                    &path,
++                    json!({"stream": stream, "count": 0, "head": "", "last": null}),
++                )?;
++                if op == "anchor.append" {
++                    let entry = digest_text(&arguments, "sha256")?;
++                    anchor = json!({"stream": stream,
++                        "count": anchor["count"].as_u64().unwrap_or_default() + 1,
++                        "head": chain(anchor["head"].as_str().unwrap_or_default(), &entry),
++                        "last": entry});
++                    write_private(&path, &anchor)?;
++                }
++                anchor
++            }
++            _ => return Err(failure("authority_operation_unknown")),
++        })
++    }
++}
++
++#[cfg(target_os = "macos")]
++mod platform {
++    use super::failure;
++    use base64::Engine;
++    use core_foundation::base::TCFType;
++    use core_foundation::data::CFData;
++    use security_framework::os::macos::code_signing::Flags;
++    use security_framework::os::macos::code_signing::GuestAttributes;
++    use security_framework::os::macos::code_signing::SecCode;
++    use security_framework::os::macos::code_signing::SecRequirement;
++    use security_framework_sys::authorization as sys;
++    use std::io;
++    use std::os::fd::AsRawFd;
++    use std::os::fd::FromRawFd;
++    use std::os::unix::net::UnixListener;
++    use std::os::unix::net::UnixStream;
++
++    const SOL_LOCAL: libc::c_int = 0;
++    const LOCAL_PEERTOKEN: libc::c_int = 0x006;
++
++    unsafe extern "C" {
++        fn launch_activate_socket(
++            name: *const libc::c_char,
++            fds: *mut *mut libc::c_int,
++            count: *mut libc::size_t,
++        ) -> libc::c_int;
++    }
++
++    pub(super) fn launchd_listener() -> io::Result<UnixListener> {
++        let mut fds = std::ptr::null_mut();
++        let mut count = 0;
++        let status = unsafe { launch_activate_socket(c"Listener".as_ptr(), &mut fds, &mut count) };
++        if status != 0 || count == 0 {
++            return Err(io::Error::from_raw_os_error(status));
++        }
++        let fd = unsafe { *fds };
++        unsafe { libc::free(fds.cast()) };
++        Ok(unsafe { UnixListener::from_raw_fd(fd) })
++    }
++
++    pub(super) fn verify_peer(stream: &UnixStream, pins: &[&str]) -> io::Result<()> {
++        let mut token = [0u8; 32];
++        let mut length = token.len() as libc::socklen_t;
++        let status = unsafe {
++            libc::getsockopt(
++                stream.as_raw_fd(),
++                SOL_LOCAL,
++                LOCAL_PEERTOKEN,
++                token.as_mut_ptr().cast(),
++                &mut length,
++            )
++        };
++        if status != 0 || length as usize != token.len() {
++            return Err(failure("authority_peer_unverified"));
++        }
++        let token = CFData::from_buffer(&token);
++        let mut attributes = GuestAttributes::new();
++        attributes.set_audit_token(token.as_concrete_TypeRef());
++        let requirement: SecRequirement = pins
++            .iter()
++            .map(|pin| format!("cdhash H\"{pin}\""))
++            .collect::<Vec<_>>()
++            .join(" or ")
++            .parse()
++            .map_err(|_| failure("authority_pins_invalid"))?;
++        SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE)
++            .and_then(|code| code.check_validity(Flags::NONE, &requirement))
++            .map_err(|_| failure("authority_peer_unverified"))
++    }
++
++    unsafe extern "C" {
++        fn SessionGetInfo(session: u32, id: *mut u32, attributes: *mut u32) -> i32;
++    }
++
++    pub(super) fn graphic_session() -> bool {
++        const CALLER_SESSION: u32 = u32::MAX;
++        const HAS_GRAPHIC_ACCESS: u32 = 0x0010;
++        let (mut id, mut attributes) = (0, 0);
++        let status = unsafe { SessionGetInfo(CALLER_SESSION, &mut id, &mut attributes) };
++        status != 0 || attributes & HAS_GRAPHIC_ACCESS != 0
++    }
++
++    fn peer_user(stream: &UnixStream) -> Option<std::ffi::CString> {
++        let (mut uid, mut gid) = (0, 0);
++        if unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } != 0 {
++            return None;
++        }
++        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
++        let mut buffer = vec![0 as libc::c_char; 4096];
++        let mut found = std::ptr::null_mut();
++        let status = unsafe {
++            libc::getpwuid_r(
++                uid,
++                &mut entry,
++                buffer.as_mut_ptr(),
++                buffer.len(),
++                &mut found,
++            )
++        };
++        if status != 0 || found.is_null() {
++            return None;
++        }
++        Some(unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }.to_owned())
++    }
++
++    pub(super) fn authorize(
++        stream: &UnixStream,
++        right: &str,
++        authorization: &str,
++        password: Option<&str>,
++    ) -> bool {
++        let credentials = match password {
++            Some(password) => match (peer_user(stream), std::ffi::CString::new(password)) {
++                (Some(user), Ok(password)) => Some((user, password)),
++                _ => return false,
++            },
++            None => None,
++        };
++        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(authorization) else {
++            return false;
++        };
++        let mut form = sys::AuthorizationExternalForm {
++            bytes: [0; sys::kAuthorizationExternalFormLength],
++        };
++        if bytes.len() != form.bytes.len() {
++            return false;
++        }
++        for (target, byte) in form.bytes.iter_mut().zip(bytes) {
++            *target = byte as libc::c_char;
++        }
++        let Ok(name) = std::ffi::CString::new(right) else {
++            return false;
++        };
++        let mut handle = std::ptr::null_mut();
++        if unsafe { sys::AuthorizationCreateFromExternalForm(&form, &mut handle) }
++            != sys::errAuthorizationSuccess
++        {
++            return false;
++        }
++        let mut item = sys::AuthorizationItem {
++            name: name.as_ptr(),
++            valueLength: 0,
++            value: std::ptr::null_mut(),
++            flags: 0,
++        };
++        let rights = sys::AuthorizationItemSet {
++            count: 1,
++            items: &mut item,
++        };
++        let mut supplied = credentials
++            .iter()
++            .flat_map(|(user, password)| [(c"username", user), (c"password", password)])
++            .map(|(name, value)| sys::AuthorizationItem {
++                name: name.as_ptr(),
++                valueLength: value.as_bytes().len(),
++                value: value.as_ptr() as *mut libc::c_void,
++                flags: 0,
++            })
++            .collect::<Vec<_>>();
++        let environment = sys::AuthorizationItemSet {
++            count: supplied.len() as u32,
++            items: supplied.as_mut_ptr(),
++        };
++        let flags = if credentials.is_some() {
++            sys::kAuthorizationFlagExtendRights
++        } else {
++            sys::kAuthorizationFlagInteractionAllowed | sys::kAuthorizationFlagExtendRights
++        };
++        let status = unsafe {
++            sys::AuthorizationCopyRights(handle, &rights, &environment, flags, std::ptr::null_mut())
++        };
++        unsafe { sys::AuthorizationFree(handle, sys::kAuthorizationFlagDestroyRights) };
++        status == sys::errAuthorizationSuccess
++    }
++
++    pub(super) struct Authorization(security_framework::authorization::Authorization);
++
++    impl Authorization {
++        pub(super) fn create() -> io::Result<Self> {
++            security_framework::authorization::Authorization::default()
++                .map(Self)
++                .map_err(|_| failure("authority_authorization_unavailable"))
++        }
++
++        pub(super) fn external(&self) -> io::Result<String> {
++            let form = self
++                .0
++                .make_external_form()
++                .map_err(|_| failure("authority_authorization_unavailable"))?;
++            Ok(base64::engine::general_purpose::STANDARD.encode(
++                form.bytes
++                    .iter()
++                    .map(|byte| *byte as u8)
++                    .collect::<Vec<_>>(),
++            ))
++        }
++    }
++}
++
++#[cfg(not(target_os = "macos"))]
++mod platform {
++    use super::failure;
++    use std::io;
++    use std::os::unix::net::UnixListener;
++    use std::os::unix::net::UnixStream;
++
++    pub(super) fn launchd_listener() -> io::Result<UnixListener> {
++        Err(failure("authority_broker_unsupported"))
++    }
++
++    pub(super) fn verify_peer(_stream: &UnixStream, _pins: &[&str]) -> io::Result<()> {
++        Err(failure("authority_broker_unsupported"))
++    }
++
++    pub(super) fn graphic_session() -> bool {
++        true
++    }
++
++    pub(super) fn authorize(
++        _stream: &UnixStream,
++        _right: &str,
++        _authorization: &str,
++        _password: Option<&str>,
++    ) -> bool {
++        false
++    }
++
++    pub(super) struct Authorization;
++
++    impl Authorization {
++        pub(super) fn create() -> io::Result<Self> {
++            Err(failure("authority_broker_unsupported"))
++        }
++
++        pub(super) fn external(&self) -> io::Result<String> {
++            Err(failure("authority_broker_unsupported"))
++        }
++    }
++}
++
++#[cfg(test)]
++#[path = "broker_tests.rs"]
++mod tests;
+diff --git a/codex-rs/omd/src/broker_tests.rs b/codex-rs/omd/src/broker_tests.rs
+new file mode 100644
+index 000000000..fafdd3799
+--- /dev/null
++++ b/codex-rs/omd/src/broker_tests.rs
+@@ -0,0 +1,234 @@
++use super::*;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
++
++#[derive(Default)]
++struct TestGate {
++    refuse_peer: bool,
++    allow: AtomicBool,
++    asked: Mutex<Vec<String>>,
++}
++
++impl Gate for TestGate {
++    fn peer(&self, _stream: &UnixStream) -> io::Result<()> {
++        if self.refuse_peer {
++            Err(failure("authority_peer_unverified"))
++        } else {
++            Ok(())
++        }
++    }
++
++    fn authorize(
++        &self,
++        _stream: &UnixStream,
++        right: &str,
++        _authorization: &str,
++        _password: Option<&str>,
++    ) -> bool {
++        self.asked.lock().unwrap().push(right.to_owned());
++        self.allow.load(Ordering::SeqCst)
++    }
++}
++
++fn serve(gate: Arc<TestGate>) -> (tempfile::TempDir, PathBuf, PathBuf) {
++    let temp = tempfile::tempdir().unwrap();
++    let base = temp.path().canonicalize().unwrap();
++    let root = base.join("broker");
++    fs::create_dir(&root).unwrap();
++    let store = base.join("store");
++    fs::create_dir(&store).unwrap();
++    let socket = base.join("s");
++    let listener = UnixListener::bind(&socket).unwrap();
++    let broker = Arc::new(Broker::open(root).unwrap());
++    std::thread::spawn(move || broker.serve(listener, gate));
++    (temp, socket, store)
++}
++
++fn error(result: io::Result<Value>) -> String {
++    result.unwrap_err().to_string()
++}
++
++#[test]
++fn unverified_peers_get_nothing() {
++    let gate = Arc::new(TestGate {
++        refuse_peer: true,
++        ..TestGate::default()
++    });
++    let (_temp, socket, store) = serve(gate);
++    let mut client = Client::at(&socket).unwrap();
++    assert_eq!(
++        error(client.call("grants.get", json!({"store": store}))),
++        "authority_peer_unverified"
++    );
++}
++
++#[test]
++fn protected_mutations_need_a_single_use_challenge_and_authorization() {
++    let gate = Arc::new(TestGate::default());
++    let (_temp, socket, store) = serve(gate.clone());
++    let mut client = Client::at(&socket).unwrap();
++    let put = json!({"store": store, "generation": 0, "grants": ["a"]});
++    assert_eq!(
++        error(client.call("grants.put", put.clone())),
++        "authority_challenge_invalid"
++    );
++    assert_eq!(
++        error(client.authorized("grants.put", put.clone())),
++        "authority_authorization_denied"
++    );
++    gate.allow.store(true, Ordering::SeqCst);
++    let nonce = client
++        .call(
++            "challenge",
++            json!({"sha256": request_digest("grants.put", &put).unwrap()}),
++        )
++        .unwrap();
++    let request = json!({"op": "grants.put", "arguments": put, "nonce": nonce,
++        "authorization": "token"});
++    assert_eq!(client.send(&request).unwrap()["generation"], 1);
++    assert_eq!(error(client.send(&request)), "authority_challenge_invalid");
++    let other = json!({"store": store, "generation": 1, "grants": ["b"]});
++    assert_eq!(
++        error(client.authorized(
++            "grants.put",
++            json!({"store": store, "generation": 0, "grants": []})
++        )),
++        "authority_grants_stale"
++    );
++    assert_eq!(
++        client.authorized("grants.put", other).unwrap()["generation"],
++        2
++    );
++    assert_eq!(
++        client.call("grants.get", json!({"store": store})).unwrap(),
++        json!({"generation": 2, "grants": ["b"]})
++    );
++    assert_eq!(
++        error(client.call("policy.put", json!({"key": "k", "value": 1}))),
++        "authority_challenge_invalid"
++    );
++    client
++        .authorized("policy.put", json!({"key": "k", "value": 1}))
++        .unwrap();
++    assert_eq!(client.call("policy.get", json!({"key": "k"})).unwrap(), 1);
++    assert_eq!(
++        *gate.asked.lock().unwrap(),
++        [
++            GRANT_RIGHT,
++            GRANT_RIGHT,
++            GRANT_RIGHT,
++            GRANT_RIGHT,
++            POLICY_RIGHT
++        ]
++    );
++}
++
++#[test]
++fn anchors_chain_every_appended_digest() {
++    let (_temp, socket, _store) = serve(Arc::new(TestGate::default()));
++    let mut client = Client::at(&socket).unwrap();
++    let (first, second) = (sha256(b"one"), sha256(b"two"));
++    for entry in [&first, &second] {
++        client
++            .call(
++                "anchor.append",
++                json!({"stream": "/ledger", "sha256": entry}),
++            )
++            .unwrap();
++    }
++    let anchor: Anchor = serde_json::from_value(
++        client
++            .call("anchor.get", json!({"stream": "/ledger"}))
++            .unwrap(),
++    )
++    .unwrap();
++    assert_eq!(
++        anchor,
++        Anchor {
++            count: 2,
++            head: chain(&chain("", &first), &second),
++            last: Some(second),
++        }
++    );
++    assert_eq!(
++        error(client.call("anchor.append", json!({"stream": "/ledger", "sha256": "x"}))),
++        "authority_request_invalid"
++    );
++}
++
++#[test]
++fn brokered_credentials_keep_secrets_in_the_broker_and_authorize_writes() {
++    let gate = Arc::new(TestGate::default());
++    let (_temp, socket, store) = serve(gate.clone());
++    let profiles = crate::credentials::CredentialProfiles::brokered(&store, &socket);
++    let key = profiles.create("key", "api_key", None).unwrap();
++    assert!(
++        profiles
++            .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-broker"}"#)
++            .is_err()
++    );
++    gate.allow.store(true, Ordering::SeqCst);
++    profiles
++        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-broker"}"#)
++        .unwrap();
++    assert_eq!(profiles.secret(&key.id).unwrap().token, "sk-broker");
++    assert_eq!(profiles.public(&key).unwrap()["status"], "ready");
++    assert!(!store.join("credentials").exists());
++    let empty = profiles.create("empty", "api_key", None).unwrap();
++    gate.allow.store(false, Ordering::SeqCst);
++    assert!(profiles.remove(&empty.id).unwrap());
++    assert!(profiles.remove(&key.id).is_err());
++    assert_eq!(gate.asked.lock().unwrap().len(), 3);
++}
++
++#[test]
++#[ignore = "needs a deployed broker that pins this test binary"]
++fn deployed_broker_holds_credentials_and_detects_ledger_tampering() {
++    assert!(deployed());
++    let temp = tempfile::tempdir().unwrap();
++    let base = temp.path().canonicalize().unwrap();
++    let profiles = crate::credentials::CredentialProfiles::open(&base).unwrap();
++    let key = profiles.create("dummy", "api_key", None).unwrap();
++    profiles
++        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-dummy"}"#)
++        .unwrap();
++    assert_eq!(profiles.secret(&key.id).unwrap().token, "sk-dummy");
++    assert!(!base.join("credentials").exists());
++    assert_eq!(
++        fs::read_dir(ROOT).unwrap_err().kind(),
++        io::ErrorKind::PermissionDenied
++    );
++    let limits = crate::Limits {
++        requests: 3,
++        exposure_microusd: 100,
++        seconds: 300,
++        concurrent_workers: 2,
++        max_depth: 2,
++    };
++    let ledger = base.join("ledger");
++    drop(crate::Task::create(limits.clone(), ledger.clone()).unwrap());
++    let first = ledger.join("00000001.json");
++    let original = fs::read_to_string(&first).unwrap();
++    fs::write(
++        &first,
++        original.replace("\"requests\":3", "\"requests\":30"),
++    )
++    .unwrap();
++    assert_eq!(
++        crate::Task::open(limits.clone(), ledger.clone(), Some("resume"))
++            .err()
++            .unwrap()
++            .to_string(),
++        "evidence_anchor_mismatch"
++    );
++    fs::write(&first, original).unwrap();
++    crate::Task::open(limits.clone(), ledger.clone(), Some("resume")).unwrap();
++    fs::remove_dir_all(&ledger).unwrap();
++    assert_eq!(
++        crate::Task::create(limits, ledger)
++            .err()
++            .unwrap()
++            .to_string(),
++        "evidence_anchor_mismatch"
++    );
++}
 diff --git a/codex-rs/omd/src/builtins.rs b/codex-rs/omd/src/builtins.rs
 new file mode 100644
 index 000000000..4820e0022
@@ -35361,10 +36490,10 @@ index 000000000..da25bfebc
 +mod tests;
 diff --git a/codex-rs/omd/src/client_surface_tests.rs b/codex-rs/omd/src/client_surface_tests.rs
 new file mode 100644
-index 000000000..363c60a3c
+index 000000000..f3496d554
 --- /dev/null
 +++ b/codex-rs/omd/src/client_surface_tests.rs
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,192 @@
 +use super::*;
 +use serde_json::json;
 +use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35377,6 +36506,19 @@ index 000000000..363c60a3c
 +            "confirm": call.confirm, "arguments": call.arguments});
 +        call.reply
 +            .send(Ok(value))
++            .map_err(|error| error.to_string())
++    }
++}
++
++struct Password;
++
++impl ClientSurface for Password {
++    fn submit(&self, call: SurfaceCall) -> Result<(), String> {
++        let host_prompt = call.caller == crate::broker::HOST_CALLER
++            && call.operation == "terminal.prompt"
++            && call.arguments["masked"] == true;
++        call.reply
++            .send(Ok(json!({"status": "accepted", "value": if host_prompt { "pw" } else { "" }})))
 +            .map_err(|error| error.to_string())
 +    }
 +}
@@ -35421,6 +36563,9 @@ index 000000000..363c60a3c
 +    .unwrap();
 +    assert_eq!(value["operation"], "app.request");
 +    assert_eq!(value["confirm"], "Allow m to list threads?");
++    let password = register(Arc::new(Password));
++    assert_eq!(crate::broker::password().unwrap().as_deref(), Some("pw"));
++    drop(password);
 +    assert_eq!(
 +        call(
 +            "m",
@@ -36344,10 +37489,10 @@ index 000000000..2c27d1cd4
 +}
 diff --git a/codex-rs/omd/src/credentials.rs b/codex-rs/omd/src/credentials.rs
 new file mode 100644
-index 000000000..1ae930c26
+index 000000000..426d1dea4
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials.rs
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,493 @@
 +use serde::{Deserialize, Serialize};
 +use std::fs;
 +use std::io::{self, Write};
@@ -36382,6 +37527,7 @@ index 000000000..1ae930c26
 +
 +pub struct CredentialProfiles {
 +    root: PathBuf,
++    broker: Option<(PathBuf, PathBuf)>,
 +}
 +
 +pub struct CredentialSecret {
@@ -36440,6 +37586,23 @@ index 000000000..1ae930c26
 +
 +impl CredentialProfiles {
 +    pub fn open(store: &Path) -> io::Result<Self> {
++        if !crate::broker::deployed() {
++            return Self::local(store);
++        }
++        if store.canonicalize()? != store {
++            return Err(failure("credential_root_invalid"));
++        }
++        Ok(Self::brokered(store, Path::new(crate::broker::SOCKET)))
++    }
++
++    pub fn brokered(store: &Path, socket: &Path) -> Self {
++        Self {
++            root: store.join("credentials"),
++            broker: Some((store.to_path_buf(), socket.to_path_buf())),
++        }
++    }
++
++    pub fn local(store: &Path) -> io::Result<Self> {
 +        if store.canonicalize()? != store {
 +            return Err(failure("credential_root_invalid"));
 +        }
@@ -36453,7 +37616,25 @@ index 000000000..1ae930c26
 +        if !metadata.is_dir() || metadata.file_type().is_symlink() {
 +            return Err(failure("credential_root_invalid"));
 +        }
-+        Ok(Self { root })
++        Ok(Self { root, broker: None })
++    }
++
++    fn remote(
++        &self,
++        op: &str,
++        mut arguments: serde_json::Value,
++        authorized: bool,
++    ) -> Option<io::Result<serde_json::Value>> {
++        let (store, socket) = self.broker.as_ref()?;
++        arguments["store"] = serde_json::json!(store);
++        let op = format!("credentials.{op}");
++        Some(crate::broker::Client::at(socket).and_then(|mut client| {
++            if authorized {
++                client.authorized(&op, arguments)
++            } else {
++                client.call(&op, arguments)
++            }
++        }))
 +    }
 +
 +    fn with_index<T>(
@@ -36505,32 +37686,46 @@ index 000000000..1ae930c26
 +    }
 +
 +    pub fn list(&self) -> io::Result<Vec<CredentialProfile>> {
++        if let Some(value) = self.remote("list", serde_json::json!({}), false) {
++            return Ok(serde_json::from_value(value?)?);
++        }
 +        self.with_index(false, |index| Ok(index.profiles.clone()))
 +    }
 +
 +    pub fn visible(&self, caller: &str) -> io::Result<Vec<serde_json::Value>> {
-+        Ok(self
-+            .list()?
++        if let Some(value) = self.remote("visible", serde_json::json!({"caller": caller}), false) {
++            return Ok(serde_json::from_value(value?)?);
++        }
++        self.list()?
 +            .iter()
 +            .filter(|profile| profile.kind != "secret" || profile.owner.as_deref() == Some(caller))
 +            .map(|profile| self.public(profile))
-+            .collect())
++            .collect()
 +    }
 +
-+    pub fn public(&self, profile: &CredentialProfile) -> serde_json::Value {
-+        let file = if profile.kind == "secret" {
++    pub fn public(&self, profile: &CredentialProfile) -> io::Result<serde_json::Value> {
++        if let Some(value) = self.remote("public", serde_json::json!({"id": profile.id}), false) {
++            return value;
++        }
++        let ready = self.enrolled(&profile.id)?;
++        Ok(
++            serde_json::json!({"id": profile.id, "label": profile.label, "kind": profile.kind,
++            "provider": profile.provider, "origin": profile.origin,
++            "status": if ready { "ready" } else { "not_enrolled" }, "default": profile.default}),
++        )
++    }
++
++    pub(crate) fn enrolled(&self, id: &str) -> io::Result<bool> {
++        let file = if self.profile(id)?.kind == "secret" {
 +            "secret"
 +        } else {
 +            "auth.json"
 +        };
-+        let ready = fs::symlink_metadata(self.root.join(&profile.id).join(file))
-+            .is_ok_and(|metadata| metadata.is_file());
-+        serde_json::json!({"id": profile.id, "label": profile.label, "kind": profile.kind,
-+            "provider": profile.provider, "origin": profile.origin,
-+            "status": if ready { "ready" } else { "not_enrolled" }, "default": profile.default})
++        Ok(fs::symlink_metadata(self.root.join(id).join(file))
++            .is_ok_and(|metadata| metadata.is_file()))
 +    }
 +
-+    pub fn home(&self, id: &str) -> io::Result<PathBuf> {
++    fn home(&self, id: &str) -> io::Result<PathBuf> {
 +        let known =
 +            self.with_index(false, |index| Ok(index.profiles.iter().any(|p| p.id == id)))?;
 +        if !known {
@@ -36555,6 +37750,13 @@ index 000000000..1ae930c26
 +        kind: &str,
 +        provider: Option<&str>,
 +    ) -> io::Result<CredentialProfile> {
++        if let Some(value) = self.remote(
++            "create",
++            serde_json::json!({"label": label, "kind": kind, "provider": provider}),
++            false,
++        ) {
++            return Ok(serde_json::from_value(value?)?);
++        }
 +        if !text(label, 64) || !KINDS.contains(&kind) || provider.is_some_and(|p| !text(p, 64)) {
 +            return Err(failure("credential_profile_invalid"));
 +        }
@@ -36567,6 +37769,13 @@ index 000000000..1ae930c26
 +        origin_url: &str,
 +        owner: &str,
 +    ) -> io::Result<CredentialProfile> {
++        if let Some(value) = self.remote(
++            "create_secret",
++            serde_json::json!({"label": label, "origin": origin_url, "owner": owner}),
++            false,
++        ) {
++            return Ok(serde_json::from_value(value?)?);
++        }
 +        if !text(label, 64) || !origin(origin_url) || !text(owner, 128) {
 +            return Err(failure("credential_profile_invalid"));
 +        }
@@ -36605,7 +37814,10 @@ index 000000000..1ae930c26
 +        Ok(profile)
 +    }
 +
-+    pub fn remove(&self, id: &str) -> io::Result<Option<PathBuf>> {
++    pub fn remove(&self, id: &str) -> io::Result<bool> {
++        if let Some(value) = self.remote("remove", serde_json::json!({"id": id}), true) {
++            return Ok(value?.as_bool().unwrap_or_default());
++        }
 +        let removed = self.with_index(true, |index| {
 +            let before = index.profiles.len();
 +            let was_default = index.profiles.iter().any(|p| p.id == id && p.default);
@@ -36617,10 +37829,19 @@ index 000000000..1ae930c26
 +            }
 +            Ok(index.profiles.len() != before)
 +        })?;
-+        Ok(removed.then(|| self.root.join(id)))
++        if removed {
++            match fs::remove_dir_all(self.root.join(id)) {
++                Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
++                _ => (),
++            }
++        }
++        Ok(removed)
 +    }
 +
 +    pub fn profile(&self, id: &str) -> io::Result<CredentialProfile> {
++        if let Some(value) = self.remote("profile", serde_json::json!({"id": id}), false) {
++            return Ok(serde_json::from_value(value?)?);
++        }
 +        self.list()?
 +            .into_iter()
 +            .find(|profile| profile.id == id)
@@ -36628,6 +37849,13 @@ index 000000000..1ae930c26
 +    }
 +
 +    pub fn store_secret(&self, id: &str, value: &str) -> io::Result<()> {
++        if let Some(result) = self.remote(
++            "store_secret",
++            serde_json::json!({"id": id, "value": value}),
++            true,
++        ) {
++            return result.map(drop);
++        }
 +        if self.profile(id)?.kind != "secret" || value.is_empty() || value.len() > SECRET_BYTES {
 +            return Err(failure("credential_secret_invalid"));
 +        }
@@ -36643,7 +37871,39 @@ index 000000000..1ae930c26
 +        file.sync_all()
 +    }
 +
++    pub fn store_auth(&self, id: &str, auth: &str) -> io::Result<()> {
++        if let Some(result) = self.remote(
++            "store_auth",
++            serde_json::json!({"id": id, "auth": auth}),
++            true,
++        ) {
++            return result.map(drop);
++        }
++        if self.profile(id)?.kind == "secret"
++            || auth.len() > 65_536
++            || serde_json::from_str::<serde_json::Value>(auth).is_err()
++        {
++            return Err(failure("credential_auth_invalid"));
++        }
++        let mut file = fs::OpenOptions::new()
++            .write(true)
++            .create(true)
++            .truncate(true)
++            .mode(0o600)
++            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
++            .open(self.home(id)?.join("auth.json"))?;
++        file.write_all(auth.as_bytes())?;
++        file.sync_all()
++    }
++
 +    pub fn owned_secret(&self, id: &str, owner: &str) -> io::Result<serde_json::Value> {
++        if let Some(value) = self.remote(
++            "owned_secret",
++            serde_json::json!({"id": id, "owner": owner}),
++            false,
++        ) {
++            return value;
++        }
 +        let profile = self.profile(id)?;
 +        if profile.kind != "secret" || profile.owner.as_deref() != Some(owner) {
 +            return Err(failure(format!("credential_secret_not_owned: {id}")));
@@ -36659,6 +37919,17 @@ index 000000000..1ae930c26
 +    }
 +
 +    pub fn secret(&self, id: &str) -> io::Result<CredentialSecret> {
++        if let Some(value) = self.remote("secret", serde_json::json!({"id": id}), false) {
++            let value = value?;
++            return Ok(CredentialSecret {
++                token: value["token"]
++                    .as_str()
++                    .filter(|token| !token.is_empty())
++                    .ok_or_else(|| failure("credential_store_invalid"))?
++                    .to_owned(),
++                account_id: value["account_id"].as_str().map(str::to_owned),
++            });
++        }
 +        let profile = self.profile(id)?;
 +        let path = self.home(id)?.join("auth.json");
 +        let metadata = fs::symlink_metadata(&path)
@@ -36697,6 +37968,9 @@ index 000000000..1ae930c26
 +    }
 +
 +    pub fn set_default(&self, id: &str) -> io::Result<()> {
++        if let Some(result) = self.remote("set_default", serde_json::json!({"id": id}), true) {
++            return result.map(drop);
++        }
 +        self.with_index(true, |index| {
 +            if !index.profiles.iter().any(|p| p.id == id) {
 +                return Err(failure(format!("credential_profile_unknown: {id}")));
@@ -36714,16 +37988,16 @@ index 000000000..1ae930c26
 +mod tests;
 diff --git a/codex-rs/omd/src/credentials_tests.rs b/codex-rs/omd/src/credentials_tests.rs
 new file mode 100644
-index 000000000..76a20ab53
+index 000000000..0dbe2a749
 --- /dev/null
 +++ b/codex-rs/omd/src/credentials_tests.rs
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,165 @@
 +use super::*;
 +
 +fn profiles() -> (tempfile::TempDir, CredentialProfiles) {
 +    let temp = tempfile::tempdir().unwrap();
 +    let root = temp.path().canonicalize().unwrap();
-+    let profiles = CredentialProfiles::open(&root).unwrap();
++    let profiles = CredentialProfiles::local(&root).unwrap();
 +    (temp, profiles)
 +}
 +
@@ -36759,15 +38033,16 @@ index 000000000..76a20ab53
 +}
 +
 +#[test]
-+fn removing_the_default_promotes_another_and_returns_the_home_to_clear() {
++fn removing_the_default_promotes_another_and_clears_its_home() {
 +    let (_temp, profiles) = profiles();
 +    profiles.create("a", "chatgpt", None).unwrap();
 +    profiles
 +        .create_secret("site", "https://example.com", "vault")
 +        .unwrap();
 +    profiles.create("b", "chatgpt", None).unwrap();
-+    let home = profiles.remove("p1").unwrap().unwrap();
-+    assert!(home.ends_with("credentials/p1"));
++    let home = profiles.home("p1").unwrap();
++    assert!(profiles.remove("p1").unwrap());
++    assert!(!home.exists());
 +    let listed = profiles.list().unwrap();
 +    assert_eq!(
 +        listed
@@ -36776,7 +38051,7 @@ index 000000000..76a20ab53
 +            .collect::<Vec<_>>(),
 +        [("p2", false), ("p3", true)]
 +    );
-+    assert_eq!(profiles.remove("p1").unwrap(), None);
++    assert!(!profiles.remove("p1").unwrap());
 +    assert!(profiles.home("p1").is_err());
 +}
 +
@@ -36814,11 +38089,9 @@ index 000000000..76a20ab53
 +            .to_string()
 +            .starts_with("credential_not_enrolled")
 +    );
-+    fs::write(
-+        profiles.home(&key.id).unwrap().join("auth.json"),
-+        br#"{"OPENAI_API_KEY":"sk-test"}"#,
-+    )
-+    .unwrap();
++    profiles
++        .store_auth(&key.id, r#"{"OPENAI_API_KEY":"sk-test"}"#)
++        .unwrap();
 +    let secret = profiles.secret(&key.id).unwrap();
 +    assert_eq!(
 +        (secret.token.as_str(), secret.account_id),
@@ -39239,13 +40512,14 @@ index 000000000..8988abc7d
 +}
 diff --git a/codex-rs/omd/src/lib.rs b/codex-rs/omd/src/lib.rs
 new file mode 100644
-index 000000000..fe20a3f04
+index 000000000..b12fd363c
 --- /dev/null
 +++ b/codex-rs/omd/src/lib.rs
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,181 @@
 +mod admission;
 +pub mod app_routes;
 +mod blob_store;
++pub mod broker;
 +mod builtins;
 +pub mod client_surface;
 +pub mod contract_cli;
@@ -39391,6 +40665,7 @@ index 000000000..fe20a3f04
 +pub use mods::ModSpan;
 +pub use mods::ModSplit;
 +pub use mods::ModStore;
++pub use mods::Trust;
 +pub use mods::ModSubscriptions;
 +pub use mods::ModSurfacePaint;
 +pub use mods::ModTab;
@@ -39605,10 +40880,10 @@ index 000000000..a7b456795
 +}
 diff --git a/codex-rs/omd/src/mods.rs b/codex-rs/omd/src/mods.rs
 new file mode 100644
-index 000000000..41326f5d4
+index 000000000..bb17eab09
 --- /dev/null
 +++ b/codex-rs/omd/src/mods.rs
-@@ -0,0 +1,4178 @@
+@@ -0,0 +1,4195 @@
 +mod author;
 +mod bridge;
 +mod chain;
@@ -39691,6 +40966,7 @@ index 000000000..41326f5d4
 +pub use package_manager::ModPackageSource;
 +pub use package_manager::ModPackageTrust;
 +pub use store::ModStore;
++pub use store::Trust;
 +
 +pub const CODEX_HOST_RELEASE: &str = "0.159.1";
 +pub const OMD_HOST_RELEASE: &str = env!("CARGO_PKG_VERSION");
@@ -39866,7 +41142,6 @@ index 000000000..41326f5d4
 +    "adapters_v1",
 +    "app_v1",
 +    "approval_v1",
-+    "tool_output_v1",
 +    "tool_batch_v1",
 +    "tool_specs_v1",
 +    "events_v1",
@@ -41856,7 +43131,12 @@ index 000000000..41326f5d4
 +    pub fn reload(&mut self) -> Result<bool> {
 +        let path = self.store.root.join("mods.json");
 +        let bytes = store::read(&path, 65_536)?;
-+        let hash = digest(&bytes);
++        let brokered = store::brokered_grants(&self.store.root)?;
++        let hash = format!(
++            "{}:{}",
++            digest(&bytes),
++            brokered.as_ref().map_or(0, |(generation, _)| *generation)
++        );
 +        if hash == self.configuration_sha256 {
 +            return Ok(false);
 +        }
@@ -41882,7 +43162,12 @@ index 000000000..41326f5d4
 +            self.dynamic_tools.clear();
 +        }
 +        let mut rejected = Vec::new();
-+        let selected = Self::select(&config, initial, &mut rejected)?;
++        let selected = Self::select(
++            &config,
++            initial,
++            brokered.as_ref().map(|(_, grants)| grants),
++            &mut rejected,
++        )?;
 +        let adapters = Self::adapters(&selected);
 +        let mut next = BTreeMap::new();
 +        for (id, (selection, package, source)) in selected {
@@ -42068,6 +43353,7 @@ index 000000000..41326f5d4
 +    fn select(
 +        config: &ModConfiguration,
 +        initial: bool,
++        grants: Option<&BTreeSet<String>>,
 +        rejected: &mut Vec<ModRejection>,
 +    ) -> Result<BTreeMap<String, (ModSelection, ModPackage, String)>> {
 +        let mut selected: BTreeMap<String, (ModSelection, ModPackage, String)> = BTreeMap::new();
@@ -42075,6 +43361,12 @@ index 000000000..41326f5d4
 +            let loaded = (|| {
 +                if !MOD_SCOPES.contains(&selection.scope.as_str()) {
 +                    return Err(failure(format!("unsupported_scope: {}", selection.scope)));
++                }
++                if grants.is_some_and(|grants| !grants.contains(&store::grant(&json!(selection)))) {
++                    return Err(failure(format!(
++                        "grant_not_brokered: {} has no protected grant; re-trust it in /omd or with omd-mod trust",
++                        selection.path.display()
++                    )));
 +                }
 +                let (package, source, hash) = store::package(&selection.path)?;
 +                if hash != selection.sha256 {
@@ -43753,7 +45045,7 @@ index 000000000..41326f5d4
 +            "supported_apis":SUPPORTED_MOD_APIS.iter().map(|(version,stability,support_until)|
 +                json!({"version":version,"stability":stability,"support_until":support_until})).collect::<Vec<_>>()},
 +            "generation": self.generation, "reload_error": self.reload_error,
-+            "order": self.order, "rejected": self.rejected, "field_policies": Self::field_policies(),
++            "authority": crate::broker::status(), "order": self.order, "rejected": self.rejected, "field_policies": Self::field_policies(),
 +            "installed_contract_types": self.store.root.join("installed-contracts.d.ts"),
 +            "active_host_types": self.store.root.join("active-host.d.ts"),
 +            "service_calls": self.service_calls,
@@ -47964,10 +49256,10 @@ index 000000000..11ec22b0c
 +}
 diff --git a/codex-rs/omd/src/mods/store.rs b/codex-rs/omd/src/mods/store.rs
 new file mode 100644
-index 000000000..d2e18e736
+index 000000000..b039fd228
 --- /dev/null
 +++ b/codex-rs/omd/src/mods/store.rs
-@@ -0,0 +1,584 @@
+@@ -0,0 +1,665 @@
 +use super::ModConfiguration;
 +use super::ModPackage;
 +use super::ModSelection;
@@ -47978,6 +49270,7 @@ index 000000000..d2e18e736
 +use serde_json::Value;
 +use serde_json::json;
 +use std::collections::BTreeMap;
++use std::collections::BTreeSet;
 +use std::fs::File;
 +use std::fs::OpenOptions;
 +use std::io::Read;
@@ -47986,6 +49279,39 @@ index 000000000..d2e18e736
 +use std::os::unix::fs::OpenOptionsExt;
 +use std::path::Path;
 +use std::path::PathBuf;
++
++pub struct Trust {
++    pub path: PathBuf,
++    pub sha256: String,
++    pub capabilities: Vec<String>,
++    pub scope: String,
++    pub secret_environment: Vec<String>,
++}
++
++pub(super) fn grant(selection: &Value) -> String {
++    crate::broker::canonical(
++        &json!({"path": selection["path"], "sha256": selection["sha256"],
++        "capabilities": selection["capabilities"], "scope": selection["scope"],
++        "secret_environment": selection.get("secret_environment").unwrap_or(&json!([]))}),
++    )
++}
++
++pub(super) fn brokered_grants(root: &Path) -> Result<Option<(u64, BTreeSet<String>)>> {
++    if !crate::broker::deployed() {
++        return Ok(None);
++    }
++    let current = crate::broker::call("grants.get", json!({"store": root}))?;
++    Ok(Some((
++        current["generation"].as_u64().unwrap_or_default(),
++        current["grants"]
++            .as_array()
++            .into_iter()
++            .flatten()
++            .filter_map(Value::as_str)
++            .map(str::to_owned)
++            .collect(),
++    )))
++}
 +
 +pub(super) fn read(path: &Path, limit: u64) -> Result<Vec<u8>> {
 +    let file = OpenOptions::new()
@@ -48191,10 +49517,37 @@ index 000000000..d2e18e736
 +
 +    pub(super) fn write(&self, name: &str, value: &Value) -> Result<()> {
 +        let bytes = serde_json::to_vec_pretty(value)?;
-+        self.write_bytes(name, &bytes)
++        self.write_staged(name, &bytes, || {
++            if name == "mods.json"
++                && let Some((generation, current)) = brokered_grants(&self.root)?
++            {
++                let wanted = value["mods"]
++                    .as_array()
++                    .into_iter()
++                    .flatten()
++                    .map(grant)
++                    .collect::<BTreeSet<_>>();
++                if wanted != current {
++                    crate::broker::authorized(
++                        "grants.put",
++                        json!({"store": self.root, "generation": generation, "grants": wanted}),
++                    )?;
++                }
++            }
++            Ok(())
++        })
 +    }
 +
 +    pub(super) fn write_bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
++        self.write_staged(name, bytes, || Ok(()))
++    }
++
++    fn write_staged(
++        &self,
++        name: &str,
++        bytes: &[u8],
++        commit: impl FnOnce() -> Result<()>,
++    ) -> Result<()> {
 +        if bytes.len() > 65_536 {
 +            return Err(failure("state_or_configuration_limit"));
 +        }
@@ -48210,6 +49563,7 @@ index 000000000..d2e18e736
 +        let result = (|| {
 +            file.write_all(bytes)?;
 +            file.sync_all()?;
++            commit()?;
 +            std::fs::rename(&temporary, &path)?;
 +            File::open(&self.root)?.sync_all()
 +        })();
@@ -48350,41 +49704,60 @@ index 000000000..d2e18e736
 +        scope: &str,
 +        secret_environment: Vec<String>,
 +    ) -> Result<()> {
++        self.trust_all(vec![Trust {
++            path,
++            sha256: sha256.to_owned(),
++            capabilities,
++            scope: scope.to_owned(),
++            secret_environment,
++        }])
++    }
++
++    pub fn trust_all(&self, packages: Vec<Trust>) -> Result<()> {
 +        let _lock = self.lock()?;
 +        self.recover_package_transaction()?;
-+        if !super::MOD_SCOPES.contains(&scope) {
-+            return Err(failure("unsupported_scope: user or project"));
-+        }
-+        let (package, _, actual) = package(&path)?;
-+        if sha256 != actual {
-+            return Err(failure("trust_digest_mismatch"));
-+        }
-+        if capabilities != package.capabilities {
-+            return Err(failure("explicit_exact_capability_grant_required"));
-+        }
-+        super::check_secret_environment(&package, &secret_environment)?;
 +        let mut config = self.configuration()?;
-+        let settings = config
-+            .mods
-+            .iter()
-+            .find(|m| m.path == path)
-+            .map(|m| m.settings.clone())
-+            .unwrap_or_default();
-+        super::validate_settings(&package, &settings)?;
-+        config.mods.retain(|m| m.path != path);
++        for Trust {
++            path,
++            sha256,
++            capabilities,
++            scope,
++            secret_environment,
++        } in packages
++        {
++            if !super::MOD_SCOPES.contains(&scope.as_str()) {
++                return Err(failure("unsupported_scope: user or project"));
++            }
++            let (package, _, actual) = package(&path)?;
++            if sha256 != actual {
++                return Err(failure("trust_digest_mismatch"));
++            }
++            if capabilities != package.capabilities {
++                return Err(failure("explicit_exact_capability_grant_required"));
++            }
++            super::check_secret_environment(&package, &secret_environment)?;
++            let settings = config
++                .mods
++                .iter()
++                .find(|m| m.path == path)
++                .map(|m| m.settings.clone())
++                .unwrap_or_default();
++            super::validate_settings(&package, &settings)?;
++            config.mods.retain(|m| m.path != path);
++            config.mods.push(ModSelection {
++                path,
++                sha256: actual,
++                enabled: false,
++                capabilities,
++                settings,
++                scope,
++                secret_environment: package.secret_environment(),
++            });
++        }
 +        config.revision = config
 +            .revision
 +            .checked_add(1)
 +            .ok_or_else(|| failure("revision_overflow"))?;
-+        config.mods.push(ModSelection {
-+            path,
-+            sha256: actual,
-+            enabled: false,
-+            capabilities,
-+            settings,
-+            scope: scope.to_owned(),
-+            secret_environment: package.secret_environment(),
-+        });
 +        self.write("mods.json", &serde_json::to_value(config)?)
 +    }
 +
@@ -55059,17 +56432,16 @@ index 000000000..330b7bc69
 +}
 diff --git a/codex-rs/omd/tests/examples.rs b/codex-rs/omd/tests/examples.rs
 new file mode 100644
-index 000000000..f797c1bdd
+index 000000000..bc7477fc3
 --- /dev/null
 +++ b/codex-rs/omd/tests/examples.rs
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,110 @@
 +use codex_omd::{ModHost, ModStore};
 +use std::path::Path;
 +
 +const HOST_FEATURES: &[&str] = &[
 +    "app_v1",
 +    "approval_v1",
-+    "tool_output_v1",
 +    "tool_batch_v1",
 +    "tool_specs_v1",
 +    "events_v1",
@@ -63138,10 +64510,10 @@ index 000000000..03463c997
 +}
 diff --git a/codex-rs/tui/src/app/mod_credentials.rs b/codex-rs/tui/src/app/mod_credentials.rs
 new file mode 100644
-index 000000000..c6e7242a7
+index 000000000..a87c64ff6
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_credentials.rs
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,327 @@
 +use super::App;
 +use crate::bottom_pane::SecretPromptView;
 +use codex_omd::client_surface::SurfaceCall;
@@ -63218,7 +64590,10 @@ index 000000000..c6e7242a7
 +}
 +
 +fn completed(profile: &CredentialProfile) -> Value {
-+    let public = profiles().map_or(Value::Null, |profiles| profiles.public(profile));
++    let public = profiles()
++        .ok()
++        .and_then(|profiles| profiles.public(profile).ok())
++        .unwrap_or(Value::Null);
 +    json!({"status": "completed", "profile": public})
 +}
 +
@@ -63230,9 +64605,47 @@ index 000000000..c6e7242a7
 +}
 +
 +fn discard(profiles: &CredentialProfiles, id: &str) {
-+    if let Ok(Some(home)) = profiles.remove(id) {
-+        let _ = std::fs::remove_dir_all(home);
++    let _ = profiles.remove(id);
++}
++
++fn finish(
++    reply: &codex_omd::client_surface::Reply,
++    profile: &CredentialProfile,
++    fresh: bool,
++    result: Result<Value, String>,
++) {
++    if fresh
++        && !result
++            .as_ref()
++            .is_ok_and(|value| value["status"] == "completed")
++        && let Ok(profiles) = profiles()
++    {
++        discard(&profiles, &profile.id);
 +    }
++    let _ = reply.send(result);
++}
++
++fn enrollment_home(profile: &CredentialProfile) -> std::path::PathBuf {
++    std::env::temp_dir().join(format!("omd-credential-enrollment-{}", profile.id))
++}
++
++fn enrolled(
++    profile: &CredentialProfile,
++    home: &std::path::Path,
++    keyring: codex_login::AuthKeyringBackendKind,
++) -> Result<Value, String> {
++    let mode = codex_login::AuthCredentialsStoreMode::Ephemeral;
++    let auth = codex_login::load_auth_dot_json(home, mode, keyring)
++        .map_err(|error| error.to_string())?
++        .ok_or("credentials_sign_in_incomplete")?;
++    let _ = codex_login::logout(home, mode, keyring);
++    profiles()?
++        .store_auth(
++            &profile.id,
++            &serde_json::to_string(&auth).map_err(|error| error.to_string())?,
++        )
++        .map_err(|error| error.to_string())?;
++    Ok(completed(profile))
 +}
 +
 +impl App {
@@ -63249,8 +64662,16 @@ index 000000000..c6e7242a7
 +                    {
 +                        return Err(format!("credential_secret_not_owned: {id}"));
 +                    }
-+                    discard(&profiles, &id);
-+                    Ok(Some(json!({"status": "completed", "profile": null})))
++                    let reply = call.reply.clone();
++                    tokio::task::spawn_blocking(move || {
++                        let _ = reply.send(
++                            profiles
++                                .remove(&id)
++                                .map(|_| json!({"status": "completed", "profile": null}))
++                                .map_err(|error| error.to_string()),
++                        );
++                    });
++                    Ok(None)
 +                }
 +                _ => {
 +                    let fresh = request.action == "enroll";
@@ -63275,9 +64696,7 @@ index 000000000..c6e7242a7
 +                            .profile(request.profile.as_deref().unwrap_or_default())
 +                            .map_err(|error| error.to_string())?
 +                    };
-+                    let home = profiles
-+                        .home(&profile.id)
-+                        .map_err(|error| error.to_string())?;
++                    let home = enrollment_home(&profile);
 +                    match profile.kind.as_str() {
 +                        "api_key" | "provider" => {
 +                            self.prompt_for_key(call.reply.clone(), profile, home, fresh);
@@ -63324,28 +64743,22 @@ index 000000000..c6e7242a7
 +        self.chat_widget
 +            .show_mod_secret_prompt(SecretPromptView::new(
 +                title,
-+                "Stored in the profile's private home. Mods never see it.".to_owned(),
++                "Stored in OMD's credential store. Mods never see it.".to_owned(),
 +                Box::new(move |key| {
-+                    let result = match key {
-+                        Some(key) => codex_login::login_with_api_key(
-+                            &home,
-+                            &key,
-+                            codex_login::AuthCredentialsStoreMode::File,
-+                            keyring,
-+                        )
-+                        .map(|()| completed(&profile))
-+                        .map_err(|error| error.to_string()),
-+                        None => Ok(json!({"status": "declined", "profile": null})),
-+                    };
-+                    if fresh
-+                        && !result
-+                            .as_ref()
-+                            .is_ok_and(|value| value["status"] == "completed")
-+                        && let Ok(profiles) = profiles()
-+                    {
-+                        discard(&profiles, &profile.id);
-+                    }
-+                    let _ = reply.send(result);
++                    tokio::task::spawn_blocking(move || {
++                        let result = match key {
++                            Some(key) => codex_login::login_with_api_key(
++                                &home,
++                                &key,
++                                codex_login::AuthCredentialsStoreMode::Ephemeral,
++                                keyring,
++                            )
++                            .map_err(|error| error.to_string())
++                            .and_then(|()| enrolled(&profile, &home, keyring)),
++                            None => Ok(json!({"status": "declined", "profile": null})),
++                        };
++                        finish(&reply, &profile, fresh, result);
++                    });
 +                }),
 +            ));
 +    }
@@ -63364,26 +64777,20 @@ index 000000000..c6e7242a7
 +        self.chat_widget
 +            .show_mod_secret_prompt(SecretPromptView::new(
 +                title,
-+                "Stored in a private profile home and given only to this mod's sidecars."
++                "Stored in OMD's credential store and given only to this mod's sidecars."
 +                    .to_owned(),
 +                Box::new(move |value| {
-+                    let result = match (value, profiles()) {
-+                        (Some(value), Ok(profiles)) => profiles
-+                            .store_secret(&profile.id, &value)
-+                            .map(|()| completed(&profile))
-+                            .map_err(|error| error.to_string()),
-+                        (None, _) => Ok(json!({"status": "declined", "profile": null})),
-+                        (_, Err(error)) => Err(error),
-+                    };
-+                    if fresh
-+                        && !result
-+                            .as_ref()
-+                            .is_ok_and(|value| value["status"] == "completed")
-+                        && let Ok(profiles) = profiles()
-+                    {
-+                        discard(&profiles, &profile.id);
-+                    }
-+                    let _ = reply.send(result);
++                    tokio::task::spawn_blocking(move || {
++                        let result = match (value, profiles()) {
++                            (Some(value), Ok(profiles)) => profiles
++                                .store_secret(&profile.id, &value)
++                                .map(|()| completed(&profile))
++                                .map_err(|error| error.to_string()),
++                            (None, _) => Ok(json!({"status": "declined", "profile": null})),
++                            (_, Err(error)) => Err(error),
++                        };
++                        finish(&reply, &profile, fresh, result);
++                    });
 +                }),
 +            ));
 +    }
@@ -63395,14 +64802,15 @@ index 000000000..c6e7242a7
 +        home: std::path::PathBuf,
 +        fresh: bool,
 +    ) -> Result<(), String> {
++        let keyring = self.config.auth_keyring_backend_kind();
 +        let options = codex_login::ServerOptions {
 +            open_browser: true,
 +            ..codex_login::ServerOptions::new(
-+                home,
++                home.clone(),
 +                codex_login::oauth_client_id(),
 +                None,
-+                codex_login::AuthCredentialsStoreMode::File,
-+                self.config.auth_keyring_backend_kind(),
++                codex_login::AuthCredentialsStoreMode::Ephemeral,
++                keyring,
 +                self.config.auth_route_config(),
 +            )
 +        };
@@ -63423,25 +64831,22 @@ index 000000000..c6e7242a7
 +            let result = server
 +                .block_until_done()
 +                .await
-+                .map(|()| completed(&profile))
 +                .map_err(|error| error.to_string());
-+            if fresh
-+                && result.is_err()
-+                && let Ok(profiles) = profiles()
-+            {
-+                discard(&profiles, &profile.id);
-+            }
-+            let _ = reply.send(result);
++            let _ = tokio::task::spawn_blocking(move || {
++                let result = result.and_then(|()| enrolled(&profile, &home, keyring));
++                finish(&reply, &profile, fresh, result);
++            })
++            .await;
 +        });
 +        Ok(())
 +    }
 +}
 diff --git a/codex-rs/tui/src/app/mod_surface.rs b/codex-rs/tui/src/app/mod_surface.rs
 new file mode 100644
-index 000000000..45b9ce116
+index 000000000..43f66e100
 --- /dev/null
 +++ b/codex-rs/tui/src/app/mod_surface.rs
-@@ -0,0 +1,1018 @@
+@@ -0,0 +1,1026 @@
 +use super::App;
 +use crate::app_event::AppEvent;
 +use crate::app_server_session::AppServerSession;
@@ -63521,7 +64926,7 @@ index 000000000..45b9ce116
 +type PackageControl = codex_omd::package_controls::PackageControl;
 +
 +enum Confirmed {
-+    Package(PackageControl),
++    Package(Box<PackageControl>),
 +    Contract(Option<String>),
 +}
 +
@@ -63618,7 +65023,7 @@ index 000000000..45b9ce116
 +            return Ok(Some((
 +                Some(title),
 +                prompt,
-+                Some(Confirmed::Package(preview.control)),
++                Some(Confirmed::Package(Box::new(preview.control))),
 +            )));
 +        }
 +        "contract.select" => {
@@ -64090,8 +65495,7 @@ index 000000000..45b9ce116
 +            let _ = call.reply.send(Ok(json!({"status": "declined"})));
 +            return;
 +        }
-+        self.run_mod_surface_call(tui, app_server, call, held)
-+            .await;
++        self.run_mod_surface_call(tui, app_server, call, held).await;
 +    }
 +
 +    async fn run_mod_surface_call(
@@ -64184,7 +65588,11 @@ index 000000000..45b9ce116
 +                };
 +                let reply = call.reply;
 +                let view = crate::bottom_pane::SecretPromptView::new(
-+                    format!("Mod {} asks: {}", call.caller, title.0),
++                    if call.caller == codex_omd::broker::HOST_CALLER {
++                        title.0
++                    } else {
++                        format!("Mod {} asks: {}", call.caller, title.0)
++                    },
 +                    title.1,
 +                    Box::new(move |value| {
 +                        let _ = reply.send(Ok(match value {
@@ -64201,7 +65609,13 @@ index 000000000..45b9ce116
 +                self.chat_widget.show_mod_secret_prompt(view);
 +                return;
 +            }
-+            "packages.apply" => apply_package(held),
++            "packages.apply" => {
++                let reply = call.reply;
++                tokio::task::spawn_blocking(move || {
++                    let _ = reply.send(apply_package(held));
++                });
++                return;
++            }
 +            "contract.select" => select_contract(&call.arguments, held),
 +            "composer.read" => Ok(self.chat_widget.mod_composer_read()),
 +            "terminal.commands" => Ok(self.chat_widget.mod_command_inventory()),
@@ -64371,13 +65785,12 @@ index 000000000..45b9ce116
 +    let mut index = 0;
 +    while index < found.len() && found.len() < 256 {
 +        let parent = found[index];
-+        found.extend(
-+            pairs
-+                .iter()
-+                .filter(|(pid, ppid)| *ppid == parent && !found.contains(pid))
-+                .map(|(pid, _)| *pid)
-+                .collect::<Vec<_>>(),
-+        );
++        let children = pairs
++            .iter()
++            .filter(|(pid, ppid)| *ppid == parent && !found.contains(pid))
++            .map(|(pid, _)| *pid)
++            .collect::<Vec<_>>();
++        found.extend(children);
 +        index += 1;
 +    }
 +    found.truncate(256);
@@ -72348,7 +73761,7 @@ index 000000000..295e9a20b
 +mod tests;
 diff --git a/codex-rs/tui/src/mod_ui_tests.rs b/codex-rs/tui/src/mod_ui_tests.rs
 new file mode 100644
-index 000000000..07b6ec63e
+index 000000000..31a2ef856
 --- /dev/null
 +++ b/codex-rs/tui/src/mod_ui_tests.rs
 @@ -0,0 +1,1119 @@
@@ -73051,7 +74464,7 @@ index 000000000..07b6ec63e
 +        "dialog":{"components":[{"type":"dialog","id":"ask","label":"Ask","title":"Ask","children":[{"type":"text","id":"body","label":"Body","text":"DIALOGTEXT"}]}]}
 +    }});
 +    let shown = snapshot(view.clone());
-+    assert!(header_rows(area, &inline_snapshot(shown.clone())) > 0);
++    assert!(header_rows(area, &inline_snapshot(shown)) > 0);
 +    let mut hidden = view;
 +    hidden["inline_sites"] = serde_json::json!("hidden");
 +    let mut hidden = inline_snapshot(snapshot(hidden));

@@ -949,6 +949,7 @@ publishes equivalent `mise run mods:*` tasks without making pnpm a mise tool.
 | `omd-mod package-plan STORE REQUEST_JSON` | Resolve and preview the exact graph, authority, settings, and activation changes |
 | `omd-mod package-apply STORE REQUEST_JSON CONFIRMATION` | Re-resolve and atomically apply only the unchanged preview |
 | `omd-mod package-lock STORE` | Print exact current versions, sources, integrity, trust, settings, and rollback history |
+| `omd-mod trust-all STORE PACKAGES_JSON` | Trust several exact packages (`[{path, sha256, capabilities, scope?}]`) in one configuration write, so a store protected by the authority broker asks once |
 | `omd-mod selection-status STORE` | Show saved user/project selections, precedence, source errors, and setting keys without running mod code |
 | `omd-mod package-enable STORE ID` | Re-enable an unchanged trusted package at the next turn boundary, retaining settings and state |
 | `omd-mod package-disable STORE ID` | Disable a managed package without deleting source, state, or cache |
@@ -1248,6 +1249,53 @@ Observers compose in that order; interceptors follow the continuation order abov
 providers, and namespaced tools fail closed when contested. Native permissions,
 credentials, accounting, cancellation, evidence, workflow enforcement, and
 provider authorization remain outside the mod API.
+
+### Protected authority (macOS)
+
+Without the broker, credential profiles, the trusted grant set, the task ledger
+and contract state are files in the mod store, so any process running as the
+user can read or change them, including an explicitly unsandboxed child, and
+`status.authority` reports `unprotected (same-user)`. `omd-package broker
+install` (sudo) deploys an OS-separated broker: a LaunchDaemon running as the
+hidden `_omdbroker` account owns `/Library/Application Support/OhMyDiff/broker`
+(mode 0700) and answers on `/var/run/dev.ohmydiff.broker.sock` only to peers
+whose kernel audit token resolves to a hardened-runtime binary whose code
+directory hash root has pinned. While the root-owned daemon plist exists,
+`status.authority` reports `protected (OS-separated broker)` and the host:
+
+- keeps credential profiles, secrets and sign-in tokens in the broker
+  (enrollment never writes them to the user's disk);
+- accepts a mod selection only when the broker holds the same grant (path,
+  digest, capabilities, scope and secret environment), otherwise
+  `grant_not_brokered`; enabling, disabling and settings changes don't touch
+  the grant;
+- anchors every task-ledger record and contract-state write in the broker and
+  refuses a ledger or contract state that differs from its anchor
+  (`evidence_anchor_mismatch`, `contract_state_anchor_mismatch`), including a
+  deleted one;
+- fails closed with `authority_broker_unavailable` when the broker can't be
+  reached; mods stay inactive and the session continues without them.
+
+Changing grants or enrolled credentials makes the broker ask the logged-in user
+to authenticate in a system dialog (right `dev.ohmydiff.broker.grant`). Without
+a GUI login session, for example over SSH, OMD asks for the macOS login password
+in the TUI or terminal instead, and the broker checks it against the connecting
+user's own account. Mods can't produce that prompt: their prompts always name
+the asking mod. Each
+change carries a single-use broker challenge bound to its digest and a
+generation check, so a stale writer is refused. Broker policy values need an
+administrator (`dev.ohmydiff.broker.policy`).
+
+The trust boundary is the OS plus the pinned binaries. The broker doesn't
+protect against an administrator or root, or a user who re-pins a replaced
+binary with sudo. Same-user processes can still read every user-readable file
+(for example `~/.codex/auth.json` or other secret files), edit the mod store
+(the host then rejects what the broker doesn't confirm) and drive OMD
+interactively, in which case the authentication dialog still appears. OMD
+offers no secrets-read API. Installs, upgrades and rollbacks pin their binaries
+(one sudo prompt), and `omd-package broker pin` re-pins by hand. `omd-package broker reset` clears grants and anchors
+but keeps credentials. `omd-package broker uninstall` removes the daemon, account,
+rights and all broker state, returning to same-user mode.
 
 
 ## Plugin components and shell commands
